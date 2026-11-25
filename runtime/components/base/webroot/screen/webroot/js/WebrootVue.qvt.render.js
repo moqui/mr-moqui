@@ -299,8 +299,8 @@
               }, 8, ["model-value", "onUpdate:modelValue", "title"]))
             }
         } },
-        "m-assist-body": { hash: "8f1ef80a", make: function (Vue) {
-            const { openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, resolveComponent: _resolveComponent, createVNode: _createVNode, createBlock: _createBlock, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, withCtx: _withCtx, renderList: _renderList, Fragment: _Fragment, normalizeClass: _normalizeClass, resolveDirective: _resolveDirective, withDirectives: _withDirectives, createElementVNode: _createElementVNode } = Vue
+        "m-assist-body": { hash: "ba6c70bb", make: function (Vue) {
+            const { openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, resolveComponent: _resolveComponent, createVNode: _createVNode, createBlock: _createBlock, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, withCtx: _withCtx, renderList: _renderList, Fragment: _Fragment, normalizeClass: _normalizeClass, resolveDirective: _resolveDirective, withDirectives: _withDirectives, createElementVNode: _createElementVNode, withModifiers: _withModifiers, withKeys: _withKeys } = Vue
 
             return function render(_ctx, _cache) {
               const _component_q_icon = _resolveComponent("q-icon")
@@ -333,7 +333,8 @@
               return (_openBlock(), _createElementBlock("div", {
                 class: _normalizeClass(["m-assist-body column no-wrap fit", {'m-assist-floated': _ctx.floated}]),
                 "data-assist-self": "assist",
-                onKeydown: _ctx.onKey
+                onKeydown: _ctx.onKey,
+                onKeyup: _ctx.onKeyUp
               }, [
                 (!_ctx.phone && !_ctx.floated)
                   ? (_openBlock(), _createElementBlock("div", {
@@ -723,8 +724,12 @@
                       (_ctx.convo.status)
                         ? (_openBlock(), _createElementBlock("div", {
                             key: 0,
-                            class: "row items-center no-wrap text-caption m-assist-status",
-                            id: "m-assist-status"
+                            class: _normalizeClass(["row items-center no-wrap text-caption m-assist-status", {'cursor-pointer m-assist-status--go': _ctx.toApproval}]),
+                            id: "m-assist-status",
+                            role: _ctx.toApproval ? 'button' : undefined,
+                            tabindex: _ctx.toApproval ? 0 : undefined,
+                            onClick: _ctx.showApproval,
+                            onKeydown: _withKeys(_withModifiers(_ctx.showApproval, ["prevent"]), ["enter"])
                           }, [
                             (!_ctx.paused)
                               ? (_openBlock(), _createBlock(_component_q_spinner_dots, {
@@ -740,7 +745,7 @@
                                   class: "q-mr-xs"
                                 })),
                             _createTextVNode(_toDisplayString(_ctx.convo.status), 1)
-                          ]))
+                          ], 42, ["role", "tabindex", "onClick", "onKeydown"]))
                         : _createCommentVNode("", true),
                       (_ctx.elsewhere)
                         ? (_openBlock(), _createElementBlock("div", {
@@ -865,7 +870,7 @@
                   "aria-live": "polite",
                   role: "status"
                 }, _toDisplayString(_ctx.s.announce), 1)
-              ], 42, ["onKeydown"]))
+              ], 42, ["onKeydown", "onKeyup"]))
             }
         } },
         "m-assist-button": { hash: "aab4ba2b", make: function (Vue) {
@@ -2612,7 +2617,7 @@
               ]))
             }
         } },
-        "m-assist-thread": { hash: "c354579e", make: function (Vue) {
+        "m-assist-thread": { hash: "a871e389", make: function (Vue) {
             const { resolveComponent: _resolveComponent, createVNode: _createVNode, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, toDisplayString: _toDisplayString, renderList: _renderList, Fragment: _Fragment, createTextVNode: _createTextVNode, withCtx: _withCtx, createBlock: _createBlock, createElementVNode: _createElementVNode, withModifiers: _withModifiers, withKeys: _withKeys } = Vue
 
             return function render(_ctx, _cache) {
@@ -2632,495 +2637,500 @@
                 "aria-busy": _ctx.streaming ? 'true' : 'false',
                 onScroll: _ctx.onScroll
               }, [
-                (_ctx.convo.hasEarlier)
-                  ? (_openBlock(), _createElementBlock("div", {
-                      key: 0,
-                      class: "text-center q-mb-sm"
+                _createElementVNode("div", {
+                  ref: "rows",
+                  class: "m-assist-thread-rows"
+                }, [
+                  (_ctx.convo.hasEarlier)
+                    ? (_openBlock(), _createElementBlock("div", {
+                        key: 0,
+                        class: "text-center q-mb-sm"
+                      }, [
+                        _createVNode(_component_q_btn, {
+                          flat: "",
+                          dense: "",
+                          "no-caps": "",
+                          size: "sm",
+                          label: _ctx.labels.earlier,
+                          onClick: _ctx.earlier
+                        }, null, 8, ["label", "onClick"])
+                      ]))
+                    : _createCommentVNode("", true),
+                  (!_ctx.rows.length && !_ctx.loose.length)
+                    ? (_openBlock(), _createElementBlock("div", {
+                        key: 1,
+                        class: "m-assist-empty text-center q-pa-lg m-muted",
+                        id: "m-assist-empty"
+                      }, [
+                        _createTextVNode(_toDisplayString(_ctx.labels.empty), 1),
+                        (_ctx.prompts.length)
+                          ? (_openBlock(), _createElementBlock("div", {
+                              key: 0,
+                              class: "q-mt-md m-assist-prompts",
+                              id: "m-assist-prompts-empty"
+                            }, [
+                              (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.prompts, (prompt, index) => {
+                                return (_openBlock(), _createBlock(_component_q_chip, {
+                                  key: prompt.promptId || index,
+                                  clickable: "",
+                                  dense: "",
+                                  icon: prompt.send ? 'sym_o_send' : undefined,
+                                  "data-assist-prompt": "",
+                                  "data-send": prompt.send ? 'true' : 'false',
+                                  onClick: $event => (_ctx.choosePrompt(prompt))
+                                }, {
+                                  default: _withCtx(() => [
+                                    _createTextVNode(_toDisplayString(prompt.label || prompt.text), 1)
+                                  ]),
+                                  _: 2
+                                }, 1032, ["icon", "data-send", "onClick"]))
+                              }), 128))
+                            ]))
+                          : _createCommentVNode("", true)
+                      ]))
+                    : _createCommentVNode("", true),
+                  (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.rows, (row) => {
+                    return (_openBlock(), _createElementBlock(_Fragment, {
+                      key: row.key
                     }, [
-                      _createVNode(_component_q_btn, {
-                        flat: "",
-                        dense: "",
-                        "no-caps": "",
-                        size: "sm",
-                        label: _ctx.labels.earlier,
-                        onClick: _ctx.earlier
-                      }, null, 8, ["label", "onClick"])
-                    ]))
-                  : _createCommentVNode("", true),
-                (!_ctx.rows.length && !_ctx.loose.length)
-                  ? (_openBlock(), _createElementBlock("div", {
-                      key: 1,
-                      class: "m-assist-empty text-center q-pa-lg m-muted",
-                      id: "m-assist-empty"
-                    }, [
-                      _createTextVNode(_toDisplayString(_ctx.labels.empty), 1),
-                      (_ctx.prompts.length)
+                      (row.kind === 'user')
                         ? (_openBlock(), _createElementBlock("div", {
                             key: 0,
-                            class: "q-mt-md m-assist-prompts",
-                            id: "m-assist-prompts-empty"
+                            class: "m-assist-user q-mb-sm",
+                            "data-assist-item": "user",
+                            "data-assist-local": row.local || undefined
                           }, [
-                            (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.prompts, (prompt, index) => {
-                              return (_openBlock(), _createBlock(_component_q_chip, {
-                                key: prompt.promptId || index,
-                                clickable: "",
-                                dense: "",
-                                icon: prompt.send ? 'sym_o_send' : undefined,
-                                "data-assist-prompt": "",
-                                "data-send": prompt.send ? 'true' : 'false',
-                                onClick: $event => (_ctx.choosePrompt(prompt))
-                              }, {
-                                default: _withCtx(() => [
-                                  _createTextVNode(_toDisplayString(prompt.label || prompt.text), 1)
-                                ]),
-                                _: 2
-                              }, 1032, ["icon", "data-send", "onClick"]))
-                            }), 128))
-                          ]))
-                        : _createCommentVNode("", true)
-                    ]))
-                  : _createCommentVNode("", true),
-                (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.rows, (row) => {
-                  return (_openBlock(), _createElementBlock(_Fragment, {
-                    key: row.key
-                  }, [
-                    (row.kind === 'user')
-                      ? (_openBlock(), _createElementBlock("div", {
-                          key: 0,
-                          class: "m-assist-user q-mb-sm",
-                          "data-assist-item": "user",
-                          "data-assist-local": row.local || undefined
-                        }, [
-                          _createElementVNode("div", { class: "m-assist-bubble" }, [
-                            (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(row.segments, (segment, index) => {
-                              return (_openBlock(), _createElementBlock(_Fragment, { key: index }, [
-                                (segment.text !== undefined)
-                                  ? (_openBlock(), _createElementBlock("span", {
-                                      key: 0,
-                                      class: "m-assist-pre"
-                                    }, _toDisplayString(segment.text), 1))
-                                  : (_openBlock(), _createBlock(_component_q_chip, {
-                                      key: 1,
-                                      dense: "",
-                                      square: "",
-                                      size: "sm",
-                                      icon: "sym_o_link",
-                                      class: "m-assist-record-chip"
-                                    }, {
-                                      default: _withCtx(() => [
-                                        _createTextVNode(_toDisplayString(segment.chip.label), 1)
-                                      ]),
-                                      _: 2
-                                    }, 1024))
-                              ], 64))
-                            }), 128))
-                          ]),
-                          (row.files && row.files.length)
-                            ? (_openBlock(), _createElementBlock("div", {
-                                key: 0,
-                                class: "row justify-end q-gutter-xs q-mt-xs m-assist-files"
-                              }, [
-                                (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(row.files, (file) => {
-                                  return (_openBlock(), _createElementBlock("a", {
-                                    key: file.attachmentId,
-                                    class: "m-assist-file",
-                                    href: _ctx.attachmentUrl(file.attachmentId),
-                                    download: file.fileName || true,
-                                    target: "_blank",
-                                    rel: "noopener",
-                                    "data-assist-file": file.attachmentId,
-                                    title: file.mediaType
-                                  }, [
-                                    _createVNode(_component_q_icon, {
-                                      name: "sym_o_attach_file",
-                                      size: "xs"
-                                    }),
-                                    _createTextVNode(_toDisplayString(file.fileName) + " ", 1),
-                                    _createElementVNode("span", { class: "m-muted" }, _toDisplayString(_ctx.sizeText(file.size)), 1)
-                                  ], 8, ["href", "download", "data-assist-file", "title"]))
-                                }), 128))
-                              ]))
-                            : _createCommentVNode("", true),
-                          (row.local === 'sending')
-                            ? (_openBlock(), _createElementBlock("div", {
-                                key: 1,
-                                class: "text-caption m-muted text-right"
-                              }, _toDisplayString(_ctx.labels.sending), 1))
-                            : (row.local === 'failed')
-                              ? (_openBlock(), _createElementBlock("div", {
-                                  key: 2,
-                                  class: "text-caption text-negative text-right"
-                                }, [
-                                  _createTextVNode(_toDisplayString(_ctx.labels.notSent) + _toDisplayString(row.error ? ': ' + row.error : ''), 1),
-                                  _createVNode(_component_q_btn, {
-                                    flat: "",
-                                    dense: "",
-                                    "no-caps": "",
-                                    size: "sm",
-                                    label: _ctx.labels.retry,
-                                    "data-assist-action": "resend",
-                                    onClick: $event => (_ctx.resend(row))
-                                  }, null, 8, ["label", "onClick"]),
-                                  _createVNode(_component_q_btn, {
-                                    flat: "",
-                                    dense: "",
-                                    round: "",
-                                    size: "sm",
-                                    icon: "sym_o_close",
-                                    "aria-label": _ctx.labels.discard,
-                                    onClick: $event => (_ctx.drop(row))
-                                  }, {
-                                    default: _withCtx(() => [
-                                      _createVNode(_component_q_tooltip, null, {
+                            _createElementVNode("div", { class: "m-assist-bubble" }, [
+                              (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(row.segments, (segment, index) => {
+                                return (_openBlock(), _createElementBlock(_Fragment, { key: index }, [
+                                  (segment.text !== undefined)
+                                    ? (_openBlock(), _createElementBlock("span", {
+                                        key: 0,
+                                        class: "m-assist-pre"
+                                      }, _toDisplayString(segment.text), 1))
+                                    : (_openBlock(), _createBlock(_component_q_chip, {
+                                        key: 1,
+                                        dense: "",
+                                        square: "",
+                                        size: "sm",
+                                        icon: "sym_o_link",
+                                        class: "m-assist-record-chip"
+                                      }, {
                                         default: _withCtx(() => [
-                                          _createTextVNode(_toDisplayString(_ctx.labels.discard), 1)
+                                          _createTextVNode(_toDisplayString(segment.chip.label), 1)
                                         ]),
-                                        _: 1
-                                      })
-                                    ]),
-                                    _: 1
-                                  }, 8, ["aria-label", "onClick"])
-                                ]))
-                              : _createCommentVNode("", true)
-                        ], 8, ["data-assist-local"]))
-                      : (row.kind === 'text')
-                        ? (_openBlock(), _createElementBlock("div", {
-                            key: 1,
-                            class: "m-assist-answer q-mb-sm",
-                            "data-assist-item": "assistant",
-                            "data-message-id": row.messageId
-                          }, [
-                            _createVNode(_component_m_assist_markdown, {
-                              text: row.text,
-                              invented: row.invented,
-                              chips: row.chips,
-                              streaming: row.streaming,
-                              "run-id": row.runId ? String(row.runId) : null
-                            }, null, 8, ["text", "invented", "chips", "streaming", "run-id"]),
-                            (!row.streaming && row.messageId && row.text)
+                                        _: 2
+                                      }, 1024))
+                                ], 64))
+                              }), 128))
+                            ]),
+                            (row.files && row.files.length)
                               ? (_openBlock(), _createElementBlock("div", {
                                   key: 0,
-                                  class: "row items-center no-wrap m-assist-actions"
+                                  class: "row justify-end q-gutter-xs q-mt-xs m-assist-files"
                                 }, [
-                                  _createVNode(_component_q_btn, {
-                                    flat: "",
-                                    round: "",
-                                    dense: "",
-                                    size: "xs",
-                                    icon: "sym_o_content_copy",
-                                    "aria-label": _ctx.labels.copy,
-                                    onClick: $event => (_ctx.copy(row.text))
-                                  }, null, 8, ["aria-label", "onClick"]),
-                                  _createVNode(_component_q_btn, {
-                                    flat: "",
-                                    round: "",
-                                    dense: "",
-                                    size: "xs",
-                                    icon: "sym_o_thumb_up",
-                                    color: row.feedback && row.feedback.rating === 'up' ? 'primary' : undefined,
-                                    "aria-label": _ctx.labels.up,
-                                    onClick: $event => (_ctx.rate(row, 'up'))
-                                  }, null, 8, ["color", "aria-label", "onClick"]),
-                                  _createVNode(_component_q_btn, {
-                                    flat: "",
-                                    round: "",
-                                    dense: "",
-                                    size: "xs",
-                                    icon: "sym_o_thumb_down",
-                                    color: row.feedback && row.feedback.rating === 'down' ? 'negative' : undefined,
-                                    "aria-label": _ctx.labels.down,
-                                    onClick: $event => (_ctx.rate(row, 'down'))
-                                  }, null, 8, ["color", "aria-label", "onClick"]),
-                                  (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.responseActions, (action) => {
-                                    return (_openBlock(), _createBlock(_component_q_btn, {
-                                      key: action.key,
+                                  (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(row.files, (file) => {
+                                    return (_openBlock(), _createElementBlock("a", {
+                                      key: file.attachmentId,
+                                      class: "m-assist-file",
+                                      href: _ctx.attachmentUrl(file.attachmentId),
+                                      download: file.fileName || true,
+                                      target: "_blank",
+                                      rel: "noopener",
+                                      "data-assist-file": file.attachmentId,
+                                      title: file.mediaType
+                                    }, [
+                                      _createVNode(_component_q_icon, {
+                                        name: "sym_o_attach_file",
+                                        size: "xs"
+                                      }),
+                                      _createTextVNode(_toDisplayString(file.fileName) + " ", 1),
+                                      _createElementVNode("span", { class: "m-muted" }, _toDisplayString(_ctx.sizeText(file.size)), 1)
+                                    ], 8, ["href", "download", "data-assist-file", "title"]))
+                                  }), 128))
+                                ]))
+                              : _createCommentVNode("", true),
+                            (row.local === 'sending')
+                              ? (_openBlock(), _createElementBlock("div", {
+                                  key: 1,
+                                  class: "text-caption m-muted text-right"
+                                }, _toDisplayString(_ctx.labels.sending), 1))
+                              : (row.local === 'failed')
+                                ? (_openBlock(), _createElementBlock("div", {
+                                    key: 2,
+                                    class: "text-caption text-negative text-right"
+                                  }, [
+                                    _createTextVNode(_toDisplayString(_ctx.labels.notSent) + _toDisplayString(row.error ? ': ' + row.error : ''), 1),
+                                    _createVNode(_component_q_btn, {
                                       flat: "",
-                                      round: "",
                                       dense: "",
-                                      size: "xs",
-                                      icon: action.icon || 'sym_o_bolt',
-                                      "aria-label": action.label,
-                                      "data-assist-response-action": action.key,
-                                      onClick: $event => (_ctx.respond(action, row))
+                                      "no-caps": "",
+                                      size: "sm",
+                                      label: _ctx.labels.retry,
+                                      "data-assist-action": "resend",
+                                      onClick: $event => (_ctx.resend(row))
+                                    }, null, 8, ["label", "onClick"]),
+                                    _createVNode(_component_q_btn, {
+                                      flat: "",
+                                      dense: "",
+                                      round: "",
+                                      size: "sm",
+                                      icon: "sym_o_close",
+                                      "aria-label": _ctx.labels.discard,
+                                      onClick: $event => (_ctx.drop(row))
                                     }, {
                                       default: _withCtx(() => [
                                         _createVNode(_component_q_tooltip, null, {
                                           default: _withCtx(() => [
-                                            _createTextVNode(_toDisplayString(action.label), 1)
+                                            _createTextVNode(_toDisplayString(_ctx.labels.discard), 1)
                                           ]),
-                                          _: 2
-                                        }, 1024)
+                                          _: 1
+                                        })
                                       ]),
-                                      _: 2
-                                    }, 1032, ["icon", "aria-label", "data-assist-response-action", "onClick"]))
-                                  }), 128)),
-                                  (_ctx.codeOf(row))
-                                    ? (_openBlock(true), _createElementBlock(_Fragment, { key: 0 }, _renderList(_ctx.codeActions, (action) => {
-                                        return (_openBlock(), _createBlock(_component_q_btn, {
-                                          key: action.key,
-                                          flat: "",
-                                          "no-caps": "",
-                                          dense: "",
-                                          size: "xs",
-                                          icon: action.icon || 'sym_o_code',
-                                          label: action.label,
-                                          "data-assist-code-action": action.key,
-                                          onClick: $event => (_ctx.runCode(action, row))
-                                        }, null, 8, ["icon", "label", "data-assist-code-action", "onClick"]))
-                                      }), 128))
-                                    : _createCommentVNode("", true)
-                                ]))
-                              : _createCommentVNode("", true)
-                          ], 8, ["data-message-id"]))
-                        : (row.kind === 'reasoning' || row.kind === 'thinking')
+                                      _: 1
+                                    }, 8, ["aria-label", "onClick"])
+                                  ]))
+                                : _createCommentVNode("", true)
+                          ], 8, ["data-assist-local"]))
+                        : (row.kind === 'text')
                           ? (_openBlock(), _createElementBlock("div", {
-                              key: 2,
-                              class: "m-assist-thought text-caption m-muted q-mb-xs",
-                              "data-assist-item": "reasoning"
+                              key: 1,
+                              class: "m-assist-answer q-mb-sm",
+                              "data-assist-item": "assistant",
+                              "data-message-id": row.messageId
                             }, [
-                              _createElementVNode("span", {
-                                class: "cursor-pointer",
-                                onClick: $event => (_ctx.toggleStep(row.key))
-                              }, [
-                                _createVNode(_component_q_icon, {
-                                  name: "sym_o_psychology",
-                                  size: "xs"
-                                }),
-                                _createTextVNode(" " + _toDisplayString(_ctx.labels.thought), 1)
-                              ], 8, ["onClick"]),
-                              (_ctx.openSteps[row.key] || row.kind === 'thinking')
+                              _createVNode(_component_m_assist_markdown, {
+                                text: row.text,
+                                invented: row.invented,
+                                chips: row.chips,
+                                streaming: row.streaming,
+                                "run-id": row.runId ? String(row.runId) : null
+                              }, null, 8, ["text", "invented", "chips", "streaming", "run-id"]),
+                              (!row.streaming && row.messageId && row.text)
                                 ? (_openBlock(), _createElementBlock("div", {
                                     key: 0,
-                                    class: "m-assist-pre q-pl-md"
-                                  }, _toDisplayString(row.text), 1))
-                                : _createCommentVNode("", true)
-                            ]))
-                          : (row.kind === 'step')
-                            ? (_openBlock(), _createElementBlock(_Fragment, { key: 3 }, [
-                                _createElementVNode("div", {
-                                  class: "m-assist-step text-caption q-mb-xs",
-                                  "data-assist-item": "step",
-                                  "data-tool": row.name,
-                                  "data-status": row.status
-                                }, [
-                                  _createElementVNode("div", {
-                                    class: "row items-center no-wrap cursor-pointer",
-                                    onClick: $event => (_ctx.toggleStep(row.key))
+                                    class: "row items-center no-wrap m-assist-actions"
                                   }, [
-                                    (row.status === 'running')
-                                      ? (_openBlock(), _createBlock(_component_q_spinner, {
+                                    _createVNode(_component_q_btn, {
+                                      flat: "",
+                                      round: "",
+                                      dense: "",
+                                      size: "xs",
+                                      icon: "sym_o_content_copy",
+                                      "aria-label": _ctx.labels.copy,
+                                      onClick: $event => (_ctx.copy(row.text))
+                                    }, null, 8, ["aria-label", "onClick"]),
+                                    _createVNode(_component_q_btn, {
+                                      flat: "",
+                                      round: "",
+                                      dense: "",
+                                      size: "xs",
+                                      icon: "sym_o_thumb_up",
+                                      color: row.feedback && row.feedback.rating === 'up' ? 'primary' : undefined,
+                                      "aria-label": _ctx.labels.up,
+                                      onClick: $event => (_ctx.rate(row, 'up'))
+                                    }, null, 8, ["color", "aria-label", "onClick"]),
+                                    _createVNode(_component_q_btn, {
+                                      flat: "",
+                                      round: "",
+                                      dense: "",
+                                      size: "xs",
+                                      icon: "sym_o_thumb_down",
+                                      color: row.feedback && row.feedback.rating === 'down' ? 'negative' : undefined,
+                                      "aria-label": _ctx.labels.down,
+                                      onClick: $event => (_ctx.rate(row, 'down'))
+                                    }, null, 8, ["color", "aria-label", "onClick"]),
+                                    (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.responseActions, (action) => {
+                                      return (_openBlock(), _createBlock(_component_q_btn, {
+                                        key: action.key,
+                                        flat: "",
+                                        round: "",
+                                        dense: "",
+                                        size: "xs",
+                                        icon: action.icon || 'sym_o_bolt',
+                                        "aria-label": action.label,
+                                        "data-assist-response-action": action.key,
+                                        onClick: $event => (_ctx.respond(action, row))
+                                      }, {
+                                        default: _withCtx(() => [
+                                          _createVNode(_component_q_tooltip, null, {
+                                            default: _withCtx(() => [
+                                              _createTextVNode(_toDisplayString(action.label), 1)
+                                            ]),
+                                            _: 2
+                                          }, 1024)
+                                        ]),
+                                        _: 2
+                                      }, 1032, ["icon", "aria-label", "data-assist-response-action", "onClick"]))
+                                    }), 128)),
+                                    (_ctx.codeOf(row))
+                                      ? (_openBlock(true), _createElementBlock(_Fragment, { key: 0 }, _renderList(_ctx.codeActions, (action) => {
+                                          return (_openBlock(), _createBlock(_component_q_btn, {
+                                            key: action.key,
+                                            flat: "",
+                                            "no-caps": "",
+                                            dense: "",
+                                            size: "xs",
+                                            icon: action.icon || 'sym_o_code',
+                                            label: action.label,
+                                            "data-assist-code-action": action.key,
+                                            onClick: $event => (_ctx.runCode(action, row))
+                                          }, null, 8, ["icon", "label", "data-assist-code-action", "onClick"]))
+                                        }), 128))
+                                      : _createCommentVNode("", true)
+                                  ]))
+                                : _createCommentVNode("", true)
+                            ], 8, ["data-message-id"]))
+                          : (row.kind === 'reasoning' || row.kind === 'thinking')
+                            ? (_openBlock(), _createElementBlock("div", {
+                                key: 2,
+                                class: "m-assist-thought text-caption m-muted q-mb-xs",
+                                "data-assist-item": "reasoning"
+                              }, [
+                                _createElementVNode("span", {
+                                  class: "cursor-pointer",
+                                  onClick: $event => (_ctx.toggleStep(row.key))
+                                }, [
+                                  _createVNode(_component_q_icon, {
+                                    name: "sym_o_psychology",
+                                    size: "xs"
+                                  }),
+                                  _createTextVNode(" " + _toDisplayString(_ctx.labels.thought), 1)
+                                ], 8, ["onClick"]),
+                                (_ctx.openSteps[row.key] || row.kind === 'thinking')
+                                  ? (_openBlock(), _createElementBlock("div", {
+                                      key: 0,
+                                      class: "m-assist-pre q-pl-md"
+                                    }, _toDisplayString(row.text), 1))
+                                  : _createCommentVNode("", true)
+                              ]))
+                            : (row.kind === 'step')
+                              ? (_openBlock(), _createElementBlock(_Fragment, { key: 3 }, [
+                                  _createElementVNode("div", {
+                                    class: "m-assist-step text-caption q-mb-xs",
+                                    "data-assist-item": "step",
+                                    "data-tool": row.name,
+                                    "data-status": row.status
+                                  }, [
+                                    _createElementVNode("div", {
+                                      class: "row items-center no-wrap cursor-pointer",
+                                      onClick: $event => (_ctx.toggleStep(row.key))
+                                    }, [
+                                      (row.status === 'running')
+                                        ? (_openBlock(), _createBlock(_component_q_spinner, {
+                                            key: 0,
+                                            size: "14px",
+                                            class: "q-mr-xs"
+                                          }))
+                                        : (_openBlock(), _createBlock(_component_q_icon, {
+                                            key: 1,
+                                            name: _ctx.stepIcon(row.status),
+                                            size: "xs",
+                                            color: row.isError ? 'negative' : undefined,
+                                            class: "q-mr-xs"
+                                          }, null, 8, ["name", "color"])),
+                                      _createElementVNode("span", { class: "ellipsis" }, _toDisplayString(row.title), 1)
+                                    ], 8, ["onClick"]),
+                                    (_ctx.openSteps[row.key])
+                                      ? (_openBlock(), _createElementBlock("div", {
                                           key: 0,
-                                          size: "14px",
-                                          class: "q-mr-xs"
-                                        }))
-                                      : (_openBlock(), _createBlock(_component_q_icon, {
-                                          key: 1,
-                                          name: _ctx.stepIcon(row.status),
-                                          size: "xs",
-                                          color: row.isError ? 'negative' : undefined,
-                                          class: "q-mr-xs"
-                                        }, null, 8, ["name", "color"])),
-                                    _createElementVNode("span", { class: "ellipsis" }, _toDisplayString(row.title), 1)
-                                  ], 8, ["onClick"]),
-                                  (_ctx.openSteps[row.key])
-                                    ? (_openBlock(), _createElementBlock("div", {
+                                          class: "m-assist-step-detail q-pl-md"
+                                        }, [
+                                          _createElementVNode("div", { class: "m-assist-pre" }, _toDisplayString(row.arguments), 1),
+                                          (row.result)
+                                            ? (_openBlock(), _createElementBlock("div", {
+                                                key: 0,
+                                                class: "m-assist-pre q-mt-xs"
+                                              }, _toDisplayString(row.result), 1))
+                                            : _createCommentVNode("", true),
+                                          _createVNode(_component_q_btn, {
+                                            flat: "",
+                                            dense: "",
+                                            "no-caps": "",
+                                            size: "xs",
+                                            icon: "sym_o_content_copy",
+                                            label: _ctx.labels.copy,
+                                            onClick: $event => (_ctx.copy(row.arguments + '\n' + row.result))
+                                          }, null, 8, ["label", "onClick"])
+                                        ]))
+                                      : _createCommentVNode("", true)
+                                  ], 8, ["data-tool", "data-status"]),
+                                  (_ctx.approvalsByCall[row.toolCallId])
+                                    ? (_openBlock(), _createBlock(_component_m_assist_card, {
                                         key: 0,
-                                        class: "m-assist-step-detail q-pl-md"
-                                      }, [
-                                        _createElementVNode("div", { class: "m-assist-pre" }, _toDisplayString(row.arguments), 1),
-                                        (row.result)
-                                          ? (_openBlock(), _createElementBlock("div", {
-                                              key: 0,
-                                              class: "m-assist-pre q-mt-xs"
-                                            }, _toDisplayString(row.result), 1))
-                                          : _createCommentVNode("", true),
-                                        _createVNode(_component_q_btn, {
+                                        kind: "approval",
+                                        card: _ctx.approvalsByCall[row.toolCallId]
+                                      }, null, 8, ["card"]))
+                                    : _createCommentVNode("", true)
+                                ], 64))
+                              : (row.kind === 'done')
+                                ? (_openBlock(), _createElementBlock("div", {
+                                    key: 4,
+                                    class: "m-assist-done text-caption m-muted q-mb-sm",
+                                    "data-assist-item": "done",
+                                    "data-state": row.state
+                                  }, [
+                                    (row.failed)
+                                      ? (_openBlock(), _createElementBlock("span", {
+                                          key: 0,
+                                          class: "text-negative"
+                                        }, _toDisplayString(row.errorText || row.errorCode || _ctx.labels.errorTitle), 1))
+                                      : _createCommentVNode("", true),
+                                    _createTextVNode(_toDisplayString(_ctx.doneText(row)), 1),
+                                    (row.failed)
+                                      ? (_openBlock(), _createBlock(_component_q_btn, {
+                                          key: 1,
                                           flat: "",
                                           dense: "",
                                           "no-caps": "",
-                                          size: "xs",
-                                          icon: "sym_o_content_copy",
-                                          label: _ctx.labels.copy,
-                                          onClick: $event => (_ctx.copy(row.arguments + '\n' + row.result))
-                                        }, null, 8, ["label", "onClick"])
-                                      ]))
-                                    : _createCommentVNode("", true)
-                                ], 8, ["data-tool", "data-status"]),
-                                (_ctx.approvalsByCall[row.toolCallId])
-                                  ? (_openBlock(), _createBlock(_component_m_assist_card, {
-                                      key: 0,
-                                      kind: "approval",
-                                      card: _ctx.approvalsByCall[row.toolCallId]
-                                    }, null, 8, ["card"]))
-                                  : _createCommentVNode("", true)
-                              ], 64))
-                            : (row.kind === 'done')
-                              ? (_openBlock(), _createElementBlock("div", {
-                                  key: 4,
-                                  class: "m-assist-done text-caption m-muted q-mb-sm",
-                                  "data-assist-item": "done",
-                                  "data-state": row.state
-                                }, [
-                                  (row.failed)
-                                    ? (_openBlock(), _createElementBlock("span", {
-                                        key: 0,
-                                        class: "text-negative"
-                                      }, _toDisplayString(row.errorText || row.errorCode || _ctx.labels.errorTitle), 1))
-                                    : _createCommentVNode("", true),
-                                  _createTextVNode(_toDisplayString(_ctx.doneText(row)), 1),
-                                  (row.failed)
-                                    ? (_openBlock(), _createBlock(_component_q_btn, {
-                                        key: 1,
-                                        flat: "",
-                                        dense: "",
-                                        "no-caps": "",
-                                        size: "sm",
-                                        label: _ctx.labels.retry,
-                                        "data-assist-action": "retry",
-                                        onClick: _ctx.retry
-                                      }, null, 8, ["label", "onClick"]))
-                                    : _createCommentVNode("", true),
-                                  (row.completed && _ctx.saveSkillOn)
-                                    ? (_openBlock(), _createBlock(_component_q_btn, {
-                                        key: 2,
-                                        flat: "",
-                                        dense: "",
-                                        "no-caps": "",
-                                        size: "sm",
-                                        icon: "sym_o_school",
-                                        label: _ctx.labels.saveSkill,
-                                        "data-assist-action": "save-skill",
-                                        onClick: $event => (_ctx.saveSkill(row))
-                                      }, null, 8, ["label", "onClick"]))
-                                    : _createCommentVNode("", true)
-                                ], 8, ["data-state"]))
-                              : (row.kind === 'queued')
-                                ? (_openBlock(), _createElementBlock("div", {
-                                    key: 5,
-                                    class: "m-assist-user m-assist-queued q-mb-sm",
-                                    "data-assist-item": "queued",
-                                    "data-input-id": row.inputId
-                                  }, [
-                                    (_ctx.editing === row.key)
-                                      ? (_openBlock(), _createElementBlock("div", {
-                                          key: 0,
-                                          class: "m-assist-queued-edit"
-                                        }, [
-                                          _createVNode(_component_q_input, {
-                                            modelValue: _ctx.editText,
-                                            "onUpdate:modelValue": $event => ((_ctx.editText) = $event),
-                                            type: "textarea",
-                                            autogrow: "",
-                                            dense: "",
-                                            outlined: "",
-                                            autofocus: "",
-                                            "data-assist-queued-text": "",
-                                            onKeydown: [
-                                              _withKeys(_withModifiers($event => (_ctx.saveQueued(row)), ["exact","prevent"]), ["enter"]),
-                                              _withKeys(_withModifiers($event => (_ctx.editing = null), ["prevent","stop"]), ["esc"])
-                                            ]
-                                          }, null, 8, ["modelValue", "onUpdate:modelValue", "onKeydown"]),
-                                          _createElementVNode("div", { class: "row justify-end q-gutter-xs q-mt-xs" }, [
-                                            _createVNode(_component_q_btn, {
-                                              flat: "",
+                                          size: "sm",
+                                          label: _ctx.labels.retry,
+                                          "data-assist-action": "retry",
+                                          onClick: _ctx.retry
+                                        }, null, 8, ["label", "onClick"]))
+                                      : _createCommentVNode("", true),
+                                    (row.completed && _ctx.saveSkillOn)
+                                      ? (_openBlock(), _createBlock(_component_q_btn, {
+                                          key: 2,
+                                          flat: "",
+                                          dense: "",
+                                          "no-caps": "",
+                                          size: "sm",
+                                          icon: "sym_o_school",
+                                          label: _ctx.labels.saveSkill,
+                                          "data-assist-action": "save-skill",
+                                          onClick: $event => (_ctx.saveSkill(row))
+                                        }, null, 8, ["label", "onClick"]))
+                                      : _createCommentVNode("", true)
+                                  ], 8, ["data-state"]))
+                                : (row.kind === 'queued')
+                                  ? (_openBlock(), _createElementBlock("div", {
+                                      key: 5,
+                                      class: "m-assist-user m-assist-queued q-mb-sm",
+                                      "data-assist-item": "queued",
+                                      "data-input-id": row.inputId
+                                    }, [
+                                      (_ctx.editing === row.key)
+                                        ? (_openBlock(), _createElementBlock("div", {
+                                            key: 0,
+                                            class: "m-assist-queued-edit"
+                                          }, [
+                                            _createVNode(_component_q_input, {
+                                              modelValue: _ctx.editText,
+                                              "onUpdate:modelValue": $event => ((_ctx.editText) = $event),
+                                              type: "textarea",
+                                              autogrow: "",
                                               dense: "",
-                                              "no-caps": "",
-                                              size: "sm",
-                                              label: _ctx.labels.cancel,
-                                              onClick: $event => (_ctx.editing = null)
-                                            }, null, 8, ["label", "onClick"]),
-                                            _createVNode(_component_q_btn, {
-                                              unelevated: "",
+                                              outlined: "",
+                                              autofocus: "",
+                                              "data-assist-queued-text": "",
+                                              onKeydown: [
+                                                _withKeys(_withModifiers($event => (_ctx.saveQueued(row)), ["exact","prevent"]), ["enter"]),
+                                                _withKeys(_withModifiers($event => (_ctx.editing = null), ["prevent","stop"]), ["esc"])
+                                              ]
+                                            }, null, 8, ["modelValue", "onUpdate:modelValue", "onKeydown"]),
+                                            _createElementVNode("div", { class: "row justify-end q-gutter-xs q-mt-xs" }, [
+                                              _createVNode(_component_q_btn, {
+                                                flat: "",
+                                                dense: "",
+                                                "no-caps": "",
+                                                size: "sm",
+                                                label: _ctx.labels.cancel,
+                                                onClick: $event => (_ctx.editing = null)
+                                              }, null, 8, ["label", "onClick"]),
+                                              _createVNode(_component_q_btn, {
+                                                unelevated: "",
+                                                dense: "",
+                                                "no-caps": "",
+                                                size: "sm",
+                                                color: "primary",
+                                                label: _ctx.labels.save,
+                                                loading: _ctx.busyQueued(row),
+                                                disable: !_ctx.editText.trim(),
+                                                "data-assist-action": "queued-save",
+                                                onClick: $event => (_ctx.saveQueued(row))
+                                              }, null, 8, ["label", "loading", "disable", "onClick"])
+                                            ])
+                                          ]))
+                                        : (_openBlock(), _createElementBlock("div", {
+                                            key: 1,
+                                            class: "m-assist-bubble"
+                                          }, [
+                                            _createElementVNode("span", { class: "m-assist-pre" }, _toDisplayString(row.text), 1)
+                                          ])),
+                                      _createElementVNode("div", { class: "text-caption m-muted text-right" }, [
+                                        _createTextVNode(_toDisplayString(_ctx.labels.queued), 1),
+                                        (row.inputId && _ctx.queuedOn && _ctx.editing !== row.key)
+                                          ? (_openBlock(), _createElementBlock(_Fragment, { key: 0 }, [
+                                              _createVNode(_component_q_btn, {
+                                                flat: "",
+                                                dense: "",
+                                                "no-caps": "",
+                                                size: "sm",
+                                                label: _ctx.labels.edit,
+                                                "data-assist-action": "queued-edit",
+                                                onClick: $event => (_ctx.editQueued(row))
+                                              }, null, 8, ["label", "onClick"]),
+                                              _createVNode(_component_q_btn, {
+                                                flat: "",
+                                                dense: "",
+                                                "no-caps": "",
+                                                size: "sm",
+                                                label: _ctx.labels.cancel,
+                                                loading: _ctx.busyQueued(row),
+                                                "data-assist-action": "queued-cancel",
+                                                onClick: $event => (_ctx.cancelQueued(row))
+                                              }, null, 8, ["label", "loading", "onClick"])
+                                            ], 64))
+                                          : _createCommentVNode("", true)
+                                      ])
+                                    ], 8, ["data-input-id"]))
+                                  : (row.kind === 'note' && row.memoryId)
+                                    ? (_openBlock(), _createElementBlock("div", {
+                                        key: 6,
+                                        class: "m-assist-note text-caption q-mb-sm row items-center no-wrap",
+                                        "data-assist-item": "note",
+                                        "data-assist-remembered": row.memoryId
+                                      }, [
+                                        _createElementVNode("span", { class: "col" }, _toDisplayString(row.forgotten ? _ctx.labels.forgotten : _ctx.labels.remembered) + ": " + _toDisplayString(row.remembered), 1),
+                                        (!row.forgotten)
+                                          ? (_openBlock(), _createBlock(_component_q_btn, {
+                                              key: 0,
+                                              flat: "",
                                               dense: "",
                                               "no-caps": "",
                                               size: "sm",
                                               color: "primary",
-                                              label: _ctx.labels.save,
-                                              loading: _ctx.busyQueued(row),
-                                              disable: !_ctx.editText.trim(),
-                                              "data-assist-action": "queued-save",
-                                              onClick: $event => (_ctx.saveQueued(row))
-                                            }, null, 8, ["label", "loading", "disable", "onClick"])
-                                          ])
-                                        ]))
-                                      : (_openBlock(), _createElementBlock("div", {
-                                          key: 1,
-                                          class: "m-assist-bubble"
-                                        }, [
-                                          _createElementVNode("span", { class: "m-assist-pre" }, _toDisplayString(row.text), 1)
-                                        ])),
-                                    _createElementVNode("div", { class: "text-caption m-muted text-right" }, [
-                                      _createTextVNode(_toDisplayString(_ctx.labels.queued), 1),
-                                      (row.inputId && _ctx.queuedOn && _ctx.editing !== row.key)
-                                        ? (_openBlock(), _createElementBlock(_Fragment, { key: 0 }, [
-                                            _createVNode(_component_q_btn, {
-                                              flat: "",
-                                              dense: "",
-                                              "no-caps": "",
-                                              size: "sm",
-                                              label: _ctx.labels.edit,
-                                              "data-assist-action": "queued-edit",
-                                              onClick: $event => (_ctx.editQueued(row))
-                                            }, null, 8, ["label", "onClick"]),
-                                            _createVNode(_component_q_btn, {
-                                              flat: "",
-                                              dense: "",
-                                              "no-caps": "",
-                                              size: "sm",
-                                              label: _ctx.labels.cancel,
-                                              loading: _ctx.busyQueued(row),
-                                              "data-assist-action": "queued-cancel",
-                                              onClick: $event => (_ctx.cancelQueued(row))
-                                            }, null, 8, ["label", "loading", "onClick"])
-                                          ], 64))
-                                        : _createCommentVNode("", true)
-                                    ])
-                                  ], 8, ["data-input-id"]))
-                                : (row.kind === 'note' && row.memoryId)
-                                  ? (_openBlock(), _createElementBlock("div", {
-                                      key: 6,
-                                      class: "m-assist-note text-caption q-mb-sm row items-center no-wrap",
-                                      "data-assist-item": "note",
-                                      "data-assist-remembered": row.memoryId
-                                    }, [
-                                      _createElementVNode("span", { class: "col" }, _toDisplayString(row.forgotten ? _ctx.labels.forgotten : _ctx.labels.remembered) + ": " + _toDisplayString(row.remembered), 1),
-                                      (!row.forgotten)
-                                        ? (_openBlock(), _createBlock(_component_q_btn, {
-                                            key: 0,
-                                            flat: "",
-                                            dense: "",
-                                            "no-caps": "",
-                                            size: "sm",
-                                            color: "primary",
-                                            label: _ctx.labels.forget,
-                                            "data-assist-action": "remembered-forget",
-                                            onClick: $event => (_ctx.forgetRemembered(row))
-                                          }, null, 8, ["label", "onClick"]))
-                                        : _createCommentVNode("", true)
-                                    ], 8, ["data-assist-remembered"]))
-                                  : (row.kind === 'note' && row.lessonId)
-                                    ? (_openBlock(), _createElementBlock("div", {
-                                        key: 7,
-                                        class: "m-assist-note text-caption q-mb-sm",
-                                        "data-assist-item": "note",
-                                        "data-assist-lesson": row.lessonId
-                                      }, _toDisplayString(_ctx.labels.lessonKept) + " " + _toDisplayString(row.anchor) + ": " + _toDisplayString(row.lesson), 9, ["data-assist-lesson"]))
-                                    : (row.kind === 'note')
+                                              label: _ctx.labels.forget,
+                                              "data-assist-action": "remembered-forget",
+                                              onClick: $event => (_ctx.forgetRemembered(row))
+                                            }, null, 8, ["label", "onClick"]))
+                                          : _createCommentVNode("", true)
+                                      ], 8, ["data-assist-remembered"]))
+                                    : (row.kind === 'note' && row.lessonId)
                                       ? (_openBlock(), _createElementBlock("div", {
-                                          key: 8,
-                                          class: "m-assist-note text-caption q-mb-sm m-assist-pre",
-                                          "data-assist-item": "note"
-                                        }, _toDisplayString(row.text), 1))
-                                      : _createCommentVNode("", true)
-                  ], 64))
-                }), 128)),
-                (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.loose, (card) => {
-                  return (_openBlock(), _createBlock(_component_m_assist_card, {
-                    key: 'a' + card.approvalId,
-                    kind: "approval",
-                    card: card
-                  }, null, 8, ["card"]))
-                }), 128))
+                                          key: 7,
+                                          class: "m-assist-note text-caption q-mb-sm",
+                                          "data-assist-item": "note",
+                                          "data-assist-lesson": row.lessonId
+                                        }, _toDisplayString(_ctx.labels.lessonKept) + " " + _toDisplayString(row.anchor) + ": " + _toDisplayString(row.lesson), 9, ["data-assist-lesson"]))
+                                      : (row.kind === 'note')
+                                        ? (_openBlock(), _createElementBlock("div", {
+                                            key: 8,
+                                            class: "m-assist-note text-caption q-mb-sm m-assist-pre",
+                                            "data-assist-item": "note"
+                                          }, _toDisplayString(row.text), 1))
+                                        : _createCommentVNode("", true)
+                    ], 64))
+                  }), 128)),
+                  (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.loose, (card) => {
+                    return (_openBlock(), _createBlock(_component_m_assist_card, {
+                      key: 'a' + card.approvalId,
+                      kind: "approval",
+                      card: card
+                    }, null, 8, ["card"]))
+                  }), 128))
+                ], 512)
               ], 40, ["aria-busy", "onScroll"]))
             }
         } },
@@ -5989,8 +5999,8 @@
               }, 8, ["model-value", "onUpdate:modelValue", "onShow", "onHide", "maximized"]))
             }
         } },
-        "m-dialog": { hash: "81320eff", make: function (Vue) {
-            const { toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, resolveComponent: _resolveComponent, createVNode: _createVNode, resolveDirective: _resolveDirective, withDirectives: _withDirectives, normalizeStyle: _normalizeStyle, withCtx: _withCtx, renderSlot: _renderSlot, openBlock: _openBlock, createBlock: _createBlock } = Vue
+        "m-dialog": { hash: "930a80f0", make: function (Vue) {
+            const { toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, resolveComponent: _resolveComponent, createVNode: _createVNode, resolveDirective: _resolveDirective, withDirectives: _withDirectives, normalizeStyle: _normalizeStyle, withCtx: _withCtx, renderSlot: _renderSlot, mergeProps: _mergeProps, openBlock: _openBlock, createBlock: _createBlock } = Vue
 
             return function render(_ctx, _cache) {
               const _component_q_space = _resolveComponent("q-space")
@@ -6001,14 +6011,15 @@
               const _component_q_dialog = _resolveComponent("q-dialog")
               const _directive_close_popup = _resolveDirective("close-popup")
 
-              return (_openBlock(), _createBlock(_component_q_dialog, {
+              return (_openBlock(), _createBlock(_component_q_dialog, _mergeProps({
                 "model-value": _ctx.modelValue,
                 "onUpdate:modelValue": $event => (_ctx.$emit('update:modelValue', $event)),
                 id: _ctx.id,
                 onShow: _ctx.onShow,
                 onHide: _ctx.onHide,
-                maximized: _ctx.$q.screen.lt.sm
-              }, {
+                maximized: _ctx.$q.screen.lt.sm,
+                "allow-focus-outside": !!_ctx.assistBeside
+              }, _ctx.besideAttrs), {
                 default: _withCtx(() => [
                   _createVNode(_component_q_card, {
                     ref: "dialogCard",
@@ -6054,7 +6065,7 @@
                   }, 8, ["style"])
                 ]),
                 _: 3
-              }, 8, ["model-value", "onUpdate:modelValue", "id", "onShow", "onHide", "maximized"]))
+              }, 16, ["model-value", "onUpdate:modelValue", "id", "onShow", "onHide", "maximized", "allow-focus-outside"]))
             }
         } },
         "m-display": { hash: "ccb7f263", make: function (Vue) {
@@ -6775,7 +6786,7 @@
               ], 46, ["aria-hidden", "aria-label", "id", "data-float-kind", "data-float-key", "onPointerdownCapture"]))
             }
         } },
-        "m-float-layer": { hash: "f2a83dd6", make: function (Vue) {
+        "m-float-layer": { hash: "cd5dd80e", make: function (Vue) {
             const { renderList: _renderList, Fragment: _Fragment, openBlock: _openBlock, createElementBlock: _createElementBlock, resolveComponent: _resolveComponent, createBlock: _createBlock, toDisplayString: _toDisplayString, createCommentVNode: _createCommentVNode, normalizeClass: _normalizeClass, normalizeStyle: _normalizeStyle, createTextVNode: _createTextVNode, withCtx: _withCtx, createVNode: _createVNode, resolveDirective: _resolveDirective, withDirectives: _withDirectives, createElementVNode: _createElementVNode } = Vue
 
             return function render(_ctx, _cache) {
@@ -6795,8 +6806,9 @@
               return (_ctx.s.floats.length)
                 ? (_openBlock(), _createElementBlock("div", {
                     key: 0,
-                    class: "m-float-layer",
-                    "data-float-layer": ""
+                    class: _normalizeClass(["m-float-layer", {'m-float-layer--over-modal': !!_ctx.over}]),
+                    "data-float-layer": "",
+                    "data-float-over": _ctx.over || undefined
                   }, [
                     (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.s.floats, (f) => {
                       return (_openBlock(), _createBlock(_component_m_float, {
@@ -7020,7 +7032,7 @@
                           }), 128))
                         ], 8, ["aria-label"]))
                       : _createCommentVNode("", true)
-                  ]))
+                  ], 10, ["data-float-over"]))
                 : _createCommentVNode("", true)
             }
         } },

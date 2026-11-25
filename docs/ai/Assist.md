@@ -663,6 +663,20 @@ width handle and `ASSIST_WIDTH` are the drawer's. Shut, the drawer pushes nothin
 Follow, approvals, the hand-off and the tasks badge read the store and the page and do not change. Whether it floats is
 kept with the float places in `localStorage`; at a load (after `bootstrap`) it floats again, shown or hidden as it was.
 
+**Beside a page's dialog.** A page dialog (`m-dialog`: container, dynamic and quick-create dialogs) does not shut Assist out:
+the agent may open and fill one (`ui.dialog`, `ui.fill`) and then wait on an approval. While Assist is shown
+(`assist.beside()`: `"drawer"` docked from 600 px, `"float"` floated and not minimized) the dialog takes
+`allow-focus-outside` and `aria-modal="false"`, and `m-dialog` counts itself in `state.pageModals`. Docked, the dialog and
+its backdrop leave the drawer's strip (`m-dialog--beside-assist`, `--m-assist-beside`), so the dialog centers in the page
+beside the drawer. Floated, the float layer goes over the dialog with the other floats hidden in place (the kind's
+`overModal`, [Qvt-Client](../ui/Qvt-Client.md#floats)). Esc in Assist then gives the keys back to the dialog's first field
+and does not close it; the dialog's own Esc and Close are as before. Below 600 px, and with Assist shut, a dialog is modal
+as it always was.
+
+**Approvals in view.** A new pending approval is scrolled into view in the thread even when the user has scrolled up, as the
+run waits on it; while the thread is at its end it stays there as what is drawn grows (a card's body, Preview, Markdown). While
+the run waits on an approval the status line is a button that scrolls to the first one waiting and focuses its Approve.
+
 **Its reach** (§10.7, D18). The float layer is outside `#m-canvas`, so a float is in `assistReach` only when its kind
 says so: a floated tray tab's body is, a floated Assist is not. Assist's body carries `data-assist-self="assist"`, and an
 element with `data-assist-self` (a terminal's has `"terminal"`) is never in reach, docked or floated, whatever

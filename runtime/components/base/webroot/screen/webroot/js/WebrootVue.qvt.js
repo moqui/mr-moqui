@@ -1694,12 +1694,31 @@
         template: '<div class="q-pa-xs" :style="bodyStyle"><slot></slot></div>'
     });
 
+    // A page's dialog. While Assist is open beside it (moqui.assist.beside(), issue 206) the focus may go out to Assist and back,
+    // and docked the dialog and its backdrop leave the drawer's strip, so Assist's approvals and composer stay usable; floated,
+    // the float layer goes over the dialog (WebrootFloats.js overModal). The keyboard shortcuts dialog is Assist's to ignore.
     component("m-dialog", {
         name: "mDialog",
         props: { draggable: { type: Boolean, default: true }, modelValue: { type: Boolean, default: false }, id: String, color: String, width: String, title: String },
         emits: ["update:modelValue", "onShow", "onHide"],
+        data() { return { counted: false }; },
+        computed: {
+            assistBeside() { return this.id !== "m-keys-help" && moqui.assist && moqui.assist.beside ? moqui.assist.beside() : null; },
+            // on the q-dialog's root (QDialog spreads its attrs after its own aria-modal)
+            besideAttrs() {
+                if (!this.assistBeside) return {};
+                const attrs = { "aria-modal": "false" };
+                if (this.assistBeside === "drawer") {
+                    attrs.class = "m-dialog--beside-assist";
+                    attrs.style = { "--m-assist-beside": ((moqui.assist.state && moqui.assist.state.width) || 420) + "px" };
+                }
+                return attrs;
+            }
+        },
+        beforeUnmount() { this.count(false); },
         template:
-            '<q-dialog :model-value="modelValue" @update:model-value="$emit(\'update:modelValue\', $event)" :id="id" @show="onShow" @hide="onHide" :maximized="$q.screen.lt.sm">' +
+            '<q-dialog :model-value="modelValue" @update:model-value="$emit(\'update:modelValue\', $event)" :id="id" @show="onShow" @hide="onHide" :maximized="$q.screen.lt.sm"' +
+                ' :allow-focus-outside="!!assistBeside" v-bind="besideAttrs">' +
                 '<q-card ref="dialogCard" flat bordered :style="{width:((width||760)+\'px\'),\'max-width\':($q.screen.lt.sm?\'100vw\':\'90vw\')}">' +
                     '<q-card-section ref="dialogHeader" class="row items-center no-wrap q-py-xs q-pr-xs non-selectable" :style="{cursor:(draggable?\'move\':\'default\')}">' +
                         '<div class="text-subtitle1 text-weight-medium ellipsis">{{title}}</div><q-space></q-space>' +
@@ -1710,7 +1729,14 @@
             '</q-dialog>',
         methods: {
             t(text) { return moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text; },
+            // one of the page's modal dialogs for Assist (moqui.assist.pageModal), once while shown
+            count(open) {
+                if (open === this.counted || this.id === "m-keys-help") return;
+                this.counted = open;
+                if (moqui.assist && moqui.assist.pageModal) moqui.assist.pageModal(open);
+            },
             onShow() {
+                this.count(true);
                 const header = this.dragHeader();
                 if (header) {
                     header.addEventListener("pointerdown", this.onGrab);
@@ -1720,6 +1746,7 @@
                 this.$emit("onShow");
             },
             onHide() {
+                this.count(false);
                 const header = this.dragHeader();
                 if (header) {
                     header.removeEventListener("pointerdown", this.onGrab);
@@ -1740,9 +1767,11 @@
                 const left = parseInt(styles.left, 10) || 0;
                 const top = parseInt(styles.top, 10) || 0;
                 const startX = event.clientX, startY = event.clientY;
+                // within the dialog's area: the window, less the Assist drawer's strip beside it
+                const area = target.parentElement && target.parentElement.clientWidth ? target.parentElement : null;
                 const place = (newLeft, newTop) => {
-                    const halfW = root.innerWidth / 2 - target.offsetWidth / 2 - 10;
-                    const halfH = root.innerHeight / 2 - target.offsetHeight / 2 - 10;
+                    const halfW = (area ? area.clientWidth : root.innerWidth) / 2 - target.offsetWidth / 2 - 10;
+                    const halfH = (area ? area.clientHeight : root.innerHeight) / 2 - target.offsetHeight / 2 - 10;
                     target.style.left = Math.max(-halfW, Math.min(halfW, newLeft)) + "px";
                     target.style.top = Math.max(-halfH, Math.min(halfH, newTop)) + "px";
                 };

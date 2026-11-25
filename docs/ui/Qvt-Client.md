@@ -478,7 +478,10 @@ Windows over the shell that are not dialogs: not modal, several at once, moved a
 shell, so its components are precompiled; its tests are `test/client/WebrootFloats.spec.js`.
 
 - **The layer** (`m-float-layer`, in the root after `q-layout`, outside `#m-canvas`): fixed over the page, the header and the
-  docked drawers (z-index 2050), below the call's ring bar, an overlay drawer, dialogs, menus and notices. It draws the windows
+  docked drawers (z-index 2050), below the call's ring bar, an overlay drawer, dialogs, menus and notices, except while a
+  kind's `overModal()` answers true (Assist floated beside a page's `m-dialog`): then the layer is over the dialogs (6001,
+  with the menus above it), the other kinds' windows and the strip are hidden in place, and all is as before once it answers
+  false (`moqui.floats.overKind()`, body class `m-float-over-modal`). It draws the windows
   the store lists and holds no content. At its bottom left a strip has the Arrange button (Tile, Cascade, Column at the
   right, Minimize all, and a kind's Gather) and a chip for each minimized window. The Arrange items are `moqui.keymap` actions
   `floatsTile`, `floatsCascade`, `floatsColumn` and `floatsMinimizeAll` with no keys; `KEYMAP` gives them some.
@@ -492,7 +495,7 @@ shell, so its components are precompiled; its tests are `test/client/WebrootFloa
   The windows keep below the header (`#top`) and inside the viewport when it is resized. **Dock** puts the content back and
   shows it there; **Close** puts it back and does not show it: closing a float ends nothing.
 - **A kind** is what floats: `moqui.floats.register(kind, {title, icon, badge, dot, defaultSize: {w, h}, minSize: {w, h},
-  place: "right" | "center", dock(shown, key, float), inReach, focus(key, bodyEl), gatherLabel, actions, home(key, float)})`.
+  place: "right" | "center", dock(shown, key, float), inReach, focus(key, bodyEl), gatherLabel, actions, home(key, float), overModal()})`.
   `home` answers where the content docks, measured when a drag starts: `{rect: {x, y, w, h}, edge}` with an edge of the
   area (`left`, `right`, `top`, `bottom`: a drag to that edge, outside the corners, docks in place of its snap) or none (a
   drag over the rect docks), or null for no home now. `actions`

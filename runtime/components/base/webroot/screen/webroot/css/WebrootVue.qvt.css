@@ -240,6 +240,11 @@ body:not(.body--dark) .q-field--outlined .q-field__control { background:var(--m-
 .m-float.m-float--max { border-radius:0; }
 /* hidden or minimized: still laid out, so what it holds keeps its scroll; not seen, not focusable, not read */
 .m-float.m-float--hidden { visibility:hidden; pointer-events:none; }
+/* a kind's window over a page's modal dialog (overModal: Assist floated beside a dialog, issue 206): the layer above the dialogs,
+   the other windows hidden (m-float--hidden) and the strip gone; menus, and Assist's own dialogs, above the layer */
+.m-float-layer.m-float-layer--over-modal { z-index:6001; }
+.m-float-layer--over-modal .m-float-strip { display:none; }
+body.m-float-over-modal .q-menu, body.m-float-over-modal .q-dialog.m-assist-popup { z-index:6002; }
 .m-float-bar { flex:none; min-height:34px; padding:0 2px 0 8px; gap:2px; cursor:grab; user-select:none; touch-action:none;
     background:color-mix(in srgb, var(--m-text) 4%, var(--m-panel-bg)); border-bottom:1px solid var(--m-divider); }
 .m-float--top .m-float-bar { background:color-mix(in srgb, var(--q-primary) 10%, var(--m-panel-bg)); }
@@ -1107,6 +1112,9 @@ body.m-radius-round :is(.q-btn:not(.q-btn--round), .q-field--outlined .q-field__
 .m-assist-agent { max-width:180px; }
 .m-assist-tier { flex:none; font-size:.8125rem; }
 .m-assist-thread { overflow-y:auto; overscroll-behavior:contain; }
+.m-assist-status--go:hover, .m-assist-status--go:focus-visible { color:var(--q-primary); text-decoration:underline; }
+/* a page dialog beside the docked drawer (m-dialog, issue 206): it and its backdrop leave the drawer's strip */
+.q-dialog.m-dialog--beside-assist > .q-dialog__backdrop, .q-dialog.m-dialog--beside-assist > .q-dialog__inner { right:var(--m-assist-beside, 0px); }
 .m-assist-user { display:flex; flex-direction:column; align-items:flex-end; }
 .m-assist-bubble { max-width:88%; padding:6px 10px; border-radius:12px 12px 2px 12px; background:color-mix(in srgb, var(--q-primary) 12%, transparent); }
 .body--dark .m-assist-bubble { background:color-mix(in srgb, var(--q-primary) 26%, transparent); }
