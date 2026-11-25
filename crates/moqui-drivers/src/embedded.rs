@@ -1512,18 +1512,33 @@ mod cluster {
         !state.is_empty() && state != "Z"
     }
 
-    /// `tasklist` is the process probe that does not add a Windows crate. This host is Linux, so
-    /// the TCP start path is not executed here.
+    /// Whether a `tasklist /FI "PID eq <pid>"` probe says `pid` is live.
+    ///
+    /// `ran` is false when `tasklist` did not start; `success` is a zero exit. A probe that did not
+    /// run, or that exited without success, counts as live: a sweep must not stop another run's
+    /// database because it could not tell. A successful listing is live when it names `pid` and is
+    /// not the English "no tasks" line. A successful listing that does not name `pid` (a localized
+    /// absence line included) is not live.
+    fn tasklist_probe_live(ran: bool, success: bool, stdout: &str, pid: u32) -> bool {
+        if !ran || !success {
+            return true;
+        }
+        stdout.contains(&pid.to_string()) && !stdout.to_ascii_lowercase().contains("no tasks")
+    }
+
+    /// `tasklist` is the process probe that does not add a Windows crate.
     #[cfg(windows)]
     fn windows_process_live(pid: u32) -> bool {
-        let Ok(output) = std::process::Command::new("tasklist")
+        match std::process::Command::new("tasklist")
             .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
             .output()
-        else {
-            return false;
-        };
-        let text = String::from_utf8_lossy(&output.stdout);
-        text.contains(&pid.to_string()) && !text.to_ascii_lowercase().contains("no tasks")
+        {
+            Ok(output) => {
+                let text = String::from_utf8_lossy(&output.stdout);
+                tasklist_probe_live(true, output.status.success(), &text, pid)
+            }
+            Err(_) => tasklist_probe_live(false, false, "", pid),
+        }
     }
 
     fn old_install_present(cluster_dir: &Path, install_root: &Path) -> bool {
@@ -1648,6 +1663,8 @@ mod cluster {
     mod hba_tests;
     #[cfg(all(test, windows))]
     mod stop_tests;
+    #[cfg(test)]
+    mod tasklist_tests;
     #[cfg(all(test, unix))]
     mod tests;
 }
