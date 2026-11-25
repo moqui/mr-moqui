@@ -39,4 +39,4 @@ jobs:
       - name: cargo lint
         run: cargo lint
       - name: test_cmd
-        run: cargo test -p moqui-host --lib test_cmd::
+        run: 'cargo test -p moqui-host --lib test_cmd::'
