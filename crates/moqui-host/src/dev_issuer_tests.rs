@@ -40,6 +40,11 @@ fn verify(
         .map(|_| ())
 }
 
+/// Whether `cert` carries the authority key identifier extension (OID 2.5.29.35).
+fn has_authority_key_identifier(cert: &CertificateDer<'_>) -> bool {
+    cert.windows(5).any(|bytes| bytes == [0x06, 0x03, 0x55, 0x1d, 0x23])
+}
+
 #[test]
 fn the_retained_signing_key_can_only_issue_loopback_server_identities() {
     let dir = private_fs::new_dir_in(&std::env::temp_dir(), "moqui-dev-issuer").unwrap();
@@ -65,9 +70,20 @@ fn the_retained_signing_key_can_only_issue_loopback_server_identities() {
     let root = CertificateDer::from_pem_file(runtime.join("dev-ca/ca.crt")).unwrap();
     let issuer = CertificateDer::from_pem_file(signer.join("issuer.crt")).unwrap();
     for checkout in [&runtime, &second] {
-        let leaf = CertificateDer::from_pem_file(checkout.join("localhost.crt")).unwrap();
+        // localhost (SNI localhost) names no address, which BoringSSL clients refuse under IP name constraints;
+        // default (no SNI, an address in the URL) names the loopback addresses too
+        let localhost = CertificateDer::from_pem_file(checkout.join("localhost.crt")).unwrap();
+        verify(&root, &issuer, &localhost, "localhost").unwrap();
+        for host in ["127.0.0.1", "::1"] {
+            assert!(verify(&root, &issuer, &localhost, host).is_err(), "{host}");
+        }
+        let default = CertificateDer::from_pem_file(checkout.join("default.crt")).unwrap();
         for host in ["localhost", "127.0.0.1", "::1"] {
-            verify(&root, &issuer, &leaf, host).unwrap();
+            verify(&root, &issuer, &default, host).unwrap();
+        }
+        // Python's strict verification needs the authority key identifier on every certificate under the root
+        for cert in [&issuer, &localhost, &default] {
+            assert!(has_authority_key_identifier(cert));
         }
         assert!(!checkout.join("dev-ca/signer/issuer.key").exists());
     }

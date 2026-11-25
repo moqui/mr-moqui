@@ -128,6 +128,8 @@ task_trust_dev_cert() {
                 sudo rm -- "$stale" || return 1
             done
         fi
+        # without --fresh, update-ca-certificates keeps the /etc/ssl/certs links of a removed local root, dangling
+        if [ -n "$remove" ] && [ "${refresh[0]}" = update-ca-certificates ]; then refresh+=(--fresh); fi
         sudo "${refresh[@]}" || return 1
         echo "Checked system trust in $anchor_dir for ${digest:-$DEV_ROOT_PREFIX}"
     elif [ -n "$remove" ]; then
