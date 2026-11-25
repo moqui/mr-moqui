@@ -1918,3 +1918,36 @@ fn an_action_disabled_for_a_reason_shows_it_and_does_nothing() {
     );
     assert!(!text.contains(r#""reason":"Not yours""#), "{text}");
 }
+
+/// A qvue-only screen asked for in html under Standard's `/apps` (its menu, a link, a bookmark) opens at the same path
+/// under `/qapps`, with its query, where Material renders it; elsewhere an html request is still a 404
+/// (plans/ui-review-dev-aide-workspace.md DEVW-UI-002).
+#[test]
+fn a_qvue_only_screen_asked_for_in_html_under_apps_opens_in_material() {
+    let dir = std::env::temp_dir().join(format!("moqui-qvue-handoff-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("Root/apps")).unwrap();
+    let write = |name: &str, text: &str| std::fs::write(dir.join(name), text).unwrap();
+    let only = r#"<screen require-authentication="false" render-modes="qvue,tui"><widgets><render-mode><text type="qvue"><![CDATA[<template><p>only</p></template>]]></text></render-mode></widgets></screen>"#;
+    let parent = r#"<screen require-authentication="false"><widgets><subscreens-active/></widgets></screen>"#;
+    write("Root.xml", parent);
+    write("Root/apps.xml", parent);
+    write("Root/apps/Only.xml", only);
+    write("Root/Only.xml", only);
+    let root = dir.join("Root.xml").to_string_lossy().into_owned();
+    let world = super::World::open("");
+    let get = |path: &str, query: &[(&str, &str)]| {
+        let mut asked = super::request("GET", path);
+        for (name, value) in query {
+            asked.query.push(((*name).to_string(), (*value).to_string()));
+        }
+        crate::screen::serve_at(&world.factory, asked, &root)
+    };
+
+    let handed = get("/apps/Only", &[("rootId", "site"), ("path", "a b")]);
+    assert_eq!(handed.status, 302, "{}", handed.body_text());
+    assert_eq!(handed.header("Location"), Some("/qapps/Only?path=a%20b&rootId=site"));
+    let elsewhere = get("/Only", &[]);
+    assert_eq!(elsewhere.status, 404, "{}", elsewhere.body_text());
+    let _ = std::fs::remove_dir_all(&dir);
+}

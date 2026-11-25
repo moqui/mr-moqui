@@ -419,6 +419,9 @@ The XML screen beside it declares the mode and the file:
 </screen>
 ```
 
+Such a screen has no html mode. Asked for in html under Standard's `/apps` (its menu, a link, a bookmark), it answers a
+redirect to the same path and query under `/qapps`, where Material renders it; elsewhere an html request is a 404.
+
 ## `moqui lint --screens`
 
 `moqui lint --screens [report-file]` checks every screen and form XML file under the runtime's components
