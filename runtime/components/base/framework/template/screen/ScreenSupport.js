@@ -148,7 +148,10 @@
             if (text(a.addressPurpose)) config.addressPurpose = text(a.addressPurpose);
         }
         config.points = points;
+        const features = a.features && typeof a.features === "object" && a.features.type === "FeatureCollection" ? listOf(a.features.features) : null;
+        if (features && features.length) config.features = { type: "FeatureCollection", features: features.slice(0, 1000) };
         if (text(a.pick) === "true") config.pick = true;
+        if (config.pick && text(a.pickForm)) config.pickForm = text(a.pickForm);
 
         const out = { config, height: text(a.height) || null,
             places: points.map((p) => ({ label: p.label || "", coordinates: coordinates(p.lon, p.lat), precision: p.precision || "", source: p.source || "" })),
@@ -191,7 +194,9 @@
         `longitude:${expandNoL10nExpr(attr(node, "longitude") || "")},latitude:${expandNoL10nExpr(attr(node, "latitude") || "")},` +
         `label:${expandNoL10nExpr(attr(node, "label") || "")},precision:${expandNoL10nExpr(attr(node, "precision") || "")},` +
         `source:${expandNoL10nExpr(attr(node, "source") || "")},points:${attr(node, "points") ? `(${attr(node, "points")})` : "null"},` +
-        `height:${expandNoL10nExpr(attr(node, "height") || "")},pick:${expandNoL10nExpr(attr(node, "pick") || "")}},${withAttribution ? "true" : "false"})`;
+        `features:${attr(node, "features") ? `(${attr(node, "features")})` : "null"},` +
+        `height:${expandNoL10nExpr(attr(node, "height") || "")},pick:${expandNoL10nExpr(attr(node, "pick") || "")},` +
+        `pickForm:${expandNoL10nExpr(attr(node, "pick-form") || "")}},${withAttribution ? "true" : "false"})`;
     // A map-view as HTML for the html and print modes, as an expression of (the mapViewExpr value, an escape function, l10n, id,
     // class): a div of the places as a list (each its label, coordinates, precision and source in spans), the center or area
     // when there is no place, and the attribution.

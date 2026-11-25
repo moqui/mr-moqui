@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Geo data (plans/Maps.md §6.4): the registered Geo data sets (moqui.maps.GeoDataSet: US Census, GeoNames, an operator's
+    file), their licenses and attribution, the countries imported with each edition, counts and last run, and Import,
+    Refresh, Cancel, Schedule and Remove, over org.moqui.maps.GeoDataServices (MAPS_ADMIN). Out of the menu until the
+    importer's screen is built here; until then it says what it is. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
+        default-menu-title="Geo data" default-menu-index="2" default-menu-include="false" menu-image="sym_o_public" menu-image-type="icon">
+    <widgets>
+        <label text="Geo data" type="h5"/>
+        <label type="p" text="Postal codes, counties and cities with their points, imported from registered public data sets (US Census, GeoNames) or a file of your own, for postal-code lookup and approximate places. No data set is imported with the installation."/>
+        <label type="p" style="m-muted" text="This installation does not offer Geo data imports from this page yet."/>
+    </widgets>
+</screen>

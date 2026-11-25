@@ -206,3 +206,50 @@ test("when the map cannot be drawn its places are listed, as text, with the noti
     app.unmount();
     holder.remove();
 });
+
+test("what the server did not resolve is named under the map, a cut feature list said, the scale in the configuration's units", async () => {
+    const config = map.normalizeConfig({ units: "IMPERIAL", featuresTruncated: true, layerErrors: [
+        { id: "record", label: "Spec places", reasonCode: "RECORD_UNAVAILABLE", message: "This record's place is not available" },
+        { id: "PARKS", label: "Parks <b>", reasonCode: "LAYER_DISABLED", message: "the layer is disabled" }, { label: "No id" }, "junk"] });
+    assert.deepEqual(config.layerErrors.map((error) => error.id), ["record", "PARKS"]);
+    assert.equal(config.featuresTruncated, true);
+    assert.equal(map.scaleUnits(config), "imperial");
+    assert.equal(map.scaleUnits(map.normalizeConfig({ units: "furlongs" })), "metric");
+    assert.equal(map.mergeConfig(config, map.normalizeConfig({ units: "metric" })).units, "metric", "the map-view's units win");
+    const holder = document.createElement("div");
+    document.body.appendChild(holder);
+    const app = Vue.createApp({ render: () => Vue.h(map.components["m-map-view"], { id: "Errors", libraryError: "fixture bundle unavailable",
+        config: { featuresTruncated: true, layerErrors: config.layerErrors, points: [{ lon: -87.6298, lat: 41.8781, label: "Chicago" }] } }) });
+    app.mount(holder);
+    await Vue.nextTick();
+    await Vue.nextTick();
+    const root = holder.querySelector("#Errors");
+    assert.ok(root.querySelector(".m-map-record-error").textContent.includes("This record's place is not available"));
+    const errors = Array.from(root.querySelectorAll(".m-map-layer-errors li")).map((item) => item.textContent);
+    assert.equal(errors.length, 2);
+    assert.ok(errors[1].includes("Parks <b>"), "a label is text");
+    assert.equal(root.querySelector(".m-map-layer-errors b"), null);
+    assert.equal(root.querySelector(".m-map-layer-errors .m-map-retry"), null, "no config-url: nothing to ask again");
+    assert.ok(root.querySelector(".m-map-truncated").textContent.includes("Only some of the records are shown"));
+    assert.ok(root.querySelector(".m-map-place .m-map-place-copy"), "each place can be copied");
+    app.unmount();
+    holder.remove();
+    // a choice fills the latitude and longitude of the form named by pickForm (LocalMap's Choose location), and no other
+    const named = document.createElement("form");
+    named.setAttribute("name", "ChooseLocation");
+    const other = document.createElement("form");
+    other.setAttribute("name", "Other");
+    const before = moqui.screenForms;
+    const chosen = { $el: named, fields: {} }, untouched = { $el: other, fields: {} };
+    moqui.screenForms = [untouched, chosen];
+    try {
+        assert.equal(map.fillPickForm("ChooseLocation", { lon: -87.62980123, lat: 41.8781 }), true);
+        assert.deepEqual(chosen.fields, { latitude: "41.878100", longitude: "-87.629801" });
+        assert.deepEqual(untouched.fields, {});
+        assert.equal(map.fillPickForm("Missing", { lon: 0, lat: 0 }), false);
+        assert.equal(map.fillPickForm("", { lon: 0, lat: 0 }), false);
+        assert.equal(map.normalizeConfig({ pick: true, pickForm: "ChooseLocation" }).pickForm, "ChooseLocation");
+    } finally {
+        moqui.screenForms = before;
+    }
+});

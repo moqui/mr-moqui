@@ -17,7 +17,10 @@ along with this software (see the LICENSE.md file). If not, see
     point, DENIED is refused as an adapter refuses a record the caller may not read, and any other fails. Its layer answers
     two features more than the limit it is given, and says it is not truncated, so the caller's own cut is what the spec
     sees; each layer it is asked for is kept (cache moqui.test.maps.asked), so the spec sees a hidden layer was not asked.
-    get#UngrantedContext is a second adapter's, which the spec grants to no one: it keeps that it ran, which it must not. -->
+    get#UngrantedContext is a second adapter's, which the spec grants to no one: it keeps that it ran, which it must not.
+    store#RecordLocation, for the MapsScreens spec's Choose location: a user who holds MAPS_SPEC_STORE may write LOCATED (and
+    get#RecordMapContext then offers chooseLocation), at version 1 (STALE_VERSION otherwise); each save is kept (cache
+    moqui.test.maps.stored, by recordId), and a user without the permission is refused as an adapter refuses a write. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
     <service verb="get" noun="RecordMapContext">
         <implements service="org.moqui.maps.MapServices.get#RecordMapContext"/>
@@ -30,7 +33,7 @@ along with this software (see the LICENSE.md file). If not, see
             <set field="precisionEnumId" value="GPP_POSTAL_AREA"/>
             <set field="sourceText" value="Spec data set"/>
             <set field="recordVersion" value="1"/>
-            <set field="permittedActions" from="['view']"/>
+            <set field="permittedActions" from="ec.user.hasPermission('MAPS_SPEC_STORE') ? ['view', 'chooseLocation'] : ['view']"/>
             <set field="links" from="[{label: 'Spec record', route: 'specRecord', parameters: {recordId}}]"/>
         </actions>
     </service>
@@ -42,6 +45,24 @@ along with this software (see the LICENSE.md file). If not, see
             <script>for (let index = 0; index &lt; limit + 2; index++) features.push({featureId: 'F' + index, label: 'Feature ' + index,
                 geometry: {type: 'Point', coordinates: [index % 180, 10]}})</script>
             <set field="truncated" from="false"/>
+        </actions>
+    </service>
+    <service verb="store" noun="RecordLocation">
+        <implements service="org.moqui.maps.MapServices.store#RecordLocation"/>
+        <actions>
+            <set field="recordId" from="String(recordKey?.recordId ?? '')"/>
+            <if condition="recordId != 'LOCATED' || !ec.user.hasPermission('MAPS_SPEC_STORE')">
+                <set field="applied" from="false"/><set field="reasonCode" value="PERMISSION_DENIED"/>
+                <set field="reason" value="You may not change this record's location"/><return/>
+            </if>
+            <if condition="String(recordVersion) != '1'">
+                <set field="applied" from="false"/><set field="reasonCode" value="STALE_VERSION"/>
+                <set field="reason" value="The record changed since it was read"/><return/>
+            </if>
+            <script>ec.cache.getCache('moqui.test.maps.stored').put(recordId, JSON.stringify({point, recordVersion, precisionEnumId,
+                addressPurpose: addressPurpose || null, userId: ec.user.userId}))</script>
+            <set field="applied" from="true"/>
+            <set field="recordVersion" value="2"/>
         </actions>
     </service>
     <service verb="get" noun="UngrantedContext">

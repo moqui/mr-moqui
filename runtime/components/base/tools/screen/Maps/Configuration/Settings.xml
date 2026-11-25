@@ -1,0 +1,269 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Maps › Configuration › Settings (plans/Maps.md §3.1, §4.2): readiness (the Maps checks, org.moqui.maps.MapServices
+    check#Readiness), the outside-request policy and limits as the conf sets them (read here; maps@external-requests,
+    maps@max-features and maps@import-max-bytes are changed in the conf), the map providers (the mapProvider connections,
+    org.moqui.admin.ConfigurationServices.find#Connections, each opened in ConnectionDetail, a new one started with
+    createProvider), the profiles (enabled or not, and the installation's default: store#ProfileSettings) and
+    the layers (find#Configuration). The services check their caller: ADMIN_CONNECTION_VIEW and ADMIN_CONNECTION_MANAGE for
+    providers, Configuration's own authorization for profiles and layers. A provider is enabled only by a passing test,
+    so a profile drawn from it is not drawn until then, whatever its own state. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
+        default-menu-title="Settings" default-menu-index="1" menu-image="sym_o_tune" menu-image-type="icon">
+
+    <!-- New provider: a connection of the mapProvider kind only, saved disabled (store#Connection, which checks
+        ADMIN_CONNECTION_MANAGE), then opened in ConnectionDetail -->
+    <transition name="createProvider">
+        <actions>
+            <service-call name="org.moqui.admin.ConfigurationServices.store#Connection" out-map="stored"
+                    in-map="{adapterKey:'mapProvider', values:{connectionId:(newConnectionId || ''), description:newDescription}}"/>
+            <if condition="!ec.message.hasError()">
+                <script>ec.message.addMessage(stored.applied ? ec.l10n.localize('Map provider started. It stays disabled until its address is set and a test of it passes.') : stored.reason,
+                    stored.applied ? 'success' : 'warning')</script>
+                <set field="connectionKey" from="stored.applied ? stored.connectionKey : null"/>
+                <set field="adapterKey" value="mapProvider"/>
+            </if>
+        </actions>
+        <conditional-response url="../ConnectionDetail"><condition><expression>!!connectionKey</expression></condition>
+            <parameter name="adapterKey"/><parameter name="connectionKey"/></conditional-response>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="storeProfile">
+        <service-call name="org.moqui.maps.MapServices.store#ProfileSettings" out-map="stored"
+                in-map="{profileId:profileId, enabled:(enabled || null), makeDefault:(makeDefault === 'Y')}"/>
+        <actions>
+            <if condition="!ec.message.hasError()">
+                <script>ec.message.addMessage(stored.reason, stored.applied ? 'success' : 'warning')</script>
+            </if>
+        </actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+
+    <actions>
+        <service-call name="org.moqui.maps.MapServices.find#Configuration" out-map="configuration" transaction="force-new" ignore-error="true"/>
+        <set field="configured" from="configuration?.applied === true"/>
+        <service-call name="org.moqui.admin.ConfigurationServices.find#Connections" out-map="found" transaction="force-new" ignore-error="true"
+                in-map="{adapterKey:'mapProvider', pageIndex:0, pageSize:100}"/>
+        <script><![CDATA[
+            providerRows = Array.from(found?.connectionList || []).map(row => Object.assign({}, row, {
+                stateColor: row.state === 'ready' ? 'positive' : ['untested', 'needsTest', 'incomplete'].includes(row.state) ? 'warning' : 'grey-7',
+                checkText: !row.lastCheckDate ? ec.l10n.localize('Not tested') : ec.l10n.format(Date.parse(row.lastCheckDate), 'yyyy-MM-dd HH:mm')
+                    + (row.lastCheckPassed ? ', ' + ec.l10n.localize('passed') : ', ' + ec.l10n.localize('did not pass'))}))
+            providersAvailable = !!found?.connectionList
+            mayStartProvider = !!found?.canManage && Array.from(found?.adapterList || []).some(row => row.adapterKey === 'mapProvider' && row.creatable)
+            profileRows = Array.from(configuration?.profileList || []).map(row => Object.assign({}, row, {
+                stateText: (row.enabled ? ec.l10n.localize('Enabled') : ec.l10n.localize('Disabled')) + (row.installationDefault ? ' · ' + ec.l10n.localize('Default') : ''),
+                stateColor: !row.enabled ? 'grey-7' : row.drawable ? 'positive' : 'warning',
+                drawText: row.drawable ? ec.l10n.localize('Drawn') : row.reason,
+                accessText: row.externalAccess ? ec.l10n.localize('From an outside host') : ec.l10n.localize('This server only')}))
+            layerRows = Array.from(configuration?.layerList || []).map(row => Object.assign({}, row, {
+                roleText: row.isBasemap ? ec.l10n.localize('Basemap') : row.adapterKey ? ec.l10n.localize('Records') : ec.l10n.localize('Overlay'),
+                stateText: !row.enabled ? ec.l10n.localize('Disabled') : row.drawable ? ec.l10n.localize('Drawn') : ec.l10n.localize('Not drawn'),
+                stateColor: !row.enabled ? 'grey-7' : row.drawable ? 'positive' : 'warning'}))
+            externalText = configuration?.externalRequests === false
+                ? ec.l10n.localize('Turned off: maps draw from this server only, no outside basemap or layer is offered, and the server makes no outside request for maps.')
+                : ec.l10n.localize('Allowed: an enabled, tested provider\'s basemap is loaded by each browser from the provider, which sees the area viewed and the browser\'s address.')
+            limitsText = ec.l10n.localize('At most') + ' ' + (configuration?.maxFeatures || '?') + ' ' + ec.l10n.localize('records in a layer of one view')
+                + (configuration?.importMaxBytes ? '; ' + ec.l10n.localize('the largest Geo data download or file') + ' ' + configuration.importMaxBytes + ' ' + ec.l10n.localize('bytes') : '')
+            // the Maps readiness checks, each provider's own; a check the user may not read is left out (its reason code)
+            readinessRows = []
+            for (const providerKey of ['maps.profile', 'maps.providers']) {
+                try {
+                    ec.message.pushErrors()
+                    const out = ec.service.sync().name('org.moqui.maps.MapServices.check#Readiness').requireNewTransaction(true).parameters({providerKey}).call()
+                    if (!ec.message.hasError()) for (const check of Array.from(out?.checks || [])) readinessRows.push({title: check.title, message: check.message || '',
+                        state: check.state, stateText: {ready: ec.l10n.localize('Ready'), warning: ec.l10n.localize('Warning'), failed: ec.l10n.localize('Failed')}[check.state]
+                            || ec.l10n.localize('Not checked'), stateColor: check.state === 'ready' ? 'positive' : check.state === 'warning' ? 'warning' : check.state === 'failed' ? 'negative' : 'grey-7'})
+                } catch (err) {
+                    ec.logger.warn('Maps readiness ' + providerKey + ' did not answer: ' + (err?.message ?? err))
+                } finally {
+                    ec.message.clearErrors()
+                    ec.message.popErrors()
+                }
+            }
+        ]]></script>
+    </actions>
+    <widgets>
+        <label text="Maps configuration" type="h5"/>
+        <label type="p" style="text-caption m-muted"
+                text="The basemaps and layers every map of this installation draws, where they come from, and the default map profile. A fresh installation draws country outlines from this server and makes no outside request."/>
+        <label type="p" style="text-negative" condition="!configured" text="Maps configuration is not available to you."/>
+        <section name="ConfigurationSections" condition="configured">
+            <widgets>
+                <container-row id="MapsSettingsTop">
+                    <row-col md="6">
+                        <container-box id="MapsReadinessBox">
+                            <box-header title="Readiness"/>
+                            <box-body>
+                                <label type="p" style="m-muted" condition="!readinessRows.length" text="No readiness check is available to you."/>
+                                <form-list name="ReadinessList" list="readinessRows" skip-form="true" paginate="false">
+                                    <field name="title"><default-field title="Check"><display/></default-field></field>
+                                    <field name="stateText">
+                                        <default-field title="State">
+                                            <render-mode>
+                                                <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${html(stateColor)}">${html(stateText)}</q-chip>]]></text>
+                                                <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: stateText})}]]></text>
+                                                <text type="html">${html(stateText)}</text>
+                                                <text type="text,csv">${stateText}</text>
+                                            </render-mode>
+                                        </default-field>
+                                    </field>
+                                    <field name="message"><default-field title="Detail"><display/></default-field></field>
+                                    <columns type="mobile">
+                                        <column><field-ref name="title"/><field-ref name="message"/></column>
+                                        <column><field-ref name="stateText"/></column>
+                                    </columns>
+                                </form-list>
+                            </box-body>
+                        </container-box>
+                    </row-col>
+                    <row-col md="6">
+                        <container-box id="MapsOutsideBox">
+                            <box-header title="Outside requests"/>
+                            <box-body>
+                                <label type="p" text="${externalText}"/>
+                                <label type="p" text="${limitsText}."/>
+                                <label type="p" style="text-caption m-muted"
+                                        text="Set in the conf (maps@external-requests, maps@max-features, maps@import-max-bytes, or moqui_conf__maps__external_requests and the like in the environment); System › Conf shows where each value comes from. A page Content-Security-Policy stricter than the default needs each provider's host in connect-src, img-src and font-src: the readiness checks name what to add."/>
+                            </box-body>
+                        </container-box>
+                    </row-col>
+                </container-row>
+
+                <container-box id="MapsProvidersBox">
+                    <box-header title="Map providers"/>
+                    <box-toolbar>
+                        <section name="NewProviderSection" condition="mayStartProvider">
+                            <widgets>
+                                <container-dialog id="NewMapProvider" button-text="New provider" type="primary" icon="sym_o_add" title="Start a map provider">
+                                    <label type="p" style="m-muted" text="A provider is saved disabled: enter its style or tile address, then test it. A passing test enables it."/>
+                                    <form-single name="NewMapProvider" transition="createProvider">
+                                        <field name="newDescription"><default-field title="Name"><text-line size="40"/></default-field></field>
+                                        <field name="newConnectionId">
+                                            <default-field title="Id" tooltip="Letters, digits and underscores, starting with a letter"><text-line size="30"/></default-field>
+                                        </field>
+                                        <field name="submitButton"><default-field title="Start provider"><submit/></default-field></field>
+                                    </form-single>
+                                </container-dialog>
+                            </widgets>
+                        </section>
+                    </box-toolbar>
+                    <box-body>
+                        <label type="p" style="text-negative" condition="!providersAvailable" text="Map providers are not available to you."/>
+                        <label type="p" style="m-muted" condition="providersAvailable &amp;&amp; !providerRows.length" text="No map provider yet."/>
+                        <form-list name="ProviderList" list="providerRows" skip-form="true" paginate="false">
+                            <field name="name">
+                                <default-field title="Provider">
+                                    <link url="../ConnectionDetail" text="${name}" link-type="anchor" parameter-map="{adapterKey:'mapProvider', connectionKey:connectionKey}"/>
+                                </default-field>
+                            </field>
+                            <field name="endpointSummary"><default-field title="Address"><display/></default-field></field>
+                            <field name="checkText"><default-field title="Last test"><display/></default-field></field>
+                            <field name="stateText">
+                                <default-field title="State">
+                                    <render-mode>
+                                        <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${html(stateColor)}">${html(stateText)}</q-chip>]]></text>
+                                        <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: stateText})}]]></text>
+                                        <text type="html">${html(stateText)}</text>
+                                        <text type="text,csv">${stateText}</text>
+                                    </render-mode>
+                                </default-field>
+                            </field>
+                            <columns type="mobile">
+                                <column><field-ref name="name"/><field-ref name="endpointSummary"/></column>
+                                <column><field-ref name="stateText"/></column>
+                            </columns>
+                        </form-list>
+                    </box-body>
+                </container-box>
+
+                <container-box id="MapsProfilesBox">
+                    <box-header title="Map profiles"/>
+                    <box-body>
+                        <label type="p" style="text-caption m-muted"
+                                text="A profile is a basemap with its layers and starting view. The default is what a user who chose none sees; a profile drawn from a provider is not drawn until that provider passes its test."/>
+                        <form-list name="ProfileList" list="profileRows" skip-form="true" paginate="false">
+                            <field name="profileName"><default-field title="Profile"><display/></default-field></field>
+                            <field name="basemapName"><default-field title="Basemap"><display/></default-field></field>
+                            <field name="accessText"><default-field title="Drawn from"><display/></default-field></field>
+                            <field name="stateText">
+                                <default-field title="State">
+                                    <render-mode>
+                                        <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${html(stateColor)}">${html(stateText)}</q-chip>]]></text>
+                                        <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: stateText})}]]></text>
+                                        <text type="html">${html(stateText)}</text>
+                                        <text type="text,csv">${stateText}</text>
+                                    </render-mode>
+                                </default-field>
+                            </field>
+                            <field name="drawText"><default-field title="Now"><display/></default-field></field>
+                            <field name="actions">
+                                <default-field title="">
+                                    <link url="storeProfile" text="Make default" icon="sym_o_star" link-type="hidden-form-link"
+                                            condition="enabled &amp;&amp; drawable &amp;&amp; !installationDefault"
+                                            confirmation="Make ${profileName} the default map profile? Every user who chose no profile of their own sees it."
+                                            parameter-map="{profileId:profileId, makeDefault:'Y'}"/>
+                                    <link url="storeProfile" text="Enable" icon="sym_o_toggle_on" link-type="hidden-form-link" condition="!enabled"
+                                            confirmation="Enable ${profileName}? Users may then choose it${externalAccess ? '; its basemap is loaded from an outside host' : ''}."
+                                            parameter-map="{profileId:profileId, enabled:'Y'}"/>
+                                    <link url="storeProfile" text="Disable" btn-type="danger" icon="sym_o_toggle_off" link-type="hidden-form-link"
+                                            condition="enabled &amp;&amp; !installationDefault"
+                                            confirmation="Disable ${profileName}? A user who chose it sees the default instead."
+                                            parameter-map="{profileId:profileId, enabled:'N'}"/>
+                                </default-field>
+                            </field>
+                            <columns type="mobile">
+                                <column><field-ref name="profileName"/><field-ref name="drawText"/></column>
+                                <column><field-ref name="stateText"/><field-ref name="actions"/></column>
+                            </columns>
+                        </form-list>
+                    </box-body>
+                </container-box>
+
+                <container-box id="MapsLayersBox">
+                    <box-header title="Layers"/>
+                    <box-body>
+                        <label type="p" style="m-muted" condition="!layerRows.length" text="No layer is registered."/>
+                        <form-list name="LayerList" list="layerRows" skip-form="true" paginate="false">
+                            <field name="layerName"><default-field title="Layer"><display/></default-field></field>
+                            <field name="roleText"><default-field title="Kind"><display/></default-field></field>
+                            <field name="formatEnumId">
+                                <default-field title="Format"><display-entity entity-name="moqui.basic.Enumeration" text="${description}"/></default-field>
+                            </field>
+                            <field name="providerName"><default-field title="Provider"><display/></default-field></field>
+                            <field name="stateText">
+                                <default-field title="State">
+                                    <render-mode>
+                                        <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${html(stateColor)}">${html(stateText)}</q-chip>]]></text>
+                                        <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: stateText})}]]></text>
+                                        <text type="html">${html(stateText)}</text>
+                                        <text type="text,csv">${stateText}</text>
+                                    </render-mode>
+                                </default-field>
+                            </field>
+                            <field name="reason"><default-field title="Why not drawn"><display/></default-field></field>
+                            <columns type="mobile">
+                                <column><field-ref name="layerName"/><field-ref name="roleText"/></column>
+                                <column><field-ref name="stateText"/></column>
+                            </columns>
+                        </form-list>
+                    </box-body>
+                </container-box>
+            </widgets>
+        </section>
+    </widgets>
+</screen>

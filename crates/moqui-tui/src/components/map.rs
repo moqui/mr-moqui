@@ -6,7 +6,8 @@
 //!
 //! Props, as ScreenTui.js writes them from the element (ScreenSupport's mapViewExpr; WGS84 degrees, longitude first):
 //! `points` (`[{id, lon, lat, label, precision, source}]`), `center` (`[lon, lat]`), `extent` (`[west, south, east,
-//! north]`), `pick`, `attribution`; the same keys in what `source` answers, when it is given.
+//! north]`), `pick`, `attribution`; the same keys in what `source` answers, when it is given (Maps › Browse's
+//! `terminalMap`), with `notes`: texts shown above the places (a profile's notice, a layer that is not shown).
 
 use std::collections::BTreeMap;
 
@@ -153,6 +154,9 @@ impl Component for Map {
         if !points.is_empty() || !marked.is_empty() {
             lines.extend(super::world::braille_map(&points, &marked, width.min(OVERVIEW_WIDTH)));
         }
+        for note in list(props, state, "notes").into_iter().filter_map(Value::as_str) {
+            lines.push(vec![Span::new(note.to_string(), Role::Warning)]);
+        }
         if places.is_empty() {
             lines.push(vec![Span::new("No places", Role::Muted)]);
             if let Some(center) = pair(props, state, "center").filter(|values| values.len() == 2) {
@@ -213,7 +217,13 @@ impl Component for Map {
                 )]);
             }
         }
-        let attribution = prop(props, "attribution", "");
+        let attribution = state
+            .data
+            .as_ref()
+            .and_then(|data| data.get("attribution"))
+            .and_then(Value::as_str)
+            .filter(|text| !text.trim().is_empty())
+            .unwrap_or_else(|| prop(props, "attribution", ""));
         if !attribution.is_empty() {
             lines.push(vec![Span::new(format!("Map data: {attribution}"), Role::Muted)]);
         }

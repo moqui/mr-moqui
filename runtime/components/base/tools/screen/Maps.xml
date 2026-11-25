@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Maps (plans/Maps.md §3.1; docs/tools/Maps.md): the framework's map app, beside Dashboards, System and Tools. Browse (the
+    full-screen map), Views (saved views), Preferences (the user's own defaults), Configuration (providers, profiles, layers,
+    the outside-request policy and readiness: MAPS_ADMIN) and LocalMap, the record dialog any app opens (MAPS_DIALOG, every
+    signed-in user, default-menu-include false). The root is MAPS_APP's (MAPS_USERS and ADMIN, data/MapsSecurityData.xml).
+    No always-actions: a render of LocalMap runs the always-actions of the screens above it without their own check
+    (docs/security/Attack-Surface-Web.md "Parent frames"), so this screen reads nothing. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
+        default-menu-title="Maps" menu-image="sym_o_map" menu-image-type="icon">
+    <subscreens default-item="Browse"/>
+    <widgets>
+        <subscreens-panel id="maps-panel" type="popup"/>
+    </widgets>
+</screen>

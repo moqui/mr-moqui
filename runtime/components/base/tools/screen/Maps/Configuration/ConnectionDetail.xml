@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- A map provider's page (plans/Maps.md §4.2): one connection of the mapProvider kind, read from
+    org.moqui.admin.ConfigurationServices.get#Connection and changed through store#Connection and test#Connection, through
+    the shared parts of template/ConnectionParts.xml (README, "Mounting the administration screens"): its settings and its
+    key (write-only, and a provider with a key is never offered to a browser), a test (one request with no credentials,
+    which enables it when it passes) and Enable and Disable. Only map providers: adapterKey is mapProvider whatever a
+    request says, so no other kind of connection is reached here. Reading needs ADMIN_CONNECTION_VIEW and a change or a test
+    ADMIN_CONNECTION_MANAGE, checked by the services. Named as System › Integrations' detail is (the sibling names an app
+    that shows these screens uses). -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
+        default-menu-title="Map provider" default-menu-include="false">
+    <parameter name="adapterKey"/>
+    <parameter name="connectionKey" required="true"/>
+
+    <always-actions>
+        <set field="adapterKey" value="mapProvider"/>
+    </always-actions>
+
+    <transition-include name="storeConnection" location="component://tools/template/ConnectionParts.xml"/>
+    <transition-include name="testConnection" location="component://tools/template/ConnectionParts.xml"/>
+    <transition-include name="setEnabled" location="component://tools/template/ConnectionParts.xml"/>
+
+    <actions>
+        <set field="kindTitle" value="Map provider"/>
+        <set field="listPath" value="../Settings"/>
+        <set field="listTitle" value="Maps configuration"/>
+        <set field="detailPath" value="."/>
+    </actions>
+    <widgets>
+        <section-include name="ConnectionPrepare" location="component://tools/template/ConnectionParts.xml"/>
+        <section-include name="ConnectionUnavailable" location="component://tools/template/ConnectionParts.xml"/>
+        <section-include name="ConnectionHeader" location="component://tools/template/ConnectionParts.xml"/>
+        <section-include name="NativeConnectionBox" location="component://tools/template/ConnectionParts.xml"/>
+        <section-include name="ConnectionChecksBox" location="component://tools/template/ConnectionParts.xml"/>
+        <section-include name="ConnectionConsumersBox" location="component://tools/template/ConnectionParts.xml"/>
+    </widgets>
+</screen>

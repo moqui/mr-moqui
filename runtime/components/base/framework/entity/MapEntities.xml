@@ -141,7 +141,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="allowedOverrides" type="text-medium"><description>What a user's preferences may change, comma
             separated: basemap, layers, extent, units</description></field>
         <field name="viewPermission" type="id"/>
-        <field name="disabled" type="text-indicator"/>
+        <field name="disabled" type="text-indicator" enable-audit-log="update"/>
         <relationship type="one" title="Basemap" related="moqui.maps.MapLayer" short-alias="basemap">
             <key-map field-name="basemapLayerId" related="layerId"/></relationship>
         <relationship type="many" related="moqui.maps.MapProfileLayer" short-alias="layers">

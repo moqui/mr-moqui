@@ -30,7 +30,7 @@ Gate 3 Chromium smoke (`crates/moqui-host/tests/gate3_browser.rs`), an acceptanc
 | `button` | `data-nav-toggle` | opens the navbar on a narrow screen |
 | `a` | `data-history-back` | `history.back()` |
 | `.alert` | `button[data-dismiss]` | removes the message |
-| `form` | `data-bg`, `data-reload`, `data-msg`, `data-hide` | background submit; then reload the container with that id, toast a message, close the dialog with that id |
+| `form` | `data-bg`, `data-reload`, `data-msg`, `data-hide` | background submit; then reload the container with that id (`_screen`: the page), toast a message, close the dialog with that id |
 | `form` | `data-focus="name"` | focuses the first field whose name starts with it |
 | `form` | `data-gopage="n"` | the page number box is 1-based and posts a 0-based `pageIndex` |
 | `input[type=datetime-local]` | | the `T` becomes a space in the posted value (`yyyy-MM-dd HH:mm`) |

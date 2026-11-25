@@ -610,4 +610,11 @@ along with this software (see the LICENSE.md file). If not, see
             settingsGroupEnumId="AdmSgInstance" scopeEnumId="AdmScInstance" destinationRoute="adminTopics"
             screenLocation="component://tools/screen/System/Operations/Topics.xml" viewPermission="ADMIN_SETTINGS_VIEW"
             configuredBy="Configuration administrator" sequenceNum="116"/>
+    <!-- Maps › Configuration (plans/Maps.md §3.1), shown to a caller whose grants open it (MAPS_ADMIN, tools
+        data/MapsSecurityData.xml); mapsConfiguration is its route key (tools template/AdminMount.js) -->
+    <moqui.server.SettingsEntry settingsKey="maps.configuration" version="1" ownerApp="Maps" title="Maps"
+            description="The basemaps and layers every map draws and where they come from: map providers, profiles and the default one, layers, outside requests and readiness"
+            settingsGroupEnumId="AdmSgApplications" scopeEnumId="AdmScInstance" destinationRoute="mapsConfiguration"
+            screenLocation="component://tools/screen/Maps/Configuration.xml" providerKey="maps.profile"
+            configuredBy="Configuration administrator" sequenceNum="300"/>
 </entity-facade-xml>

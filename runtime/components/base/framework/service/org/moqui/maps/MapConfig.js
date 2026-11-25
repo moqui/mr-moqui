@@ -96,6 +96,8 @@ const canConfigure = () => {
         mayConfigure = !!ec.artifactExecution.isPermitted(CONFIGURATION_SCREEN, "AT_XML_SCREEN", "AUTHZA_VIEW")
     return mayConfigure
 }
+// Whether the caller may change Configuration (store#ProfileSettings): its update, not only its view
+const canChangeConfiguration = () => !!ec.artifactExecution.isPermitted(CONFIGURATION_SCREEN, "AT_XML_SCREEN", "AUTHZA_UPDATE")
 let providerKind = null
 const testedProviders = new Map()
 function providerTested(provider) {
@@ -676,10 +678,14 @@ function effectiveConfig(p) {
     // ----- record layers: each adapter's features for the initial view, cut to its limit -----
     let truncated = false
     const recordLayers = []
+    // the view the features are read for: the one asked for (Browse's search, the view on screen), else the initial one
+    const featuresExtent = extentOf(p.featuresExtent) || config.extent || WORLD
+    // recordLayers false (the local-map dialog's own record read): the layers are listed, and no adapter is asked
+    const readFeatures = !(p.recordLayers === false || p.recordLayers === "false" || p.recordLayers === "N")
     for (const layer of adapterLayers) {
         recordLayers.push({id: layer.id, label: layer.label, visible: layer.visible, adapterKey: layer.adapterKey})
         // a hidden layer's adapter is not asked until it is shown
-        if (!layer.visible) continue
+        if (!layer.visible || !readFeatures) continue
         const resolved = probe("org.moqui.maps.MapServices.get#AdapterService", {
             adapterKey: layer.adapterKey,
             operation: "features"
@@ -697,7 +703,7 @@ function effectiveConfig(p) {
         const limit = Number(resolved.out.limit) || 0
         const answered = probe(resolved.out.serviceName, {
             layerId: layer.id,
-            extent: (([west, south, east, north]) => ({west, south, east, north}))(config.extent || WORLD),
+            extent: (([west, south, east, north]) => ({west, south, east, north}))(featuresExtent),
             zoom: config.zoom ?? null,
             limit
         })
@@ -1096,7 +1102,125 @@ function findSavedViews(p) {
     return {savedViewList}
 }
 
-const operations = {effectiveConfig, getPreferences, storePreferences, storeSavedView, deleteSavedView, findSavedViews}
+// ===== find#Configuration and store#ProfileSettings (Maps › Configuration) =====
+// For a caller who may open Configuration (canConfigure) only: what is configured, each profile and layer with whether it
+// can be drawn now and why not, and the installation's outside-request policy and limits as the conf sets them (read
+// here, changed only in the conf).
+function findConfiguration() {
+    if (!canConfigure()) return refused("PERMISSION_DENIED", L("Maps configuration is not available to you"))
+    const installed = installationProfileId()
+    const layerNames = new Map()
+    const layerList = Array.from(find(LAYER, {}).orderBy("layerName").limit(200).list()).map(layer => {
+        const resolved = resolveLayer(layer, layer.layerId, layer.isBasemap === "Y")
+        const provider = text(layer.providerId) ? one(PROVIDER, {providerId: layer.providerId}) : null
+        const layerName = text(layer.layerName) ? L(layer.layerName) : layer.layerId
+        layerNames.set(layer.layerId, layerName)
+        return {
+            layerId: layer.layerId,
+            layerName,
+            formatEnumId: text(layer.formatEnumId) || null,
+            providerName: provider ? text(provider.providerName) || provider.providerId : "",
+            isBasemap: layer.isBasemap === "Y",
+            adapterKey: text(layer.adapterKey) || null,
+            enabled: layer.disabled !== "Y",
+            drawable: resolved.ok,
+            reason: resolved.ok ? "" : resolved.reason
+        }
+    })
+    const profileList = Array.from(find(PROFILE, {}).orderBy("profileName").limit(200).list()).map(profile => {
+        const resolved = resolveProfile(profile, profile.profileId)
+        return {
+            profileId: profile.profileId,
+            profileName: profileName(profile, profile.profileId),
+            description: text(profile.description) ? L(profile.description) : "",
+            basemapName: layerNames.get(text(profile.basemapLayerId)) || text(profile.basemapLayerId),
+            externalAccess: profile.externalAccess === "Y",
+            enabled: profile.disabled !== "Y",
+            installationDefault: profile.profileId === installed,
+            drawable: resolved.ok,
+            reason: resolved.ok ? "" : resolved.reason
+        }
+    })
+    const setting = name => text(ec.factory.getConfValue("maps@" + name))
+    return {
+        applied: true,
+        installationProfileId: installed || null,
+        externalRequests: !offline(),
+        maxFeatures: setting("max-features") || null,
+        importMaxBytes: setting("import-max-bytes") || null,
+        profileList,
+        layerList
+    }
+}
+// Enable or disable a profile, and make one the installation's default (the ALL_USERS UserGroupPreference maps.profile).
+// The default must be enabled and drawable now (PROFILE_UNAVAILABLE, with the cause); the default is not disabled
+// (DEFAULT_PROFILE: choose another first). A profile enabled whose basemap's provider is not enabled yet is enabled, and
+// the answer says it is not drawn until the provider is.
+// A write the caller was checked for above, of configuration no group is granted to write: authorization off, the caller
+// kept, so the audit log (MapProfile.disabled, UserGroupPreference.preferenceValue) names who changed it
+function asCaller(write) {
+    const wasDisabled = ec.artifactExecution.disableAuthz()
+    try {
+        return write()
+    } finally {
+        if (!wasDisabled) ec.artifactExecution.enableAuthz()
+    }
+}
+function storeProfileSettings(p) {
+    if (!canConfigure() || !canChangeConfiguration())
+        return refused("PERMISSION_DENIED", L("Changing the maps configuration is not available to you"))
+    const profileId = text(p.profileId)
+    const profile = profileId ? ec.entity.find(PROFILE).condition({profileId}).disableAuthz().one() : null
+    if (!profile) return refused("RECORD_UNAVAILABLE", say("The map profile ${profileId} is not registered", {profileId}))
+    const installed = installationProfileId()
+    const enable = given(p.enabled) && text(p.enabled) !== "" ? yes(p.enabled) : null
+    const makeDefault = yes(p.makeDefault)
+    if (enable === false && (profileId === installed || makeDefault))
+        return refused(
+            "DEFAULT_PROFILE",
+            L("This profile is the installation's default map profile: choose another default before disabling it")
+        )
+    if (enable !== null && (profile.disabled !== "Y") !== enable) {
+        profile.disabled = enable ? "N" : "Y"
+        asCaller(() =>
+            ec.entity
+                .makeValue(PROFILE)
+                .setAll({profileId, disabled: enable ? "N" : "Y"})
+                .update()
+        )
+    }
+    const name = profileName(profile, profileId)
+    const resolved = resolveProfile(profile, profileId)
+    if (makeDefault) {
+        if (!resolved.ok)
+            return refused(
+                "PROFILE_UNAVAILABLE",
+                say("${name} cannot be the default: ${reason}", {name, reason: resolved.reason}),
+                {cause: resolved.reasonCode}
+            )
+        const row = ec.entity.makeValue(GROUP_PREFERENCE)
+        row.setFields({userGroupId: "ALL_USERS", preferenceKey: PROFILE_KEY, preferenceValue: profileId}, true, null, null)
+        asCaller(() => row.createOrUpdate())
+        return {applied: true, reason: say("${name} is the installation's default map profile", {name})}
+    }
+    if (enable && !resolved.ok)
+        return {
+            applied: true,
+            reason: say("${name} is enabled, but it is not drawn yet: ${reason}", {name, reason: resolved.reason})
+        }
+    return {applied: true, reason: enable === false ? say("${name} is disabled", {name}) : say("${name} is saved", {name})}
+}
+
+const operations = {
+    effectiveConfig,
+    getPreferences,
+    storePreferences,
+    storeSavedView,
+    deleteSavedView,
+    findSavedViews,
+    findConfiguration,
+    storeProfileSettings
+}
 ;({
     execute: (op, parameters) => {
         if (!Object.hasOwn(operations, op)) throw new Error("Unknown map configuration operation " + op)

@@ -71,6 +71,9 @@ along with this software (see the LICENSE.md file). If not, see
     <artifactGroups artifactGroupId="MAPS_ADMIN" description="Maps: configuration and Geo data imports">
         <artifacts artifactName="component://tools/screen/Maps/Configuration.xml" artifactTypeEnumId="AT_XML_SCREEN" inheritAuthz="Y"/>
         <artifacts artifactName="org\.moqui\.maps\.GeoDataServices\..*" artifactTypeEnumId="AT_SERVICE" nameIsPattern="Y" inheritAuthz="Y"/>
+        <!-- Configuration's profiles and layers; each also checks that its caller may open Configuration -->
+        <artifacts artifactName="org.moqui.maps.MapServices.find#Configuration" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+        <artifacts artifactName="org.moqui.maps.MapServices.store#ProfileSettings" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
         <authz artifactAuthzId="MAPS_ADMIN_ADMIN" userGroupId="ADMIN" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
         <authz artifactAuthzId="MAPS_ADMIN_USERS_DENY" userGroupId="MAPS_USERS" authzTypeEnumId="AUTHZT_DENY" authzActionEnumId="AUTHZA_ALL"/>
     </artifactGroups>

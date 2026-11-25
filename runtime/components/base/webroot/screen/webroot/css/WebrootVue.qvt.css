@@ -1033,8 +1033,8 @@ pre.m-md-mermaid-drawn:hover .m-md-mermaid-zoom, .m-md-mermaid-zoom:focus-visibl
 .m-map-notice, .m-map-fallback, .m-map-status { font-size:calc(13px * var(--m-fs-small-scale)); }
 .m-map-notice { padding:6px 10px; border-radius:6px; background:color-mix(in srgb, var(--q-info) 14%, transparent); }
 .m-map-fallback { padding:8px 10px; border-radius:6px; border:1px dashed rgba(127,127,127,0.5); }
-.m-map-layer-status { list-style:none; margin:0; padding:0; }
-.m-map-retry, .m-map-pick-use { font:inherit; font-size:12px; padding:1px 8px; border:1px solid rgba(127,127,127,0.5); border-radius:4px; background:transparent; color:inherit; cursor:pointer; }
+.m-map-layer-status, .m-map-layer-errors { list-style:none; margin:0; padding:0; }
+.m-map-retry, .m-map-pick-use, .m-map-place-copy { font:inherit; font-size:12px; padding:1px 8px; border:1px solid rgba(127,127,127,0.5); border-radius:4px; background:transparent; color:inherit; cursor:pointer; }
 .m-map-pick-input { font:inherit; width:16em; max-width:100%; padding:2px 6px; border:1px solid rgba(127,127,127,0.5); border-radius:4px; background:transparent; color:inherit; }
 .m-map-picked, .m-map-located, .m-map-center { font-size:calc(13px * var(--m-fs-small-scale)); }
 .m-map-places { list-style:none; margin:0; padding:0; }

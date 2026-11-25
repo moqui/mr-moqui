@@ -241,6 +241,11 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="adapterKey"/>
             <parameter name="recordKey" type="Object"><description>The record's key fields, a map or its JSON</description></parameter>
             <parameter name="addressPurpose"/>
+            <parameter name="featuresExtent" type="Object"><description>The view a shown record layer's features are read for
+                (west, south, east, north in degrees, a list or a comma text): Browse's search reads the view on screen;
+                empty for the initial view</description></parameter>
+            <parameter name="recordLayers" type="Boolean" default="true"><description>false: the record layers are listed and
+                no adapter is asked for their features (the local-map dialog, which shows one record)</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="config" type="Map"><description>{profileId, profile: {profileId, profileName, basemaps, basemap,
@@ -337,6 +342,49 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="savedViewId"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapConfig.js').execute('deleteSavedView', context))</script></actions>
+    </service>
+
+    <!-- ========== Configuration (P1; MapConfig.js): Maps › Configuration's profiles and layers ========== -->
+
+    <service verb="find" noun="Configuration">
+        <description>What Maps › Configuration shows, for a caller who may open it (PERMISSION_DENIED otherwise): each map
+            profile (enabled, the installation's default, whether it can be drawn now and why not) and each layer (its
+            provider, whether a basemap or a record layer, enabled, drawable and why not), at most 200 of each, and the
+            installation's outside-request policy and limits as the conf sets them (maps@external-requests, maps@max-features,
+            maps@import-max-bytes), which are changed only in the conf. Changes nothing.</description>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="installationProfileId"/>
+            <parameter name="externalRequests" type="Boolean"/>
+            <parameter name="maxFeatures"/>
+            <parameter name="importMaxBytes"/>
+            <parameter name="profileList" type="List"/>
+            <parameter name="layerList" type="List"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapConfig.js').execute('findConfiguration', context))</script></actions>
+    </service>
+    <service verb="store" noun="ProfileSettings">
+        <description>Enable or disable a map profile and make one the installation's default (the ALL_USERS
+            UserGroupPreference maps.profile), for a caller who may open and change Maps › Configuration (its view and update;
+            PERMISSION_DENIED otherwise). Both changes are in the audit log (MapProfile.disabled, UserGroupPreference.preferenceValue).
+            The default must be enabled and drawable now (PROFILE_UNAVAILABLE, with the cause: a profile whose provider has
+            not passed its test, one drawn from outside while outside requests are off); the default is not disabled
+            (DEFAULT_PROFILE). A profile may be enabled before its provider is: it is then not drawn, and the answer says
+            so. An unknown profile is RECORD_UNAVAILABLE.</description>
+        <in-parameters>
+            <parameter name="profileId" required="true"/>
+            <parameter name="enabled"><description>Y or N; empty to leave it</description></parameter>
+            <parameter name="makeDefault" type="Boolean"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="cause"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapConfig.js').execute('storeProfileSettings', context))</script></actions>
     </service>
 
     <!-- ========== Providers and readiness (P1; MapProviders.js) ========== -->

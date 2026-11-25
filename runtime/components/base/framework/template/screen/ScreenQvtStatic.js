@@ -2301,8 +2301,9 @@
             const textPart = (into, key, name) => { if (!blank(at(n, name))) into.push(sq(key) + ":" + exp(at(n, name), n, name, false)); };
             const exprPart = (into, key, name) => { if (!blank(at(n, name))) into.push(sq(key) + ":" + X(at(n, name), n, name)); };
             [["profileId", "profile"], ["layers", "layers"], ["center", "center"], ["zoom", "zoom"], ["extent", "extent"], ["projection", "projection"],
-                ["adapter", "adapter"], ["addressPurpose", "address-purpose"]].forEach(([key, name]) => textPart(parts, key, name));
+                ["adapter", "adapter"], ["addressPurpose", "address-purpose"], ["pickForm", "pick-form"]].forEach(([key, name]) => textPart(parts, key, name));
             exprPart(parts, "recordKey", "record-key");
+            exprPart(parts, "features", "features");
             const point = [];
             [["lon", "longitude"], ["lat", "latitude"], ["label", "label"], ["precision", "precision"], ["source", "source"]].forEach(([key, name]) => textPart(point, key, name));
             const plain = blank(at(n, "longitude")) && blank(at(n, "latitude")) ? "" : "{" + point.join(",") + "}";

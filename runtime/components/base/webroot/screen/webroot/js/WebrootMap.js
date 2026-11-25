@@ -32,8 +32,13 @@
  *     center: [lon, lat], zoom: 0-22, extent: [west, south, east, north], projection: "EPSG:3857" | "EPSG:4326",
  *     points: [{id, lon, lat, label, precisionEnumId, precision, source}]  (longitude/latitude, sourceText are read too),
  *     features: a GeoJSON FeatureCollection in WGS84 (each feature's label or name property its label),
- *     pick: true to let the user choose a point,
- *     adapter, recordKey, addressPurpose: a record shown through a registered adapter, sent to config-url as given
+ *     pick: true to let the user choose a point, pickForm: the name of a form of the page whose latitude and longitude
+ *           fields a choice fills (the map-view's pick-form),
+ *     adapter, recordKey, addressPurpose: a record shown through a registered adapter, sent to config-url as given,
+ *     layerErrors: [{id, label, reasonCode, message}]  what the server did not resolve (id "record": the record's place),
+ *                  each named under the map, with Retry (the configuration asked again) when it came from config-url,
+ *     featuresTruncated: true when a record layer had more features than were sent, units: "metric" | "imperial" (the
+ *                  scale line's)
  *   }
  * The network contracts of the bundle (build/libs/refresh.mjs, OPENLAYERS_HOSTS; plans/Maps.md §3.2): a mapbox:// URL is
  * refused before it reaches the library; a style is loaded here, checked, its sources' attributions escaped, and its
@@ -43,8 +48,9 @@
  * (urlAllowed, and transformRequest for what ol-mapbox-style fetches). Locate me asks the browser for the position only when
  * pressed, and the position is neither kept nor sent.
  *
- * Events: pick ({lon, lat}, also the DOM event m-map-pick with that detail, which bubbles), select (a place: {id, lon, lat,
- * label}) and view-change ({center, zoom, extent}).
+ * Events: pick ({lon, lat}, also the DOM event m-map-pick with that detail, which bubbles), select (a place or a feature:
+ * {id, lon, lat, label}, with layerId for a record layer's feature) and view-change ({center, zoom, extent}). Each place
+ * listed has Copy, which puts its latitude, longitude on the clipboard.
  */
 (function (root) {
     "use strict";
@@ -201,10 +207,19 @@
             points: map.normalizePoints(given.points),
             features: given.features && given.features.type === "FeatureCollection" && Array.isArray(given.features.features) ? given.features : null,
             pick: given.pick === true || given.pick === "true",
+            pickForm: text(given.pickForm),
             adapter: text(given.adapter), recordKey: given.recordKey && typeof given.recordKey === "object" ? given.recordKey : null,
-            addressPurpose: text(given.addressPurpose)
+            addressPurpose: text(given.addressPurpose),
+            layerErrors: map.normalizeLayerErrors(given.layerErrors),
+            featuresTruncated: given.featuresTruncated === true || given.featuresTruncated === "true",
+            units: text(given.units).toLowerCase() === "imperial" ? "imperial" : text(given.units).toLowerCase() === "metric" ? "metric" : ""
         };
     };
+    // What the server did not resolve, each {id, label, reasonCode, message} as text; one without an id is left out.
+    map.normalizeLayerErrors = (errors) => (Array.isArray(errors) ? errors : []).filter((error) => error && typeof error === "object" && text(error.id))
+        .map((error) => ({ id: text(error.id), label: text(error.label) || text(error.id), reasonCode: text(error.reasonCode), message: text(error.message) }));
+    // The scale line's units of a configuration: imperial (feet and miles) or metric, the default.
+    map.scaleUnits = (config) => (config && config.units === "imperial" ? "imperial" : "metric");
 
     // A server's effective configuration with what the map-view itself gave (both normalized): its view (center, zoom, extent,
     // projection) and pick win, its places follow the server's (a record's place first), and a layer it asked for that the
@@ -214,6 +229,10 @@
         ["center", "zoom", "extent"].forEach((key) => { if (local[key] !== null) out[key] = local[key]; });
         if (local.projection !== "EPSG:3857") out.projection = local.projection;
         out.pick = server.pick || local.pick;
+        if (local.units) out.units = local.units;
+        if (local.pickForm) out.pickForm = local.pickForm;
+        // the map-view's own features (a record's area) beside the server's
+        if (local.features) out.features = server.features ? { type: "FeatureCollection", features: server.features.features.concat(local.features.features) } : local.features;
         out.points = map.normalizePoints(server.points.concat(local.points));
         const known = new Set(server.layers.map((layer) => layer.id));
         out.layers = server.layers.concat(local.layers.filter((layer) => !known.has(layer.id)));
@@ -328,6 +347,18 @@
     // A source's attribution HTML as plain text (a style document's own, which may hold markup), for attributionHtml.
     map.attributionText = (html) => String(html || "").replace(/<[^>]*>/g, " ").replace(/&copy;/g, "©").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
 
+    // A choice put in the latitude and longitude fields of the page's form named pickForm (the shell's registered m-forms, by
+    // their name or id), six decimals; false when there is no such form.
+    map.fillPickForm = (pickForm, point) => {
+        const name = text(pickForm);
+        const forms = name && moqui.screenForms ? moqui.screenForms : [];
+        const form = forms.find((vm) => vm && vm.$el && vm.$el.getAttribute && (vm.$el.getAttribute("name") === name || vm.$el.getAttribute("id") === name) && vm.fields);
+        if (!form) return false;
+        form.fields.latitude = Number(point.lat).toFixed(6);
+        form.fields.longitude = Number(point.lon).toFixed(6);
+        return true;
+    };
+
     // ---- the component ----
 
     const h = (...args) => root.Vue.h(...args);
@@ -423,7 +454,7 @@
                 const view = new O.View({ projection: config.projection, center: this.toMap(0, 20), zoom: 2, maxZoom: 22 });
                 const olMap = new O.Map({
                     target: canvas, view, keyboardEventTarget: canvas,
-                    controls: O.defaultControls({ rotate: false, attributionOptions: { collapsible: true } }).extend([new O.ScaleLine()])
+                    controls: O.defaultControls({ rotate: false, attributionOptions: { collapsible: true } }).extend([new O.ScaleLine({ units: map.scaleUnits(config) })])
                 });
                 this.olMap = olMap;
                 this.basemapGroup = new O.LayerGroup();
@@ -442,8 +473,9 @@
                     this.readout = map.formatCoordinates(at.lon, at.lat);
                 });
                 olMap.on("singleclick", (event) => {
-                    const feature = olMap.forEachFeatureAtPixel(event.pixel, (found) => (found.get("place") ? found : null));
-                    if (feature) this.select(feature.get("place"));
+                    const feature = olMap.forEachFeatureAtPixel(event.pixel, (found) => (found.get("place") || found.get("recordFeature") ? found : null));
+                    if (feature && feature.get("place")) this.select(feature.get("place"));
+                    else if (feature) this.selectFeature(feature, this.toLonLat(event.coordinate));
                     else if (this.shown.pick) this.choose(this.toLonLat(event.coordinate));
                 });
                 olMap.on("moveend", () => {
@@ -683,6 +715,7 @@
                 if (config.features) {
                     try {
                         const features = new O.GeoJSON().readFeatures(config.features, { dataProjection: "EPSG:4326", featureProjection: config.projection });
+                        features.forEach((feature) => feature.set("recordFeature", true));
                         const layer = new O.VectorLayer({ source: new O.VectorSource({ features }), style: (feature) => this.featureStyle(O, feature) });
                         this.overlayGroup.getLayers().push(layer);
                     } catch (err) { this.status("features", L("Features"), "failed", err && err.message || String(err)); }
@@ -717,6 +750,20 @@
                 if (this.markerSource) this.markerSource.changed();
                 this.$emit("select", { id: place.id, lon: place.lon, lat: place.lat, label: place.label });
             },
+            // a record layer's feature (config.features): its id, label and layer, at the point clicked
+            selectFeature(feature, at) {
+                this.selectedId = "";
+                if (this.markerSource) this.markerSource.changed();
+                this.$emit("select", { id: String(feature.getId() === undefined ? "" : feature.getId()), lon: at.lon, lat: at.lat,
+                    label: text(feature.get("label") || feature.get("name")), layerId: text(feature.get("layerId")) });
+            },
+            copyPlace(place) {
+                const coordinates = map.formatCoordinates(place.lon, place.lat);
+                const clipboard = root.navigator && root.navigator.clipboard;
+                const done = () => { this.announced = L("Copied") + ": " + coordinates; };
+                if (!clipboard || !clipboard.writeText) { done(); return; }
+                clipboard.writeText(coordinates).then(done, (err) => console.warn("m-map: the coordinates were not copied", err));
+            },
             // ---- pick, locate ----
             choose(point) {
                 this.picked = point;
@@ -726,6 +773,7 @@
                 if (this.$el && this.$el.dispatchEvent && root.CustomEvent) {
                     this.$el.dispatchEvent(new root.CustomEvent("m-map-pick", { bubbles: true, detail: { lon: point.lon, lat: point.lat } }));
                 }
+                map.fillPickForm(this.shown.pickForm, point);
             },
             chooseCenter() {
                 const center = this.olMap && this.olMap.getView().getCenter();
@@ -774,9 +822,11 @@
                 const body = [h("span", { class: "m-map-place-label" }, place.label || L("Place")), " ",
                     h("span", { class: "m-map-place-coordinates" }, map.formatCoordinates(place.lon, place.lat)),
                     details ? h("span", { class: "m-map-place-details" }, details) : null];
+                const copy = h("button", { type: "button", class: "m-map-place-copy", "aria-label": L("Copy the coordinates of") + " " + (place.label || L("Place")),
+                    onClick: () => this.copyPlace(place) }, L("Copy"));
                 return h("li", { key: place.id, class: { "m-map-place": true, "m-map-place-selected": place.id === this.selectedId } },
-                    this.drawn ? [h("button", { type: "button", class: "m-map-place-button", title: L("Show on the map"),
-                        onClick: () => { this.goTo(place); this.select(place); } }, body)] : body);
+                    (this.drawn ? [h("button", { type: "button", class: "m-map-place-button", title: L("Show on the map"),
+                        onClick: () => { this.goTo(place); this.select(place); } }, body)] : body).concat([" ", copy]));
             },
             toolbar() {
                 const button = root.Vue.resolveComponent("q-btn");
@@ -821,6 +871,12 @@
                 this.failedLayers.length ? h("ul", { class: "m-map-status m-map-layer-status" }, this.failedLayers.map((status) => h("li", { key: status.id }, [
                     h("span", { class: "text-negative" }, L("Not shown") + ": " + status.label + (status.error ? " (" + status.error + ")" : "")), " ",
                     h("button", { type: "button", class: "m-map-retry", onClick: () => this.retry(status.id) }, L("Retry"))]))) : null,
+                shown.layerErrors.length ? h("ul", { class: "m-map-status m-map-layer-errors" }, shown.layerErrors.map((error) => h("li", {
+                    key: error.id, class: error.id === "record" ? "m-map-record-error" : null }, [
+                    h("span", { class: "text-negative" }, L("Not shown") + ": " + error.label + (error.message ? " (" + error.message + ")" : "")),
+                    this.configUrl ? [" ", h("button", { type: "button", class: "m-map-retry", onClick: () => this.load() }, L("Retry"))] : null]))) : null,
+                shown.featuresTruncated ? h("div", { class: "m-map-status m-map-truncated", role: "note" },
+                    L("Only some of the records are shown: zoom in or search to narrow them")) : null,
                 this.located ? h("div", { class: "m-map-located", "aria-live": "polite" }, this.located) : null,
                 shown.pick ? this.pickForm() : null,
                 this.picked ? h("div", { class: "m-map-picked", "aria-live": "polite" }, L("Chosen") + ": " + map.formatCoordinates(this.picked.lon, this.picked.lat)) : null,

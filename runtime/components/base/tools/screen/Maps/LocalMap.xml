@@ -1,0 +1,188 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The local-map dialog (plans/Maps.md §3.2; docs/tools/Maps.md "The local-map dialog"), opened beside an address or a
+    coordinate field of any app with View map: a dynamic-dialog whose id is LocalMapDialog, loading this screen with
+    adapterKey and recordKey (its key fields as JSON) and an optional addressPurpose, or a plain longitude, latitude and
+    label, and the dialog's id as dialogId when it is not LocalMapDialog. Every signed-in user reaches it and its transitions (MAPS_DIALOG, data/MapsSecurityData.xml); an app shows it
+    under its own route by the thin-wrapper rule (include-screen and a transition-include of getConfig and storeLocation).
+    The record's place is read here, in the actions, through get#EffectiveConfig, whose adapter checks the caller's access
+    first (a record they may not read is "not available", with nothing of it shown), and given to the map-view as its
+    points, view (a postal area's extent) and features (an area or a line), so html, print, text and the terminal show the
+    same place (its coordinates, precision and source, which the browser's map lists with Copy and the terminal's copies
+    with c) as the browser; the browser asks getConfig for the basemap and layers only. Neither asks a record layer's
+    adapter for features (recordLayers false): the dialog shows one record. Read-only by default: Choose location shows only when the adapter's
+    permitted actions name chooseLocation, and Save location posts this dialog's own form to storeLocation, which calls
+    the adapter's store#RecordLocation with the record's key, the version read and the point (the adapter checks again and
+    writes through its domain's guarded services). The form posts in the background in every client: on success the dialog
+    closes (background-hide-id, the dialogId) and the screen behind it reloads in place (background-reload-id _screen); a
+    refusal stays in the dialog. A plain point grants no record access: with pick=true its map lets the user choose
+    a point, which m-map gives the host page as the m-map-pick event, and nothing is posted. Open in Maps shows only to a
+    user who may open the Maps app. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
+        default-menu-title="Map" default-menu-include="false" history="false">
+    <parameter name="adapterKey"/>
+    <parameter name="recordKey"/>
+    <parameter name="addressPurpose"/>
+    <parameter name="longitude"/>
+    <parameter name="latitude"/>
+    <parameter name="label"/>
+    <parameter name="pick"/>
+    <parameter name="dialogId"/>
+
+    <!-- the basemap and layers the map draws (get#EffectiveConfig with no record: the record's place is the actions') -->
+    <transition name="getConfig" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.maps.MapServices.get#EffectiveConfig').requireNewTransaction(true)
+                .parameters({profileId: profileId || null, layerIds: layerIds || null, recordLayers: false}).call()
+            if (ec.message.hasError()) { const errors = ec.message.getErrorsString(); ec.message.clearErrors(); ec.web.sendJsonResponse({errors}) }
+            else ec.web.sendJsonResponse(out.config || {})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- Save location: the adapter registered as adapterKey (get#AdapterService, store), called with the record's key, the
+        version the dialog read and the point; its refusal (a changed record, no right to write) comes back as the error -->
+    <transition name="storeLocation">
+        <actions><script><![CDATA[
+            const blank = value => value == null || String(value).trim() === ''
+            let key = null
+            try { key = typeof recordKey === 'string' ? JSON.parse(recordKey) : recordKey } catch (err) { key = null }
+            const lat = Number(String(latitude ?? '').trim()), lon = Number(String(longitude ?? '').trim())
+            if (blank(adapterKey) || !key || typeof key !== 'object' || Array.isArray(key)) {
+                ec.message.addError(ec.l10n.localize('This record\'s location cannot be changed here'))
+            } else if (blank(latitude) || blank(longitude) || !(lat >= -90 && lat <= 90) || !(lon >= -180 && lon <= 180)) {
+                ec.message.addError(ec.l10n.localize('Choose a point on the map, or enter a latitude from -90 to 90 and a longitude from -180 to 180'))
+            } else {
+                // the adapter and its write as a probe: a refusal by authorization is the same words as the adapter's own, and
+                // what the adapter or the registry said is not passed on or logged, only the adapter's key
+                let stored = null
+                let failed = false
+                ec.message.pushErrors()
+                try {
+                    const resolved = ec.service.sync().name('org.moqui.maps.MapServices.get#AdapterService')
+                        .parameters({adapterKey: String(adapterKey), operation: 'store'}).call()
+                    if (!ec.message.hasError()) stored = ec.service.sync().name(resolved.serviceName).parameters({recordKey: key,
+                        addressPurpose: addressPurpose || null, recordVersion: blank(recordVersion) ? '0' : String(recordVersion),
+                        point: {longitude: lon, latitude: lat}}).call()
+                    failed = ec.message.hasError()
+                } catch (err) {
+                    failed = true
+                } finally {
+                    ec.message.clearErrors()
+                    ec.message.popErrors()
+                }
+                if (failed) {
+                    ec.logger.warn('Map adapter ' + String(adapterKey).slice(0, 60) + ' did not store a location')
+                    ec.message.addError(ec.l10n.localize('You may not change this record\'s location'))
+                } else if (stored?.applied) ec.message.addMessage(ec.l10n.localize('The location is saved'), 'success')
+                else ec.message.addError(stored?.reason || ec.l10n.localize('The location was not saved'))
+            }
+            // a background post (every client's: the form says background-submit) is answered with its words: a refusal as an
+            // error status, so the dialog stays open with it, and a save as its message, so the page behind reloads
+            const asJson = String(ec.web?.request?.getHeader('Accept') ?? '').includes('application/json')
+            if (asJson && ec.message.hasError()) {
+                const refusal = ec.message.getErrorsString()
+                ec.message.clearErrors()
+                ec.web.sendJsonError(409, refusal)
+            } else if (asJson) {
+                ec.message.clearAll()
+                ec.web.sendJsonResponse({messageInfos: [{message: ec.l10n.localize('The location is saved'), type: 'success'}]})
+            }
+        ]]></script></actions>
+        <!-- the form posts in the background: the answer is its messages, and the page behind the dialog reloads itself -->
+        <default-response type="none"/>
+        <error-response type="none"/>
+    </transition>
+
+    <actions>
+        <set field="mapConfig" from="{}"/>
+        <if condition="adapterKey">
+            <!-- the adapter checks the caller first; a refusal or a failure is a layer error of the record, never an error here -->
+            <service-call name="org.moqui.maps.MapServices.get#EffectiveConfig" out-map="effective" transaction="force-new" ignore-error="true"
+                    in-map="{adapterKey: adapterKey, recordKey: recordKey || null, addressPurpose: addressPurpose || null, recordLayers: false}"/>
+            <set field="mapConfig" from="effective?.config || {}"/>
+        </if>
+        <script><![CDATA[
+            record = mapConfig.record || null
+            recordError = Array.from(mapConfig.layerErrors || []).find(error => error.id === 'record') || null
+            const recordPoint = Array.from(mapConfig.points || []).find(point => point.id === 'record') || null
+            const num = value => {
+                const text = String(value ?? '').trim()
+                const found = text ? Number(text) : NaN
+                return Number.isFinite(found) ? found : null
+            }
+            const plainLon = num(longitude), plainLat = num(latitude)
+            const plain = !adapterKey && plainLon !== null && plainLat !== null && plainLon >= -180 && plainLon <= 180 && plainLat >= -90 && plainLat <= 90
+            place = recordPoint ? {id: 'record', lon: Number(recordPoint.lon), lat: Number(recordPoint.lat), label: record?.label || recordPoint.label || '',
+                    precisionEnumId: record?.precisionEnumId || null, sourceText: record?.sourceText || null}
+                : plain ? {id: 'place', lon: plainLon, lat: plainLat, label: String(label || '')} : null
+            placePoints = place ? [place] : []
+            // the record's view (a postal area's extent, else its point and zoom) and its area or line, when it is not a point
+            mapExtent = Array.isArray(mapConfig.extent) && mapConfig.extent.length === 4 ? mapConfig.extent.join(',') : ''
+            // a plain point is the view too, so the profile's own view does not win over it
+            mapCenter = mapExtent ? '' : adapterKey && Array.isArray(mapConfig.center) ? mapConfig.center.join(',')
+                : place ? place.lon + ',' + place.lat : ''
+            mapZoom = !mapCenter ? '' : adapterKey ? (mapConfig.zoom != null ? String(mapConfig.zoom) : '') : '14'
+            const areas = Array.from(mapConfig.features?.features || []).filter(feature => feature?.id === 'record')
+            recordFeatures = areas.length ? {type: 'FeatureCollection', features: areas} : null
+            hideId = /^[A-Za-z][A-Za-z0-9_-]{0,80}$/.test(String(dialogId || '')) ? String(dialogId) : 'LocalMapDialog'
+            mayChoose = !!record && Array.from(record.permittedActions || []).includes('chooseLocation')
+            pickPlain = !adapterKey && String(pick || '') === 'true'
+            // the user's own grant of the app, not the frames of an app that shows this dialog under its own root
+            mayOpenMaps = !!ec.user.userId && !!ec.artifactExecution.isPermittedOwn('component://tools/screen/Maps.xml', 'AT_XML_SCREEN', 'view')
+            placeTitle = record?.label || (place ? place.label : '') || ec.l10n.localize('Place')
+            const keyText = recordKey == null ? '' : typeof recordKey === 'string' ? recordKey : JSON.stringify(recordKey)
+            storeValues = {adapterKey: adapterKey || '', recordKey: keyText, addressPurpose: addressPurpose || '', recordVersion: record?.recordVersion || '',
+                latitude: place ? place.lat.toFixed(6) : '', longitude: place ? place.lon.toFixed(6) : ''}
+            openParameters = adapterKey ? {adapterKey, recordKey: keyText, addressPurpose: addressPurpose || ''}
+                : place ? {longitude: String(place.lon), latitude: String(place.lat), label: place.label} : {}
+        ]]></script>
+    </actions>
+    <widgets>
+        <container id="LocalMapBody" style="m-local-map">
+            <label text="${placeTitle}" type="h6" style="q-mt-none q-mb-sm"/>
+            <label condition="recordError" type="p" style="text-negative" text="${recordError.message}"/>
+            <label condition="record &amp;&amp; !place" type="p" style="m-muted" text="This record has no location on the map yet."/>
+            <label condition="!adapterKey &amp;&amp; !place" type="p" style="m-muted" text="No place was given to show."/>
+            <map-view id="LocalMapView" config-transition="getConfig" points="placePoints" features="recordFeatures" height="360px"
+                    extent="${mapExtent}" center="${mapCenter}" zoom="${mapZoom}"
+                    pick="${mayChoose || pickPlain ? 'true' : 'false'}" pick-form="${mayChoose ? 'ChooseLocation' : ''}"/>
+            <section name="OpenInMaps" condition="mayOpenMaps">
+                <widgets>
+                    <link url="//apps/maps/Browse" text="Open in Maps" icon="sym_o_map" parameter-map="openParameters" style="q-mt-sm"/>
+                </widgets>
+            </section>
+            <section name="ChooseLocation" condition="mayChoose">
+                <widgets>
+                    <label text="Choose location" type="h6" style="q-mt-md q-mb-none"/>
+                    <label type="p" style="text-caption m-muted"
+                            text="Click the map, press Enter on it to take its center, or enter a latitude and a longitude. Nothing is saved until Save location."/>
+                    <form-single name="ChooseLocation" transition="storeLocation" map="storeValues" background-submit="true"
+                            background-hide-id="${hideId}" background-reload-id="_screen">
+                        <field name="adapterKey"><default-field><hidden/></default-field></field>
+                        <field name="recordKey"><default-field><hidden/></default-field></field>
+                        <field name="addressPurpose"><default-field><hidden/></default-field></field>
+                        <field name="recordVersion"><default-field><hidden/></default-field></field>
+                        <field name="latitude"><default-field title="Latitude"><text-line size="12"/></default-field></field>
+                        <field name="longitude"><default-field title="Longitude"><text-line size="12"/></default-field></field>
+                        <field name="submitButton"><default-field title="Save location"><submit/></default-field></field>
+                        <field-layout>
+                            <field-row-big><field-ref name="latitude"/><field-ref name="longitude"/><field-ref name="submitButton"/></field-row-big>
+                        </field-layout>
+                    </form-single>
+                </widgets>
+            </section>
+        </container>
+    </widgets>
+</screen>

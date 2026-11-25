@@ -152,3 +152,23 @@ fn with_pick_a_point_is_chosen_by_its_latitude_and_longitude() {
     assert_eq!(parse_lat_lon("41.8"), None);
     assert_eq!(parse_lat_lon("NaN, 1"), None);
 }
+
+#[test]
+fn a_source_gives_the_places_notes_and_attribution() {
+    // Maps › Browse's terminalMap answer: the source's attribution wins over the props', its notes above the places
+    let props = json!({"source": "terminalMap", "attribution": "Natural Earth"});
+    let state = ComponentState {
+        data: Some(json!({
+            "points": [{"id": "view:1", "lon": -87.6298, "lat": 41.8781, "label": "Home", "source": "Your saved view"}],
+            "notes": ["Not shown: Parks (it names no source)"],
+            "attribution": "OpenFreeMap; © OpenMapTiles"
+        })),
+        ..ComponentState::default()
+    };
+    let text = shown(&props, &state);
+    let note = text.iter().position(|line| line == "Not shown: Parks (it names no source)");
+    let places = text.iter().position(|line| line == "Places");
+    assert!(note.is_some() && places.is_some() && note < places, "{text:?}");
+    assert!(text.contains(&"▸ Home  41.87810, -87.62980  Your saved view".to_string()), "{text:?}");
+    assert_eq!(text.last().map(String::as_str), Some("Map data: OpenFreeMap; © OpenMapTiles"));
+}

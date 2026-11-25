@@ -1045,8 +1045,8 @@
             if (!skipStart) {
                 out += "<form" + A({
                     name: formId, id: formId, method: "post", action: url.url, enctype: upload ? "multipart/form-data" : null,
-                    "data-bg": at(n, "background-submit") === "true" ? true : null, "data-reload": at(n, "background-reload-id") || null,
-                    "data-msg": at(n, "background-message") || null, "data-hide": at(n, "background-hide-id") || null,
+                    "data-bg": at(n, "background-submit") === "true" ? true : null, "data-reload": xn(at(n, "background-reload-id")) || null,
+                    "data-msg": at(n, "background-message") || null, "data-hide": xn(at(n, "background-hide-id")) || null,
                     "data-exclude-empty-fields": at(n, "exclude-empty-fields") === "true" ? "true" : null,
                     "data-focus": at(n, "focus-field") || null
                 }) + ">" + hiddenInput("moquiFormName", at(n, "name")) + hiddenInput("moquiSessionToken", token());

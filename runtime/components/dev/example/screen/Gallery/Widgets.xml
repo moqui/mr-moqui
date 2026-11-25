@@ -283,6 +283,12 @@ along with this software (see the LICENSE.md file). If not, see
         <!-- map -->
         <container-box><box-header title="Map (map-view, m-map): the outline profile, places, pick"/><box-body>
             <map-view id="WidgetMap" profile="OUTLINE" points="mapPlaces" pick="true" height="320px"/>
+            <!-- the local-map dialog as an app opens it beside an address or coordinate field (docs/tools/Maps.md): a record's
+                adapterKey and recordKey, or a plain point as here. The gallery names the Maps screen to show it; an app shows
+                it under its own route by the thin-wrapper rule (a screen of its own that includes LocalMap and takes in its
+                transitions, with the app's grants on that screen), and opens that screen. -->
+            <dynamic-dialog id="LocalMapDialog" button-text="View map" icon="sym_o_map" title="Chicago office"
+                    transition="//apps/maps/LocalMap" parameter-map="{longitude: '-87.6298', latitude: '41.8781', label: 'Chicago office'}"/>
         </box-body></container-box>
 
         <!-- 4. list -->

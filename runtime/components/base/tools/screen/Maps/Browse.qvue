@@ -1,0 +1,398 @@
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Maps › Browse (Browse.xml; plans/Maps.md §3.1): m-map filling the space below the shell's header, over the effective
+    configuration this component asks getConfig for and hands to m-map as an object (so a layer shown or hidden, a basemap
+    chosen, a saved view or a result gone to draws again where the map was). Beside it, one panel at a time: Search (saved
+    places and permitted records), Layers (the basemap, the overlays and record layers, each layer that is not shown named
+    with Retry, and a cut feature list said), Saved views (Save view saves where the map is) and the selected feature's
+    details. Below 600 px the panel is a bottom sheet over the map. Full screen is the browser's, on request. The last view
+    is posted (rememberView) only when the user turned Restore my last view on. Brand color names and Quasar classes
+    only. -->
+<template><div ref="frame" class="m-maps-browse column no-wrap" :class="fullscreen ? ($q.dark.isActive ? 'bg-dark' : 'bg-white') : ''">
+    <div class="row items-center no-wrap q-gutter-x-xs q-px-sm q-py-xs">
+        <div class="col" style="max-width:420px">
+            <m-text-line v-model="query" name="mapsSearch" id="MapsSearch" :label="t('Search saved places and records')" @keyup.enter="runSearch"></m-text-line>
+        </div>
+        <q-btn id="MapsSearchButton" dense flat no-caps icon="sym_o_search" :label="phone ? '' : t('Search')" :aria-label="t('Search')" @click="runSearch"></q-btn>
+        <q-space></q-space>
+        <q-btn dense flat no-caps icon="sym_o_layers" :label="phone ? '' : t('Layers')" :aria-label="t('Layers')" :class="panel === 'layers' ? 'm-tonal text-primary' : ''"
+                :aria-pressed="panel === 'layers' ? 'true' : 'false'" @click="togglePanel('layers')">
+            <q-badge v-if="problemCount" floating color="warning" rounded>{{problemCount}}</q-badge>
+        </q-btn>
+        <q-btn dense flat no-caps icon="sym_o_bookmarks" :label="phone ? '' : t('Saved views')" :aria-label="t('Saved views')"
+                :class="panel === 'views' ? 'm-tonal text-primary' : ''" :aria-pressed="panel === 'views' ? 'true' : 'false'" @click="togglePanel('views')"></q-btn>
+        <q-btn dense unelevated no-caps class="m-btn-tonal" icon="sym_o_bookmark_add" :label="phone ? '' : t('Save view')" :aria-label="t('Save view')"
+                :disable="!lastView" @click="openSave"></q-btn>
+        <q-btn v-if="fullscreenAvailable" dense flat :icon="fullscreen ? 'fullscreen_exit' : 'fullscreen'"
+                :aria-label="fullscreen ? t('Leave full screen') : t('Full screen')" @click="toggleFullscreen">
+            <q-tooltip>{{fullscreen ? t('Leave full screen') : t('Full screen')}}</q-tooltip>
+        </q-btn>
+    </div>
+    <div v-if="error" class="text-negative q-px-sm" role="alert">{{error}}</div>
+
+    <div class="row no-wrap">
+        <component :is="phone ? 'q-card' : 'div'" v-if="panel" :flat="phone ? true : undefined" :bordered="phone ? true : undefined"
+                :class="phone ? 'm-maps-sheet scroll q-pa-sm' : 'm-maps-panel col-auto scroll q-pa-sm'"
+                :style="phone ? sheetStyle : {width: '320px', height: mapPx + 'px'}" role="region" :aria-label="panelTitle">
+            <div class="row items-center no-wrap q-mb-xs">
+                <div class="text-subtitle2 col">{{panelTitle}}</div>
+                <q-btn dense flat round icon="close" :aria-label="t('Close')" @click="panel = ''"></q-btn>
+            </div>
+
+            <template v-if="panel === 'search'">
+                <div v-if="searching" class="m-muted">{{t('Searching…')}}</div>
+                <div v-else-if="!results.length" class="m-muted">{{t('No saved place or record matches.')}}</div>
+                <q-list dense separator>
+                    <q-item v-for="result in results" :key="result.id" clickable @click="goToResult(result)" :data-maps-result="result.id">
+                        <q-item-section avatar><q-icon :name="result.kind === 'savedView' ? 'sym_o_bookmark' : 'sym_o_location_on'"></q-icon></q-item-section>
+                        <q-item-section>
+                            <q-item-label>{{result.label}}</q-item-label>
+                            <q-item-label caption>{{[result.sourceText, precisionText(result.precisionEnumId)].filter(Boolean).join(' · ')}}</q-item-label>
+                        </q-item-section>
+                    </q-item>
+                </q-list>
+                <div class="text-caption m-muted q-mt-sm">{{t('Saved places, and the records of the layers shown in the view on screen, are searched. Going to a result changes nothing in its record.')}}</div>
+            </template>
+
+            <template v-if="panel === 'layers'">
+                <template v-if="basemaps.length > 1">
+                    <div class="text-caption m-muted q-mt-xs">{{t('Basemap')}}</div>
+                    <q-list dense>
+                        <q-item v-for="basemap in basemaps" :key="basemap.id" clickable @click="chooseBasemap(basemap.id)" :aria-pressed="basemap.id === basemapId ? 'true' : 'false'">
+                            <q-item-section avatar><q-icon :name="basemap.id === basemapId ? 'radio_button_checked' : 'radio_button_unchecked'"></q-icon></q-item-section>
+                            <q-item-section>{{basemap.label}}</q-item-section>
+                        </q-item>
+                    </q-list>
+                </template>
+                <div v-else class="text-caption m-muted q-mt-xs">{{t('Basemap')}}: {{(basemaps[0] || {}).label || t('Country outlines')}}</div>
+                <template v-if="overlays.length || recordLayers.length">
+                    <div class="text-caption m-muted q-mt-sm">{{t('Layers')}}</div>
+                    <q-list dense>
+                        <q-item v-for="layer in overlays.concat(recordLayers)" :key="layer.id" clickable @click="toggleLayer(layer)"
+                                :aria-pressed="layerShown(layer) ? 'true' : 'false'" :data-maps-layer="layer.id">
+                            <q-item-section avatar><q-icon :name="layerShown(layer) ? 'check_box' : 'check_box_outline_blank'"></q-icon></q-item-section>
+                            <q-item-section>
+                                <q-item-label>{{layer.label}}</q-item-label>
+                                <q-item-label v-if="layer.adapterKey" caption>{{t('Records')}}</q-item-label>
+                            </q-item-section>
+                        </q-item>
+                    </q-list>
+                </template>
+                <div v-else class="text-caption m-muted q-mt-sm">{{t('This map profile has no layers over its basemap.')}}</div>
+                <div v-if="layerErrors.length" class="q-mt-sm m-maps-layer-errors">
+                    <div class="text-caption m-muted">{{t('Not shown')}}</div>
+                    <div v-for="layerError in layerErrors" :key="layerError.id" class="row items-start no-wrap q-py-xs" :data-maps-layer-error="layerError.id">
+                        <q-icon name="sym_o_error" color="warning" class="q-mr-xs q-mt-xs"></q-icon>
+                        <div class="col">
+                            <div class="text-body2">{{layerError.label}}</div>
+                            <div class="text-caption m-muted">{{layerError.message}}</div>
+                        </div>
+                        <q-btn dense flat no-caps size="sm" :label="t('Retry')" @click="retry"></q-btn>
+                    </div>
+                </div>
+                <div v-if="effective && effective.featuresTruncated" class="text-caption text-warning q-mt-sm m-maps-truncated">
+                    {{t('Only some of the records are shown: zoom in or search to narrow them.')}}
+                </div>
+                <div v-if="effective && effective.profile && effective.profile.profileName" class="text-caption m-muted q-mt-sm">
+                    {{t('Map profile')}}: {{effective.profile.profileName}}
+                </div>
+            </template>
+
+            <template v-if="panel === 'views'">
+                <div v-if="!savedViews.length" class="m-muted">{{t('No saved view yet. Move the map where you want it and choose Save view.')}}</div>
+                <q-list dense separator>
+                    <q-item v-for="view in savedViews" :key="view.savedViewId" clickable @click="applyView(view)" :data-maps-view="view.savedViewId">
+                        <q-item-section avatar><q-icon :name="view.isOwn ? 'sym_o_bookmark' : 'sym_o_group'"></q-icon></q-item-section>
+                        <q-item-section>
+                            <q-item-label>{{view.description}}</q-item-label>
+                            <q-item-label caption>{{view.isOwn ? (view.isShared ? t('Yours, shared') : t('Yours')) : t('Shared by') + ' ' + (view.ownerName || '')}}</q-item-label>
+                            <q-item-label v-if="view.explanation" caption class="text-warning">{{view.explanation}}</q-item-label>
+                        </q-item-section>
+                    </q-item>
+                </q-list>
+                <a class="text-caption q-mt-sm block" :href="siblingUrl('Views')" @click.prevent="$root.setUrl(siblingUrl('Views'))">{{t('Manage saved views')}}</a>
+            </template>
+
+            <template v-if="panel === 'details' && selected">
+                <div class="text-body1 text-weight-medium">{{selected.label || t('Place')}}</div>
+                <div class="text-caption m-muted" v-if="selectedLayerLabel">{{selectedLayerLabel}}</div>
+                <div class="q-mt-xs" style="font-family:var(--m-font-mono)">{{coordinates(selected)}}</div>
+                <div class="text-caption m-muted" v-if="selected.precision">{{selected.precision}}</div>
+                <div class="text-caption m-muted" v-if="selected.source">{{selected.source}}</div>
+                <q-btn dense flat no-caps icon="sym_o_content_copy" :label="t('Copy coordinates')" class="q-mt-sm" @click="copy(selected)"></q-btn>
+            </template>
+        </component>
+
+        <div class="col" ref="mapHolder" style="min-width:0">
+            <m-map v-if="mapConfig" id="MapsBrowseMap" :config="mapConfig" :height="mapPx + 'px'" @select="onSelect" @view-change="onViewChange"></m-map>
+            <div v-else class="flex flex-center" :style="{height: mapPx + 'px'}"><q-spinner size="2em"></q-spinner></div>
+        </div>
+    </div>
+
+    <m-dialog v-model="saveShown" :title="t('Save view')" width="440">
+        <div>
+            <m-text-line v-model="saveName" name="description" id="MapsSaveName" :label="t('Name')"></m-text-line>
+            <div class="q-mt-sm">
+                <q-btn-toggle v-model="saveShared" dense no-caps unelevated toggle-color="primary"
+                        :options="[{label: t('Only me'), value: 'N'}, {label: t('Every Maps user'), value: 'Y'}]"></q-btn-toggle>
+            </div>
+            <div class="text-caption m-muted q-mt-xs">{{t('The view keeps where the map is, its basemap and the layers shown.')}}</div>
+            <div class="row justify-end q-mt-md q-gutter-sm">
+                <q-btn flat dense no-caps :label="t('Cancel')" @click="saveShown = false"></q-btn>
+                <q-btn dense unelevated no-caps color="primary" :label="t('Save view')" :loading="saving" :disable="!saveName.trim()" @click="saveView"></q-btn>
+            </div>
+        </div>
+    </m-dialog>
+</div></template>
+
+<script>
+const t = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
+const PRECISION = { GPP_USER_CONFIRMED: 'User-confirmed point', GPP_ADDRESS_MATCH: 'Address match', GPP_STREET_RANGE: 'Street-range interpolation',
+    GPP_POSTAL_AREA: 'Postal-area representative point', GPP_PLACE_ESTIMATE: 'Place estimate' };
+
+module.exports = {
+    name: 'MapsBrowse',
+    inject: { mScreen: { default: null } },
+    data() {
+        return { effective: null, error: '', panel: '', query: '', results: [], searching: false, savedViews: [], hidden: {}, basemapId: '',
+            view: null, lastView: null, marker: null, selected: null, mapPx: 480, phone: false, fullscreen: false, saveShown: false,
+            saveName: '', saveShared: 'N', saving: false, restoreLastView: false };
+    },
+    computed: {
+        screenPath() { return this.mScreen ? this.mScreen.path : this.$root.basePath + '/' + this.$root.currentPathList.join('/'); },
+        parameters() { return this.$root.currentParameters || {}; },
+        fullscreenAvailable() { return !!document.fullscreenEnabled; },
+        basemaps() { return this.effective && this.effective.profile ? this.effective.profile.basemaps || [] : []; },
+        overlays() { return this.effective ? (this.effective.layers || []).filter((layer) => layer && typeof layer === 'object') : []; },
+        recordLayers() { return this.effective ? this.effective.recordLayers || [] : []; },
+        layerErrors() { return this.effective ? this.effective.layerErrors || [] : []; },
+        problemCount() { return this.layerErrors.length + (this.effective && this.effective.featuresTruncated ? 1 : 0); },
+        panelTitle() {
+            return { search: t('Search results'), layers: t('Layers'), views: t('Saved views'), details: t('Selected') }[this.panel] || '';
+        },
+        sheetStyle() { return { position: 'fixed', left: '0', right: '0', bottom: '0', maxHeight: '55vh', zIndex: 2000 }; },
+        selectedLayerLabel() {
+            if (!this.selected || !this.selected.layerId) return '';
+            const layer = this.recordLayers.concat(this.overlays).find((one) => one.id === this.selected.layerId);
+            return layer ? layer.label : '';
+        },
+        // what m-map draws: the effective configuration with the layers shown or hidden here, the basemap chosen, the view
+        // last gone to and a result's marker; the layer errors and a cut list are this panel's, not the map's
+        mapConfig() {
+            const config = this.effective;
+            if (!config) return null;
+            const out = Object.assign({}, config, { layerErrors: [], featuresTruncated: false });
+            out.profile = Object.assign({}, config.profile || {}, this.basemapId ? { basemap: this.basemapId } : {});
+            out.layers = this.overlays.map((layer) => Object.assign({}, layer, { visible: this.layerShown(layer) }));
+            if (config.features && Array.isArray(config.features.features)) {
+                out.features = Object.assign({}, config.features, { features: config.features.features.filter((feature) =>
+                    !(feature.properties && feature.properties.layerId && this.hidden[feature.properties.layerId])) });
+            }
+            out.points = (config.points || []).concat(this.marker ? [this.marker] : []);
+            if (this.view) {
+                delete out.center; delete out.zoom; delete out.extent;
+                Object.assign(out, this.view);
+            }
+            return out;
+        }
+    },
+    watch: {
+        // another record or place: the layer choices start again from the profile's
+        parameters: { deep: true, handler(value, before) { if (JSON.stringify(value) !== JSON.stringify(before)) { this.hidden = {}; this.load(); } } }
+    },
+    methods: {
+        t,
+        siblingUrl(name) { return this.screenPath.replace(/\/[^/]*$/, '/' + name); },
+        request(name, options) {
+            return moqui.request(this.screenPath + '/' + name, options || {}).then((result) => {
+                const json = result.json || {};
+                if (json.errors) throw new Error(json.errors);
+                return json;
+            });
+        },
+        precisionText(id) { return PRECISION[id] ? t(PRECISION[id]) : ''; },
+        coordinates(place) { return Number(place.lat).toFixed(5) + ', ' + Number(place.lon).toFixed(5); },
+        layerShown(layer) { return this.hidden[layer.id] !== undefined ? !this.hidden[layer.id] : layer.visible !== false; },
+        // the parameters a configuration is asked with: the page's record, and the layers to show (a hidden record layer's
+        // adapter was not asked, so showing one asks for the configuration again with it)
+        configParameters(extraLayerId) {
+            const p = this.parameters;
+            const out = {};
+            ['profileId', 'adapterKey', 'recordKey', 'addressPurpose'].forEach((key) => { if (p[key]) out[key] = p[key]; });
+            if (extraLayerId) {
+                const shown = this.overlays.concat(this.recordLayers).filter((layer) => this.layerShown(layer)).map((layer) => layer.id);
+                out.layerIds = shown.concat([extraLayerId]).join(',');
+            }
+            return out;
+        },
+        load(extraLayerId) {
+            this.error = '';
+            const asked = typeof extraLayerId === 'string' ? extraLayerId : '';
+            return this.request('getConfig', { params: this.configParameters(asked) }).then((config) => {
+                this.effective = config;
+                const p = this.parameters;
+                const lon = Number(p.longitude), lat = Number(p.latitude);
+                if (p.longitude !== undefined && p.latitude !== undefined && String(p.longitude).trim() && String(p.latitude).trim()
+                        && lon >= -180 && lon <= 180 && lat >= -90 && lat <= 90 && !this.marker) {
+                    this.marker = { id: 'given', lon, lat, label: String(p.label || '') };
+                    this.view = { center: [lon, lat], zoom: 14 };
+                }
+            }, (err) => { this.error = t('The map settings did not load') + ': ' + (err && err.message || err); });
+        },
+        loadViews() {
+            return this.request('savedViews').then((json) => {
+                this.savedViews = json.savedViewList || [];
+                const wanted = this.parameters.savedViewId;
+                if (wanted) {
+                    const view = this.savedViews.find((one) => String(one.savedViewId) === String(wanted));
+                    if (view) this.applyView(view);
+                }
+            }, () => { this.savedViews = []; });
+        },
+        loadPreferences() {
+            this.request('preferences').then((json) => { this.restoreLastView = !!json.restoreLastView; }, () => { this.restoreLastView = false; });
+        },
+        togglePanel(name) { this.panel = this.panel === name ? '' : name; },
+        // a layer that was not shown, asked for again: the layers shown or hidden here, and the view, stay as they are
+        retry() {
+            this.keepView();
+            this.load();
+        },
+        shownLayerIds() { return this.overlays.concat(this.recordLayers).filter((layer) => this.layerShown(layer)).map((layer) => layer.id); },
+        runSearch() {
+            const query = (this.query || '').trim();
+            if (!query) return;
+            this.panel = 'search';
+            this.searching = true;
+            // the layers shown and the view on screen bound the records searched
+            const params = { q: query };
+            if (this.parameters.profileId) params.profileId = this.parameters.profileId;
+            const shown = this.shownLayerIds();
+            if (shown.length) params.layerIds = shown.join(',');
+            if (this.lastView && Array.isArray(this.lastView.extent)) params.extent = this.lastView.extent.join(',');
+            this.request('search', { params }).then((json) => { this.results = json.results || []; }, (err) => {
+                this.results = [];
+                this.error = t('The search did not run') + ': ' + (err && err.message || err);
+            }).then(() => { this.searching = false; });
+        },
+        goToResult(result) {
+            if (result.kind === 'savedView') { this.applyView({ view: result.view }); return; }
+            if (result.lon === null || result.lon === undefined) return;
+            this.marker = { id: 'result', lon: Number(result.lon), lat: Number(result.lat), label: result.label };
+            this.view = { center: [Number(result.lon), Number(result.lat)], zoom: 14 };
+            this.selected = { label: result.label, lon: Number(result.lon), lat: Number(result.lat), layerId: result.layerId,
+                precision: this.precisionText(result.precisionEnumId), source: result.sourceText };
+            this.panel = 'details';
+        },
+        applyView(row) {
+            const view = row.view || {};
+            if (Array.isArray(view.extent)) this.view = { extent: view.extent };
+            else if (Array.isArray(view.center)) this.view = Object.assign({ center: view.center }, view.zoom !== undefined && view.zoom !== null ? { zoom: view.zoom } : {});
+            if (view.basemap && this.basemaps.some((basemap) => basemap.id === view.basemap)) this.basemapId = view.basemap;
+            if (Array.isArray(view.layers) && view.layers.length) {
+                const wanted = new Set(view.layers);
+                const hidden = {};
+                this.overlays.concat(this.recordLayers).forEach((layer) => { hidden[layer.id] = !wanted.has(layer.id); });
+                this.hidden = hidden;
+                const missing = this.recordLayers.find((layer) => wanted.has(layer.id) && layer.visible === false);
+                if (missing) this.load(missing.id);
+            }
+            if (this.phone) this.panel = '';
+        },
+        // the view stays where it is when the map draws again
+        keepView() { if (this.lastView) this.view = { center: this.lastView.center, zoom: this.lastView.zoom }; },
+        chooseBasemap(id) { this.keepView(); this.basemapId = id; },
+        toggleLayer(layer) {
+            this.keepView();
+            const shown = this.layerShown(layer);
+            this.hidden = Object.assign({}, this.hidden, { [layer.id]: shown });
+            // a record layer that was hidden when the configuration was read has no features yet: ask for them
+            if (!shown && layer.adapterKey && layer.visible === false && !(this.effective.features && (this.effective.features.features || [])
+                    .some((feature) => feature.properties && feature.properties.layerId === layer.id))) this.load(layer.id);
+        },
+        onSelect(place) {
+            const point = (this.mapConfig.points || []).find((one) => one.id === place.id) || {};
+            this.selected = Object.assign({}, place, { precision: this.precisionText(point.precisionEnumId) || point.precision || '', source: point.source || point.sourceText || '' });
+            this.panel = 'details';
+        },
+        onViewChange(change) {
+            this.lastView = { center: change.center, zoom: change.zoom, extent: change.extent };
+            if (!this.restoreLastView) return;
+            clearTimeout(this.rememberTimer);
+            this.rememberTimer = setTimeout(() => {
+                moqui.request(this.screenPath + '/rememberView', { method: 'POST',
+                    params: { lastView: JSON.stringify({ center: this.lastView.center, zoom: Math.round((this.lastView.zoom || 0) * 100) / 100 }) } })
+                    .catch((err) => console.warn('Maps: the last view was not kept', err));
+            }, 2000);
+        },
+        openSave() { this.saveName = ''; this.saveShared = 'N'; this.saveShown = true; },
+        saveView() {
+            if (!this.lastView || this.saving) return;
+            this.saving = true;
+            const view = { center: this.lastView.center, zoom: Math.round((this.lastView.zoom || 0) * 100) / 100,
+                layers: this.overlays.concat(this.recordLayers).filter((layer) => this.layerShown(layer)).map((layer) => layer.id) };
+            if (this.basemapId) view.basemap = this.basemapId;
+            const params = { description: this.saveName.trim(), isShared: this.saveShared, view: JSON.stringify(view) };
+            if (this.effective && this.effective.profileId) params.profileId = this.effective.profileId;
+            this.request('saveView', { method: 'POST', params }).then((json) => {
+                if (json.applied) {
+                    this.saveShown = false;
+                    moqui.notifyMessages([{ type: 'success', message: t('View saved') }], null);
+                    this.loadViews();
+                } else moqui.notifyMessages(null, [json.reason || t('The view was not saved')]);
+            }, (err) => moqui.notifyMessages(null, [String(err && err.message || err)])).then(() => { this.saving = false; });
+        },
+        copy(place) {
+            const text = this.coordinates(place);
+            const clipboard = navigator.clipboard;
+            if (!clipboard) return;
+            clipboard.writeText(text).then(() => moqui.notifyMessages([{ type: 'success', message: t('Copied') + ': ' + text }], null),
+                (err) => console.warn('Maps: the coordinates were not copied', err));
+        },
+        toggleFullscreen() {
+            if (document.fullscreenElement) document.exitFullscreen();
+            else if (this.$refs.frame && this.$refs.frame.requestFullscreen) this.$refs.frame.requestFullscreen();
+        },
+        measure() {
+            this.phone = window.innerWidth < 600;
+            const holder = this.$refs.mapHolder;
+            const top = holder ? holder.getBoundingClientRect().top : 120;
+            // the shell's footer, when it is fixed over the page, is not the map's
+            const footer = !this.fullscreen && document.querySelector('.q-footer');
+            const below = footer ? footer.offsetHeight : 0;
+            this.mapPx = Math.max(240, Math.floor(window.innerHeight - top - below - 8));
+        },
+        onFullscreen() {
+            this.fullscreen = document.fullscreenElement === this.$refs.frame;
+            this.keepView();
+            this.$nextTick(() => this.measure());
+        }
+    },
+    mounted() {
+        this.measure();
+        this.onResize = () => this.measure();
+        window.addEventListener('resize', this.onResize);
+        this.onFullscreenChange = () => this.onFullscreen();
+        document.addEventListener('fullscreenchange', this.onFullscreenChange);
+        this.load();
+        this.loadViews();
+        this.loadPreferences();
+    },
+    beforeUnmount() {
+        window.removeEventListener('resize', this.onResize);
+        document.removeEventListener('fullscreenchange', this.onFullscreenChange);
+        clearTimeout(this.rememberTimer);
+    }
+};
+</script>

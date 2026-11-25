@@ -10197,7 +10197,11 @@
             addContainer(contId, comp) { this.activeContainers[contId] = comp; },
             // an unmounted container takes its registration back, unless another has the id since
             removeContainer(contId, comp) { if (this.activeContainers[contId] === comp) delete this.activeContainers[contId]; },
-            reloadContainer(contId) { const comp = this.activeContainers[contId]; if (comp) comp.reload(); else console.error("Container with ID " + contId + " not found, not reloading"); },
+            // _screen is the screen the page shows: a dialog's form reloads the page behind it in place (the local-map dialog's Save location)
+            reloadContainer(contId) {
+                if (contId === "_screen") { this.reloadSubscreens(); return; }
+                const comp = this.activeContainers[contId]; if (comp) comp.reload(); else console.error("Container with ID " + contId + " not found, not reloading");
+            },
             loadContainer(contId, url, method) { const comp = this.activeContainers[contId]; if (comp) comp.load(url, method); else console.error("Container with ID " + contId + " not found, not loading url " + url); },
             hideContainer(contId) { const comp = this.activeContainers[contId]; if (comp && comp.hide) comp.hide(); else console.error("Container with ID " + contId + " not found, not hiding"); },
 

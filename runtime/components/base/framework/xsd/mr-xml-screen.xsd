@@ -1532,6 +1532,10 @@ along with this software (see the LICENSE.md file). If not, see
             each a map of longitude and latitude (or lon and lat), label, precisionEnumId (or precision), sourceText (or
             source) and an optional id; drawn after the plain point. A place whose coordinates are not WGS84 degrees is
             left out and logged.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="features" type="xs:string"><xs:annotation><xs:documentation>An expression of a GeoJSON
+            FeatureCollection in WGS84 (each feature's label property its label), such as a record's area or line as the
+            effective configuration's features give it, drawn over the basemap in qvt; the other modes list the places only.
+            At most 1000 features are taken.</xs:documentation></xs:annotation></xs:attribute>
         <xs:attribute name="config-transition" type="xs:string"><xs:annotation><xs:documentation>A transition of the
             screen (or a path) that answers the map's effective configuration as JSON (the shape documented in
             js/WebrootMap.js and docs/ui/Qvt-Client.md); m-map asks it with profileId, layerIds, adapterKey, recordKey
@@ -1543,6 +1547,9 @@ along with this software (see the LICENSE.md file). If not, see
             point: a click, Enter at the map's center from the keyboard, or a typed latitude and longitude. m-map emits
             pick with {lon, lat} (WGS84) and dispatches the DOM event m-map-pick with that detail from its element; the
             tui map takes the latitude and longitude as numbers. A choice saves nothing by itself.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="pick-form" type="xs:string"><xs:annotation><xs:documentation>With pick, the name of a form of the
+            screen whose latitude and longitude fields a choice fills (in qvt), so the form posts the point: the local-map
+            dialog's Choose location. In the other modes the fields are typed.</xs:documentation></xs:annotation></xs:attribute>
         <xs:attribute name="condition" type="xs:string"/>
         <xs:attribute name="style" type="xs:string"/>
     </xs:complexType></xs:element>
