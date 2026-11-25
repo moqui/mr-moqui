@@ -256,6 +256,73 @@ async fn a_passthrough_tunnel_is_from_the_client_its_proxy_header_names() {
     );
 }
 
+/// A managed instance's TLS to its manager, as its dialer makes it: the manager's link key pinned, the instance's
+/// own presented, ALPN `moqui-manage/1`.
+#[cfg(all(feature = "manage", feature = "instances"))]
+fn manager_connector(manager: &crate::manage_link::LinkKey) -> tokio_rustls::TlsConnector {
+    use crate::tls_pin::{parse_hex, Pin, PinVerifier};
+    let instance = crate::manage_link::LinkKey::generate("instance").unwrap();
+    let identity = instance.identity();
+    let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+    let pin = parse_hex(manager.fingerprint()).unwrap();
+    let mut tls = rustls::ClientConfig::builder_with_provider(Arc::clone(&provider))
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .dangerous()
+        .with_custom_certificate_verifier(PinVerifier::new(Pin::PublicKey(pin), true, &provider))
+        .with_client_auth_cert(vec![identity.cert()], identity.key_der())
+        .unwrap();
+    tls.alpn_protocols = vec![crate::manage_link::ALPN.to_vec()];
+    tokio_rustls::TlsConnector::from(Arc::new(tls))
+}
+
+/// plans/Vault-Instances.md §4.4, a manager behind a firewall: its instances dial a passthrough host name of its edge
+/// node, and a tunnel whose ClientHello offers `moqui-manage/1` is the manager link's, under the manager's link key and
+/// answered by it, not this node's web. On a node that manages nothing no manager answers it.
+#[cfg(all(feature = "manage", feature = "instances"))]
+#[tokio::test]
+async fn a_manager_link_down_a_passthrough_tunnel_is_the_managers() {
+    let context = moqui_core::context::ExecutionContextFactory::test_context();
+    let factory = Arc::clone(context.factory());
+    let manager = crate::manage_link::LinkKey::generate("manager").unwrap();
+    let (_stop_manager, manager_shutdown) = tokio::sync::watch::channel(false);
+    crate::manage_link::accept::acceptor(
+        &factory,
+        &manager,
+        "manager-1",
+        crate::manage_link::accept::AcceptConfig::default(),
+        manager_shutdown,
+    )
+    .unwrap();
+    let client: SocketAddr = "203.0.113.9:5000".parse().unwrap();
+    let header = crate::proxy_header::v2(client, "192.0.2.1:443".parse().unwrap());
+    let name = rustls::pki_types::ServerName::try_from("manage.example.com").unwrap();
+
+    let (mut web, _, _stop) = local("down-manage");
+    web.factory = Arc::downgrade(&factory);
+    let mut send = connect(web).await;
+    let mut tunnel = open(&mut send, TUNNEL_HTTPS).await.unwrap();
+    tunnel.write_all(&header).await.unwrap();
+    // the pin is the manager's link key, so the handshake itself shows the manager answered
+    let mut tls = manager_connector(&manager).connect(name.clone(), tunnel).await.unwrap();
+    assert_eq!(tls.get_ref().1.alpn_protocol(), Some(crate::manage_link::ALPN));
+    tls.write_all(&[crate::manage_link::ROLE_UP]).await.unwrap();
+    tls.flush().await.unwrap();
+    // a key the manager never pinned: refused (or failed, with no instance table here), by the manager
+    let (answer, _) = crate::link::read_answer(&mut tls).await.unwrap();
+    assert!(
+        matches!(answer, crate::link::Answer::Refused | crate::link::Answer::Failed),
+        "{answer:?}"
+    );
+
+    // a node with no manager on it: no manager's key answers the same tunnel
+    let (web, _, _stop) = local("down-manage-none");
+    let mut send = connect(web).await;
+    let mut tunnel = open(&mut send, TUNNEL_HTTPS).await.unwrap();
+    tunnel.write_all(&header).await.unwrap();
+    assert!(manager_connector(&manager).connect(name, tunnel).await.is_err());
+}
+
 #[tokio::test]
 async fn an_xmpp_tunnel_is_refused_on_a_node_with_no_xmpp_server() {
     // the STARTTLS and direct TLS kinds (plans/archive/Edge-Node.md §5.4, E9) go only to this node's own XMPP server, which an

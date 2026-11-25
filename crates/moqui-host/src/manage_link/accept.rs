@@ -209,6 +209,24 @@ impl std::fmt::Debug for ManagerServer {
 #[derive(Default)]
 struct Kept(Mutex<Option<Arc<ManagerServer>>>);
 
+/// The manager's acceptor on a factory, for a link that reaches it other than on the HTTPS listener: a passthrough
+/// tunnel its edge node sends down the edge link ([`acceptor_of`]).
+#[derive(Default)]
+struct KeptAcceptor(Mutex<Option<Arc<Acceptor>>>);
+
+/// The manager's acceptor of `factory`, when its HTTPS listener takes manager links: for a manager behind a firewall,
+/// which its instances reach at a passthrough host name of its edge node (plans/Vault-Instances.md §4.4).
+#[cfg_attr(not(feature = "edge"), allow(dead_code))]
+pub(crate) fn acceptor_of(factory: &ExecutionContextFactory) -> Option<Arc<Acceptor>> {
+    lock(&factory.extension(|_| KeptAcceptor::default()).0).clone()
+}
+
+/// The bytes under a link connection's TLS: a TCP connection to the HTTPS listener, or a passthrough tunnel the
+/// manager's edge node sent down its edge link.
+pub(crate) trait ManageStream: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static {}
+
+impl<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static> ManageStream for S {}
+
 /// The manager's server of `factory`, when its HTTPS listener takes manager links.
 pub(crate) fn server_of(factory: &ExecutionContextFactory) -> Option<Arc<ManagerServer>> {
     lock(&factory.extension(|_| Kept::default()).0).clone()
@@ -313,10 +331,12 @@ pub(crate) fn acceptor(
         shutdown,
     });
     *lock(&factory.extension(|_| Kept::default()).0) = Some(Arc::clone(&server));
-    Some(Arc::new(Acceptor {
+    let acceptor = Arc::new(Acceptor {
         tls: Arc::new(tls),
         server,
-    }))
+    });
+    *lock(&factory.extension(|_| KeptAcceptor::default()).0) = Some(Arc::clone(&acceptor));
+    Some(acceptor)
 }
 
 impl Acceptor {
@@ -350,8 +370,27 @@ impl Acceptor {
     }
 
     /// Serve a link connection until it closes.
-    pub(crate) async fn serve(&self, stream: TlsStream<TcpStream>, remote: SocketAddr) {
+    pub(crate) async fn serve<S: ManageStream>(&self, stream: TlsStream<S>, remote: SocketAddr) {
         Arc::clone(&self.server).serve(stream, remote).await;
+    }
+
+    /// A link connection that came down a passthrough tunnel, its ClientHello read (`accepted`, which offered
+    /// `moqui-manage/1`): the link's handshake, then served as on the listener, from `remote`, the instance's address
+    /// the tunnel's PROXY header named. `limit` bounds the handshake.
+    #[cfg_attr(not(feature = "edge"), allow(dead_code))]
+    pub(crate) async fn serve_passthrough<S: ManageStream>(
+        &self,
+        accepted: rustls::server::Accepted,
+        stream: S,
+        remote: SocketAddr,
+        limit: Duration,
+    ) {
+        let start = tokio_rustls::StartHandshake::from_parts(accepted, stream);
+        match tokio::time::timeout(limit, start.into_stream(Arc::clone(&self.tls))).await {
+            Ok(Ok(stream)) => self.serve(stream, remote).await,
+            Ok(Err(err)) => tracing::debug!("manager link through the edge node from {remote}: TLS failed: {err}"),
+            Err(_) => tracing::debug!("manager link through the edge node from {remote}: TLS timed out"),
+        }
     }
 }
 
@@ -449,7 +488,7 @@ impl ManagerServer {
         true
     }
 
-    async fn serve(self: Arc<Self>, mut stream: TlsStream<TcpStream>, remote: SocketAddr) {
+    async fn serve<S: ManageStream>(self: Arc<Self>, mut stream: TlsStream<S>, remote: SocketAddr) {
         let fingerprint = stream
             .get_ref()
             .1
@@ -500,7 +539,12 @@ impl ManagerServer {
         }
     }
 
-    async fn serve_up(self: Arc<Self>, mut stream: TlsStream<TcpStream>, remote: SocketAddr, fingerprint: String) {
+    async fn serve_up<S: ManageStream>(
+        self: Arc<Self>,
+        mut stream: TlsStream<S>,
+        remote: SocketAddr,
+        fingerprint: String,
+    ) {
         let lookup = fingerprint.clone();
         let linked = self
             .on_pool(move |facade| moqui_instance::link::linked(facade, &lookup))
@@ -577,9 +621,9 @@ impl ManagerServer {
 
     /// Serve the `Manager` service on a connection until it ends, `closed` signals (with the time its Hello must come
     /// in), the listener stops, or a pairing connection's time is up.
-    async fn serve_h2(
+    async fn serve_h2<S: ManageStream>(
         self: Arc<Self>,
-        stream: TlsStream<TcpStream>,
+        stream: TlsStream<S>,
         conn: Arc<Conn>,
         closed: Option<(watch::Receiver<bool>, Duration)>,
         lifetime: Option<Duration>,
