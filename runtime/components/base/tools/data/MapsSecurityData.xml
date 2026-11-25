@@ -37,7 +37,32 @@ along with this software (see the LICENSE.md file). If not, see
                 nameIsPattern="Y" inheritAuthz="N"/>
         <artifacts artifactName="org.moqui.maps.MapServices.find#MapAdapters" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
         <artifacts artifactName="org.moqui.maps.MapServices.get#AdapterService" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+        <!-- what a map of any app is drawn from, and the user's own preferences read: the effective configuration reads only
+            what the user may be offered, and a record's place only through its adapter, whose own grant and access check
+            hold (not inherited) -->
+        <artifacts artifactName="org.moqui.maps.MapServices.get#EffectiveConfig" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+        <artifacts artifactName="org.moqui.maps.MapServices.get#Preferences" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
         <authz artifactAuthzId="MAPS_DIALOG_USERS" userGroupId="ALL_USERS" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
+    </artifactGroups>
+
+    <!-- What the Maps app changes for its user: their preferences and saved views, each service acting on the signed-in
+        user's own (a saved view another user shared is read, never changed). The app's users and ADMIN, as the app. -->
+    <artifactGroups artifactGroupId="MAPS_APP_SERVICES" description="Maps: preferences and saved views">
+        <artifacts artifactName="org.moqui.maps.MapServices.store#Preferences" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+        <artifacts artifactName="org.moqui.maps.MapServices.find#SavedViews" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+        <artifacts artifactName="org.moqui.maps.MapServices.store#SavedView" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+        <artifacts artifactName="org.moqui.maps.MapServices.delete#SavedView" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+        <authz artifactAuthzId="MAPS_APP_SVC_USERS" userGroupId="MAPS_USERS" authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
+        <authz artifactAuthzId="MAPS_APP_SVC_ADMIN" userGroupId="ADMIN" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
+    </artifactGroups>
+
+    <!-- The Maps readiness providers (framework data/AdminConfigurationData.xml): the registry calls check#Readiness as the reader,
+        and the service checks ADMIN_OVERVIEW_VIEW or ADMIN_CONNECTION_VIEW itself, so every user may call it. The mapProvider
+        connection kind's run#MapProviderAdapter needs no grant: the connection services' inheritable allow covers it
+        (AdminConnectionServices), and it checks ADMIN_CONNECTION_VIEW and ADMIN_CONNECTION_MANAGE itself. -->
+    <artifactGroups artifactGroupId="MAPS_READINESS" description="Maps: readiness checks">
+        <artifacts artifactName="org.moqui.maps.MapServices.check#Readiness" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+        <authz artifactAuthzId="MAPS_READINESS_ALL" userGroupId="ALL_USERS" authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
     </artifactGroups>
 
     <!-- Configuration: providers, profiles, layers, the outside-request policy, Geo data sets and their imports (§3.1,

@@ -128,6 +128,7 @@ along with this software (see the LICENSE.md file). If not, see
                     <set field="testText" from="adapterKey === 'printer' ? 'Prints one fixed test page on the printer.'
                             : adapterKey === 'relay' ? 'Connects to the relay and signs in. Nothing is sent unless you choose the test message, which goes to your own address only.'
                             : adapterKey === 'mailOAuth' ? 'Checks that the client is configured. No request is made: the provider proves it when a mail account signs in.'
+                            : adapterKey === 'mapProvider' ? 'Fetches the provider\'s style or a tile once, with no credentials and never its key, and checks that it names only the provider\'s own host.'
                             : 'Sends one request with no credentials and no content to the connection\'s address, to see that it answers. Nothing is changed there, and the sign-in is proven by the first real use.'"/>
                 </if>
             </actions>

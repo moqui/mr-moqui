@@ -184,6 +184,11 @@ along with this software (see the LICENSE.md file). If not, see
             description="A printer on a print server (NetworkPrinter)"/>
     <moqui.server.ConnectionAdapter adapterKey="relay" title="Mail relay" adapterGroup="mail" creatable="Y" sequenceNum="10"
             description="An outgoing mail server no mail account owns (EmailServer)"/>
+    <!-- Maps' providers (plans/Maps.md §4.2): a kind with a service, org.moqui.maps.MapServices.run#MapProviderAdapter
+        (MapProviders.js), on the same engine; Maps › Configuration takes the shared parts in -->
+    <moqui.server.ConnectionAdapter adapterKey="mapProvider" title="Map provider" adapterGroup="integration" creatable="Y" sequenceNum="70"
+            description="A hosted basemap style, raster tiles or a geocoder a map is drawn from or asks (MapProvider)"
+            adapterServiceName="org.moqui.maps.MapServices.run#MapProviderAdapter"/>
 
     <!-- ========== Admin P12 (mr-boss plan/impl-admin.md P12): protocols and the mail queue ========== -->
     <!-- The protocol services for every signed-in user: get#ProtocolReadiness checks ADMIN_CONNECTION_VIEW,
@@ -558,6 +563,16 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.server.ReadinessProvider providerKey="constitution.global" version="1" ownerApp="System" title="Instance Constitution"
             healthGroupEnumId="AdmHgBusiness" scopeEnumId="AdmScInstance" serviceName="org.moqui.admin.ReadinessServices.check#InstanceSetup"
             requiredPermission="ADMIN_OVERVIEW_VIEW" fixRoute="constitution" sequenceNum="140"/>
+    <!-- Maps' (plans/Maps.md §4.2), org.moqui.maps.MapServices.check#Readiness (MapProviders.js; its grant is tools
+        data/MapsSecurityData.xml MAPS_READINESS): mapsConfiguration is Maps › Configuration's key -->
+    <moqui.server.ReadinessProvider providerKey="maps.profile" version="1" ownerApp="Maps" title="Map profile"
+            description="The installation's default map profile can be drawn; whether maps draw the country outlines only"
+            healthGroupEnumId="AdmHgBusiness" scopeEnumId="AdmScInstance" serviceName="org.moqui.maps.MapServices.check#Readiness"
+            requiredPermission="ADMIN_OVERVIEW_VIEW" fixRoute="mapsConfiguration" sequenceNum="300"/>
+    <moqui.server.ReadinessProvider providerKey="maps.providers" version="1" ownerApp="Maps" title="Map providers"
+            description="Each enabled map provider passed its test, and the page's Content-Security-Policy lets a browser reach its hosts"
+            healthGroupEnumId="AdmHgTransport" scopeEnumId="AdmScInstance" serviceName="org.moqui.maps.MapServices.check#Readiness"
+            requiredPermission="ADMIN_CONNECTION_VIEW" fixRoute="adminConnection" sequenceNum="310"/>
     <!-- The framework's own settings index entries, each shown to a caller its System screen opens to. An app that
         shows one of these screens under its own root seeds the entry again with its own screenLocation. -->
     <moqui.server.SettingsEntry settingsKey="admin.instanceSettings" version="1" ownerApp="System" title="Instance settings"
