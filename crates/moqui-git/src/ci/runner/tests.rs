@@ -199,6 +199,7 @@ fn an_archive_unpacks_within_its_limits_and_only_files_directories_and_inner_lin
 /// Between a registered runner's jobs only what started since the job began is killed: never the runner, what it runs
 /// under, or a process started before the job (the `tee` its output goes through). `ps`'s elapsed time reads in its
 /// forms (`mm:ss`, `hh:mm:ss`, `dd-hh:mm:ss`).
+#[cfg(unix)]
 #[test]
 fn only_processes_started_during_the_job_are_leftovers() {
     assert_eq!(super::etime_seconds("00:07"), Some(7));
@@ -799,6 +800,7 @@ fn a_scratch_file_is_made_new_and_never_through_a_link() {
 }
 
 /// SEC-GIT-95: after an unpack, a link it made that now resolves outside the workspace is removed.
+#[cfg(unix)]
 #[test]
 fn a_link_an_unpack_made_that_leads_out_is_removed() {
     let root = scratch("unpack-links-out").canonicalize().unwrap();

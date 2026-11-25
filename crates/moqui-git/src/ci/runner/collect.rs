@@ -31,7 +31,8 @@ pub const COLLECT_LIMIT: Duration = Duration::from_secs(30 * 60);
 /// The arguments of the child a `--step-user` runner reads the workspace with: `moqui ci-run collect <what>`.
 pub const COLLECT_ARGS: [&str; 2] = ["ci-run", "collect"];
 
-/// What a collect child is asked for.
+/// What a collect child is asked for. A collect child runs on Unix, where a step can run as another user.
+#[cfg(unix)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Collect {
     /// The paths a pattern names ([`find`]).
@@ -44,8 +45,8 @@ pub(super) enum Collect {
     Probe,
 }
 
+#[cfg(unix)]
 impl Collect {
-    #[cfg(unix)]
     fn word(self) -> &'static str {
         match self {
             Self::Find => "find",
@@ -55,7 +56,6 @@ impl Collect {
         }
     }
 
-    #[cfg(unix)]
     fn of(word: &str) -> Option<Self> {
         [Self::Find, Self::Report, Self::Pack, Self::Probe]
             .into_iter()

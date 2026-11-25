@@ -1699,7 +1699,7 @@ fn plain_path(path: std::path::PathBuf) -> std::path::PathBuf {
         if plain.encode_utf16().count() >= 260 {
             return path;
         }
-        return std::path::PathBuf::from(plain);
+        std::path::PathBuf::from(plain)
     }
     #[cfg(not(windows))]
     path

@@ -488,6 +488,7 @@ fn output_of(program: &str, args: &[&str]) -> String {
 }
 
 /// Seconds from a `ps` `etime` (`[[dd-]hh:]mm:ss`), the time since a process started.
+#[cfg(unix)]
 fn etime_seconds(text: &str) -> Option<u64> {
     let text = text.trim();
     let (days, clock) = match text.split_once('-') {
@@ -502,6 +503,7 @@ fn etime_seconds(text: &str) -> Option<u64> {
 }
 
 /// The processes of a `ps -o pid=,etime=` listing started within `within_seconds`, but those of `keep`.
+#[cfg(unix)]
 fn started_within(listing: &str, within_seconds: u64, keep: &[u32]) -> Vec<u32> {
     listing
         .lines()
@@ -832,16 +834,10 @@ impl Drop for WorkDir {
     }
 }
 
-/// The effective user id of this process (on unix; 0 elsewhere, where the checks that use it do not run).
+/// The effective user id of this process.
+#[cfg(unix)]
 fn effective_uid() -> u32 {
-    #[cfg(unix)]
-    {
-        rustix::process::geteuid().as_raw()
-    }
-    #[cfg(not(unix))]
-    {
-        0
-    }
+    rustix::process::geteuid().as_raw()
 }
 
 /// The effective group id of this process (on unix; 0 elsewhere).

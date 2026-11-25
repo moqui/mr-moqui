@@ -692,6 +692,16 @@ fn has_in(condition: &Condition, field: &str, expected: &[&str]) -> bool {
     }
 }
 
+/// A file link. On Unix a symlink. On Windows a hard link, which needs no extra privilege (a file symlink does).
+fn link_file(from: impl AsRef<Path>, to: impl AsRef<Path>) {
+    let from = from.as_ref();
+    let to = to.as_ref();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(from, to).unwrap();
+    #[cfg(windows)]
+    std::fs::hard_link(from, to).unwrap();
+}
+
 fn product_facade() -> (EntityFacade, TempDir) {
     let root = temp_dir("product-fw");
     let entity_dir = root.path().join("entity");
@@ -699,17 +709,16 @@ fn product_facade() -> (EntityFacade, TempDir) {
     std::fs::create_dir_all(&entity_dir).unwrap();
     std::fs::create_dir_all(&conf_dir).unwrap();
     let real = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
-    std::os::unix::fs::symlink(
+    link_file(
         real.join("conf/MoquiDefaultConf.xml"),
         conf_dir.join("MoquiDefaultConf.xml"),
-    )
-    .unwrap();
+    );
     for entry in std::fs::read_dir(real.join("entity")).unwrap() {
         let entry = entry.unwrap();
         if !entry.file_type().unwrap().is_file() {
             continue;
         }
-        std::os::unix::fs::symlink(entry.path(), entity_dir.join(entry.file_name())).unwrap();
+        link_file(entry.path(), entity_dir.join(entry.file_name()));
     }
     std::fs::write(entity_dir.join("TestProductAuthz.xml"), PRODUCT_XML).unwrap();
     (open_mem(root.path()), root)
