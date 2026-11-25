@@ -238,19 +238,31 @@ fn owned(dir: &Path) -> bool {
     std::fs::symlink_metadata(dir).is_ok_and(|meta| meta.uid() == uid)
 }
 
-/// This process can write in `dir`, which on Windows is how a scratch runtime of this user is told from another
-/// user's. The probe file goes as soon as it is created.
+/// The owner of `dir` is this process. On Windows that is the token owner, the SID a new object of this process
+/// receives. A directory under `C:\` inherits Authenticated Users' Modify, so a write probe would accept another
+/// user's leftover scratch runtime and the sweep would remove it. A missing path, a refused read, or a PowerShell
+/// that did not start counts as not owned, and the directory stays.
 #[cfg(windows)]
 fn owned(dir: &Path) -> bool {
-    let probe = dir.join(format!(".moqui-test-owned-{}", std::process::id()));
-    match std::fs::OpenOptions::new().write(true).create_new(true).open(&probe) {
-        Ok(file) => {
-            drop(file);
-            let _ = std::fs::remove_file(probe);
-            true
-        }
-        Err(_) => false,
-    }
+    std::process::Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            concat!(
+                "$ErrorActionPreference = 'Stop'; ",
+                "$mine = [Security.Principal.WindowsIdentity]::GetCurrent().Owner.Value; ",
+                "$owner = (Get-Acl -LiteralPath $env:MOQUI_OWNED_DIR)",
+                ".GetOwner([Security.Principal.SecurityIdentifier]).Value; ",
+                "if ($owner -eq $mine) { exit 0 } else { exit 1 }"
+            ),
+        ])
+        .env("MOQUI_OWNED_DIR", dir)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
 }
 
 #[cfg(not(any(unix, windows)))]
@@ -418,6 +430,30 @@ mod tests {
         let _ = holder.kill();
         let _ = holder.wait();
         assert!(!dir.exists(), "the scratch directory was left");
+    }
+
+    /// The owner SID of a directory this process just created is this process's token owner, and the check writes no
+    /// probe file.
+    #[cfg(windows)]
+    #[test]
+    fn a_directory_this_process_created_is_owned() {
+        let dir = std::env::temp_dir().join(format!("mt-owned-{}-1", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(super::owned(&dir), "a directory this process created was not owned");
+        let probe = dir.join(format!(".moqui-test-owned-{}", std::process::id()));
+        assert!(!probe.exists(), "the ownership check left a probe file");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `C:\Windows` is TrustedInstaller's, and a path that is not there has no owner.
+    #[cfg(windows)]
+    #[test]
+    fn a_directory_this_process_did_not_create_is_not_owned() {
+        assert!(!super::owned(std::path::Path::new(r"C:\Windows")));
+        let missing = std::env::temp_dir().join(format!("mt-owned-missing-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&missing);
+        assert!(!super::owned(&missing));
     }
 
     #[cfg(windows)]
