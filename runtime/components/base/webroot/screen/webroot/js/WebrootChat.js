@@ -2489,23 +2489,21 @@
         },
         template:
             '<div class="m-user-status">' +
-                '<q-item id="m-status-current" dense>' +
-                    '<q-item-section avatar class="m-status-avatar"><span class="m-status-dot" :class="\'m-presence-\' + currentDot"></span></q-item-section>' +
-                    '<q-item-section><q-item-label>{{currentLabel}}</q-item-label>' +
-                        '<q-item-label v-if="me.statusText || me.emoji" caption class="m-status-text">{{me.emoji ? me.emoji + \' \' : \'\'}}{{me.statusText}}</q-item-label></q-item-section>' +
+                '<q-item id="m-status-current" class="q-ma-md" data-status="message" @click="openDialog">' +
+                    '<q-item-section side avatar class="m-status-avatar"><span class="m-status-dot" :class="\'m-presence-\' + currentDot"></span></q-item-section>' +
+                    '<q-item-section v-if="me.statusText || me.emoji">' +
+                        '<q-item-label>{{currentLabel}}</q-item-label>' +
+                        '<q-item-label caption class="m-status-text">{{me.emoji ? me.emoji + \' \' : \'\'}}{{me.statusText}}</q-item-label>' +
+                    '</q-item-section>' +
+                    '<q-item-section v-else>{{labels.setStatus}}</q-item-section>' +
+                    '<q-item-section v-if="me.statusText || me.emoji" side>' +
+                        '<q-btn flat round dense icon="sym_o_close" data-status="clear" @click.stop.prevent="clearText" @keyup.enter.stop/>' +
+                    '</q-item-section>' +
                 '</q-item>' +
                 '<q-item v-for="option in options" :key="option.value" dense clickable v-close-popup :active="current === option.value" :data-status="option.value" @click="choose(option.value)">' +
                     '<q-item-section avatar class="m-status-avatar"><span class="m-status-dot" :class="\'m-presence-\' + option.dot"></span></q-item-section>' +
                     '<q-item-section>{{option.label}}</q-item-section>' +
                     '<q-item-section side v-if="current === option.value"><q-icon flat round dense name="sym_o_check"/></q-item-section>' +
-                '</q-item>' +
-                '<q-item dense clickable v-close-popup data-status="message" @click="openDialog">' +
-                    '<q-item-section avatar class="m-status-avatar"><q-icon name="sym_o_edit" size="xs"></q-icon></q-item-section>' +
-                    '<q-item-section>{{labels.setStatus}}</q-item-section>' +
-                '</q-item>' +
-                '<q-item v-if="me.statusText || me.emoji" dense clickable v-close-popup data-status="clear" @click="clearText">' +
-                    '<q-item-section avatar class="m-status-avatar"><q-icon name="sym_o_close" size="xs"></q-icon></q-item-section>' +
-                    '<q-item-section>{{labels.clearStatus}}</q-item-section>' +
                 '</q-item>' +
             '</div>'
     };
