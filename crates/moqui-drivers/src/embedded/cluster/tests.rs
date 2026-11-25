@@ -475,7 +475,9 @@ fn a_cluster_with_its_password_given_keeps_no_password_file_and_a_cold_start_ope
         ..StartOptions::new(20)
     };
     // its tools put the password into a URL as it is: base64's / and + are refused before anything starts
-    let err = EmbeddedCluster::start_with(&dir, &with("a/b+c=")).map(|_| ()).unwrap_err();
+    let err = EmbeddedCluster::start_with(&dir, &with("a/b+c="))
+        .map(|_| ())
+        .unwrap_err();
     assert!(err.to_string().contains("letters, digits"), "{err}");
     let password = "the-sealed-superuser-password-7f3a";
     {
@@ -577,7 +579,29 @@ fn adopt_live_postmaster_keeps_the_same_pid() {
     let data_dir = owner.data_dir().to_path_buf();
     drop(driver);
     let pid = postmaster_pid(&data_dir);
+    // initdb's clear-text `password` on the host lines is SCRAM after a start; one put back is rewritten again, and the
+    // live postmaster adopted below is reloaded with it
+    let hba = data_dir.join("pg_hba.conf");
+    let host_methods = |text: &str| -> Vec<String> {
+        text.lines()
+            .map(str::trim)
+            .filter(|line| line.starts_with("host"))
+            .filter_map(|line| line.split_whitespace().nth(4).map(str::to_string))
+            .collect()
+    };
+    let started = std::fs::read_to_string(&hba).unwrap();
+    let methods = host_methods(&started);
+    assert!(
+        !methods.is_empty() && methods.iter().all(|method| method == "scram-sha-256"),
+        "{started}"
+    );
+    std::fs::write(&hba, started.replace("scram-sha-256", "password")).unwrap();
     let (cluster, driver) = EmbeddedCluster::start(&dir, 20).unwrap();
+    let adopted = std::fs::read_to_string(&hba).unwrap();
+    assert!(
+        host_methods(&adopted).iter().all(|method| method == "scram-sha-256"),
+        "{adopted}"
+    );
     assert_eq!(postmaster_pid(&data_dir), pid);
     let mut conn = driver.connect_postgres().unwrap();
     let rows = conn.query_once("SELECT 1", &[]).unwrap();

@@ -119,9 +119,9 @@ mod cluster {
         /// Install, initdb, start, and create the `moqui` database.
         ///
         /// On Unix the socket directory is the data directory and `listen_addresses` is empty.
-        /// On Windows `listen_addresses` is `127.0.0.1` and the postmaster binds an ephemeral port,
-        /// and each `host` rule of method `password` is `scram-sha-256` before the client connects.
-        /// The client uses `NoTls` either way.
+        /// On Windows `listen_addresses` is `127.0.0.1` and the postmaster binds an ephemeral port.
+        /// The client uses `NoTls` either way. On every platform each `host` rule of method `password`
+        /// is `scram-sha-256` before the client connects.
         ///
         /// A live postmaster is adopted when `PG_VERSION` matches this theseus major, and refused
         /// with that pid when it does not. An adopted postmaster keeps running after this handle,
@@ -828,10 +828,10 @@ mod cluster {
         let set_up = server.setup();
         drop(initdb_guard);
         set_up.map_err(|err| embedded("setup embedded postgres", data_dir, err))?;
-        // Windows reaches the cluster over TCP with no TLS. initdb's host method `password` asks for the
-        // password in clear text, which this client refuses. The file is SCRAM before start, and a postmaster
-        // already live is reloaded: that needs no connection, which could not be made until the rules change.
-        #[cfg(not(unix))]
+        // A TCP connection has no TLS (Windows reaches the cluster that way; Unix has no TCP listener). initdb's host
+        // method `password` asks for the password in clear text, which this client refuses over TCP. The file is SCRAM
+        // before start on every platform, and a postmaster already live is reloaded: that needs no connection, which
+        // could not be made until the rules change.
         {
             let data = server.settings().data_dir.clone();
             if scram_host_auth_file(&data.join("pg_hba.conf"))? && postmaster_live(&data) {
@@ -1235,7 +1235,6 @@ mod cluster {
     /// `host` line's method `password` becomes `scram-sha-256`. A `local` line stays: clear text on this machine's
     /// Unix socket is still answered. A comment is left as written, including the word password in the header.
     /// The second value is whether a line changed.
-    #[cfg(any(not(unix), test))]
     fn scram_host_auth(text: &str) -> (String, bool) {
         let mut changed = false;
         let mut out = String::with_capacity(text.len() + 16);
@@ -1261,7 +1260,6 @@ mod cluster {
     }
 
     /// The method field of a TCP rule, when it is `password`. `None` leaves the line as it is.
-    #[cfg(any(not(unix), test))]
     fn rewrite_host_password_line(line: &str) -> Option<String> {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
@@ -1283,7 +1281,6 @@ mod cluster {
     }
 
     /// Byte range of whitespace-separated field `index` in `line`.
-    #[cfg(any(not(unix), test))]
     fn field_range(line: &str, index: usize) -> Option<std::ops::Range<usize>> {
         let bytes = line.as_bytes();
         let mut seen = 0;
@@ -1308,7 +1305,6 @@ mod cluster {
     }
 
     /// Rewrite `path` as [`scram_host_auth`]. A missing file is left missing. True when the file changed.
-    #[cfg(not(unix))]
     fn scram_host_auth_file(path: &Path) -> Result<bool, Error> {
         let text = match std::fs::read_to_string(path) {
             Ok(text) => text,
@@ -1326,7 +1322,6 @@ mod cluster {
 
     /// `pg_ctl reload` so a postmaster that is already up reads `pg_hba.conf`. No SQL connection can do it:
     /// until the reload, that postmaster still asks for the password in clear text.
-    #[cfg(not(unix))]
     fn reload_postmaster(data_dir: &Path, bin_dir: &Path) -> Result<(), Error> {
         let pg_ctl = tool_bin(bin_dir, "pg_ctl");
         let mut command = std::process::Command::new(&pg_ctl);
@@ -1648,7 +1643,7 @@ mod cluster {
     }
 
     // Inline `mod cluster` loads children from embedded/cluster/, not from beside embedded.rs.
-    // The rewriter test is its own module: `tests` is Unix-only, and this one runs there and on Windows.
+    // The rewriter test is its own module: `tests` is Unix-only, and this one runs on every platform.
     #[cfg(test)]
     mod hba_tests;
     #[cfg(all(test, windows))]
