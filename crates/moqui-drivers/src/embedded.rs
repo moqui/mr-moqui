@@ -1518,7 +1518,8 @@ mod cluster {
     /// run, or that exited without success, counts as live: a sweep must not stop another run's
     /// database because it could not tell. A successful listing is live when it names `pid` and is
     /// not the English "no tasks" line. A successful listing that does not name `pid` (a localized
-    /// absence line included) is not live.
+    /// absence line included) is not live. Only the Windows probe and its test call it.
+    #[cfg(any(windows, test))]
     fn tasklist_probe_live(ran: bool, success: bool, stdout: &str, pid: u32) -> bool {
         if !ran || !success {
             return true;
