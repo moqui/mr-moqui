@@ -23,10 +23,7 @@ use serde_json::json;
 
 use moqui_lib::object::{to_plain_string, Value, ValueMap};
 
-use super::{
-    cleanup_runs_docker, create_body, inspect_run_docker, remove_run_docker, start_run_docker,
-    Hardening,
-};
+use super::{cleanup_runs_docker, create_body, inspect_run_docker, remove_run_docker, start_run_docker, Hardening};
 use moqui_core::context::{ExecutionContext, ExecutionContextFactory};
 use moqui_core::entity::{EntityFacade, EntityValue};
 
@@ -143,6 +140,11 @@ fn answer(method: &str, target: &str, body: &serde_json::Value, seen: &Seen) -> 
                 json!({"Config": {"User": user, "Labels": {"moqui.ci.server": "this"}}, "Mounts": mounts}).to_string(),
             )
         }
+        // Docker's answer: no component named "Podman Engine"
+        ("GET", "/v1.40/version") => (
+            200,
+            json!({"Version": "27.5.1", "Components": [{"Name": "Engine"}]}).to_string(),
+        ),
         ("GET", _) => (404, json!({"message": "No such container"}).to_string()),
         ("POST", path) if path.ends_with("/start") => (204, String::new()),
         ("DELETE", path) if path.starts_with("/v1.40/networks/") => {
@@ -269,8 +271,15 @@ impl Api {
         (out, errors)
     }
 
+    /// What the fake API was asked, without the engine's `/version` question, which a create asks first.
     fn seen(&self) -> Vec<(String, String, serde_json::Value)> {
-        self.seen.lock().unwrap().clone()
+        self.seen
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, target, _)| target != "/v1.40/version")
+            .cloned()
+            .collect()
     }
 }
 
@@ -443,6 +452,16 @@ fn the_run_services_speak_the_docker_api() {
     assert_eq!(seen[1].2["HostConfig"]["Privileged"], false);
     assert_eq!(seen[1].2["HostConfig"]["Memory"], 2048i64 * 1024 * 1024);
     assert_eq!(seen[1].2["Labels"]["moqui.ci.job"], "J1");
+    // the engine was asked, once, for its tmpfs options (seen() leaves the question out)
+    assert_eq!(
+        api.seen
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, target, _)| target == "/v1.40/version")
+            .count(),
+        1
+    );
 
     // an image the host does not have is pulled, then created again
     api.seen.lock().unwrap().clear();
@@ -784,6 +803,27 @@ fn an_image_user_that_is_root_is_refused_before_it_starts() {
     let (out, errors) = api.call(start_run_docker, &start_parameters("moqui-build:1"));
     assert!(errors.is_empty(), "{errors}");
     assert!(out.contains_key("instanceRef"));
+}
+
+/// Podman refuses a tmpfs's `uid=` and `gid=` (`unknown mount option "uid=1000"`, seen on Podman 5.7): on Podman
+/// each tmpfs a numeric user owns takes `U` in their place, and a world-writable one is left as it is.
+#[test]
+fn on_podman_a_tmpfs_is_the_container_users_by_u_not_uid_and_gid() {
+    let mut body = create_body(
+        &[("image", Value::string("busybox"))]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect(),
+        &Hardening::default(),
+        None,
+    );
+    body["HostConfig"]["Tmpfs"]["/open"] = json!("rw,exec,nosuid,nodev,size=8m,mode=1777");
+    super::podman_tmpfs(&mut body);
+    let tmpfs = &body["HostConfig"]["Tmpfs"];
+    assert_eq!(tmpfs["/tmp"], "rw,exec,nosuid,nodev,size=1024m,mode=0700,U");
+    assert_eq!(tmpfs["/workspace"], "rw,exec,nosuid,nodev,size=4096m,mode=0700,U");
+    assert_eq!(tmpfs["/open"], "rw,exec,nosuid,nodev,size=8m,mode=1777");
+    assert_eq!(body["User"], "1000:1000", "U chowns to this user");
 }
 
 /// SEC-GIT-93: an image that declares a VOLUME runs with a sized tmpfs at each such path, so the engine makes no
