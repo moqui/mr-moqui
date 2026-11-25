@@ -272,6 +272,9 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="repositoryId" required="true"/>
             <parameter name="commitId" required="true"/>
             <parameter name="path"/>
+            <parameter name="diffLineOffset" type="Integer" default="0"><description>As get#GitCompare's</description></parameter>
+            <parameter name="diffLineLimit" type="Integer" default="0"><description>As get#GitCompare's; with it a
+                file has its hunks of that window, not unifiedDiff and html</description></parameter>
             <parameter name="includeHidden" type="Boolean" default="false"><description>Read the commits of hidden
                 merge requests too (set#MergeRequestHidden); with authorization disabled only</description></parameter>
         </in-parameters>
@@ -712,6 +715,13 @@ along with this software (see the LICENSE.md file). If not, see
                 files after it are still given. 0: no bound</description></parameter>
             <parameter name="withHtml" type="Boolean" default="true"><description>false: hunks only, no
                 moqui-diff html</description></parameter>
+            <parameter name="diffLineOffset" type="Integer" default="0"><description>With diffLineLimit, the first line
+                of a file's hunks given, counted from 0 without the hunks' headers; past the last line, the last window of
+                diffLineLimit lines at a multiple of it</description></parameter>
+            <parameter name="diffLineLimit" type="Integer" default="0"><description>At most this many lines of a file's
+                hunks from diffLineOffset (a page's part of a large file: the rest is not made into values); a hunk cut
+                at its start has skippedLines, and the file has diffLineCount (the lines of all its hunks) and
+                diffLineOffset (where the window starts). The html stays whole. 0: every line</description></parameter>
             <parameter name="headRepositoryId"><description>The repository head is a revision of: another one of the
                 fork network of repositoryId, which the user may view too (a fork compared with its parent). Empty:
                 repositoryId</description></parameter>

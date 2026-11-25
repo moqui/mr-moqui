@@ -571,7 +571,11 @@ revision of `headRepositoryId`, another repository of the fork network that the 
 fork's branch against its parent's) answers as GitHub's compare: the
 merge base, the commits in head and not in base (oldest first, at most 250), ahead and behind, the files changed from
 the merge base to head with their line counts, and with `withDiffs` each file's diff (at most 300 files) as the
-`moqui-diff` html and as hunks of numbered lines (`oldNo`, `newNo`) for a review to anchor to.
+`moqui-diff` html and as hunks of numbered lines (`oldNo`, `newNo`) for a review to anchor to. With `diffLineLimit` a
+file's hunks hold only that many lines from `diffLineOffset` (counted without the hunks' headers; past the end, the last
+such window), a hunk cut at its start has `skippedLines`, and the file has `diffLineCount` and `diffLineOffset`: a page
+of a large file asks for its part, and the rest of the file's lines are never made into values (`get#GitCommitDiff`
+takes the same two, and gives such a file its hunks in place of `unifiedDiff` and `html`).
 
 `merge#GitRefs(source, target, method, message)` merges a revision into a branch as the current user, by gix-merge
 (gix's `merge` feature: git's `merge-ort` rules, renames followed, both sides' changes to one file merged by lines):
