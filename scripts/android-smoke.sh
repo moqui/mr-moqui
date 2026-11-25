@@ -124,8 +124,10 @@ adb exec-out screencap -p >"$shot"
 # from it would show the shell first).
 echo "== a notification tap another app makes up opens no page" >&2
 loaded=$(adb logcat -d -s moqui-mobile | grep -c 'moqui-mobile: the shell loaded' || true)
+# as a real tap's intent is (the notification plugin's buildIntent): its action too, which the plugin's Rust side needs to
+# read the tap at all (ActionPerformed's actionId), so without it the app's own refusal is never reached
 adb shell am start -n "$package/.MainActivity" -a android.intent.action.MAIN --ei NotificationId 4242 \
-    --es LocalNotficationObject "'{\"id\":4242,\"extra\":{\"link\":\"/qapps/system/smoke-forged-tap\"}}'" >/dev/null
+    --es NotificationUserAction tap --es LocalNotficationObject "'{\"id\":4242,\"extra\":{\"link\":\"/qapps/system/smoke-forged-tap\"}}'" >/dev/null
 refused=
 for _ in $(seq 1 10); do
     if adb logcat -d -s moqui-mobile | grep -q "a notification's tap the app did not sign"; then
@@ -162,14 +164,20 @@ else
 fi
 
 echo "== backing out of the app, and starting it again" >&2
+running=$(adb shell pidof "$package" | tr -d '\r' || true)
 for _ in 1 2 3 4; do
     adb shell input keyevent 4
     sleep 1
 done
 sleep 2
-if [ -n "$(adb shell pidof "$package" | tr -d '\r' || true)" ]; then
+# the activity's own process ends with it; the outbox's background send then runs a few seconds later in a process of
+# its own (FlushWorker.background with ending), which is not that one
+after=$(adb shell pidof "$package" | tr -d '\r' || true)
+if [ -n "$after" ] && [ -n "$running" ] && printf ' %s ' $after | grep -q " $running "; then
     echo "FAILED: the process stayed after its activity ended" >&2
     failed=1
+elif [ -n "$after" ]; then
+    echo "   the activity's process ($running) ended; $after is the outbox's background send" >&2
 fi
 # the first run's log is kept, and the relaunch's ready line is its own
 log=$(adb logcat -d -s moqui-mobile)

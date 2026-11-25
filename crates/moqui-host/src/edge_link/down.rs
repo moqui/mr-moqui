@@ -430,17 +430,8 @@ where
     // (plans/Edge-Node2.md §4.7); anything else is this node's own
     let stream = match web.relay.as_ref().and_then(Weak::upgrade) {
         Some(server) => {
-            let read = tokio::time::timeout(TUNNEL_HANDSHAKE, super::accept::read_hello(&mut stream)).await;
-            let (accepted, hello) = match read {
-                Ok(Ok(read)) => read,
-                Ok(Err(err)) => {
-                    tracing::debug!("edge passthrough: the ClientHello from {client}: {err}");
-                    return;
-                }
-                Err(_) => {
-                    tracing::debug!("edge passthrough: no ClientHello from {client} in time");
-                    return;
-                }
+            let Some((accepted, hello)) = passthrough_hello(&mut stream, client).await else {
+                return;
             };
             // a local node's link, dialed at this edge member's link name on the front (plans/Edge-Node2.md §4.7)
             if super::accept::offers_link(&accepted) {
@@ -463,9 +454,34 @@ where
                 super::tunnel::relay_passthrough(server, stream, hello, &node, client, local).await;
                 return;
             }
-            Prefixed::Replay(super::xmpp_domain::Prefixed::new(hello, stream))
+            // the ClientHello read, played again
+            super::xmpp_domain::Prefixed::new(hello, stream)
         }
-        None => Prefixed::Direct(stream),
+        None => {
+            let Some((accepted, hello)) = passthrough_hello(&mut stream, client).await else {
+                return;
+            };
+            // a manager behind a firewall: its managed instances dial a passthrough host name of this node, and their
+            // links come down here (plans/Vault-Instances.md §4.4); the instance's address is the PROXY header's
+            if offers_manage(&accepted) {
+                let acceptor = web
+                    .factory
+                    .upgrade()
+                    .and_then(|factory| crate::manage_link::accept::acceptor_of(&factory));
+                match acceptor {
+                    Some(acceptor) => {
+                        let limit = web.serve.app.limits.header.unwrap_or(TUNNEL_HANDSHAKE);
+                        acceptor.serve_passthrough(accepted, stream, client, limit).await;
+                    }
+                    None => tracing::debug!(
+                        "edge passthrough: a manager link from {client}, but this node manages no instances"
+                    ),
+                }
+                return;
+            }
+            // the ClientHello read, played again
+            super::xmpp_domain::Prefixed::new(hello, stream)
+        }
     };
     // this node's own TLS: a relayed tunnel above needs no certificate of this node's
     let Some(tls) = web.serve.tls.clone() else {
@@ -488,51 +504,35 @@ where
     crate::http::serve_tunneled(stream, client, web.serve.app, web.serve.shutdown).await;
 }
 
-/// A tunnel's stream, with the ClientHello read already played again when it was read to choose where it goes.
-enum Prefixed<S> {
-    Direct(S),
-    Replay(super::xmpp_domain::Prefixed<S>),
-}
-
-impl<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin> tokio::io::AsyncRead for Prefixed<S> {
-    fn poll_read(
-        self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &mut tokio::io::ReadBuf<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        match self.get_mut() {
-            Self::Direct(stream) => Pin::new(stream).poll_read(cx, buf),
-            Self::Replay(stream) => Pin::new(stream).poll_read(cx, buf),
+/// A passthrough tunnel's ClientHello, read to choose where the connection goes: what rustls made of it, and its
+/// bytes, to play again. None (logged) when it does not come in time or is not one.
+async fn passthrough_hello<S>(stream: &mut S, client: SocketAddr) -> Option<(rustls::server::Accepted, Vec<u8>)>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    match tokio::time::timeout(TUNNEL_HANDSHAKE, super::accept::read_hello(stream)).await {
+        Ok(Ok(read)) => Some(read),
+        Ok(Err(err)) => {
+            tracing::debug!("edge passthrough: the ClientHello from {client}: {err}");
+            None
+        }
+        Err(_) => {
+            tracing::debug!("edge passthrough: no ClientHello from {client} in time");
+            None
         }
     }
 }
 
-impl<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin> tokio::io::AsyncWrite for Prefixed<S> {
-    fn poll_write(
-        self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        data: &[u8],
-    ) -> std::task::Poll<std::io::Result<usize>> {
-        match self.get_mut() {
-            Self::Direct(stream) => Pin::new(stream).poll_write(cx, data),
-            Self::Replay(stream) => Pin::new(stream).poll_write(cx, data),
-        }
-    }
-
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<std::io::Result<()>> {
-        match self.get_mut() {
-            Self::Direct(stream) => Pin::new(stream).poll_flush(cx),
-            Self::Replay(stream) => Pin::new(stream).poll_flush(cx),
-        }
-    }
-
-    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<std::io::Result<()>> {
-        match self.get_mut() {
-            Self::Direct(stream) => Pin::new(stream).poll_shutdown(cx),
-            Self::Replay(stream) => Pin::new(stream).poll_shutdown(cx),
-        }
-    }
+/// Whether a ClientHello offers the manager link's `moqui-manage/1`.
+fn offers_manage(accepted: &rustls::server::Accepted) -> bool {
+    accepted
+        .client_hello()
+        .alpn()
+        .is_some_and(|mut offered| offered.any(|protocol| protocol == MANAGE_ALPN))
 }
+
+/// The manager link's ALPN (`manage_link::ALPN`, which a host without the manage feature does not have).
+const MANAGE_ALPN: &[u8] = b"moqui-manage/1";
 
 #[cfg(test)]
 #[path = "down_tests.rs"]
