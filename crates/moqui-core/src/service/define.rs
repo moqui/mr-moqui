@@ -1947,18 +1947,30 @@ fn resolve_one(
                 implemented(&mut in_params, &target.in_params, *required);
                 implemented(&mut out_params, &target.out_params, *required);
             }
-            for param in std::mem::take(&mut def.in_params) {
-                merge_param(&mut in_params, param);
-            }
-            for param in std::mem::take(&mut def.out_params) {
-                merge_param(&mut out_params, param);
-            }
+            merge_own(&mut in_params, std::mem::take(&mut def.in_params));
+            merge_own(&mut out_params, std::mem::take(&mut def.out_params));
             def.in_params = in_params;
             def.out_params = out_params;
         }
     }
     done.insert(name.to_string());
     stack.pop();
+}
+
+/// A service's own parameters `own` merged by name into the implemented ones in `dest`, in the order written, as Java's
+/// `ServiceDefinition` merges them: up to its first `auto-parameters`, each merges now; from there on each is added
+/// after it as written, so that the expansion at the call (`validate::expand_params`) merges the auto fields first and a
+/// parameter written after them last, its attributes winning over a field's of its name.
+fn merge_own(dest: &mut Vec<ParamDef>, own: Vec<ParamDef>) {
+    let mut after_auto = false;
+    for param in own {
+        after_auto |= param.name.is_empty() && param.auto.is_some();
+        if after_auto {
+            dest.push(param);
+        } else {
+            merge_param(dest, param);
+        }
+    }
 }
 
 /// The parameters of an implemented service, added before the service's own, with `required` set on each when the

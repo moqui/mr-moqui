@@ -1272,6 +1272,41 @@ fn auto_parameters_of_a_view_entity_use_its_aliases() {
     assert!(!out.contains_key("notDeclared"), "{out:?}");
 }
 
+/// Java's `ServiceDefinition` merge in the order written: a parameter of an implementing service written after its
+/// `auto-parameters` merges after the auto fields, so its type wins over the field's of its name, though the
+/// implemented service declares it too.
+#[test]
+fn a_parameter_after_auto_parameters_wins_over_the_field_with_implements() {
+    let path = write_fixture(
+        "merge-order",
+        r#"<services>
+                <service verb="define" noun="Medium" type="interface">
+                    <in-parameters><parameter name="testMedium"/></in-parameters>
+                </service>
+                <service verb="save" noun="Medium">
+                    <implements service="define#Medium"/>
+                    <in-parameters>
+                        <auto-parameters entity-name="moqui.test.TestEntity" include="nonpk"/>
+                        <parameter name="testMedium" type="Long"/>
+                    </in-parameters>
+                    <actions><set field="x" value="1"/></actions>
+                </service>
+            </services>"#,
+    );
+    let (facade, ctx) = seeded_context(&[]);
+    let _entered = ctx.enter();
+    let failures = crate::service::lint(std::slice::from_ref(&path)).unwrap();
+    assert!(failures.is_empty(), "{failures:?}");
+    let def = crate::service::define::find("save#Medium").expect("registered");
+    let declared = super::validate::declared_in(&def, Some(&facade)).unwrap();
+    let medium: Vec<&str> = declared
+        .iter()
+        .filter(|param| param.name == "testMedium")
+        .map(|param| param.java_type.as_str())
+        .collect();
+    assert_eq!(medium, ["Long"]);
+}
+
 /// Java's `ServiceDefinition` merge: the implemented service's parameters first, then the service's own merged
 /// into them by name, and an `auto-parameters` field and a parameter of the same name are one parameter, whose
 /// attributes the later one sets. An empty `default-value` is no default. A `<description>` of the later one
