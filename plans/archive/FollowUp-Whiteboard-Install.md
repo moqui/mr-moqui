@@ -3,7 +3,7 @@
 > Archived 2026-11-22 after phases 1–7 and the basic-comms acceptance checks passed.
 
 This covers a review of the commits that brought [Comms-Whiteboard](Comms-Whiteboard.md)'s boards, meeting boards, ink
-and markup, the presentation stage and follow mode, and [Install-DevCA](../Install-DevCA.md)'s per-user install, shared
+and markup, the presentation stage and follow mode, and [Install-DevCA](Install-DevCA.md)'s per-user install, shared
 `~/.mr-moqui` definitions, development certificates and separate listener ports. The review found the core models
 sound:
 - **Boards:** guest and member grants checked on the server, all four `board@*` limits enforced, SVG shown only
@@ -63,7 +63,7 @@ The encrypted-chat walk also passed all seven features on its own and in the ful
 
 All eight framework regression groups passed on the closeout run with one Rust test thread. The earlier two-thread run exhausted a PostgreSQL shared-memory slot and timed out in an XMPP test. Both tests passed twice in isolation and again in the serial suite. Webroot passed 548/548 in 47.2 seconds of feature time against its 48-second budget (69.79 seconds wall time). The service runner reported timing advisories for framework (30.0 seconds against 29) and basic-comms (9.4 seconds against 9).
 
-[Comms-Whiteboard](Comms-Whiteboard.md) and [Install-DevCA](../Install-DevCA.md) continue to track their own work.
+[Comms-Whiteboard](Comms-Whiteboard.md) and [Install-DevCA](Install-DevCA.md) continue to track their own work.
 
 ## Opus 5.5 medium Cost Calibration
 
