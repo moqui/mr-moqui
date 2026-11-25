@@ -42,7 +42,8 @@ import org.json.JSONObject
 object ScreenShare {
     private const val TAG = "moqui-mobile"
     internal const val CHANNEL = "screen-share"
-    internal const val NOTIFICATION_ID = 7301
+    /** Not the call's own (CallService 7301): both are shown while a call shares the screen. */
+    internal const val NOTIFICATION_ID = 7302
     internal const val ACTION_STOP = "org.moqui.mobile.SCREEN_STOP"
 
     private const val FRAME_RATE = 15
@@ -58,6 +59,7 @@ object ScreenShare {
     private var displayListener: DisplayManager.DisplayListener? = null
     private var displayManager: DisplayManager? = null
     private var thread: HandlerThread? = null
+    @Volatile private var appContext: Context? = null
 
     // what the spike measures (wall clock, ms)
     @Volatile private var askedMs = 0L
@@ -113,6 +115,7 @@ object ScreenShare {
             end(service)
             return
         }
+        appContext = service.applicationContext
         val handlerThread = HandlerThread("screen-share").also { it.start() }
         thread = handlerThread
         val handler = Handler(handlerThread.looper)
@@ -324,6 +327,8 @@ object ScreenShare {
             it.stopForeground(Service.STOP_FOREGROUND_REMOVE)
             it.stopSelf()
         }
+        // the notification goes with the share whichever way it ended
+        appContext?.getSystemService(NotificationManager::class.java)?.cancel(NOTIFICATION_ID)
     }
 
     private fun release(mp: MediaProjection) {
