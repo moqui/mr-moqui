@@ -1305,7 +1305,11 @@ function addScreenLeg(p) {
   const session = me && p.callSessionId ? lockSession(p.callSessionId) : null
   if (!session || !canSee(session, me)) return refuse('notFound', 'Call not found')
   if (session.statusId === 'CssEnded') return refuse('callEnded', 'The call has ended')
-  if (isE2ee(session)) return refuse('e2eeScreen', 'Sharing the phone screen is not available in an end-to-end encrypted call yet')
+  // an encrypted call's screen leg is sealed by the app with SFrame under its own key, which the page makes and sends
+  const sealed = isE2ee(session)
+  if (sealed && !truthy(p.sframe)) {
+    return refuse('e2eeScreen', 'Sharing the phone screen in an end-to-end encrypted call needs a newer app')
+  }
   const participant = participantOf(session.callSessionId, me)
   const answered = participant && participant.admissionStatusId === 'CasAdmitted'
     ? rows(LEG, { callParticipantId: participant.callParticipantId, statusId: 'ClsAnswered' }) : []
@@ -1315,6 +1319,9 @@ function addScreenLeg(p) {
   if (!page) return refuse('notInCall', 'Join the call before sharing your screen')
   if (!rows(CONNECTION, { callLegId: page.callLegId, statusId: 'CcsActive' }).length) {
     return refuse('notConnected', 'Connect to the call before sharing your screen')
+  }
+  if (sealed && !page.cryptoDeviceId) {
+    return refuse('noCryptoDevice', 'This call is end-to-end encrypted, and this page has not named its encryption device')
   }
   if (directPath(session, legsOf(session.callSessionId), participantsOf(session.callSessionId))) {
     return refuse('notRelayed', 'The call moves to the media server before you share your screen')
@@ -1326,6 +1333,8 @@ function addScreenLeg(p) {
   const leg = makeLeg(session, participant, 'ClsAnswered', 'CltScreen')
   leg.set('screenOfLegId', page.callLegId)
   leg.update()
+  // the page's device holds its keys: the roster names it for the screen leg too, with a key index of the leg's own
+  if (sealed) setLegDevice(session, leg, page.cryptoDeviceId)
   bump(session)
   session.update()
   pushState(session, 'screenLeg', { callLegId: leg.callLegId, screenOfLegId: page.callLegId })
@@ -1444,7 +1453,7 @@ function bindLeg(session, leg, participant, signalingNodeId, forUserId, direct) 
   if (participant.admissionStatusId !== 'CasAdmitted') return refuse('notAdmitted', 'You are not in this call yet')
   if (leg.statusId !== 'ClsAnswered') return refuse('legClosed', 'You are not in this call')
   // W8: a browser's leg in an encrypted call has named its crypto device; no other leg (a guest's, a phone's) has media in it
-  if (isE2ee(session) && (leg.legTypeEnumId !== 'CltWeb' || !leg.cryptoDeviceId)) {
+  if (isE2ee(session) && (!['CltWeb', 'CltScreen'].includes(leg.legTypeEnumId) || !leg.cryptoDeviceId)) {
     return refuse('noCryptoDevice', 'This call is end-to-end encrypted, and this browser has not named its encryption device')
   }
   const node = direct ? session.mediaNodeId : bindNode(session, leg, signalingNodeId)

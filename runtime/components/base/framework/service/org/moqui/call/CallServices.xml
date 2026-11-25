@@ -199,12 +199,14 @@ along with this software (see the LICENSE.md file). If not, see
             and asks for the stage with it; the leg ends with the page's leg (leave, hold, its socket gone, the call's end) or
             by leave#Call naming it, and never keeps its participant in the call. notInCall for a user with no answered
             browser leg in the call, notConnected before that leg's media connects, notRelayed while the call is on the
-            direct path (the page moves it to the media server first), e2eeScreen in an end-to-end encrypted call (the app has
-            no SFrame yet).</description>
+            direct path (the page moves it to the media server first), e2eeScreen in an end-to-end encrypted call from an app
+            without SFrame (sframe), noCryptoDevice there for a page leg with no crypto device.</description>
         <in-parameters>
             <parameter name="callSessionId" required="true"/>
             <parameter name="callLegId"><description>The page's own leg, whose share this is (default: the user's newest
                 answered browser leg); the screen leg ends with it</description></parameter>
+            <parameter name="sframe" type="Boolean"><description>The app seals the screen leg's frames with SFrame: what an
+                end-to-end encrypted call needs (the leg is then the page's device's, with a key index of its own)</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="callLegId"/>
