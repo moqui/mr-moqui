@@ -24,7 +24,10 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
+import android.util.DisplayMetrics
 import android.util.Log
+import android.view.Display
+import android.view.Surface
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import org.json.JSONObject
@@ -42,8 +45,6 @@ object ScreenShare {
     internal const val NOTIFICATION_ID = 7301
     internal const val ACTION_STOP = "org.moqui.mobile.SCREEN_STOP"
 
-    /** The long side of the capture, in pixels: enough for a phone's text at a viewer's tile size. */
-    private const val MAX_SIDE = 1280
     private const val FRAME_RATE = 15
     /** The encoder repeats the last frame after this long without a new one, so a still screen still answers a keyframe. */
     private const val REPEAT_US = 250_000L
@@ -51,6 +52,11 @@ object ScreenShare {
     @Volatile private var projection: MediaProjection? = null
     @Volatile private var display: VirtualDisplay? = null
     @Volatile private var encoder: MediaCodec? = null
+    @Volatile private var inputSurface: Surface? = null
+    @Volatile private var current: Pair<Int, Int>? = null
+    @Volatile private var bitrates: android.util.Range<Int>? = null
+    private var displayListener: DisplayManager.DisplayListener? = null
+    private var displayManager: DisplayManager? = null
     private var thread: HandlerThread? = null
 
     // what the spike measures (wall clock, ms)
@@ -110,22 +116,91 @@ object ScreenShare {
         val handlerThread = HandlerThread("screen-share").also { it.start() }
         thread = handlerThread
         val handler = Handler(handlerThread.looper)
-        // Android 14: the callback is registered before the display is made; the system's stop ends the share
+        // Android 14: the callback is registered before the display is made; the system's stop ends the share, and a
+        // captured content of a new size (a rotation, a folded screen) starts the encoder again at it
         mp.registerCallback(object : MediaProjection.Callback() {
             override fun onStop() {
                 Log.i(TAG, "Screen share: the projection stopped")
                 end(service)
             }
+
+            override fun onCapturedContentResize(width: Int, height: Int) {
+                resize(service, width, height)
+            }
         }, handler)
         projection = mp
-        val metrics = service.resources.displayMetrics
-        val scale = minOf(1.0, MAX_SIDE.toDouble() / maxOf(metrics.widthPixels, metrics.heightPixels))
-        val width = (metrics.widthPixels * scale).toInt() and 1.inv()
-        val height = (metrics.heightPixels * scale).toInt() and 1.inv()
+        val (screenW, screenH) = screenSize(service)
+        val (width, height) = ScreenRules.captureSize(screenW, screenH)
+        bitrateBps = START_BPS
+        val (codec, surface) = startEncoder(service, width, height, handler)
+        display = mp.createVirtualDisplay(
+            "moqui-screen", width, height, service.resources.displayMetrics.densityDpi,
+            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, surface, null, handler
+        )
+        encoder = codec
+        inputSurface = surface
+        // before Android 14 a rotation is the default display's change, not the projection's
+        val displays = service.getSystemService(DisplayManager::class.java)
+        val listener = object : DisplayManager.DisplayListener {
+            override fun onDisplayAdded(displayId: Int) {}
+            override fun onDisplayRemoved(displayId: Int) {}
+            override fun onDisplayChanged(displayId: Int) {
+                if (displayId != Display.DEFAULT_DISPLAY) return
+                val (w, h) = screenSize(service)
+                resize(service, w, h)
+            }
+        }
+        displays.registerDisplayListener(listener, handler)
+        displayListener = listener
+        displayManager = displays
+        state = "sharing"
+        Log.i(TAG, "Screen share: capturing $size with $codecName")
+    }
+
+    /** The default display's whole size, as the projection mirrors it. */
+    private fun screenSize(context: Context): Pair<Int, Int> {
+        val display = context.getSystemService(DisplayManager::class.java).getDisplay(Display.DEFAULT_DISPLAY)
+            ?: return context.resources.displayMetrics.let { Pair(it.widthPixels, it.heightPixels) }
+        val metrics = DisplayMetrics()
+        @Suppress("DEPRECATION")
+        display.getRealMetrics(metrics)
+        return Pair(metrics.widthPixels, metrics.heightPixels)
+    }
+
+    /** A screen of a new size: the encoder again at the capture's new size, the display drawn on its surface (its first
+     *  frame is a keyframe, which a VP8 decoder takes as the new size). On the share's thread. */
+    private fun resize(service: Service, screenW: Int, screenH: Int) {
+        val vd = display ?: return
+        if (!ScreenRules.resized(current, screenW, screenH)) return
+        val (width, height) = ScreenRules.captureSize(screenW, screenH)
+        val handler = Handler(thread?.looper ?: return)
+        val old = encoder
+        val oldSurface = inputSurface
+        try {
+            val (codec, surface) = startEncoder(service, width, height, handler)
+            vd.resize(width, height, service.resources.displayMetrics.densityDpi)
+            vd.surface = surface
+            encoder = codec
+            inputSurface = surface
+            Log.i(TAG, "Screen share: the screen is now $size")
+        } catch (err: Throwable) {
+            Log.e(TAG, "Screen share: the encoder did not start again at ${width}x$height", err)
+            end(service)
+        } finally {
+            if (encoder !== old) {
+                old?.let { stopCodec(it) }
+                oldSurface?.release()
+            }
+        }
+    }
+
+    /** A VP8 encoder at `width` x `height` and its input surface, its frames to Rust. */
+    private fun startEncoder(service: Service, width: Int, height: Int, handler: Handler): Pair<MediaCodec, Surface> {
+        current = Pair(width, height)
         size = "${width}x$height"
         val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_VP8, width, height).apply {
             setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
-            setInteger(MediaFormat.KEY_BIT_RATE, START_BPS)
+            setInteger(MediaFormat.KEY_BIT_RATE, bitrateBps)
             setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR)
             setInteger(MediaFormat.KEY_FRAME_RATE, FRAME_RATE)
             // keyframes when asked (a new subscriber, a loss), and one a minute at most otherwise
@@ -138,7 +213,7 @@ object ScreenShare {
         val name = MediaCodecList(MediaCodecList.REGULAR_CODECS).findEncoderForFormat(format)
         val codec = if (name != null) MediaCodec.createByCodecName(name) else MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_VP8)
         codecName = codec.name
-        bitrateBps = START_BPS
+        bitrates = codec.codecInfo.getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_VP8).videoCapabilities?.bitrateRange
         codec.setCallback(object : MediaCodec.Callback() {
             override fun onInputBufferAvailable(codec: MediaCodec, index: Int) {}
 
@@ -166,11 +241,16 @@ object ScreenShare {
                 } catch (err: Throwable) {
                     Log.w(TAG, "Screen share: a frame was dropped", err)
                 } finally {
-                    codec.releaseOutputBuffer(index, false)
+                    try {
+                        codec.releaseOutputBuffer(index, false)
+                    } catch (_: IllegalStateException) {
+                        // an encoder stopped for a new size
+                    }
                 }
             }
 
             override fun onError(codec: MediaCodec, e: MediaCodec.CodecException) {
+                if (codec !== encoder) return
                 Log.e(TAG, "Screen share: the encoder failed", e)
                 end(service)
             }
@@ -180,13 +260,15 @@ object ScreenShare {
         codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
         val surface = codec.createInputSurface()
         codec.start()
-        encoder = codec
-        display = mp.createVirtualDisplay(
-            "moqui-screen", width, height, metrics.densityDpi,
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, surface, null, handler
-        )
-        state = "sharing"
-        Log.i(TAG, "Screen share: capturing $size with $codecName")
+        return Pair(codec, surface)
+    }
+
+    private fun stopCodec(codec: MediaCodec) {
+        try {
+            codec.stop()
+        } catch (_: IllegalStateException) {
+        }
+        codec.release()
     }
 
     /** A keyframe now (Rust: the leg connected, or the media server asked). */
@@ -196,11 +278,12 @@ object ScreenShare {
         encoder?.setParameters(Bundle().apply { putInt(MediaCodec.PARAMETER_KEY_REQUEST_SYNC_FRAME, 0) })
     }
 
-    /** The encoder's bitrate (Rust: the bandwidth estimate changed). */
+    /** The encoder's bitrate (Rust: the bandwidth estimate changed), within what it takes. */
     @JvmStatic
     fun bitrate(bps: Int) {
-        bitrateBps = bps
-        encoder?.setParameters(Bundle().apply { putInt(MediaCodec.PARAMETER_KEY_VIDEO_BITRATE, bps) })
+        val range = bitrates
+        bitrateBps = ScreenRules.encoderBitrate(bps, range?.lower, range?.upper)
+        encoder?.setParameters(Bundle().apply { putInt(MediaCodec.PARAMETER_KEY_VIDEO_BITRATE, bitrateBps) })
     }
 
     /** The page ends the share. */
@@ -254,6 +337,12 @@ object ScreenShare {
             it.release()
         }
         encoder = null
+        inputSurface?.release()
+        inputSurface = null
+        current = null
+        displayListener?.let { displayManager?.unregisterDisplayListener(it) }
+        displayListener = null
+        displayManager = null
         thread?.quitSafely()
         thread = null
         try {
