@@ -3105,7 +3105,7 @@
               ]))
             }
         } },
-        "m-call-presentation": { hash: "5beef6b4", make: function (Vue) {
+        "m-call-presentation": { hash: "10ff9897", make: function (Vue) {
             const { toDisplayString: _toDisplayString, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, resolveComponent: _resolveComponent, createBlock: _createBlock, renderList: _renderList, Fragment: _Fragment, createTextVNode: _createTextVNode, withCtx: _withCtx, createVNode: _createVNode, resolveDirective: _resolveDirective, withDirectives: _withDirectives, createElementVNode: _createElementVNode, withModifiers: _withModifiers, vModelSelect: _vModelSelect, vModelText: _vModelText, normalizeStyle: _normalizeStyle, normalizeClass: _normalizeClass } = Vue
 
             return function render(_ctx, _cache) {
@@ -3167,24 +3167,25 @@
                         onClick: _ctx.boardPicker
                       }, null, 8, ["disable", "label", "onClick"]))
                     : _createCommentVNode("", true),
-                  (_ctx.supported && (!_ctx.mine || (_ctx.boardId && !_ctx.call.sharing)) && !_ctx.pending.includes(_ctx.call.legId))
+                  (_ctx.supported && (!_ctx.mine || (_ctx.boardId && !_ctx.call.sharing)) && !_ctx.asking)
                     ? (_openBlock(), _createBlock(_component_q_btn, {
                         key: 4,
                         flat: "",
                         dense: "",
                         icon: "sym_o_present_to_all",
-                        disable: !_ctx.host && _ctx.call.shareMode === 'CsmHosts',
+                        disable: (!_ctx.host && _ctx.call.shareMode === 'CsmHosts') || (_ctx.native && !!_ctx.view?.e2ee) || _ctx.call.picking,
+                        title: _ctx.native && _ctx.view?.e2ee ? _ctx.t('Sharing the phone screen is not available in an end-to-end encrypted call yet') : undefined,
                         label: _ctx.t('Share the screen'),
-                        onClick: $event => (_ctx.ask())
-                      }, null, 8, ["disable", "label", "onClick"]))
+                        onClick: $event => (_ctx.native ? _ctx.shareNative() : _ctx.ask())
+                      }, null, 8, ["disable", "title", "label", "onClick"]))
                     : _createCommentVNode("", true),
-                  (_ctx.pending.includes(_ctx.call.legId))
+                  (_ctx.asking)
                     ? (_openBlock(), _createBlock(_component_q_btn, {
                         key: 5,
                         flat: "",
                         dense: "",
                         label: _ctx.t('Cancel presentation request'),
-                        onClick: $event => (_ctx.command('lower'))
+                        onClick: $event => (_ctx.call.screenLegId ? _ctx.stop() : _ctx.command('lower'))
                       }, null, 8, ["label", "onClick"]))
                     : _createCommentVNode("", true),
                   (_ctx.host)
@@ -3508,9 +3509,15 @@
                       ]))
                     }), 128))
                   : _createCommentVNode("", true),
-                (_ctx.sharing && _ctx.mine && !_ctx.call.sharing)
-                  ? (_openBlock(), _createElementBlock("div", {
+                (_ctx.sharing && _ctx.mine && _ctx.call.capture?.surface === 'phone')
+                  ? (_openBlock(), _createElementBlock("p", {
                       key: 3,
+                      class: "text-caption"
+                    }, _toDisplayString(_ctx.t('Your phone screen is shared. Stop sharing here or from the notification.')), 1))
+                  : _createCommentVNode("", true),
+                (_ctx.sharing && _ctx.mine && !_ctx.call.sharing && !_ctx.native)
+                  ? (_openBlock(), _createElementBlock("div", {
+                      key: 4,
                       class: "row items-center q-gutter-xs"
                     }, [
                       _createVNode(_component_q_toggle, {
@@ -3535,7 +3542,7 @@
                   : _createCommentVNode("", true),
                 (_ctx.sharing && _ctx.stream)
                   ? (_openBlock(), _createElementBlock("div", {
-                      key: 4,
+                      key: 5,
                       class: "row items-center q-gutter-xs m-stage-ink-tools"
                     }, [
                       (_ctx.mine || _ctx.host)
@@ -3646,7 +3653,7 @@
                   : _createCommentVNode("", true),
                 (_ctx.sharing && _ctx.stream)
                   ? (_openBlock(), _createElementBlock("div", {
-                      key: 5,
+                      key: 6,
                       ref: "viewport",
                       class: _normalizeClass(["m-present-viewport relative-position", {'m-present-preview':_ctx.mine}]),
                       style: _normalizeStyle({height:_ctx.mine?'8rem':_ctx.landscape?'calc(100dvh - 3rem)':'min(58dvh,48rem)',maxWidth:_ctx.mine?'15rem':'100%',background:'#121212',borderRadius:'8px',overflow:'hidden',touchAction:'none'}),
@@ -3679,7 +3686,7 @@
                   : _createCommentVNode("", true),
                 (_ctx.sharing && _ctx.stream && !_ctx.mine)
                   ? (_openBlock(), _createElementBlock("div", {
-                      key: 6,
+                      key: 7,
                       class: "row items-center q-gutter-xs"
                     }, [
                       _createVNode(_component_q_btn, {
@@ -3705,7 +3712,7 @@
                   : _createCommentVNode("", true),
                 (_ctx.tabControls)
                   ? (_openBlock(), _createElementBlock("div", {
-                      key: 7,
+                      key: 8,
                       class: "row items-center q-gutter-xs"
                     }, [
                       _createVNode(_component_q_btn, {
@@ -3732,7 +3739,7 @@
                   : _createCommentVNode("", true),
                 (_ctx.notice)
                   ? (_openBlock(), _createElementBlock("div", {
-                      key: 8,
+                      key: 9,
                       role: "status",
                       class: "text-caption"
                     }, _toDisplayString(_ctx.notice), 1))
