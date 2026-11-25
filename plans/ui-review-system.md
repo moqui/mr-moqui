@@ -121,7 +121,7 @@ activities. Dialogs, templates and non-XML surfaces follow the route tables.
 | `/qapps/system/Conf` | [Conf.xml](../runtime/components/base/tools/screen/System/Conf.xml) | Default: `View`. | SYS-06 |
 | `/qapps/system/Data` | [Data.xml](../runtime/components/base/tools/screen/System/Data.xml) | Default: `Imports`. | SYS-12, SYS-13, SYS-14 |
 | `/qapps/system/Home` | [Home.xml](../runtime/components/base/tools/screen/System/Home.xml) | Authored text: `html`, `qvt`, `tui`. Context: `period`, `refresh`. | SYS-01, SYS-09 |
-| `/qapps/system/Instance` | [Instances.xml](../runtime/components/base/tools/screen/System/Instances.xml) | Default: `InstanceList`. | SYS-08 |
+| `/qapps/system/Instances` | [Instances.xml](../runtime/components/base/tools/screen/System/Instances.xml) | Default: `Fleet`. | SYS-08 |
 | `/qapps/system/Operations` | [Operations.xml](../runtime/components/base/tools/screen/System/Operations.xml) | Default: `Jobs`. | SYS-01, SYS-10, SYS-11 |
 | `/qapps/system/Print` | [Print.xml](../runtime/components/base/tools/screen/System/Print.xml) | Default: `Printer`. | SYS-17 |
 | `/qapps/system/Resource` | [Resource.xml](../runtime/components/base/tools/screen/System/Resource.xml) | Default: `GitRepositoryList`. | SYS-16 |
@@ -176,12 +176,12 @@ activities. Dialogs, templates and non-XML surfaces follow the route tables.
 | `/qapps/system/Data/ImportDetail` | [ImportDetail.xml](../runtime/components/base/tools/screen/System/Data/ImportDetail.xml) | Hidden/helper entry; enter through its parent action and inspect direct access. Context: `targetId`, `operationKey`, `pageIndex`, `errorsOnly`. | SYS-12 |
 | `/qapps/system/Data/Imports` | [Imports.xml](../runtime/components/base/tools/screen/System/Data/Imports.xml) | Authored text: `html`, `qvt`, `tui`. Context: `targetId`, `state`, `fromDate`, `thruDate`, `pageIndex`. | SYS-12 |
 
-### tools: `System/Instance`
+### tools: `System/Instances`
 
 | Route / surface | XML source | Default / variants / boundary | Activities |
 | --- | --- | --- | --- |
-| `/qapps/system/Instance/InstanceDetail` | [InstanceDetail.xml](../runtime/components/base/tools/screen/System/Instances/InstanceDetail.xml) | Context: `appInstanceId`. | SYS-08 |
-| `/qapps/system/Instance/InstanceList` | [InstanceList.xml](../runtime/components/base/tools/screen/System/Instances/InstanceList.xml) | Hidden/helper entry; enter through its parent action and inspect direct access. | SYS-08 |
+| `/qapps/system/Instances/InstanceDetail` | [InstanceDetail.xml](../runtime/components/base/tools/screen/System/Instances/InstanceDetail.xml) | Context: `appInstanceId`. | SYS-08 |
+| `/qapps/system/Instances/InstanceList` | [InstanceList.xml](../runtime/components/base/tools/screen/System/Instances/InstanceList.xml) | Hidden/helper entry; enter through its parent action and inspect direct access. | SYS-08 |
 
 ### tools: `System/Operations`
 
