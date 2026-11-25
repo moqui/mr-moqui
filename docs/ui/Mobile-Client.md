@@ -322,6 +322,46 @@ The call's media stays the WebView's; the native code gives it what a phone's ow
   `androidx.core.telecom` has no managed account, and moving the self-managed calls alone is later work
   ([plans/Comms-Messaging.md §9.1](../../plans/Comms-Messaging.md)).
 
+## Sharing the screen in a call
+
+Android's WebView has no `getDisplayMedia`, so in the app **Share the screen** shares the phone's screen natively, as a
+**screen leg**: a second leg of the participant (`CltScreen`, `add#ScreenLeg`) whose only track is the screen, sent by
+the app's Rust rather than the WebView ([WebRTC, Presenting in a call](../interfaces/WebRTC.md#presenting-in-a-call);
+plans/Comms-Whiteboard.md §3.6, the spike's numbers in plans/MM-Spike.md).
+
+- **Capture.** The system's consent each time (`ScreenConsentActivity`, Android 14 refuses a projection kept from an
+  earlier one), then a foreground service of type `mediaProjection` (`ScreenShareService`, before the projection is
+  taken) with an ongoing notification whose **Stop sharing** ends the share. The projection draws into a
+  VirtualDisplay on a MediaCodec VP8 encoder's input surface: the phone's hardware VP8 encoder where it has one, else
+  the platform's `c2.android.vp8.encoder`. The capture keeps the screen's aspect with a long side of at most 1280
+  (`ScreenRules`), at most 15 frames a second (`KEY_MAX_FPS_TO_ENCODER`), and repeats its last frame after 250 ms of a
+  still screen so a keyframe asked for comes then. A rotation or a resize (`onCapturedContentResize`, the display's
+  change before Android 14) starts the encoder again at the new size. The app's own `FLAG_SECURE` screens (an
+  encrypted room, a view-once photo; [Screen security](#screen-security)) are black in the capture, Android's rule.
+- **Send.** Each encoded frame goes over JNI (`Native.screenFrame`) to the leg's thread in Rust (`src/screen.rs`), a
+  str0m client of the media server (the workspace's str0m, on the aws-lc-rs the app already links): one send-only VP8
+  video, its candidates from the server's answer (a UDP socket for each local address that reaches one, IPv4 and IPv6,
+  and ICE-TCP when the server offers it). The media server's keyframe requests ask the encoder for one
+  (`PARAMETER_KEY_REQUEST_SYNC_FRAME`), and the TWCC estimate sets its bitrate (85 % of it, 150 kbps to 2.5 Mbps,
+  within what the encoder takes).
+- **Signalling through the page.** The page holds the call and its socket, so it signals for the leg: it makes the leg
+  for its own leg, gets the app's offer (`screen_offer`), joins the leg on its socket, hands the server's answer and
+  offers to the app (`screen_answer`, `screen_remote_offer`), asks for the stage with the leg, and publishes its video
+  as the screen. No credential leaves the page, and the server checks the leg is the socket user's. The leg's frames
+  never reach the page's own connection. The commands are the shell's (`moquiDesktop.screenStart` and the rest of
+  `src/bridge.js`).
+- **The end.** Stop (in the call or the notification), a take over or a host's Stop, the page leaving the call, its
+  hold, or its socket gone end the share: the page sends the leg's `leave` and stops the app's capture, and the server
+  ends a screen leg with its page leg in any case (the WebView is paused while the app is in the background, so the
+  page cannot be relied on then). The app's leg ends by itself when its connection is lost for 10 s, and tells the page
+  (`moqui.call.nativeScreen`).
+- **Not yet.** An end-to-end encrypted call refuses the native share and says why, until the app has SFrame. A direct
+  call moves to the media server before the share starts, as a browser's share does. There is no annotation over
+  another app (Android would need a draw-over permission).
+- **Tests.** The leg against the repository's media server on loopback, over UDP and ICE-TCP (`screen_tests.rs`, with
+  `moqui-rtc` as a dev-dependency); the size and bitrate rules (`ScreenRulesTest`); on the emulator, consent for
+  automation is `adb shell appops set org.moqui.mobile PROJECT_MEDIA allow` (and `appops reset` after).
+
 ## The phone's dialer and contacts
 
 [plans/Comms-Messaging.md §9](../../plans/Comms-Messaging.md), phase 9. The Kotlin is `DialAccount` and `PhoneBook`;

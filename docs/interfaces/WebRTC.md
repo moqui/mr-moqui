@@ -566,4 +566,15 @@ The stage's frames, on the notification socket (or a guest's `/callws`):
 | `rtc: "ink"`, `action` `stroke`, `pin`, `clear`, `snapshot` | a page, relayed | A stroke in fractions of the shared picture (at most 512 points, 128 kept), pinned or fading; `clear` is a host's or the presenter's; `snapshot` asks the presenter's page for a board and is sent only by one who may draw |
 | `rtc: "follow"`, `action` `navigate`, `locate`, `catchUp` | the presenter, relayed | The screen path and declared parameters, the section, dialog and pointer; to member pages only |
 
+The mobile app shares the phone's screen as a **screen leg** (`CltScreen`), since Android's WebView cannot capture
+it: `add#ScreenLeg` makes a leg of the caller's own participant for the page's leg (`screenOfLegId`), refused until that
+leg is connected (`notConnected`), while the call is on the direct path (`notRelayed`: the page moves it to the media
+server first) and in an end-to-end encrypted call (`e2eeScreen`). The page relays the leg's rtc frames on its own
+socket (`join`, the media node's `joined` and `offer`, the leg's `answer`, `stage` with the leg as `callLegId`,
+`publish`, `leave`), and the app's Rust sends its media. At the media node the leg is publish-only: it is offered no
+tracks, its video is the screen from its first packet so the stage gates it, and its page leg is not sent it back.
+The stage names the screen leg, which the pages show as its participant's share. It never keeps its participant in
+the call, and it ends with its page leg (leave, hold, the socket gone, the call's end), or by `leave#Call` naming it,
+which ends only the share. See [Mobile-Client, Sharing the screen](../ui/Mobile-Client.md#sharing-the-screen-in-a-call).
+
 **Present this screen** lets signed-in participants follow the presenter's application screens. Each follower loads the screen with their own account. If the account cannot read a record, the call shows an access message without its parameters. **Stop following** lets the viewer browse independently. **Follow again** opens the current presentation. A guest can watch only when the presenter shares this tab through the browser picker. Phone legs receive no screen-navigation messages.

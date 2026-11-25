@@ -187,9 +187,8 @@ leg, the stage's owner check, generation fencing) applied unchanged. The changes
   SFU's TCP candidate); the leg's end told to the page; unit tests (`server_address`, `is_vp8_keyframe`, an offer and
   answer against a str0m ICE-lite peer on the host).
 - **E2EE**: as planned: `sframe` in moqui-mobile, the sender key from the page's `moqui.callKeys` over the bridge (a new
-  shell-only command), the leg named with the page's crypto device so `bindLeg` admits it. To check first: SFrame over
-  the whole VP8 frame (as WebrootSFrame.js does) leaves str0m's VP8 packetizer reading an encrypted payload descriptor,
-  so the encrypted leg needs str0m's RTP mode or a generic packetizer.
+  shell-only command), the leg named with the page's crypto device so `bindLeg` admits it. (A concern of this spike,
+  that SFrame leaves str0m's VP8 packetizer reading ciphertext, does not hold: see §6, "The E2EE stage, as found".)
 - **Tests**: moqui-rtc: a screen leg is publish-only and its participant's share; leaving ends it. Specs:
   `Calls.spec.js` for `add#ScreenLeg` (the refusals, one at a time, closed with the page's leg, the stage cleared).
   Client: `WebrootCall`'s routing by leg against a fake socket. The emulator walk (consent by the appop, Chrome by CDP,
@@ -202,3 +201,60 @@ leg, the stage's owner check, generation fencing) applied unchanged. The changes
   leg against a real `Sfu` over the testnet's shaped links, which would measure the bitrate's way down; or a str0m
   ICE-lite peer in the test alone.
 - The repeat interval (keyframe latency on a still screen against idle traffic): 250 ms as now, or 100 ms.
+
+Decided (2026-11-24): a direct call moves to the media server before the share, as the browser's share does; the app's
+host tests may take `moqui-rtc` as a dev-dependency; the repeat stays at 250 ms.
+
+## 6. The build without E2EE (stage 2)
+
+What the build changed from the spike, by the order of §4:
+
+- **Server.** `CallLeg.screenOfLegId` names the page leg a screen leg shares for. `closeLeg` of any other leg ends its
+  screen legs (and the media node drops them), so leave, hold (`hold#OwnLeg`, `setHeld`), a lost socket
+  (`connectionLost`), a move and the call's end all end the share; the next `bump` clears a stage that named it.
+  `leaveLeg` of a screen leg ends only the share (`screenEnded` push) and `leave#Call` naming one does that.
+  `answeredLegCount`, `leaveLeg`'s "still in" and the view's `inCall` leave screen legs out, so a call of two ends when
+  the other person leaves. `add#ScreenLeg` takes the page's `callLegId` and refuses a leg not connected
+  (`notConnected`) and a call on the direct path (`notRelayed`). `bind#Connection` returns `screenLeg` and
+  `screenOfLegId`; the socket passes it to the media node as `boundScreenOf` (a client's copy is dropped), and the SFU
+  joins the leg with `Sfu::join_as(.., Some(page))`: offered no tracks, its tracks the screen from the start, and the
+  page leg not sent its own screen. Tests: moqui-rtc `a_screen_leg_only_publishes_and_its_video_is_the_screen`;
+  `Calls.spec.js` "the app's screen leg shares for its page leg, ends with its Stop or that leg, and keeps nobody in the
+  call" (the refusals, one at a time, the bind, the stage, Stop, the page's leave ending a call of two).
+- **Page.** `shareNative` (the share button where the page has no `getDisplayMedia` and the bridge has
+  `screenStart`): consent, `addScreenLeg`, the app's offer joined on the page's socket; `nativeFrame` takes the leg's
+  frames (`onFrame` routes any frame with no `to` whose `callLegId` is one of the page's screen legs there, also after
+  the share ended); `nativeAsk` asks the stage with the leg once joined; `nativeStageFrame` publishes when the stage
+  names it and ends the share when the stage goes elsewhere or the request is lowered; `endNative` sends the leg's
+  `leave` and stops the app. A direct call moves first (`toRelay("share")`, then the share once joined). The pages
+  leave screen legs out of the tiles (`isScreenLeg`): the stage shows them. An encrypted call refuses with a message.
+  Test: `WebrootCall` "the mobile app's native share ...".
+- **Kotlin.** `ScreenRules` (capture size, the encoder's bitrate within its `bitrateRange`, when a new size restarts
+  the encoder), JVM-tested; `onCapturedContentResize` (Android 14) and a display listener (before) restart the encoder
+  at a new size and set the virtual display's surface to its new one.
+- **Rust.** Every server candidate: a UDP socket per local address that reaches one (IPv4, IPv6), and an active
+  ICE-TCP candidate for passive TCP ones (RFC 4571 framing, connected off the leg's thread). The leg ends when lost
+  10 s or not connected 20 s after the answer, and tells the page (`screen` → `moqui.call.nativeScreen`). Tests against
+  moqui-rtc's `Sfu` on loopback, over UDP (connected, the frames forwarded as the screen) and over ICE-TCP only.
+
+### The E2EE stage, as found
+
+The spike's worry was that SFrame over a whole encoded frame would leave str0m's frame API (`Writer::write`, its VP8
+packetizer) and the SFU's keyframe checks reading ciphertext. The pages do not encrypt the whole frame: the worker
+(WebrootSFrameWorker.js, `WebrootSFrame.clearBytes`) keeps a VP8 frame's first 10 bytes (a keyframe) or 3 (a delta) in
+the clear, authenticates them as the SFrame metadata (AAD), and sends `clear || SFrame(header || ciphertext || tag)`.
+The frame tag, and so the keyframe bit, stays readable, and a VP8 packetizer needs nothing else of the frame. So the
+app's leg keeps `Writer::write`: Kotlin's frame goes through the same layout in Rust (the `sframe` crate's suite the
+call uses, `CALL_SUITE`, with the browser's counter and KID rules) before the write, and the SFU and the browsers'
+receivers take it as any page's. What the E2EE stage needs:
+
+1. The sender key over the bridge: the page's `moqui.callKeys` derives the leg's own key (`setOwnKey`) and hands it to
+   the app with a new shell-only command; the KID is the screen leg's own key index (the roster has one per leg) and the
+   epoch, rotated with the page's (`rotate`, `rekey`).
+2. `bindLeg` admits a screen leg in an encrypted call when it names the page's crypto device (`cryptoDeviceId`, as a
+   browser leg does), and `add#ScreenLeg` drops `e2eeScreen` for an app that says it has SFrame; the roster lists the
+   screen leg so the others take its key.
+3. Rust: SFrame encrypt of each frame with the clear prefix, one counter for the leg, no frame sent without a key; the
+   RFC 9605 vectors and a frame the browsers' worker decrypts (WebrootSFrame.js's own vectors in a shared test).
+4. The page drops the encrypted-call refusal for an app with the command, and the label of the call stays
+   `call-encrypted`.

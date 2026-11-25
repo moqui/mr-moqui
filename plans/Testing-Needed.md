@@ -108,7 +108,8 @@ Comms-Messaging, Edge-Node2 and [ui-review-basic-comms](ui-review-basic-comms.md
 ### Desktop and mobile apps
 
 Screen share from the apps ([Comms-Whiteboard](Comms-Whiteboard.md) MD and MM; guides
-[Desktop-Client, Screen share](../docs/ui/Desktop-Client.md#screen-share)). Built and unit tested here; no run of the
+[Desktop-Client, Screen share](../docs/ui/Desktop-Client.md#screen-share),
+[Mobile-Client, Sharing the screen](../docs/ui/Mobile-Client.md#sharing-the-screen-in-a-call)). Built and unit tested here; no run of the
 installed apps has shared a screen yet.
 
 | Area | Item | Source |
@@ -116,6 +117,10 @@ installed apps has shared a screen yet.
 | Desktop, Linux | Share a window of another application and a whole screen into a call from `./moq desktop dev` on Wayland (the portal's picker over PipeWire) and on X11; a browser leg sees it; the annotation overlay shows over a shared screen on X11 with one monitor and is absent on Wayland | `src/capture.rs` |
 | Desktop, macOS | The first share asks for Screen & System Audio Recording; the app's list shows the displays and the other applications' windows; a picked window is shared through the patched runtime's one grant (and a second `getUserMedia` without a new pick is refused); the overlay covers the picked window or screen and its strokes are in a recording | `src/capture.rs`, `patches/tauri-runtime-cef` |
 | Desktop, Windows | Chromium's picker shares a window and a screen; the overlay with one monitor | `src/capture.rs` |
+| Android, a phone | The system's consent dialog each share (Android 14+'s "Share one app" or "entire screen"), and Cancel shares nothing; a browser in a group call sees the phone's screen within 2 s of consent; Stop in the call, Stop sharing in the notification, leaving the call and the call's end each end the projection and its notification; a rotation keeps the share | `crates/moqui-mobile/src/screen.rs`, `ScreenShare.kt` |
+| Android, encoders | On a phone with a hardware VP8 encoder it is the one picked, and its keyframe and bitrate requests take effect; on one without, the platform's software encoder keeps 15 fps at 1280 px | `ScreenShare.kt` |
+| Android, network | The share over a phone's mobile network to a public media server (UDP), and with UDP blocked over ICE-TCP; the bitrate follows a constrained uplink down | `src/screen.rs` |
+| Android, screen security | A room with Block screenshots shown during a share is black to the others (FLAG_SECURE in the projection) | `ScreenSecurity.kt` |
 
 ## Related documents
 

@@ -555,6 +555,10 @@ can follow the presenter’s viewport or pan independently and choose **Follow a
 Admitted guests draw by default and lose access when removed or when the board closes. The recording’s details
 link to boards shown during the meeting. For a recurring meeting, choose a board on the call link. The linked board opens when its owner opens the meeting and the stage is free. An earlier guest or view-only member waits for the owner.
 
+In the Android app, **Share the screen** shares the phone's whole screen after Android asks for your consent; a
+notification shows while it is shared and has **Stop sharing**. It is not available in an end-to-end encrypted call
+yet, and others cannot draw over a phone's share.
+
 **Who can present** offers **Anyone can present** (the default), **Hosts can present**, and **Ask a host to present**. Only a host can take over from a host. **Present this screen** lets signed-in members follow the presenter through the application, using their own accounts. Guests can watch when the presenter shares the tab with them. Following pauses when a member has changed a form, opened a dialog of their own, or navigated elsewhere. **Follow again** catches up. Reloading a page that was sharing a screen releases its stage. Choose the screen again to resume.
 
 While sharing, **Annotation permissions** controls who may draw; the presenter always may. Unpinned marks fade after five seconds. Use the laser for
