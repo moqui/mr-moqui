@@ -205,6 +205,31 @@ pub trait ResourceProvider: Send + Sync + std::fmt::Debug {
     fn read_version(&self, _location: &str, _version_name: &str) -> Result<Option<Vec<u8>>, Error> {
         Ok(None)
     }
+    /// One version of the file to read a window at a time, for a response: `None` when there is no such version. By
+    /// default [`ResourceProvider::read_version`] into memory, tagged by its SHA-256 (`sha256-<hex>`); storage that can
+    /// read a version by range overrides it (`git` for an LFS object or a content blob), with the source's strong tag.
+    fn open_version(&self, location: &str, version_name: &str) -> Result<OpenedFile, Error> {
+        Ok(self.read_version(location, version_name)?.map(|bytes| {
+            let stat = ResourceStat {
+                is_file: true,
+                size: bytes.len() as u64,
+                last_modified: None,
+            };
+            let tag = format!("sha256-{}", crate::resource::blob::blob_id(&bytes));
+            let source: Arc<dyn crate::resource::source::ByteSource> =
+                Arc::new(crate::resource::source::MemorySource::new(bytes).with_tag(tag));
+            (stat, source)
+        }))
+    }
+    /// What the storage names the content of the file at `location` by (of `version_name` when given), for a reader
+    /// to pin ([`crate::context::ResourceFacade::content_address`]); `None` by default.
+    fn content_address(
+        &self,
+        _location: &str,
+        _version_name: Option<&str>,
+    ) -> Result<Option<crate::context::ContentAddress>, Error> {
+        Ok(None)
+    }
     /// Write a file with a note for the version it makes (a commit message on `git`). Storage that keeps no notes
     /// writes the bytes and drops the note.
     fn write_bytes_noted(&self, location: &str, bytes: &[u8], _note: Option<&str>) -> Result<(), Error> {

@@ -49,6 +49,11 @@ const WEB_SHIM_JS: &str = r#"(function (proto, hidden) {
         if (arguments.length < 1) return hidden.sendResourceResponse();
         return hidden.sendResourceResponse(location, arguments[1] === true, coerced(arguments[2]));
     });
+    define("sendPinnedResourceResponse", function sendPinnedResourceResponse(location, checksum, size) {
+        if (arguments.length < 3) return hidden.sendPinnedResourceResponse();
+        return hidden.sendPinnedResourceResponse(location, checksum, Number(size), arguments[3] === true,
+            coerced(arguments[4]));
+    });
     define("saveScreenLastInfo", function saveScreenLastInfo() {
         return hidden.saveScreenLastInfo(typeof arguments[0] === "string" ? arguments[0] : null);
     });
@@ -141,6 +146,12 @@ pub(super) static WEB: HostClass = HostClass {
             [Text, OptBool, OptNullableText],
             send_resource_response
         ),
+        method!(
+            "ec.web",
+            "sendPinnedResourceResponse",
+            [Text, Text, Number, OptBool, OptNullableText],
+            send_pinned_resource_response
+        ),
         method!("ec.web", "saveScreenLastInfo", [OptNullableText], save_screen_last_info),
         method!(
             "ec.web",
@@ -161,6 +172,7 @@ pub(super) static WEB: HostClass = HostClass {
         "sendError",
         "sendTextResponse",
         "sendResourceResponse",
+        "sendPinnedResourceResponse",
         "saveScreenLastInfo",
         "getWebappRootUrl",
         "sessionAttributes",
@@ -242,6 +254,25 @@ fn send_resource_response(call: &mut Call<'_>) -> Result<Ret, HostError> {
         call.text(2),
     );
     Ok(Ret::Undefined)
+}
+
+/// `sendPinnedResourceResponse(location, checksum, size, inline, fileName)`: one revision of a file
+/// (`location#versionName`) when it is still the content the caller recorded (its tag and size), with that tag as its
+/// `ETag`, cached `private` (`web::send_pinned_response`); whether it was.
+fn send_pinned_resource_response(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    // a size that is not one never matches, so the content is refused as changed
+    let size = match call.number(2) {
+        Some(size) if size.is_finite() && size >= 0.0 && size.fract() == 0.0 => size as u64,
+        _ => u64::MAX,
+    };
+    let sent = crate::web::send_pinned_resource_response(
+        call.text(0).unwrap_or_default(),
+        call.text(1).unwrap_or_default(),
+        size,
+        call.bool(3).unwrap_or(false),
+        call.text(4),
+    );
+    Ok(Value::Bool(sent).into())
 }
 
 /// Remember the current screen path (or `path`) so a login can go back to it.

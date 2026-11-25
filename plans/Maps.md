@@ -336,7 +336,12 @@ needs the same contract, so whichever of the two starts first builds it here rat
   revision as the `ETag`, since a plain file has only a weak one and pmtiles.js is believed to disregard weak tags
   when it checks for a replaced archive (confirm against the vendored version in P0's spike).
 - **`Cache-Control: private` with the revision in the URL**, in place of the `no-store` user files carry, so a
-  browser reuses the tile bytes it has; a revoked share is refused on the next request to the server.
+  browser reuses the tile bytes it has, for `resource-facade` `pinned-max-age` (a day by default). After a share is
+  revoked, the ranges a browser already has stay readable in that browser until the max-age passes; any range it
+  does not have is a request to the server, refused at once. The transition answers through
+  `ec.web.sendPinnedResourceResponse` with the `tag` and `size` `ec.resource.getContentAddress` gave when the source
+  was registered, and content that is no longer that (a stale record) is refused with 409, never sent under the old
+  tag.
 - **`If-Range` by strong comparison** (it is compared as a string today, so a weak tag can satisfy it), and
   **cancellation** of a streamed read when the client goes away.
 

@@ -27,10 +27,10 @@ use moqui_lib::object::Value;
 
 use super::server::lfs::{pointer, pointer_text, Asked, GIT_LFS_OBJECT, MAX_POINTER};
 use super::{attributes, ops, GitProvider, Repo};
-use moqui_core::context::Error;
+use moqui_core::context::{ContentAddress, ContentKind, Error, ResourceStat};
 use moqui_core::entity::EntityValue;
 use moqui_core::resource::blob::{BlobInfo, BlobStore, Expected};
-use moqui_core::resource::source::ByteSource;
+use moqui_core::resource::source::{ByteSource, LazySource};
 
 /// A file's content to store.
 pub(super) enum FileContent<'a> {
@@ -148,6 +148,63 @@ impl GitProvider {
         }
     }
 
+    /// The file whose object is `blob` to read a window at a time, as it is in `repo`: an LFS object's content blob
+    /// or a `db` repository's large object by range, with its SHA-256 as the tag; any other object (a deflated object
+    /// of the filesystem store, a small row) read whole on the first read, tagged by its blob id. `size` is the
+    /// object's when the caller knows it. An object the store does not have is an error.
+    pub(super) fn open_blob(
+        &self,
+        repo: Arc<Repo>,
+        blob: ObjectId,
+        size: Option<u64>,
+        last_modified: Option<i64>,
+    ) -> Result<(ResourceStat, Arc<dyn ByteSource>), Error> {
+        let stat = |size| ResourceStat {
+            is_file: true,
+            size,
+            last_modified,
+        };
+        if let Some(info) = self.lfs_content(&repo, &blob)? {
+            return Ok((stat(info.size), self.lfs_source(&info)?));
+        }
+        if let Some(source) = repo.store.content_source(&blob)? {
+            return Ok((stat(source.len()), source));
+        }
+        let size = match size {
+            Some(size) => size,
+            None => object_size(&repo, &blob)?,
+        };
+        let source = LazySource::new(size, true, move || {
+            Ok(ops::object(repo.store.as_ref(), &blob, Kind::Blob)?)
+        })
+        .with_tag(format!("git-{blob}"));
+        Ok((stat(size), Arc::new(source)))
+    }
+
+    /// What a reader pins the file whose object is `blob` by: its LFS object, when the repository has the content,
+    /// else the git object; with the tag [`GitProvider::open_blob`] gives its source. An object the store does not
+    /// have is an error.
+    pub(super) fn blob_address(&self, repo: &Repo, blob: &ObjectId) -> Result<ContentAddress, Error> {
+        if let Some(info) = self.lfs_content(repo, blob)? {
+            return Ok(ContentAddress {
+                kind: ContentKind::GitLfs,
+                tag: format!("sha256-{}", info.id),
+                id: info.id,
+                size: info.size,
+            });
+        }
+        let (size, tag) = match repo.store.content_source(blob)? {
+            Some(source) => (source.len(), source.tag()),
+            None => (object_size(repo, blob)?, None),
+        };
+        Ok(ContentAddress {
+            kind: ContentKind::GitObject,
+            id: blob.to_string(),
+            size,
+            tag: tag.unwrap_or_else(|| format!("git-{blob}")),
+        })
+    }
+
     /// The source of the LFS content `info`.
     pub(super) fn lfs_source(&self, info: &BlobInfo) -> Result<Arc<dyn ByteSource>, Error> {
         Ok(BlobStore::new(self.entity()?).source(info))
@@ -178,4 +235,12 @@ impl GitProvider {
             &[],
         )
     }
+}
+
+/// The size of the object `blob` of `repo`; one the store does not have is an error (a tree names it, so the
+/// repository is missing an object).
+fn object_size(repo: &Repo, blob: &ObjectId) -> Result<u64, Error> {
+    repo.store
+        .object_size(blob)?
+        .ok_or_else(|| Error::new(format!("the object {blob} of {} is missing", repo.definition.id)))
 }
