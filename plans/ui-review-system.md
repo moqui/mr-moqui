@@ -399,13 +399,13 @@ alone does not complete the activity. Names beginning `review.` are fixture prop
 
 - **Actor/start:** Instance administrator; disposable supported hosting backend with isolated ports/volumes, or
   explicitly unavailable backend.
-- **Objective/steps:** Instance/List → create → Detail set environment/volume/link →
+- **Objective/steps:** Instances/InstanceList → create → InstanceDetail set environment/volume/link →
   provision/check/database/init as offered → start → inspect state → stop → remove with confirmation.
 - **Expected:** Displayed lifecycle matches backend outcomes; instance/volume identity is clear and credentials
   stay protected; defined, provisioned and running are distinct.
 - **Recovery:** Unsupported backend, conflicting port, failed phase, invalid environment, canceled removal and
   stale state identify the failed operation without damaging other definitions.
-- **Screens/modes:** Instance/InstanceList/InstanceDetail; local backend required for successful lifecycle, with
+- **Screens/modes:** Instances/InstanceList and Instances/InstanceDetail; local backend required for successful lifecycle, with
   TUI/Standard administrative forms.
 
 ### SYS-09 — Inspect cache and thread pressure
