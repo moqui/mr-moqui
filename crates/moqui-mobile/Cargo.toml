@@ -54,6 +54,10 @@ ndk-context = "0.1"
 jni = "0.22"
 rustls-platform-verifier = "0.7"
 
+[dev-dependencies]
+# The screen leg's tests against the repository's own media server (src/screen_tests.rs), on loopback.
+moqui-rtc = { path = "../moqui-rtc" }
+
 [build-dependencies]
 tauri-build = { version = "=3.0.0-alpha.4", features = [] }
 
