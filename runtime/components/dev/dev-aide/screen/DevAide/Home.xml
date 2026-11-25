@@ -23,10 +23,10 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><message type="${published ? 'success' : 'warning'}">${(message || 'Published')}</message></actions>
         <default-response url="."/></transition>
     <transition name="createSite"><service-call name="org.moqui.devaide.WorkspaceServices.create#SiteComponent"/>
-        <actions><message type="success">Created ${location}: it loads after a restart</message></actions>
+        <actions><if condition="location"><message type="success">Created ${location}: it loads after a restart</message></if></actions>
         <default-response url="."/></transition>
     <transition name="createComponent"><service-call name="org.moqui.devaide.WorkspaceServices.create#Component"/>
-        <actions><message type="success">Created ${location}: it loads after a restart</message></actions>
+        <actions><if condition="location"><message type="success">Created ${location}: it loads after a restart</message></if></actions>
         <default-response url="."/></transition>
     <transition name="restart"><service-call name="org.moqui.dev.DevToolsServices.restart#Server"/>
         <actions><message type="warning">Restarting: the server comes back in a few seconds</message></actions>
@@ -92,7 +92,7 @@ along with this software (see the LICENSE.md file). If not, see
                         <container-dialog id="DevAideCreateSite" button-text="Create site component" title="Create site component">
                             <form-single name="CreateSiteForm" transition="createSite">
                                 <field name="componentName"><default-field title="Name"><text-line size="20" default-value="my-site"/></default-field></field>
-                                <field name="dependsOn"><default-field title="Extends (components, comma separated)"><text-line size="40"/></default-field></field>
+                                <field name="dependsOn"><default-field title="Extends (components, comma separated)" tooltip="Components that load on every instance, as the site does: not a dev-only one such as example"><text-line size="40"/></default-field></field>
                                 <field name="submitButton"><default-field title="Create"><submit/></default-field></field>
                                 <field-layout>
                                     <field-row><field-ref name="componentName"/><field-ref name="dependsOn"/></field-row>

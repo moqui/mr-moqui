@@ -246,6 +246,13 @@
         for (const index of path || []) node = node && node.children ? node.children[index] || null : null;
         return node;
     };
+    // The element a selection held, in an outline read again after an edit: the one now at its path when it is still of
+    // its kind, else null (plans/ui-review-dev-aide-authoring.md DEVA-UI-002, where the properties kept the old values).
+    pure.sameNodeIn = (outline, node) => {
+        if (!node) return null;
+        const now = pure.outlineAt(outline, node.path);
+        return now && now.name === node.name ? now : null;
+    };
     // The elements of an outline, depth first, each with its depth: what a view lists.
     pure.walkOutline = (outline, visit, depth) => {
         if (!outline) return;

@@ -1,6 +1,8 @@
 # MR Moqui — UI review: Dev AIDE artifact authoring
 
-**Status — 2026-11-25.** First live review, DEVA-B01. All fourteen activities have branch-level outcomes. A saved entity field propagated through service inputs to a persisted row in Tools Grid. Two P2 findings remain open.
+**Status — 2026-11-25, refinement.** Both DEVA-B01 findings are fixed (DEVA-UI-001/002).
+
+**Previous status — 2026-11-25.** First live review, DEVA-B01. All fourteen activities have branch-level outcomes. A saved entity field propagated through service inputs to a persisted row in Tools Grid. Two P2 findings remain open.
 
 Contents: [scope](#1-purpose-scope-and-sources) · [method](#2-review-method-and-refinement-criteria) ·
 [inventory](#3-screen-and-surface-inventory) · [activities](#4-end-to-end-activities) ·
@@ -421,8 +423,8 @@ presentation; P3 is a localized refinement. Label evidence as observed behavior,
 
 | ID / severity | Actor, activity step, route, mode / viewport | Reproduction and impact | Evidence / owning layer | State / correction / retest |
 | --- | --- | --- | --- | --- |
-| DEVA-UI-001 · P2 | ADMIN, DEVA-07, Material Entities/Edit, 1280×720 | Open RoundReviewAppItem in the modeler with the site seed file present. Choose Seed data. Its selected tab shows an empty pane. Returning after reload has the same outcome. Explain which file or records apply and how to start when the file has no applicable rows. | Observed, seed.jpg. Entity modeler seed panel. | Open. |
-| DEVA-UI-002 · P2 | ADMIN, DEVA-12, Material Screens/Design, generated FindItem | Choose Screen → Design → Outline → NewItemDialog. Replace “New item” in the button-text property, then leave the field with Tab. The field retains the new label, Save stays disabled, the canvas button keeps “New item”, and Text still shows the original XML. Repeated with a keyboard-typed replacement. Stage the property edit in the XML buffer, or explain why the change cannot be applied. | Observed, designer-property.jpg. Screen designer outline/property editor. | Open. |
+| DEVA-UI-001 · P2 | ADMIN, DEVA-07, Material Entities/Edit, 1280×720 | Open RoundReviewAppItem in the modeler with the site seed file present. Choose Seed data. Its selected tab shows an empty pane. Returning after reload has the same outcome. Explain which file or records apply and how to start when the file has no applicable rows. | Observed, seed.jpg. Entity modeler seed panel. | **Fixed and checked 2026-11-25.** The tab showed when the seed file existed, but its pane waited for the file to be read on an edit. It is now read when the tab is chosen, with a reading state and an error. The pane shows only this entity's records, always with its fields as columns. With no records it says so and offers Add row. Live: moqui.example.Example over my-site's empty seed file showed the empty state; Add row made a row with all nine field cells. Nothing was saved. DevAideEntity page test. |
+| DEVA-UI-002 · P2 | ADMIN, DEVA-12, Material Screens/Design, generated FindItem | Choose Screen → Design → Outline → NewItemDialog. Replace “New item” in the button-text property, then leave the field with Tab. The field retains the new label, Save stays disabled, the canvas button keeps “New item”, and Text still shows the original XML. Repeated with a keyboard-typed replacement. Stage the property edit in the XML buffer, or explain why the change cannot be applied. | Observed, designer-property.jpg. Screen designer outline/property editor. | **Fixed and checked 2026-11-25.** Reproduced on a generated app's FindItem. The `xmlOp` edit applied to the buffer and Save was enabled, but the Properties panel kept reading the selected element from the outline as it was before the edit, so it showed the old value. The selection now follows to the element at its path in the new outline. Live: button-text "Add item" stayed in Properties and in the text after Tab, with Save enabled. The canvas preview was refused for lack of a grant on the recheck runtime, so the canvas was not rechecked. The reviewer's disabled Save was not reproduced. DevAide page test. |
 
 ### Bounded batch record
 

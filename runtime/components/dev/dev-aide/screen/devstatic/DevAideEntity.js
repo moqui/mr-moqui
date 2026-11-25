@@ -210,6 +210,18 @@
     ops.setRecordValue = (row, name, value) => (value === "" || value == null)
         ? (row.values[name] === undefined ? [] : [{ op: "remove-attribute", at: row.path, name }])
         : [{ op: "set-attribute", at: row.path, name, value: String(value) }];
+    // The entity's own records in the seed file, as a table; with none, an empty table of its fields, so Add row makes the
+    // first (plans/ui-review-dev-aide-authoring.md DEVA-UI-001). Records of other entities in the file are not shown.
+    ops.entityRecordTables = (outline, entity) => {
+        if (!entity) return [];
+        const names = [entity.fullEntityName, entity.entityName, entity.shortAlias].filter(Boolean);
+        // the entity's fields are columns whatever the records set, so a new empty row has its cells; lastUpdatedStamp is
+        // the framework's to set
+        const fields = (entity.fields || []).map((field) => field.name).filter((name) => name !== "lastUpdatedStamp");
+        const own = ops.recordTables(outline).filter((table) => names.indexOf(table.entity) >= 0)
+            .map((table) => Object.assign(table, { columns: table.columns.concat(fields.filter((name) => table.columns.indexOf(name) < 0)) }));
+        return own.length ? own : [{ entity: entity.fullEntityName, columns: fields, rows: [] }];
+    };
     ops.addRecord = (outline, table, values) => {
         const rows = table.rows;
         const xml = ops.xml(table.entity, table.columns.map((name) => [name, values ? values[name] : ""]));
@@ -329,7 +341,7 @@
         props: { ctx: { type: Object, required: true }, tab: { type: Object, required: true }, outline: Object },
         data() {
             return {
-                entityName: "", view: null, loading: false, error: "", target: null, seed: null, section: "fields",
+                entityName: "", view: null, loading: false, error: "", target: null, seed: null, seedError: "", section: "fields",
                 adding: null, relAdding: null, indexAdding: null, memberAdding: null, aliasAdding: null, uses: null,
                 membersAs: "diagram", memberSizes: {},
                 ddl: null, showOnForm: null, entityOptions: [], filterFields: "", seedPending: false, schema: null, viewSql: "",
@@ -387,7 +399,8 @@
                 if (!table.missingColumns.length && !table.extraColumns.length) return moqui.l10n.localize("The table matches the fields.");
                 return "";
             },
-            seedTables() { return this.isData ? ops.recordTables(this.outline) : (this.seed && this.seed.outline ? ops.recordTables(this.seed.outline) : []); },
+            seedTables() { return this.isData ? ops.recordTables(this.outline) : (this.seed && this.seed.outline ? ops.entityRecordTables(this.seed.outline, this.entity) : []); },
+            seedRecordCount() { return this.seedTables.reduce((count, table) => count + table.rows.length, 0); },
             full() { return this.ctx.tier === "full"; },
             // the attributes the schema gives the element edits go to (entity, view-entity or extend-entity), but its name
             elementAttributes() {
@@ -405,7 +418,13 @@
             dataEditUrl() { return this.entity ? "/qapps/tools/Data/Grid?entityName=" + encodeURIComponent(this.entity.fullEntityName) : ""; }
         },
         watch: {
-            outline() { if (!this.entityName && !this.isData) this.pickEntity(); }
+            outline() { if (!this.entityName && !this.isData) this.pickEntity(); },
+            // the seed file is read when its tab is chosen, not only on an edit, so the tab never opens empty (DEVA-UI-001)
+            section(value) {
+                if (value !== "seed" || this.seed) return;
+                this.seedError = "";
+                this.seedBuffer().catch((error) => { this.seedError = pure.errorText(error); });
+            }
         },
         mounted() {
             this.pickEntity();
@@ -934,8 +953,12 @@
         <div class="m-dev-grid-wrap" v-if="(view.data.rows || []).length"><table class="m-dev-grid"><thead><tr><th v-for="name in Object.keys(view.data.rows[0])" :key="name">{{name}}</th></tr></thead>
           <tbody><tr v-for="(row, i) in view.data.rows" :key="i"><td v-for="name in Object.keys(view.data.rows[0])" :key="name" class="ellipsis" style="max-width: 14rem">{{row[name]}}</td></tr></tbody></table></div>
       </div>
-      <div v-if="section === 'seed' && seed" id="DevEntitySeed">
+      <div v-if="section === 'seed'" id="DevEntitySeed">
+        <div v-if="seedError" class="text-negative">{{seedError}}</div>
+        <div v-else-if="!seed" class="m-muted"><q-spinner size="14px" class="q-mr-xs"></q-spinner>{{ t('Reading the seed data file') }}</div>
+        <template v-else>
         <div class="text-caption m-muted q-mb-xs">{{seed.path}}{{seed.missing ? ' (made on Save)' : ''}}: loaded after Save.</div>
+        <div v-if="!seedRecordCount" class="m-muted q-mb-sm">{{ t('This file has no records of the entity yet: Add row starts one, and Save writes it.') }}</div>
         <div v-for="table in seedTables" :key="table.entity" class="q-mb-md">
           <div class="row items-center no-wrap"><span class="text-weight-medium">{{table.entity}}</span><q-space></q-space>
             <q-btn dense flat no-caps size="sm" icon="add" label="Add row" @click="addRecord(seed, table)"></q-btn></div>
@@ -944,6 +967,7 @@
               <td v-for="column in table.columns" :key="column"><input class="m-dev-cell" :value="row.values[column] || ''" @change="setRecord(seed, row, column, $event.target.value)"></td>
               <td><q-btn dense flat round size="xs" icon="delete" aria-label="Remove row" @click="removeRecord(seed, row)"><q-tooltip>Remove row</q-tooltip></q-btn></td></tr></tbody></table></div>
         </div>
+        </template>
       </div>
     </template>
   </template>
