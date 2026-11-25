@@ -73,7 +73,7 @@ Contents: [0 decisions](#0-decisions) · [1 what moves](#1-what-moves) · [2 tod
 
 | Today | Lands in | The old place |
 | --- | --- | --- |
-| GitHub repositories of the `moqui` organization (the five mr-* repositories of the [README](../README.md#repositories), the Java ones, `moqui-site`) | Hosted repositories of the `moqui` group ([§5](#5-smithy)) | A push mirror, read only ([§9](#9-github)) |
+| GitHub repositories of the `moqui` organization (the mr-* repositories of the [README](../README.md#applications), the Java ones, `moqui-site`) | Hosted repositories of the `moqui` group ([§5](#5-smithy)) | A push mirror, read only ([§9](#9-github)) |
 | GitHub Issues | Work items of each repository's project, with their numbers ([§5.5](#55-issues)) | Closed to new issues, each with a link to its new place |
 | GitHub pull requests | Merge requests, with their commits, reviews and line comments ([§5.6](#56-merge-requests-forks-and-push-to-review)) | A pull request template that points to moqui.org |
 | GitHub Actions, where a repository still has a workflow | Pipelines ([§8](#8-ci)) | Removed |

@@ -4,7 +4,7 @@ Notes for moving a Moqui Java deployment, or a component written for it, to MR M
 locations. The rest is documented elsewhere:
 
 - The deliberate redesigns (JavaScript for scripts and templates, SearchFacade, html-print, database cluster
-  coordination and sessions, keys as configuration): the root [README](../../README.md#significant-redesigns-vs-moqui-java).
+  coordination and sessions, keys as configuration): the root [README](../../README.md#significant-redesigns).
 - Smaller deliberate differences inside ported features: [Parity-Diffs](../../plans/Parity-Diffs.md). Features left out
   on purpose: [Parity-Mapping, Excluded on purpose](../../plans/Parity-Mapping.md#excluded-on-purpose).
 - Converting a component's Groovy to JavaScript (`moqui convert --groovy`, `moqui lint --groovy`, hand ports): the Mantle
@@ -15,7 +15,7 @@ locations. The rest is documented elsewhere:
   [JS-Core-API](JS-Core-API.md#differences-from-moqui-java) for `ec.*` and [JS-Globals](JS-Globals.md) for the helper
   classes; the Groovy idioms that do not carry over: [JS-XML-Actions](JS-XML-Actions.md#groovy-that-does-not-carry-over).
 - A component's native Rust code, which takes the place of a Gradle build and jars: [Native-Components](Native-Components.md).
-- `./moq` in place of the Gradle tasks: the root [README](../../README.md#build-test-and-run).
+- `./moq` in place of the Gradle tasks: [Build and Test](../Build-Test.md).
 
 ## Component and repository renames
 
