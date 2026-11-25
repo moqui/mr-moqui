@@ -8,7 +8,8 @@
 // and revives a code its owner retired; an import never changes a user-confirmed point or a code made by hand, and a
 // Remove end-dates a code something refers to; refusals with maps@external-requests false, for a non-administrator
 // (also with authorization off, by the importer's own MAPS_ADMIN check), for a license not acknowledged and for an
-// operator's file with no country or outside the allowed locations.
+// operator's file with no country or outside the allowed locations; and a ServiceJob run with no user runs as its
+// runAsUserId only when that user added themselves to the job.
 // Run: ./moq test framework --spec GeoDataImport
 const S = "org.moqui.maps.GeoDataServices."
 const IMPORT = "moqui.maps.GeoDataImport"
@@ -18,7 +19,8 @@ const ZCTA_MEMBER = "2026_Gaz_zcta_national.txt"
 const GN_URL = "https://download.geonames.org/export/zip/US.zip"
 const ROOT = "dbresource://moqui/maps/spec-geo"
 const USER = "GEO_SPEC_USER"
-const CODES = ["00601", "02134", "02135", "02138", "02139", "02140"]
+const CODES = ["00601", "02134", "02135", "02138", "02139", "02140", "00599"]
+const JOBS = ["SPEC_GEO_RUNAS_OTHER", "SPEC_GEO_RUNAS_SELF"]
 const http = ec.factory.getTool("HttpFixtures")
 // the data sets' license acknowledgements before the spec, put back after
 const acks = {}
@@ -82,7 +84,10 @@ function sweep() {
         ec.entity.find("moqui.basic.GeoPostalCodePlace").condition("geoId", "in", geoIds).deleteAll()
         ec.entity.find("moqui.basic.GeoPointAssoc").condition("geoId", "in", geoIds).deleteAll()
         for (const geoId of geoIds) {
-            ec.entity.find("moqui.basic.GeoPoint").condition("geoPointId", "like", geoId + "_%").deleteAll()
+            ec.entity
+                .find("moqui.basic.GeoPoint")
+                .condition("geoPointId", "like", geoId + "_%")
+                .deleteAll()
         }
         ec.entity.find("moqui.basic.GeoAssoc").condition("toGeoId", "in", geoIds).deleteAll()
         ec.entity.find("moqui.basic.GeoPostalCode").condition("geoId", "in", geoIds).deleteAll()
@@ -90,7 +95,15 @@ function sweep() {
         for (const run of Array.from(ec.entity.find(IMPORT).condition("dataSetId", "in", SETS).list())) {
             if (run.errorFileLocation) written.push(run.errorFileLocation)
         }
-        ec.entity.find(IMPORT).condition("dataSetId", "in", SETS).deleteAll()
+        ec.entity
+            .find(IMPORT)
+            .condition("dataSetId", "in", SETS.concat(["OPERATOR_CSV"]))
+            .deleteAll()
+        for (const entity of ["ServiceJobUser", "ServiceJobParameter", "ServiceJobRun", "ServiceJobRunLock", "ServiceJob"])
+            ec.entity
+                .find("moqui.service.job." + entity)
+                .condition("jobName", "in", JOBS)
+                .deleteAll()
     })
 }
 
@@ -100,7 +113,7 @@ spec({
         http.enable()
         sweep()
         sys(() => {
-            for (const dataSetId of ["CENSUS_ZCTA", "GEONAMES_POSTAL"]) {
+            for (const dataSetId of ["CENSUS_ZCTA", "GEONAMES_POSTAL", "OPERATOR_CSV"]) {
                 const set = ec.entity.find("moqui.maps.GeoDataSet").condition({dataSetId}).one()
                 acks[dataSetId] = {licenseAckUserId: set.licenseAckUserId, licenseAckDate: set.licenseAckDate}
                 set.setAll({licenseAckUserId: ec.user.userId, licenseAckDate: ec.user.nowTimestamp}).update()
@@ -117,6 +130,7 @@ spec({
         ec.user.internalLoginUser("john.doe")
         invoke(S + "remove#GeoData", {dataSetId: "GEONAMES_POSTAL", countryGeoId: "USA"})
         invoke(S + "remove#GeoData", {dataSetId: "CENSUS_ZCTA"})
+        invoke(S + "remove#GeoData", {dataSetId: "OPERATOR_CSV", countryGeoId: "USA"})
         sweep()
         sys(() => {
             for (const dataSetId of Object.keys(acks)) {
@@ -442,5 +456,64 @@ feature("an import is refused with outside requests off, for a non-administrator
         userNoAuthz.error.includes("MAPS_ADMIN")
         userNoAuthz.statusId == null
         made == 0
+    }
+})
+
+feature("a ServiceJob run with no user runs as its runAsUserId only when that user added themselves to the job", {
+    when() {
+        const me = ec.user.userId
+        const location = `dbresource://moqui/maps/import/${me}/spec-runas/US.csv`
+        written.push(location)
+        sys(() => {
+            ec.resource
+                .getLocationReference(location)
+                .putText("country,code,place,admin1,admin2,latitude,longitude,precision\nUS,00599,Spec,NY,,40.8,-73.0,postal\n")
+            for (const jobName of JOBS) {
+                ec.entity
+                    .makeValue("moqui.service.job.ServiceJob")
+                    .setAll({jobName, serviceName: S + "import#GeoData", transactionTimeout: 600})
+                    .create()
+                const parameters = {dataSetId: "OPERATOR_CSV", countryGeoId: "USA", location, runAsUserId: me}
+                for (const [parameterName, parameterValue] of Object.entries(parameters))
+                    ec.entity
+                        .makeValue("moqui.service.job.ServiceJobParameter")
+                        .setAll({jobName, parameterName, parameterValue})
+                        .create()
+            }
+        })
+        // the job user row is added by another user to one job, and by the run-as user to the other
+        ec.user.internalLoginUser("geo.spec.user")
+        sys(() => ec.entity.makeValue("moqui.service.job.ServiceJobUser").setAll({jobName: JOBS[0], userId: me}).create())
+        ec.user.internalLoginUser("john.doe")
+        sys(() => ec.entity.makeValue("moqui.service.job.ServiceJobUser").setAll({jobName: JOBS[1], userId: me}).create())
+        ec.user.logoutUser()
+        // as a scheduler starts a job: no user, authorization off
+        const runIds = sys(() => JOBS.map(jobName => ec.service.job(jobName).run()))
+        ec.user.internalLoginUser("john.doe")
+        const ended = id =>
+            sys(() =>
+                ec.entity
+                    .find("moqui.service.job.ServiceJobRun")
+                    .condition("jobRunId", id || "_NA_")
+                    .one()
+            )
+        const deadline = Date.now() + 10000
+        while (Date.now() < deadline && !runIds.every(id => ended(id)?.endTime)) {
+            const pause = Date.now() + 50
+            while (Date.now() < pause) {
+                /* look again shortly */
+            }
+        }
+        const [other, self] = runIds.map(ended)
+        return {other, self, imported: all(IMPORT, {dataSetId: "OPERATOR_CSV"}), me}
+    },
+    then({other, self, imported, me}) {
+        other.hasError == "Y"
+        other.errors.includes("who added themselves")
+        self.hasError != "Y"
+        imported.length == 1
+        imported[0].statusId == "GdiCompleted"
+        imported[0].userId == me
+        imported[0].jobRunId == self.jobRunId
     }
 })

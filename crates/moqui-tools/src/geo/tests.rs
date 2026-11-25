@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-use super::fetch::{copy_capped, expand_template, header, location_allowed, PROGRESS_BYTES};
+use super::fetch::{copy_capped, expand_template, header, location_allowed, location_allowed_for, PROGRESS_BYTES};
 use super::*;
 
 #[test]
@@ -62,7 +62,24 @@ fn headers_and_locations() {
     ];
     assert_eq!(header(&headers, "ETag").as_deref(), Some("\"abc\""));
     assert_eq!(header(&headers, "last-modified"), None);
-    assert!(location_allowed("dbresource://moqui/maps/import/zips.csv"));
+    // the Maps import folder: only the caller's own folder of it
+    assert!(!location_allowed("dbresource://moqui/maps/import/zips.csv"));
+    assert!(location_allowed_for(
+        "dbresource://moqui/maps/import/EX_JOHN_DOE/a/zips.csv",
+        Some("EX_JOHN_DOE")
+    ));
+    assert!(!location_allowed_for(
+        "dbresource://moqui/maps/import/OTHER/a/zips.csv",
+        Some("EX_JOHN_DOE")
+    ));
+    assert!(!location_allowed_for(
+        "dbresource://moqui/maps/import/EX_JOHN_DOE/",
+        Some("EX_JOHN_DOE")
+    ));
+    assert!(location_allowed_for(
+        "dbresource://moqui/database/upload/EX_JOHN_DOE/1/z.csv",
+        Some("EX_JOHN_DOE")
+    ));
     assert!(location_allowed("runtime://import/geo/zips.csv"));
     assert!(!location_allowed("dbresource://moqui/maps/import/"));
     assert!(!location_allowed("dbresource://moqui/maps/import/../etl/x.csv"));

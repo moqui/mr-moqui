@@ -169,6 +169,62 @@ pub fn normalize_postal_code(country: &str, raw: &str) -> Result<PostalCode, Str
     }
 }
 
+/// A postal code a person typed, read for the postal lookup (plans/Maps.md §6.1, §6.3): the code by its country's rules,
+/// and the declared prefix to fall back to when the full code has no row.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LookupCode {
+    pub code: PostalCode,
+    /// The country's declared first part of a full code (a Canadian forward sortation area, a British outward code, a
+    /// Dutch four-digit area): only for the countries whose sources publish such prefixes, never a cut of another
+    /// country's code.
+    pub prefix: Option<PostalCode>,
+    /// The text was a US ZIP+4 code, read as its five-digit ZIP code: the ZIP+4 lies within that area, so the area's
+    /// precision is all a match claims.
+    pub zip_plus4: bool,
+}
+
+/// `raw` as a postal code of `country` for a lookup: as [`normalize_postal_code`], but a US ZIP+4 is read as its
+/// ZIP code (a lookup of the area that holds it, flagged), and a full code of a partial-code country has its declared
+/// prefix.
+///
+/// # Errors
+///
+/// As [`normalize_postal_code`].
+pub fn lookup_code(country: &str, raw: &str) -> Result<LookupCode, String> {
+    let compact: String = raw.chars().filter(|c| !c.is_whitespace() && *c != '-').collect();
+    let zip_plus4 = rules_country(country) == "US" && shaped(&compact, "999999999");
+    let code = if zip_plus4 {
+        normalize_postal_code(country, compact.get(..5).unwrap_or_default())?
+    } else {
+        normalize_postal_code(country, raw)?
+    };
+    let prefix = declared_prefix(country, &code);
+    Ok(LookupCode {
+        code,
+        prefix,
+        zip_plus4,
+    })
+}
+
+/// The declared prefix of a full code of Canada, Great Britain or the Netherlands (the first part their sources publish
+/// alone); None for a prefix already, and for every other country.
+#[must_use]
+pub fn declared_prefix(country: &str, code: &PostalCode) -> Option<PostalCode> {
+    if code.granularity != Granularity::Full {
+        return None;
+    }
+    let cut = match rules_country(country) {
+        "CA" => 3,
+        "NL" => 4,
+        "GB" if code.normalized != "GIR0AA" => code.normalized.len().checked_sub(3)?,
+        _ => return None,
+    };
+    let head = code.normalized.get(..cut)?;
+    normalize_postal_code(country, head)
+        .ok()
+        .filter(|prefix| prefix.granularity == Granularity::Prefix)
+}
+
 /// Whether `text` has the shape of `pattern`: `9` a digit, `A` a letter, one for one.
 fn shaped(text: &str, pattern: &str) -> bool {
     text.len() == pattern.len()

@@ -5128,6 +5128,7 @@ name = "moqui-tools"
 version = "0.1.0"
 dependencies = [
  "csv",
+ "flate2",
  "indexmap",
  "jiff",
  "moqui-core",

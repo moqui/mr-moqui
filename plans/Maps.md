@@ -148,7 +148,8 @@ name:
 - KML is read with an `iconUrlFunction` that answers a blank `data:` icon for every href (and the default pushpin), as
   an IconStyle's image loads while the file is parsed whatever `extractStyles` is; the layer is styled by `m-map`.
 - A PMTiles archive must be of this server; its header is read first, so an archive that cannot be read by range is a
-  named, retryable failure.
+  named, retryable failure. A registered archive's URL is the map-source transition's, naming its revision (§5); a 409
+  from it loads the configuration again, so a replaced archive is drawn whole at its new revision.
 - A hillshade layer's raster operation runs in a Blob worker: a page with a Content-Security-Policy stricter than the
   default needs `worker-src blob:` for it, beside the provider's hosts in `connect-src`, `img-src` and `font-src`.
 
@@ -330,16 +331,18 @@ What each backend does with a range today:
 
 | Backend | A range reads only its bytes | Validator |
 | --- | --- | --- |
-| Plain file (`file`, `runtime`, `component`) | Yes, by seek | Weak (`mtime` and size) |
+| Plain file (`file`, `runtime`, `component`) | Yes, by seek | Weak (`mtime` and size); a registered archive's SHA-256 is read once when it is registered, and the map-source transition sends it as the strong tag (a change of its size or modification time is 409 until it is registered again) |
 | DbResource over `dbresource-blob-threshold` (64 KiB) | Yes, the 1 MiB chunks it needs of the content blob | Strong (SHA-256) |
 | Git on Postgres, an object over `db-large-object` (8 MiB) | Yes, from its content blob; a smaller object is read whole from its row | Strong |
 | Git LFS, in either kind of repository | Yes, but the bytes are Postgres content blobs whatever the repository's storage | Strong |
 | Git on filesystem, an object not in LFS | **No: the whole object is read for every request**, and a deflated object cannot be read by range | Strong (blob id) |
-| Any `location#version` | **No: the whole version is read into memory** | None |
+| Any `location#version` | Built in stage R: a version of an LFS object, a content blob or a large object opens by range with its strong tag; a small row or a filesystem git object is read whole | Strong (its content address) |
 
 This work is **stage R** (§9): it has no dependency on the map widget, and
 [HOME Media](../runtime/components/addon/mr-home/plan/initial-design.md#32-media-photos-music-videos-ebooks-and-audiobooks)
-needs the same contract, so whichever of the two starts first builds it here rather than in its own plan. To build:
+needs the same contract, so whichever of the two starts first builds it here rather than in its own plan. Built (stage R,
+then the registration, the transition and the LFS rule with P2's archives, November 25, 2026: `org.moqui.maps.MapSourceServices`,
+`MapSources.js`, `LocalMap.xml` `source`; [Maps › Archives](../docs/tools/Maps.md#archives)); the items were:
 
 - **Git archives are LFS objects.** A map source registered in a git repository must be an LFS object, and
   readiness refuses another by name; the 512 MiB cap on a pushed non-LFS object (`git-server@max-object-size`)
@@ -398,7 +401,7 @@ Archive ingestion must expose each backend's practical size/quota limits. Curren
 (`git-server@lfs-max-object-size`), a pushed non-LFS git object of 512 MiB (`git-server@max-object-size`) and a
 drive's own `quotaBytes`; a large regional/planet archive can exceed them. Where the per-client web protection is
 on, the `all` rate limit (50 requests a second, a burst of 500) also bounds the tile requests of several people
-panning behind one address; measure a pan against it in P2 rather than raising it by default. Support operator-registered local files in place and bounded server-side download/import jobs, with explicit
+panning behind one address; measure a pan against it in P2 rather than raising it by default (measured by `MapsLocalOnly`, November 25, 2026: a pan of six steps and two zooms over a small archive asked 17 ranges in about 4 s, far under the limit; an archive with leaf directories asks a few more, and the browser keeps each range it read). Support operator-registered local files in place and bounded server-side download/import jobs, with explicit
 configured limits and disk/database capacity checks. Do not imply that range playback removes upload/storage caps,
 or globally raise those caps just to install a map. Include backup and archive-replacement space in readiness.
 
@@ -492,10 +495,36 @@ Keep reference geography in `moqui.basic`, usable with only the framework instal
   the first in the file among equals.
 
 This is four rows a postal code (Geo, GeoPostalCode, GeoPoint, GeoPointAssoc) and one a place name
-(GeoPostalCodePlace): about 135,000 for the US, and
+(GeoPostalCodePlace): about 135,000 for the US by the first estimate, about 318,500 as measured below (each code has a
+point from each source that has it, and the county links come too), and
 several million for every GeoNames country. The model is kept as it is for the US. P2 measures the US import, the
 lookup and a refresh before the importer offers every country at once, and the international shape is decided on
 those numbers.
+
+**Measured November 25, 2026** (the acceptance test `GeoDataUsaImport`, release build, embedded Postgres, a 2026 Apple
+laptop shared with other builds; the Census 2026 Gazetteer and 2020 relationship files and GeoNames `US.zip` as published
+that day). The first import, downloads included, took 61 s: Counties 1.5 s (3,222 rows), ZCTAs 29.3 s (33,791), the
+ZCTA-to-county file 16.4 s (47,863 rows, 33,486 links, 305 county parts outside every ZCTA passed over) and GeoNames US
+13.7 s (41,490 rows, 41,488 written). In use after it, about 318,500 rows: 44,925 Geos (codes, counties), 41,637
+GeoPostalCode, 78,501 GeoPointAssoc and as many GeoPoint (a point an association; a GeoNames place's own point beyond
+its code's was not counted), 41,490 GeoPostalCodePlace and 33,486 county-to-code GeoAssoc links. A refresh that changes nothing took 1.3 s when the sources answered
+conditionally (Counties, ZCTAs and GeoNames ended as current; the relationship file, which sends no validator, was read
+and compared whole in 0.75 s) and 3.5 s forced (every file downloaded, read and compared: 0 created, updated or retired).
+The postal lookup took 0.46 ms a code with its cache cleared and 0.11 ms cached (1,041 codes, every one found). Memory:
+the spec records the status map's `Process MemoryUsed` and `MemoryPeak`, which are read from `/proc` and so are Linux's
+only (null on macOS, where `ru_maxrss` or `/usr/bin/time -l` would give the peak of the whole test process, its data
+load included). The figures here are the test server's resident size read with `ps -o rss` once a second by a sampler
+beside the run, so a shorter peak can be missed: about 445 MB before the first import, at most about 520 MB during it,
+and about 745 MB at the end of the forced GeoNames refresh.
+
+**Every country.** One run reads one country, so the time, the rows and the memory of a run grow with that country's
+codes, not with the number of countries: at the US rate (about 3,000 GeoNames rows a second), the 124 GeoNames countries (about 1.3 million rows, judged by `allCountries.zip`'s 19 MB against `US.zip`'s 619 KB
+and 41,490 rows; with the US's about 7.7 database rows a code, about 10 million database rows) would load in roughly 8 minutes of runs. Importing
+each country by itself stays as it is (Geo data's Import, one country a run). Every country at once may open as a queued
+sequence of per-country runs, each its own run and edition, with the confirmation of §6.4 giving that estimate, once the
+memory growth of a forced refresh (about 225 MB above the first import's peak for 41,000 codes) is explained: a run that
+holds a country's records in memory would need GBs for the largest files (`GB_full` has well over a million codes),
+which stay a separate, deliberate import. Until then the screen offers one country a run.
 
 A framework postal lookup accepts country and postal code only; it does not need a street address or party ID.
 
@@ -565,7 +594,10 @@ runs lack, is new here.
 **Settings.** Maps › Configuration › Geo data, for `MAPS_ADMIN`: each data set with its license and attribution;
 the countries imported, each with its edition, counts and last run; and Import, Refresh, Cancel, Schedule and
 Remove (rows nothing refers to are deleted, the rest end-dated). Importing every GeoNames country at once asks
-for confirmation with an estimate of the rows, and is not offered until the P2 measurement.
+for confirmation with an estimate of the rows, and is not offered until the P2 measurement. Built: Import and a scope's
+Refresh start a run of the `GeoDataImport` ServiceJob; Refresh all and the schedule are one `GeoDataRefresh` ServiceJob
+that imports every scope again (an unchanged source costs a conditional request), scheduled weekly or monthly and run
+as the administrator who scheduled it, rather than a job a data set (docs/tools/Maps.md "Geo data").
 
 ## 7. Useful Rust server work
 
@@ -625,7 +657,7 @@ prepared downloads. This keeps a HOME installation practical without a large geo
 | P0 — contracts and a spike | Confirm widget/dialog, profile/layer/provider schema, the adapter interfaces and permission boundaries, Geo extensions and ID scheme, and the `maps` conf element. Before the widget contract is fixed, a spike on a scratch page proves the two rendering paths on a desktop and a phone: an OpenFreeMap style through `ol-mapbox-style` with fonts served locally, and `PMTilesVectorSource` with a local style against a ranged resource URL (which also settles the weak-tag question of §5). Then vendor the selected OpenLayers/style/PMTiles versions and their assets/notices. Spike outcome (November 25, 2026): OpenFreeMap liberty and a Florence PMTiles extract both drew on desktop and at phone width, with fonts only from the page's origin once the webfonts template was absolute; `m-map` binds the archive's source itself (`applyStyle`, `updateSource: false`; §4.1); pmtiles ignored the static handler's weak tag, so stage R's pinned strong tag is required to detect a replaced archive (§5). |
 | R — byte access | The to-build list of §5: LFS-only git archives with their readiness check, pinned revisions by range, the map-source transition with a strong validator and private caching, strong `If-Range`, cancellation. Independent of P1, and built by whichever of Maps and HOME Media starts first. |
 | P1 — map and shared UI | Tools Maps full-screen browser, local dialog, personal preferences/saved views, explicit current-location action, the outline map of a fresh install and the OpenFreeMap provider an administrator enables. A user can open a record dialog without System, BOSS or standalone Maps app access, but cannot read an unauthorized record; with no Mantle in this stage, that rule is tested with a test adapter of the framework's own test services (`framework/test/MoquiConf.xml` and `framework/test/service/org/moqui/mapstest/`, loaded in `moqui test` runs only). Text/TUI/phone fallbacks work. |
-| P2 — local data and archives | PMTiles through stage R on all four backends, packaged local styles/fonts/icons, the Geo data importer (§6.4) with its Census, GeoNames and operator-CSV parsers and its settings screen, a measured US import, provenance/precision and data refresh. Local browsing and postal lookup work with external requests disabled. Other GeoNames countries open after the measurement. |
+| P2 — local data and archives | PMTiles through stage R on all four backends, packaged local styles/fonts/icons, the Geo data importer (§6.4) with its Census, GeoNames and operator-CSV parsers and its settings screen, a measured US import, provenance/precision and data refresh. Local browsing and postal lookup work with external requests disabled. Other GeoNames countries open after the measurement. Built (A7a, November 25, 2026): the postal lookup (`get#PostalLocation`) in Browse's search and as the local-map dialog's fallback for an address with no point, Maps › Configuration › Geo data (licenses, Import as a ServiceJob run, Refresh and its schedule, Cancel, Remove, run history), the `maps.geodata` readiness and refresh; measured US import (§6.3): 61 s first, 1.3 s conditional and 3.5 s forced refresh changing nothing, 41,637 codes and about 318,500 rows, lookup 0.46 ms cold; every country at once waits on the forced refresh's memory (§6.3), one country a run is offered. Built (A7b, November 25, 2026): PMTiles archives registered from a plain file, a drive (DbResource) or git as a Git LFS object (`register#ArchiveLayer`: header checked in Rust, revision, version, drive and size recorded; a non-LFS git archive refused, `NOT_LFS`), the map-source transition (`LocalMap.xml` `source`: access on every range with no write, 409 for a stale revision, pinned strong ETag and private caching) and the same-origin URL in the effective configuration, `m-map` loading its configuration again on a 409, Maps › Configuration › Archives, the `maps.archives` readiness, and the packaged local Protomaps profile (`LOCAL_PROTOMAPS`: the `@protomaps/basemaps` light and dark styles generated at build time, the basemaps-assets sprites, Noto Sans); acceptance `MapsArchiveBackends`, `MapsLocalOnly` and `MapsFrameworkOnly`. |
 | P3 — consumer integration | Mantle adapters and BOSS/HOME mounts, basic geographic file overlays, optional configured street/place search, private/shared collections. HOME-only and dual-suite users see only permitted places; a viewer cannot save record coordinates. P0–P3 comprise the initial Maps scope. |
 | P4 — richer GIS | Configured WMS/WMTS/WFS and additional imports/editing, COG/raster controls, advanced CRS workflows, large-data processing and optional detailed dashboard drill-downs. Prioritize concrete household/business scenarios. |
 | Optional O1 — Overture Places and Buildings | After the shared source/import foundation, add selected regional Places search and Buildings overlays with attribution, pinned releases and staged updates. Initial Maps remains usable without these datasets. |

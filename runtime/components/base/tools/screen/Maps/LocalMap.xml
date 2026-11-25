@@ -15,7 +15,9 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- The local-map dialog (plans/Maps.md §3.2; docs/tools/Maps.md "The local-map dialog"), opened beside an address or a
     coordinate field of any app with View map: a dynamic-dialog whose id is LocalMapDialog, loading this screen with
     adapterKey and recordKey (its key fields as JSON) and an optional addressPurpose, or a plain longitude, latitude and
-    label, and the dialog's id as dialogId when it is not LocalMapDialog. Every signed-in user reaches it and its transitions (MAPS_DIALOG, data/MapsSecurityData.xml); an app shows it
+    label, or a plain postalCode and countryGeoId (an address with no point: its local postal-area position from
+    get#PostalLocation, labeled approximate, with a broad extent, no outside request), and the dialog's id as dialogId when
+    it is not LocalMapDialog. Every signed-in user reaches it and its transitions (MAPS_DIALOG, data/MapsSecurityData.xml); an app shows it
     under its own route by the thin-wrapper rule (include-screen and a transition-include of getConfig and storeLocation).
     The record's place is read here, in the actions, through get#EffectiveConfig, whose adapter checks the caller's access
     first (a record they may not read is "not available", with nothing of it shown), and given to the map-view as its
@@ -38,6 +40,8 @@ along with this software (see the LICENSE.md file). If not, see
     <parameter name="longitude"/>
     <parameter name="latitude"/>
     <parameter name="label"/>
+    <parameter name="postalCode"/>
+    <parameter name="countryGeoId"/>
     <parameter name="pick"/>
     <parameter name="dialogId"/>
 
@@ -48,6 +52,30 @@ along with this software (see the LICENSE.md file). If not, see
                 .parameters({profileId: profileId || null, layerIds: layerIds || null, recordLayers: false}).call()
             if (ec.message.hasError()) { const errors = ec.message.getErrorsString(); ec.message.clearErrors(); ec.web.sendJsonResponse({errors}) }
             else ec.web.sendJsonResponse(out.config || {})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- A registered map archive (a PMTiles layer's, plans/Maps.md §5), read by range by every map, the Browse page's and any
+        app's dialog alike: the effective configuration hands a map this path with the layer's ID and its registered revision
+        (MapSources.js). Each request (GET, HEAD, every range) checks the caller again and writes nothing
+        (MapSourceServices.get#SourceAccess: the layer, its viewPermission and its drive's access, so a revoked share is
+        refused at once); a revision that is no longer the registered one is 409, and the map loads its configuration
+        again. The bytes go out pinned to the registered tag (the strong ETag), Cache-Control private for
+        resource-facade@pinned-max-age. method any: a HEAD is answered too, and another method is 405. -->
+    <transition name="source" method="any" read-only="true">
+        <actions><script><![CDATA[
+            const access = ec.service.sync().name('org.moqui.maps.MapSourceServices.get#SourceAccess')
+                .parameters({layerId: String(layerId ?? ''), revision: String(revision ?? '')}).call()
+            if (ec.message.hasError() || !access?.ok) {
+                const status = ec.message.hasError() ? 404 : Number(access.status) || 404
+                ec.message.clearErrors()
+                ec.web.sendJsonError(status, status === 409 ? 'The map archive changed: load the map again' : 'Map archive not available')
+            } else {
+                // the caller was checked above; the storage's rows (DbResource, git) are read as the framework
+                const wasDisabled = ec.artifactExecution.disableAuthz()
+                try { ec.web.sendPinnedResourceResponse(access.location, access.tag, access.size, true, access.fileName) }
+                finally { if (!wasDisabled) ec.artifactExecution.enableAuthz() }
+            }
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
@@ -107,11 +135,17 @@ along with this software (see the LICENSE.md file). If not, see
 
     <actions>
         <set field="mapConfig" from="{}"/>
+        <set field="postal" from="null"/>
         <if condition="adapterKey">
             <!-- the adapter checks the caller first; a refusal or a failure is a layer error of the record, never an error here -->
             <service-call name="org.moqui.maps.MapServices.get#EffectiveConfig" out-map="effective" transaction="force-new" ignore-error="true"
                     in-map="{adapterKey: adapterKey, recordKey: recordKey || null, addressPurpose: addressPurpose || null, recordLayers: false}"/>
             <set field="mapConfig" from="effective?.config || {}"/>
+            <!-- a plain address: its postal code's local postal-area position (get#PostalLocation), approximate, no outside request -->
+            <else-if condition="postalCode &amp;&amp; countryGeoId &amp;&amp; !String(longitude ?? '').trim()">
+                <service-call name="org.moqui.maps.MapServices.get#PostalLocation" out-map="postal" transaction="force-new" ignore-error="true"
+                        in-map="{postalCode: postalCode, countryGeoId: countryGeoId}"/>
+            </else-if>
         </if>
         <script><![CDATA[
             record = mapConfig.record || null
@@ -124,12 +158,25 @@ along with this software (see the LICENSE.md file). If not, see
             }
             const plainLon = num(longitude), plainLat = num(latitude)
             const plain = !adapterKey && plainLon !== null && plainLat !== null && plainLon >= -180 && plainLon <= 180 && plainLat >= -90 && plainLat <= 90
+            // a plain postal code's one match (several are choices this dialog does not make: it says so)
+            const postalMatches = Array.from(postal?.matches || [])
+            const postalMatch = !adapterKey && !plain && postalMatches.length === 1 ? postalMatches[0] : null
+            postalNote = !adapterKey && !plain && postalCode ? (postalMatches.length > 1 ? ec.l10n.localize('More than one postal area has this code: choose one in Maps')
+                : !postalMatch ? (postal?.reason || ec.l10n.localize('No imported Geo data has this postal code')) : '') : ''
+            // an approximate place (a postal area) says so in words, in every mode
+            approximateText = record?.approximate ? record.precisionText : postalMatch ? postalMatch.precisionText : ''
+            placeNamesText = postalMatch && (postalMatch.placeNames || []).length ? ec.l10n.localize('Places with this code') + ': '
+                + postalMatch.placeNames.map(place => place.name + (place.adminName1 ? ' (' + place.adminName1 + ')' : '')).join(', ') : ''
             place = recordPoint ? {id: 'record', lon: Number(recordPoint.lon), lat: Number(recordPoint.lat), label: record?.label || recordPoint.label || '',
-                    precisionEnumId: record?.precisionEnumId || null, sourceText: record?.sourceText || null}
-                : plain ? {id: 'place', lon: plainLon, lat: plainLat, label: String(label || '')} : null
+                    precisionEnumId: record?.approximate ? null : record?.precisionEnumId || null, precision: record?.approximate ? record.precisionText : null,
+                    sourceText: record?.sourceText || null}
+                : plain ? {id: 'place', lon: plainLon, lat: plainLat, label: String(label || '')}
+                : postalMatch ? {id: 'place', lon: Number(postalMatch.lon), lat: Number(postalMatch.lat), label: String(label || '') || postalMatch.displayCode,
+                    precision: postalMatch.precisionText, sourceText: postalMatch.sourceText} : null
             placePoints = place ? [place] : []
             // the record's view (a postal area's extent, else its point and zoom) and its area or line, when it is not a point
-            mapExtent = Array.isArray(mapConfig.extent) && mapConfig.extent.length === 4 ? mapConfig.extent.join(',') : ''
+            mapExtent = postalMatch && Array.isArray(postalMatch.extent) ? postalMatch.extent.join(',')
+                : Array.isArray(mapConfig.extent) && mapConfig.extent.length === 4 ? mapConfig.extent.join(',') : ''
             // a plain point is the view too, so the profile's own view does not win over it
             mapCenter = mapExtent ? '' : adapterKey && Array.isArray(mapConfig.center) ? mapConfig.center.join(',')
                 : place ? place.lon + ',' + place.lat : ''
@@ -154,7 +201,10 @@ along with this software (see the LICENSE.md file). If not, see
             <label text="${placeTitle}" type="h6" style="q-mt-none q-mb-sm"/>
             <label condition="recordError" type="p" style="text-negative" text="${recordError.message}"/>
             <label condition="record &amp;&amp; !place" type="p" style="m-muted" text="This record has no location on the map yet."/>
-            <label condition="!adapterKey &amp;&amp; !place" type="p" style="m-muted" text="No place was given to show."/>
+            <label condition="approximateText" type="p" style="text-caption m-muted q-mb-xs" text="${approximateText}"/>
+            <label condition="!adapterKey &amp;&amp; !place &amp;&amp; !postalNote" type="p" style="m-muted" text="No place was given to show."/>
+            <label condition="postalNote" type="p" style="m-muted" text="${postalNote}"/>
+            <label condition="placeNamesText" type="p" style="text-caption m-muted" text="${placeNamesText}"/>
             <map-view id="LocalMapView" config-transition="getConfig" points="placePoints" features="recordFeatures" height="360px"
                     extent="${mapExtent}" center="${mapCenter}" zoom="${mapZoom}"
                     pick="${mayChoose || pickPlain ? 'true' : 'false'}" pick-form="${mayChoose ? 'ChooseLocation' : ''}"/>

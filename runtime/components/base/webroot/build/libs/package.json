@@ -60,6 +60,7 @@
     "@material-symbols/font-400": "0.47.6",
     "@matrix-org/matrix-sdk-crypto-wasm": "18.9.0",
     "@openuidev/lang-core": "0.2.18",
+    "@protomaps/basemaps": "5.7.2",
     "@replit/codemirror-indentation-markers": "6.5.3",
     "@tiptap/core": "3.31.4",
     "@tiptap/extension-blockquote": "3.31.4",

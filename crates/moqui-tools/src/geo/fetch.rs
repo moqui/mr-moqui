@@ -31,8 +31,9 @@ use moqui_core::outbound::{self, Method, OpenRequest};
 const DOWNLOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30 * 60);
 /// How often, in bytes, progress is reported while a file is written.
 pub const PROGRESS_BYTES: u64 = 8 << 20;
-/// Where an operator's file may come from: the Maps import folder and the runtime's import folder, and the caller's
-/// own uploads.
+/// Where an operator's file may come from: the caller's own folder of the Maps import folder (where Geo data's Import
+/// keeps an upload, `<IMPORT_ROOT><userId>/`), the runtime's import folder (files an operator put on the server), and
+/// the caller's own uploads.
 pub const IMPORT_ROOT: &str = "dbresource://moqui/maps/import/";
 pub const RUNTIME_IMPORT_ROOT: &str = "runtime://import/";
 
@@ -248,11 +249,18 @@ fn write_file(
     written
 }
 
-/// Whether the current user may import an operator's file from `location`: under [`IMPORT_ROOT`] or
-/// [`RUNTIME_IMPORT_ROOT`], or among the user's own uploads (`dbresource://moqui/database/upload/<userId>/`); no `..`,
-/// `.`, `\` or `%`.
+/// Whether the current user may import an operator's file from `location` ([`location_allowed_for`]).
 #[must_use]
 pub fn location_allowed(location: &str) -> bool {
+    let user = moqui_core::user::current_user_id().ok().flatten();
+    location_allowed_for(location, user.as_deref())
+}
+
+/// Whether `user` may import an operator's file from `location`: under their own folder of [`IMPORT_ROOT`]
+/// (`<IMPORT_ROOT><userId>/`), under [`RUNTIME_IMPORT_ROOT`], or among their own uploads
+/// (`dbresource://moqui/database/upload/<userId>/`); no `..`, `.`, `\` or `%`. Another user's folder is refused.
+#[must_use]
+pub fn location_allowed_for(location: &str, user: Option<&str>) -> bool {
     let location = location.trim();
     if location.is_empty()
         || location.contains('\\')
@@ -262,14 +270,13 @@ pub fn location_allowed(location: &str) -> bool {
         return false;
     }
     let under = |prefix: &str| location.starts_with(prefix) && location.len() > prefix.len();
-    if under(IMPORT_ROOT) || under(RUNTIME_IMPORT_ROOT) {
+    if under(RUNTIME_IMPORT_ROOT) {
         return true;
     }
-    moqui_core::user::current_user_id()
-        .ok()
-        .flatten()
-        .filter(|user| !user.is_empty() && !user.contains('/'))
-        .is_some_and(|user| under(&format!("{}/{user}/", crate::etl::access::UPLOAD_ROOT)))
+    user.filter(|user| !user.is_empty() && !user.contains('/'))
+        .is_some_and(|user| {
+            under(&format!("{IMPORT_ROOT}{user}/")) || under(&format!("{}/{user}/", crate::etl::access::UPLOAD_ROOT))
+        })
 }
 
 /// Copy the operator's file at `location` (allowed by [`location_allowed`], checked by the caller) to `path`, read as

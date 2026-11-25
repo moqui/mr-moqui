@@ -2,7 +2,8 @@
 // client/suite.js: maps.walk, a Maps user the framework's test adapter lets write (MAPS_SPEC_STORE), and maps.walk.plain,
 // with ALL_USERS alone; the test adapter (framework test/service/org/moqui/mapstest) registered as MAPS_WALK_ADAPTER and
 // granted to every user, as a component would; a record layer of it on the outline profile (its features one more than a
-// layer may send, so the cut is said); and a saved view of maps.walk's. Each row is made when it is missing.
+// layer may send, so the cut is said); a saved view of maps.walk's; and a US postal code (USA_Z_60601, as an import writes
+// it, with a Census point and two GeoNames places, each with its own point) for the postal search. Each row is made when it is missing.
 // Run: ./moq accept tools --spec MapsBrowseWalk (or MapsDialogWalk), which brings this spec in
 const PASSWORD = "MapsWalk1!!"
 const one = (entityName, fields) => ec.entity.find(entityName).condition(fields).disableAuthz().one()
@@ -111,6 +112,50 @@ spec({
                 viewJson: JSON.stringify({center: [-87.6, 41.89], zoom: 11, layers: []})
             }
         )
+        // a postal code as the importer writes it: its Geo, code, Census point and two place names
+        ensure("moqui.basic.Geo", {geoId: "USA_Z_60601"}, {geoTypeEnumId: "GEOT_POSTAL_CODE", geoName: "60601"})
+        ensure(
+            "moqui.basic.GeoPostalCode",
+            {geoId: "USA_Z_60601"},
+            {
+                countryGeoId: "USA",
+                normalizedCode: "60601",
+                displayCode: "60601",
+                granularityEnumId: "GPG_FULL",
+                sourceKey: "CENSUS_ZCTA"
+            }
+        )
+        ensure(
+            "moqui.basic.GeoPoint",
+            {geoPointId: "USA_Z_60601_CENSUS_ZCTA"},
+            {geoPointTypeEnumId: "GPT_GEO_REFERENCE", latitude: 41.8858, longitude: -87.6181}
+        )
+        ensure(
+            "moqui.basic.GeoPointAssoc",
+            {geoId: "USA_Z_60601", geoPointId: "USA_Z_60601_CENSUS_ZCTA"},
+            {
+                pointRoleEnumId: "GPR_REPRESENTATIVE",
+                precisionEnumId: "GPP_POSTAL_AREA",
+                dataSetId: "CENSUS_ZCTA",
+                edition: "2026",
+                priority: 10,
+                fromDate: ec.user.nowTimestamp
+            }
+        )
+        // each place with a point of its own, as a GeoNames row has
+        for (const [index, [placeName, latitude, longitude]] of [
+            ["Chicago", 41.8857, -87.6229],
+            ["Loop", 41.8837, -87.6289]
+        ].entries()) {
+            const geoPointId = "USA_Z_60601_GN_POSTAL_" + (index + 1)
+            ensure("moqui.basic.GeoPoint", {geoPointId}, {geoPointTypeEnumId: "GPT_GEO_REFERENCE", latitude, longitude})
+            ensure(
+                "moqui.basic.GeoPostalCodePlace",
+                {geoId: "USA_Z_60601", sourceKey: "GN_POSTAL", placeName},
+                {sequenceNum: index + 1, adminName1: "Illinois", geoPointId}
+            )
+        }
+        ec.cache.getCache("maps.postal.lookup").clear()
         ec.artifactExecution.enableAuthz()
     }
 })

@@ -2,7 +2,8 @@
 // MapsBrowseWalk (plans/Maps.md §3.1, §9): Maps › Browse in a browser on the qvt shell, at desktop and phone width, as a Maps
 // user (MapsWalkFixtures: maps.walk, a record layer of the framework's test adapter on the outline profile, a saved view):
 // the map draws with its scale line and attribution; Layers names the record layer and says its features were cut;
-// Search finds the saved place and a record, and going to the record shows its details; Save view saves where the map is
+// Search finds the saved place, a record, and a postal code (MapsWalkFixtures' 60601) with its places as choices, going to
+// it showing its approximate precision; going to the record shows its details; Save view saves where the map is
 // and lists it; on a phone the panel is a bottom sheet over the map.
 // Run: ./moq accept tools --spec MapsBrowseWalk
 spec({timeout: 120})
@@ -29,12 +30,22 @@ feature("desktop: the map draws; Layers, Search, a record's details and Save vie
         page.waitFor(() => (document.querySelector(".m-maps-panel") || {}).textContent.includes("Walk records"))
         page.text().includes("Only some of the records are shown")
         // Search: the saved place
-        page.getByLabel("Search saved places and records").fill("harbor")
+        page.getByLabel("Search saved places, records and postal codes").fill("harbor")
         page.click("#MapsSearchButton")
         page.waitFor(() => !!document.querySelector('[data-maps-result="view:MAPS_WALK_HARBOR"]'))
         page.locator('[data-maps-result="view:MAPS_WALK_HARBOR"]').click()
+        // a postal code of the user's country: the code and its two places as choices, approximate, the country shown
+        page.getByLabel("Search saved places, records and postal codes").fill("60601")
+        page.click("#MapsSearchButton")
+        page.waitFor(() => !!document.querySelector('[data-maps-result="postal:USA_Z_60601"]'))
+        page.evaluate(() => document.querySelectorAll('[data-maps-result^="postal:USA_Z_60601:"]').length) == 2
+        page.locator('[data-maps-result="postal:USA_Z_60601"]').click()
+        page.waitFor(() =>
+            (document.querySelector(".m-maps-panel") || {}).textContent.includes("Approximate location — postal area")
+        )
+        page.text().includes("60601 — Chicago, Loop")
         // and a record of the layer, whose details show where it is
-        page.getByLabel("Search saved places and records").fill("Feature 1")
+        page.getByLabel("Search saved places, records and postal codes").fill("Feature 1")
         page.click("#MapsSearchButton")
         page.waitFor(() => !!document.querySelector('[data-maps-result^="record:"]'))
         page.locator('[data-maps-result^="record:"]').first().click()

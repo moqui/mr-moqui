@@ -21,6 +21,7 @@
 
 pub mod fetch;
 pub mod load;
+pub mod lookup;
 pub mod remove;
 pub mod service;
 
@@ -51,6 +52,16 @@ pub const COMPLETED: &str = "GdiCompleted";
 pub const UNCHANGED: &str = "GdiUnchanged";
 pub const FAILED: &str = "GdiFailed";
 pub const CANCELLED: &str = "GdiCancelled";
+
+/// Empty the postal lookup's cache (`maps.postal.lookup`): after a run that committed a change (a whole load, or the
+/// batches of one that failed or was cancelled after them) and after a Remove. A failure is logged.
+pub fn clear_postal_cache() {
+    let cleared =
+        moqui_core::context::ExecutionContext::with_current(|ec| ec.factory().cache().clear(POSTAL_LOOKUP_CACHE));
+    if let Some(Err(err)) = cleared {
+        tracing::warn!(error = %err, "Could not clear the postal lookup cache");
+    }
+}
 
 /// Whether a run in `status` is still going (or waiting to).
 #[must_use]

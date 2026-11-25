@@ -422,6 +422,9 @@
         <!-- whether the Login screen's Test Login still holds (UserServices.get#TestLoginOffered), by a digest of the
             test account's stored hash, so an anonymous render runs the password check at most once a minute -->
         <cache name="webroot.login.test" type="local" expire-time-live="60" max-elements="10" value-type="Boolean"/>
+        <!-- the postal lookup of org.moqui.maps.MapServices.get#PostalLocation (JSON text by country and code); an import of
+            Geo data clears it when it finishes -->
+        <cache name="maps.postal.lookup" type="distributed" expire-time-live="86400" max-elements="20000" value-type="String"/>
     </cache-list>
     <!-- sample-ratio: the share of traces whose spans below the request or job root are kept, decided from the trace id.
         At 0 every root span is kept, and the whole trace of an error or a slow root (the tail rule); 1 keeps every span. -->

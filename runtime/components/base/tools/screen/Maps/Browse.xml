@@ -19,8 +19,8 @@ along with this software (see the LICENSE.md file). If not, see
     Browse.tui.json is the terminal's: the map component over terminalMap (the places of the saved views and the record
     layers, the notices and the attribution). A qvue screen only: asked for in html under /apps it opens at the same path
     under /qapps (screen/render.rs). Search reads saved places and the permitted records of the record layers (each read
-    through its adapter, which checks the caller); postal-code lookup and a configured place or address service join it
-    later (search, below). Navigating to a result saves nothing to its record. -->
+    through its adapter, which checks the caller) and postal codes of the local Geo data; a configured place or address
+    service joins it later (search, below). Navigating to a result saves nothing to its record. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Browse" default-menu-index="1" menu-image="sym_o_explore" menu-image-type="icon"
         render-modes="qvue,tui" server-static="qvue">
@@ -88,11 +88,14 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <!-- Search: the saved places (the user's and shared saved views) whose name has the text, and the permitted records of the
         record layers shown (layerIds, as Browse shows them) in the view on screen (extent: west, south, east, north), which
-        get#EffectiveConfig reads through their adapters, which check the caller; each result with its source and precision. More sources join this list later, each a kind of its own: postal-code lookup of the
-        local Geo data (GeoDataServices) and a configured place or address service (a geocoder connection). -->
+        get#EffectiveConfig reads through their adapters, which check the caller; and a postal code of the local Geo data
+        (get#PostalLocation, kind postal: a code's point and broad extent, approximate, and its several places as choices), of
+        the country chosen (country), named in the text ("US 02134", "02134, US") or the user's; each result with its source
+        and precision. A configured place or address service (a geocoder connection) joins it in P3. -->
     <transition name="search" method="get" read-only="true">
         <actions><script><![CDATA[
             const term = String(q || '').trim().toLowerCase()
+            let postalCountries = null, postalCountryGeoId = null
             const results = []
             const sources = []
             try {
@@ -120,10 +123,19 @@ along with this software (see the LICENSE.md file). If not, see
                             sourceText: layerLabels[feature.properties.layerId] || '', precisionEnumId: feature.properties.precisionEnumId || null,
                             lon: coordinates ? coordinates[0] : null, lat: coordinates ? coordinates[1] : null})
                     }
-                    // later sources: postal-code lookup (GeoDataServices) and a configured place or address service
+                    // a postal code of a country (chosen, named in the text, or the user's): the local Geo data's postal
+                    // lookup (MapLookup.js searchPostal over get#PostalLocation), its results first, each with its source
+                    // and precision, and a code's several places as choices
+                    const postal = ec.resource.script('component://framework/service/org/moqui/maps/MapLookup.js')
+                        .execute('searchPostal', {q: String(q || ''), country: country || null})
+                    sources.push('postal')
+                    postalCountries = postal.countries
+                    postalCountryGeoId = postal.countryGeoId
+                    results.unshift(...Array.from(postal.results || []))
+                    // later: a configured place or address service (a geocoder connection, P3)
                 }
                 if (ec.message.hasError()) throw new Error(ec.message.getErrorsString())
-                ec.web.sendJsonResponse({results, sources})
+                ec.web.sendJsonResponse({results: results.slice(0, 60), sources, countries: postalCountries || [], countryGeoId: postalCountryGeoId || null})
             } catch (err) {
                 ec.message.clearErrors()
                 ec.web.sendJsonResponse({errors: String(err.message || err)})

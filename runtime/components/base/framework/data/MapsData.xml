@@ -59,10 +59,13 @@ along with this software (see the LICENSE.md file). If not, see
             sourceUrl="https://www.census.gov/programs-surveys/geography/technical-documentation/records-layout/2020-zcta-record-layout.html"
             dataSourceId="CENSUS_ZCTA_COUNTY"/>
 
-    <!-- GeoNames (CC BY 4.0, attribution shown): tab-delimited UTF-8 text, no header. {country} is the ISO alpha-2 code (US). -->
+    <!-- GeoNames (CC BY 4.0, attribution shown): tab-delimited UTF-8 text, no header. {country} is the ISO alpha-2 code (US).
+        countryCodes: the 124 country files of download.geonames.org/export/zip/ (November 25, 2026), the countries Import
+        offers; CA_full, GB_full and NL_full are other sets an administrator adds. -->
     <moqui.maps.GeoDataSet dataSetId="GEONAMES_POSTAL" sourceKey="GN_POSTAL" publisher="GeoNames" parserEnumId="GDP_GEONAMES" yieldsEnumId="GDY_POSTAL_POINTS"
             description="Postal codes a country at a time (124 countries): code, place name, three levels of admin names and codes, point and accuracy (1 estimated, 4 the place's own, 6 centroid of addresses or shape). Some countries have partial codes or coverage (Chile, China, Ireland, Malta, Argentina, Brazil); Canada, the Netherlands and Great Britain have only the first part of the code here."
             perCountry="Y"
+            countryCodes="AD,AE,AI,AL,AM,AR,AS,AT,AU,AX,AZ,BD,BE,BG,BM,BR,BY,CA,CC,CH,CL,CN,CO,CR,CX,CY,CZ,DE,DK,DO,DZ,EC,EE,ES,FI,FK,FM,FO,FR,GB,GF,GG,GI,GL,GP,GS,GT,GU,HK,HM,HN,HR,HT,HU,ID,IE,IM,IN,IO,IS,IT,JE,JP,KE,KR,LI,LK,LT,LU,LV,MA,MC,MD,MH,MK,MN,MO,MP,MQ,MT,MW,MX,MY,NC,NF,NL,NO,NR,NU,NZ,PA,PE,PF,PH,PK,PL,PM,PN,PR,PT,PW,PY,RE,RO,RS,RU,SE,SG,SI,SJ,SK,SM,TC,TH,TR,UA,US,UY,VA,VI,WF,WS,YT,ZA"
             licenseName="CC BY 4.0" licenseUrl="https://creativecommons.org/licenses/by/4.0/"
             attribution="GeoNames (geonames.org), CC BY 4.0" sourceUrl="https://download.geonames.org/export/zip/readme.txt"
             dataSourceId="GEONAMES_POSTAL"/>
@@ -97,4 +100,24 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.maps.GeoDataSet dataSetId="OPERATOR_CSV" sourceKey="OPERATOR" publisher="Operator" parserEnumId="GDP_OPERATOR_CSV" yieldsEnumId="GDY_POSTAL_POINTS"
             description="An operator's CSV, from an upload or a resource location: a licensed or national data set the operator converted, or an installation with no outside access. Columns: country, code, place, admin1, admin2, latitude, longitude, precision."
             perCountry="N" licenseName="The operator's" dataSourceId="OPERATOR_CSV"/>
+
+    <!-- The importer's jobs (GeoDataServices.xml): GeoDataImport runs one import a Maps › Configuration › Geo data Import or
+        Refresh started (start#GeoDataImport makes its pending run, and the job runs as the administrator who started it);
+        GeoDataRefresh imports again every scope whose last run ended well (request#GeoDataRefresh runs it now; its schedule,
+        cronExpression and the runAsUserId parameter, is set by schedule#GeoDataRefresh and left alone by these rows). A run
+        downloads and loads for minutes, in transactions of its own: no time limit on its scripts, a day for the run. Each
+        notifies the user it ran as and the job's users. -->
+    <moqui.security.user.NotificationTopic topic="GeoDataImport" inboxEnumId="NinUpdates" description="Geo data import"
+            typeString="success" showAlert="Y" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y" emailTemplateId="NOTIFICATION"
+            titleTemplate="Geo data import ${results.geoDataImportId || ''}: ${results.statusId === 'GdiCompleted' ? 'completed' : results.statusId === 'GdiUnchanged' ? 'the source is unchanged' : results.statusId === 'GdiCancelled' ? 'cancelled' : 'did not complete'}"
+            errorTitleTemplate="Geo data import did not run: see Maps › Configuration › Geo data"
+            linkTemplate="/qapps/maps/Configuration/GeoData"/>
+    <moqui.security.user.NotificationTopic topic="GeoDataRefresh" inboxEnumId="NinUpdates" description="Geo data refresh"
+            typeString="success" showAlert="Y" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y" emailTemplateId="NOTIFICATION"
+            titleTemplate="Geo data refresh: ${results.outcome || 'done'}" errorTitleTemplate="Geo data refresh did not run: see Maps › Configuration › Geo data"
+            linkTemplate="/qapps/maps/Configuration/GeoData"/>
+    <moqui.service.job.ServiceJob jobName="GeoDataImport" description="Import a Geo data set"
+            serviceName="org.moqui.maps.GeoDataServices.import#GeoData" topic="GeoDataImport" transactionTimeout="86400" noTimeLimit="Y"/>
+    <moqui.service.job.ServiceJob jobName="GeoDataRefresh" description="Refresh the imported Geo data"
+            serviceName="org.moqui.maps.GeoDataServices.run#GeoDataRefresh" topic="GeoDataRefresh" transactionTimeout="86400" noTimeLimit="Y"/>
 </entity-facade-xml>

@@ -573,6 +573,23 @@ along with this software (see the LICENSE.md file). If not, see
             description="Each enabled map provider passed its test, and the page's Content-Security-Policy lets a browser reach its hosts"
             healthGroupEnumId="AdmHgTransport" scopeEnumId="AdmScInstance" serviceName="org.moqui.maps.MapServices.check#Readiness"
             requiredPermission="ADMIN_CONNECTION_VIEW" fixRoute="adminConnection" sequenceNum="310"/>
+    <!-- Maps' archives (plans/Maps.md §5), org.moqui.maps.MapSourceServices.check#ArchiveReadiness (MapSources.js; its grant is
+        tools data/MapsSecurityData.xml MAPS_READINESS) -->
+    <moqui.server.ReadinessProvider providerKey="maps.archives" version="1" ownerApp="Maps" title="Map archives"
+            description="Each registered map archive is still the registered revision, read by range (in git, a Git LFS object), and each archive layer is registered"
+            healthGroupEnumId="AdmHgBusiness" scopeEnumId="AdmScInstance" serviceName="org.moqui.maps.MapSourceServices.check#ArchiveReadiness"
+            requiredPermission="ADMIN_OVERVIEW_VIEW" fixRoute="mapsConfiguration" sequenceNum="315"/>
+    <!-- Maps' Geo data (plans/Maps.md §6.4), org.moqui.maps.MapServices.check#GeoDataReadiness (GeoData.js; its grant is tools
+        data/MapsSecurityData.xml MAPS_READINESS), and its refresh, which starts the GeoDataRefresh ServiceJob
+        (GeoDataServices.request#GeoDataRefresh): offered to holders of ADMIN_SETTINGS_MANAGE, and run only for a caller who
+        also holds MAPS_ADMIN's authorization of the service (ADMIN's); another is refused by authorization -->
+    <moqui.server.ReadinessProvider providerKey="maps.geodata" version="1" ownerApp="Maps" title="Geo data"
+            description="Postal code data is imported for the default country, the last import of each data set did not fail, and a postal data set's license is acknowledged"
+            healthGroupEnumId="AdmHgBusiness" scopeEnumId="AdmScInstance" serviceName="org.moqui.maps.MapServices.check#GeoDataReadiness"
+            requiredPermission="ADMIN_OVERVIEW_VIEW" fixRoute="mapsConfiguration" sequenceNum="320"/>
+    <moqui.server.RefreshOperation refreshKey="maps.geodata.refresh" version="1" ownerApp="Maps" title="Refresh the imported Geo data"
+            serviceName="org.moqui.maps.GeoDataServices.request#GeoDataRefresh" sourceKindEnumId="AdmRsFeed" sourceName="Geo data"
+            requiredPermission="ADMIN_SETTINGS_MANAGE" providerKey="maps.geodata"/>
     <!-- The framework's own settings index entries, each shown to a caller its System screen opens to. An app that
         shows one of these screens under its own root seeds the entry again with its own screenLocation. -->
     <moqui.server.SettingsEntry settingsKey="admin.instanceSettings" version="1" ownerApp="System" title="Instance settings"

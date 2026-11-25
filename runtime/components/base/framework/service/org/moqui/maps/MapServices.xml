@@ -25,7 +25,8 @@ along with this software (see the LICENSE.md file). If not, see
     the dialog. A render of LocalMap runs the always-actions of the screens above it (Maps.xml) without their own check
     (docs/security/Attack-Surface-Web.md "Parent frames"), so those always-actions read nothing privileged.
     The effective configuration, personal preferences and saved views (MapConfig.js), the mapProvider connection kind and
-    the Maps readiness checks (MapProviders.js) are P1's; postal lookup and geocoding join this file in P3. -->
+    the Maps readiness checks (MapProviders.js) are P1's; the postal lookup (MapLookup.js) and the Geo data readiness
+    (GeoData.js) are P2's; geocoding joins this file in P3. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
     <!-- ========== The adapter contracts ========== -->
@@ -60,6 +61,10 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="links" type="List"><description>Each {label, route, parameters}: route a key the application
                 showing the map resolves, never a URL</description></parameter>
             <parameter name="reasonCode"><description>Set, with nothing else, when the record is not shown</description></parameter>
+            <parameter name="postalCode"><description>With no geometry: the postal code of the record's address, so the map
+                shows its local postal-area position (get#PostalLocation, approximate, with a broad extent) and no outside
+                service is asked; never a substitute for a recorded point</description></parameter>
+            <parameter name="countryGeoId"><description>The country of postalCode: a Geo ID or an ISO alpha-2 or alpha-3 code</description></parameter>
         </out-parameters>
     </service>
 
@@ -418,5 +423,53 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters><parameter name="providerKey" required="true"/></in-parameters>
         <out-parameters><parameter name="checks" type="List"/></out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapProviders.js').execute('readiness', context))</script></actions>
+    </service>
+
+    <!-- ========== Postal lookup and Geo data readiness (P2; MapLookup.js, GeoData.js) ========== -->
+
+    <service verb="get" noun="PostalLocation">
+        <description>A postal code's place from the local Geo data (plans/Maps.md §6.1, §6.3; GeoDataServices imports it), for a
+            map, a search and an address with no point: country and code only, no street address, party or outside request.
+            The country is a Geo ID or an ISO alpha-2 or alpha-3 code; the code is read by the importer's rules
+            (normalize#PostalCode: leading zeros kept, a US ZIP+4 read as its ZIP code). Each match is the code's active
+            representative point (the in-date GPR_REPRESENTATIVE association of lowest priority: in the US the Census ZCTA
+            point before GeoNames'), never a user-confirmed point or a record's own location, with a broad extent around it
+            (not the area's boundary), its precision (precisionText "Approximate location — postal area"), its source,
+            edition and attribution, and its place names, which are aliases of the one area. A full code with no row falls
+            back to its country's declared prefix (Canada, Great Britain, the Netherlands) at a lower precision
+            (matchKind prefix, GPP_PLACE_ESTIMATE); no other country's code is cut. ambiguous is true when there is more
+            than one match or a code has several place names, which are choices, none chosen. No match is matches empty with
+            reasonCode NO_MATCH; a country that is not one COUNTRY_UNKNOWN; text that is no code of the country CODE_INVALID,
+            with reason. Cached in maps.postal.lookup (bounded), which an import clears. Reads public reference data only,
+            changes nothing: every signed-in user may call it (MAPS_DIALOG), as an adapter or the local-map dialog does.</description>
+        <in-parameters>
+            <parameter name="countryGeoId" required="true"/>
+            <parameter name="postalCode" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="matches" type="List"><description>Each {geoId, countryGeoId, normalizedCode, displayCode,
+                granularityEnumId, matchKind (code or prefix), lon, lat, extent [west, south, east, north], precisionEnumId,
+                precisionText, approximate, dataSetId, sourceKey, publisher, edition, attribution, licenseName, sourceText,
+                placeNames [{name, adminName1, adminName2, sourceKey, lon, lat}]}</description></parameter>
+            <parameter name="ambiguous" type="Boolean"/>
+            <parameter name="countryGeoId"/>
+            <parameter name="normalizedCode"/>
+            <parameter name="displayCode"/>
+            <parameter name="zipPlus4" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapLookup.js').execute('getPostalLocation', context))</script></actions>
+    </service>
+
+    <service verb="check" noun="GeoDataReadiness" allow-remote="false">
+        <description>The maps.geodata readiness provider (data/AdminConfigurationData.xml), changing nothing, for a caller with
+            ADMIN_OVERVIEW_VIEW (PERMISSION_DENIED otherwise): postal data in date for the instance's default country (the
+            country of instance@default-locale; GEO_DATA_MISSING), the last run of each imported scope did not fail
+            (IMPORT_FAILED, naming the data set and country), and a data set covering that country has its license
+            acknowledged (LICENSE_NOT_ACKNOWLEDGED, while no Geo data is there to look up).</description>
+        <in-parameters><parameter name="providerKey" required="true"/></in-parameters>
+        <out-parameters><parameter name="checks" type="List"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/GeoData.js').execute('readiness', context))</script></actions>
     </service>
 </services>

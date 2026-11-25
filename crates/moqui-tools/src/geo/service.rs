@@ -307,6 +307,31 @@ fn running_refusal(facade: &EntityFacade, set: &DataSet, country: Option<&str>, 
     None
 }
 
+/// Delete the operator's uploads (under [`fetch::IMPORT_ROOT`]) that the runs of `set`'s scope read, but `keep`: after a
+/// Remove all of them, after a completed run those of the runs before it. A file that will not go is logged.
+fn delete_uploads(facade: &EntityFacade, set: &DataSet, country: Option<&str>, keep: Option<&str>) {
+    let Ok(runs) = scope_runs(facade, set, country) else {
+        return;
+    };
+    let mut seen = std::collections::BTreeSet::new();
+    for run in &runs {
+        let location = text_of(run, "sourceLocation");
+        if !location.starts_with(fetch::IMPORT_ROOT)
+            || keep == Some(location.as_str())
+            || !seen.insert(location.clone())
+        {
+            continue;
+        }
+        let removed = ExecutionContext::with_current(|ec| {
+            let _authz = ec.disable_authz();
+            ec.factory().resource().delete(&location)
+        });
+        if let Some(Err(err)) = removed {
+            tracing::warn!(error = %err, location = %location, "Could not delete a Geo data upload");
+        }
+    }
+}
+
 /// The edition in use: the last completed run of the source key and country.
 fn edition_in_use(facade: &EntityFacade, set: &DataSet, country: Option<&str>) -> Option<EntityValue> {
     let mut completed: Vec<EntityValue> = scope_runs(facade, set, country)
@@ -821,10 +846,6 @@ fn run(facade: &EntityFacade, plan: &Plan, path: &std::path::Path) -> Ended {
             )
         }
     }
-    let cleared = ExecutionContext::with_current(|ec| ec.factory().cache().clear(super::POSTAL_LOOKUP_CACHE));
-    if let Some(Err(err)) = cleared {
-        tracing::warn!(error = %err, "Could not clear the postal lookup cache");
-    }
     Ended {
         status: COMPLETED,
         failure: None,
@@ -917,6 +938,15 @@ fn finish(facade: &EntityFacade, plan: &Plan, mut ended: Ended) -> BTreeMap<Stri
         }
     };
     write_run(facade, &plan.run_id, fields);
+    // the batches a run committed are in use whatever its end (a failure or a cancel after them): the lookup reads them
+    if counts.created + counts.updated + counts.retired > 0 {
+        super::clear_postal_cache();
+    }
+    // a completed run of an operator's upload: the uploads of the scope's earlier runs go, its own stays for a Refresh
+    if status == COMPLETED && plan.location.starts_with(fetch::IMPORT_ROOT) {
+        let country = plan.country.as_ref().map(|country| country.geo_id.as_str());
+        delete_uploads(facade, &plan.set, country, Some(plan.location.as_str()));
+    }
     if let Some(failure) = &ended.failure {
         tracing::warn!(run = %plan.run_id, data_set = %plan.set.data_set_id, failure = %failure, "A Geo data import failed");
     } else {
@@ -1051,6 +1081,8 @@ pub(crate) fn remove_geo_data(
     match remove::remove(facade, &set, country.as_ref()) {
         Ok(removed) => {
             tracing::info!(data_set = %data_set_id, deleted = removed.deleted, retired = removed.retired, "Removed Geo data");
+            super::clear_postal_cache();
+            delete_uploads(facade, &set, country_id.as_deref(), None);
             let mut out = Out::new();
             out.insert("rowsDeleted".to_string(), Value::I64(removed.deleted as i64));
             out.insert("rowsRetired".to_string(), Value::I64(removed.retired as i64));

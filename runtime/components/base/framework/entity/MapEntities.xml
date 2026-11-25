@@ -97,6 +97,22 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="sourceEdition" type="text-short"><description>The source's edition or release (Natural Earth 4.1.0)</description></field>
         <field name="sourceRevision" type="text-medium"><description>The registered revision's content address (an LFS oid,
             a SHA-256), the strong validator and the revision in the map-source URL (§5)</description></field>
+        <field name="sourceTag" type="text-medium"><description>The strong tag the registered revision is sent with (the
+            ETag): sha256-(hex) of an LFS object, a content blob or a digest, or of a file on disk as it was read when
+            registered (MapSourceServices.register#ArchiveLayer)</description></field>
+        <field name="sourceSize" type="number-integer"><description>The registered revision's size in bytes</description></field>
+        <field name="sourceVersionName" type="text-medium"><description>On storage that keeps versions (git://,
+            dbresource://), the version registered: resourceLocation#sourceVersionName is what the map-source transition
+            sends, so a later commit or write does not change what a map already drawing reads until the layer is
+            registered again</description></field>
+        <field name="sourceAddressKind" type="text-short"><description>What sourceRevision is: git-lfs, content-blob,
+            digest (a small dbresource:// file kept in its row) or file (a file on disk, its SHA-256)</description></field>
+        <field name="sourceModifiedDate" type="date-time"><description>A file on disk: its modification time when
+            registered; a file changed in place since is refused (409) until the layer is registered again</description></field>
+        <field name="sourceRegisteredDate" type="date-time"/>
+        <field name="driveId" type="id"><description>The drive resourceLocation is under, whose access (a member, a
+            share of the file or a folder above it) a viewer needs too, checked on every request; empty for a location
+            outside every drive, which only an administrator registers</description></field>
         <field name="isBasemap" type="text-indicator"/>
         <field name="adapterKey" type="id"><description>A dynamic layer: the registered adapter whose
             find#LayerFeatures answers a viewport, after its own access check</description></field>
@@ -105,6 +121,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="disabled" type="text-indicator"/>
         <relationship type="one" related="moqui.maps.MapProvider" short-alias="provider"/>
         <relationship type="one" related="moqui.maps.MapAdapter" short-alias="adapter"/>
+        <relationship type="one-nofk" related="moqui.resource.ResourceDrive" short-alias="drive"/>
         <relationship type="one" title="MapLayerFormat" related="moqui.basic.Enumeration" short-alias="format">
             <key-map field-name="formatEnumId"/></relationship>
         <seed-data>
@@ -218,6 +235,9 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="coverageGeoId" type="id"><description>The country it covers; empty for a set read a country at a time
             (perCountry Y) or one that is global</description></field>
         <field name="perCountry" type="text-indicator"><description>Y: a run names a country, the {country} of urlTemplate</description></field>
+        <field name="countryCodes" type="text-long"><description>For a set read a country at a time: the ISO alpha-2 codes of
+            the countries its publisher has a file for, comma separated (GeoNames' 124), the countries Geo data's Import
+            offers; empty for any country</description></field>
         <field name="licenseName" type="text-medium"/>
         <field name="licenseUrl" type="text-medium"/>
         <field name="attribution" type="text-long"/>

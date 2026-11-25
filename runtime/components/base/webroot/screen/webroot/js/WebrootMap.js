@@ -20,8 +20,10 @@
  *         kind outline: url a TopoJSON of countries (the Natural Earth file, /libs/naturalearth/countries-110m.json)
  *         kind style:   url a MapLibre/OpenMapTiles style document, drawn by ol-mapbox-style
  *         kind xyz:     url a raster tile template ({z}, {x}, {y})
- *         kind pmtiles: url a PMTiles archive of this server (same origin only), styleUrl its style (raster: true for a
- *                       raster archive); a style's vector source is bound to the archive (applyStyle, updateSource false)
+ *         kind pmtiles: url a PMTiles archive of this server (same origin only: a registered archive's is the map-source
+ *                       transition's, naming its revision, and a 409 from it loads the configuration again), styleUrl
+ *                       its style (raster: true for a raster archive); a style's vector source is bound to the archive
+ *                       (applyStyle, updateSource false)
  *       basemap: the id of the one drawn first (else the first),
  *       allowedOrigins: ["https://tiles.example.org"]   origins its styles' sources, sprites and tiles may also come from
  *       notice: {text, href, linkText}  shown over the map: the effective configuration gives an administrator the way to
@@ -279,6 +281,18 @@
         if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return false;
         return origins.has(parsed.origin);
     };
+    // A PMTiles source of this server's archive at url (pmtiles' FetchSource, the session's cookies), whose 409 calls
+    // changed: the archive is no longer the revision the URL names.
+    map.pinnedSource = (O, url, changed) => {
+        const fetched = new O.FetchSource(url);
+        return {
+            getKey: () => url,
+            getBytes: (offset, length, signal, etag) => fetched.getBytes(offset, length, signal, etag).catch((error) => {
+                if (error && /\b409\b/.test(String(error.message))) changed();
+                throw error;
+            })
+        };
+    };
     // Whether a URL is the page's own (a PMTiles archive must be: its ranges are read with the session's access).
     map.sameOrigin = (url, pageOrigin) => map.urlAllowed(url, new Set([pageOrigin]), pageOrigin);
 
@@ -467,6 +481,12 @@
                 config.layers.forEach((layer) => this.drawLayer(O, layer));
                 this.drawPlaces(O, config);
                 this.fitView(O, config);
+                const kept = this.keptView;
+                this.keptView = null;
+                if (kept && kept.projection === config.projection) {
+                    view.setCenter(kept.center);
+                    if (kept.zoom !== undefined) view.setZoom(kept.zoom);
+                }
                 olMap.on("pointermove", (event) => {
                     if (event.dragging) return;
                     const at = this.toLonLat(event.coordinate);
@@ -604,16 +624,24 @@
             pmtilesLayer(O, group, entry, attributions) {
                 if (!map.sameOrigin(entry.url, this.pageOrigin())) return Promise.reject(new Error(L("A PMTiles archive must be of this server") + ": " + entry.url));
                 const url = new URL(entry.url, this.pageOrigin() + "/").href;
-                // the archive's header first: one that cannot be read by range fails here, by name, not tile by tile in silence
-                const archive = new O.PMTiles(url);
+                // the archive's header first: one that cannot be read by range fails here, by name, not tile by tile in silence.
+                // Its URL names a registered revision (the map-source transition): a 409 says the archive has another now,
+                // and the map loads its configuration again rather than draw ranges of two revisions.
+                // A read of a layer no longer drawn (another basemap chosen, the map drawn again) says nothing of this map.
+                const olMap = this.olMap;
+                let drawn = null;
+                const live = () => this.olMap === olMap && (group === this.basemapGroup || this.overlayGroup.getLayers().getArray().includes(group)) &&
+                    (!drawn || group.getLayers().getArray().includes(drawn));
+                const archive = new O.PMTiles(map.pinnedSource(O, url, () => { if (live()) this.sourceChanged(entry); }));
                 return archive.getHeader().then(() => {
                     if (entry.raster) {
                         const source = new O.PMTilesRasterSource({ url: archive.source, attributions });
                         this.watchSource(source, entry, "tile");
-                        group.getLayers().push(new O.TileLayer({ source }));
+                        drawn = new O.TileLayer({ source });
+                        group.getLayers().push(drawn);
                         return null;
                     }
-                    const layer = new O.VectorTileLayer({ declutter: true, source: new O.PMTilesVectorSource({ url: archive.source, attributions }) });
+                    const layer = drawn = new O.VectorTileLayer({ declutter: true, source: new O.PMTilesVectorSource({ url: archive.source, attributions }) });
                     this.watchSource(layer.getSource(), entry, "tile");
                     group.getLayers().push(layer);
                     return entry.styleUrl ? this.pmtilesStyle(O, layer, entry) : null;
@@ -622,9 +650,25 @@
             pmtilesStyle(O, layer, entry) {
                 return this.loadStyle(entry.styleUrl, true).then(({ style, sourceId }) => {
                     // the style's vector source is the archive: ol-mapbox-style does not know pmtiles:// URLs
-                    return O.applyStyle(layer, style, { source: sourceId, updateSource: false, webfonts: this.webfonts(), transformRequest: this.transformRequest() })
+                    // styleUrl: the style's relative sprite resolves against it, on this server
+                    return O.applyStyle(layer, style, { source: sourceId, updateSource: false, styleUrl: new URL(entry.styleUrl, this.pageOrigin() + "/").href,
+                        webfonts: this.webfonts(), transformRequest: this.transformRequest() })
                         .then(() => O.applyBackground(layer, style));
                 }).then(() => this.status(entry.id, entry.label, "ready"));
+            },
+            // A registered archive answered 409: it has another revision now (registered again) or its file changed. The
+            // configuration is asked again, once in a while, so the map draws the new revision whole; with no config-url,
+            // or a second change within a minute, the layer is named as failed.
+            sourceChanged(entry) {
+                const now = Date.now();
+                if (this.configUrl && (!this.changedAt || now - this.changedAt > 60000)) {
+                    this.changedAt = now;
+                    console.info("m-map: the archive of " + entry.id + " changed; loading the map settings again");
+                    // the map drawn again stays where the user had it
+                    const view = this.olMap && this.olMap.getView();
+                    this.keptView = view && view.getCenter() ? { center: view.getCenter(), zoom: view.getZoom(), projection: this.projection() } : null;
+                    this.load();
+                } else this.status(entry.id, entry.label, "failed", L("Its archive changed: reload the page"));
             },
             // the profile's attribution on every source ol-mapbox-style made, in place of the style's own markup
             attribute(group, attributions) {

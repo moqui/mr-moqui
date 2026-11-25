@@ -491,6 +491,38 @@ fn coordinates_and_precision() {
 }
 
 #[test]
+fn lookup_codes_read_a_zip_plus4_as_its_zip_and_declare_prefixes() {
+    let us = postal::lookup_code("USA", "02134-1234").unwrap();
+    assert_eq!(
+        (us.code.normalized.as_str(), us.zip_plus4, us.prefix),
+        ("02134", true, None)
+    );
+    let plain = postal::lookup_code("US", "00601").unwrap();
+    assert!(!plain.zip_plus4);
+    let ca = postal::lookup_code("CAN", "k1a 0b1").unwrap();
+    assert_eq!(ca.code.display, "K1A 0B1");
+    let fsa = ca.prefix.unwrap();
+    assert_eq!((fsa.normalized.as_str(), fsa.granularity), ("K1A", Granularity::Prefix));
+    assert_eq!(
+        postal::lookup_code("GB", "EC1A 1BB")
+            .unwrap()
+            .prefix
+            .unwrap()
+            .normalized,
+        "EC1A"
+    );
+    assert_eq!(
+        postal::lookup_code("NL", "1012 AB").unwrap().prefix.unwrap().normalized,
+        "1012"
+    );
+    // a prefix typed alone has none of its own; any other country's code is never cut
+    assert_eq!(postal::lookup_code("CA", "K1A").unwrap().prefix, None);
+    assert_eq!(postal::lookup_code("DE", "01067").unwrap().prefix, None);
+    assert_eq!(postal::lookup_code("GB", "GIR 0AA").unwrap().prefix, None);
+    assert!(postal::lookup_code("US", "2134").is_err());
+}
+
+#[test]
 fn derived_ids() {
     let us = normalize_postal_code("US", "02134").unwrap();
     assert_eq!(ids::postal_code_geo_id("USA", &us).unwrap(), "USA_Z_02134");

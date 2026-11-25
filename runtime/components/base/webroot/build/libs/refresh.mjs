@@ -237,6 +237,102 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.`;
 // (OPENLAYERS_HOSTS). That is the Fontsource layout, so each face is that package's own CSS (every subset, each by
 // unicode-range), with only the woff2 sources.
 const MAP_FONT_FACES = ['400', '400-italic', '500', '700'];
+// The local Protomaps profile (plans/Maps.md §4.1, §5): a regional Protomaps PMTiles archive registered as a layer draws
+// with these. The styles are the output of @protomaps/basemaps (layers() of a namedFlavor, lang "en"), generated here
+// with Node from the package's CommonJS build into protomaps/light.json and protomaps/dark.json, each with one vector
+// source, "protomaps", that m-map binds to the archive (applyStyle, updateSource false), its sprite at
+// /libs/protomaps/sprites/v4/<flavor> and no glyphs (ol-mapbox-style draws text with the web fonts of MAP_FONT_FACES:
+// lang "en" names Noto Sans Regular, Medium and Italic only; another language would name script faces such as
+// "Noto Sans Devanagari Regular v1", which are not packaged). The build fails when a generated style names a URL or a font
+// that is not packaged. The sprites are those of github.com/protomaps/basemaps-assets, sprites/v4 at commit
+// 028c18f713baecad011301ff7a69acc39bcc2ae7 (Oct 31, 2025), light and dark at 1x and 2x, kept as committed under
+// build/libs/assets/protomaps-sprites-v4 since no npm package carries them; their license is that directory's
+// (derived from tangrams/icons, MIT). The package carries no license file: PROTOMAPS_LICENSE is LICENSE.md of its
+// repository at the commit 5.7.2 names (gitHead 3ea8293a).
+const PROTOMAPS_FLAVORS = ['light', 'dark'];
+const PROTOMAPS_FONTS = ['Noto Sans Regular', 'Noto Sans Medium', 'Noto Sans Italic'];
+const PROTOMAPS_SPRITES = 'assets/protomaps-sprites-v4';
+const PROTOMAPS_LICENSE = `From https://github.com/protomaps/basemaps/blob/3ea8293a28131c3dc63f1bb20827bdb8a76df06f/LICENSE.md
+(@protomaps/basemaps 5.7.2 is published from that repository; its npm package carries no license file):
+
+# Code Licenses and Attribution
+
+# The BSD 3-Clause License (BSD-3-Clause)
+
+Copyright 2019-2023 Protomaps LLC, Kelso Cartography
+
+Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its contributors may be used to endorse or promote products derived from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+# Visual Design
+
+The visual design of the Protomaps basemap styles was created by Geraldine Sarmiento for Protomaps LLC and released under a Creative Commons 0 (CC0) license.
+
+https://creativecommons.org/publicdomain/zero/1.0/
+
+Certain map styles may also include derivatives of icons designed for Mapzen and released under an MIT license.
+
+https://github.com/tangrams/icons/blob/master/LICENSE.md
+
+# Tile Schema
+
+The organization of layers and tags is adapted from the Tilezen project.
+
+https://github.com/tilezen/vector-datasource
+https://github.com/tilezen/vector-datasource/blob/master/docs/LICENSE-SCHEMA.md
+
+# The MIT License (MIT)
+
+Copyright (c) 2015-2018 Mapzen
+Copyright (c) 2019 Linux Foundation
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software is furnished to do so,
+subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.`;
+const PROTOMAPS_SPRITES_LICENSE = `The sprites (protomaps/sprites/v4) are from https://github.com/protomaps/basemaps-assets/tree/028c18f713baecad011301ff7a69acc39bcc2ae7/sprites/v4,
+whose README says they are "derived from MIT-licensed tangrams/icons"
+(https://github.com/tangrams/icons/blob/92510779634f4a006c61ea70e50cb8c52c765a81/LICENSE.md):
+
+The MIT License (MIT)
+
+Copyright (c) 2017 Mapzen
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software is furnished to do so,
+subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.`;
 
 const HLJS_LANGS = ['bash', 'css', 'diff', 'groovy', 'java', 'javascript', 'json', 'kotlin', 'markdown', 'plaintext',
   'python', 'rust', 'sql', 'typescript', 'xml', 'yaml'];
@@ -559,6 +655,24 @@ licenses/Unicode-3.0.txt, from ${UNICODE_URL}.
     licenseFiles: ['LICENSE'],
   },
   {
+    // The local Protomaps profile's styles and sprites (PROTOMAPS_FLAVORS; plans/Maps.md §4.1), for a regional archive
+    // registered as the LOCAL_PROTOMAPS layers (framework data/MapsSetupData.xml). Pinned Nov 25, 2026: 5.7.2 of Mar 10.
+    id: 'protomaps', name: 'Protomaps basemap styles (generated) and sprites', npm: '@protomaps/basemaps',
+    license: 'BSD-3-Clause AND CC0-1.0 AND MIT',
+    licenseNote: 'The styles are generated by the package\'s code (BSD-3-Clause); their visual design is CC0, with ' +
+      'derivatives of Mapzen icons (MIT), and the layer schema is adapted from Tilezen. The sprites are those of ' +
+      'protomaps/basemaps-assets (derived from tangrams/icons, MIT).',
+    copy: [],
+    build: `For each flavor of ${PROTOMAPS_FLAVORS.join(', ')}: the package's layers("protomaps", namedFlavor(flavor), ` +
+      '{lang: "en"}), run by Node from dist/cjs/index.cjs, as a style (version 8, the source protomaps of type vector ' +
+      'with the Protomaps and OpenStreetMap attribution, sprite /libs/protomaps/sprites/v4/<flavor>, no glyphs) at ' +
+      'protomaps/<flavor>.json; and the committed sprites of basemaps-assets sprites/v4 (build/libs/' + PROTOMAPS_SPRITES +
+      ') at protomaps/sprites/v4/. Fails when a style names a URL or a font that is not packaged.',
+    produce: (ctx) => ctx.protomapsStyles(),
+    noticeText: () => `${PROTOMAPS_LICENSE}\n\n${PROTOMAPS_SPRITES_LICENSE}\n`,
+    licenseFiles: [],
+  },
+  {
     // The OpenUI Lang canvas of Assist (plans/LLM-A2A-Assist.md 4.10): parsed in the browser by the renderer and on the
     // server in QuickJS. The license texts are lang-core's and zod's (noticePackages).
     id: 'openui-lang-core', name: 'OpenUI Lang core (bundled with zod)', npm: '@openuidev/lang-core', license: 'MIT', licenseNote: 'Bundles @openuidev/lang-core and the parts of zod ' + pins.zod + ' it uses (MIT). Patched: ' +
@@ -792,6 +906,54 @@ export const atob = typeof globalThis.atob === 'function' ? globalThis.atob.bind
         });
         if (!rules.length) throw new Error(`No @font-face in ${face}.css of @fontsource/noto-sans`);
         files.push([`mapfonts/noto-sans/${face}.css`, Buffer.from(rules.join('\n\n') + '\n')]);
+      }
+      return files;
+    },
+    protomapsStyles() {
+      const root = packages.protomaps.root;
+      const files = [];
+      const generator = `const pm = require(${JSON.stringify(join(root, 'dist/cjs/index.cjs'))});
+const out = {};
+for (const flavor of ${JSON.stringify(PROTOMAPS_FLAVORS)}) out[flavor] = pm.layers('protomaps', pm.namedFlavor(flavor), {lang: 'en'});
+process.stdout.write(JSON.stringify(out));`;
+      const generated = JSON.parse(run(process.execPath, ['-e', generator], { cwd: build }));
+      const version = LIBS.find((l) => l.id === 'protomaps').version;
+      for (const flavor of PROTOMAPS_FLAVORS) {
+        const layers = generated[flavor];
+        if (!Array.isArray(layers) || !layers.length) throw new Error(`@protomaps/basemaps made no layers for ${flavor}`);
+        const style = {
+          version: 8,
+          name: `Protomaps ${flavor}`,
+          metadata: { 'generated-by': `@protomaps/basemaps ${version} layers("protomaps", namedFlavor("${flavor}"), {lang: "en"})` },
+          sources: { protomaps: { type: 'vector', attribution: '<a href="https://protomaps.com">Protomaps</a> © <a href="https://openstreetmap.org/copyright">OpenStreetMap</a>' } },
+          sprite: `/libs/protomaps/sprites/v4/${flavor}`,
+          layers,
+        };
+        const text = JSON.stringify(layers);
+        const urls = text.match(/[a-z][a-z0-9+.-]*:\/\/[^"\\]+/gi);
+        if (urls) throw new Error(`the Protomaps ${flavor} style names ${urls[0]}: review it`);
+        // every font a text-font names: a plain list of names, each name of a ["literal", [...]] of an expression, and any
+        // other text of the expression with a space in it (an operator or a property name has none)
+        for (const layer of layers) {
+          const value = layer.layout?.['text-font'];
+          if (value === undefined) continue;
+          const fonts = [];
+          const walk = (node, top) => {
+            if (!Array.isArray(node)) return;
+            if (node[0] === 'literal' && Array.isArray(node[1])) { fonts.push(...node[1]); return; }
+            if (top && node.every((item) => typeof item === 'string')) { fonts.push(...node); return; }
+            for (const item of node) {
+              if (typeof item === 'string' && item.includes(' ')) fonts.push(item);
+              else walk(item, false);
+            }
+          };
+          if (typeof value === 'string') fonts.push(value); else walk(value, true);
+          if (!fonts.length) throw new Error(`the Protomaps ${flavor} style's layer ${layer.id} has a text-font naming no font`);
+          for (const font of fonts) if (!PROTOMAPS_FONTS.includes(font)) throw new Error(`the Protomaps ${flavor} style names the font ${JSON.stringify(font)}, which is not packaged`);
+        }
+        files.push([`protomaps/${flavor}.json`, Buffer.from(JSON.stringify(style) + '\n')]);
+        for (const name of [`${flavor}.json`, `${flavor}.png`, `${flavor}@2x.json`, `${flavor}@2x.png`])
+          files.push([`protomaps/sprites/v4/${name}`, readFileSync(join(source, PROTOMAPS_SPRITES, name))]);
       }
       return files;
     },

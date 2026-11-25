@@ -28,8 +28,8 @@ along with this software (see the LICENSE.md file). If not, see
             (every data set sharing the sourceKey, which must share one format) and its country. Preflight, refused with
             an error and no run: the set registered and enabled; for a set downloaded from its URL, outside requests
             allowed (maps@external-requests) and no location given; for an operator's file (a set with no URL), a
-            countryGeoId and a location under dbresource://moqui/maps/import/, runtime://import/ or the user's own
-            uploads; the license acknowledged by an administrator (licenseAckUserId); no run of the same scope in
+            countryGeoId and a location under the user's own folder of dbresource://moqui/maps/import/ ((userId)/),
+            runtime://import/ or the user's own uploads; the license acknowledged by an administrator (licenseAckUserId); no run of the same scope in
             progress (one whose row has not changed for an hour is taken as abandoned and marked failed, and a live one
             so marked stops at its next check). countryGeoId is needed for a set read a country at a time and must be
             its coverage for a set with one. A run downloads from the registered host (never an internal address) to
@@ -44,8 +44,9 @@ along with this software (see the LICENSE.md file). If not, see
             and the cancel flag read between batches. Only after a whole load, it end-dates (thruDate) what this source
             key owns in the run's country that the new edition does not have: its postal codes (but one another source
             still has a point for), place names and point associations, a row passed over for another fault keeping its
-            code when the code could be read. The run (GdiCompleted, with its edition) is then the edition in use, and
-            the postal lookup cache is cleared. A run never changes a row another source key owns, a code made by hand
+            code when the code could be read. The run (GdiCompleted, with its edition) is then the edition in use. A run
+            that committed rows (a whole load, or the batches of one that failed or was cancelled after them) clears the
+            postal lookup cache; a completed run of an upload deletes the uploads of its scope's earlier runs. A run never changes a row another source key owns, a code made by hand
             (no sourceKey), a user-confirmed point or a record's own location; it revives a code another source key owns
             and retired when this edition has it (the code stays that source's). Where two sources have a code each
             writes its own point, and the data set's priority makes the active one. Rejected rows go to the error file
@@ -98,7 +99,8 @@ along with this software (see the LICENSE.md file). If not, see
             address, a group); the rest are end-dated. A user-confirmed point stays, with its association, and keeps its
             Geo; a record's own location is left alone. For the ZCTA-to-county set, its county-to-code links are deleted;
             a set of countries or divisions is refused, those rows being shared. Refused while an import of the source
-            key and country is in progress. rowsDeleted and rowsRetired count rows.</description>
+            key and country is in progress. rowsDeleted and rowsRetired count rows. The operator's uploads its runs read (under
+            dbresource://moqui/maps/import/) are deleted, and the postal lookup cache is cleared.</description>
         <in-parameters>
             <parameter name="dataSetId" required="true"/>
             <parameter name="countryGeoId"/>
@@ -107,5 +109,125 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="rowsDeleted" type="Long"/>
             <parameter name="rowsRetired" type="Long"/>
         </out-parameters>
+    </service>
+
+    <!-- ========== The lookup's reading of a code ========== -->
+
+    <service verb="normalize" noun="PostalCode" type="rust" location="moqui_tools::geo::lookup::normalize_postal_code"
+            transaction="ignore">
+        <description>A typed postal code read by the importer's own country rules (moqui_lib::geo::postal), for the postal
+            lookup (org.moqui.maps.MapServices.get#PostalLocation, which calls it as its own step): normalized (upper case,
+            spaces and hyphens out, leading zeros kept), its display spelling and granularity, the declared prefix of a full
+            Canadian, British or Dutch code, and a US ZIP+4 read as its ZIP code (zipPlus4). Text that is no code of the
+            country answers reason alone. Reads and writes nothing.</description>
+        <in-parameters>
+            <parameter name="country" required="true"><description>ISO alpha-2 or alpha-3</description></parameter>
+            <parameter name="postalCode" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="normalizedCode"/>
+            <parameter name="displayCode"/>
+            <parameter name="granularityEnumId"/>
+            <parameter name="prefixCode"/>
+            <parameter name="prefixDisplay"/>
+            <parameter name="zipPlus4" type="Boolean"/>
+            <parameter name="reason"/>
+        </out-parameters>
+    </service>
+
+    <!-- ========== Maps › Configuration › Geo data (GeoData.js) ========== -->
+
+    <service verb="find" noun="GeoDataSets">
+        <description>What Maps › Configuration › Geo data shows: each registered data set with its license, attribution, coverage
+            and whether it may be imported now (importRefusal: disabled, license not acknowledged, outside requests off for a
+            download); the countries its source key has been imported for (a scope listed under the set its last run was
+            of), each with its edition in use (the last completed run's), its postal codes and points in date and its last
+            run; the last 50 runs with their counts, error file and failure; and the refresh schedule (the GeoDataRefresh
+            ServiceJob's) and the conf limits. Changes nothing.</description>
+        <out-parameters>
+            <parameter name="dataSetList" type="List"/>
+            <parameter name="runList" type="List"/>
+            <parameter name="schedule" type="Map"/>
+            <parameter name="externalRequests" type="Boolean"/>
+            <parameter name="importMaxBytes"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/GeoData.js').execute('findGeoDataSets', context))</script></actions>
+    </service>
+
+    <service verb="acknowledge" noun="GeoDataLicense">
+        <description>Record that the signed-in administrator acknowledged a data set's license and attribution terms
+            (licenseAckUserId, in the audit log, and licenseAckDate): import#GeoData refuses a set whose license nobody
+            acknowledged. Loading the seed again keeps it.</description>
+        <in-parameters><parameter name="dataSetId" required="true"/></in-parameters>
+        <out-parameters><parameter name="licenseAckDate" type="Timestamp"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/GeoData.js').execute('acknowledgeLicense', context))</script></actions>
+    </service>
+
+    <service verb="start" noun="GeoDataImport">
+        <description>Start an import as a run of the GeoDataImport ServiceJob, never in the request: a pending run
+            (GdiPending, the signed-in user's) that the job's import#GeoData takes, so it has a job run, its notification
+            (topic GeoDataImport) and the run row from the start. Refused here, with no run: a set that is not there or is
+            disabled, a license not acknowledged, a download while outside requests are off, no country for a set read a
+            country at a time or an operator's file (or one its countryCodes do not list), no file for an operator's file, and a run of the same source key and
+            country in progress, each before an upload is written. An operator's file is an upload (file, at most maps@import-max-bytes, kept under
+            dbresource://moqui/maps/import/(userId)/) or a location the importer allows. A refused job start leaves the run
+            failed. Every GeoNames country at once is not offered: one country a run.</description>
+        <in-parameters>
+            <parameter name="dataSetId" required="true"/>
+            <parameter name="countryGeoId"><description>A Geo ID or an alpha-2 or alpha-3 code</description></parameter>
+            <parameter name="file" type="FileItem"/>
+            <parameter name="location"/>
+            <parameter name="force" type="Boolean" default-value="false"/>
+            <parameter name="again" type="Boolean" default-value="false"><description>A Refresh: an operator's file given no
+                file or location is the file its scope's last run read</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="geoDataImportId"/>
+            <parameter name="jobRunId"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/GeoData.js').execute('startImport', context))</script></actions>
+    </service>
+
+    <service verb="request" noun="GeoDataRefresh">
+        <description>Start the GeoDataRefresh ServiceJob now (Refresh all, and the maps.geodata.refresh RefreshOperation of
+            System › Health), which imports again each scope in use (it ever completed a run and still has rows): a source that
+            has not changed ends as current with a conditional request, so a refresh of unchanged sources changes
+            nothing.</description>
+        <in-parameters>
+            <parameter name="refreshKey"/>
+            <parameter name="operationKey"/>
+            <parameter name="reason"/>
+        </in-parameters>
+        <out-parameters><parameter name="jobRunId"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/GeoData.js').execute('requestRefresh', context))</script></actions>
+    </service>
+
+    <service verb="run" noun="GeoDataRefresh" transaction="ignore">
+        <description>The GeoDataRefresh ServiceJob's run: import#GeoData again for each scope (a source key and country) in use:
+            one that ever completed a run and still has rows in date (countries and divisions always have), whatever its
+            last run, but one with a run in progress or of a disabled set, with the operator's file of its last run where it was one, one after another; a scope that
+            fails is logged and counted and the rest go on. A scheduled run has no user: runAsUserId (the job's parameter,
+            set by schedule#GeoDataRefresh) is the administrator import#GeoData runs as.</description>
+        <in-parameters>
+            <parameter name="runAsUserId"/>
+            <parameter name="reason"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="scopeCount" type="Integer"/>
+            <parameter name="completedCount" type="Integer"/>
+            <parameter name="unchangedCount" type="Integer"/>
+            <parameter name="failedCount" type="Integer"/>
+            <parameter name="outcome"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/GeoData.js').execute('runRefresh', context))</script></actions>
+    </service>
+
+    <service verb="schedule" noun="GeoDataRefresh">
+        <description>Schedule the GeoDataRefresh ServiceJob every week (Sunday 03:20) or every month (the 1st, 03:20), or stop
+            its schedule (none, which pauses it). A schedule runs as the administrator who set it: they become a user of the
+            job who added themselves (notified of each run) and its runAsUserId parameter.</description>
+        <in-parameters><parameter name="scheduleKey" required="true"><description>none, weekly or monthly</description></parameter></in-parameters>
+        <out-parameters><parameter name="cronExpression"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/GeoData.js').execute('scheduleRefresh', context))</script></actions>
     </service>
 </services>

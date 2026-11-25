@@ -14,7 +14,8 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- For moqui test runs only (test/MoquiConf.xml registers this file): a map adapter for the MapsConfig spec, which registers
     it as a moqui.maps.MapAdapter row of its own and grants it. Its records are its recordKey's recordId: LOCATED has a
-    point, DENIED is refused as an adapter refuses a record the caller may not read, and any other fails. Its layer answers
+    point, DENIED is refused as an adapter refuses a record the caller may not read, ADDRESS_ONLY is an address with no point
+    (its postal code and country only), and any other fails. Its layer answers
     two features more than the limit it is given, and says it is not truncated, so the caller's own cut is what the spec
     sees; each layer it is asked for is kept (cache moqui.test.maps.asked), so the spec sees a hidden layer was not asked.
     get#UngrantedContext is a second adapter's, which the spec grants to no one: it keeps that it ran, which it must not.
@@ -27,6 +28,15 @@ along with this software (see the LICENSE.md file). If not, see
         <actions>
             <set field="recordId" from="String(recordKey?.recordId ?? '')"/>
             <if condition="recordId == 'DENIED'"><set field="reasonCode" value="PERMISSION_DENIED"/><return/></if>
+            <!-- an address with no point: its postal code and country, for the postal fallback (MapsPostalLookup) -->
+            <if condition="recordId == 'ADDRESS_ONLY'">
+                <set field="label" value="Spec address"/>
+                <set field="postalCode" value="00501"/>
+                <set field="countryGeoId" value="US"/>
+                <set field="recordVersion" value="1"/>
+                <set field="permittedActions" from="['view']"/>
+                <return/>
+            </if>
             <if condition="recordId != 'LOCATED'"><return error="true" message="The spec record ${recordId} cannot be read"/></if>
             <set field="label" value="Spec place"/>
             <set field="geometry" from="{type: 'Point', coordinates: [-87.6298, 41.8781]}"/>

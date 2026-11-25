@@ -223,6 +223,8 @@ function providerRefusal(provider, providerId) {
         return refusal("PROVIDER_KEYED", say("its provider ${name} needs a key, which is never sent to a browser", {name}))
     return null
 }
+// The map archives (MapSources.js), loaded when a layer has one
+let sources = null
 // The URLs a layer's browser asks for: {url, styleUrl}, or a refusal.
 function layerUrls(layer, provider, kind) {
     const format = text(layer.formatEnumId)
@@ -235,8 +237,20 @@ function layerUrls(layer, provider, kind) {
         url = text(layer.sourceUrl)
         if (kind === "pmtiles") styleUrl = text(layer.styleLocation)
     }
-    if (!url && text(layer.resourceLocation))
-        return refusal("SOURCE_NOT_SERVED", L("its file is a registered resource, which this server does not hand to a map here"))
+    if (!url && text(layer.resourceLocation)) {
+        if (kind !== "pmtiles")
+            return refusal("SOURCE_NOT_SERVED", L("its file is a registered resource, which this server does not hand to a map here"))
+        // a registered archive: the map-source transition's same-origin URL with its revision, for a caller it lets read the
+        // archive now (MapSources.js); one it does not is, to a caller who may not configure, one that is not there
+        sources = sources || ec.resource.script("component://framework/service/org/moqui/maps/MapSources.js")
+        const served = sources.servedUrl(layer)
+        if (!served.ok)
+            return served.reasonCode === "SOURCE_MISSING" ||
+                (served.reasonCode === "SOURCE_NOT_PERMITTED" && !canConfigure())
+                ? refusal("LAYER_MISSING", say("the layer ${layerId} is not registered", {layerId: layer.layerId}))
+                : refusal(served.reasonCode, served.reason)
+        url = served.url
+    }
     if (!url) return refusal("SOURCE_MISSING", L("it names no source"))
     for (const each of [url, styleUrl].filter(value => value)) {
         if (!isLocal(each) && !isWeb(each))
@@ -406,6 +420,18 @@ function recordKeyOf(value) {
     for (const key of keys)
         if (!/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(key) || !["string", "number"].includes(typeof found[key])) return undefined
     return found
+}
+
+// A postal code's one local match (get#PostalLocation, MapLookup.js), for a record whose adapter gave an address with no
+// point; null when there is none or more than one
+function postalPlace(postalCode, countryGeoId) {
+    if (!text(countryGeoId)) return null
+    const found = probe("org.moqui.maps.MapServices.get#PostalLocation", {
+        postalCode: text(postalCode),
+        countryGeoId: text(countryGeoId)
+    })
+    const matches = found.failed ? [] : Array.from(found.out.matches || [])
+    return matches.length === 1 ? matches[0] : null
 }
 
 function effectiveConfig(p) {
@@ -669,6 +695,27 @@ function effectiveConfig(p) {
                             properties: {label: record.label, precisionEnumId: record.precisionEnumId}
                         })
                         if (extent) setView({extent})
+                    } else if (text(out.postalCode)) {
+                        // an address with no point: its local postal-area position, approximate, with a broad extent
+                        // (§6.1); no outside service is asked and nothing is saved to the record
+                        const postal = postalPlace(out.postalCode, out.countryGeoId)
+                        if (postal) {
+                            Object.assign(record, {
+                                precisionEnumId: postal.precisionEnumId,
+                                precisionText: postal.precisionText,
+                                sourceText: postal.sourceText,
+                                approximate: true
+                            })
+                            points.push({
+                                id: "record",
+                                lon: postal.lon,
+                                lat: postal.lat,
+                                label: record.label || postal.displayCode,
+                                precision: postal.precisionText,
+                                source: postal.sourceText
+                            })
+                            setView({extent: postal.extent})
+                        } else if (extent) setView({extent})
                     } else if (extent) setView({extent})
                 }
             }

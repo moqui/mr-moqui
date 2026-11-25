@@ -42,6 +42,12 @@ along with this software (see the LICENSE.md file). If not, see
             hold (not inherited) -->
         <artifacts artifactName="org.moqui.maps.MapServices.get#EffectiveConfig" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
         <artifacts artifactName="org.moqui.maps.MapServices.get#Preferences" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+        <!-- the postal lookup: public reference data (the imported Geo data) only, for the dialog, an adapter or a search
+            acting as the user -->
+        <artifacts artifactName="org.moqui.maps.MapServices.get#PostalLocation" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+        <!-- a registered map archive read by range (LocalMap.xml source): the service checks the layer, its viewPermission and
+            the drive's access to it itself, on every request -->
+        <artifacts artifactName="org.moqui.maps.MapSourceServices.get#SourceAccess" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
         <authz artifactAuthzId="MAPS_DIALOG_USERS" userGroupId="ALL_USERS" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
     </artifactGroups>
 
@@ -62,6 +68,8 @@ along with this software (see the LICENSE.md file). If not, see
         (AdminConnectionServices), and it checks ADMIN_CONNECTION_VIEW and ADMIN_CONNECTION_MANAGE itself. -->
     <artifactGroups artifactGroupId="MAPS_READINESS" description="Maps: readiness checks">
         <artifacts artifactName="org.moqui.maps.MapServices.check#Readiness" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+        <artifacts artifactName="org.moqui.maps.MapSourceServices.check#ArchiveReadiness" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+        <artifacts artifactName="org.moqui.maps.MapServices.check#GeoDataReadiness" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
         <authz artifactAuthzId="MAPS_READINESS_ALL" userGroupId="ALL_USERS" authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
     </artifactGroups>
 
@@ -74,6 +82,10 @@ along with this software (see the LICENSE.md file). If not, see
         <!-- Configuration's profiles and layers; each also checks that its caller may open Configuration -->
         <artifacts artifactName="org.moqui.maps.MapServices.find#Configuration" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
         <artifacts artifactName="org.moqui.maps.MapServices.store#ProfileSettings" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+        <!-- map archives (MapSourceServices): registering one also checks that its caller may change Configuration -->
+        <artifacts artifactName="org.moqui.maps.MapSourceServices.read#ArchiveHeader" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+        <artifacts artifactName="org.moqui.maps.MapSourceServices.register#ArchiveLayer" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+        <artifacts artifactName="org.moqui.maps.MapSourceServices.find#ArchiveLayers" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
         <authz artifactAuthzId="MAPS_ADMIN_ADMIN" userGroupId="ADMIN" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
         <authz artifactAuthzId="MAPS_ADMIN_USERS_DENY" userGroupId="MAPS_USERS" authzTypeEnumId="AUTHZT_DENY" authzActionEnumId="AUTHZA_ALL"/>
     </artifactGroups>

@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- Maps › Browse (Browse.xml; plans/Maps.md §3.1): m-map filling the space below the shell's header, over the effective
     configuration this component asks getConfig for and hands to m-map as an object (so a layer shown or hidden, a basemap
     chosen, a saved view or a result gone to draws again where the map was). Beside it, one panel at a time: Search (saved
-    places and permitted records), Layers (the basemap, the overlays and record layers, each layer that is not shown named
+    places, permitted records and postal codes, a postal area shown by its broad extent), Layers (the basemap, the overlays and record layers, each layer that is not shown named
     with Retry, and a cut feature list said), Saved views (Save view saves where the map is) and the selected feature's
     details. Below 600 px the panel is a bottom sheet over the map. Full screen is the browser's, on request. The last view
     is posted (rememberView) only when the user turned Restore my last view on. Brand color names and Quasar classes
@@ -22,8 +22,10 @@ along with this software (see the LICENSE.md file). If not, see
 <template><div ref="frame" class="m-maps-browse column no-wrap" :class="fullscreen ? ($q.dark.isActive ? 'bg-dark' : 'bg-white') : ''">
     <div class="row items-center no-wrap q-gutter-x-xs q-px-sm q-py-xs">
         <div class="col" style="max-width:420px">
-            <m-text-line v-model="query" name="mapsSearch" id="MapsSearch" :label="t('Search saved places and records')" @keyup.enter="runSearch"></m-text-line>
+            <m-text-line v-model="query" name="mapsSearch" id="MapsSearch" :label="t('Search saved places, records and postal codes')" @keyup.enter="runSearch"></m-text-line>
         </div>
+        <q-select v-if="postalCountries.length" v-model="postalCountry" :options="postalCountries" option-value="geoId" option-label="name" emit-value map-options
+                dense outlined clearable style="min-width:120px" :label="t('Postal country')" id="MapsPostalCountry"></q-select>
         <q-btn id="MapsSearchButton" dense flat no-caps icon="sym_o_search" :label="phone ? '' : t('Search')" :aria-label="t('Search')" @click="runSearch"></q-btn>
         <q-space></q-space>
         <q-btn dense flat no-caps icon="sym_o_layers" :label="phone ? '' : t('Layers')" :aria-label="t('Layers')" :class="panel === 'layers' ? 'm-tonal text-primary' : ''"
@@ -52,17 +54,18 @@ along with this software (see the LICENSE.md file). If not, see
 
             <template v-if="panel === 'search'">
                 <div v-if="searching" class="m-muted">{{t('Searching…')}}</div>
-                <div v-else-if="!results.length" class="m-muted">{{t('No saved place or record matches.')}}</div>
+                <div v-else-if="!results.length" class="m-muted">{{t('No saved place, record or postal code matches.')}}</div>
+                <div v-if="!searching && postalNote" class="text-caption text-warning q-mb-xs" id="MapsPostalNote">{{postalNote}}</div>
                 <q-list dense separator>
                     <q-item v-for="result in results" :key="result.id" clickable @click="goToResult(result)" :data-maps-result="result.id">
-                        <q-item-section avatar><q-icon :name="result.kind === 'savedView' ? 'sym_o_bookmark' : 'sym_o_location_on'"></q-icon></q-item-section>
+                        <q-item-section avatar><q-icon :name="result.kind === 'savedView' ? 'sym_o_bookmark' : result.kind === 'postal' || result.kind === 'postalPlace' ? 'sym_o_markunread_mailbox' : 'sym_o_location_on'"></q-icon></q-item-section>
                         <q-item-section>
                             <q-item-label>{{result.label}}</q-item-label>
-                            <q-item-label caption>{{[result.sourceText, precisionText(result.precisionEnumId)].filter(Boolean).join(' · ')}}</q-item-label>
+                            <q-item-label caption>{{[result.sourceText, result.precisionText || precisionText(result.precisionEnumId)].filter(Boolean).join(' · ')}}</q-item-label>
                         </q-item-section>
                     </q-item>
                 </q-list>
-                <div class="text-caption m-muted q-mt-sm">{{t('Saved places, and the records of the layers shown in the view on screen, are searched. Going to a result changes nothing in its record.')}}</div>
+                <div class="text-caption m-muted q-mt-sm">{{t('Saved places, the records of the layers shown in the view on screen and the postal codes of the imported Geo data are searched. Going to a result changes nothing in its record.')}}</div>
             </template>
 
             <template v-if="panel === 'layers'">
@@ -165,7 +168,7 @@ module.exports = {
     name: 'MapsBrowse',
     inject: { mScreen: { default: null } },
     data() {
-        return { effective: null, error: '', panel: '', query: '', results: [], searching: false, savedViews: [], hidden: {}, basemapId: '',
+        return { effective: null, error: '', panel: '', query: '', results: [], postalCountries: [], postalCountry: null, postalNote: '', searching: false, savedViews: [], hidden: {}, basemapId: '',
             view: null, lastView: null, marker: null, selected: null, mapPx: 480, phone: false, fullscreen: false, saveShown: false,
             saveName: '', saveShared: 'N', saving: false, restoreLastView: false };
     },
@@ -281,7 +284,14 @@ module.exports = {
             const shown = this.shownLayerIds();
             if (shown.length) params.layerIds = shown.join(',');
             if (this.lastView && Array.isArray(this.lastView.extent)) params.extent = this.lastView.extent.join(',');
-            this.request('search', { params }).then((json) => { this.results = json.results || []; }, (err) => {
+            if (this.postalCountry) params.country = this.postalCountry;
+            this.request('search', { params }).then((json) => {
+                this.results = json.results || [];
+                this.postalCountries = json.countries || [];
+                // the country searched, shown in the selector unless the code was found in more than one
+                if (!this.postalCountry && json.countryGeoId && !json.ambiguous && this.postalCountries.some((one) => one.geoId === json.countryGeoId)) this.postalCountry = json.countryGeoId;
+                this.postalNote = json.reason || '';
+            }, (err) => {
                 this.results = [];
                 this.error = t('The search did not run') + ': ' + (err && err.message || err);
             }).then(() => { this.searching = false; });
@@ -290,9 +300,10 @@ module.exports = {
             if (result.kind === 'savedView') { this.applyView({ view: result.view }); return; }
             if (result.lon === null || result.lon === undefined) return;
             this.marker = { id: 'result', lon: Number(result.lon), lat: Number(result.lat), label: result.label };
-            this.view = { center: [Number(result.lon), Number(result.lat)], zoom: 14 };
+            // an approximate place (a postal area) shows its broad extent, never a close zoom on a point it does not know
+            this.view = Array.isArray(result.extent) ? { extent: result.extent } : { center: [Number(result.lon), Number(result.lat)], zoom: 14 };
             this.selected = { label: result.label, lon: Number(result.lon), lat: Number(result.lat), layerId: result.layerId,
-                precision: this.precisionText(result.precisionEnumId), source: result.sourceText };
+                precision: result.precisionText || this.precisionText(result.precisionEnumId), source: result.sourceText };
             this.panel = 'details';
         },
         applyView(row) {

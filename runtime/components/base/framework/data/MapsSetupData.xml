@@ -41,6 +41,24 @@ along with this software (see the LICENSE.md file). If not, see
             centerLongitude="0" centerLatitude="20" zoom="2" externalAccess="Y" allowedOverrides="basemap,layers,extent,units"
             disabled="Y"/>
 
+    <!-- The local Protomaps profile (plans/Maps.md §4.1, §5): a regional Protomaps PMTiles extract an administrator places in
+        a drive, in a git repository as a Git LFS object, or on disk, and registers under Configuration › Archives
+        (MapSourceServices.register#ArchiveLayer, which records its revision and enables the layer). Drawn with the styles,
+        sprites and fonts packaged under /libs (webroot build/libs/refresh.mjs, protomaps and mapfonts), from this server
+        only. The layers and the profile are disabled until an archive is registered and the profile enabled. -->
+    <moqui.maps.MapLayer layerId="LOCAL_PROTOMAPS_LIGHT" layerName="Local map (light)" formatEnumId="MLF_PMTILES_VECTOR"
+            description="A regional Protomaps archive registered on this server, drawn with the Protomaps light style"
+            styleLocation="/libs/protomaps/light.json" assetsLocation="/libs/protomaps" crs="EPSG:3857"
+            attribution="Protomaps&#10;© OpenStreetMap" isBasemap="Y" disabled="Y"/>
+    <moqui.maps.MapLayer layerId="LOCAL_PROTOMAPS_DARK" layerName="Local map (dark)" formatEnumId="MLF_PMTILES_VECTOR"
+            description="The same regional Protomaps archive, drawn with the Protomaps dark style (register the same location)"
+            styleLocation="/libs/protomaps/dark.json" assetsLocation="/libs/protomaps" crs="EPSG:3857"
+            attribution="Protomaps&#10;© OpenStreetMap" isBasemap="Y" disabled="Y"/>
+    <moqui.maps.MapProfile profileId="LOCAL_PROTOMAPS" profileName="Local map" basemapLayerId="LOCAL_PROTOMAPS_LIGHT"
+            description="A regional map from an archive on this server, with no outside request"
+            centerLongitude="0" centerLatitude="20" zoom="2" externalAccess="N" allowedOverrides="basemap,layers,extent,units"
+            disabled="Y"/>
+
     <!-- Where each registered Geo data set (MapsData.xml) is downloaded from, its year and its priority: the lower is a Geo's
         active point where sources overlap, so in the US the Census point wins and GeoNames adds names and the codes Census
         lacks; an operator's file, chosen deliberately, comes first. -->

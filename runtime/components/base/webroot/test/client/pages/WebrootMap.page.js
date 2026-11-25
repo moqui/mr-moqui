@@ -253,3 +253,18 @@ test("what the server did not resolve is named under the map, a cut feature list
         moqui.screenForms = before;
     }
 });
+
+test("a registered archive's 409 says its revision changed; another failure does not, and both still fail the read", async () => {
+    const answers = { "/a.pmtiles": "Bad response code: 409", "/b.pmtiles": "Bad response code: 404" };
+    const O = { FetchSource: class { constructor(url) { this.url = url; }
+        getBytes() { return Promise.reject(new Error(answers[this.url])); } } };
+    const changed = [];
+    for (const url of ["/a.pmtiles", "/b.pmtiles"]) {
+        const source = map.pinnedSource(O, url, () => changed.push(url));
+        assert.equal(source.getKey(), url);
+        let failed = null;
+        try { await source.getBytes(0, 16384); } catch (err) { failed = err.message; }
+        assert.equal(failed, answers[url]);
+    }
+    assert.deepEqual(changed, ["/a.pmtiles"]);
+});
