@@ -246,7 +246,7 @@ fn rest_post_json(address: SocketAddr, auth: &str, path: &str, body: &str) -> (u
     (status, page)
 }
 
-fn assert_page(address: SocketAddr, auth: &str, path: &str, texts: &[&str]) {
+fn assert_page(address: SocketAddr, auth: &str, path: &str, texts: &[&str]) -> String {
     let (status, page) = get(address, auth, path);
     assert_eq!(status, 200, "{}", failure(path, status, &page));
     assert!(!page.contains("Error rendering"), "{}", failure(path, status, &page));
@@ -257,6 +257,7 @@ fn assert_page(address: SocketAddr, auth: &str, path: &str, texts: &[&str]) {
             failure(path, status, &page)
         );
     }
+    page
 }
 
 /// A transition answers 200, or 302 when it redirects back to its screen. Either way it did not fail to run.
@@ -892,12 +893,15 @@ fn every_tools_screen_renders_in_html_for_an_admin(gate: &crate::common::Gate) {
         &["It is shared with "],
     );
     // Analysis: the choices run as the viewer, and saved as a library panel on that dashboard.
-    assert_page(
+    let analysis = "/apps/dashboards/Analysis?datasetId=otel_metrics&run=Run";
+    let page = assert_page(
         address,
         &john,
-        "/apps/dashboards/Analysis?datasetId=otel_metrics&run=Run",
+        analysis,
         &["Source", "Result", "Computed from ", "Save analysis"],
     );
+    // an ungrouped count is one row, not an empty table (plans/ui-review-dashboards.md DASH-UI-003)
+    assert!(!page.contains("No record matches"), "{analysis}: {page}");
     let save = "/apps/dashboards/Analysis/saveAnalysis";
     let (status, page) = post(
         address,
