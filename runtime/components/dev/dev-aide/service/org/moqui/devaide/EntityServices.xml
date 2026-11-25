@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     and where an edit goes (the site's extend-entity for an upstream entity, D17), the table against the fields, the
     changes the table check never makes (the full tier, typed confirm, audited) and the load of a modeler's seed data. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
-    <service verb="list" noun="Entities" type="rust" location="dev_aide::entities::list_entities" allow-remote="false" read-only="true">
+    <service verb="list" noun="Entities" authz-action="view" type="rust" location="dev_aide::entities::list_entities" allow-remote="false" read-only="true">
         <description>The entities and view entities of the artifact index by name, with their component, file and how many site extensions each has.</description>
         <in-parameters>
             <parameter name="filter"/>
@@ -71,7 +71,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="file"/>
         </out-parameters>
     </service>
-    <service verb="check" noun="DataFile" type="rust" location="dev_aide::entities::check_data_file" allow-remote="false" read-only="true">
+    <service verb="check" noun="DataFile" authz-action="view" type="rust" location="dev_aide::entities::check_data_file" allow-remote="false" read-only="true">
         <description>A data file's records (the buffer's text, or the file) against the database: each record not found and each field that differs.</description>
         <in-parameters>
             <parameter name="rootId" required="true"/>
@@ -84,7 +84,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="fieldsChecked" type="Long"/>
         </out-parameters>
     </service>
-    <service verb="export" noun="Records" type="rust" location="dev_aide::entities::export_records" allow-remote="false" read-only="true">
+    <service verb="export" noun="Records" authz-action="view" type="rust" location="dev_aide::entities::export_records" allow-remote="false" read-only="true">
         <description>An entity's records as the elements of a data file, at most a thousand; filter narrows by field values.</description>
         <in-parameters>
             <parameter name="entityName" required="true"/>
@@ -106,7 +106,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="records" type="Long"/>
         </out-parameters>
     </service>
-    <service verb="list" noun="DataFiles" type="rust" location="dev_aide::entities::list_data_files" allow-remote="false" read-only="true">
+    <service verb="list" noun="DataFiles" authz-action="view" type="rust" location="dev_aide::entities::list_data_files" allow-remote="false" read-only="true">
         <description>The data files of the loaded components by component and type, each with its Workspace link.</description>
         <in-parameters>
             <parameter name="filter"/>
