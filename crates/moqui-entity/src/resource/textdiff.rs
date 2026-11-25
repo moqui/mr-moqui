@@ -332,39 +332,92 @@ impl TextDiff {
         stats.insert("insertions".to_string(), count(self.stats.insertions));
         stats.insert("deletions".to_string(), count(self.stats.deletions));
         stats.insert("hunks".to_string(), count(self.stats.hunks));
-        let hunks = self
-            .hunks
-            .iter()
-            .map(|hunk| {
-                let lines = hunk
-                    .lines
-                    .iter()
-                    .map(|line| {
-                        let mut map = IndexMap::default();
-                        map.insert("tag".to_string(), Value::string(line.tag.name()));
-                        map.insert("oldNo".to_string(), line.old_no.map_or(Value::Null, count));
-                        map.insert("newNo".to_string(), line.new_no.map_or(Value::Null, count));
-                        map.insert("text".to_string(), Value::string(trim_line_end(&line.text())));
-                        Value::Map(map)
-                    })
-                    .collect();
-                let mut map = IndexMap::default();
-                map.insert("oldStart".to_string(), count(hunk.old_start));
-                map.insert("oldLines".to_string(), count(hunk.old_lines));
-                map.insert("newStart".to_string(), count(hunk.new_start));
-                map.insert("newLines".to_string(), count(hunk.new_lines));
-                map.insert("lines".to_string(), Value::List(lines));
-                Value::Map(map)
-            })
-            .collect();
+        let hunks = self.hunks_value(&self.window(0, 0));
         let mut map = IndexMap::default();
         map.insert("fromName".to_string(), Value::string(&self.from_name));
         map.insert("toName".to_string(), Value::string(&self.to_name));
         map.insert("unifiedDiff".to_string(), Value::string(self.unified()));
         map.insert("html".to_string(), Value::string(self.render_html()));
         map.insert("stats".to_string(), Value::Map(stats));
-        map.insert("hunks".to_string(), Value::List(hunks));
+        map.insert("hunks".to_string(), hunks);
         Value::Map(map)
+    }
+}
+
+/// The lines of a diff's hunks a page shows at once ([`TextDiff::window`]): from the line `offset` of all the hunks'
+/// lines, counted from 0 without their headers, at most `limit` lines; `total` is the count of all of them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LineWindow {
+    pub offset: usize,
+    pub limit: usize,
+    pub total: usize,
+}
+
+impl TextDiff {
+    /// The count of the lines of all the hunks, without their headers.
+    pub fn line_count(&self) -> usize {
+        self.hunks.iter().map(|hunk| hunk.lines.len()).sum()
+    }
+
+    /// The window of `limit` lines from `offset` (0 for all of them). An offset at or past the last line is the last
+    /// window of `limit` lines that starts at a multiple of `limit`, so a page past the end shows the last part.
+    pub fn window(&self, offset: usize, limit: usize) -> LineWindow {
+        let total = self.line_count();
+        let offset = if limit == 0 {
+            0
+        } else if offset >= total {
+            total.saturating_sub(1) / limit * limit
+        } else {
+            offset
+        };
+        LineWindow { offset, limit, total }
+    }
+
+    /// The hunks of the lines in `window` as a script value, as [`Self::to_value`]'s `hunks`: a hunk wholly outside it is
+    /// left out, and one it cuts keeps its header's numbers with only the lines inside; one cut at its start has
+    /// `skippedLines`, the count of its lines before the window. A large file's diff is read a part at a time without
+    /// the host making the values of the rest (mr-pass SmithyDiffScale: 37,500 lines of values crossed every script
+    /// that passed the diff on, for a page of 10,000).
+    pub fn hunks_value(&self, window: &LineWindow) -> Value {
+        let end = if window.limit == 0 {
+            usize::MAX
+        } else {
+            window.offset.saturating_add(window.limit)
+        };
+        let mut at = 0usize;
+        let mut hunks = Vec::new();
+        for hunk in &self.hunks {
+            let (first, past) = (at, at + hunk.lines.len());
+            at = past;
+            // every hunk when the window is all of them, else those with a line in it
+            if window.limit > 0 && (past <= window.offset || first >= end) {
+                continue;
+            }
+            let skipped = window.offset.saturating_sub(first);
+            let taken = past.min(end) - first - skipped;
+            let lines = hunk.lines[skipped..skipped + taken]
+                .iter()
+                .map(|line| {
+                    let mut map = IndexMap::default();
+                    map.insert("tag".to_string(), Value::string(line.tag.name()));
+                    map.insert("oldNo".to_string(), line.old_no.map_or(Value::Null, count));
+                    map.insert("newNo".to_string(), line.new_no.map_or(Value::Null, count));
+                    map.insert("text".to_string(), Value::string(trim_line_end(&line.text())));
+                    Value::Map(map)
+                })
+                .collect();
+            let mut map = IndexMap::default();
+            map.insert("oldStart".to_string(), count(hunk.old_start));
+            map.insert("oldLines".to_string(), count(hunk.old_lines));
+            map.insert("newStart".to_string(), count(hunk.new_start));
+            map.insert("newLines".to_string(), count(hunk.new_lines));
+            if skipped > 0 {
+                map.insert("skippedLines".to_string(), count(skipped));
+            }
+            map.insert("lines".to_string(), Value::List(lines));
+            hunks.push(Value::Map(map));
+        }
+        Value::List(hunks)
     }
 }
 
@@ -748,5 +801,75 @@ mod tests {
             panic!("no hunks");
         };
         assert_eq!(hunks.len(), 1);
+    }
+
+    /// The lines of a hunk value: (tag, oldNo, newNo) of each.
+    fn hunk_lines(hunk: &Value) -> Vec<(String, Option<i64>, Option<i64>)> {
+        let Value::Map(map) = hunk else { panic!("not a map") };
+        let Some(Value::List(lines)) = map.get("lines") else {
+            panic!("no lines")
+        };
+        lines
+            .iter()
+            .map(|line| {
+                let Value::Map(line) = line else { panic!("not a map") };
+                let number = |name: &str| match line.get(name) {
+                    Some(Value::I64(n)) => Some(*n),
+                    _ => None,
+                };
+                let tag = match line.get("tag") {
+                    Some(Value::String(tag)) => tag.to_string(),
+                    _ => String::new(),
+                };
+                (tag, number("oldNo"), number("newNo"))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_window_gives_only_its_lines_and_marks_a_cut_hunk() {
+        // two hunks of 8 lines each (3 context, a change of one line, 3 context) far apart
+        let old: String = (1..=100).map(|n| format!("line {n}\n")).collect();
+        let new = old
+            .replace("line 10\n", "line ten\n")
+            .replace("line 80\n", "line eighty\n");
+        let text = diff(&old, &new, "a", "b");
+        assert_eq!(text.line_count(), 16);
+        // the whole diff is every hunk, as to_value gives it
+        let Value::List(all) = text.hunks_value(&text.window(0, 0)) else {
+            panic!("not a list")
+        };
+        assert_eq!(all.len(), 2);
+        assert_eq!(text.window(0, 0).total, 16);
+        // lines 5 to 10: the last 3 of the first hunk and the first 3 of the second
+        let window = text.window(5, 6);
+        assert_eq!((window.offset, window.total), (5, 16));
+        let Value::List(part) = text.hunks_value(&window) else {
+            panic!("not a list")
+        };
+        assert_eq!(part.len(), 2);
+        let Value::Map(first) = &part[0] else {
+            panic!("not a map")
+        };
+        assert_eq!(first.get("skippedLines"), Some(&Value::I64(5)));
+        assert_eq!(first.get("oldStart"), Some(&Value::I64(7)));
+        let context = |n: i64| ("equal".to_string(), Some(n), Some(n));
+        assert_eq!(hunk_lines(&part[0]), vec![context(11), context(12), context(13)]);
+        let Value::Map(second) = &part[1] else {
+            panic!("not a map")
+        };
+        assert_eq!(second.get("skippedLines"), None);
+        assert_eq!(hunk_lines(&part[1]), vec![context(77), context(78), context(79)]);
+        // an offset past the end is the last window, at a multiple of the limit
+        let window = text.window(400, 6);
+        assert_eq!(window.offset, 12);
+        let Value::List(last) = text.hunks_value(&window) else {
+            panic!("not a list")
+        };
+        assert_eq!(last.len(), 1);
+        assert_eq!(
+            hunk_lines(&last[0]).last(),
+            Some(&("equal".to_string(), Some(83), Some(83)))
+        );
     }
 }

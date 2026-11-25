@@ -738,10 +738,13 @@ fn get_compare(parameters: &Parameters, _facade: &EntityFacade) -> Out {
             let (mut insertions, mut deletions) = (0, 0);
             // the diffs a caller asks for: one file's (path), at most maxDiffLines changed lines in all and at most
             // maxFileDiffLines in one file (0: no bound; a file past either is listed with diffOmitted and no diff, and
-            // the files after it are still given), and the html only with withHtml
+            // the files after it are still given), and the html only with withHtml; with diffLineLimit a file's hunks
+            // have only the lines of that window from diffLineOffset (diff_window)
             let only = text(parameters, "path").filter(|path| !path.is_empty());
             let max_lines = number(parameters, "maxDiffLines", 0);
             let max_file_lines = number(parameters, "maxFileDiffLines", 0);
+            let line_offset = number(parameters, "diffLineOffset", 0);
+            let line_limit = number(parameters, "diffLineLimit", 0);
             let with_html =
                 text(parameters, "withHtml").is_none_or(|value| matches!(value.as_str(), "true" | "Y" | "y"));
             let mut given = 0usize;
@@ -770,11 +773,7 @@ fn get_compare(parameters: &Parameters, _facade: &EntityFacade) -> Out {
                             if with_html {
                                 entries.insert("html".to_string(), Value::string(text.render_html()));
                             }
-                            if let Value::Map(diff) = text.to_value() {
-                                if let Some(hunks) = diff.get("hunks") {
-                                    entries.insert("hunks".to_string(), hunks.clone());
-                                }
-                            }
+                            diff_window(entries, text, line_offset, line_limit);
                         } else if with_diffs && wanted {
                             entries.insert("diffOmitted".to_string(), Value::Bool(true));
                         }
@@ -2270,6 +2269,24 @@ fn merge_merge_request(parameters: &Parameters, facade: &EntityFacade) -> Out {
         ),
         ("mergeMethodEnumId", Value::string(method.enum_id())),
     ]))
+}
+
+/// A file's hunks for a diff's caller: every line, or with `limit` the lines of the window from `offset`
+/// ([`TextDiff::window`]) with `diffLineCount` (the lines of all its hunks, for the count of parts) and `diffLineOffset`
+/// (where the window starts: an offset past the end gives the last window). Only the lines a page shows become values,
+/// so a large file's diff is not made whole for each script that passes it on.
+pub(super) fn diff_window(
+    entries: &mut moqui_lib::object::ValueMap,
+    text: &moqui_core::resource::textdiff::TextDiff,
+    offset: usize,
+    limit: usize,
+) {
+    let window = text.window(offset, limit);
+    entries.insert("hunks".to_string(), text.hunks_value(&window));
+    if limit > 0 {
+        entries.insert("diffLineCount".to_string(), count(window.total));
+        entries.insert("diffLineOffset".to_string(), count(window.offset));
+    }
 }
 
 #[cfg(test)]
