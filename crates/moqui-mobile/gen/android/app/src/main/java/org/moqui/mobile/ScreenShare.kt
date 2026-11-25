@@ -2,7 +2,6 @@
 
 package org.moqui.mobile
 
-import android.app.Activity
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -381,26 +380,6 @@ object ScreenShare {
             .setOngoing(true)
             .addAction(0, "Stop sharing", stop)
             .build()
-    }
-}
-
-/** The system's consent dialog for the capture, each time; no window of its own. */
-class ScreenConsentActivity : Activity() {
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        if (savedInstanceState == null) {
-            val manager = getSystemService(MediaProjectionManager::class.java)
-            @Suppress("DEPRECATION")
-            startActivityForResult(manager.createScreenCaptureIntent(), 1)
-        }
-    }
-
-    @Deprecated("The platform's result, as the consent intent gives it")
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        @Suppress("DEPRECATION")
-        super.onActivityResult(requestCode, resultCode, data)
-        ScreenShare.consented(applicationContext, resultCode, data)
-        finish()
     }
 }
 
