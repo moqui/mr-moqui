@@ -9704,7 +9704,7 @@
         // app root's subscreens (the top-level screens): the menu the app-root breadcrumb had before the trail started below it.
         // The routed menu items leave keyboard activation to Quasar's keyup handler, as the drawer does.
         // (below 600 px the launcher stands for it: the title is hidden, style-guide §2.2 and §7)
-        "        <q-btn v-if=\"appScreenMenu\" flat dense no-caps id=\"m-app-screens\" class=\"m-app-screens text-subtitle1 text-weight-medium\" :class=\"handheld ? '' : 'gt-xs'\">\n" +
+        "        <q-btn v-if=\"appScreenMenu\" flat dense no-caps id=\"m-app-screens\" class=\"m-app-screens text-weight-medium\" :class=\"handheld ? '' : 'gt-xs'\">\n" +
         "            {{headerTitle}}<q-icon name=\"arrow_drop_down\" size=\"xs\"></q-icon>\n" +
         "            <q-menu anchor=\"bottom left\" self=\"top left\"><q-list dense style=\"min-width:200px;\">\n" +
         "                <q-item v-for=\"subscreen in appScreenMenu.subscreens\" :key=\"subscreen.name\" clickable v-close-popup :active=\"subscreen.active\" active-class=\"text-primary text-weight-medium\" :to=\"subscreen.pathWithParams\" @keydown.enter.prevent>\n" +
