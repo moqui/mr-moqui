@@ -74,9 +74,11 @@ const DATA: &str = r#"<entity-facade-xml type="seed">
     <moqui.entity.document.DataDocumentField dataDocumentId="GateDoc" fieldSeqId="02" fieldPath="description"/>
     <moqui.entity.document.DataDocumentField dataDocumentId="GateDoc" fieldSeqId="03" fieldPath="(enumId + ' / ' + description)"
         fieldNameAlias="enumLabel" defaultDisplay="Y"/>
-    <!-- a business dataset over the document, in a registered feed and waiting for review, for the dataset screens of Dashboards -->
+    <!-- a business dataset over the document, in a registered feed and waiting for review, for the dataset screens of
+        Dashboards; the document is read by ADMIN, so the admin user may make a dataset over it (SEC-TLS-92) -->
     <moqui.entity.feed.DataFeed dataFeedId="GateFeed" dataFeedTypeEnumId="DTFDTP_MAN_PULL" feedName="Gate feed"/>
     <moqui.entity.feed.DataFeedDocument dataFeedId="GateFeed" dataDocumentId="GateDoc"/>
+    <moqui.entity.document.DataDocumentUserGroup dataDocumentId="GateDoc" userGroupId="ADMIN"/>
     <moqui.report.Definition definitionId="gate-business" definitionType="dataset" title="Gate business dataset" ownerId="EX_JOHN_DOE"
         readOnly="N" versionNumber="1"
         bodyJson='{"documentType":"GateDoc","timeField":"_timestamp","signal":"business","rowFilterService":"org.moqui.report.ReportServices.get#UserGroupRowFilter","rowFilterParameters":{"groupField":"enumTypeId"}}'/>
@@ -1160,9 +1162,10 @@ fn the_groovy_specs_text_is_on_the_screens_and_the_rest_api(gate: &crate::common
     // The Groovy rows look for the seed phrase "Test Name A" in the browser download. This runtime has no such
     // row; the record just created is the one the export has to carry. The transition runs actions, so the
     // parameters go in the body. Browser output is the form's default: the writer's text sent as a download, and
-    // more than one entity as CSV a zip. The form's empty filter, and Java's `[:]`, are no filter.
+    // more than one entity as CSV a zip. The form's empty filter, and Java's `[:]`, are no filter; any other is a JSON
+    // object of field values, never evaluated (SEC-TLS-01).
     let path = "/Tools/Data/Export/EntityExport";
-    for (file_type, filter) in [("XML", ""), ("JSON", "[:]"), ("CSV", "{testId: 'TEST_SCR'}")] {
+    for (file_type, filter) in [("XML", ""), ("JSON", "[:]"), ("CSV", r#"{"testId": "TEST_SCR"}"#)] {
         let (status, page) = post(
             address,
             &john,
