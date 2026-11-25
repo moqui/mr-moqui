@@ -258,3 +258,21 @@ receivers take it as any page's. What the E2EE stage needs:
    RFC 9605 vectors and a frame the browsers' worker decrypts (WebrootSFrame.js's own vectors in a shared test).
 4. The page drops the encrypted-call refusal for an app with the command, and the label of the call stays
    `call-encrypted`.
+
+### The emulator walk of the build
+
+The same set-up as §3 (the debug server built from this branch, Chrome by CDP), but the page's own flow:
+`moqui.call.shareNative()` in the app's shell, as its Share the screen button calls it. Not a committed acceptance test
+(the scripts drive two CDP endpoints and the emulator's shade); run once each:
+
+| Check | Result |
+| --- | --- |
+| consent (the appop) → Chrome decodes the phone's screen, through `addScreenLeg`, the page's join, the stage | 497 ms, and 564 ms in a second call |
+| the stage names the screen leg on Chrome | yes (`state.stage.callLegId` the screen leg) |
+| Stop in the call | the leg leaves, Chrome's stage clears, the capture and its service end, the call goes on |
+| leaving the call from the app (a call of two) | the call ends on Chrome too, the capture ends |
+| Stop sharing in the notification | the page is told (`nativeScreen`), its leg leaves, Chrome's stage clears, the share's notification goes and the call's stays |
+| rotation to landscape and back | the encoder starts again: Chrome decodes 1280x576, then 576x1280 |
+
+The walk found one bug, fixed: the share's notification had the call's notification id, so sharing during a call
+replaced the call's ongoing notification and stopping left the call's service holding the share's.
