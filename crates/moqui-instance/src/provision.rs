@@ -51,8 +51,8 @@ use zeroize::Zeroizing;
 
 use crate::actions::{self, Opened};
 use crate::common::{
-    connect_host, fail, field, leased, new_credential, new_item_id, now, rows, INSTANCE_ENV, INSTANCE_HOST_CONFIG,
-    INSTANCE_SECRET, INSTANCE_VOLUME,
+    connect_host, fail, field, leased, new_credential, new_item_id, now, one, rows, APP_INSTANCE, INSTANCE_DEPENDENCY,
+    INSTANCE_ENV, INSTANCE_HOST_CONFIG, INSTANCE_SECRET, INSTANCE_VOLUME,
 };
 use crate::database::{self, AdminLogin, OneShot, Server, EXIT_EXISTS, ONE_SHOT_WAIT};
 use crate::kinds::{self, ContainerInput};
@@ -341,12 +341,22 @@ fn deposit_credentials(
         let field_name = Some(field(secret, "fieldName"))
             .filter(|name| !name.is_empty())
             .unwrap_or_else(|| "password".to_string());
+        let mut fields = serde_json::Map::new();
         let value = if secret_name == crate::monitor::INGEST_SECRET {
             crate::monitor::new_ingest_key()
+        } else if item_type == "tls-key-pair" {
+            // a database's TLS: the key is the item's (and its file); the certificate, public, goes on the instance's
+            // row too, whence its own file and its clients' come (parts)
+            let (key, certificate) = kinds::tls_key_pair(&name)?;
+            fields.insert("certificate".to_string(), json!(certificate));
+            let mut row =
+                one(facade, APP_INSTANCE, "appInstanceId", &id)?.ok_or_else(|| fail(format!("No AppInstance {id}")))?;
+            row.set("tlsCertificate", Value::string(&certificate));
+            row.update(facade)?;
+            key
         } else {
             kinds::credential_for(&kind)
         };
-        let mut fields = serde_json::Map::new();
         match (item_type.as_str(), secret_name.as_str()) {
             ("database-credential", "admin") => {
                 let user = if field(&step.kind, "confName") == "postgres" {
@@ -815,6 +825,32 @@ pub(crate) fn parts(
         };
         let setting = Some(field(&secret, "envName")).filter(|setting| !setting.is_empty());
         secrets.push((file, setting, Zeroizing::new(value.as_bytes().to_vec())));
+    }
+    // the certificates, which are public and on the rows: a database instance's own, beside its key, and the one of an
+    // instance's database instance, which its datasource trusts alone (and checks the name against)
+    let certificate_of = |instance_id: &str| -> Result<String, LibError> {
+        Ok(one(facade, APP_INSTANCE, "appInstanceId", instance_id)?
+            .map(|row| field(&row, "tlsCertificate"))
+            .unwrap_or_default())
+    };
+    let own = certificate_of(id)?;
+    if !own.is_empty() {
+        secrets.push((kinds::TLS_CERT_FILE.to_string(), None, Zeroizing::new(own.into_bytes())));
+    }
+    let database = rows(facade, INSTANCE_DEPENDENCY, "appInstanceId", id)?
+        .into_iter()
+        .find(|dependency| field(dependency, "dependencyRole") == "database")
+        .map(|dependency| field(&dependency, "dependsOnInstanceId"))
+        .filter(|other| !other.is_empty());
+    if let Some(other) = database {
+        let trusted = certificate_of(&other)?;
+        if !trusted.is_empty() {
+            secrets.push((
+                kinds::DATABASE_CA_FILE.to_string(),
+                Some(kinds::DATABASE_CA_SETTING.to_string()),
+                Zeroizing::new(trusted.into_bytes()),
+            ));
+        }
     }
     Ok(Parts {
         env,

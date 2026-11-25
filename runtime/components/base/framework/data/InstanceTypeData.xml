@@ -120,6 +120,14 @@ along with this software (see the LICENSE.md file). If not, see
         <secrets secretName="admin" vaultItemTypeId="database-credential" bindingPattern="AppInstance:{id}:admin"
                 fieldName="password" fileName="postgres-password" envName="POSTGRES_PASSWORD_FILE" generated="Y"
                 description="The superuser postgres's password" rotateService="org.moqui.dev.InstanceServices.rotate#Credential"/>
+        <!-- TLS (verify-full, so by its name too) for its clients on the environment's network: a key pair made at the
+            provision, its key a file of the generated tls item and its certificate, which is public, on its row
+            (AppInstance.tlsCertificate) and given as tls.crt; an mr-moqui instance that uses it trusts that certificate
+            alone (crates/moqui-instance kinds.rs) -->
+        <hostConfigs hostConfigName="Cmd" hostConfigValue="postgres -c ssl=on -c ssl_cert_file=/run/secrets/tls.crt -c ssl_key_file=/run/secrets/tls.key"/>
+        <secrets secretName="tls" vaultItemTypeId="tls-key-pair" bindingPattern="AppInstance:{id}:tls" fieldName="privateKey"
+                fileName="tls.key" generated="Y" description="The server's TLS key; its certificate is on the instance's row"
+                rotateByHand="Remove the instance's tlsCertificate and this item, provision the instance's TLS again (a new key and certificate), then deploy each instance that uses it as its database so its new container trusts the new certificate"/>
     </moqui.server.instance.InstanceKind>
     <moqui.server.instance.InstanceKind instanceKindId="mysql" description="MySQL" confName="mysql" containerPort="3306"
             runAsUser="999:999" createDatabaseService="org.moqui.dev.InstanceServices.create#DatabaseMySQL"
@@ -132,6 +140,14 @@ along with this software (see the LICENSE.md file). If not, see
         <secrets secretName="admin" vaultItemTypeId="database-credential" bindingPattern="AppInstance:{id}:admin"
                 fieldName="password" fileName="mysql-root-password" envName="MYSQL_ROOT_PASSWORD_FILE" generated="Y"
                 description="The root user's password" rotateService="org.moqui.dev.InstanceServices.rotate#Credential"/>
+        <!-- TLS (verify-full, so by its name too) for its clients on the environment's network: a key pair made at the
+            provision, its key a file of the generated tls item and its certificate, which is public, on its row
+            (AppInstance.tlsCertificate) and given as tls.crt; an mr-moqui instance that uses it trusts that certificate
+            alone (crates/moqui-instance kinds.rs) -->
+        <hostConfigs hostConfigName="Cmd" hostConfigValue="mysqld --ssl-cert=/run/secrets/tls.crt --ssl-key=/run/secrets/tls.key"/>
+        <secrets secretName="tls" vaultItemTypeId="tls-key-pair" bindingPattern="AppInstance:{id}:tls" fieldName="privateKey"
+                fileName="tls.key" generated="Y" description="The server's TLS key; its certificate is on the instance's row"
+                rotateByHand="Remove the instance's tlsCertificate and this item, provision the instance's TLS again (a new key and certificate), then deploy each instance that uses it as its database so its new container trusts the new certificate"/>
     </moqui.server.instance.InstanceKind>
     <!-- OpenSearch reads no *_FILE setting: its entrypoint is wrapped to read the admin password from its file into the
         setting its demo security configuration takes (crates/moqui-instance/src/kinds.rs), so it is in no container's

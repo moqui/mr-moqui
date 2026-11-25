@@ -209,7 +209,7 @@ fn provisions_on(engine: FakeEngine, tag: &str) {
     let (pg, app) = pg_and_app(&facade, &fleet, tag, "MoquiLocal");
     login(&fleet.vault.maker.user);
     let registry = lease::registry(ctx.factory());
-    // the preview: both instances, dependencies first, three items deposited, and no lease needed on this host
+    // the preview: both instances, dependencies first, four items deposited, and no lease needed on this host
     let plan = crate::plan::build(&facade, &app).unwrap();
     let steps: Vec<String> = plan.steps.iter().map(crate::plan::Step::id).collect();
     assert_eq!(steps, [pg.clone(), app.clone()]);
@@ -218,7 +218,7 @@ fn provisions_on(engine: FakeEngine, tag: &str) {
     let Some(Value::List(deposits)) = preview.get("deposits") else {
         panic!("{preview:?}")
     };
-    assert_eq!(deposits.len(), 3, "{deposits:?}");
+    assert_eq!(deposits.len(), 4, "{deposits:?}");
 
     let outcome = crate::provision::provision(&facade, &registry, &app, None).unwrap();
     assert!(
@@ -248,6 +248,7 @@ fn provisions_on(engine: FakeEngine, tag: &str) {
     // the credentials it made are deposited: wrapped to the deposit key, so the server cannot read them back
     for binding in [
         format!("AppInstance:{pg}:admin"),
+        format!("AppInstance:{pg}:tls"),
         format!("AppInstance:{app}:dbPassword"),
         format!("AppInstance:{app}:ingestKey"),
     ] {
@@ -283,6 +284,58 @@ fn provisions_on(engine: FakeEngine, tag: &str) {
         app_body.contains("127.0.0.1") && app_body.contains("28080"),
         "{app_body}"
     );
+    // the database serves TLS with the key it was made with, and its certificate, which is public, is on its row and is
+    // what the app's datasource trusts alone: a client that does accepts it for the database's name, and for no other
+    let pg_body = fleet.body_of(&format!("pg-{tag}")).to_string();
+    assert!(
+        pg_body.contains("ssl=on") && pg_body.contains("/run/secrets/tls.key"),
+        "{pg_body}"
+    );
+    let certificate = field_of(&facade, INSTANCE, "appInstanceId", &pg, "tlsCertificate");
+    assert!(certificate.starts_with("-----BEGIN CERTIFICATE-----"), "{certificate}");
+    assert_eq!(
+        files[&(format!("pg-{tag}"), crate::kinds::TLS_CERT_FILE.to_string())],
+        certificate.as_bytes()
+    );
+    let key = String::from_utf8(files[&(format!("pg-{tag}"), "tls.key".to_string())].clone()).unwrap();
+    assert!(key.starts_with("-----BEGIN PRIVATE KEY-----"));
+    assert_eq!(
+        files[&(format!("app-{tag}"), crate::kinds::DATABASE_CA_FILE.to_string())],
+        certificate.as_bytes()
+    );
+    // the setting that names it, as Docker's create body has it (NAME=value) or Podman's (a map)
+    let (setting, path) = (
+        crate::kinds::DATABASE_CA_SETTING,
+        format!("/run/secrets/{}", crate::kinds::DATABASE_CA_FILE),
+    );
+    assert!(
+        app_body.contains(&format!("{setting}={path}")) || app_body.contains(&format!("\"{setting}\":\"{path}\"")),
+        "{app_body}"
+    );
+    {
+        use rustls::client::danger::ServerCertVerifier as _;
+        use rustls::pki_types::pem::PemObject as _;
+        use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+        let der = CertificateDer::from_pem_slice(certificate.as_bytes()).unwrap();
+        let mut roots = rustls::RootCertStore::empty();
+        roots.add(der.clone()).unwrap();
+        let provider = std::sync::Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+        let verifier =
+            rustls::client::WebPkiServerVerifier::builder_with_provider(std::sync::Arc::new(roots), provider)
+                .build()
+                .unwrap();
+        let check = |name: &str| {
+            verifier.verify_server_cert(
+                &der,
+                &[],
+                &ServerName::try_from(name.to_string()).unwrap(),
+                &[],
+                UnixTime::now(),
+            )
+        };
+        check(&format!("pg-{tag}")).unwrap();
+        assert!(check("another-server").is_err());
+    }
     let token = files[&(format!("app-{tag}"), crate::kinds::PAIRING_TOKEN_FILE.to_string())].clone();
     let hash = moqui_vault::text::hex(&sha2::Sha256::digest(&token));
     assert_eq!(

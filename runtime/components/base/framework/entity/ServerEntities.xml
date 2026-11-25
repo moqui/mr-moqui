@@ -426,6 +426,9 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="hostPort" type="number-integer"><description>The host's port its service is published on, on the host's
             loopback only; none when it is reached only on the environment's network</description></field>
         <field name="networkName" type="text-short"/>
+        <field name="tlsCertificate" type="text-very-long"><description>A database instance's TLS certificate (PEM), made with
+            its key at its provision: public, so on the row and not in the vault (its key is the tls item); the instances
+            that use it as their database trust it alone, and check its name</description></field>
         <field name="databaseName" type="text-short"><description>Its own database on its database dependency</description></field>
         <field name="databaseUser" type="text-short"/>
         <!-- the version: the image digest and the component commits (JSON, M3), and the schema hash its link last
