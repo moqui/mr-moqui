@@ -522,7 +522,7 @@ test("the shell components compile and the header has each element of the design
     assert.match(shell, /<q-btn v-if="!handheld" flat dense no-caps id="m-launcher"/);
     assert.match(shell, /<template v-if="!handheld">\n {8}<q-btn flat dense no-caps id="m-search"/);
     assert.match(shell, /<\/template>\n {8}<q-btn flat round dense id="m-account"/);
-    assert.match(shell, /id="m-app-screens" class="m-app-screens text-subtitle1 text-weight-medium" :class="handheld \? '' : 'gt-xs'"/);
+    assert.match(shell, /id="m-app-screens" class="m-app-screens text-weight-medium" :class="handheld \? '' : 'gt-xs'"/);
     // the notify-history menu only without a Notifications tab
     assert.match(shell, /<q-btn v-if="!shellValues.trayNotifications" flat round dense icon="notifications" :aria-label="labels.notifyHistory">/);
     // the icon-only buttons are named for a screen reader, not by their icon ligature; the launcher opens the AppList

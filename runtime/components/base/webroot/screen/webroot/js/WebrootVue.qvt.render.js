@@ -9198,7 +9198,7 @@
                 : _createCommentVNode("", true)
             }
         } },
-        "m-qapps-root": { hash: "40727a7a", make: function (Vue) {
+        "m-qapps-root": { hash: "d1001d49", make: function (Vue) {
             const { resolveComponent: _resolveComponent, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, createElementBlock: _createElementBlock, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, withCtx: _withCtx, createVNode: _createVNode, renderList: _renderList, Fragment: _Fragment, withModifiers: _withModifiers, withKeys: _withKeys, resolveDirective: _resolveDirective, withDirectives: _withDirectives, normalizeClass: _normalizeClass, resolveDynamicComponent: _resolveDynamicComponent, createElementVNode: _createElementVNode, vShow: _vShow } = Vue
 
             return function render(_ctx, _cache) {
@@ -9311,7 +9311,7 @@
                                   dense: "",
                                   "no-caps": "",
                                   id: "m-app-screens",
-                                  class: _normalizeClass(["m-app-screens text-subtitle1 text-weight-medium", _ctx.handheld ? '' : 'gt-xs'])
+                                  class: _normalizeClass(["m-app-screens text-weight-medium", _ctx.handheld ? '' : 'gt-xs'])
                                 }, {
                                   default: _withCtx(() => [
                                     _createTextVNode(_toDisplayString(_ctx.headerTitle), 1),
