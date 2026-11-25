@@ -758,11 +758,14 @@
         (FileServices ensure#PersonalDrive, create#Drive); a setting, not a user's preference, so a user does not choose
         where their drive is. sftp-max-read: the largest file the SFTP client (SftpClient getText and getBinary, the
         SystemMessage poll) reads from a remote server, in bytes; a larger one is refused, not read whole (0 or empty is
-        the default, 64 MiB; there is no setting for no limit). -->
+        the default, 64 MiB; there is no setting for no limit). pinned-max-age: seconds a browser keeps a file sent at a
+        pinned revision (ec.web.sendPinnedResourceResponse, a map archive's ranges) without asking again, private to
+        that browser; after access is taken away the ranges it already has stay readable there until then, and any
+        other is refused at once; 0 asks each time. -->
     <resource-facade xml-actions-template-location="component://framework/template/XmlActions.groovy.ftl"
             blob-chunk-size="1048576" blob-gc-prune-days="14" dbresource-blob-threshold="65536"
             image-max-concurrent="2" script-timeout="" script-module-cache="true" drive-root="dbresource://drive"
-            collab-max-state-bytes="8388608" sftp-max-read="67108864">
+            collab-max-state-bytes="8388608" sftp-max-read="67108864" pinned-max-age="86400">
         <!-- A drive's share links (FileServices download#PublicShare and upload#PublicShare; SEC-BOS-83, SEC-FIL-06), per
             link and per requester, the counts in a window (ten minutes for a folder's zip, an hour for uploads):
             folder-zip-max-bytes and folder-zip-max-files: the most a folder's zip holds; a larger folder is refused, not

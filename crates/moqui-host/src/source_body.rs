@@ -15,8 +15,10 @@
 //! The body of a response that streams ([`moqui_core::web::ResponseStream`]): a window of its source read only when
 //! the client has taken the one before, on a blocking thread (in an execution context of its own for a source in the
 //! database, at most the webapp's `transfer-workers` of those reading at once). A slow download holds no request worker,
-//! and its memory is a window.
+//! and its memory is a window. A body the client went away from is dropped and read no further; a window whose read
+//! was still waiting for a blocking thread then is not read at all ([`Gone`]).
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use moqui_core::context::ExecutionContextFactory;
@@ -41,6 +43,40 @@ struct State {
     sent: u64,
     factory: Arc<ExecutionContextFactory>,
     trace: Option<moqui_core::telemetry::TraceContext>,
+    gone: Gone,
+}
+
+/// Set when the body is dropped (the client went away, or the response ended), so a window's read queued for a blocking
+/// thread is not started: a blocking read cannot be stopped once it runs, so at most the window being read finishes.
+struct Gone(Arc<AtomicBool>);
+
+impl Drop for Gone {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Read one window of `source` on a blocking thread, in an execution context of `factory` when given (a source in the
+/// database), unless the body is `gone` by the time the thread takes it: then nothing is read, and the error is
+/// answered to no one, since the body that would take it was dropped.
+fn read_window(
+    source: &dyn moqui_core::resource::source::ByteSource,
+    gone: &AtomicBool,
+    factory: Option<&Arc<ExecutionContextFactory>>,
+    offset: u64,
+    want: usize,
+) -> Result<Vec<u8>, moqui_lib::error::Error> {
+    if gone.load(Ordering::Relaxed) {
+        return Err(moqui_lib::error::Error::new("the response was dropped"));
+    }
+    match factory {
+        Some(factory) => {
+            let context = factory.new_context();
+            let _entered = context.enter();
+            source.read_at(offset, want)
+        }
+        None => source.read_at(offset, want),
+    }
 }
 
 /// The body that reads `stream` a window at a time.
@@ -50,6 +86,7 @@ pub(crate) fn body(factory: Arc<ExecutionContextFactory>, stream: ResponseStream
         sent: 0,
         factory,
         trace: moqui_core::telemetry::capture(),
+        gone: Gone(Arc::new(AtomicBool::new(false))),
     };
     let windows = futures_util::stream::unfold(Some(state), |state| async move {
         let state = state?;
@@ -64,6 +101,7 @@ pub(crate) fn body(factory: Arc<ExecutionContextFactory>, stream: ResponseStream
         let factory = Arc::clone(&state.factory);
         let needs_context = source.needs_context();
         let trace = state.trace.clone();
+        let gone = Arc::clone(&state.gone.0);
         let permit = if needs_context {
             readers(&factory).acquire_owned().await.ok()
         } else {
@@ -72,13 +110,7 @@ pub(crate) fn body(factory: Arc<ExecutionContextFactory>, stream: ResponseStream
         let read = tokio::task::spawn_blocking(move || {
             let _permit = permit;
             let _trace = moqui_core::telemetry::attach(trace);
-            if needs_context {
-                let context = factory.new_context();
-                let _entered = context.enter();
-                source.read_at(offset, want)
-            } else {
-                source.read_at(offset, want)
-            }
+            read_window(source.as_ref(), &gone, needs_context.then_some(&factory), offset, want)
         })
         .await;
         let failed = |text: String| Some((Err(std::io::Error::other(text)), None));

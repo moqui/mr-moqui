@@ -59,8 +59,8 @@ pub(crate) use resource::split_version;
 pub use resource::version_author;
 pub(crate) use resource::{apply_changes_each, last_change_by_stat, tree_size_by_walk};
 pub use resource::{
-    with_version_author, ChangeLogEntry, ChangeSetOutcome, Opened, ResourceChange, ResourceChangeInfo, ResourceEntry,
-    ResourceFacade, ResourceRef, ResourceStat, ResourceVersion, VersionAuthor,
+    with_version_author, ChangeLogEntry, ChangeSetOutcome, ContentAddress, ContentKind, Opened, ResourceChange,
+    ResourceChangeInfo, ResourceEntry, ResourceFacade, ResourceRef, ResourceStat, ResourceVersion, VersionAuthor,
 };
 
 #[cfg(test)]

@@ -215,19 +215,99 @@ impl EntityFacade {
         let Some((resource_id, file)) = self.file_row(location)? else {
             return Ok(None);
         };
-        let source: std::sync::Arc<dyn crate::resource::source::ByteSource> = match text_of(file.get("blobId")) {
-            Some(blob_id) => {
-                let blobs = crate::resource::blob::BlobStore::new(self.clone());
-                let info = blobs
-                    .stat(&blob_id)?
-                    .ok_or_else(|| Error::new(format!("the content blob {blob_id} of {location} is missing")))?;
-                blobs.source(&info)
-            }
-            None => std::sync::Arc::new(crate::resource::source::MemorySource::new(
-                blob_bytes(file.get("fileData"), &resource_id)?.unwrap_or_default(),
-            )),
+        let source = self
+            .row_source(&file, &resource_id)?
+            .unwrap_or_else(|| in_memory(Vec::new()));
+        Ok(Some((stat, source)))
+    }
+
+    /// One version of the file at `location` to read a window at a time, as [`EntityFacade::read_db_resource_version`]
+    /// reads it: a version kept in a content blob is read by range from it, never whole; a row's own bytes and a
+    /// version rebuilt from reverse deltas (text, under the blob threshold) are in memory, tagged by their SHA-256.
+    /// `None` when there is no such version.
+    pub fn open_db_resource_version(&self, location: &str, version_name: &str) -> Result<Option<OpenedDbFile>, Error> {
+        let Some((resource_id, file)) = self.file_row(location)? else {
+            return Ok(None);
+        };
+        let Some(history) = self.history_row(&resource_id, version_name)? else {
+            return Ok(None);
+        };
+        let source = if text_of(history.get("isDiff")).as_deref() == Some("Y") {
+            let Some(bytes) = self.read_db_resource_version(location, version_name)? else {
+                return Ok(None);
+            };
+            in_memory(bytes)
+        } else if let Some(source) = self.row_source(&history, &resource_id)? {
+            source
+        } else if text_of(file.get("versionName")).as_deref() == Some(version_name) {
+            self.row_source(&file, &resource_id)?
+                .unwrap_or_else(|| in_memory(Vec::new()))
+        } else {
+            return Ok(None);
+        };
+        let stat = DbResourceStat {
+            is_file: true,
+            last_updated: None,
+            size: source.len(),
         };
         Ok(Some((stat, source)))
+    }
+
+    /// The content blob that holds the file at `location` (or its version `version_name`) and its size: what a reader
+    /// pins that content by (its id is the SHA-256 of the bytes). `None` for a file kept in its row (under the blob
+    /// threshold), a version stored as a reverse delta, or no such file or version.
+    pub fn db_resource_content_blob(
+        &self,
+        location: &str,
+        version_name: Option<&str>,
+    ) -> Result<Option<crate::resource::blob::BlobInfo>, Error> {
+        let Some((resource_id, file)) = self.file_row(location)? else {
+            return Ok(None);
+        };
+        let row = match version_name {
+            None => file,
+            // as read_db_resource_version reads it: the history row's bytes, else the file's when it is that version
+            Some(version_name) => match self.history_row(&resource_id, version_name)? {
+                Some(history) if text_of(history.get("isDiff")).as_deref() == Some("Y") => return Ok(None),
+                Some(history) if text_of(history.get("blobId")).is_some() => history,
+                Some(history) if !history.get("fileData").is_none_or(Value::is_null) => return Ok(None),
+                Some(_) if text_of(file.get("versionName")).as_deref() == Some(version_name) => file,
+                _ => return Ok(None),
+            },
+        };
+        match text_of(row.get("blobId")) {
+            Some(blob_id) => crate::resource::blob::BlobStore::new(self.clone()).stat(&blob_id),
+            None => Ok(None),
+        }
+    }
+
+    /// The `DbResourceFileHistory` row of one version of a file.
+    fn history_row(&self, resource_id: &str, version_name: &str) -> Result<Option<EntityValue>, Error> {
+        self.find(DB_HISTORY)?
+            .eq("resourceId", Value::string(resource_id))
+            .eq("versionName", Value::string(version_name))
+            .one()
+    }
+
+    /// The content of a file or history row to read a window at a time: its content blob by range, or its `fileData`
+    /// in memory, tagged by its SHA-256 ([`in_memory`]); `None` when it holds neither.
+    fn row_source(
+        &self,
+        row: &EntityValue,
+        resource_id: &str,
+    ) -> Result<Option<std::sync::Arc<dyn crate::resource::source::ByteSource>>, Error> {
+        match text_of(row.get("blobId")) {
+            Some(blob_id) => {
+                let blobs = crate::resource::blob::BlobStore::new(self.clone());
+                let info = blobs.stat(&blob_id)?.ok_or_else(|| {
+                    Error::new(format!(
+                        "the content blob {blob_id} of DbResource {resource_id} is missing"
+                    ))
+                })?;
+                Ok(Some(blobs.source(&info)))
+            }
+            None => Ok(blob_bytes(row.get("fileData"), resource_id)?.map(in_memory)),
+        }
     }
 
     /// [`EntityFacade::write_db_resource`] of what `input` gives (`size` bytes, when known): content over the blob
@@ -1178,6 +1258,13 @@ fn text_of(value: Option<&Value>) -> Option<String> {
         Value::Null => None,
         value => Some(moqui_lib::object::to_plain_string(value)).filter(|text| !text.is_empty()),
     }
+}
+
+/// Bytes a row holds as a source tagged by their SHA-256 (`sha256-<hex>`, the form of a content blob's tag): a strong
+/// validator of a small file or version, which a pinned response compares (`plans/Maps.md` §5).
+fn in_memory(bytes: Vec<u8>) -> std::sync::Arc<dyn crate::resource::source::ByteSource> {
+    let tag = format!("sha256-{}", crate::resource::blob::blob_id(&bytes));
+    std::sync::Arc::new(crate::resource::source::MemorySource::new(bytes).with_tag(tag))
 }
 
 fn version_of(row: &EntityValue) -> DbResourceVersion {

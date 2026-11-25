@@ -375,6 +375,50 @@ fn large_content_is_a_content_blob_that_past_versions_keep() {
     );
 }
 
+/// A version kept in a content blob opens by range with the blob's strong tag, never read whole, and names that blob
+/// as its content address; a small version is in memory and has none.
+#[test]
+fn a_large_version_opens_by_range_from_its_content_blob() {
+    let facade = facade();
+    let location = "dbresource://maps/world.pmtiles";
+    let first: Vec<u8> = (0..200_000u32).map(|n| (n * 11 % 251) as u8).collect();
+    let second: Vec<u8> = first.iter().rev().copied().collect();
+    facade.write_db_resource(location, &first).unwrap();
+    facade.write_db_resource(location, &second).unwrap();
+    let first_id = crate::resource::blob::blob_id(&first);
+    for (version, bytes, id) in [
+        ("01", &first, first_id.clone()),
+        ("02", &second, crate::resource::blob::blob_id(&second)),
+    ] {
+        let (stat, source) = facade.open_db_resource_version(location, version).unwrap().unwrap();
+        assert_eq!(stat.size, bytes.len() as u64, "{version}");
+        assert_eq!(source.tag(), Some(format!("sha256-{id}")), "{version}");
+        assert_eq!(
+            source.read_at(150_000, 10).unwrap(),
+            bytes[150_000..150_010],
+            "{version}"
+        );
+        let blob = facade
+            .db_resource_content_blob(location, Some(version))
+            .unwrap()
+            .unwrap();
+        assert_eq!((blob.id, blob.size), (id, bytes.len() as u64));
+    }
+    assert_eq!(
+        facade.db_resource_content_blob(location, None).unwrap().unwrap().id,
+        crate::resource::blob::blob_id(&second)
+    );
+    assert!(facade.open_db_resource_version(location, "09").unwrap().is_none());
+
+    let small = "dbresource://maps/notes.md";
+    facade.write_db_resource(small, b"one").unwrap();
+    facade.write_db_resource(small, b"two").unwrap();
+    let (_, source) = facade.open_db_resource_version(small, "01").unwrap().unwrap();
+    assert_eq!(source.read_at(0, 10).unwrap(), b"one");
+    assert!(facade.db_resource_content_blob(small, Some("01")).unwrap().is_none());
+    assert!(facade.db_resource_content_blob(small, None).unwrap().is_none());
+}
+
 /// Two first writes in their own transactions can each make the same missing directory: a file under either copy
 /// reads back, and a later write to it changes that file rather than make another.
 #[test]
