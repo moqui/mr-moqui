@@ -53,3 +53,21 @@ feature("a saved dataset names only a shipped dataset's service, or a registered
         read.error.includes("dataset rds-written: a dataset's serviceName")
     }
 })
+
+// plans/ui-review-dashboards.md DASH-UI-001: a service dataset answers frames, not records, so the list and the dataset
+// say so, and Explore neither opens on one nor offers it.
+feature("a service dataset is listed and read as one", {
+    when() {
+        const saved = save("rds-listed", {serviceName: "org.moqui.calc.CalcServices.get#CalcFrame"})
+        const listed = (call(R + "list#Datasets", {}).datasets || []).find(dataset => dataset.id === "rds-listed")
+        const read = call(R + "get#Dataset", {datasetId: "rds-listed"}).dataset
+        const logs = (call(R + "list#Datasets", {}).datasets || []).find(dataset => dataset.id === "otel_logs")
+        return {saved, listed, read, logs}
+    },
+    then({saved, listed, read, logs}) {
+        saved.error === undefined
+        listed.service === true
+        read.service === true
+        logs.service === false
+    }
+})

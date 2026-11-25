@@ -311,7 +311,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="conflict" type="Boolean"/>
         </out-parameters>
     </service>
-    <service verb="compare" noun="Refs" type="rust" location="dev_aide::repo::compare_refs" allow-remote="false" read-only="true">
+    <service verb="compare" noun="Refs" authz-action="view" type="rust" location="dev_aide::repo::compare_refs" allow-remote="false" read-only="true">
         <description>The commits on head that base has not, and the files that differ since their common ancestor.</description>
         <in-parameters>
             <parameter name="rootId" required="true"/>
@@ -593,7 +593,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="task"/>
         </in-parameters>
     </service>
-    <service verb="list" noun="Repositories" type="rust" location="dev_aide::repos::list_repositories" allow-remote="false" read-only="true">
+    <service verb="list" noun="Repositories" authz-action="view" type="rust" location="dev_aide::repos::list_repositories" allow-remote="false" read-only="true">
         <description>Every root with its kind, components, branch, upstream, ahead and behind, changes and last fetch.</description>
         <out-parameters>
             <parameter name="repositories" type="List"/>

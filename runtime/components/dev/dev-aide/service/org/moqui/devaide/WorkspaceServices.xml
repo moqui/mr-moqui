@@ -37,7 +37,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="gitAvailable" type="Boolean"/><parameter name="tier"/>
         </out-parameters>
     </service>
-    <service verb="list" noun="Directory" type="rust" location="dev_aide::workspace::list_directory" allow-remote="false" read-only="true">
+    <service verb="list" noun="Directory" authz-action="view" type="rust" location="dev_aide::workspace::list_directory" allow-remote="false" read-only="true">
         <description>The entries of a directory, folders first, with their git status (a folder's rolled up) and whether git ignores them.</description>
         <in-parameters>
             <parameter name="rootId" required="true"/>
@@ -162,7 +162,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="files" type="List"/>
         </out-parameters>
     </service>
-    <service verb="check" noun="File" type="rust" location="dev_aide::workspace::check_file" allow-remote="false" read-only="true">
+    <service verb="check" noun="File" authz-action="view" type="rust" location="dev_aide::workspace::check_file" allow-remote="false" read-only="true">
         <description>The problems of a file's text (the editor's buffer), as a save would find them.</description>
         <in-parameters>
             <parameter name="rootId" required="true"/>

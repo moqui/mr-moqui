@@ -139,8 +139,10 @@ pub(super) fn run_sync(
         text_of(results.get("recordsStored"))
     );
 
-    // If not yet up to delayBufferMillis trigger another async run.
-    if last_success.is_some_and(|last| last < now_millis() - delay) {
+    // If not yet up to delayBufferMillis trigger another async run. Only after a success: a failed run leaves
+    // lastSuccessfulSyncTime where it was, so following it again would repeat the failure at once, without end, with a
+    // History row each time (plans/ui-review-system-ai-integrations.md AI-UI-002); the next scheduled run tries again.
+    if error_message.is_empty() && last_success.is_some_and(|last| last < now_millis() - delay) {
         let again = pairs([("entitySyncId", Value::string(&sync_id))]);
         if let Err(err) = crate::service::async_call(RUN_SYNC, &again) {
             add_error(err.message());
@@ -521,6 +523,25 @@ fn call_remote(
         deny_internal: crate::outbound::deny_private_network(&map_text(sync, "allowPrivateNetwork")),
     })?;
     let status = response.status;
+    if (300..400).contains(&status) {
+        // The shared client follows a redirect only to the same origin; another one (most often http to https) is the
+        // partner's address to correct, so say where it points.
+        let location = response
+            .headers
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case("location"))
+            .map(|(_, value)| {
+                if value.contains("://") {
+                    crate::outbound::redacted(value)
+                } else {
+                    value.clone()
+                }
+            })
+            .unwrap_or_default();
+        return Err(LibError::new(format!(
+            "Remote EntitySync {operation} at {shown} was redirected ({status}) to {location}: set the target server URL to the address the partner serves"
+        )));
+    }
     let reply = crate::service::parse_json(&response.body).ok();
     if !(200..300).contains(&status) {
         let errors = match &reply {

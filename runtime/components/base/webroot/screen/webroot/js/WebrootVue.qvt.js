@@ -2485,7 +2485,7 @@
     component("m-form-link", {
         name: "mFormLink",
         props: { disable: Boolean, fieldsInitial: Object, action: { type: String, required: true }, focusField: String, noValidate: Boolean, bodyParameterNames: Array },
-        data() { return { fields: Object.assign({}, this.fieldsInitial), fieldsOriginal: Object.assign({}, this.fieldsInitial) }; },
+        data() { return { fields: Object.assign({}, this.fieldsInitial), fieldsOriginal: Object.assign({}, this.fieldsInitial), buttonClicked: null }; },
         provide() { return { mForm: this }; },
         template:
             '<q-form ref="qForm" @submit.prevent="submitForm" @reset.prevent="resetForm" autocapitalize="off" autocomplete="off">' +
@@ -2500,7 +2500,8 @@
             submitGo() {
                 if (this.disable) return;
                 const formEl = this.$refs.qForm.$el;
-                const button = submitButton(formEl, null);
+                // a pressed QBtn moves the focus to its inner helper, so the button comes from the click, as in m-form
+                const button = submitButton(formEl, this.buttonClicked);
                 let btnName = null;
                 let btnValue = null;
                 if (button) {
@@ -2547,6 +2548,10 @@
                 const target = this.$refs.qForm.$el.querySelector('[name="' + this.focusField + '"]');
                 if (target) { target.classList.add("default-focus"); target.focus(); }
             }
+            this.$refs.qForm.$el.addEventListener("click", (event) => {
+                const button = event.target.closest && event.target.closest('button[type="submit"], input[type="submit"], input[type="image"]');
+                if (button) this.buttonClicked = button;
+            });
             moqui.registerScreenForm(this);
         },
         beforeUnmount() { moqui.unregisterScreenForm(this); }

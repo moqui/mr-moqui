@@ -973,6 +973,17 @@ fn run_job_now(factory: &Arc<ExecutionContextFactory>, job: &Job<'_>) -> Result<
         if facade.output_kind(&mode) == OutputKind::Json {
             return tui_unsupported_screen(&info);
         }
+        // A qvue-only screen asked for in html under Standard's /apps (its menu, a link, a bookmark) opens at the same path
+        // in Material, which renders it, rather than a 404 naming the screen's file
+        // (plans/ui-review-dev-aide-workspace.md DEVW-UI-002).
+        if mode == "html" && rendered.allows_render_mode("qvue") {
+            if let Some(rest) = job.request.path.split('?').next().unwrap_or("").strip_prefix("/apps/") {
+                let query: BTreeMap<String, String> = job.request.query.iter().cloned().collect();
+                save_messages();
+                web::send_redirect(&with_query(format!("/qapps/{rest}"), &query));
+                return Ok(());
+            }
+        }
         return Err(Error::of_kind(
             ErrorKind::NotFound,
             format!("render mode {mode} is not supported by {}", rendered.location),

@@ -51,6 +51,13 @@ const DATA: &str = r#"<entity-facade-xml type="seed">
     <moqui.entity.sync.EntitySync entitySyncId="GATE_PULL" description="Gate pull" statusId="EsNotStarted" forPull="Y"
         delayBufferMillis="1" targetUsername="john.doe" allowPrivateNetwork="Y"/>
     <moqui.entity.sync.EntitySyncArtifact entitySyncId="GATE_PULL" artifactGroupId="GATE_SYNC_DATA" applEnumId="EsaaInclude"/>
+    <moqui.entity.sync.EntitySync entitySyncId="GATE_REDIRECT" description="Gate redirected push" statusId="EsNotStarted"
+        forPull="N" delayBufferMillis="1" syncSplitMillis="60000" targetUsername="john.doe"
+        allowPrivateNetwork="Y"/>
+    <moqui.security.ArtifactGroup artifactGroupId="GATE_REDIRECT_DATA" description="Gate push's history"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="GATE_REDIRECT_DATA" artifactName="moqui.entity.sync.EntitySyncHistory"
+        artifactTypeEnumId="AT_ENTITY" nameIsPattern="N" filterMap="{entitySyncId: 'GATE_PUSH'}"/>
+    <moqui.entity.sync.EntitySyncArtifact entitySyncId="GATE_REDIRECT" artifactGroupId="GATE_REDIRECT_DATA" applEnumId="EsaaInclude"/>
 </entity-facade-xml>"#;
 
 fn call(address: SocketAddr, method: &str, path: &str, auth: Option<&str>, body: &str) -> (u16, serde_json::Value) {
@@ -172,6 +179,7 @@ fn system_messages_and_entity_syncs_run_over_rest() {
     a_system_message_goes_out_over_rest_comes_back_at_rest_sm_and_is_consumed(&gate);
     the_instance_administrators_message_transitions_send_consume_and_receive(&gate);
     an_entity_sync_push_and_a_pull_complete_with_a_history_row(&gate);
+    a_redirected_entity_sync_fails_once_and_names_the_redirect(&gate);
 }
 
 fn a_system_message_goes_out_over_rest_comes_back_at_rest_sm_and_is_consumed(gate: &crate::common::Gate) {
@@ -403,4 +411,106 @@ fn an_entity_sync_push_and_a_pull_complete_with_a_history_row(gate: &crate::comm
         );
     }
     renders(address, "/System/EntitySync/EntitySyncList.text", &john);
+}
+
+/// A partner that answers every put with a redirect to another origin: the run fails once, its History row says where
+/// the redirect points, and the failure queues no follow-up run, though lastSuccessfulSyncTime is past the buffer
+/// (plans/ui-review-system-ai-integrations.md AI-UI-002, where one run repeated 772 times).
+fn a_redirected_entity_sync_fails_once_and_names_the_redirect(gate: &crate::common::Gate) {
+    use std::io::{Read, Write};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let address = gate.server.address();
+    let john = basic("john.doe", "moqui");
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let partner = listener.local_addr().unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let asked = Arc::new(AtomicUsize::new(0));
+    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let server = {
+        let (asked, stop) = (asked.clone(), stop.clone());
+        std::thread::spawn(move || {
+            while !stop.load(Ordering::SeqCst) {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        stream.set_nonblocking(false).unwrap();
+                        stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+                        // the whole request, headers and body, so closing sends no reset
+                        let mut buf = Vec::new();
+                        let mut chunk = [0_u8; 8192];
+                        loop {
+                            if let Some(split) = buf.windows(4).position(|window| window == b"\r\n\r\n") {
+                                let head = String::from_utf8_lossy(&buf[..split]).to_ascii_lowercase();
+                                let length = head
+                                    .lines()
+                                    .find_map(|line| line.strip_prefix("content-length:"))
+                                    .and_then(|value| value.trim().parse::<usize>().ok())
+                                    .unwrap_or(0);
+                                if buf.len() >= split + 4 + length {
+                                    break;
+                                }
+                            }
+                            match stream.read(&mut chunk) {
+                                Ok(0) | Err(_) => break,
+                                Ok(size) => buf.extend_from_slice(&chunk[..size]),
+                            }
+                        }
+                        asked.fetch_add(1, Ordering::SeqCst);
+                        let _ = stream.write_all(
+                            b"HTTP/1.1 302 Found\r\nLocation: https://partner.invalid:8443/rest/s1/moqui/entity/syncs/data/put\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                        );
+                    }
+                    Err(_) => std::thread::sleep(Duration::from_millis(10)),
+                }
+            }
+        })
+    };
+
+    let row_path = "/rest/e1/moqui.entity.sync.EntitySync/GATE_REDIRECT";
+    // a success 15 minutes ago: past the delay buffer, so the old code queued another run after every failure. What
+    // the sync pushes is the History of GATE_PUSH's run above, written minutes ago at most, so the window has a record
+    // to send however old the cached template database is.
+    let since = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis()
+        - 15 * 60 * 1000;
+    let target = serde_json::json!({ "targetServerUrl": format!("http://{partner}"), "targetPassword": "moqui",
+        "lastSuccessfulSyncTime": since })
+    .to_string();
+    let (status, json) = call(address, "PATCH", row_path, Some(&john), &target);
+    assert_eq!(status, 200, "{json}");
+    let (status, json) = call(
+        address,
+        "POST",
+        "/rest/s1/moqui/entity/syncs/GATE_REDIRECT/run",
+        Some(&john),
+        "{}",
+    );
+    assert_eq!(status, 200, "asked {} times: {json}", asked.load(Ordering::SeqCst));
+    // time for a follow-up run, had one been queued: the loop the review saw ran every 20 to 30 ms
+    std::thread::sleep(Duration::from_millis(1500));
+    stop.store(true, Ordering::SeqCst);
+    server.join().unwrap();
+    assert_eq!(asked.load(Ordering::SeqCst), 1, "the failed run is not repeated");
+
+    let (status, sync) = call(address, "GET", row_path, Some(&john), "");
+    assert_eq!(status, 200, "{sync}");
+    assert_eq!(text(&sync, "statusId"), "EsOtherError", "{sync}");
+    let (status, history) = call(
+        address,
+        "GET",
+        "/rest/e1/moqui.entity.sync.EntitySyncHistory?entitySyncId=GATE_REDIRECT",
+        Some(&john),
+        "",
+    );
+    assert_eq!(status, 200, "{history}");
+    let rows = history.as_array().cloned().unwrap_or_default();
+    assert_eq!(rows.len(), 1, "{history}");
+    let error = text(&rows[0], "errorMessage");
+    assert!(
+        error.contains("redirected (302) to https://partner.invalid:8443"),
+        "{error}"
+    );
 }

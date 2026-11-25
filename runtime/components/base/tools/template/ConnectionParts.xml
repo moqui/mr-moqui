@@ -222,18 +222,21 @@ along with this software (see the LICENSE.md file). If not, see
                                     <hidden-parameters parameter-map="{adapterKey:adapterKey, connectionKey:connectionKey, expectedRevision:connection.revision}"/>
                                     <field name="fieldName"><default-field><hidden/></default-field></field>
                                     <field name="fieldLabel"><default-field title="Setting"><display/></default-field></field>
+                                    <!-- the column is Value; each row's control is named by its setting (plans/ui-review-system-ai-integrations.md AI-UI-003) -->
                                     <field name="fieldValue">
-                                        <conditional-field condition="fieldKind === 'secret'" title="Value"><display text=""/></conditional-field>
-                                        <conditional-field condition="fieldKind === 'choice'" title="Value">
+                                        <header-field title="Value"/>
+                                        <conditional-field condition="fieldKind === 'secret'" title="${fieldLabel}"><display text=""/></conditional-field>
+                                        <conditional-field condition="fieldKind === 'choice'" title="${fieldLabel}">
                                             <drop-down allow-empty="true"><list-options list="fieldOptions" key="${value}" text="${label}"/></drop-down>
                                         </conditional-field>
-                                        <conditional-field condition="fieldKind === 'flag'" title="Value">
+                                        <conditional-field condition="fieldKind === 'flag'" title="${fieldLabel}">
                                             <drop-down><option key="N" text="No"/><option key="Y" text="Yes"/></drop-down>
                                         </conditional-field>
-                                        <default-field title="Value"><text-line size="50"/></default-field>
+                                        <default-field title="${fieldLabel}"><text-line size="50"/></default-field>
                                     </field>
                                     <field name="secretPassword">
-                                        <conditional-field condition="fieldKind === 'secret'" title=""><password size="40"/></conditional-field>
+                                        <header-field title=""/>
+                                        <conditional-field condition="fieldKind === 'secret'" title="${fieldLabel}"><password size="40"/></conditional-field>
                                         <default-field title=""><display text=""/></default-field>
                                     </field>
                                     <field name="fieldNote"><default-field title="Note"><display/></default-field></field>

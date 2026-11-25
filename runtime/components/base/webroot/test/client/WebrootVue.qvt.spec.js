@@ -178,6 +178,27 @@ feature("find and compact checkbox controls name their field and preserve keyboa
     },
 })
 
+// DASH-UI-003: a pressed QBtn moves the focus to its inner helper span, so the clicked submit must still reach the URL.
+feature("a clicked submit button of a form to a screen puts its name in the query", {
+    expect() {
+        const page = browser.newPage()
+        page.setContent(`<!doctype html><html><head><link rel="stylesheet" href="/libs/quasar/quasar.prod.css"></head><body><div id="app">
+            <m-form-link action="/apps/report/Analysis" :fields-initial="{datasetId:'rdr-sales'}">
+                <q-btn type="submit" name="run" value="run" label="Run" no-caps></q-btn>
+            </m-form-link>
+            </div><script src="/libs/vue/vue.global.prod.js"></script><script src="/libs/quasar/quasar.umd.prod.js"></script>
+            <script src="/js/MoquiLib.js"></script><script src="/js/MoquiL10n.js"></script><script src="/js/WebrootVue.qvt.js"></script><script>
+            const app=Vue.createApp({methods:{setUrl(url){window.lastUrl=url;}}});
+            app.use(Quasar);app.component('m-form-link',moqui.qvt.components['m-form-link']);
+            window.vm=app.mount('#app');
+            </script></body></html>`)
+        page.waitFor(() => window.vm && document.querySelector('button[name="run"]'))
+        page.locator('button[name="run"]').click()
+        page.waitFor(() => window.lastUrl)
+        assert.equal(page.evaluate(() => window.lastUrl), '/apps/report/Analysis?datasetId=rdr-sales&run=run')
+    },
+})
+
 browser.runInPage({
     scripts: ["/js/MoquiLib.js", "/js/MoquiL10n.js", "/libs/vue/compiler-dom.cjs.js", "/js/WebrootVue.qvt.js"],
     test: "/files/component/webroot/test/client/pages/WebrootVue.qvt.page.js",

@@ -340,14 +340,20 @@ feature("a refused recipient is said once, and a From the user may only read say
     }
 })
 
-feature("Mail offers only what an account allows and asks before deleting forever; a label row is a checkbox; MessageDetail links stay under its app; Compose's text blocks keep the focus", {
+feature("Mail offers only what an account allows and asks before deleting forever; a label row is a checkbox; an empty folder names itself; MessageDetail links stay under its app and its print shows the message; Compose's text blocks keep the focus", {
     when() {
         const source = ec.resource.getLocationText("component://basic-comms/screen/BasicComms/Inbox/Mail.qvue", false)
         const detail = ec.resource.getLocationText("component://basic-comms/screen/BasicComms/Inbox/MessageDetail.xml", false)
         const composer = ec.resource.getLocationText("component://basic-comms/screen/BasicComms/Inbox/Compose.qvue", false)
-        return {source, detail, composer}
+        // COM-UI-038: the print, as its link opens it (/apps, html-print), shows the message itself
+        ec.user.internalLoginUser("basic.comms.inbox")
+        const printed = sys(() => ec.screen.makeTest().rootScreen("component://webroot/screen/webroot.xml").renderMode("html-print")
+            .render("apps/BasicComms/Inbox/MessageDetail", {emailMessageId: MESSAGE}, null))
+        const print = {output: String(printed.output || ""), errors: Array.from(printed.errorMessages || []).join(" | ")}
+        ec.message.clearErrors()
+        return {source, detail, composer, print}
     },
-    then({source, detail, composer}) {
+    then({source, detail, composer, print}) {
         // COM-UI-021: the mutations are gated on the account's send right, and applyAction refuses the rest
         source.includes('v-if="selectionCanChange"') && source.includes('v-if="rowCanChange(row)"') && source.includes('v-if="threadCanChange"')
         source.includes("You may read this account but not change its mail")
@@ -362,8 +368,15 @@ feature("Mail offers only what an account allows and asks before deleting foreve
         /action === 'deleteForever' && !confirmed\) \{\s*return this\.confirmDeleteForever/.test(source)
         // COM-UI-028: an outgoing row names its own recipients, or none
         source.includes("row.recipientList") && source.includes("t('No recipients')")
+        // COM-UI-039: an account folder, label or mailbox opens with no view; its empty state names it, Spam and Trash their own
+        /emptyText\(\) \{[\s\S]*?EfkJunk: 'junk', EfkTrash: 'trash'[\s\S]*?t\('No conversations in'\) \+ ' ' \+ folder\.folderName/.test(source)
+        /emptyText\(\) \{[\s\S]*?t\('Nothing labelled'\) \+ ' ' \+ label\.labelName[\s\S]*?p\.mailbox\) return/.test(source)
         // COM-UI-016: no fixed /apps/Comms path
         !detail.includes("/apps/Comms/") && detail.includes('url="downloadEml"')
+        // COM-UI-038: the print goes through /apps (qapps renders only html, so an html-print there is the wrapper alone)
+        detail.includes("printUrl = detail ? '/apps/' + (appRoot || 'BasicComms') + '/Inbox/MessageDetail?'") && detail.includes('url="${printUrl}" url-type="plain"')
+        print.errors == ""
+        print.output.includes("Lunch on Friday") && print.output.includes("Pat Sender") && print.output.includes("Are you free for lunch on Friday?")
         // COM-UI-023: the text blocks' search has the focus when the menu opens, and the block goes where the "/" was
         composer.includes('@show="focusBlockSearch"') && composer.includes("this.slashAt = at")
         /insertBlock\(block\) \{[\s\S]*?editor\.chain\(\)\.focus\(slashAt\)/.test(composer)

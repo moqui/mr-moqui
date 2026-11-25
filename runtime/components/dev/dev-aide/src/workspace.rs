@@ -1313,6 +1313,26 @@ fn delete_root(
     Ok(Parameters::new())
 }
 
+/// Why a site component, which loads on every instance, may not extend `depends`: startup leaves out a component whose
+/// dependency is not loaded, and one that loads on every instance whose dependency loads only on some
+/// (`moqui_core::context::component`). Refused before anything is written, rather than found missing after the restart
+/// (plans/ui-review-dev-aide-workspace.md DEVW-UI-001).
+fn site_dependency_refusal(loaded: &[moqui_core::context::ComponentInfo], depends: &[String]) -> Option<String> {
+    depends.iter().find_map(
+        |depend| match loaded.iter().find(|component| &component.name == depend) {
+            None => Some(format!(
+                "{depend} is not a component this instance loads, so the site would not load: extend one it loads"
+            )),
+            Some(component) if component.is_restricted() => Some(format!(
+            "{depend} loads only on {} instances and a site component loads on every instance, so the site would not \
+             load: extend a component that loads on every instance",
+            component.purposes.join(", ")
+        )),
+            Some(_) => None,
+        },
+    )
+}
+
 /// `create#SiteComponent`: a component the site owns, from the dev-aide's Site template (plans/design-dev-aide.md 12), in
 /// runtime/components/addon/<name> with a git repository of its own; the site component when none is set. It loads after a
 /// restart.
@@ -1339,6 +1359,9 @@ fn create_site_component(
     // each goes into component.xml as an attribute value
     if let Some(bad) = depends.iter().find(|depend| !valid(depend)) {
         return Err(LibError::new(format!("{bad} is not a component name")));
+    }
+    if let Some(refusal) = site_dependency_refusal(&context.factory.components(), &depends) {
+        return Err(LibError::new(refusal));
     }
     let target =
         moqui_core::context::layout::set_dir(context.factory.runtime_dir(), moqui_core::context::layout::Set::Addon)
@@ -1568,5 +1591,31 @@ mod tests {
         assert!(!ignored(&top, ".gitignore"));
         assert!(!ignored(&inside, "a.txt"));
         assert!(ignored(&inside, "b.log"), "{inside:?}");
+    }
+
+    /// DEVW-UI-001: a site loads on every instance, so it extends only loaded components that do too.
+    #[test]
+    fn a_site_extends_only_loaded_components_that_load_on_every_instance() {
+        let component = |name: &str, purposes: &[&str]| moqui_core::context::ComponentInfo {
+            name: name.to_string(),
+            version: String::new(),
+            location: std::path::PathBuf::new(),
+            depends_on: Vec::new(),
+            purposes: purposes.iter().map(|purpose| (*purpose).to_string()).collect(),
+        };
+        let loaded = [component("tools", &[]), component("example", &["dev"])];
+        let depends = |names: &[&str]| names.iter().map(|name| (*name).to_string()).collect::<Vec<_>>();
+        assert_eq!(site_dependency_refusal(&loaded, &depends(&["tools"])), None);
+        assert_eq!(site_dependency_refusal(&loaded, &[]), None);
+        let dev_only = site_dependency_refusal(&loaded, &depends(&["tools", "example"])).unwrap();
+        assert!(
+            dev_only.starts_with("example loads only on dev instances"),
+            "{dev_only}"
+        );
+        let missing = site_dependency_refusal(&loaded, &depends(&["absent"])).unwrap();
+        assert!(
+            missing.starts_with("absent is not a component this instance loads"),
+            "{missing}"
+        );
     }
 }

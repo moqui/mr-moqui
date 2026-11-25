@@ -2151,6 +2151,8 @@ fn add_subtotal_metrics(value: &mut Json) -> Result<serde_json::Map<String, Json
     Ok(projected)
 }
 
+/// The datasets the viewer may read, each with its id, title and time field, and `service` for one whose service answers
+/// a report query with frames: it has no records to search, so Explore offers only the others.
 pub fn list_datasets(
     ec: &ExecutionContext,
     _service: &ServiceInfo<'_>,
@@ -2159,13 +2161,13 @@ pub fn list_datasets(
     let mut items = Vec::new();
     for id in search::telemetry::TELEMETRY_INDEXES {
         if let Ok(dataset) = resolve_dataset(ec, id, false) {
-            items.push(json!({"id":id,"timeField":dataset.time_field}));
+            items.push(json!({"id":id,"timeField":dataset.time_field,"service":dataset.service.is_some()}));
         }
     }
     for definition in definitions::list(ec, Some("dataset"))? {
         let id = text(&definition, "id", "");
         if let Ok(dataset) = resolve_dataset(ec, id, false) {
-            items.push(json!({"id":id,"title":definition["title"],"timeField":dataset.time_field}));
+            items.push(json!({"id":id,"title":definition["title"],"timeField":dataset.time_field,"service":dataset.service.is_some()}));
         }
     }
     if let Some(entity) = ec.factory().entity() {
@@ -2179,7 +2181,9 @@ pub fn list_datasets(
         for index in indexes {
             let id = format!("index:{index}");
             if let Ok(dataset) = resolve_dataset(ec, &id, false) {
-                items.push(json!({"id":id,"title":index,"timeField":dataset.time_field}));
+                items.push(
+                    json!({"id":id,"title":index,"timeField":dataset.time_field,"service":dataset.service.is_some()}),
+                );
             }
         }
     }
@@ -2219,7 +2223,7 @@ pub fn get_dataset(
         field["config"] = config;
     }
     Ok(output(
-        json!({"dataset":{"id":id,"timeField":dataset.time_field,"fields":fields.into_values().collect::<Vec<_>>(),"capabilities":facade.capabilities().iter().map(|c|c.name()).collect::<Vec<_>>()}}),
+        json!({"dataset":{"id":id,"timeField":dataset.time_field,"service":dataset.service.is_some(),"fields":fields.into_values().collect::<Vec<_>>(),"capabilities":facade.capabilities().iter().map(|c|c.name()).collect::<Vec<_>>()}}),
     ))
 }
 

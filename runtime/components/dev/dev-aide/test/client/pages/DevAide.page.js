@@ -95,6 +95,15 @@ test("Save all writes entities, services, rules, screens, then the rest", () => 
     assert.equal(pure.isDirtyAll({ text: "a", saved: "a", companions: [] }), false);
 });
 
+test("a selection follows to its element in the outline an edit answers", () => {
+    const before = { name: "widgets", path: [], children: [{ name: "container-dialog", path: [0], attrs: [["button-text", "New item"]] }] };
+    const after = { name: "widgets", path: [], children: [{ name: "container-dialog", path: [0], attrs: [["button-text", "Add item"]] }] };
+    const moved = { name: "widgets", path: [], children: [{ name: "label", path: [0], attrs: [] }] };
+    assert.equal(pure.attr(pure.sameNodeIn(after, before.children[0]), "button-text"), "Add item");
+    assert.equal(pure.sameNodeIn(moved, before.children[0]), null);
+    assert.equal(pure.sameNodeIn(after, null), null);
+});
+
 test("an outline is walked and read by path", () => {
     const outline = { name: "entities", path: [], attrs: [], children: [
         { name: "entity", path: [0], attrs: [["entity-name", "A"]], children: [{ name: "field", path: [0, 0], attrs: [["name", "x"]] }] }] };

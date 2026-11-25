@@ -798,6 +798,36 @@ The two System findings, two Monitor findings and two historical Tools findings 
 
 **Closeout.** The dashboard schedule and alert were paused, dashboard Git sync disabled, and the shipped Constitution restored. The primary runtime, local peer, both databases, SMTP sink and model/protocol fixtures were stopped. Listener checks found all six review ports closed. Temporary transfer credentials were removed. The stopped fixture directories and ignored evidence were retained locally. Only the nine review plans changed in the tracked tree. Fixture setup and readback ran during the walks; no acceptance suite ran.
 
+### Refinement, 2026-11-25
+
+All 16 findings are fixed, in commits 62d502416 through 258d3479e. Each register row records its correction, its
+regression test and its live recheck on a disposable runtime. Four causes were in shared layers rather than in the
+screen where they showed:
+
+- **DASH-UI-003**: `m-form-link` dropped the clicked submit button. This affected every GET form to a screen, not only
+  Analysis.
+- **DEVW-UI-002**: the framework now sends a qvue-only screen requested in html under `/apps` to the same path under
+  `/qapps`.
+- **DEVW-UI-003**: View-tier reads with a list or check verb now declare `authz-action="view"`, and the shared
+  m-file-tree shows the answer's errors.
+- **AI-UI-003**: the shared `NativeConnection` form names each control by its setting, which fixes ConnectionDetail
+  and MailRelayDetail together.
+
+Rechecks found two further problems in the same paths, both fixed:
+
+- An ungrouped Analysis count had no row.
+- Home reported "Created" even when a component was refused.
+
+Not rechecked live:
+
+- DASH-UI-004, because the runtime had no Git sync fixture.
+- The designer canvas for DEVA-UI-002, because the preview was refused for lack of a grant.
+- The reviewer's disabled Save for DEVA-UI-002, which was not reproduced.
+- The origin of AI-UI-002's 302, which is still unknown; the likely cause is a peer redirecting http to https.
+
+The Analysis ungrouped-count assertion added to the slow `tools_screens` test does not run yet. An earlier,
+unrelated check in that test fails first: Datasets no longer offers the fixture's DataDocument.
+
 ## 7. Decisions
 
 - Nine companion files are indexed in [plans](README.md); this one owns common methodology and shared behavior.

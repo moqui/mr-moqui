@@ -24,6 +24,19 @@
 
     // ---- pure helpers ----
 
+    // The words of a failed load: a request's answer (moqui.request rejects with {status, statusText, json}) by its
+    // errors, else its status, else an error's message; never "[object Object]" (plans/ui-review-dev-aide-workspace.md
+    // DEVW-UI-003).
+    editor.failureText = (error) => {
+        const json = error && (error.json || (error.errors ? error : null));
+        const errors = json && (json.errors || json.errorMessage || json.message);
+        if (Array.isArray(errors) && errors.length) return errors.join("; ");
+        if (typeof errors === "string" && errors) return errors;
+        if (error && error.status) return "HTTP " + error.status + (error.statusText ? " " + error.statusText : "");
+        if (error && typeof error.message === "string" && error.message) return error.message;
+        return typeof error === "string" && error ? error : "The folder could not be read";
+    };
+
     // File extensions to the editor's languages; anything else is plain text.
     const EXTENSIONS = {
         xml: "xml", xsd: "xml", xsl: "xml", svg: "xml",
@@ -568,7 +581,7 @@
                     this.failed = "";
                     this.nodes = (entries || []).map((entry) => editor.treeNode("", entry));
                     this.expanded = [];
-                }, (error) => { this.failed = String((error && error.message) || error); });
+                }, (error) => { this.failed = editor.failureText(error); });
             },
             onLazyLoad({ node, done, fail }) {
                 Promise.resolve(this.load(node.path)).then((entries) =>

@@ -88,15 +88,18 @@ function sources(datasetId) {
     const listed = ask("list#Datasets", {})
     if (listed.failure) fail(listed.failure)
     const datasets = Array.from(listed.out.datasets || [])
-        .map(row => ({value: row.id, label: row.title || row.id, timeField: row.timeField}))
+        // a saved dataset has a title; a telemetry index has none, and a DataDocument index's id is index:name
+        .map(row => ({value: row.id, label: row.title || row.id, timeField: row.timeField,
+            saved: !!row.title && !String(row.id).startsWith("index:")}))
         .sort((a, b) => a.label.localeCompare(b.label))
     const chosen = datasetId ? datasets.find(row => row.value === datasetId) : null
     if (datasetId && !chosen) fail(ec.l10n.localize("Choose a dataset you may read"))
     if (!chosen) return {datasets, dataset: null, fields: []}
     const found = ask("get#Dataset", {datasetId})
     if (found.failure) fail(found.failure)
-    // a saved dataset's definition declares its fields' units and ratios; a telemetry index has none
-    const body = ask("get#Definition", {definitionId: datasetId}).out?.definition?.body || {}
+    // a saved dataset's definition declares its fields' units and ratios; a telemetry index has none, and is not asked
+    // for (its definition's absence would be an error in the log at every run)
+    const body = chosen.saved ? ask("get#Definition", {definitionId: datasetId}).out?.definition?.body || {} : {}
     return {
         datasets,
         dataset: Object.assign({}, chosen, {timeField: found.out.dataset?.timeField || chosen.timeField}),
@@ -225,6 +228,10 @@ function resultOf(answer, query, range) {
                 .join(", ")
         })
     }
+    // an ungrouped count asks for no aggregation, and its one row is the count of the records the answer is computed
+    // from (plans/ui-review-dashboards.md DASH-UI-003): the search engine has no bucketless count to ask for
+    if (!rows.length && !(query.aggregations || []).length && answer.sourceCount != null)
+        rows.push({label: ec.l10n.localize("All records"), valuesText: "count " + Number(answer.sourceCount)})
     const answered = answer.range || range
     const day = value => {
         const millis = Date.parse(String(value ?? ""))

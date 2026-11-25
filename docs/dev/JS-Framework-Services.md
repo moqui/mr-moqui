@@ -414,7 +414,7 @@ Also members and ownership, favorites, tags, activity, previews, public share li
 
 | Service | |
 |---|---|
-| `ReportServices.list#Datasets`, `get#Dataset` | → `datasets`; `datasetId*` → `dataset` |
+| `ReportServices.list#Datasets`, `get#Dataset` | → `datasets`; `datasetId*` → `dataset` (each with `id`, `timeField` and `service`, true for a dataset that answers report queries with frames rather than records) |
 | `ReportServices.query#Documents` | `datasetId*`, `queryString`, `filters`, `from`, `thru`, `sort`, `pageIndex`, `pageSize` → `hits`, `total`, `nextCursor`, `notices` |
 | `ReportServices.run#Query` | `query*` → `frames`, `range`, `notices` |
 | `ReportServices.list#Definitions`, `get#Definition`, `save#Definition` | `definitionType`; `definitionId*`; `definition*`, `note` → `definition`. The group a definition is shared with (`definition.userGroupId`) is one the saver belongs to or one whose share artifact (`org.moqui.report.share.<userGroupId>`) their own grant holds (`SHARE_GROUP_UNAVAILABLE` otherwise); a group kept as stored is not asked again |

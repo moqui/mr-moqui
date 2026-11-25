@@ -18,6 +18,14 @@ test("the language of a file comes from its extension, else plain text", () => {
     assert.equal(editor.languageOf(""), "text");
 });
 
+test("a failed load says why, from the answer's errors, its status or the error's message", () => {
+    assert.equal(editor.failureText({ ok: false, status: 403, statusText: "Forbidden", json: { errors: ["Not allowed to read"] } }), "Not allowed to read");
+    assert.equal(editor.failureText({ ok: false, status: 500, json: { errorMessage: "Root not found" } }), "Root not found");
+    assert.equal(editor.failureText({ ok: false, status: 404, statusText: "Not Found", json: null }), "HTTP 404 Not Found");
+    assert.equal(editor.failureText(new Error("network down")), "network down");
+    assert.equal(editor.failureText({}), "The folder could not be read");
+});
+
 test("a SQL editor takes the database's dialect and completes the schema's tables", () => {
     assert.equal(editor.sqlDialectName("embedded-postgres"), "PostgreSQL");
     assert.equal(editor.sqlDialectName("mysql8"), "MySQL");
