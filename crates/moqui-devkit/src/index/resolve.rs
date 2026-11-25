@@ -42,8 +42,11 @@
 //! maps the field into ([`Resolver::path_bindings`]).
 
 mod expand;
+mod family;
+mod groups;
 
-pub use expand::{path_seed, Expansion, FormCall, NameDependents};
+pub use expand::{path_seed, Expansion, FormCall};
+pub use family::NameDependents;
 
 use std::collections::{HashMap, HashSet};
 
@@ -206,28 +209,7 @@ impl Resolver {
                     self.requests.insert(artifact.id.clone(), services);
                 }
             }
-            "artifact-group" => {
-                let patterns: Vec<(ToKind, regex::Regex)> = super::extract::split_marks(&artifact.marks)
-                    .into_iter()
-                    .filter_map(|mark| {
-                        let (kind, pattern) = mark.strip_prefix("pattern ")?.split_once(' ')?;
-                        let kind = ToKind::parse(kind)?;
-                        match regex::Regex::new(&format!("^(?:{pattern})$")) {
-                            Ok(compiled) => Some((kind, compiled)),
-                            Err(err) => {
-                                tracing::warn!(
-                                    "Artifact index: the pattern {pattern} of {} does not compile: {err}",
-                                    artifact.id
-                                );
-                                None
-                            }
-                        }
-                    })
-                    .collect();
-                if !patterns.is_empty() {
-                    self.patterns.insert(artifact.id.clone(), patterns);
-                }
-            }
+            "artifact-group" => self.add_group(artifact),
             "field" => {
                 if let Some(entity) = artifact.parent.as_deref().and_then(|id| id.strip_prefix("entity:")) {
                     let (kind, pk) = match artifact.summary.strip_suffix(PK_MARK) {
@@ -488,56 +470,6 @@ impl Resolver {
         };
         reference.resolved = target.is_some();
         reference.to_id = target;
-    }
-
-    /// `refs` with each artifact group member's reference whose name is a pattern ([`PATTERN_SCOPE`], not yet matched)
-    /// made one for each artifact of its kind whose name it matches whole (a REST resource, not a method of one), each
-    /// resolved to it; one that matches none, or whose pattern does not compile, stays as it is, unresolved.
-    #[must_use]
-    pub fn expand_patterns(&self, refs: Vec<RefRow>) -> Vec<RefRow> {
-        if !refs
-            .iter()
-            .any(|row| row.to_scope == PATTERN_SCOPE && row.to_id.is_none())
-        {
-            return refs;
-        }
-        let mut out = Vec::with_capacity(refs.len());
-        for row in refs {
-            if row.to_scope != PATTERN_SCOPE || row.to_id.is_some() {
-                out.push(row);
-                continue;
-            }
-            let pattern = regex::Regex::new(&format!("^(?:{})$", row.to_name)).ok();
-            let mut matched: Vec<&String> = match &pattern {
-                Some(pattern) => self
-                    .ids
-                    .keys()
-                    .filter(|id| pattern_name(row.to_kind, id).is_some_and(|name| pattern.is_match(name)))
-                    .collect(),
-                None => Vec::new(),
-            };
-            if matched.is_empty() {
-                out.push(row);
-                continue;
-            }
-            matched.sort();
-            for id in matched {
-                let mut one = row.clone();
-                one.to_id = Some(id.clone());
-                one.resolved = true;
-                out.push(one);
-            }
-        }
-        out
-    }
-
-    /// Whether a pattern of an artifact group matches the artifact `id` ([`Self::expand_patterns`]).
-    #[must_use]
-    pub fn pattern_matches(&self, id: &str) -> bool {
-        self.patterns
-            .values()
-            .flatten()
-            .any(|(kind, pattern)| pattern_name(*kind, id).is_some_and(|name| pattern.is_match(name)))
     }
 
     /// The parameter `name` of the service `service` in `direction`: a defined service's, or the derived service's
@@ -1086,20 +1018,6 @@ fn remove_one<T>(map: &mut HashMap<String, Vec<T>>, key: &str, matches: impl Fn(
 }
 
 /// The file name of a location without its `.xml`.
-/// The name an artifact group's pattern of `kind` is matched against in the artifact `id`, when the id is of that kind:
-/// a screen's location, a service's or entity's name, a REST resource's path (not a method's).
-fn pattern_name(kind: ToKind, id: &str) -> Option<&str> {
-    let prefix = match kind {
-        ToKind::Screen => "screen:",
-        ToKind::Service => "service:",
-        ToKind::Entity => "entity:",
-        ToKind::Rest => "rest:",
-        _ => return None,
-    };
-    let name = id.strip_prefix(prefix)?;
-    (kind != ToKind::Rest || !name.contains(':')).then_some(name)
-}
-
 fn file_stem(location: &str) -> &str {
     let name = location.rsplit('/').next().unwrap_or(location);
     name.strip_suffix(".xml").unwrap_or(name)
