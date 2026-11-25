@@ -185,8 +185,11 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="objectCount" type="Integer"/>
         </out-parameters>
     </service>
-    <service verb="import" noun="GitRepository" type="rust" location="moqui_git::service::import_repository">
-        <description>Copy a branch, with all of its history, into a db kind repository, replacing its branch.</description>
+    <service verb="import" noun="GitRepository" type="rust" location="moqui_git::service::import_repository"
+            transaction-timeout="1800">
+        <description>Copy a branch, with all of its history, into a db kind repository, replacing its branch. A long
+            history is written in the one transaction, so it has delete#GitRepository's half hour, not the default
+            deadline.</description>
         <in-parameters>
             <parameter name="repositoryId" required="true"/>
             <parameter name="source"><description>git://otherRepositoryId, a repository directory (bare or not), or a

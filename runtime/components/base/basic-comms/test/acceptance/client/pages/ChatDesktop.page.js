@@ -75,7 +75,15 @@ const answers = {
     "/apps/BasicComms/Chat/myThreads": () => ({ items: clone(threads), nextCursor: null }),
     "/apps/BasicComms/Chat/mailLines": () => ({ mailList: [{ userId: "bob", chatRoomId: "R1", subject: "Q3 plan", date: NOW - 3600000, threadKey: "email:M1",
         url: "/qapps/BasicComms/Inbox?view=all&thread=email%3AM1" }] }),
-    "/apps/BasicComms/Chat/createDirect": (params) => ({ chatRoomId: "D_" + params.userIds, created: true }),
+    // the direct chat made, a room the next roomView and chatData answer, as the server's is
+    "/apps/BasicComms/Chat/createDirect": (params) => {
+        const chatRoomId = "D_" + params.userIds;
+        if (!rooms.some((one) => one.chatRoomId === chatRoomId)) {
+            const person = people.find((one) => one.userId === params.userIds);
+            rooms.push(room(chatRoomId, "CrtDirect", person ? person.name : params.userIds, { otherUserId: params.userIds }));
+        }
+        return { chatRoomId, created: true };
+    },
     "/apps/BasicComms/Chat/send": (params) => ({ eventSeq: 1, event: event(1, String(params.body || "")) })
 };
 moqui.request = (url, options) => {
@@ -165,6 +173,8 @@ window.desk = {
         await until(() => !pending.querySelector(".m-chat-pending-send").disabled, "Send enabled");
         pending.querySelector(".m-chat-pending-send").click();
         await until(() => root.currentParameters.chatRoomId === "D_dee", "the new direct chat", 4000).catch(() => null);
+        // the message is sent by the room once it is shown, through its own send (sealed there in an encrypted room)
+        await until(() => posted.some((one) => one.path.endsWith("/send")), "the first message sent", 4000).catch(() => null);
         out.after = where();
         out.made = posted.filter((one) => one.path.endsWith("/createDirect")).map((one) => one.params.userIds);
         out.sent = posted.filter((one) => one.path.endsWith("/send")).map((one) => one.params.chatRoomId + " " + one.params.body);

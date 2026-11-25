@@ -2316,10 +2316,11 @@ fn html_widgets(browser: &mut Browser, base: &str) {
         .iter()
         .map(|text| text.as_str().unwrap().to_string())
         .collect();
-    // the database collation orders, so the check is the ends of the page, not a byte order
+    // the database collation orders, so the check is the ends of the page: in a collation that folds case, or in byte
+    // order (a C collation, which puts every lowercase word after the capitalized ones)
     assert_eq!(descriptions.len(), 20);
     assert!(
-        descriptions[0].to_lowercase() > descriptions[19].to_lowercase(),
+        descriptions[0].to_lowercase() > descriptions[19].to_lowercase() || descriptions[0] > descriptions[19],
         "{descriptions:?}"
     );
     assert_clean(browser, "the widgets after paging and sorting");
@@ -3822,6 +3823,28 @@ mod assist {
             "Before"
         );
         browser.click("Save", "document.querySelector('[data-assist-canvas-button=Save]')");
+        // the click holds the write and shows it, its path and every parameter; only Save on that confirm runs it (SEC-AI-02)
+        browser.wait_for(
+            "the write's confirm",
+            "(() => { const el = document.querySelector('.q-dialog [data-assist-canvas-confirm-parameters]'); \
+             return !!el && el.innerText.indexOf('Clicked on the canvas') >= 0; })()",
+            WAIT,
+        );
+        assert_eq!(
+            field_of(
+                &gate,
+                "moqui.basic.EnumerationType",
+                "enumTypeId",
+                "AST_GATE",
+                "description"
+            ),
+            "Before",
+            "the click alone writes nothing"
+        );
+        browser.click(
+            "Save on the write's confirm",
+            "[...document.querySelectorAll('.q-dialog button')].find((b) => b.innerText.trim() === 'Save')",
+        );
         let start = std::time::Instant::now();
         while field_of(
             &gate,
@@ -3831,7 +3854,7 @@ mod assist {
             "description",
         ) != "Clicked on the canvas"
         {
-            assert!(start.elapsed() < WAIT, "the click's write did not run");
+            assert!(start.elapsed() < WAIT, "the confirmed write did not run");
             browser.pump(Duration::from_millis(200));
         }
         let action = super::fetched(&mut browser, "the canvas action", "/assist/canvasAction");
@@ -4263,6 +4286,17 @@ module.exports = {
             "Save on the confirm",
             "document.querySelector('[data-assist-sfc-confirm-save]')",
         );
+        // the canvas then shows the held write, its path and parameters; only Save on that runs it (SEC-AI-02)
+        browser.wait_for(
+            "the write's confirm",
+            "(() => { const el = document.querySelector('.q-dialog [data-assist-canvas-confirm-parameters]'); \
+             return !!el && el.innerText.indexOf('Clicked in the frame') >= 0; })()",
+            WAIT,
+        );
+        browser.click(
+            "Save on the write's confirm",
+            "[...document.querySelectorAll('.q-dialog button')].find((b) => b.innerText.trim() === 'Save')",
+        );
         let start = std::time::Instant::now();
         while field_of(
             &gate,
@@ -4284,7 +4318,8 @@ module.exports = {
         assert_eq!(action["status"], 200, "{action}");
 
         // the user allows other sites: the frame restarts and may now load another site's image, but the proxy refuses
-        // every read, so a read cannot be carried out in an image URL
+        // every read, so a read cannot be carried out in an image URL (once the write's confirm has gone, as it covers the page)
+        browser.wait_for("the write's confirm closed", "!document.querySelector('.q-dialog')", WAIT);
         browser.click(
             "Other sites",
             "document.querySelector('[data-assist-sfc-external] [role=switch], [data-assist-sfc-external]')",
@@ -4356,11 +4391,19 @@ module.exports = {
         }
         shots(&mut browser, "sfc-killed");
         // the page's console has only the read proxy's 403s for the probes' refused reads (the writing transition and the
-        // undeclared list); the frame's own CSP reports are in its process
+        // undeclared list); the frame's own CSP reports are in its process. The sandbox host (SEC-AI-81) adds two notices of
+        // Chromium's own about it, by design: its policy's webrtc 'block', a directive Chromium does not know (the known limit
+        // Assist.md names), and the holder frame's allow-scripts with allow-same-origin, as it is this site's own document
+        let host = |problem: &super::Problem| {
+            (problem.text.contains("/assist/sandboxHost") || problem.text.contains("/js/WebrootAssistSandboxHost.js"))
+                && (problem.text.contains("Unrecognized Content-Security-Policy directive 'webrtc'")
+                    || problem.text.contains("both allow-scripts and allow-same-origin"))
+        };
         let problems: Vec<_> = browser
             .take_problems()
             .into_iter()
             .filter(|problem| !(problem.text.contains("status of 403") && problem.text.contains("/assist/read")))
+            .filter(|problem| !host(problem))
             .collect();
         assert!(
             problems.is_empty(),
@@ -5527,8 +5570,10 @@ fn the_screen_builder_extends_an_upstream_list_in_chromium() {
         browser.pump(Duration::from_millis(100));
     }
     let extend_text = std::fs::read_to_string(&extend).unwrap();
+    // the field inside the form, however the saved file is indented (it is written pretty-printed, one element a line)
+    let compact: String = extend_text.lines().map(str::trim).collect();
     assert!(
-        extend_text.contains("<form-single name=\"WidgetForm\"><field name=\"note\" after=\"widgetName\">"),
+        compact.contains("<form-single name=\"WidgetForm\"><field name=\"note\" after=\"widgetName\">"),
         "{extend_text}"
     );
     // the layout puts the new field in the selected field's row, before the submit button
@@ -5603,7 +5648,11 @@ fn the_screen_builder_extends_an_upstream_list_in_chromium() {
     }
     let extend_text = std::fs::read_to_string(&extend).unwrap();
     assert!(
-        extend_text.contains("<widgets-extend name=\"Notes\" where=\"append\"><container-box name=\"MoreNotes\">"),
+        extend_text
+            .lines()
+            .map(str::trim)
+            .collect::<String>()
+            .contains("<widgets-extend name=\"Notes\" where=\"append\"><container-box name=\"MoreNotes\">"),
         "{extend_text}"
     );
 

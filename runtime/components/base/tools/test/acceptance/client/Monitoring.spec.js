@@ -442,6 +442,11 @@ feature('a synthetic check added on Checks runs now and links its trace; AI and 
         page.waitFor(()=>!!document.querySelector('form input[name="checkId"]'))
         page.evaluate(()=>{const form=[...document.querySelectorAll('form')].find(form=>form.querySelector('input[name="checkId"]') && form.querySelector('input[name="expectStatus"]'))
             for(const [name,value] of [['checkId','browser_health'],['name','Browser health'],['url',location.origin+'/health']]){const input=form.querySelector('input[name="'+name+'"]');input.value=value;input.dispatchEvent(new Event('input',{bubbles:true}))}return true})
+        // the check is of this server, on loopback: it reaches the private network only with Private network Yes, which the
+        // administrator's MONITOR_PRIVATE_NETWORK lets them set (SEC-OUT-03; empty is No on a production instance)
+        const checkForm=page.locator('form:has(input[name="checkId"]):has(input[name="expectStatus"])')
+        checkForm.getByLabel('Private network',{exact:true}).click()
+        page.getByRole('option',{name:'Yes',exact:true}).click()
         page.getByRole('button',{name:'Add check'}).click()
         page.waitFor(()=>document.body.innerText.includes('browser_health'))
         page.getByRole('button',{name:'Run now'}).first().click()
