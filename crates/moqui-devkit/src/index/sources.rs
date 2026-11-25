@@ -174,7 +174,7 @@ fn source_changes(
 }
 
 /// The hash the rows hold for the file or pseudo file `path`; none when it has no row.
-fn stored_hash(facade: &EntityFacade, path: &str) -> Result<Option<String>, Error> {
+pub(super) fn stored_hash(facade: &EntityFacade, path: &str) -> Result<Option<String>, Error> {
     Ok(facade
         .find(FILE)?
         .eq("filePath", Value::string(path))

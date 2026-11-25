@@ -13,7 +13,11 @@
  */
 
 //! The artifact groups' members whose names are patterns (plans/design-dev-aide.md 7.1, `super::super::rows`): each
-//! group's patterns as its marks keep them, and each pattern member's reference made one for each artifact it matches.
+//! group's patterns as its marks keep them, compiled once, and each pattern member's reference made one for each
+//! artifact it matches. A pattern is matched whole by `moqui_lib`'s Java-compatible matcher, as authorization matches
+//! it (`moqui_core::user::authz`); one that does not compile matches nothing.
+
+use moqui_lib::object::CompiledRegex;
 
 use super::Resolver;
 use crate::index::extract::{ArtifactRow, RefRow, ToKind, PATTERN_SCOPE};
@@ -21,13 +25,13 @@ use crate::index::extract::{ArtifactRow, RefRow, ToKind, PATTERN_SCOPE};
 impl Resolver {
     /// Know the patterns of the artifact group `artifact` (its marks, `pattern <kind> <pattern>`).
     pub(super) fn add_group(&mut self, artifact: &ArtifactRow) {
-        let patterns: Vec<(ToKind, regex::Regex)> = crate::index::extract::split_marks(&artifact.marks)
+        let patterns: Vec<(ToKind, String, CompiledRegex)> = crate::index::extract::split_marks(&artifact.marks)
             .into_iter()
             .filter_map(|mark| {
                 let (kind, pattern) = mark.strip_prefix("pattern ")?.split_once(' ')?;
                 let kind = ToKind::parse(kind)?;
-                match regex::Regex::new(&format!("^(?:{pattern})$")) {
-                    Ok(compiled) => Some((kind, compiled)),
+                match CompiledRegex::new(pattern) {
+                    Ok(compiled) => Some((kind, pattern.to_string(), compiled)),
                     Err(err) => {
                         tracing::warn!(
                             "Artifact index: the pattern {pattern} of {} does not compile: {err}",
@@ -60,12 +64,19 @@ impl Resolver {
                 out.push(row);
                 continue;
             }
-            let pattern = regex::Regex::new(&format!("^(?:{})$", row.to_name)).ok();
+            // the group's compiled pattern when the resolver knows the group, else compiled here
+            let known = self.patterns.get(&row.from).and_then(|patterns| {
+                patterns
+                    .iter()
+                    .find(|(kind, pattern, _)| *kind == row.to_kind && *pattern == row.to_name)
+                    .map(|(_, _, compiled)| compiled.clone())
+            });
+            let pattern = known.or_else(|| CompiledRegex::new(&row.to_name).ok());
             let mut matched: Vec<&String> = match &pattern {
                 Some(pattern) => self
                     .ids
                     .keys()
-                    .filter(|id| pattern_name(row.to_kind, id).is_some_and(|name| pattern.is_match(name)))
+                    .filter(|id| pattern_name(row.to_kind, id).is_some_and(|name| pattern.is_full_match(name)))
                     .collect(),
                 None => Vec::new(),
             };
@@ -90,7 +101,7 @@ impl Resolver {
         self.patterns
             .values()
             .flatten()
-            .any(|(kind, pattern)| pattern_name(*kind, id).is_some_and(|name| pattern.is_match(name)))
+            .any(|(kind, _, pattern)| pattern_name(*kind, id).is_some_and(|name| pattern.is_full_match(name)))
     }
 }
 

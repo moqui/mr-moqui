@@ -335,7 +335,7 @@ fn an_expansions_write_that_fails_is_written_again_at_the_next_update() {
     assert!(bed.has_artifact("parameter:service:rows.ThingServices.save#Thing@in.name"));
 
     // a field added to the entity: the service in its own file is expanded again, and its write fails
-    lock(&FAIL_EXPANSION_WRITE).push(service.to_string());
+    lock(&FAIL_EXPANSION_WRITE).push((factory_key(bed.factory()), service.to_string()));
     std::fs::write(
         &entities,
         ROWS_ENTITIES.replace(
@@ -345,7 +345,11 @@ fn an_expansions_write_that_fails_is_written_again_at_the_next_update() {
     )
     .unwrap();
     update_files(bed.factory(), std::slice::from_ref(&entities)).unwrap();
-    assert!(lock(&FAIL_EXPANSION_WRITE).is_empty(), "the failure point was reached");
+    let key = (factory_key(bed.factory()), service.to_string());
+    assert!(
+        !lock(&FAIL_EXPANSION_WRITE).contains(&key),
+        "the failure point was reached"
+    );
     assert!(!bed.has_artifact(color), "the failed write left no row");
 
     // an update of another file: the expansion that failed is written then
@@ -371,12 +375,18 @@ fn an_artifact_groups_patterns_resolve_to_the_artifacts_they_match() {
             ("rows\\.ThingServices\\..*", "AT_SERVICE", "Y"),
             ("rows.Thing", "AT_ENTITY", "N"),
             ("rows.Missing", "AT_ENTITY", "N"),
+            // matched whole as Java matches it: no group of its own to close, so it does not compile and matches none
+            ("x)|(.*", "AT_SERVICE", "Y"),
         ] {
             let mut member = facade.make_value(rows::ARTIFACT_GROUP_MEMBER).unwrap();
             member.set("artifactGroupId", Value::string("THINGS"));
             member.set("artifactName", Value::string(name));
             member.set("artifactTypeEnumId", Value::string(kind));
             member.set("nameIsPattern", Value::string(pattern));
+            member.set(
+                "inheritAuthz",
+                Value::string(if name == "rows.Thing" { "Y" } else { "N" }),
+            );
             member.create(&facade).unwrap();
         }
     }
@@ -384,10 +394,10 @@ fn an_artifact_groups_patterns_resolve_to_the_artifacts_they_match() {
     let group = "artifact-group:THINGS";
     assert!(bed.has_artifact(group));
     let members = || bed.ids(REF, "fromArtifactId", group, "toArtifactId");
-    // the pattern's service, the entity by its name; the missing entity unresolved
+    // the pattern's service, the entity by its name; the missing entity and the bad pattern unresolved
     assert_eq!(
         members(),
-        ["", "entity:rows.Thing", "service:rows.ThingServices.save#Thing"]
+        ["", "", "entity:rows.Thing", "service:rows.ThingServices.save#Thing"]
     );
 
     // a service the pattern matches, added by an update: a member of the group at once
@@ -400,9 +410,21 @@ fn an_artifact_groups_patterns_resolve_to_the_artifacts_they_match() {
         members(),
         [
             "",
+            "",
             "entity:rows.Thing",
             "service:rows.ThingServices.save#Thing",
             "service:rows.ThingServices.ship#Thing"
         ]
     );
+
+    // and gone again: no member left naming it
+    bed.write("service/rows/ThingServices.xml", ROWS_SERVICES);
+    update_files(bed.factory(), std::slice::from_ref(&added)).unwrap();
+    assert_eq!(
+        members(),
+        ["", "", "entity:rows.Thing", "service:rows.ThingServices.save#Thing"]
+    );
+    // a member that inherits its authorization says so
+    let inherited = bed.ids(REF, "operation", "authz-inherit", "toArtifactId");
+    assert_eq!(inherited, ["entity:rows.Thing"]);
 }

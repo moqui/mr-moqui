@@ -113,7 +113,7 @@ pub struct Resolver {
     aliases: HashMap<String, Vec<expand::DeclaredAlias>>,
     /// The artifact groups' patterns ([`Self::expand_patterns`]): each group's id with the kind and the pattern, matched
     /// whole, of each member whose name is a pattern.
-    patterns: HashMap<String, Vec<(ToKind, regex::Regex)>>,
+    patterns: HashMap<String, Vec<(ToKind, String, moqui_lib::object::CompiledRegex)>>,
 }
 
 /// One subscreens item of a screen.

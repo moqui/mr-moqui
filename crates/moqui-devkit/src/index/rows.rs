@@ -428,7 +428,16 @@ fn group_members(rows: &[EntityValue], path: &str) -> FileIndex {
             patterns.push(format!("pattern {} {name}", kind.as_str()));
         }
         let scope = if pattern { PATTERN_SCOPE } else { "" };
-        index.refs.push(reference(&id, kind, &name, scope, "artifact-group"));
+        // what a member does to what it names: authorizes it, and with inheritAuthz what runs under it on the artifact
+        // stack too, of any kind, as `moqui_core::user::authz` lets an inheritable frame's children run
+        let operation = if text(row, "inheritAuthz") == "Y" {
+            "authz-inherit"
+        } else {
+            "authz"
+        };
+        index
+            .refs
+            .push(doing(reference(&id, kind, &name, scope, "artifact-group"), operation));
     }
     for (group, (count, patterns)) in groups {
         let id = format!("artifact-group:{group}");

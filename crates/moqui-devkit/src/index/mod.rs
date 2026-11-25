@@ -45,7 +45,7 @@ use serde::Serialize;
 
 pub use self::extract::{ArtifactRow, BindingRow, FileIndex, FileInfo, RefRow, ToKind};
 use self::resolve::Resolver;
-use self::sources::{expand_source, refresh, refresh_locked, screen_rows_moved, source_change};
+use self::sources::{expand_source, refresh, refresh_locked, screen_rows_moved, source_change, stored_hash};
 use super::ArtifactKind;
 use moqui_core::context::ExecutionContextFactory;
 use moqui_core::entity::{fence, EntityFacade, EntityValue};
@@ -1266,9 +1266,11 @@ pub fn build_files(
         on_disk.insert(mounts.path.clone());
         sources.push(mounts);
     }
+    // the artifact groups' members are matched once this build's files are in the resolver, after them
+    let groups_path = format!("db:{}", rows::ARTIFACT_GROUP_MEMBER);
+    let (groups, sources): (Vec<rows::RowSource>, Vec<rows::RowSource>) =
+        sources.into_iter().partition(|source| source.path == groups_path);
     for source in sources {
-        // the artifact groups' patterns as they match now: the same rows matching other artifacts are written again
-        let source = expand_source(&state, source);
         if hashes.get(&source.path).is_some_and(|hash| *hash == source.hash) {
             report.unchanged += 1;
             continue;
@@ -1283,6 +1285,14 @@ pub fn build_files(
     }
     report.read_millis = started.elapsed().as_millis();
     apply(factory, &facade, &state, changes, &mut report)?;
+    for source in groups {
+        // the patterns as they match the artifacts now: the same rows matching other artifacts are written again
+        let source = expand_source(&state, source);
+        match stored_hash(&facade, &source.path) {
+            Ok(Some(hash)) if hash == source.hash => report.unchanged += 1,
+            _ => apply(factory, &facade, &state, vec![source_change(source)], &mut report)?,
+        }
+    }
     if factory.is_shutting_down() {
         // not marked built: what the build did not write is read again at the next start, by its file's hash
         return Ok(report);
@@ -1452,13 +1462,14 @@ fn apply(
     let shared: HashSet<String>;
     // the files that have rows: only theirs are read and removed first
     let mut known: HashSet<String> = HashSet::new();
-    // an artifact new to the index that an artifact group's pattern matches: the members are read again after
+    // an artifact new to the index, or gone from it, that an artifact group's pattern matches: the members are read
+    // again after
     let groups_path = format!("db:{}", rows::ARTIFACT_GROUP_MEMBER);
     let reads_groups = changes.iter().any(|change| match change {
         Change::Read { file, .. } | Change::Stale { file, .. } => file.location == groups_path,
         Change::Removed(path) => *path == groups_path,
     });
-    let mut pattern_added = false;
+    let mut patterns_moved = false;
     {
         let paths: Vec<Value> = changes
             .iter()
@@ -1528,7 +1539,7 @@ fn apply(
                     }
                     let known_before = gone.remove(&artifact.id);
                     if !known_before && !reads_groups && resolver.pattern_matches(&artifact.id) {
-                        pattern_added = true;
+                        patterns_moved = true;
                     }
                     added.push(artifact.clone());
                 }
@@ -1570,6 +1581,10 @@ fn apply(
         let mut made = expand_in(&mut resolver, &mut changes, &touched, &retry, &mut added, &mut gone);
         // an id another file still defines is not gone
         gone.retain(|id| !resolver.has(id));
+        // an artifact gone that a pattern matched: the members are matched again too
+        if !reads_groups && gone.iter().any(|id| resolver.pattern_matches(id)) {
+            patterns_moved = true;
+        }
         shared = added
             .iter()
             .filter(|artifact| resolver.count(&artifact.id) > 1)
@@ -1605,7 +1620,10 @@ fn apply(
     }
     // each owner's expansion in a transaction of its own: one that fails is that owner's alone
     for rewrite in &rewrites {
-        if let Err(err) = tx.run(TransactionAttribute::ForceNew, None, || write_expanded(facade, rewrite)) {
+        let written = tx.run(TransactionAttribute::ForceNew, None, || {
+            write_expanded(factory, facade, rewrite)
+        });
+        if let Err(err) = written {
             // the rows are written without a transaction of their own: the next update writes all of them again
             lock(&state.retry).insert(rewrite.owner.clone());
             tracing::error!(
@@ -1688,15 +1706,15 @@ fn apply(
         walk_again(factory, facade, state, &tx, &changed_paths, &walk_names)?;
     }
     report.write_millis = writing.elapsed().as_millis();
-    if pattern_added {
-        // the artifact groups' members again, their patterns matched against the artifacts now; one that is not read
-        // is logged, and the next build reads them
-        match rows::read_entity(facade, rows::ARTIFACT_GROUP_MEMBER) {
-            Ok(source) => {
-                let source = expand_source(state, source);
-                apply(factory, facade, state, vec![source_change(source)], report)?;
-            }
-            Err(err) => tracing::error!("Artifact index: the artifact group members were not read again: {err}"),
+    if patterns_moved {
+        // the artifact groups' members again, their patterns matched against the artifacts now; this update's own rows
+        // are written, so a failure here is logged and the next build reads them
+        let again = rows::read_entity(facade, rows::ARTIFACT_GROUP_MEMBER).and_then(|source| {
+            let source = expand_source(state, source);
+            apply(factory, facade, state, vec![source_change(source)], report)
+        });
+        if let Err(err) = again {
+            tracing::error!("Artifact index: the artifact group members were not matched again: {err}");
         }
     }
     Ok(())
@@ -1826,17 +1844,25 @@ fn expand_in(
 }
 
 /// A test's failure point in the index writer (plans/design-dev-aide.md 19): the owners whose next expansion write
-/// ([`write_expanded`]) fails, each once.
+/// ([`write_expanded`]) fails, each once, by the factory whose index writes it, so tests in parallel keep their own.
 #[cfg(test)]
-pub(crate) static FAIL_EXPANSION_WRITE: Mutex<Vec<String>> = Mutex::new(Vec::new());
+pub(crate) static FAIL_EXPANSION_WRITE: Mutex<Vec<(usize, String)>> = Mutex::new(Vec::new());
+
+/// The key of `factory` in [`FAIL_EXPANSION_WRITE`].
+#[cfg(test)]
+pub(crate) fn factory_key(factory: &ExecutionContextFactory) -> usize {
+    std::ptr::from_ref(factory) as usize
+}
 
 /// Replace the expanded rows of a service or form of a file not read now ([`expand_in`]): its artifacts and bindings of
-/// an expanded origin.
-fn write_expanded(facade: &EntityFacade, rewrite: &Rewrite) -> Result<(), Error> {
+/// an expanded origin. Under test, the failure point of `factory` fails it ([`FAIL_EXPANSION_WRITE`]).
+#[cfg_attr(not(test), allow(unused_variables))]
+fn write_expanded(factory: &ExecutionContextFactory, facade: &EntityFacade, rewrite: &Rewrite) -> Result<(), Error> {
     #[cfg(test)]
     {
+        let key = (factory_key(factory), rewrite.owner.clone());
         let mut failing = lock(&FAIL_EXPANSION_WRITE);
-        if let Some(at) = failing.iter().position(|owner| *owner == rewrite.owner) {
+        if let Some(at) = failing.iter().position(|known| *known == key) {
             failing.remove(at);
             return Err(Error::new(format!("the failure point of {}", rewrite.owner)));
         }
