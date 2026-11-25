@@ -2430,7 +2430,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7518b930f6aeb75e871d32ce873c2ae46e35cef19b5a0b039d4337f651d897cd"
 dependencies = [
  "bstr",
- "hashbrown 0.17.1",
+ "hashbrown 0.15.5",
 ]
 
 [[package]]
@@ -6564,8 +6564,8 @@ dependencies = [
 
 [[package]]
 name = "quickjs-oxide"
-version = "0.4.1"
-source = "git+https://github.com/moqui/quickjs-oxide?rev=b7e34e04bde919d1a76cfd01430226ea0493017f#b7e34e04bde919d1a76cfd01430226ea0493017f"
+version = "0.5.0"
+source = "git+https://github.com/moqui/quickjs-oxide?rev=ad56ffec86877daea9ea4b153912c812fac0bd23#ad56ffec86877daea9ea4b153912c812fac0bd23"
 dependencies = [
  "num-bigint 0.5.1",
  "num-traits",
@@ -6575,16 +6575,18 @@ dependencies = [
 
 [[package]]
 name = "quickjs-oxide-core"
-version = "0.4.1"
-source = "git+https://github.com/moqui/quickjs-oxide?rev=b7e34e04bde919d1a76cfd01430226ea0493017f#b7e34e04bde919d1a76cfd01430226ea0493017f"
+version = "0.5.0"
+source = "git+https://github.com/moqui/quickjs-oxide?rev=ad56ffec86877daea9ea4b153912c812fac0bd23#ad56ffec86877daea9ea4b153912c812fac0bd23"
 dependencies = [
+ "hashbrown 0.17.1",
+ "libm",
  "quickjs-oxide-regexp",
 ]
 
 [[package]]
 name = "quickjs-oxide-regexp"
-version = "0.4.1"
-source = "git+https://github.com/moqui/quickjs-oxide?rev=b7e34e04bde919d1a76cfd01430226ea0493017f#b7e34e04bde919d1a76cfd01430226ea0493017f"
+version = "0.5.0"
+source = "git+https://github.com/moqui/quickjs-oxide?rev=ad56ffec86877daea9ea4b153912c812fac0bd23#ad56ffec86877daea9ea4b153912c812fac0bd23"
 
 [[package]]
 name = "quinn"
@@ -8348,7 +8350,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
