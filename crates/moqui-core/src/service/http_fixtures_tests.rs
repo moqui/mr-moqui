@@ -160,3 +160,28 @@ fn a_closed_test_run_refuses_all_but_loopback_and_opened_prefixes() {
     // outside a test run (no allow() in this binary) nothing is refused
     assert!(network_refusal("https://api.example.com/x").is_none());
 }
+
+#[test]
+fn a_bytes_body_is_answered_as_it_is() {
+    let fixtures = HttpFixtures::default();
+    let zip = vec![b'P', b'K', 3, 4, 0xff, 0x00, 0x80];
+    fixtures.add(fixture(&[
+        ("url", Value::string("https://data.test/US.zip")),
+        ("body", Value::Bytes(zip.clone())),
+        ("contentType", Value::string("application/zip")),
+    ]));
+    let answer = fixtures
+        .answer(&request(Method::Get, "https://data.test/US.zip", None))
+        .unwrap();
+    assert_eq!(answer.bytes, zip, "not text, not lossy");
+    assert_eq!(answer.body, "");
+    // a text body still answers as its UTF-8
+    fixtures.add(fixture(&[
+        ("url", Value::string("https://data.test/a.txt")),
+        ("body", Value::string("é")),
+    ]));
+    let answer = fixtures
+        .answer(&request(Method::Get, "https://data.test/a.txt", None))
+        .unwrap();
+    assert_eq!(answer.bytes, "é".as_bytes());
+}

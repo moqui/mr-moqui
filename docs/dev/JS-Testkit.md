@@ -390,7 +390,7 @@ http.requests()[0].headers["Idempotency-Key"]
 
 | Method | |
 |---|---|
-| `add({method, url, bodyContains, status, body, headers, contentType, error, times})` | A fixture. `url` is exact, or a prefix when it ends with `*`; `method` and `bodyContains` narrow it; `status` is 200 by default; `error` fails the call as a transport error after recording it; `times` is how many requests it answers (absent or 0, any number) |
+| `add({method, url, bodyContains, status, body, headers, contentType, error, times})` | A fixture. `url` is exact, or a prefix when it ends with `*`; `method` and `bodyContains` narrow it; `status` is 200 by default; `body` is text, or a `Uint8Array` for a binary answer (a zip); `error` fails the call as a transport error after recording it; `times` is how many requests it answers (absent or 0, any number) |
 | `requests()`, `last()`, `count()` | The recorded requests, oldest first, each `{method, url, headers, body, fixture, at}`, `fixture` the index of the fixture that answered or -1 (the 500 most recent). The values of Authorization, Proxy-Authorization, Cookie and `*Api-Key` headers are `[redacted]` |
 | `enable()`, `disable()`, `isEnabled()` | Answer and record; off by default. `enable()` is refused outside a `moqui test` run |
 | `allowNetwork(urlPrefixes)` | Let requests to these URL prefixes go to the network while the fixtures are off (see below); an empty list closes it again |

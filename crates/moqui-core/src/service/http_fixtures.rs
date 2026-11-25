@@ -31,9 +31,9 @@
 //! The tool: `isEnabled()`, `enable()`, `disable()`, `reset()` (off, no fixtures, no requests, no network opened: still
 //! closed), `allowNetwork(urlPrefixes)` (a list; empty closes again), `add({method, url,
 //! bodyContains, status, body, headers, contentType, error, times})` (`url` exact, or a prefix when it ends with `*`;
-//! `times` 0 or absent is any number), `clear()` (the fixtures and requests), `requests()` (oldest first, each
-//! `{method, url, headers, body, fixture, at}`, `fixture` the index of the fixture that answered or -1), `count()` and
-//! `last()`.
+//! `body` text, or a `Uint8Array` for a binary answer such as a zip; `times` 0 or absent is any number), `clear()`
+//! (the fixtures and requests), `requests()` (oldest first, each `{method, url, headers, body, fixture, at}`,
+//! `fixture` the index of the fixture that answered or -1), `count()` and `last()`.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
@@ -63,6 +63,8 @@ pub struct Fixture {
     pub body_contains: String,
     pub status: u16,
     pub body: String,
+    /// A binary body (a `Uint8Array` given as `body`), answered in place of `body`'s text when not empty.
+    pub body_bytes: Vec<u8>,
     pub headers: Vec<(String, String)>,
     /// A transport error instead of an answer: the request went out and its answer was lost.
     pub error: Option<String>,
@@ -201,9 +203,14 @@ impl HttpFixtures {
         if let Some(error) = fixture.error {
             return Err(TransportError::new(error));
         }
+        let bytes = if fixture.body_bytes.is_empty() {
+            fixture.body.clone().into_bytes()
+        } else {
+            fixture.body_bytes
+        };
         Ok(Response {
             status: if fixture.status == 0 { 200 } else { fixture.status },
-            bytes: fixture.body.clone().into_bytes(),
+            bytes,
             body: fixture.body,
             headers: fixture.headers,
         })
@@ -339,12 +346,17 @@ fn fixture_of(value: &Value) -> Result<Fixture, Error> {
         headers.push(("Content-Type".to_string(), content_type));
     }
     let error = text("error");
+    let (body, body_bytes) = match map.get("body") {
+        Some(Value::Bytes(bytes)) => (String::new(), bytes.clone()),
+        _ => (text("body"), Vec::new()),
+    };
     Ok(Fixture {
         method: text("method").to_ascii_uppercase(),
         url,
         body_contains: text("bodyContains"),
         status,
-        body: text("body"),
+        body,
+        body_bytes,
         headers,
         error: (!error.is_empty()).then_some(error),
         times: number("times").map_or(0, |times| times as usize),
@@ -403,7 +415,7 @@ impl ToolFactory for HttpFixturesToolFactory {
         Some(
             "{ isEnabled(): boolean; enable(): void; disable(): void; reset(): void; \
              allowNetwork(urlPrefixes: string[]): void; \
-             add(fixture: { method?: string; url: string; bodyContains?: string; status?: number; body?: string; \
+             add(fixture: { method?: string; url: string; bodyContains?: string; status?: number; body?: string | Uint8Array; \
              headers?: Record<string, string>; contentType?: string; error?: string; times?: number }): void; \
              clear(): void; requests(): { method: string; url: string; headers: Record<string, string>; \
              body: string | null; fixture: number; at: number }[]; count(): number; \

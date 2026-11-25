@@ -36,6 +36,7 @@ pub mod error;
 pub mod etl;
 pub mod format;
 pub mod fs_link;
+pub mod geo;
 pub mod histogram;
 #[cfg(feature = "http")]
 pub mod http;

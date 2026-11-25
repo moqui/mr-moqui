@@ -268,7 +268,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="sourceLocation" type="text-medium"><description>An operator's file: its resource location</description></field>
         <field name="sourceEtag" type="text-medium"/>
         <field name="sourceLastModified" type="text-short"/>
-        <field name="checksum" type="text-short"><description>SHA-256 of the file read, hex</description></field>
+        <field name="checksum" type="text-medium"><description>SHA-256 of the file read, hex (64 characters)</description></field>
         <field name="byteCount" type="number-integer"/>
         <field name="rowsRead" type="number-integer"/>
         <field name="rowsCreated" type="number-integer"/>

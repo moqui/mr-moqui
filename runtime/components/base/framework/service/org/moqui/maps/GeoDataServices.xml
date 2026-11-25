@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
+    <!-- The Geo data importer (plans/Maps.md §6.4), in crates/moqui-tools/src/geo, with the parsers, postal-code rules and
+        derived IDs in moqui-lib's geo module. A run brings a registered data set (moqui.maps.GeoDataSet, MapEntities.xml)
+        into moqui.basic.Geo, GeoPostalCode, GeoPostalCodePlace, GeoPoint, GeoPointAssoc and GeoAssoc (BasicEntities.xml)
+        and is a moqui.maps.GeoDataImport row. For MAPS_ADMIN (the artifact group names these services), checked again
+        as the user with authorization on, also as a ServiceJob's user; a job run with no user signed in runs as the
+        first of the job's ServiceJobUser rows whose user added themselves. A refusal before a run is a message-facade
+        error; a run that fails is GdiFailed with its failureText. Nothing is imported at startup or in a test run. No
+        Java counterpart. -->
+
+    <service verb="import" noun="GeoData" type="rust" location="moqui_tools::geo::service::import_geo_data"
+            transaction="ignore">
+        <description>Import a data set, here (a ServiceJob runs it in the background). A run's scope is its source key
+            (every data set sharing the sourceKey, which must share one format) and its country. Preflight, refused with
+            an error and no run: the set registered and enabled; for a set downloaded from its URL, outside requests
+            allowed (maps@external-requests) and no location given; for an operator's file (a set with no URL), a
+            countryGeoId and a location under dbresource://moqui/maps/import/, runtime://import/ or the user's own
+            uploads; the license acknowledged by an administrator (licenseAckUserId); no run of the same scope in
+            progress (one whose row has not changed for an hour is taken as abandoned and marked failed, and a live one
+            so marked stops at its next check). countryGeoId is needed for a set read a country at a time and must be
+            its coverage for a set with one. A run downloads from the registered host (never an internal address) to
+            runtime/tmp/geo-import as it arrives, within maps@import-max-bytes, conditionally on the edition in use's
+            ETag and Last-Modified (an unchanged source ends the run GdiUnchanged); the edition in use is the scope's
+            last completed run, and none while the source key has no rows in date there (after a Remove), so such a run
+            fetches whole. It reads the whole file (a zip member within maps@import-max-bytes and a ratio limit, lines
+            within 64 KB), checking each row's country, code shape (leading zeros kept, a partial code a declared
+            prefix), computed IDs, coordinates and duplicates, writing nothing; refuses a file with no row to load, or
+            with fewer than 80% of the edition in use's rows unless forced; loads in batches of 2,000 codes, a
+            transaction each, creating or updating by computed ID and leaving unchanged rows alone, the counts written
+            and the cancel flag read between batches. Only after a whole load, it end-dates (thruDate) what this source
+            key owns in the run's country that the new edition does not have: its postal codes (but one another source
+            still has a point for), place names and point associations, a row passed over for another fault keeping its
+            code when the code could be read. The run (GdiCompleted, with its edition) is then the edition in use, and
+            the postal lookup cache is cleared. A run never changes a row another source key owns, a code made by hand
+            (no sourceKey), a user-confirmed point or a record's own location; it revives a code another source key owns
+            and retired when this edition has it (the code stays that source's). Where two sources have a code each
+            writes its own point, and the data set's priority makes the active one. Rejected rows go to the error file
+            (dbresource://moqui/maps/geo-import/(userId)/(geoDataImportId)/errors.csv, as an ETL run's: the first
+            10,000, and how many more), the first 100 in errors; a failed run's errorLocation names the step.
+            geoDataImportId runs a pending run (GdiPending, made by the screen or job that starts it), whose own data set
+            and country are used. A ServiceJob with no user signed in names the user to run as in runAsUserId, a
+            ServiceJobUser of the job who added themselves.</description>
+        <in-parameters>
+            <parameter name="dataSetId"/>
+            <parameter name="countryGeoId"/>
+            <parameter name="location"><description>An operator's file</description></parameter>
+            <parameter name="force" type="Boolean" default-value="false"><description>Fetch whatever the edition in use,
+                and accept a file with far fewer rows than it</description></parameter>
+            <parameter name="geoDataImportId"><description>A pending run to run</description></parameter>
+            <parameter name="runAsUserId"><description>For a ServiceJob run with no user signed in: the user to run as, a
+                ServiceJobUser of the job who added themselves</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="geoDataImportId"/>
+            <parameter name="statusId"/>
+            <parameter name="edition"/>
+            <parameter name="rowsRead" type="Long"/>
+            <parameter name="rowsCreated" type="Long"/>
+            <parameter name="rowsUpdated" type="Long"/>
+            <parameter name="rowsUnchanged" type="Long"/>
+            <parameter name="rowsRetired" type="Long"/>
+            <parameter name="rowsRejected" type="Long"/>
+            <parameter name="errorFileLocation"/>
+            <parameter name="failureText"/>
+            <parameter name="errors" type="List"><parameter name="error" type="Map"/></parameter>
+        </out-parameters>
+    </service>
+
+    <service verb="cancel" noun="GeoDataImport" type="rust" location="moqui_tools::geo::service::cancel_geo_data_import"
+            transaction="ignore">
+        <description>Ask a run to stop: a pending run is cancelled at once; a running one reads the request between its
+            steps and batches and ends GdiCancelled with nothing retired, the rows of the batches it loaded kept and the
+            edition in use unchanged. Refused for a run that has ended.</description>
+        <in-parameters><parameter name="geoDataImportId" required="true"/></in-parameters>
+        <out-parameters><parameter name="statusId"/></out-parameters>
+    </service>
+
+    <service verb="remove" noun="GeoData" type="rust" location="moqui_tools::geo::service::remove_geo_data"
+            transaction="ignore">
+        <description>Remove what a data set's source key owns, for countryGeoId (needed for a set read a country at a
+            time; every country for a set with none), in one transaction: its place names and point associations, then
+            each point, postal code and county, place or city Geo it made that no row of any entity refers to (from the
+            entity model's relationships to Geo, GeoPoint and GeoPostalCode: another source's points and place names, an
+            address, a group); the rest are end-dated. A user-confirmed point stays, with its association, and keeps its
+            Geo; a record's own location is left alone. For the ZCTA-to-county set, its county-to-code links are deleted;
+            a set of countries or divisions is refused, those rows being shared. Refused while an import of the source
+            key and country is in progress. rowsDeleted and rowsRetired count rows.</description>
+        <in-parameters>
+            <parameter name="dataSetId" required="true"/>
+            <parameter name="countryGeoId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="rowsDeleted" type="Long"/>
+            <parameter name="rowsRetired" type="Long"/>
+        </out-parameters>
+    </service>
+</services>
