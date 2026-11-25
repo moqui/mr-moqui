@@ -1,6 +1,6 @@
 # MR Moqui — UI review: Dev AIDE artifact authoring
 
-**Status — 2026-11-16:** planned; every activity pending. Source inspection only; no review or test results claimed.
+**Status — 2026-11-25.** First live review, DEVA-B01. All fourteen activities have branch-level outcomes. A saved entity field propagated through service inputs to a persisted row in Tools Grid. Two P2 findings remain open.
 
 Contents: [scope](#1-purpose-scope-and-sources) · [method](#2-review-method-and-refinement-criteria) ·
 [inventory](#3-screen-and-surface-inventory) · [activities](#4-end-to-end-activities) ·
@@ -399,20 +399,20 @@ execution records it; “exercised” never implies that all modes and recovery 
 
 | Activity | Status | Outcome / remaining branches | Evidence / findings |
 | --- | --- | --- | --- |
-| DEVA-01 — Find an artifact and follow its references | pending | All steps, modes and recovery branches pending. | — |
-| DEVA-02 — Explore the graph and export useful documentation | pending | All steps, modes and recovery branches pending. | — |
-| DEVA-03 — Understand what the site customizes | pending | All steps, modes and recovery branches pending. | — |
-| DEVA-04 — Add and revise entity fields in the owning layer | pending | All steps, modes and recovery branches pending. | — |
-| DEVA-05 — Model relationships, indexes and a view | pending | All steps, modes and recovery branches pending. | — |
-| DEVA-06 — Plan a table change and apply it deliberately | pending | All steps, modes and recovery branches pending. | — |
-| DEVA-07 — Edit seed records and verify loaded data | pending | All steps, modes and recovery branches pending. | — |
-| DEVA-08 — Define service inputs and outputs | pending | All steps, modes and recovery branches pending. | — |
-| DEVA-09 — Compose logic and connect an ECA rule | pending | All steps, modes and recovery branches pending. | — |
-| DEVA-10 — Simulate a service and retain a runnable fixture spec | pending | All steps, modes and recovery branches pending. | — |
-| DEVA-11 — Arrange the actual screen tree | pending | All steps, modes and recovery branches pending. | — |
-| DEVA-12 — Design and preview a screen before saving | pending | All steps, modes and recovery branches pending. | — |
-| DEVA-13 — Resolve buffered edits and a competing disk change | pending | All steps, modes and recovery branches pending. | — |
-| DEVA-14 — Verify the changed artifact through its consumer | pending | All steps, modes and recovery branches pending. | — |
+| DEVA-01 — Find an artifact and follow its references | exercised · partial | Found RoundReviewAppItem by name, followed its reference list (12 incoming edges) and opened Workspace with the generated artifact selected. Keyboard palette and role variants pending. | B01 |
+| DEVA-02 — Explore the graph and export useful documentation | exercised · partial | Opened graph and rendered documentation with a field table. Exported Entities for round-review-app into devw-git/review-docs. Verified the manifest and generated entity Markdown containing reviewNote. Diagram and alternate renderer checks remain open. | B01 |
+| DEVA-03 — Understand what the site customizes | exercised · partial | Customizations reported zero site extensions and zero broken. A broken-extension repair and a populated extension comparison remain pending. | B01 |
+| DEVA-04 — Add and revise entity fields in the owning layer | exercised · partial | Added reviewNote (text-medium) to the generated app, saved and reopened five fields. Disk XML confirmed the owner. Phone 390×844 explicitly displayed Read only below 1024 px; dialog localization and upstream extension branches pending. | entity-table.jpg; phone-readonly.jpg |
+| DEVA-05 — Model relationships, indexes and a view | exercised · partial | Compared empty relationship and index lists, added ReviewNoteIdx on reviewNote, saved and verified an index in XML. View members, relationship creation and recovery pending. | B01 |
+| DEVA-06 — Plan a table change and apply it deliberately | exercised · partial | Table initially showed four columns, then review_note text after Save reported one DDL statement. Verified the column in the generated table. Explicit type conversion and destructive rebuild confirmation pending. | entity-table.jpg |
+| DEVA-07 — Edit seed records and verify loaded data | exercised · partial | Opened Seed data twice with a site seed file present. No rows, explanation or actions appeared. Data inventory exposed the site seed file. Via Data → Workspace → Entity, edited a populated seed fixture, saved and loaded one record. Tools Grid reopened DEVA_SEED_01 with the edited value. Starting directly from the empty guided tab remains blocked by DEVA-UI-001. | seed.jpg |
+| DEVA-08 — Define service inputs and outputs | exercised · partial | Filtered services by component, opened create#Item and inspected its four inputs and one output. The generated entity supplied reviewNote(auto) and the Try input. Editing nested Map/List and output changes pending. | B01 |
+| DEVA-09 — Compose logic and connect an ECA rule | exercised · partial | Implementation displayed the create entity service call with context in/out. SECA rules showed zero and the Add a SECA rule in the site action. Logic composition and rule persistence pending. | B01 |
+| DEVA-10 — Simulate a service and retain a runnable fixture spec | exercised · partial | Try accepted itemName and reviewNote. Initial Run in sim hit a PostgreSQL Unix socket path limit. After shortening the runtime path, simulation returned virtual ID -1 and a proposed create row. Confirmed Run for real in the scratch DB and inspected itemId 100000. A reusable simulation spec remains pending. | sim.jpg |
+| DEVA-11 — Arrange the actual screen tree | exercised · partial | From /qapps opened the generated app tree. Items was the default, Item hidden, and both named their parent file and mount. New/move/remove and broken-reference recovery pending. | B01 |
+| DEVA-12 — Design and preview a screen before saving | exercised · partial | Opened FindItem designer, switched Text → Screen → Preview and selected 390px, then 1280px and Dark. Preview reported denied access for FindItem. After its grant propagated the preview contained the generated consumer row. Selecting NewItemDialog in Outline exposed its properties. Replacing button-text failed to update the preview or source (DEVA-UI-002). QVue companion and terminal preview remain pending. | screen-preview.jpg |
+| DEVA-13 — Resolve buffered edits and a competing disk change | exercised · partial | Staged conflictDemo via the guided field editor; changed the disposable XML on disk before Save. Compared both versions, took disk and reopened the five retained fields. Multi-file, terminal buffer expiry and overwrite branches pending. | guided-conflict.jpg |
+| DEVA-14 — Verify the changed artifact through its consumer | exercised · partial | Confirmed the changed entity field reached the generated service and Tools Grid. Reopened the grid and read item 100000, Review fixture, Round 20261125. Material Open in Workspace preserved entity, root and file. After the seeded grants took effect, the generated FindItem screen showed both 100000 and DEVA_SEED_01. | consumer-grid.jpg |
 
 ### Findings register
 
@@ -421,7 +421,8 @@ presentation; P3 is a localized refinement. Label evidence as observed behavior,
 
 | ID / severity | Actor, activity step, route, mode / viewport | Reproduction and impact | Evidence / owning layer | State / correction / retest |
 | --- | --- | --- | --- | --- |
-| — | — | No findings recorded. | — | — |
+| DEVA-UI-001 · P2 | ADMIN, DEVA-07, Material Entities/Edit, 1280×720 | Open RoundReviewAppItem in the modeler with the site seed file present. Choose Seed data. Its selected tab shows an empty pane. Returning after reload has the same outcome. Explain which file or records apply and how to start when the file has no applicable rows. | Observed, seed.jpg. Entity modeler seed panel. | Open. |
+| DEVA-UI-002 · P2 | ADMIN, DEVA-12, Material Screens/Design, generated FindItem | Choose Screen → Design → Outline → NewItemDialog. Replace “New item” in the button-text property, then leave the field with Tab. The field retains the new label, Save stays disabled, the canvas button keeps “New item”, and Text still shows the original XML. Repeated with a keyboard-typed replacement. Stage the property edit in the XML buffer, or explain why the change cannot be applied. | Observed, designer-property.jpg. Screen designer outline/property editor. | Open. |
 
 ### Bounded batch record
 
@@ -433,7 +434,13 @@ For each later batch record:
 - In refinement only: decisions, owning files/components, correction, focused verification commands/results and retest.
 - Temporary settings/grants/files/jobs restored, remaining cleanup and companion handoffs.
 
-No execution batches have been started.
+#### DEVA-B01 — 2026-11-25, generated app and site
+
+Reviewed at checkout 6d8bb49f8a7c on the isolated dev runtime, port 18765, Chicago. DEVW-B01 supplied round-review-app and round-review-site. After the dependency correction, the site loaded. It remained the first authoring target, with the scratch Git and app repositories configured as additional site roots. John Doe (ADMIN) used the built-in browser at measured 1280×720 and a second editor at measured 390×844. The latter displayed an explicit read-only width boundary. Designer preview sizes and theme choices are distinct from the outer viewport.
+
+The modeler saved reviewNote and ReviewNoteIdx to entity/RoundReviewAppEntities.xml. Its Table tab showed review_note text. The generated create service exposed reviewNote without a separate input definition. Simulation failed because its Unix socket path was 113 bytes; the service reported the required limit of 108. On explicit confirmation the real fixture write returned itemId 100000. Tools Grid reopened that row with the submitted field. After coordinating a shorter runtime path and restart, Run in sim showed its proposed row with virtual ID -1, and the generated FindItem consumer listed 100000 and DEVA_SEED_01. The real item and new field were independently visible in Tools. Extra evidence includes sim-short.jpg, seed-grid.jpg, generated-consumer.jpg and export.jpg. No product source changed and no automated suites ran.
+
+Local evidence is under `plans/ui-refinement-evidence/deva-20261125/`. The original generated source, reviewed writes and short conflict marker are confined to the disposable repositories. Actor variations, full guided terminal operations and recovery branches beyond the recorded steps remain pending.
 
 ## 7. Decisions
 

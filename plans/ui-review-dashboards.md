@@ -1,6 +1,6 @@
 # MR Moqui — UI review: Dashboards
 
-**Status — 2026-11-16:** planned; every activity pending. Source inspection only; no review or test results claimed.
+**Status — 2026-11-25.** DASH-B01 opened all 13 activities on the current release. Four findings concern unsupported dataset selection, misleading record times, the Analysis Run action and raw Git sync timestamps. Branch-level outcomes and remaining work are recorded in §6.
 
 Contents: [scope](#1-purpose-scope-and-sources) · [method](#2-review-method-and-refinement-criteria) ·
 [inventory](#3-screen-and-surface-inventory) · [activities](#4-end-to-end-activities) ·
@@ -376,19 +376,19 @@ execution records it; “exercised” never implies that all modes and recovery 
 
 | Activity | Status | Outcome / remaining branches | Evidence / findings |
 | --- | --- | --- | --- |
-| DASH-01 — Start from a trustworthy dashboard | pending | All steps, modes and recovery branches pending. | — |
-| DASH-02 — Explore a dataset and resume a saved search | pending | All steps, modes and recovery branches pending. | — |
-| DASH-03 — Explain a panel value down to allowed records | pending | All steps, modes and recovery branches pending. | — |
-| DASH-04 — Create and steward a usable dataset | pending | All steps, modes and recovery branches pending. | — |
-| DASH-05 — Build an analysis and a reusable panel | pending | All steps, modes and recovery branches pending. | — |
-| DASH-06 — Assemble, share and revise a dashboard | pending | All steps, modes and recovery branches pending. | — |
-| DASH-07 — Create a spreadsheet over admitted data | pending | All steps, modes and recovery branches pending. | — |
-| DASH-08 — Edit a shared spreadsheet and consume its range | pending | All steps, modes and recovery branches pending. | — |
-| DASH-09 — Schedule a report and resolve individual delivery outcomes | pending | All steps, modes and recovery branches pending. | — |
-| DASH-10 — Evaluate an alert and manage its audience or contacts | pending | All steps, modes and recovery branches pending. | — |
-| DASH-11 — Share and play a playlist unattended | pending | All steps, modes and recovery branches pending. | — |
-| DASH-12 — Annotate a result and synchronize definitions | pending | All steps, modes and recovery branches pending. | — |
-| DASH-13 — Reconcile access, embedded context and outputs | pending | All steps, modes and recovery branches pending. | — |
+| DASH-01 — Start from a trustworthy dashboard | exercised — partial | Author opened Monitor overview. Independent panels named unavailable datasets and retained their menus. A newly authored dashboard displayed its accessible rows. Star/recent, variables and restore remain pending. | DASH-B01 |
+| DASH-02 — Explore a dataset and resume a saved search | exercised — partial | After fresh login, rdr-sales showed four group-scoped rows. Filtering relatedEnumId:north returned RDR_E1 and E2, saved as ui-b01-north. Split and changed-query reopen pending. Default dataset and time display findings 001/002. | DASH-B01 |
+| DASH-03 — Explain a panel value down to allowed records | exercised — partial | Selected north from the owned dashboard table. Dashboard showed one filter and two northern rows. A table-cell click applies a filter. Dedicated Drill returned RDR_E3/E4 for Other. The aggregate-only panel returned counts and explained its source rows were restricted. Mixed-unit recovery pending. | DASH-B01 |
+| DASH-04 — Create and steward a usable dataset | exercised — partial | John Doe opened the admitted rdr-sales steward detail, scope field, rebuild control and Used in section. Author opened its four-row preview and the generic new dataset definition editor. Creating a separate DataDocument, invalid fields, admit/retire and rebuild pending. | DASH-B01 |
+| DASH-05 — Build an analysis and a reusable panel | exercised — partial | Author selected rdr-sales, Count of records and relatedEnumId in Analysis. Run returned the populated form without a result or explanation (003). Library listed rdr-panel and rdr-totals-panel. Explore independently created a working panel. | DASH-B01 |
+| DASH-06 — Assemble, share and revise a dashboard | exercised — partial | Saved dashboard ui-b01-dashboard, reopened its initial version, then added the saved Explore query and a CalcGrid panel. Shipped definitions remained distinct. Version 4 shared the dashboard with RDR_READER; the reader opened two northern rows in Standard. Opened comparison of versions 1 and 4. Restore remains pending. | DASH-B01 |
+| DASH-07 — Create a spreadsheet over admitted data | exercised — partial | Created B01 Calc review over Enumeration with report author’s narrow profile, added Sheet1, entered =2+3 and saved. Exported XLSX contains formula and cached value 5. Formatting, undo and stale refresh pending. | DASH-B01 |
+| DASH-08 — Edit a shared spreadsheet and consume its range | exercised — partial | Author shared B01 Calc review with RDR_READER. Reader reopened Sheet1 showing 5. Author saw reader presence and added Sheet1!A1 to the owned dashboard. CSV contains header 5 and no data rows, as described in the range dialog. Concurrent editor conflict/undo and revocation pending. | DASH-B01 |
+| DASH-09 — Schedule a report and resolve individual delivery outcomes | exercised — partial | Reports provided functional workbook and dashboard downloads. Personal PDF schedule 100000 refused no-address, then persisted after address setup. Send now → occurrence 100000, one render and one failed personal recipient. See B01 for retry outcome. Multi-dashboard composition and mixed group runs pending. | DASH-B01 |
+| DASH-10 — Evaluate an alert and manage its audience or contacts | exercised — partial | Created ui-b01-count over rdr-sales, opened explicit Evaluate now confirmation, observed last evaluated and Normal. History and delivery outcomes were separately visible. The rule was paused and showed Activate. Audience changes and firing/recovery remain pending. | DASH-B01 |
+| DASH-11 — Share and play a playlist unattended | exercised — partial | Created ui-b01-playlist/B01 rotation from B01 Review Dashboard. Playback offered Previous/Next, one dashboard, source rows and its CalcGrid panel. Group and signed-out playback, kiosk recovery and multi-item rotation pending. | DASH-B01 |
+| DASH-12 — Annotate a result and synchronize definitions | exercised — partial | Author saw the named monitor_annotations read refusal and gitSync update refusal. John Doe added a synthetic dashboard marker and opened the resulting indexed annotation list. Admin connected the fixture folder to local database-backed example-wiki, pushed zero files, tried Pull, and disabled the connection. Nonempty sync and conflict remain pending (004). | DASH-B01 |
+| DASH-13 — Reconcile access, embedded context and outputs | exercised — partial | Compared steward dataset detail against author preview; tested the shared workbook as reader; inspected XLSX and CSV download bytes. Standard reader opened the shared dashboard and the author launched Dashboards by keyboard in the browser terminal. Aggregate-only drill hid individual rows. Outsider, embedded mounts and additional TUI controls remain pending. | DASH-B01 |
 
 ### Findings register
 
@@ -397,7 +397,10 @@ presentation; P3 is a localized refinement. Label evidence as observed behavior,
 
 | ID / severity | Actor, activity step, route, mode / viewport | Reproduction and impact | Evidence / owning layer | State / correction / retest |
 | --- | --- | --- | --- | --- |
-| — | — | No findings recorded. | — | — |
+| DASH-UI-001 / P2 | Author, DASH-02, Explore, Material | With only CalcGrid range available, open Explore. The preselected service dataset immediately reports “a service dataset returns frames; run it as a report query”, then tells the reader to correct the query. The input is empty and no eligible alternative was offered. A reader needs a supported starting source or an actionable route to run a report query. | B01 03-default-explore.jpg, Explore default selection and error recovery. | Open |
+| DASH-UI-002 / P2 | Scoped author, DASH-02, Explore, Material | Filter rdr-sales by relatedEnumId:north. Both Nov 25 fixture records show 1970-01-01T00:00:00.000Z. Their surrounding-entry links carry a Nov 25, 2026 anchor and the exported _timestamp matches that anchor. The result time should use the dataset’s configured time field. | B01 06-filtered-records.jpg and dashboard-csv.zip; Explore.xml builds timestampText from four fixed names, while anchorTime uses the dataset timeField. | Open |
+| DASH-UI-003 / P1 | Scoped author, DASH-05, Analysis, Material | Select rdr-sales → Count of records → Group by relatedEnumId → Run. The URL contains dataset, aggregate, grouping and range. The form redisplays without a result, error or Save panel action. The same happened for ungrouped count. The four source rows are visible in DatasetView. | B01 07-run-without-result.jpg. The Analysis screen expects the run submit parameter and ReportAnalysis.view gates evaluation on it. The observed URLs omitted it. | Open |
+| DASH-UI-004 / P3 | Administrator, DASH-12, Git sync, Material | Add local database-backed example-wiki with folder UI review and directory review-b01, then Push now. Last push displays a raw 13-digit epoch (1795607783560), making the time of the last sync difficult to read. Format the time in the viewer’s zone. GitSync.xml displays the returned numeric date directly. Unlike 002, this surface has the correct timestamp and needs presentation formatting. | B01 20-git-sync-times.jpg, GitSync list rendering. | Open |
 
 ### Bounded batch record
 
@@ -409,7 +412,15 @@ For each later batch record:
 - In refinement only: decisions, owning files/components, correction, focused verification commands/results and retest.
 - Temporary settings/grants/files/jobs restored, remaining cleanup and companion handoffs.
 
-No execution batches have been started.
+### DASH-B01 — Framework report author and reader, 2026-11-25
+
+Current maximal release at `6d8bb49f8a7c`, fresh six-component runtime on local port 18765. Browser hosts dashauthor, dashreader and dashadmin separated identities. The author and reader held RDR_A and RDR_READER. The author used the review-enum CalcGrid profile. Refreshing the author’s sign-in after fixture setup exposed rdr-sales and rdr-totals. John Doe supplied the separate steward control. The 13 ledger rows above describe the steps walked. No regression or acceptance suite was used as review evidence.
+
+**Artifacts and state.** Evidence is under ignored `plans/ui-refinement-evidence/dashboards/B01/`. The author saved `ui-b01-north`, `ui-b01-dashboard`, `ui-b01-playlist` and `calc-b01-calc-review-18eb4714`. The report preview downloads returned HTML with embedded download links. The decoded XLSX had Enumeration and Sheet1; Sheet1 A1 stored formula 2+3 and value 5. The dashboard CSV bundle held the two northern rows and a one-cell Calc panel filename. The expected first-row-as-heading rule explains why the one-cell range has no data rows in the dashboard. The recipient detail for schedule 100000 recorded the first delivery as failed. The server identified an empty From on DASHBOARD_REPORT; the original failure produced no SMTP receipt.
+
+**Delivery recovery.** The original failed run correctly refused Retry after pausing had changed its schedule revision. The coordinator set the synthetic From address on DASHBOARD_REPORT and its local relay. A fresh occurrence after resuming showed Complete / 1 sent. The loopback sink captured the expected subject and review.report.author@review.invalid with one 72,865-byte PDF attachment (delivered-report.pdf). The schedule was paused again.
+
+**Rechecks and modes.** On a fresh signed-in hostname, Analysis Run again navigated to the grouped query URL without a run parameter. After network idle and disappearance of the progress indicator, no result, failure or Save panel control appeared (21-fresh-analysis.jpg). The dedicated Drill screen reported each dataset’s access correctly. The Other bucket showed E3 and E4; rdr-totals-panel exposed count 2 for each bucket and explained that the source records were restricted. Additional evidence covers the 390px Analysis form, 1920px dark appearance, the Standard reader dashboard, and the author’s keyboard-opened Dashboards list in the browser terminal. Modal, query-race, multieditor, provider and access branches not individually recorded in the ledger remain pending.
 
 ## 7. Decisions
 
