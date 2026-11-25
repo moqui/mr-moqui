@@ -93,6 +93,12 @@ object Native {
 
     @JvmStatic external fun callTell(what: String, json: String)
 
+    /** An encoded VP8 frame of the screen share for its leg (`ScreenShare`, Rust's `screen.rs`). */
+    @JvmStatic external fun screenFrame(data: ByteArray, ptsUs: Long)
+
+    /** The screen share's projection stopped: its leg goes. */
+    @JvmStatic external fun screenEnded()
+
     /**
      * Tell the shell's call screen what the native call did (`audio`: its route and routes; `pip`: picture-in-picture
      * on or off; `hold`: Telecom holds or resumes the call), when the library is loaded; nothing otherwise.

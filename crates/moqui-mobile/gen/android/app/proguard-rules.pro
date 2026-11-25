@@ -29,6 +29,7 @@
 # The native code Rust calls (the page's call state) and the library's entry points (src/native.rs).
 -keep class org.moqui.mobile.CallManager { *; }
 -keep class org.moqui.mobile.CallAudio { *; }
+-keep class org.moqui.mobile.ScreenShare { *; }
 -keep class org.moqui.mobile.Native { *; }
 -keep class org.moqui.mobile.ActivityEnd { *; }
 # Rust calls the notification check by name (src/android.rs push_check_state, push_check_fix)

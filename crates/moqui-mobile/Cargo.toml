@@ -39,6 +39,9 @@ getrandom = { version = "0.4", features = ["std"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 log = "0.4"
+# The native screen share's leg (plans/MM-Spike.md): a WebRTC client of the media server, the workspace's str0m on the
+# aws-lc-rs crypto rustls already links here.
+str0m = { version = "0.25.0", default-features = false, features = ["aws-lc-rs"] }
 # moqui-client logs through tracing: with no subscriber its events go to log, so to logcat.
 tracing = { version = "0.1", features = ["log"] }
 

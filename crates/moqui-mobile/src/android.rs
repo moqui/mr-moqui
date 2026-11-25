@@ -681,3 +681,72 @@ fn app_class<'local>(env: &mut Env<'local>, app: &JObject<'_>, name: &JNIStr) ->
     let loader = env.cast_local::<JClassLoader>(loader)?;
     LoaderContext::Loader(&loader).load_class(env, name, true)
 }
+
+/// The screen share's encoder makes a keyframe now (`ScreenShare.keyframe`): a new subscriber, a PLI or FIR.
+pub(crate) fn screen_keyframe() {
+    if let Err(err) = with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.ScreenShare"))?;
+        env.call_static_method(&class, jni_str!("keyframe"), jni_sig!("()V"), &[])?;
+        Ok(())
+    }) {
+        log::warn!("Screen leg: no keyframe was asked: {err}");
+    }
+}
+
+/// The screen share's encoder to `bps` (`ScreenShare.bitrate`), from the leg's bandwidth estimate.
+pub(crate) fn screen_bitrate(bps: u64) {
+    let bps = i32::try_from(bps).unwrap_or(i32::MAX);
+    if let Err(err) = with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.ScreenShare"))?;
+        env.call_static_method(&class, jni_str!("bitrate"), jni_sig!("(I)V"), &[JValue::Int(bps)])?;
+        Ok(())
+    }) {
+        log::warn!("Screen leg: the bitrate was not set: {err}");
+    }
+}
+
+/// The screen leg's connection ended: the projection and its notification go (`ScreenShare.legEnded`).
+pub(crate) fn screen_leg_ended() {
+    if let Err(err) = with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.ScreenShare"))?;
+        env.call_static_method(&class, jni_str!("legEnded"), jni_sig!("()V"), &[])?;
+        Ok(())
+    }) {
+        log::warn!("Screen leg: the projection was not told it ended: {err}");
+    }
+}
+
+/// Ask for the system's consent to capture the screen, then start the share (`ScreenShare.request`): whether asked.
+pub(crate) fn screen_request() -> Result<bool, String> {
+    with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.ScreenShare"))?;
+        env.call_static_method(
+            &class,
+            jni_str!("request"),
+            jni_sig!("(Landroid/content/Context;)Z"),
+            &[JValue::Object(app)],
+        )?
+        .z()
+    })
+}
+
+/// End the share from the page (`ScreenShare.stop`): the projection, the encoder and the notification.
+pub(crate) fn screen_stop() -> Result<(), String> {
+    with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.ScreenShare"))?;
+        env.call_static_method(&class, jni_str!("stop"), jni_sig!("()V"), &[])?;
+        Ok(())
+    })
+}
+
+/// The share's state on the native side as JSON (`ScreenShare.state`): consent, capture size, frames encoded, times.
+pub(crate) fn screen_state() -> Result<String, String> {
+    with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.ScreenShare"))?;
+        let state = env
+            .call_static_method(&class, jni_str!("state"), jni_sig!("()Ljava/lang/String;"), &[])?
+            .l()?;
+        let state = env.cast_local::<jni::objects::JString>(state)?;
+        state.try_to_string(env)
+    })
+}

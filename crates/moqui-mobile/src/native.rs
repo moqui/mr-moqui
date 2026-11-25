@@ -1277,6 +1277,30 @@ mod entries {
         .resolve::<LogErrorAndDefault>();
     }
 
+    /// `Native.screenFrame(data, ptsUs)`: an encoded VP8 frame of the screen share, for its leg (`crate::screen`).
+    #[no_mangle]
+    pub extern "system" fn Java_org_moqui_mobile_Native_screenFrame<'caller>(
+        mut env: EnvUnowned<'caller>,
+        _class: JClass<'caller>,
+        data: JByteArray<'caller>,
+        pts_us: jlong,
+    ) {
+        env.with_env(|env| -> Result<(), jni::errors::Error> {
+            crate::screen::frame(env.convert_byte_array(&data)?, pts_us);
+            Ok(())
+        })
+        .resolve::<LogErrorAndDefault>();
+    }
+
+    /// `Native.screenEnded()`: the projection stopped (the user, the system, another app's share): the leg goes.
+    #[no_mangle]
+    pub extern "system" fn Java_org_moqui_mobile_Native_screenEnded<'caller>(
+        _env: EnvUnowned<'caller>,
+        _class: JClass<'caller>,
+    ) {
+        crate::screen::stop();
+    }
+
     /// The client's directory under the app's data directory, as the app's setup has it (`app_data_dir()/client`).
     fn client_dir(data_dir: &str) -> PathBuf {
         PathBuf::from(data_dir).join("client")

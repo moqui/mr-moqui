@@ -43,6 +43,7 @@ mod keystore;
 mod native;
 mod push;
 mod scheme;
+mod screen;
 
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -137,6 +138,12 @@ pub fn run() {
             commands::call_audio,
             commands::call_audio_route,
             commands::secure_screen,
+            commands::screen_start,
+            commands::screen_offer,
+            commands::screen_answer,
+            commands::screen_remote_offer,
+            commands::screen_stop,
+            commands::screen_status,
             commands::calendar_insert,
             commands::call_dial_account,
             commands::call_dial_choice,
