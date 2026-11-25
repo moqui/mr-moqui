@@ -488,7 +488,7 @@ places and puts an IDE in them:
   in the browser.
 - **Search in files**: `git grep` in a repository (its `.gitignore` respected), a walk of the directory in a plain root;
   text or a regular expression, case, a path filter; the results in the bottom panel, each opening its line. Replace
-  across files is later.
+  across files is later (as built, `search#Files` only; §18's Remaining list).
 - The shell's app drawer is closed while the Workspace is the page (its menu button opens it), and the Workspace takes
   the window's height with no page scroll.
 - Below 1024 px the Workspace reads only: the tree, a file, Changes as a list, the browser in vertical orientation.
@@ -619,6 +619,9 @@ the same way by §21.
   `update:modelValue`, `save` and `cursor`, and gives the dev-aide its `EditorView`. In an XML screen,
   `text-area editor-type="code"` with a new `language` attribute puts it in a form (the SQL runner, Service Run's JSON,
   a script field). It follows the shell's dark mode and the user's font size and keymap (default or VS Code; Vim later).
+  As built: the font size is fixed at 13 px (`WebrootCode.js`), and there is one keymap, CodeMirror's default with
+  the common VS Code bindings: `@replit/codemirror-vscode-keymap` was left out in P1a (it carries no license text,
+  §18). No Vim keymap, and no second bundle of legacy modes, yet.
 - highlight.js stays for `code-view` and for code blocks in Markdown.
 
 ### 5.2 One buffer, many views
@@ -752,7 +755,8 @@ reload log and the agents (`check` with no file, §13.2).
 ### 6.3 The watcher
 
 On a dev instance of a package with `devtools` (Dev and Debug, §3.3; since Nov 2, 2026 Maximal, the default, and
-Debug), with `dev-reload` on (it is when `instance@purpose` is dev, unless turned off), a file watcher (the `notify`
+Debug), with `dev-reload` on (it is when `instance@purpose` is dev, unless turned off; `instance_purpose` until
+Conf-Paths renamed it, Nov 18, 2026), a file watcher (the `notify`
 crate: inotify, FSEvents, ReadDirectoryChangesW; through the license gate and `deny.toml`) watches every component
 directory except `runtime/db`, `log`, `tmp` and `target`. It waits 300 ms after the last event (an editor's
 write-and-rename is one change) and calls the reload for what changed. It is the framework's, so an agent or an editor
@@ -1540,6 +1544,9 @@ framework's:
 <dev-reload debounce-ms="300"/>   <!-- on when instance@purpose is dev; enabled="false" turns it off -->
 ```
 
+The comment above said `instance_purpose`, the setting's name until Conf-Paths made it `instance@purpose` (Nov 18,
+2026).
+
 ---
 
 ## 17. Framework changes
@@ -1560,7 +1567,7 @@ framework's:
 | F12 | Assist: approval target kind `file` with its hand-off to the editor and its card as artifacts with Preview (§13.3); the page state's `editor` part in the tail; `moqui.assist.codeActions`; the `$bridge` mixin for `.qvue` screens (P9). The shell: a page may keep the app drawer closed while it is the page; "Customize this screen" in the page menu and the drawer's header on dev instances (D18) | `llm/approval/`, `llm/assist/state.rs`, `webroot/js/WebrootAssist.js`, `WVQ` |
 | F13 | `moqui refs` and `moqui check` (`--json`, `--extensions`, a stable exit code, the changed files by default) and the coding-agent skill; later `moqui lsp`, under `devtools` (built in P9) | `crates/moqui-host/src/`, `fw/skill/` |
 | F14 | A request-scoped location overlay: a screen renders from unsaved or proposed text standing at its location for one request (the Preview of §13.3, the builder's buffer of §11.2, the dialects of §13.5), in P4; services from proposed text later | `core/context/resource.rs`, `core/screen/cache.rs` |
-| F15 | Later: Yjs out of the Tiptap bundle into its own, for co-editing code with `y-codemirror.next` on the existing rooms | `runtime/components/base/webroot/build/libs/refresh.mjs` (run by `./moq build-js`), `collab/` |
+| F15 | Later: Yjs out of the Tiptap bundle into its own, for co-editing code with `y-codemirror.next` on the existing rooms | `webroot/libs/refresh.mjs` (since Nov 22, 2026 `runtime/components/base/webroot/build/libs/refresh.mjs`, run by `./moq build-js`), `collab/` |
 | F16 | `screen-extend` strengthened (D17): `widgets-extend where="prepend|append"` inside a named container (the XSD's FUTURE); a form merge that places a merged field in the form's `field-layout`, and a merged `form-list-column`, by `after="fieldName"`; the order of several components' extensions of one screen stated (component load order, as entities); stamps carry the writing file (F10); a `moqui lint --screens` rule for unnamed containers in base screens, so upstream authors add anchors | `core/screen/definition.rs`, `core/screen/form.rs`, `fw/xsd/mr-xml-screen.xsd`, `devkit/screen_lint.rs` |
 | F17 | §21.2: a dev instance signs in to a group server as an installed app does (`core/service/sso_app.rs`), with a loopback redirect URI, and after the server's own login where it has no identity provider; it gets a login key as the Desktop app gets a device key | `core/service/sso_app.rs`, `crates/moqui-host/src/sso.rs` |
 | F18 | §21.3, §21.7: REST on the hosting side for what a client asks first: what the server offers, the repository of a clone URL with the caller's rights and its settings, and whether an author has signed a repository's agreement. The merge request, thread and pipeline resources are [Dogfood](Dogfood.md#12-framework-changes) F9 | `runtime/components/base/tools/service/moqui.rest.xml`, `crates/moqui-git/src/service/hosting.rs` |
@@ -2074,11 +2081,11 @@ merge request `cargo lint`, `cargo lint-min`, `scripts/check-packages.sh`, `./mo
 - **Not built:** the optional remote (git init only, as for a site), and the data only, native, theme, skill pack and
   dev tool kinds.
 
-**Remaining** (Nov 25, 2026): every open item of the records above and of §19 to §21, one a line. It is to be built
-in the order of a finishing plan of the same day, whose Phases 1 to 8 (named here as Phase n, not one of P1a to P13)
-take P10 too; each line is struck, with the date, when its phase records it built.
+**Remaining** (Nov 25, 2026): every open item of the records above and of §19 to §21, one a line, grouped by area;
+the finishing work, P10 included, was begun Nov 25. Each line is struck, with the date, when a record above says it
+is built; an item decided against says so.
 
-*Small leftovers (Phase 1)*
+*Small leftovers*
 - `DEV_AIDE_PUBLISH_BRANCH` as an enumerated preference key, so the System User screen offers it (P2, §16).
 - The Workspace asks the shell to start with its app drawer closed (P2, §4.3, F12).
 - Unsaved text in IndexedDB behind the same small API, with the `localStorage` drafts moved over once (P2, §5.2).
@@ -2090,7 +2097,7 @@ take P10 too; each line is struck, with the date, when its phase records it buil
 - Quick create files an issue in the repository's tracker, and Branch names a branch from an issue (§21.6).
 - The projects linked to the repository first in the task panel (§21.3, P8).
 
-*Editor, agent and hosting gaps (Phase 2)*
+*Editor, agent and hosting gaps*
 - Nested service parameters in the browser's service view: Add child, Edit and Remove by the parameter's path (D14).
 - A `.qvue` tab with its XML: Design renders the unsaved sibling XML too, and one tab holds both files (P9).
 - A gitECA rule's condition tried against a push from the push log, `GitUpdate` (§10, P7).
@@ -2098,8 +2105,9 @@ take P10 too; each line is struck, with the date, when its phase records it buil
 - Run locally in the job's image when Docker or Podman is there (question 20, P13).
 - Scoped connection keys: a `tasks` scope, the app sign-in keeping `git`, `tasks` and `gateway` keys in place of the
   account's, the routes that take each, and Remove revoking all three (question 18).
+- "Open on the server" for a file, a commit and a branch; only merge requests, statuses and remotes have it (§21.3).
 
-*Index gaps, LSP rename and code actions (Phase 3)*
+*Index gaps, LSP rename and code actions*
 - A view entity's `alias-all` aliases, and an alias's key and type (§7.1).
 - A parameter declared before `auto-parameters` merged in Moqui's order (§7.1).
 - REST methods bound to their service's parameters (§7.1, P3).
@@ -2107,7 +2115,7 @@ take P10 too; each line is struck, with the date, when its phase records it buil
 - `moqui lsp` rename through the index's references, refused where a reference is unresolved or upstream (P9).
 - `moqui lsp` code actions from the check rules that know a fix, and the coding-agent skill updated (P9).
 
-*Tests (Phase 4)*
+*Tests*
 - The restart's re-exec: a new pid answers after `restart#Server` (§19).
 - A page test of the change-set card's artifact summary from a patch (§19).
 - A pty test of `open#TerminalSession` `input` (P13).
@@ -2117,36 +2125,45 @@ take P10 too; each line is struck, with the date, when its phase records it buil
 - A browser smoke of group servers: Connect, a merge request, a review thread in the merge view with a reply (P11, P12).
 - A browser smoke of an agent session in a worktree (P13).
 
-*Sim and the composer, P10a (Phase 5)*
+*Sim and the composer (P10)*
 - F14 for services: Try and `try_service` run the service as the tab's unsaved buffer or a proposal defines it.
 - A trace of a Try on the composer's blocks: run, not run or failed, with counts and values.
 - ECA rules against recorded contexts, saved as fixtures, with Save as spec on a rule.
 
-*New components, rebuild, DbForm conversion, P10b (Phase 6)*
+*New components, rebuild, DbForm conversion (P10)*
 - The template's data only, native, theme, skill pack and dev tool kinds, each tested both ways (§12).
 - An optional remote when a component is created (§12).
 - Rebuild from the app: `rebuild#Server` in a host session, then Restart (§6.5).
 - Convert to site extension for a DbForm row on Customizations, one way (§7.2, question 16).
 
-*Three-way data load and hosted roots, P10c (Phase 7)*
+*Three-way data load and hosted roots (P10)*
 - The three-way data load for Load the changed records, with a baseline per file and user (§12).
 - Hosted roots: a hosted repository at a branch, each Save a commit through the hosting services (§4.10).
 
-*Co-editing and a TypeScript checker, P10d (Phase 8)*
+*Co-editing and a TypeScript checker (P10)*
 - F15: Yjs in its own library with `y-codemirror.next`, a text room per root and file on the `moqui-collab` rooms.
 - A TypeScript checker in a browser worker over the project's `moqui types` declarations (question 10).
 
-*Not in a phase yet*
-- The WASM build of `xml_edit` for the views (§5.2; `apply#XmlOps` serves them, P1b).
-- "Customize this screen" in the shell's page menu: the shell has none, so it is in the drawer's header (P4).
-- Editor settings (font size, keymap, wrap, tab size) and `keymap` rows a user rebinds (§3.5, §16).
-- A `screen-xml` preview that shows "would post" for a write and has its own time limit and tarpit count (question
-  9); the read fence refuses the write (P4).
+*The editor*
+- Editor settings: font size, keymap, wrap, tab size and whitespace (`DEV_AIDE_EDITOR`, §5.1, §16).
+- `keymap` rows a user rebinds: Go to file, Go to artifact, Search in files and Save (§3.5).
+- A Vim keymap (§5.1).
+- A second bundle of legacy language modes for the other languages (§5.1).
+- Replace across files; Search in files has no replace service (§4.3).
+
+*Decided against* (Nov 25, 2026)
+- The WASM build of `xml_edit` for the views (§5.2): decided; P5 made the server's outline (`get#XmlOutline`,
+  `apply#XmlOps`) the one parser of what a view edits.
+- "Customize this screen" in the shell's page menu (D18, F12): decided; the shell has no page menu, and the Assist
+  drawer's header holds it (P4).
+- A `screen-xml` preview that shows "would post" for a write, with its own time limit and tarpit count (question 9,
+  §13.5): decided; P4 refuses the write under the read fence instead.
 
 *Checks not run (for Testing-Needed when the plan is archived)*
 - The dev agent's live-model run, `--agents --llm-profile`, which costs API spend (P4, §19).
 - A job's log and failed tests against a real CI run (P12).
-- The first Windows run of the dev-aide's tests, once Phase 4 adds them.
+- The first Windows run of the dev-aide's tests, once `windows.yml` runs them.
+- Smithy's side of P11, checked by its REST contract only.
 - The terminal twins walked by hand ([ui-review-dev-aide-authoring](ui-review-dev-aide-authoring.md)).
 
 ---
@@ -2278,11 +2295,12 @@ take P10 too; each line is struck, with the date, when its phase records it buil
 18. **The connection's token** (§21.2, §21.9). It is a login key of the user, with all of the user's rights on the
     group server. A token limited to git, tasks and the gateway would be safer on a shared dev-aide server. Proposed:
     later, with scoped tokens on the hosting side; until then a shared server's users each connect as themselves.
-    - Partly answered Nov 14, 2026 (P12): keys have a scope (`UserLoginKey.scope`): `gateway`, a key for the LLM
-      gateway alone that Connect writes (`create#UserScopedKey`; nothing else takes it), and `git`, an
-      access token, which git over HTTP and the git REST take. The connection itself still holds the account's login
-      key from the app sign-in; a `tasks` scope, and the connection keeping scoped keys in place of the account's, are
-      in the Remaining list (§18).
+    - Partly answered. Nov 14, 2026 (P12, a49770031): keys have a scope (`UserLoginKey.scope`), and `gateway` is a
+      key for the LLM gateway alone that Connect writes (`create#UserScopedKey`; nothing else takes it). Nov 16, 2026
+      (85f2033be, SEC-PFS-61): `git`, an access token (`ACCESS_TOKEN_SCOPE`, `core/user/login.rs`), which git over
+      HTTP and the git REST take. The connection itself still holds the account's login key from the app sign-in; a
+      `tasks` scope, and the connection keeping scoped keys in place of the account's, are in the Remaining list
+      (§18).
 19. **Worktrees and live reload** (§21.8). A second working tree of a component cannot be loaded beside the first, so
     an agent's worktree is edited, checked and committed but not run live. Proposed: accept it; a session that needs
     the running server works in the main tree.
