@@ -213,6 +213,7 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.Enumeration description="Guest browser" enumId="CltGuest" enumCode="guest" enumTypeId="CallLegType" sequenceNum="2"/>
             <moqui.basic.Enumeration description="Desk or soft phone" enumId="CltSipDevice" enumCode="sipDevice" enumTypeId="CallLegType" sequenceNum="3"/>
             <moqui.basic.Enumeration description="Phone number" enumId="CltPstn" enumCode="pstn" enumTypeId="CallLegType" sequenceNum="4"/>
+            <moqui.basic.Enumeration description="Native screen share" enumId="CltScreen" enumCode="screen" enumTypeId="CallLegType" sequenceNum="5"/>
 
             <moqui.basic.StatusType description="Call Leg" statusTypeId="CallLeg"/>
             <moqui.basic.StatusItem statusId="ClsOffered" statusTypeId="CallLeg" sequenceNum="1" description="Ringing"/>

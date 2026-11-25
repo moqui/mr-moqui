@@ -37,7 +37,7 @@ const QUEUE_ENTRY = 'moqui.call.CallQueueEntry'
 const OPEN_TRANSFER = ['CtsRinging', 'CtsConsulting']
 const TRANSFER_CODES = { CtsRinging: 'ringing', CtsConsulting: 'consulting', CtsCompleted: 'completed', CtsCanceled: 'canceled', CtsFailed: 'failed' }
 const IDENTITY_CODES = { CikLocal: 'local', CikGuest: 'guest', CikPhone: 'phone' }
-const LEG_TYPE_CODES = { CltWeb: 'web', CltGuest: 'guest', CltSipDevice: 'sipDevice', CltPstn: 'pstn' }
+const LEG_TYPE_CODES = { CltWeb: 'web', CltGuest: 'guest', CltSipDevice: 'sipDevice', CltPstn: 'pstn', CltScreen: 'screen' }
 
 /** Seconds a call rings before it is missed. */
 const ringSeconds = () => Math.max(10, Number(ec.factory.getConfValue('calls@ring-seconds') || 45))
@@ -76,8 +76,8 @@ const one = (entity, fields) => find(entity).condition(fields).one()
 const rows = (entity, fields) => Array.from(find(entity).condition(fields).list())
 /** A desk or soft phone's leg (V4), which the SIP engine rings and answers; a user's own legs in the browser are the others. */
 const isDeviceLeg = (leg) => leg.legTypeEnumId === 'CltSipDevice'
-/** A user's own leg in a browser: not a phone's (V4) nor a number dialed for them (V3). */
-const isTabLeg = (leg) => !isDeviceLeg(leg) && leg.legTypeEnumId !== 'CltPstn'
+/** A user's own leg in a browser: not a phone's (V4) nor a number dialed for them (V3), nor a native screen share's. */
+const isTabLeg = (leg) => !isDeviceLeg(leg) && leg.legTypeEnumId !== 'CltPstn' && leg.legTypeEnumId !== 'CltScreen'
 /**
  * A forwarded leg (V3): a number dialed for a user (their mobile, a forward; the leg is under their participant) or for a
  * ring group's fallback (a phone participant with the role CprForward). The other phone legs are the far end's.
@@ -1256,6 +1256,33 @@ function move(p) {
   session.update()
   pushState(session, 'moving', { callLegId: leg.callLegId, fromLegId: from.callLegId })
   return { callLegId: leg.callLegId, movedFromLegId: from.callLegId, call: view(session, me) }
+}
+
+/**
+ * The native screen share's leg (plans/Comms-Whiteboard.md §3.6, plans/MM-Spike.md): a second answered leg of the
+ * caller's own participant (CltScreen) that publishes only the screen. The caller's page relays its rtc frames on its own
+ * socket (bind#Connection checks the leg is the socket user's), and asks for the stage with it. One at a time: an older
+ * one closes. Not in an end-to-end encrypted call until the app has SFrame (bindLeg refuses it there too).
+ */
+function addScreenLeg(p) {
+  const me = currentUser()
+  const session = me && p.callSessionId ? lockSession(p.callSessionId) : null
+  if (!session || !canSee(session, me)) return refuse('notFound', 'Call not found')
+  if (session.statusId === 'CssEnded') return refuse('callEnded', 'The call has ended')
+  if (isE2ee(session)) return refuse('e2eeScreen', 'Sharing the phone screen is not available in an end-to-end encrypted call yet')
+  const participant = participantOf(session.callSessionId, me)
+  const answered = participant && participant.admissionStatusId === 'CasAdmitted'
+    ? rows(LEG, { callParticipantId: participant.callParticipantId, statusId: 'ClsAnswered' }) : []
+  if (!answered.some((leg) => leg.legTypeEnumId === 'CltWeb')) return refuse('notInCall', 'Join the call before sharing your screen')
+  for (const old of answered.filter((leg) => leg.legTypeEnumId === 'CltScreen')) {
+    closeLeg(old, 'ClsLeft', 'CerCanceled')
+    mediaControl(session, { action: 'closeLeg', callLegId: old.callLegId })
+  }
+  const leg = makeLeg(session, participant, 'ClsAnswered', 'CltScreen')
+  bump(session)
+  session.update()
+  pushState(session, 'screenLeg', { callLegId: leg.callLegId })
+  return { callLegId: leg.callLegId, call: view(session, me) }
 }
 
 /**
@@ -2898,6 +2925,7 @@ const operations = {
     const g = guestOf(p.credential)
     return g ? {callGuestId:g.guest.callGuestId,callSessionId:g.participant.callSessionId,callLinkId:g.guest.callLinkId} : {}
   },
+  addScreenLeg,
   changeStage: p => stageRules.change(p, { lockSession, guestOf, mediaControl, bump, refuse, linkOwner }),
   preferences, setPreferences, setShareMode,
   addPhoneLeg, offerUsers, closeUserLegs, closePhoneLeg, transferLeave, setHeld, setKind, mergeInto, context,

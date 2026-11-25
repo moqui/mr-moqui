@@ -193,6 +193,22 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Calls.js').execute('move', context))</script></actions>
     </service>
 
+    <service verb="add" noun="ScreenLeg">
+        <description>The mobile app's native screen share (plans/Comms-Whiteboard.md §3.6): a screen leg (CltScreen) of the
+            user's own participant, which publishes only the screen. The user's page relays its rtc frames on its own socket
+            and asks for the stage with it. notInCall for a user with no answered browser leg in the call; e2eeScreen in an
+            end-to-end encrypted call (the app has no SFrame yet).</description>
+        <in-parameters>
+            <parameter name="callSessionId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="callLegId"/>
+            <parameter name="call" type="Map"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Calls.js').execute('addScreenLeg', context))</script></actions>
+    </service>
+
     <service verb="hold" noun="OwnLeg">
         <description>Call waiting (plans/Comms-Messaging.md §8.3 item 7): the user puts their own leg in a call on hold
             (held true), to answer another call, or takes it off (held false; the leg binding again does that too). The leg
