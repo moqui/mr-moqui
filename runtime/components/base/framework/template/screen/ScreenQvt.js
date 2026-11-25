@@ -2936,6 +2936,18 @@
         return attr(node, "condition") ? `if (${attr(node, "condition")}) {\n${body}}\n` : body;
     });
 
+    // map-view (plans/Maps.md §3.2): an m-map with its configuration (ScreenSupport's mapViewExpr, checked: WGS84, longitude first)
+    // as the value of a bound attribute, JSON, never template text, so nothing in a label is compiled; the effective
+    // configuration's transition as config-url, the height and the class. Nothing for a false condition.
+    const mapViewWidget = stmt((node) => {
+        const transition = attr(node, "config-transition");
+        const url = transition ? `((u) => (u.getDisableLink() ? null : u.path))(sri.makeUrlByType(${lit(transition)}, "transition", ${bareLit(node)}, "true"))` : "null";
+        const style = attr(node, "style");
+        const body = `{ const $map = ${S.mapViewExpr(node, false)};\nsri.write("<m-map" + $v.A({id: ${nodeIdCode(node)}, ":config": $v.js($map.config), ` +
+            `"config-url": ${url}, height: $map.height, class: ${style ? noL10n(style) : "null"}}) + "></m-map>\\n");\n}\n`;
+        return attr(node, "condition") ? `if (${attr(node, "condition")}) {\n${body}}\n` : body;
+    });
+
     const dashboardMacro = stmt((node) => {
         const minWidth = parseInt(attr(node, "min-width") || "", 10);
         const gridStyle = minWidth > 0 ? `--m-dashboard-min:${minWidth}px` : "";
@@ -3100,6 +3112,7 @@
         "context": widget("screenContext", false),
         "report-panel": reportWidget,
         "report-dashboard": reportWidget,
+        "map-view": mapViewWidget,
         "report-embed": reportWidget,
         "dashboard": dashboardMacro,
         "number-card": widget("numberCard", false),

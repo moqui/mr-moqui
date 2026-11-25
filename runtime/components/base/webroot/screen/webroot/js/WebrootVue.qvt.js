@@ -8121,6 +8121,63 @@
         }
     });
 
+    // m-map (plans/Maps.md §3.2), the map-view element: js/WebrootMap.js, the vendored OpenLayers bundle and its style sheet,
+    // loaded once when the first map mounts, then m-map-view of that file drawn by its definition (as m-diagram-zoom draws
+    // m-pan-zoom). The bundle failing is passed on as library-error, so m-map-view lists the places in its place; until the file
+    // has loaded, and when it cannot, the places are listed here, so a record's actions stay usable. config is the map's
+    // configuration (an object or its JSON; the shape is in js/WebrootMap.js), config-url a transition answering the effective
+    // one. Emits pick ({lon, lat}), select and view-change.
+    let mapLoad = null;
+    const loadMap = () => mapLoad || (mapLoad = Promise.all([
+        moqui.loadScript("/js/WebrootMap.js", null, () => !!(moqui.map && moqui.map.components)),
+        (moqui.loadStylesheet("/libs/openlayers/ol.css"), moqui.loadScript("/libs/openlayers/ol-map.min.js", null, () => !!root.MoquiOl))
+            .then(() => "", (err) => String(err && err.message || err || "OpenLayers did not load"))
+    ]).then(([, libraryError]) => libraryError, (err) => { mapLoad = null; throw err; }));
+    component("m-map", {
+        name: "mMap",
+        props: { id: String, config: [Object, String], configUrl: String, height: String, pick: Boolean },
+        emits: ["pick", "select", "view-change"],
+        data() { return { view: null, libraryError: "", failed: "" }; },
+        computed: {
+            // the places given, for the list shown while the map loads or when it cannot
+            places() {
+                let config = this.config;
+                if (typeof config === "string") { try { config = JSON.parse(config); } catch (err) { config = null; } }
+                const points = config && Array.isArray(config.points) ? config.points : [];
+                // a number, or NaN for nothing (Number(null) would be 0, a real coordinate)
+                const num = (value) => (value === null || value === undefined || String(value).trim() === "" ? NaN : Number(value));
+                const first = (point, a, b) => (point[a] !== undefined && point[a] !== null ? point[a] : point[b]);
+                return points.filter((point) => point && typeof point === "object").map((point, index) => ({ key: index, label: String(point.label || ""),
+                    lat: num(first(point, "lat", "latitude")), lon: num(first(point, "lon", "longitude")),
+                    details: [first(point, "precision", "precisionEnumId"), first(point, "source", "sourceText")].filter((part) => part).join(" \u00b7 ") }))
+                    .filter((point) => point.lat >= -90 && point.lat <= 90 && point.lon >= -180 && point.lon <= 180);
+            },
+            frameHeight() { return this.height || "360px"; }
+        },
+        template:
+            '<component :is="view" v-if="view" :id="id" :config="config" :config-url="configUrl" :height="height" :pick="pick" :library-error="libraryError"' +
+                ' @pick="$emit(\'pick\', $event)" @select="$emit(\'select\', $event)" @view-change="$emit(\'view-change\', $event)">' +
+                '<template v-if="$slots.notice" v-slot:notice><slot name="notice"></slot></template>' +
+            '</component>' +
+            '<div v-else class="m-map m-map-waiting" :id="id">' +
+                '<div v-if="failed" class="m-map-fallback" role="status">{{failed}}</div>' +
+                '<div v-else class="m-map-frame flex flex-center" :style="{height: frameHeight}"><q-spinner size="2em"></q-spinner></div>' +
+                '<ul v-if="places.length" class="m-map-places"><li v-for="place in places" :key="place.key" class="m-map-place">' +
+                    '<span class="m-map-place-label">{{place.label}}</span> <span class="m-map-place-coordinates">{{place.lat.toFixed(5)}}, {{place.lon.toFixed(5)}}</span>' +
+                    '<span v-if="place.details" class="m-map-place-details">{{place.details}}</span>' +
+                '</li></ul>' +
+            '</div>',
+        mounted() {
+            loadMap().then((libraryError) => {
+                this.libraryError = libraryError;
+                this.view = markRaw(moqui.map.components["m-map-view"]);
+            }, (err) => {
+                console.error("m-map: js/WebrootMap.js did not load", err);
+                this.failed = (moqui.l10n ? moqui.l10n.localize("The map could not be drawn here") : "The map could not be drawn here") + ": " + (err && err.message || err);
+            });
+        }
+    });
+
     /* ========== dashboards ========== */
 
     // The delta of a number-card: its sign (a leading + or -, else the number's; 0 or no number is none) and, against

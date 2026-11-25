@@ -183,11 +183,13 @@ export { PMTiles, FetchSource, FileSource } from 'pmtiles';
 //   only styles and sources its profiles name, so a mapbox:// URL is refused before it reaches the library.
 // - https://cdn.jsdelivr.net: ol-mapbox-style's default webfonts template (Fontsource CSS). A style's own
 //   metadata['ol:webfonts'] wins over the webfonts option, so m-map loads the style JSON itself, replaces any
-//   metadata['ol:webfonts'] with the local template (libs/mapfonts) and passes the same template as webfonts.
+//   metadata['ol:webfonts'] with the local template (libs/mapfonts) and passes the same template as webfonts. The template
+//   is absolute (the page's origin first): ol-mapbox-style resolves a root-relative one against the style's URL, so for a
+//   hosted style it would ask the provider's host.
 // - https://maps.google.com: KML's default pushpin icon. A KML IconStyle without an Icon gets it, and an Icon href is
-//   loaded as the file is parsed; defaultStyle does not stop either. m-map reads KML with extractStyles: false and styles
-//   the layer itself (to keep a file's styles it would need an iconUrlFunction mapping every URL, the pushpin's too, to
-//   a local icon, and a defaultStyle, since the built-in default style uses the pushpin directly).
+//   loaded as the file is parsed; neither extractStyles: false nor defaultStyle stops either, since the IconStyle is still
+//   read and its image loaded. m-map reads KML with an iconUrlFunction that answers a blank data: icon for every href (the
+//   pushpin's too), with extractStyles: false, and styles the layer itself.
 // - https://github.com: a link in an error message.
 const OPENLAYERS_HOSTS = [
   'http://earth.google.com', 'http://www.google.com', 'http://www.opengis.net', 'http://www.topografix.com',
@@ -230,7 +232,8 @@ CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING 
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.`;
 // The faces of Noto Sans the packaged map styles name: OpenFreeMap's liberty (Noto Sans Regular, Italic and Bold) and the
 // Protomaps basemap (Regular, Italic and Medium). ol-mapbox-style asks for a face the page lacks at the style's
-// metadata['ol:webfonts'], else its webfonts option; m-map sets both to /libs/mapfonts/{font-family}/{fontweight}{-fontstyle}.css
+// metadata['ol:webfonts'], else its webfonts option; m-map sets both to the page's origin and
+// /libs/mapfonts/{font-family}/{fontweight}{-fontstyle}.css
 // (OPENLAYERS_HOSTS). That is the Fontsource layout, so each face is that package's own CSS (every subset, each by
 // unicode-range), with only the woff2 sources.
 const MAP_FONT_FACES = ['400', '400-italic', '500', '700'];

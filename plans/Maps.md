@@ -133,6 +133,25 @@ nearby geographic context, source/precision, coordinate copy and **Open in Maps*
 **Choose location** is offered only when the owning record service permits a write. On phones it can occupy the
 screen while retaining the same close/return behavior and form state. Keyboard focus returns to the launch control.
 
+**Network contracts of `m-map`** (built in P1, `js/WebrootMap.js`; the reviewed hosts of the bundle are
+`OPENLAYERS_HOSTS` in `build/libs/refresh.mjs`). A map asks only the page's origin and the hosts its profile and layers
+name:
+
+- A `mapbox://` URL, and any scheme but http and https, is refused before it reaches the library.
+- A style document is loaded by `m-map`, its sources, tiles, GeoJSON data and sprite checked against those hosts, each
+  source's attribution made escaped text, and its `metadata['ol:webfonts']` replaced with the local fonts' template;
+  the same template is the `webfonts` option. The template is absolute (the page's origin and
+  `/libs/mapfonts/{font-family}/{fontweight}{-fontstyle}.css`): `ol-mapbox-style` resolves a root-relative one against
+  the style's URL, so a hosted style would have its fonts asked of the provider's host.
+- What `ol-mapbox-style` fetches itself (TileJSON, tiles, sprites) passes a `transformRequest` allow-list of those hosts;
+  a TileJSON is fetched by `m-map` and handed on with its attribution escaped, since the attribution control sets HTML.
+- KML is read with an `iconUrlFunction` that answers a blank `data:` icon for every href (and the default pushpin), as
+  an IconStyle's image loads while the file is parsed whatever `extractStyles` is; the layer is styled by `m-map`.
+- A PMTiles archive must be of this server; its header is read first, so an archive that cannot be read by range is a
+  named, retryable failure.
+- A hillshade layer's raster operation runs in a Blob worker: a page with a Content-Security-Policy stricter than the
+  default needs `worker-src blob:` for it, beside the provider's hosts in `connect-src`, `img-src` and `font-src`.
+
 The common interface accepts:
 
 - A profile ID, initial center/extent/zoom and a list of registered layer/source IDs; an explicit projection where
@@ -199,8 +218,9 @@ attribution, source edition and update policy. Regional extracts are useful for 
 are optional. Protomaps is one available downloadable basemap, not the archive format's only supplier. Its schema
 and style differ from OpenMapTiles, so changing suppliers can mean changing the whole profile. OpenFreeMap
 publishes no PMTiles, so the local profile P2 packages and validates is a regional Protomaps extract with its own
-style, sprites and fonts. How a style's source is bound to `PMTilesVectorSource` (by `m-map` itself where
-`ol-mapbox-style` does not) is settled by P0's spike (§9).
+style, sprites and fonts. Settled by P0's spike (§9): `m-map` binds the archive itself, a `PMTilesVectorSource` on the
+archive's URL with `applyStyle(layer, style, {source, updateSource: false})`, since `ol-mapbox-style` does not know a
+style's `pmtiles://` source; that source is not checked as a URL to ask.
 [PMTiles for OpenLayers](https://docs.protomaps.com/pmtiles/openlayers),
 [Protomaps downloads](https://docs.protomaps.com/basemaps/downloads)
 
@@ -333,8 +353,9 @@ needs the same contract, so whichever of the two starts first builds it here rat
   records a `ResourceRecent` row each time, which hundreds of tile requests must not), then answers through
   `respond_opened`.
 - **A strong validator for every backend.** The transition sends the checksum recorded with the registered
-  revision as the `ETag`, since a plain file has only a weak one and pmtiles.js is believed to disregard weak tags
-  when it checks for a replaced archive (confirm against the vendored version in P0's spike).
+  revision as the `ETag`, since a plain file has only a weak one, and pmtiles.js disregards a weak tag when it checks
+  for a replaced archive (confirmed in P0's spike against the vendored pmtiles 4.5.0: the Florence archive, served with
+  a weak tag by the static handler, drew, and its tag was ignored), so only a pinned strong tag detects a replacement.
 - **`Cache-Control: private` with the revision in the URL**, in place of the `no-store` user files carry, so a
   browser reuses the tile bytes it has, for `resource-facade` `pinned-max-age` (a day by default). After a share is
   revoked, the ranges a browser already has stay readable in that browser until the max-age passes; any range it
@@ -601,7 +622,7 @@ prepared downloads. This keeps a HOME installation practical without a large geo
 
 | Stage | Deliverable and acceptance |
 | --- | --- |
-| P0 — contracts and a spike | Confirm widget/dialog, profile/layer/provider schema, the adapter interfaces and permission boundaries, Geo extensions and ID scheme, and the `maps` conf element. Before the widget contract is fixed, a spike on a scratch page proves the two rendering paths on a desktop and a phone: an OpenFreeMap style through `ol-mapbox-style` with fonts served locally, and `PMTilesVectorSource` with a local style against a ranged resource URL (which also settles the weak-tag question of §5). Then vendor the selected OpenLayers/style/PMTiles versions and their assets/notices. |
+| P0 — contracts and a spike | Confirm widget/dialog, profile/layer/provider schema, the adapter interfaces and permission boundaries, Geo extensions and ID scheme, and the `maps` conf element. Before the widget contract is fixed, a spike on a scratch page proves the two rendering paths on a desktop and a phone: an OpenFreeMap style through `ol-mapbox-style` with fonts served locally, and `PMTilesVectorSource` with a local style against a ranged resource URL (which also settles the weak-tag question of §5). Then vendor the selected OpenLayers/style/PMTiles versions and their assets/notices. Spike outcome (November 25, 2026): OpenFreeMap liberty and a Florence PMTiles extract both drew on desktop and at phone width, with fonts only from the page's origin once the webfonts template was absolute; `m-map` binds the archive's source itself (`applyStyle`, `updateSource: false`; §4.1); pmtiles ignored the static handler's weak tag, so stage R's pinned strong tag is required to detect a replaced archive (§5). |
 | R — byte access | The to-build list of §5: LFS-only git archives with their readiness check, pinned revisions by range, the map-source transition with a strong validator and private caching, strong `If-Range`, cancellation. Independent of P1, and built by whichever of Maps and HOME Media starts first. |
 | P1 — map and shared UI | Tools Maps full-screen browser, local dialog, personal preferences/saved views, explicit current-location action, the outline map of a fresh install and the OpenFreeMap provider an administrator enables. A user can open a record dialog without System, BOSS or standalone Maps app access, but cannot read an unauthorized record; with no Mantle in this stage, that rule is tested with an adapter of a test component (`runtime/components/test`). Text/TUI/phone fallbacks work. |
 | P2 — local data and archives | PMTiles through stage R on all four backends, packaged local styles/fonts/icons, the Geo data importer (§6.4) with its Census, GeoNames and operator-CSV parsers and its settings screen, a measured US import, provenance/precision and data refresh. Local browsing and postal lookup work with external requests disabled. Other GeoNames countries open after the measurement. |
