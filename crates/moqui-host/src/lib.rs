@@ -995,7 +995,8 @@ where
             {
                 let _ = rest;
                 Err(moqui_lib::error::Error::new(
-                    "moqui lsp is not built into this host: it is in the Dev and Debug packages (the devtools feature)",
+                    "moqui lsp is not built into this host: it is in the Maximal (default) and Debug packages, and in Lite \
+                     built with --features devtools (the devtools feature)",
                 ))
             }
         }
