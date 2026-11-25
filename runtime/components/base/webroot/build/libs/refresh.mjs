@@ -1,6 +1,6 @@
 // Build and verify the browser assets from both npm lockfiles: the webroot component's script of
 // build/js-build.json. The steps every component's build shares are in ../js-kit.mjs.
-import { checkManifest, esbuildBinary, installProject, mode, outputDir, publish, run, sha256, withWork } from '../js-kit.mjs';
+import { checkManifest, esbuildBinary, installProject, mode, outputDir, publish, run, sha256, toLf, withWork } from '../js-kit.mjs';
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,6 +9,8 @@ import { assetPack, fontLibraries, packs } from '../fonts/build.mjs';
 import { buildBoard } from '../whiteboard/build.mjs';
 
 const source = dirname(fileURLToPath(import.meta.url));
+// Multiline text in this file picks up CR from a Windows checkout. Package license bytes do not.
+const lf = (value) => toLf(value).toString('utf8');
 const here = outputDir(resolve(source, '../../screen/webroot/libs'));
 const projects = process.env.JS_PROJECTS || dirname(source);
 const pins = JSON.parse(readFileSync(join(projects, 'libs/package.json'))).dependencies;
@@ -623,7 +625,7 @@ export const atob = typeof globalThis.atob === 'function' ? globalThis.atob.bind
       files.push({ path: to, from: lib.produce ? 'build' : 'generated' });
     }
     let text = '';
-    if (lib.noticeText) text += lib.noticeText() + '\n';
+    if (lib.noticeText) text += lf(lib.noticeText()) + '\n';
     for (const f of lib.licenseFiles ?? []) text += `--- ${f} ---\n${readFileSync(join(root, f), 'utf8').trimEnd()}\n\n`;
     // noticeDedupe: a license text that several packages share is printed once, after the list of them
     const shared = new Map();
@@ -641,11 +643,11 @@ export const atob = typeof globalThis.atob === 'function' ? globalThis.atob.bind
     notices.push({ lib, text });
     libMeta.push({
       id: lib.id, name: lib.name, version: lib.version, license: lib.license,
-      ...(lib.licenseNote ? { note: lib.licenseNote } : {}),
+      ...(lib.licenseNote ? { note: lf(lib.licenseNote) } : {}),
       source: `https://registry.npmjs.org/${lib.npm}/-/${lib.npm.split('/').pop()}-${lib.version}.tgz`,
       npm: `${lib.npm}@${lib.version}`, tarballIntegrity: packages[lib.id].integrity,
-      ...(lib.build ? { build: lib.build } : {}),
-      ...(lib.patches ? { patches: lib.patches.map((path) => ({ path, sha256: sha256(readFileSync(join(source, path))) })) } : {}),
+      ...(lib.build ? { build: lf(lib.build) } : {}),
+      ...(lib.patches ? { patches: lib.patches.map((path) => ({ path, sha256: sha256(toLf(readFileSync(join(source, path)))) })) } : {}),
       files: files.map((f) => ({ path: f.path, from: f.from, size: outputs.get(f.path).length, sha256: sha256(outputs.get(f.path)) })),
     });
   }
@@ -664,6 +666,7 @@ export const atob = typeof globalThis.atob === 'function' ? globalThis.atob.bind
       if (write && url) console.error(`could not download ${url}; keeping the copy at ${path}`);
       buf = readFileSync(kept);
     }
+    buf = toLf(buf);
     outputs.set(path, buf);
     lt.push({ path, from: url || 'committed', size: buf.length, sha256: sha256(buf) });
   }
@@ -704,17 +707,17 @@ export const atob = typeof globalThis.atob === 'function' ? globalThis.atob.bind
 }
 
 function renderNotices(notices) {
-  let md = `# Third-party notices
+  let md = lf(`# Third-party notices
 
 The files under \`libs/\` are third-party browser libraries served as their own files. They are not compiled into the
 \`moqui\` binary. \`MANIFEST.json\` lists each file with its sha256, and \`refresh.mjs\` rebuilds them from the pinned
 versions below. The license of each library applies to its files only. The framework's own CC0 license does not
 relicense them, and theirs does not apply to Moqui code.
 
-`;
+`);
   for (const { lib, text } of notices) {
     md += `## ${lib.name} ${lib.version}\n\nLicense: ${lib.license}. Source: npm \`${lib.npm}@${lib.version}\`.\n`;
-    if (lib.licenseNote) md += `${lib.licenseNote}\n`;
+    if (lib.licenseNote) md += `${lf(lib.licenseNote)}\n`;
     md += `\n\`\`\`text\n${text.trimEnd()}\n\`\`\`\n\n`;
   }
   return md;

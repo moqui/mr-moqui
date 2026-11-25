@@ -138,6 +138,8 @@ its checks of the builds (test-all needs no Node).
   "Desktop development with C++" workload; aws-lc and QuickJS compile C, and the embedded Postgres binaries load that
   workload's `VCRUNTIME140.dll`), and Git for Windows supplies bash. From PowerShell or cmd, `moq.cmd` runs `moq`; the
   binary is `target\release\moqui.exe`.
+- **Line endings.** The browser-library manifest is hashed as LF: `.gitattributes` checks text out that way, and the
+  build strips CR from the text it hashes.
 - **`moq test`.** The scratch runtime links its component directories with directory junctions, so the run does not
   need Developer Mode.
 - **NASM.** The first build that needs it downloads NASM 3.02 to `%USERPROFILE%\.moqui\nasm` (aws-lc assembles with
