@@ -177,17 +177,35 @@ fn process_live(pid: u32) -> bool {
     }
 }
 
+/// Whether a `tasklist /FI "PID eq <pid>"` probe says `pid` is live.
+///
+/// `ran` is false when `tasklist` did not start; `success` is a zero exit. A probe that did not
+/// run, or that exited without success, counts as live, so an orphan sweep does not remove a
+/// profile it could not tell was free. A successful listing is live when it names `pid` and is
+/// not the English "no tasks" line. A successful listing that does not name `pid` (a localized
+/// absence line included) is not live. The same rule as the embedded cluster's probe; this copy
+/// stays here because that one is exported only with `embedded-postgres`.
+#[cfg(windows)]
+fn tasklist_probe_live(ran: bool, success: bool, stdout: &str, pid: u32) -> bool {
+    if !ran || !success {
+        return true;
+    }
+    stdout.contains(&pid.to_string()) && !stdout.to_ascii_lowercase().contains("no tasks")
+}
+
 /// `tasklist` is the process probe that does not add a Windows crate.
 #[cfg(windows)]
 fn windows_process_live(pid: u32) -> bool {
-    let Ok(output) = Command::new("tasklist")
+    match Command::new("tasklist")
         .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
         .output()
-    else {
-        return false;
-    };
-    let text = String::from_utf8_lossy(&output.stdout);
-    text.contains(&pid.to_string()) && !text.to_ascii_lowercase().contains("no tasks")
+    {
+        Ok(output) => {
+            let text = String::from_utf8_lossy(&output.stdout);
+            tasklist_probe_live(true, output.status.success(), &text, pid)
+        }
+        Err(_) => tasklist_probe_live(false, false, "", pid),
+    }
 }
 
 /// Removes the engine from core, if it is still the installed one, and stops its browser.
