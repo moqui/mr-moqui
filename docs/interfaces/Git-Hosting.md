@@ -1330,8 +1330,11 @@ row refers to and that were not written or referenced again in the last `resourc
 
 File responses stream (`sendResourceResponse`, a screen's static files): a file over 256 KiB is read a window at a time
 as the client takes it, on a thread of its own (at most `webapp` `transfer-workers`, 4, reading the database at once, fewer when the content pool cannot hold them), so
-a slow download holds no request worker. One `Range` is answered from the bytes it names, with `ETag` (a git file's
-blob id, a content blob's SHA-256) and `If-Range`. Only text types are compressed. An upload is read as it arrives: a
+a slow download holds no request worker. One `Range` is answered with `ETag` (a git file's
+blob id, a content blob's SHA-256) and `If-Range`, reading only the bytes it names from a file on disk, a content
+blob (a DbResource file over 64 KiB, a `db` repository's object over 8 MiB) and a Git LFS object; a `local`
+repository's object that is not in LFS, a smaller `db` object and a `location#versionName` are read whole first.
+Only text types are compressed. An upload is read as it arrives: a
 file part over 256 KiB goes to a file in `runtime/tmp/upload`, and from there to its storage (a content blob, a git
 object) as it is read; `webapp-list/webapp[webroot]/web-protection/requests@max-upload` (2 GiB) bounds it and `webapp-list/webapp[webroot]/web-protection/requests@upload-idle-timeout` (60 seconds) of silence
 ends it.

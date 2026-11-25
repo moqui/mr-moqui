@@ -80,10 +80,14 @@ Dashboards); the deliberate differences from Java are in [Parity-Diffs](Parity-D
 
 ## Maps
 
-Initial design, not built: [Maps](Maps.md) owns the OpenLayers Tools app, shared full-screen and local-map interface,
-global/personal configuration, OpenFreeMap and ResourceFacade PMTiles delivery. [Delivery stages](Maps.md#9-delivery-and-acceptance)
-include local postal-code coordinates using basic Geo data, Mantle record adapters and BOSS/HOME integration.
-Resource streaming is shared with Media; the LFS placement item below remains a dependency for filesystem git/LFS.
+Design reviewed against the code on November 25, 2026, not built: [Maps](Maps.md) owns the OpenLayers Tools app,
+shared full-screen and local-map interface, global/personal configuration, OpenFreeMap (seeded disabled) and
+ResourceFacade PMTiles delivery. [Delivery stages](Maps.md#9-delivery-and-acceptance) include local postal-code
+coordinates from Geo data an administrator imports ([the Geo data importer](Maps.md#64-geo-data-importer); none
+ships), Mantle record adapters and BOSS/HOME integration. [Stage R](Maps.md#5-resourcefacade-and-tile-streaming),
+the byte access Maps shares with HOME Media, is the first prerequisite: a filesystem-git object that is not in LFS
+and any `location#version` are still read whole for a ranged request, and the LFS placement item below remains a
+dependency for a disk-backed archive in filesystem git.
 
 ## Chat and presence
 
