@@ -31,11 +31,15 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      # The theseus Postgres archive that moqui-drivers' build script embeds: kept in ~/.theseus (USERPROFILE), and
+      # fetched and stripped of psql when the cache has none. Its version is POSTGRESQL_VERSION in .cargo/config.toml.
       - uses: actions/cache@v4
         with:
-          path: ${{ env.USERPROFILE }}/.theseus
-          key: theseus-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', '.cargo/config.toml') }}
-          restore-keys: theseus-
+          path: ~/.theseus
+          key: theseus-${{ hashFiles('.cargo/config.toml') }}
+      - name: Postgres archive
+        shell: bash
+        run: scripts/pg-payload.sh strip
       - name: cargo lint
         run: cargo lint
       - name: test_cmd
