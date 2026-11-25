@@ -1,0 +1,159 @@
+{
+  "about": "The change set card of propose_edit (src/agent/propose.rs change_card, plans/design-dev-aide.md 13.3) from a patch: each vector's files are a root's files with their text now and the change proposed (edits, the exact replacements of a patch, or a new file's text); card is what the server's card holds for them, which src/agent/propose_card_tests.rs checks and test/client/pages/DevAideCard.page.js renders in m-assist-change-set (webroot js/WebrootAssist.js). MOQUI_REGENERATE_VECTORS=1 cargo test -p dev-aide --lib change_card writes card again, for review.",
+  "vectors": [
+    {
+      "card": {
+        "files": [
+          {
+            "added": 1,
+            "file": "component://my-site/entity/SiteEntities.xml",
+            "new": false,
+            "path": "my-site/entity/SiteEntities.xml",
+            "removed": 0,
+            "rootId": "work",
+            "side": "site"
+          },
+          {
+            "added": 1,
+            "file": "component://my-site/screen-extend/example/screen/ExampleApp/Example/EditExample.xml",
+            "new": false,
+            "path": "my-site/screen-extend/example/screen/ExampleApp/Example/EditExample.xml",
+            "removed": 0,
+            "rootId": "work",
+            "side": "site"
+          },
+          {
+            "added": 5,
+            "file": "component://my-site/service/mysite/DueServices.xml",
+            "new": true,
+            "path": "my-site/service/mysite/DueServices.xml",
+            "removed": 0,
+            "rootId": "work",
+            "side": "site"
+          },
+          {
+            "added": 1,
+            "file": "component://upstream-app/screen/UpApp/Things.xml",
+            "new": false,
+            "path": "upstream-app/screen/UpApp/Things.xml",
+            "removed": 1,
+            "rootId": "work",
+            "side": "upstream"
+          }
+        ],
+        "preview": [
+          {
+            "location": "component://example/screen/ExampleApp/Example/EditExample.xml"
+          },
+          {
+            "location": "component://upstream-app/screen/UpApp/Things.xml"
+          }
+        ],
+        "rows": [
+          {
+            "artifact": "Entity Example",
+            "change": "+ field dueDate (date)",
+            "file": "component://my-site/entity/SiteEntities.xml"
+          },
+          {
+            "artifact": "Screen EditExample",
+            "change": "+ field Due Date in EditExample after exampleEndDate",
+            "file": "component://my-site/screen-extend/example/screen/ExampleApp/Example/EditExample.xml"
+          },
+          {
+            "artifact": "DueServices.xml",
+            "change": "+ service update#DueDate (inline)",
+            "file": "component://my-site/service/mysite/DueServices.xml"
+          },
+          {
+            "artifact": "DueServices.xml",
+            "change": "+ parameter exampleId (in String, required=true)",
+            "file": "component://my-site/service/mysite/DueServices.xml"
+          },
+          {
+            "artifact": "DueServices.xml",
+            "change": "+ parameter dueDate (in Date, required=false)",
+            "file": "component://my-site/service/mysite/DueServices.xml"
+          },
+          {
+            "artifact": "Things.xml",
+            "change": "+1 −1",
+            "file": "component://upstream-app/screen/UpApp/Things.xml"
+          }
+        ],
+        "values": [
+          {
+            "attribute": "title",
+            "file": 1,
+            "label": "Title",
+            "value": "Due Date"
+          },
+          {
+            "attribute": "title",
+            "file": 3,
+            "label": "Title",
+            "value": "Find your things"
+          }
+        ]
+      },
+      "components": [
+        {
+          "name": "my-site",
+          "path": "my-site",
+          "site": true
+        },
+        {
+          "name": "upstream-app",
+          "path": "upstream-app",
+          "site": false
+        }
+      ],
+      "files": [
+        {
+          "current": "<entities>\n    <extend-entity entity-name=\"Example\" package=\"moqui.example\">\n    </extend-entity>\n</entities>\n",
+          "edits": [
+            {
+              "new": "        <field name=\"dueDate\" type=\"date\"/>\n    </extend-entity>",
+              "old": "    </extend-entity>"
+            }
+          ],
+          "file": "component://my-site/entity/SiteEntities.xml",
+          "kind": "entity",
+          "relative": "my-site/entity/SiteEntities.xml"
+        },
+        {
+          "current": "<screen-extend>\n    <form-single name=\"EditExample\">\n    </form-single>\n</screen-extend>\n",
+          "edits": [
+            {
+              "new": "        <field name=\"dueDate\" after=\"exampleEndDate\"><default-field title=\"Due Date\"><date-time type=\"date\"/></default-field></field>\n    </form-single>",
+              "old": "    </form-single>"
+            }
+          ],
+          "file": "component://my-site/screen-extend/example/screen/ExampleApp/Example/EditExample.xml",
+          "kind": "screen-extend",
+          "relative": "my-site/screen-extend/example/screen/ExampleApp/Example/EditExample.xml"
+        },
+        {
+          "current": null,
+          "file": "component://my-site/service/mysite/DueServices.xml",
+          "kind": "service",
+          "relative": "my-site/service/mysite/DueServices.xml",
+          "text": "<services>\n    <service verb=\"update\" noun=\"DueDate\">\n        <in-parameters><parameter name=\"exampleId\" required=\"true\"/><parameter name=\"dueDate\" type=\"Date\"/></in-parameters>\n    </service>\n</services>\n"
+        },
+        {
+          "current": "<screen>\n    <widgets>\n        <label text=\"Things\" type=\"h4\"/>\n        <link url=\"../Find\" text=\"Find\" title=\"Find things\"/>\n    </widgets>\n</screen>\n",
+          "edits": [
+            {
+              "new": "title=\"Find your things\"",
+              "old": "title=\"Find things\""
+            }
+          ],
+          "file": "component://upstream-app/screen/UpApp/Things.xml",
+          "kind": "screen",
+          "relative": "upstream-app/screen/UpApp/Things.xml"
+        }
+      ],
+      "name": "a site's entity and screen extensions and a new service by patches, and an upstream screen's title"
+    }
+  ]
+}
