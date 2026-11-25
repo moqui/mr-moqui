@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Deliveries (plans/Vault-Instances.md §3.3, `VaultDelivery`): a value sealed in the client to one user's personal
+//! Deliveries (plans/archive/Vault-Instances.md §3.3, `VaultDelivery`): a value sealed in the client to one user's personal
 //! key and signed by its sender. The server takes one only signed by the caller's own active key, to the recipient's
 //! active key, and lists it only to that recipient, who checks the signature again before filing the value. An
 //! instance's deliveries (its recovery shares, signed with its link key, M6) are written by the manager's link

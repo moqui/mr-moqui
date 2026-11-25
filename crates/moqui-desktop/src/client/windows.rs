@@ -617,7 +617,7 @@ pub(crate) fn close_remotes(app: &AppHandle, account: Option<&str>) {
 }
 
 /// An app window closed: its sockets go, and it is no longer the account's. Its vault session locks, as a browser's
-/// worker goes with its tab (plans/Vault-Instances.md §3.6).
+/// worker goes with its tab (plans/archive/Vault-Instances.md §3.6).
 pub(crate) fn closed(app: &AppHandle, label: &str) {
     let Some(client) = app.try_state::<Client>() else {
         return;

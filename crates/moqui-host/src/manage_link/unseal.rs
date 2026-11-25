@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Transit by the manager, on the instance (plans/Vault-Instances.md §4.5, M6): a `seal::Method` of the `transit` kind
+//! Transit by the manager, on the instance (plans/archive/Vault-Instances.md §4.5, M6): a `seal::Method` of the `transit` kind
 //! that a managed instance's gate installs ([`register`]), so core never calls the host.
 //!
 //! - **Wrap** (at init): the root key wrapped to this instance's transit key on the manager, whose public half the

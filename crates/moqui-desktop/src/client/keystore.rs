@@ -117,7 +117,7 @@ pub(crate) fn open_keys(dir: &Path) -> Keys {
     Keys::new(store, kind)
 }
 
-/// The vault's device memory keys (plans/Vault-Instances.md §3.5, V5) in the store the device keys are in: the OS key
+/// The vault's device memory keys (plans/archive/Vault-Instances.md §3.5, V5) in the store the device keys are in: the OS key
 /// store, opened by the computer's sign-in; where that is the file in `dir`, it says so and device memory is not offered
 /// (a key in a file beside the wrap it opens would guard nothing).
 pub(crate) fn open_memory_keys(dir: &Path) -> moqui_client::vault::memory::StoreMemoryKeys {

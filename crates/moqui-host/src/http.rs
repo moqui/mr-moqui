@@ -498,7 +498,7 @@ pub(crate) async fn listen(
         }
     };
     let edge = started.acceptor;
-    // the manager link (plans/Vault-Instances.md §4.4): on a manager the hand-off of moqui-manage/1, which an edge node's
+    // the manager link (plans/archive/Vault-Instances.md §4.4): on a manager the hand-off of moqui-manage/1, which an edge node's
     // listener does not take; on a managed instance its dialer, unless its sealed gate started it
     let manage = crate::manage_link::start(&link_factory, shutdown_rx.clone(), edge.is_some()).acceptor;
     let in_process =

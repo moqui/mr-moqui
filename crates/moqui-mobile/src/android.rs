@@ -610,7 +610,7 @@ impl Sealer for KeyVault {
     }
 }
 
-/// The Keystore key of the vault's device memory (`KeyVault.sealAuth`, `openAuth`; plans/Vault-Instances.md §3.5, V5):
+/// The Keystore key of the vault's device memory (`KeyVault.sealAuth`, `openAuth`; plans/archive/Vault-Instances.md §3.5, V5):
 /// each use asks the user for the phone's lock screen or a strong biometric (BiometricPrompt with the cipher), so these
 /// calls block until they answer: never on the main thread.
 pub(crate) struct AuthVault;

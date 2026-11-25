@@ -1,17 +1,31 @@
 # Vaults and Instances
 
-Status 2026-11-20: built, V0 to V5 and M1 to M6, with Sealed-Secrets S3, S4 and S11; the open points were decided on
-Nov 19 ([§9](#9-decisions)). Not run here: the acceptance tests `InstanceDeploy` (needs Podman) and Sealed-Secrets'
-`SealedStart` (needs a TPM); Android not compiled; Linux and Windows screen lock not watched by the desktop app. The
-guides are [Vaults](../docs/security/Vaults.md) and [Run-Deploy](../docs/Run-Deploy.md) (Sealed start, Managed
-instances). Before: 2026-11-14, plan; nothing built. Reviewed 2026-11-15 against the code in the security review: the facts of §2
-are corrected, the design of §3.2, §3.3, §3.5, §3.7 to §3.10, §3.12, §4.2, §4.4 to §4.6 and §4.9 changed (signing
-keys and signed wraps, the signed lease, machine access, recovery shares, the manager's limits), and the choices left
-to the owner are in [Open points](#open-points-from-the-security-review). It expands the user's notes of Nov 14, 2026
-and their answers the same day ([§9](#9-decisions)). [Sealed-Secrets](Sealed-Secrets.md) keeps the server's own keys.
-This plan keeps the keys people hold, and the keys of the instances a server manages, and it covers the deployment
-side of a sealed start: how a managed instance gets its secrets, unseals, keeps its recovery shares and rotates its
-credentials.
+> Archived 2026-11-25: built, V0 to V5 and M1 to M6. What is left for v0.1.0 is in
+> [Remaining-Work](../Remaining-Work.md) (the passkey slot, machine access's key with Sealed-Secrets S1), what comes
+> after in [Future-Plans](../Future-Plans.md#vaults-and-managed-instances), and the checks still to run in
+> [Testing-Needed](../Testing-Needed.md#vaults-and-managed-instances). The guides are
+> [Vaults](../../docs/security/Vaults.md) and [Run-Deploy](../../docs/Run-Deploy.md) (Sealed start, Managed instances).
+
+Status 2026-11-25: built, V0 to V5 and M1 to M6, with Sealed-Secrets S3, S4 and S11; the open points were decided on
+Nov 19 ([§9](#9-decisions)). Run on 2026-11-25 (Ubuntu 26.04, rootless Podman 5.7 and Docker 29.7): the real-engine
+tests on both engines, `ManagedSealedStart` (the Rust test, now in `cargo test-slow`), `InstanceDeploy` against a
+`./moq run` manager (5 of 5, with its new fixture), and the Android build, Kotlin tests and emulator smoke. What the
+runs found was fixed:
+- the CI driver's tmpfs on Podman;
+- the images' glibc on a newer host than Debian 13;
+- TLS for managed databases;
+- a waiting action that started before its request committed and ran as no user;
+- a removal on Ubuntu's rootless Podman.
+
+Built the same day: the desktop vault locks on the Linux and Windows screen lock and sleep (Windows compiled, not
+run), and a manager behind a firewall reached through its edge node. Not run here: Sealed-Secrets' `SealedStart` (a TPM
+reboot) and the hand checks on installed apps, in [Testing-Needed](../Testing-Needed.md#vaults-and-managed-instances).
+Before: 2026-11-14, plan; reviewed 2026-11-15 in the security review (§2's facts corrected; §3.2, §3.3, §3.5, §3.7 to
+§3.10, §3.12, §4.2, §4.4 to §4.6 and §4.9 changed), with the choices in
+[Open points](#open-points-from-the-security-review). It expands the user's notes and answers of Nov 14, 2026
+([§9](#9-decisions)). [Sealed-Secrets](../Sealed-Secrets.md) keeps the server's own keys. This plan keeps the keys people
+hold, and the keys of the instances a server manages, and it covers the deployment side of a sealed start: how a
+managed instance gets its secrets, unseals, keeps its recovery shares and rotates its credentials.
 
 The plan has two parts, and they share one problem: secrets that a person must open.
 
@@ -39,7 +53,7 @@ Sections: [1 three tiers](#1-three-tiers-of-secrets) · [2 what is there now](#2
 
 | | Platform secrets | Operational vaults | Personal vaults |
 |---|---|---|---|
-| Plan | [Sealed-Secrets](Sealed-Secrets.md) | this plan, §3 and §4 | this plan, §3 |
+| Plan | [Sealed-Secrets](../Sealed-Secrets.md) | this plan, §3 and §4 | this plan, §3 |
 | Who decrypts | The server, with nobody present | The server, during a lease a member approves, or under an environment's machine access | A client only |
 | Opened by | The seal: TPM, KMS, transit, passphrase or shares | A member's personal key, in the member's client | The vault's password or key (single-secret), or a member's personal key (shared-key) |
 | Holds | Bootstrap secrets, generated keys, and credentials the server uses all the time: SMTP, OAuth client secrets, FCM, model API keys | A managed instance's database, search and link credentials, host TLS keys, registry and database admin logins, deploy tokens, recovery bundles | Logins, notes, private contacts, cards, SSH keys, TOTP seeds, recovery codes and shares |
@@ -64,15 +78,15 @@ credential-vault implementation" (`boss/plan/design-admin.md`, Credentials) stil
 | CI driver | Rust, on Docker and Podman: a Unix socket, HTTP, or HTTPS with the host's `tlsCaCert`, `tlsClientCert` and `tlsClientKey`; runs that end, with limits; a `fake` host type for tests. Since M1 the Engine API client is shared with managed instances as `moqui_lib::docker` (containers that stay, volumes, networks, secret files, a fake engine), and CI keeps its run policy | `crates/moqui-lib/src/docker/`, `crates/moqui-git/src/ci/driver/docker.rs`, `fake.rs` |
 | Instance screens | System › Instance: InstanceList, InstanceDetail | `tools/screen/System/Instance/` |
 | Secrets in instance rows | `InstanceHost.password` and `tlsClientKey`, `InstanceImage.password`, `DatabaseHost.adminPassword`, `InstanceImageTypeEnv.envValue` and `AppInstanceEnv.envValue` are `encrypt="true"` fields. Any find decrypts them, and the env values reach the container as environment variables, which `docker inspect` and `/proc/*/environ` show | `fw/entity/ServerEntities.xml` |
-| CI secrets and environments | `GitCiSecret` (encrypted, scoped to protected refs, tags or an environment), `GitCiEnvironment` (`targetUrl`, an encrypted `targetToken`, `requiredPipeline`, `approvalRequired`), `GitDeployment`. A deployment of a component repository is built: `request#GitDeployment` queues the environment's pipeline for the branch's head with the `deploy` event; when that run passes, the deployment waits for `decide#GitDeployment` if the environment requires approval or no branch rule protects the branch (never the requester); then the deploy step posts an attestation to the target's Component-Deploy REST (`deploy#AttestedComponent`, called with no user signed in). The attestation is JSON signed with HMAC-SHA256 under `targetToken`: the audience (the target's URL), the repository URL, branch, commit, component, pipeline and run, environment, deployment id, time and data types. The target holds the same secret as `component_deploy_attestation_key`, checks the signature, the age and the audience, fetches the branch and deploys that commit. A CI job's secrets reach its container as environment variables | `fw/entity/GitCiEntities.xml`, `fw/service/org/moqui/git/GitCiServices.xml`, `crates/moqui-git/src/ci/deploy.rs`, `attest.rs`, `trust.rs`; [Pipelines](../docs/interfaces/Pipelines.md#deployments) |
-| Deploy plan | Environments, the deploy event, the gate and the approval: built for a component repository, as above. Not built: an owner's environment, a private repository's fetch by the target, a tag, a framework archive or image, and deploys to managed instances | [Dogfood §8.6](Dogfood.md#86-deploys), DG10; [Pipelines](../docs/interfaces/Pipelines.md#not-built) |
-| Component deploy | Fetch, preview and deploy from git; the database storage reaches every cluster member | [Component-Deploy](../docs/tools/Component-Deploy.md#deploying-from-git) |
-| Monitor | OTLP in with `service.instance.id`; Services and Releases by instance; regressions compared across instances; `RecoveryPolicy`, `RecoveryAdapter` (`in-process`, `webhook`, `manual`), `RecoveryAction`; `InstanceDrain`; `ScrapeTarget`; `IngestKey`; annotations by `POST /v1/annotations` | `fw/entity/MonitorEntities.xml`; [Monitoring](../docs/tools/Monitoring.md#recovery) |
-| Edge link | A local node dials its edge node's HTTPS port. Pairing runs on a separate ALPN over the web certificate, then both link keys are pinned. gRPC runs both ways on HTTP/2, with generations, PINGs and redial with backoff. The members of a local cluster share the pairing's key in the `.env` they share, and each member also has an Ed25519 key of its own in `runtime/db/edge_member_key`, which the edge node pins on the member's first link | `host/edge_link/` (`member_key.rs`); [Run-Deploy](../docs/Run-Deploy.md#a-local-server-with-an-edge-node) |
-| Client crypto | Chat's crypto device (matrix-sdk-crypto in wasm, loaded only when asked). Its store is encrypted under a key the server derives, so it is not zero-knowledge. Room keys are backed up to a recovery key the user keeps | `runtime/components/base/webroot/screen/webroot/js/WebrootCrypto.js`, `crates/moqui-core/src/service/chat_keys.rs`; [Chat-Keys](../docs/interfaces/Chat-Keys.md) |
+| CI secrets and environments | `GitCiSecret` (encrypted, scoped to protected refs, tags or an environment), `GitCiEnvironment` (`targetUrl`, an encrypted `targetToken`, `requiredPipeline`, `approvalRequired`), `GitDeployment`. A deployment of a component repository is built: `request#GitDeployment` queues the environment's pipeline for the branch's head with the `deploy` event; when that run passes, the deployment waits for `decide#GitDeployment` if the environment requires approval or no branch rule protects the branch (never the requester); then the deploy step posts an attestation to the target's Component-Deploy REST (`deploy#AttestedComponent`, called with no user signed in). The attestation is JSON signed with HMAC-SHA256 under `targetToken`: the audience (the target's URL), the repository URL, branch, commit, component, pipeline and run, environment, deployment id, time and data types. The target holds the same secret as `component_deploy_attestation_key`, checks the signature, the age and the audience, fetches the branch and deploys that commit. A CI job's secrets reach its container as environment variables | `fw/entity/GitCiEntities.xml`, `fw/service/org/moqui/git/GitCiServices.xml`, `crates/moqui-git/src/ci/deploy.rs`, `attest.rs`, `trust.rs`; [Pipelines](../../docs/interfaces/Pipelines.md#deployments) |
+| Deploy plan | Environments, the deploy event, the gate and the approval: built for a component repository, as above. Not built: an owner's environment, a private repository's fetch by the target, a tag, a framework archive or image, and deploys to managed instances | [Dogfood §8.6](../Dogfood.md#86-deploys), DG10; [Pipelines](../../docs/interfaces/Pipelines.md#not-built) |
+| Component deploy | Fetch, preview and deploy from git; the database storage reaches every cluster member | [Component-Deploy](../../docs/tools/Component-Deploy.md#deploying-from-git) |
+| Monitor | OTLP in with `service.instance.id`; Services and Releases by instance; regressions compared across instances; `RecoveryPolicy`, `RecoveryAdapter` (`in-process`, `webhook`, `manual`), `RecoveryAction`; `InstanceDrain`; `ScrapeTarget`; `IngestKey`; annotations by `POST /v1/annotations` | `fw/entity/MonitorEntities.xml`; [Monitoring](../../docs/tools/Monitoring.md#recovery) |
+| Edge link | A local node dials its edge node's HTTPS port. Pairing runs on a separate ALPN over the web certificate, then both link keys are pinned. gRPC runs both ways on HTTP/2, with generations, PINGs and redial with backoff. The members of a local cluster share the pairing's key in the `.env` they share, and each member also has an Ed25519 key of its own in `runtime/db/edge_member_key`, which the edge node pins on the member's first link | `host/edge_link/` (`member_key.rs`); [Run-Deploy](../../docs/Run-Deploy.md#a-local-server-with-an-edge-node) |
+| Client crypto | Chat's crypto device (matrix-sdk-crypto in wasm, loaded only when asked). Its store is encrypted under a key the server derives, so it is not zero-knowledge. Room keys are backed up to a recovery key the user keeps | `runtime/components/base/webroot/screen/webroot/js/WebrootCrypto.js`, `crates/moqui-core/src/service/chat_keys.rs`; [Chat-Keys](../../docs/interfaces/Chat-Keys.md) |
 | Device key stores | Desktop: the OS key store, or a file only the user can read. Android: an AES-GCM Keystore key | `crates/moqui-desktop/src/client/keystore.rs`, `crates/moqui-mobile/gen/android/app/src/main/java/org/moqui/mobile/KeyVault.kt` |
 | Crypto crates | `argon2`, `aes-gcm`, `hkdf`, `curve25519-dalek` and `chacha20poly1305` are in the workspace. No HPKE, Shamir, `zeroize`, `secrecy` or `subtle` crate is a workspace dependency. An age implementation already wraps a file key to X25519 recipients (X25519, HKDF, ChaCha20-Poly1305) | `Cargo.toml`, `crates/moqui-lib/src/age.rs` |
-| Passkeys | Not built | [Dogfood §15](Dogfood.md#15-later), Remaining-Work |
+| Passkeys | Not built | [Dogfood §15](../Dogfood.md#15-later), Remaining-Work |
 
 ## 3. Vaults
 
@@ -129,7 +143,7 @@ item body: the item's JSON, encrypted whole
   second. The parameters are stored with each wrap, and the crate has three numbers for them:
   - the **floor**, m=64 MiB, t=3 and p=1: no client writes less, so a wrap under it is refused;
   - the **target**, which starts at the floor and is raised over time: a client that finds a wrap under it wraps again
-    with the target on that open, which is the lesson of the LastPass breach ([Sealed-Secrets §8](Sealed-Secrets.md#8-inspiration));
+    with the target on that open, which is the lesson of the LastPass breach ([Sealed-Secrets §8](../Sealed-Secrets.md#8-inspiration));
   - the **ceiling**: a wrap over it is refused, since the server stores the parameters and a huge value stalls a phone.
 - **The deposit key** (operational only) is a key pair. Its public half is stored in the clear on the vault, signed by
   the member with the manage role who made it, and its private half is wrapped by the vault key. The server makes a
@@ -140,7 +154,7 @@ item body: the item's JSON, encrypted whole
 - **One implementation.** A small crate with no I/O, `crates/moqui-vault`: the formats, the KDFs, the wraps, the
   signatures, the item AEAD, the lease seal and zeroized key types. The browser module must build without the
   framework, which is why it is its own crate. V0 adds it by the Crate-Split rules
-  ([Practices-Rust](../docs/dev/Practices-Rust.md)). It is linked natively into the server, the desktop and mobile
+  ([Practices-Rust](../../docs/dev/Practices-Rust.md)). It is linked natively into the server, the desktop and mobile
   shells and the `moqui` command, and built to a small wasm module for the browser, since WebCrypto has no Argon2id.
   A vault written on a phone opens the same way in a browser and on the server.
 
@@ -169,7 +183,7 @@ item, many to one with the vault, as the user asked.
 date, file name) and whether a value is masked. The client draws forms from it. For operational types, the server checks
 an item's shape when it uses it. The framework ships login, one-time code, note, card, identity, contact, SSH key, API
 key, database credential, TLS key pair, registry login, recovery code and recovery share. A TOTP field's codes are made
-in the client's module from its seed, which the page never holds ([Vaults, One-time codes](../docs/security/Vaults.md#one-time-codes)). Components add their own: an instance kind
+in the client's module from its seed, which the page never holds ([Vaults, One-time codes](../../docs/security/Vaults.md#one-time-codes)). Components add their own: an instance kind
 adds the items it needs ([§4.1](#41-the-model)).
 
 A body is versioned JSON: `{"v": 1, "type": "login", "name": "…", "fields": {…}, "notes": "…", "tags": […], "uris": […]}`.
@@ -233,7 +247,7 @@ In normal use a member never sees an operational value. The server decrypts it f
    written to the lease row, which is safe: only the lease's private key, in one member's memory, opens them.
 3. The server opens the sealed item keys and decrypts the items when the operation uses them. Each use is an event.
 4. The lease ends when the operation ends, at its time limit, on Revoke, or on a seal. The lease's keys and the item keys
-   are zeroized (the key types of [Sealed-Secrets §3.5](Sealed-Secrets.md#35-memory)), and nothing stored can open them
+   are zeroized (the key types of [Sealed-Secrets §3.5](../Sealed-Secrets.md#35-memory)), and nothing stored can open them
    again.
 
 - **What it gains.** The member's passphrase, their personal key and the vault key never reach the server. A server
@@ -241,7 +255,7 @@ In normal use a member never sees an operational value. The server decrypts it f
 - Before approving, the member sees what the lease names: each item's name and binding, the operation and the time limit.
   The dialog shows them from the signed lease, never from a column, and the unwrap of step 2 proves each one.
 - **The lease key** is an Ed25519 key of the server: the `vault-lease` purpose key of the keyring
-  ([Sealed-Secrets §3.1](Sealed-Secrets.md#31-key-hierarchy)), and until Sealed-Secrets S4 a generated secret, kept as
+  ([Sealed-Secrets §3.1](../Sealed-Secrets.md#31-key-hierarchy)), and until Sealed-Secrets S4 a generated secret, kept as
   today's generated secrets are. A member checks its fingerprint once, as they check a member's key, and the check is
   a `VaultKeyCheck` row. A client refuses a lease that is not signed, or signed by a key its user has not checked, and
   shows a changed lease key as a changed member key is shown. A writer of the database cannot put its own public key
@@ -258,7 +272,7 @@ In normal use a member never sees an operational value. The server decrypts it f
   The SSH admin shell lists and revokes leases but does not approve them, because the passphrase would be typed on the
   server.
 - Scripts get no `ec` member that hands out a vault value at will. A kind's service reads a value from the lease it runs
-  under, by binding. That host member is added to [JS-Core-API](../docs/dev/JS-Core-API.md) and
+  under, by binding. That host member is added to [JS-Core-API](../../docs/dev/JS-Core-API.md) and
   `crates/moqui-devkit/src/typegen/moqui-host.d.ts` when it is built.
 
 ### 3.8 Machine access
@@ -272,11 +286,11 @@ TLS key the engine uses for queued jobs. An environment may hold **machine acces
   machine key, with the vault crate's AEAD (AES-256-GCM) and the environment, vault and item ids as associated data,
   so a row copied to another environment or item does not open.
 - **The machine key** is the `vault-machine` purpose key of the keyring
-  ([Sealed-Secrets §3.1](Sealed-Secrets.md#31-key-hierarchy), S1). Until S1 it is derived by HKDF from today's field
+  ([Sealed-Secrets §3.1](../Sealed-Secrets.md#31-key-hierarchy), S1). Until S1 it is derived by HKDF from today's field
   pass (`entity-facade@crypt-pass`) with the label `vault-machine`, and the screen says that this pass is on the server's
   disk.
 - The sealed item keys are not an entity `encrypt="true"` field. Today's field format has no MAC and no associated
-  data ([Sealed-Secrets §2](Sealed-Secrets.md#2-what-is-there-now)), and the entity facade decrypts such a field on
+  data ([Sealed-Secrets §2](../Sealed-Secrets.md#2-what-is-there-now)), and the entity facade decrypts such a field on
   every find. The facade never decrypts this column, so no find, cache, export or sync holds an item key in the clear.
   Only the lease code of the vault services opens it.
 - It covers named items only, for the environment's own operations. The environment and the vault both show it, with
@@ -360,7 +374,7 @@ The screen also checks the choice:
   - A key passphrase, a vault password or key, a personal private key, a vault key.
   - An operational value, except inside a lease and only for that lease's items.
 
-The limits, which the vault's About and [Attack-Surface](../docs/security/Attack-Surface-Data.md#threat-model-stored-secrets) state:
+The limits, which the vault's About and [Attack-Surface](../../docs/security/Attack-Surface-Data.md#threat-model-stored-secrets) state:
 
 - **The web form runs code the server sends.** A compromised server can send code that takes the passphrase, which is
   the limit of every web password manager. The desktop and mobile apps carry their own code and are the strong form.
@@ -409,7 +423,7 @@ A `VaultEvent` row is written for each of these:
 - a reveal;
 - a delivery sent or filed.
 
-A lease does not open when its event cannot be written (fail closed, as [Sealed-Secrets §3.10](Sealed-Secrets.md#310-who-has-access-to-what)
+A lease does not open when its event cannot be written (fail closed, as [Sealed-Secrets §3.10](../Sealed-Secrets.md#310-who-has-access-to-what)
 has it for `audit="required"`). Sealed-Secrets' access report (S13) reads these rows: who can approve leases on an
 environment's vault, who did and for which run, and where machine access is held.
 
@@ -421,7 +435,7 @@ The `moqui.server.instance` tables are reshaped. Before 0.1.0 there is no migrat
 
 | Entity | Change |
 |---|---|
-| `InstanceHost` | Kept: a Docker or Podman host (Unix socket, HTTP, HTTPS with TLS). Later host types: SSH with systemd for an archive or a `.deb` ([Debian-Packaging](Debian-Packaging.md)), Quadlet (`podman/quadlet/`), Kubernetes. Its password and TLS key become vault item bindings in the vault it names. A host that serves a runner pool needs machine access for them, since CI runs unattended |
+| `InstanceHost` | Kept: a Docker or Podman host (Unix socket, HTTP, HTTPS with TLS). Later host types: SSH with systemd for an archive or a `.deb` ([Debian-Packaging](../Debian-Packaging.md)), Quadlet (`podman/quadlet/`), Kubernetes. Its password and TLS key become vault item bindings in the vault it names. A host that serves a runner pool needs machine access for them, since CI runs unattended |
 | `InstanceHostType` | Kept: the services by name are the driver contract |
 | `InstanceKind` | New, in place of `InstanceImageType` and `DatabaseType`: `mr-moqui`, `postgres`, `mysql`, `opensearch`. It keeps the template rows (env, volume, host config). Its services: provision, configure, start, stop, check, backup, upgrade, `rotate#Credential`, `create#Database`, `check#Database` and remove. `InstanceKindSecret` lists the items it needs, by type and binding. Its dependencies: what an instance of it needs (a `mr-moqui` instance needs a database, unless it uses embedded Postgres, and may use search) |
 | `InstanceImage` | Kept: an image of a kind, with its registry. The registry login becomes a vault item. MR Moqui's image is the one `podman/build.sh` makes, with one data volume, in place of Moqui Java's images and paths |
@@ -459,7 +473,7 @@ state and raises the alerts of [§4.8](#48-monitor). It changes nothing by itsel
 
 1. **Choose.** The operator picks the kind and version, the host, the environment, a cluster if any, and the
    dependencies. A database can be a new Postgres or MySQL instance, a database on a database host, or embedded
-   Postgres. Search can be a new OpenSearch instance, embedded OpenSearch (`--embed-opensearch`, [Build-Test](../docs/Build-Test.md)),
+   Postgres. Search can be a new OpenSearch instance, embedded OpenSearch (`--embed-opensearch`, [Build-Test](../../docs/Build-Test.md)),
    or Postgres search.
 2. **Preview.** The screen shows what will be made: containers, volumes, networks, databases and users, vault items and
    host names. It also shows the lease the provision needs: the host's TLS key, the database admin login and the
@@ -473,7 +487,7 @@ state and raises the alerts of [§4.8](#48-monitor). It changes nothing by itsel
    4. It starts the container and checks it.
 5. **A new MR Moqui instance** dials the manager with its pairing token, takes its bootstrap bundle, makes its seal
    ([§4.5](#45-sealed-start-of-a-managed-instance)), loads its data as its first start does
-   ([Run-Deploy](../docs/Run-Deploy.md#data-and-the-first-start)) and reports ready.
+   ([Run-Deploy](../../docs/Run-Deploy.md#data-and-the-first-start)) and reports ready.
 6. **Register.** Monitor's identity, ingest key and scrape targets are set ([§4.8](#48-monitor)). The action is
    recorded, with an annotation.
 
@@ -492,8 +506,9 @@ The user's answer: a link like the edge link, with SSH as a fallback, or as the 
   ([§4.5](#45-sealed-start-of-a-managed-instance)). A changed set of approvers reaches the instance signed by an
   approver it has pinned.
 - **A manager behind a firewall** is reached through its own edge node, by a passthrough host name, the way a local
-  node's web access is. The manager still opens no inbound port.
-- **While the instance is sealed**, dialing out opens no listener ([Sealed-Secrets §3.3](Sealed-Secrets.md#33-sealed-start)).
+  node's web access is. The manager still opens no inbound port. (Built 2026-11-25: a passthrough tunnel whose
+  ClientHello offers `moqui-manage/1` goes to the manager link, [Run-Deploy](../../docs/Run-Deploy.md#the-manager-link).)
+- **While the instance is sealed**, dialing out opens no listener ([Sealed-Secrets §3.3](../Sealed-Secrets.md#33-sealed-start)).
   Only three calls are allowed then: Hello and status, the bootstrap bundle on a first start, and unseal. Every other
   call needs the instance unsealed.
 - **Manager to instance:**
@@ -511,7 +526,7 @@ The user's answer: a link like the edge link, with SSH as a fallback, or as the 
   permission. On the instance, link calls run as one system identity that may run only the commands listed here.
   Nothing on the link runs an arbitrary service.
 - **SSH.** The manager can run the same operator commands over SSH instead: the instance's SSH admin shell (`moqui>`,
-  [TUI](../docs/ui/TUI.md)), or the host's own sshd running `moqui operator …`. The SSH key is a vault item. An
+  [TUI](../../docs/ui/TUI.md)), or the host's own sshd running `moqui operator …`. The SSH key is a vault item. An
   environment chooses link, SSH or both.
 - **The link key on the instance** must work while the instance is sealed, so it cannot be under the root key. It sits
   in `runtime/` with mode 0600, or in `systemd-creds` on a host with a TPM. With it, the instance can ask the manager
@@ -539,7 +554,7 @@ Sealed-Secrets S3 and S11 make the seal; this section is its deployment side.
     never typed into the manager: a holder enters a share on the instance's operator socket, or runs `moqui vault` on
     their own machine, which seals the share to a key the sealed instance makes for that unseal and signs with its
     link key. The manager relays the sealed share over the link and cannot open it
-    ([Sealed-Secrets §6](Sealed-Secrets.md#6-decisions): never HTTP).
+    ([Sealed-Secrets §6](../Sealed-Secrets.md#6-decisions): never HTTP).
 - **Transit by the manager.** The manager keeps one transit key for each instance, in its own keyring. It is a platform
   secret, because an unattended unseal needs it. Unsealing works like this:
   1. The instance sends its wrapped root key over the link, with an ephemeral public key.
@@ -606,7 +621,7 @@ request, the gate and the decision, and changes what follows them:
    changes.
 5. **Back up first.** The kind's backup service runs before a change that touches the database.
 6. **Roll.** One cluster member at a time:
-   1. drain it (`InstanceDrain`, the member drain of [Edge-Node2](Edge-Node2.md));
+   1. drain it (`InstanceDrain`, the member drain of [Edge-Node2](../Edge-Node2.md));
    2. change it: a new container from the new image with the same volumes and secrets, or Component-Deploy's update
       over the link;
    3. wait until it reports healthy and unsealed;
@@ -635,7 +650,7 @@ own procedure, and comes later.
   - at the policy age;
   - on removing a member (offered, [§3.9](#39-members-removal-and-rotation));
   - after an incident: the manager lists each item of an environment and rotates all that have a rotate service
-    ([Sealed-Secrets §3.12](Sealed-Secrets.md#312-incident-response)).
+    ([Sealed-Secrets §3.12](../Sealed-Secrets.md#312-incident-response)).
 - A credential the manager cannot change (an outside provider's) shows as due, with what to do by hand.
 
 ### 4.8 Monitor
@@ -671,7 +686,7 @@ own procedure, and comes later.
 - For a fleet in production, run it as an ops instance of its own, in the inner zone and without the business apps.
   It holds every managed instance's transit key and the deposit keys of their vaults, so it should hold as little else
   as it can.
-- It seals with `tpm`, `kms`, `passphrase` or `shamir` ([Sealed-Secrets §3.3](Sealed-Secrets.md#33-sealed-start)), and
+- It seals with `tpm`, `kms`, `passphrase` or `shamir` ([Sealed-Secrets §3.3](../Sealed-Secrets.md#33-sealed-start)), and
   never by transit to an instance it manages.
 - **What a compromised manager gets.** More than its leases. It sees each managed instance's root key at that
   instance's next unseal, and it can unwrap the root key in any recovery bundle it reads, since it holds the transit
@@ -685,7 +700,7 @@ own procedure, and comes later.
   choice, and then gets its recovery shares. The holders' confirmations ([§4.5](#45-sealed-start-of-a-managed-instance))
   show a holder who received nothing. A manager compromised later cannot change the pinned approvers.
 - **Zones.** The manager is in the inner zone, and it may manage outer instances (PASS, edge nodes). Their transit keys
-  open only their own root keys, so an outer instance gets no inner key ([Sealed-Secrets §1](Sealed-Secrets.md#1-deployment-zones)).
+  open only their own root keys, so an outer instance gets no inner key ([Sealed-Secrets §1](../Sealed-Secrets.md#1-deployment-zones)).
 
 ## 5. Screens
 
@@ -714,7 +729,7 @@ own procedure, and comes later.
 ## 6. Phases
 
 Each phase is done when its regression tests pass, `./moq test-framework` passes (`./moq test-apps` for the Commons
-phases), and [Attack-Surface](../docs/security/Attack-Surface.md) says what changed.
+phases), and [Attack-Surface](../../docs/security/Attack-Surface.md) says what changed.
 
 | Phase | Work | Tests (suite) |
 |---|---|---|
@@ -723,7 +738,7 @@ phases), and [Attack-Surface](../docs/security/Attack-Surface.md) says what chan
 | **V2** | Operational vaults: the signed deposit key, the lease key and signed leases (the ephemeral key, approval with sealed item keys, use, end, revoke), reveal by role, machine access per environment under the vault crate's AEAD, the lease dialog, `moqui vault approve` | A lease opens only the items it names, and nothing it held opens after it ends; an approval without the approve role or a recent sign-in is refused; a lease whose event cannot be written does not open; a lease approved through one cluster member runs on another; machine access opens only its items for its environment, and its sealed keys moved to another environment's row do not open; a client refuses a lease whose public key or item list was changed after it was signed, and one signed by a lease key its user has not checked; a binding pointed at another item fails at the unwrap; the server refuses a deposit key with no manager's signature; a leased value is not in a job's stored parameters; a restart ends the member's leases (regression) |
 | **V3** | Commons › Vault (mr-boss): the module in a worker, item types and forms, single-secret creation with §3.11's steps, shared-key vaults with members and fingerprints, deliveries, private contacts in Contacts, import from Bitwarden and KeePass exports in the client, encrypted export, lock on idle | A single-secret vault refuses a member and a recovery key; a private contact never reaches CardDAV (regression, mr-boss); a value shows only when asked for, and the page locks when idle (one client spec). `VaultPersonal`: both locks, a share, a removal, a recovery (acceptance) |
 | **V4** | Recovery keys and holders; recovery on shared-key vaults; BOSS Admin › Security | A holder recovers a vault to a member's new personal key, and every member is told; a single-secret vault never gets a recovery wrap; recovery without `VAULT_RECOVERY` or a recent sign-in is refused; an operational vault cannot drop to one member with recovery off (regression) |
-| **V5** | The vault in the desktop and mobile shells, with the native crate; device memory in the OS key store; the passkey slot once passkeys are built | Device memory ends at its time limit and when the device is revoked (regression, the shells' crates). Hand checks in [Mobile-Desktop-Exit-Checks](Mobile-Desktop-Exit-Checks.md) |
+| **V5** | The vault in the desktop and mobile shells, with the native crate; device memory in the OS key store; the passkey slot once passkeys are built | Device memory ends at its time limit and when the device is revoked (regression, the shells' crates). Hand checks in [Mobile-Desktop-Exit-Checks](../Mobile-Desktop-Exit-Checks.md) |
 | **M1** | Instances on one driver: the Rust driver for containers that stay; `InstanceKind` for `mr-moqui`, `postgres`, `mysql` and `opensearch`; the reshaped tables; secrets as bindings and files; provisioning under a lease; MR Moqui's own image and volume; System › Instances | Against the fake host type: a provision deposits its items and puts no secret in any container's environment, labels or command; a provision without a lease or machine access is refused; dependencies are made first (regression). Against real Docker and Podman: opt-in, as CI's driver tests are |
 | **M2** | The manager link: pairing at provision (the token as a file) and by code, the approvers' signing keys pinned at pairing, the calls, the bootstrap bundle (to `runtime/.env` until Sealed-Secrets S4, then to `seal.json` and `SecretValue`); SSH as the other transport | An unpinned key is refused; a pairing token works once and is in no container's command, environment or labels; a sealed instance can make only the three sealed calls; a call not on the list is refused on the instance (regression, with a two-runtime link test as `edge_link`'s) |
 | **M3** | Environments and deploys (Dogfood DG10): `InstanceEnvironment` and `GitCiEnvironment`'s link to it, the deploy event, the gate, approval with its lease, rolling deploys with drain, rollback to recorded versions, annotations | The gate refuses a commit with no passed run; a deploy uses only its lease's items; members change one at a time, each drained; a rollback across a schema hash change is refused (regression). `InstanceDeploy` on a real Podman host: provision Postgres and MR Moqui, deploy a component and an image, roll back (acceptance) |
@@ -750,15 +765,17 @@ The order:
   - framework specs for the vault and instance services;
   - mr-boss specs for Commons' rules.
 
-  A screen is rendered at most once in each mode, and there is no screen sweep ([Build-Test](../docs/Build-Test.md#rendering-screens-in-tests)).
+  A screen is rendered at most once in each mode, and there is no screen sweep ([Build-Test](../../docs/Build-Test.md#rendering-screens-in-tests)).
 - **Opt-in:** the driver against a real Docker and a real Podman, as CI's driver tests are.
-- **Acceptance:** `VaultPersonal` (mr-boss), `InstanceDeploy` and `ManagedSealedStart` (framework). Each is written with
-  its phase and run only when asked, or when it is added or changed.
-- **Proof catalog:** each vault rule is a row in [Proof-Tests](../docs/security/Proof-Tests.md), beside Stored secrets.
+- **Acceptance:** `VaultPersonal` (mr-boss), `InstanceDeploy` (framework, a client spec with its fixture
+  `InstanceDeployFixtures`) and `ManagedSealedStart` (the ignored Rust test `crates/moqui-host/tests/it/
+  managed_sealed_start.rs`, in `cargo test-slow`). Each is written with its phase and run only when asked, or when it is
+  added or changed.
+- **Proof catalog:** each vault rule is a row in [Proof-Tests](../../docs/security/Proof-Tests.md), beside Stored secrets.
 
 ## 8. Other plans and docs
 
-- **[Sealed-Secrets](Sealed-Secrets.md)** is changed with this plan. It names this plan for:
+- **[Sealed-Secrets](../Sealed-Secrets.md)** is changed with this plan. It names this plan for:
   - people's secrets;
   - transit by a manager, recovery shares in holders' vaults and the recovery bundle (§3.3);
   - a manager's place in the zones (§1);
@@ -766,17 +783,17 @@ The order:
   - the managed keys in the inventory (§3.11);
   - a manager in incident response (§3.12);
   - S4 and S11.
-- **[Dogfood](Dogfood.md):** M3 builds §8.6 and DG10 for managed instances. Dogfood gets a pointer when M3 starts.
-- **[Pipelines](../docs/interfaces/Pipelines.md):** environments, deploy secrets as vault items, and runner hosts'
+- **[Dogfood](../Dogfood.md):** M3 builds §8.6 and DG10 for managed instances. Dogfood gets a pointer when M3 starts.
+- **[Pipelines](../../docs/interfaces/Pipelines.md):** environments, deploy secrets as vault items, and runner hosts'
   credentials under machine access, as M1 and M3 are built.
-- **[Attack-Surface](../docs/security/Attack-Surface-Data.md#threat-model-stored-secrets):** vaults and managed instances in the threat model. The rows
+- **[Attack-Surface](../../docs/security/Attack-Surface-Data.md#threat-model-stored-secrets):** vaults and managed instances in the threat model. The rows
   "the server sees every plaintext" and the client-side vault in "What MR Moqui can take" point here once V1 is built.
 - **Guides, as each phase is built:**
-  - [Run-Deploy](../docs/Run-Deploy.md): a Managed instances section (M1, M2);
-  - [Monitoring](../docs/tools/Monitoring.md): the fleet screen and the `instance` adapter (M4);
-  - [Component-Deploy](../docs/tools/Component-Deploy.md): a deploy over the link (M3);
+  - [Run-Deploy](../../docs/Run-Deploy.md): a Managed instances section (M1, M2);
+  - [Monitoring](../../docs/tools/Monitoring.md): the fleet screen and the `instance` adapter (M4);
+  - [Component-Deploy](../../docs/tools/Component-Deploy.md): a deploy over the link (M3);
   - a new guide for vaults.
-- **[Remaining-Work](Remaining-Work.md):** items leave it as they are built.
+- **[Remaining-Work](../Remaining-Work.md):** items leave it as they are built.
 
 ## 9. Decisions
 
@@ -839,7 +856,7 @@ The security review of 2026-11-15 found these. The owner decided each on Nov 19,
 - Attachments in a vault (files encrypted with the item). Later.
 - Server search, CardDAV sync or server-side restore of personal items. Never: they need the plaintext.
 - Dynamic credentials made for one lease and dropped after it, as Vault's database engine makes them. Later.
-- Kubernetes, AWS and other providers' APIs ([Dogfood §15](Dogfood.md#15-later), D19).
+- Kubernetes, AWS and other providers' APIs ([Dogfood §15](../Dogfood.md#15-later), D19).
 - Major version upgrades of Postgres, MySQL and OpenSearch. Later.
 
 ## 11. Inspiration

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The driver for containers that stay, against the fake engine as Docker and as Podman (plans/Vault-Instances.md §6
+//! The driver for containers that stay, against the fake engine as Docker and as Podman (plans/archive/Vault-Instances.md §6
 //! M1): secrets go in files and nowhere else, and each call says what it should. On a real socket it is the opt-in
 //! `docker_real` test.
 

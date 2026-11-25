@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Organization recovery, split k of n (plans/Vault-Instances.md §3.10, §3.12, §3.13, V4; the owner's decision of
+//! Organization recovery, split k of n (plans/archive/Vault-Instances.md §3.10, §3.12, §3.13, V4; the owner's decision of
 //! Nov 19, 2026).
 //!
 //! - [`keys`]: a holder with `VAULT_RECOVERY` and a recent sign-in makes the organization's recovery key in their

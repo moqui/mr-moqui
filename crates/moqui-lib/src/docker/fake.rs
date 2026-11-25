@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A fake container engine for tests (plans/Vault-Instances.md §6 M1, §7): a small HTTP server on a loopback port that
+//! A fake container engine for tests (plans/archive/Vault-Instances.md §6 M1, §7): a small HTTP server on a loopback port that
 //! answers the calls of [`super::DockerHost`] as Docker or as Podman would, keeps the containers, volumes, networks and
 //! Podman secrets it was asked to make, and records every request, so a test asserts what each call carried: that no
 //! secret is in a container's environment, labels or command ([`FakeEngine::secret_outside_files`]), and which secret

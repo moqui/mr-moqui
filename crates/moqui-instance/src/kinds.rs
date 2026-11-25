@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The instance kinds (plans/Vault-Instances.md §4.1, §4.2): `mr-moqui`, `postgres`, `mysql` and `opensearch`. A kind's
+//! The instance kinds (plans/archive/Vault-Instances.md §4.1, §4.2): `mr-moqui`, `postgres`, `mysql` and `opensearch`. A kind's
 //! rows (`InstanceKind` with its env, volume, host config, secret and dependency rows, framework/data/
 //! InstanceTypeData.xml) say what its container is made of; this module turns an instance's rows into the container
 //! that stays ([`ContainerSpec`]), with each secret a file under `/run/secrets` and the image's `*_FILE` setting naming

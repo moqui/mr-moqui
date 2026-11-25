@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! One rotation of a binding at a time (plans/Vault-Instances.md §4.7), across a cluster: an `InstanceRotation` row per
+//! One rotation of a binding at a time (plans/archive/Vault-Instances.md §4.7), across a cluster: an `InstanceRotation` row per
 //! binding, keyed by it, holds the claim of the rotation that runs or waits for its lease (a token, until a time). A
 //! claim is taken in a transaction of its own, the row locked (`for_update`) or made (its key is the binding, so a
 //! second member's create of the same row fails), and refused while another token holds it and its time has not

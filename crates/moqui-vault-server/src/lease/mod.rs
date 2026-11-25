@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Leases (plans/Vault-Instances.md §3.7): operational items used on the server for one operation.
+//! Leases (plans/archive/Vault-Instances.md §3.7): operational items used on the server for one operation.
 //!
 //! 1. An operation asks ([`LeaseRegistry::ask`]): the server makes an ephemeral X25519 key pair, keeps its private half
 //!    in this cluster member's memory only, and signs the lease with its lease key ([`key`]): the lease id, the vault
@@ -713,7 +713,7 @@ impl LeaseRegistry {
         Ok(answer)
     }
 
-    /// Stages a rotation's new value of the item bound to `binding` (plans/Vault-Instances.md §4.7): the item's body,
+    /// Stages a rotation's new value of the item bound to `binding` (plans/archive/Vault-Instances.md §4.7): the item's body,
     /// opened under the lease, with `fields[field_name]` set to `value` and the rest as it was (its other fields, notes,
     /// tags and URIs), deposited as a pending revision ([`crate::deposit::stage_revision`]). The body goes to no caller.
     /// Refused unless the item is at `expected_revision`. Its pending id.

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Secret files on Docker (plans/Vault-Instances.md §4.2): a tar of `run/secrets/<name>`, each file with its owner and
+//! Secret files on Docker (plans/archive/Vault-Instances.md §4.2): a tar of `run/secrets/<name>`, each file with its owner and
 //! mode, put into a created container with `PUT /containers/{id}/archive?path=/` before it starts. The file is in the
 //! container's own layer, so it is on the host's disk only while the container exists. Docker keeps the owner of each
 //! entry as the tar says it (it sets the container user's only with `copyUIDGID`, which this does not send).

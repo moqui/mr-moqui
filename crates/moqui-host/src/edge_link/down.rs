@@ -462,7 +462,7 @@ where
                 return;
             };
             // a manager behind a firewall: its managed instances dial a passthrough host name of this node, and their
-            // links come down here (plans/Vault-Instances.md §4.4); the instance's address is the PROXY header's
+            // links come down here (plans/archive/Vault-Instances.md §4.4); the instance's address is the PROXY header's
             if offers_manage(&accepted) {
                 let acceptor = web
                     .factory

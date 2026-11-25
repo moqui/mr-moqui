@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Leases (plans/Vault-Instances.md §3.7): the server asks for an operation's items under an ephemeral X25519 key it
+//! Leases (plans/archive/Vault-Instances.md §3.7): the server asks for an operation's items under an ephemeral X25519 key it
 //! holds in memory, and signs the lease with its lease key; a member with the approve role checks that signature
 //! against a lease key their user has checked, unwraps each named item key with the type, binding and name the lease
 //! gives (so an item that is not the one named does not unwrap), seals them to the lease's public key and signs the

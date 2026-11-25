@@ -1,6 +1,6 @@
 # Vaults
 
-A vault holds secrets under a key the server does not hold ([Vault-Instances](../../plans/Vault-Instances.md) has
+A vault holds secrets under a key the server does not hold ([Vault-Instances](../../plans/archive/Vault-Instances.md) has
 the design). It covers the crypto every client and the server share, what the server keeps and serves (V1): personal
 keys, key checks, vaults of both locks, items, members, deliveries and events, with the `moqui vault` command;
 operational vaults (V2): the deposit key, leases, machine access and reveal, with System › Vaults and the lease dialog;
@@ -453,7 +453,7 @@ those entries; the rustc version; and the module's own SHA-256. The script rebui
 the moq test tasks run it first ([Build-Test, Build](../Build-Test.md#build)); a build with the production or all
 runtime built in refuses to build without the module. On a runtime without it, the lease dialog says the module is not
 built, and Commons › Vault gets no integrity hash for it and does not load it. The desktop and mobile shells
-carry their own copy (plans/Vault-Instances.md §3.6): a shell build that bundles it runs the script first.
+carry their own copy (plans/archive/Vault-Instances.md §3.6): a shell build that bundles it runs the script first.
 
 ### The vault screens' policy
 

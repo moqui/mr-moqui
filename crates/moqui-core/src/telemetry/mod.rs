@@ -562,7 +562,7 @@ pub fn for_factory(factory: &ExecutionContextFactory) -> Arc<Telemetry> {
         if !name.is_empty() {
             resource.service_name = name;
         }
-        // what a manager sets on its instances (plans/Vault-Instances.md §4.8): the version at each deploy, the
+        // what a manager sets on its instances (plans/archive/Vault-Instances.md §4.8): the version at each deploy, the
         // environment at the provision
         let version = factory.conf_setting("telemetry", "service-version");
         if !version.is_empty() {

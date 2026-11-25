@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The manager's transit and its view of "unsealed" (plans/Vault-Instances.md §4.4, §4.5, M6); the link that carries
+//! The manager's transit and its view of "unsealed" (plans/archive/Vault-Instances.md §4.4, §4.5, M6); the link that carries
 //! them is the host's (`moqui_host::manage_link`).
 //!
 //! - **The transit key.** One X25519 key per instance whose environment's method is the manager's transit, in this

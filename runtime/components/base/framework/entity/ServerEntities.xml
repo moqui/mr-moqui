@@ -170,7 +170,7 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- moqui.server.instance -->
     <!-- ========================================================= -->
 
-    <!-- Managed instances (plans/Vault-Instances.md §4.1; docs/Run-Deploy.md "Managed instances"): environments, the hosts
+    <!-- Managed instances (plans/archive/Vault-Instances.md §4.1; docs/Run-Deploy.md "Managed instances"): environments, the hosts
         and images instances run on, the kinds they are (mr-moqui, postgres, mysql, opensearch) with their templates and the
         vault items they need, the instances with their dependencies and secret bindings, and each change as an action. No
         column holds a secret: a host's TLS client key, a registry login and a database host's admin login are items of an
@@ -198,7 +198,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="unsealMethod" type="text-short"><description>transit, tpm, passphrase or shamir (M6)</description></field>
         <field name="recoveryUserGroupId" type="id"><description>The group whose members hold its instances' recovery shares,
             one each, in their personal vaults; a holder's key is taken only with a key check by an approver the instance
-            pinned (M6, plans/Vault-Instances.md §4.5)</description></field>
+            pinned (M6, plans/archive/Vault-Instances.md §4.5)</description></field>
         <field name="transportEnumId" type="id"/>
         <field name="leaseLimitMinutes" type="number-integer"><description>A lease's time limit for its operations; at most
             vault@lease-max-hours</description></field>
@@ -207,12 +207,12 @@ along with this software (see the LICENSE.md file). If not, see
             another member of the group approves it (approve#InstanceDeploy). A deploy's lease is never approved by its
             requester.</description></field>
         <field name="rolloutPausedDate" type="date-time"><description>Set while its rolling deploys are paused (Monitor's
-            pause-rollout, cleared by promote: plans/Vault-Instances.md §4.8); a deploy changes no further member
+            pause-rollout, cleared by promote: plans/archive/Vault-Instances.md §4.8); a deploy changes no further member
             meanwhile</description></field>
         <field name="rolloutPausedReason" type="text-medium"/>
         <field name="automaticRecovery" type="text-indicator" default="'N'"><description>Y: an automatic Monitor recovery
             policy may act on its instances (restart, isolate, pause-rollout, promote, rollback), with no person
-            approving, and only with machineAccess Y as well (plans/Vault-Instances.md §4.8); N: each needs a person's
+            approving, and only with machineAccess Y as well (plans/archive/Vault-Instances.md §4.8); N: each needs a person's
             approval</description></field>
         <relationship type="one" title="EnvironmentType" related="moqui.basic.Enumeration" short-alias="environmentType">
             <key-map field-name="environmentTypeEnumId"/></relationship>
@@ -299,7 +299,7 @@ along with this software (see the LICENSE.md file). If not, see
             change that touches the database (M3): of org.moqui.dev.InstanceServices only</description></field>
         <field name="scrapeUrlTemplate" type="text-medium"><description>Where Monitor scrapes an instance of the kind
             (its exporter, or its own Prometheus endpoint), with the template placeholders (${instanceName}): a provision
-            adds it as a ScrapeTarget (plans/Vault-Instances.md §4.8). Empty: the kind reports by OTLP or not at
+            adds it as a ScrapeTarget (plans/archive/Vault-Instances.md §4.8). Empty: the kind reports by OTLP or not at
             all</description></field>
         <relationship type="many" related="moqui.server.instance.InstanceKindEnv" short-alias="envs">
             <key-map field-name="instanceKindId"/></relationship>
@@ -352,7 +352,7 @@ along with this software (see the LICENSE.md file). If not, see
             role (an mr-moqui instance's database password, with a database)</description></field>
         <field name="description" type="text-medium"/>
         <field name="rotateService" type="text-medium"><description>The kind's rotate#Credential for this secret
-            (plans/Vault-Instances.md §4.7), of org.moqui.dev.InstanceServices only: the manager sets a new value at its
+            (plans/archive/Vault-Instances.md §4.7), of org.moqui.dev.InstanceServices only: the manager sets a new value at its
             source, puts it on the instances that use it, checks them and writes the item's new revision. Empty: the
             manager cannot change it, and rotateByHand says what to do</description></field>
         <field name="rotateByHand" type="text-long"><description>What to do by hand to rotate a secret with no
@@ -556,7 +556,7 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="one" related="moqui.server.instance.AppInstance"/>
     </entity>
     <entity entity-name="InstanceRecoveryShare" package="moqui.server.instance" use="nontransactional" cache="never">
-        <description>One recovery share of a managed instance's share set (plans/Vault-Instances.md §4.5, M6): which
+        <description>One recovery share of a managed instance's share set (plans/archive/Vault-Instances.md §4.5, M6): which
             holder it was sealed to, its delivery, and the holder's confirmation (their signature, which the instance
             checks). The share itself is never here: the delivery holds it sealed to the holder.</description>
         <field name="appInstanceId" type="id" is-pk="true"/>
@@ -574,7 +574,7 @@ along with this software (see the LICENSE.md file). If not, see
     </entity>
     <entity entity-name="InstanceSealedShare" package="moqui.server.instance" use="nontransactional" cache="never">
         <description>A recovery holder's share sealed to the key a sealed managed instance made for one unseal
-            (plans/Vault-Instances.md §4.5, M6): ciphertext that only that unseal opens, relayed to the instance and
+            (plans/archive/Vault-Instances.md §4.5, M6): ciphertext that only that unseal opens, relayed to the instance and
             removed when it takes it, unseals or its link ends.</description>
         <field name="appInstanceId" type="id" is-pk="true"/>
         <field name="holderUserId" type="id" is-pk="true"/>
@@ -584,7 +584,7 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="one-nofk" related="moqui.server.instance.AppInstance"/>
     </entity>
     <entity entity-name="InstanceRotation" package="moqui.server.instance" use="transactional" cache="never">
-        <description>One operational item's rotation (plans/Vault-Instances.md §4.7): while one runs or waits for its lease,
+        <description>One operational item's rotation (plans/archive/Vault-Instances.md §4.7): while one runs or waits for its lease,
             its claim (claimToken, the lease's id or the run's own, until claimedUntil), which a second rotation of the
             same binding is refused by, on any cluster member (the row's key is the binding); and how the last one
             ended, which the job at the policy age backs off from after a failure (manage@rotate-retry-days).</description>

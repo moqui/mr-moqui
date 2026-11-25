@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! What a sealed value is, written into its associated data or its HPKE `info` (plans/Vault-Instances.md §3.2): the
+//! What a sealed value is, written into its associated data or its HPKE `info` (plans/archive/Vault-Instances.md §3.2): the
 //! purpose, the vault id, the item id and the key version, and for an operational item its type, binding and clear
 //! name. A value copied to another row, vault, version or purpose, or an operational item whose clear columns were
 //! changed, does not open.

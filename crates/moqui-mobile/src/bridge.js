@@ -285,7 +285,7 @@
         window.__moquiCryptoInShell = true;
         if (Array.isArray(page.clearScopes) && page.clearScopes.length) clearScopes(page.clearScopes);
         const backToShell = () => ask("client_show_shell");
-        // the vault module the app runs natively for the page's account (moqui_client_tauri::vault, plans/Vault-Instances.md
+        // the vault module the app runs natively for the page's account (moqui_client_tauri::vault, plans/archive/Vault-Instances.md
         // V5), which VaultClient.js calls in place of its wasm worker; memory is device memory (state, remember, restore,
         // forget), opened with the phone's lock or biometrics
         // the page's user activation (a click), read with the getter and navigator taken before any page script ran, so a

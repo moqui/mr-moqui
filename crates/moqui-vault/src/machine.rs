@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The machine-access seal (plans/Vault-Instances.md §3.8): an item key an environment may use unattended, sealed by
+//! The machine-access seal (plans/archive/Vault-Instances.md §3.8): an item key an environment may use unattended, sealed by
 //! the crate's AEAD under the server's machine key with the environment, vault and item ids as associated data, so a
 //! row copied to another environment or item does not open. Until Sealed-Secrets S1 the machine key is derived by
 //! HKDF from the field pass (`entity-facade@crypt-pass`) with the label `vault-machine`.

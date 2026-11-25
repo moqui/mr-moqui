@@ -1,4 +1,4 @@
-# Managed instances (plans/Vault-Instances.md §4): instance kinds (mr-moqui, postgres, mysql, opensearch),
+# Managed instances (plans/archive/Vault-Instances.md §4): instance kinds (mr-moqui, postgres, mysql, opensearch),
 # provisioning with secrets as files, the reconcile job, deploys to environments, rotation and the manager's transit
 # keys. Core reaches it only through moqui_core::extension, which this crate fills with an inventory entry;
 # moqui-host links it under its instances feature. Credentials are operational vault items (moqui-vault-server).

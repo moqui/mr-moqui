@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! What `moqui vault` remembers between runs (plans/Vault-Instances.md §9, decision (d)): for each server and vault,
+//! What `moqui vault` remembers between runs (plans/archive/Vault-Instances.md §9, decision (d)): for each server and vault,
 //! the highest key version and member-list revision its client accepted and the hash of that member list. The next
 //! open hands it to the vault module, which refuses a chain that does not hold that entry with that member list (a
 //! rollback, or a fork however high it goes). Kept in `~/.config/moqui/vault/state.json` (or under

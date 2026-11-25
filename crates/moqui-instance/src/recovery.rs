@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The manager's end of Monitor's `instance` recovery adapter (plans/Vault-Instances.md §4.8): a recovery action on a
+//! The manager's end of Monitor's `instance` recovery adapter (plans/archive/Vault-Instances.md §4.8): a recovery action on a
 //! managed instance runs through the manager's own actions, not a webhook to an outside controller. Monitor calls
 //! `run#InstanceRecovery` by name with its `RecoveryAction`'s id (moqui-report has no dependency on this crate), and
 //! follows the `InstanceAction` it names; `cancel#InstanceRecovery` ends one that waits.

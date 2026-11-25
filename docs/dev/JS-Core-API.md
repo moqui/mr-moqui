@@ -1290,7 +1290,7 @@ time the transaction has left.
 
 ## `ec.vault`
 
-An operational vault item's value, only from the lease the code runs under (plans/Vault-Instances.md §3.7,
+An operational vault item's value, only from the lease the code runs under (plans/archive/Vault-Instances.md §3.7,
 [Vaults](../security/Vaults.md#leases)): a kind's service that a provision or a deploy calls under its lease reads
 the credentials it needs by binding. There is no member that hands out a vault value at will.
 

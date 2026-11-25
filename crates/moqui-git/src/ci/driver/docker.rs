@@ -53,7 +53,7 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, moqui_core::extension::R
 }
 
 /// The values of an `InstanceHost` row that say where its host is and how it is reached. The client key of an https
-/// host with a client certificate is a vault item (`InstanceHost:<id>:tlsClientKey`, plans/Vault-Instances.md §4.1). A
+/// host with a client certificate is a vault item (`InstanceHost:<id>:tlsClientKey`, plans/archive/Vault-Instances.md §4.1). A
 /// CI run is unattended, so it is read under the machine access of the environment the host names
 /// (`InstanceHost.environmentId`): a lease approved by "machine" for this one call, ended when the client is made
 /// (`moqui_core::vault_hooks::machine_run`). A host with a client key and no environment, or an environment with no

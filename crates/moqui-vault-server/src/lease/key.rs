@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The server's lease key (plans/Vault-Instances.md §3.7): an Ed25519 key that signs each lease, whose fingerprint
+//! The server's lease key (plans/archive/Vault-Instances.md §3.7): an Ed25519 key that signs each lease, whose fingerprint
 //! every approver checks once. Its seed is the generated secret `vault@lease-key`, which Sealed-Secrets S4 keeps in the
 //! seal's store as a `SecretValue` (made at its first read), read through the factory's secret handle; S1 makes it the
 //! keyring's `vault-lease` purpose key. [`seed`] is the one place that reads it, so that move changes only it. A new

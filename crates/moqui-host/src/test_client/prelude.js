@@ -421,7 +421,7 @@
         }
     }));
 
-    // Vault clients (plans/Vault-Instances.md V1): each is the vault crate's own session (crates/moqui-vault ops), run
+    // Vault clients (plans/archive/Vault-Instances.md V1): each is the vault crate's own session (crates/moqui-vault ops), run
     // natively as `moqui vault` runs it, holding its personal key and opened vault keys and refusing what a real client
     // refuses. call(op, args) answers the result or throws the module's refusal; try(op, args) answers {ok, result,
     // error}. The clients end with their spec.

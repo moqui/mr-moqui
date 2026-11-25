@@ -393,7 +393,7 @@ fn an_idle_connection_the_server_closed_reads_as_closed() {
 }
 
 /// A server (or a proxy in the path) that asks for the password in clear text over plain TCP gets no password: the
-/// connect fails before a password message is written (plans/Vault-Instances.md M1 review: an admin login would cross
+/// connect fails before a password message is written (plans/archive/Vault-Instances.md M1 review: an admin login would cross
 /// the network in the clear).
 #[test]
 fn a_cleartext_password_is_not_sent_over_plain_tcp() {

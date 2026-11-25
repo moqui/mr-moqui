@@ -296,7 +296,7 @@ activities. Dialogs, templates and non-XML surfaces follow the route tables.
 | Git export/import/LFS/mirror; printer job download/hold/release/cancel; terminal End dialog; ACME confirmation | SYS-16–19; actual files/results, local prerequisites and confirmation identity |
 
 Older standalone user/job/reference routes and Monitor launcher entries are not restored. New registered
-administration areas are current scope. [Vault/Instances](Vault-Instances.md) and [Sealed Secrets](Sealed-Secrets.md)
+administration areas are current scope. [Vault/Instances](archive/Vault-Instances.md) and [Sealed Secrets](Sealed-Secrets.md)
 remain separate proposals; their absent controls are not review failures or implementation requests.
 
 ## 4. End-to-end activities

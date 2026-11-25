@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! SSH, the manager's other transport (plans/Vault-Instances.md §4.4): the same operator commands as the link's, run
+//! SSH, the manager's other transport (plans/archive/Vault-Instances.md §4.4): the same operator commands as the link's, run
 //! as `moqui operator …` by the instance's SSH admin shell or its host's sshd. The key it signs in with is the vault
 //! item `AppInstance:{id}:sshKey` (type ssh-key), used under a lease or the environment's machine access and written
 //! for the one call to a file of mode 0600 that is removed after; the instance's host key is pinned on its row

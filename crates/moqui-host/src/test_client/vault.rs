@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The client specs' `vault` member (plans/Vault-Instances.md V1): vault clients of a spec, each the vault crate's own
+//! The client specs' `vault` member (plans/archive/Vault-Instances.md V1): vault clients of a spec, each the vault crate's own
 //! session natively (`crate::vault_cmd::client`, which `moqui vault` drives too), so a spec makes a personal key,
 //! checks a fingerprint, signs a member list and a wrap, opens a vault through its chain and an item, the way a real
 //! client does and with its refusals. The clients end with their spec.

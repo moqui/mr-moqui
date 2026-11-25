@@ -1,7 +1,7 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
 /*
- * The page side of the vault module (plans/Vault-Instances.md §3.6; docs/security/Vaults.md). It starts
+ * The page side of the vault module (plans/archive/Vault-Instances.md §3.6; docs/security/Vaults.md). It starts
  * VaultWorker.js, which holds moqui_vault.wasm and every key; the page asks it for one item at a time.
  *
  *   const vault = new MoquiVaultClient({ wasmIntegrity: "sha256-...", workerIntegrity: "sha256-..." });
@@ -17,7 +17,7 @@
  * hands it the module's bytes. The vault locks after `idleMinutes` with no call (15 by default) and on lock(); a lock
  * zeroes the module's memory in the worker.
  *
- * In the desktop and mobile apps (plans/Vault-Instances.md V5) the page bridge has window.moquiDesktop.vault: the app
+ * In the desktop and mobile apps (plans/archive/Vault-Instances.md V5) the page bridge has window.moquiDesktop.vault: the app
  * runs the same module natively, one session per account, and the client calls it there with the same ops. It then
  * loads no worker and no module from the server (the app refuses them), the app keeps what it has seen of each vault
  * (rollback memory), and device memory (deviceMemory, remember, restore, forget) can keep the personal key open for a

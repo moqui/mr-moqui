@@ -3,7 +3,7 @@
 //! scope and a retried run reaches the controller with the same key. An in-process action is done at once and keeps
 //! what reverting it restores; a webhook posts a signed request to a deployment controller, which answers at once or
 //! reports back on `/v1/recovery` (or is polled at its `statusUrl`); a manual action waits for an operator; an instance
-//! action runs through this server's own actions on a managed instance (plans/Vault-Instances.md §4.8), and one that
+//! action runs through this server's own actions on a managed instance (plans/archive/Vault-Instances.md §4.8), and one that
 //! waits for its vault lease is followed on its `InstanceAction`. An action past its deadline is timed out and
 //! escalated.
 

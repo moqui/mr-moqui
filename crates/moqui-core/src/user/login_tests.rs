@@ -1110,7 +1110,7 @@ fn a_password_login_and_a_finished_second_factor_are_recent_sign_ins_an_internal
     session::reset_session();
 }
 
-/// A strong sign-in (plans/Vault-Instances.md §9, Nov 19): the code that finishes a second factor and an SSO login
+/// A strong sign-in (plans/archive/Vault-Instances.md §9, Nov 19): the code that finishes a second factor and an SSO login
 /// are; a password alone, an internal login and a session's login key are not; a paired device's key is, with a recent
 /// sign-in on the device. Each is the user's own, recent within the age asked, and a logout drops it.
 #[test]

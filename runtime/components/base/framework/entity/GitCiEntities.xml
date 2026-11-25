@@ -221,7 +221,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="targetUrl" type="text-medium"><description>The target instance's base URL (https; http only to a
             loopback IP literal); a deployment posts to its Component-Deploy REST</description></field>
         <field name="instanceEnvironmentId" type="id"><description>The InstanceEnvironment of managed instances this
-            environment deploys to (plans/Vault-Instances.md §4.6): over the manager link or SSH, no attestation posted,
+            environment deploys to (plans/archive/Vault-Instances.md §4.6): over the manager link or SSH, no attestation posted,
             the deployment's decision opening its lease; targetUrl and the token are then unused</description></field>
         <field name="vaultId" type="id"><description>A target not managed here: the operational vault holding the
             secret the target issued (its component-deploy attestation-secret), the item bound to
@@ -344,7 +344,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="approvedByUserId" type="id"/>
         <field name="approvedDate" type="date-time"/>
         <field name="refusedByUserId" type="id"/>
-        <field name="leaseId" type="id"><description>The vault lease its approval opens (plans/Vault-Instances.md §4.6):
+        <field name="leaseId" type="id"><description>The vault lease its approval opens (plans/archive/Vault-Instances.md §4.6):
             of the managed instances' items, or of the target's token; asked once its pipeline passed, on the cluster
             member that then runs its deploy step</description></field>
         <field name="deployResult" type="text-long"><description>What the target answered, as JSON (status,

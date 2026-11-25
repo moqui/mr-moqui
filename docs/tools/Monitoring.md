@@ -1188,7 +1188,7 @@ public demo ends `MONITOR_RECOVER` and `MONITOR_RECOVER_ADMIN`.
 ## Managed instances
 
 A server that manages instances (System › Instances, [Run-Deploy](../Run-Deploy.md#managed-instances)) is their
-Monitor too (plans/Vault-Instances.md §4.8).
+Monitor too (plans/archive/Vault-Instances.md §4.8).
 
 **Identity.** A provision gives a new MR Moqui instance its Monitor identity as settings, never secrets:
 - `instance@id` is its `AppInstance` id, so its `service.instance.id` is too;

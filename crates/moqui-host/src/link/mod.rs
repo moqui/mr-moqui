@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! What the links a node dials out on share (plans/Vault-Instances.md §4.4): the edge link
+//! What the links a node dials out on share (plans/archive/Vault-Instances.md §4.4): the edge link
 //! (plans/archive/Edge-Node.md §5.1, `crate::edge_link`) and the manager link (`crate::manage_link`). Each dials an
 //! HTTPS port with an ALPN of its own, pins the other end's key by SHA-256 of its public key (`crate::tls_pin`), sends a
 //! one-byte role and reads an [`Answer`], then speaks gRPC on HTTP/2 over the connection ([`H2Channel`]); a lost link is

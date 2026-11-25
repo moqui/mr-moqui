@@ -25,7 +25,7 @@
 //! - [`commands`]: the shell's commands (the accounts, sign-in and SSO, sign-out), [`outbox`]: the outbox and drafts,
 //!   [`sockets`]: the sockets of a page whose sockets are all the server's (the mobile app; the desktop app has its
 //!   own, with the node's in process).
-//! - [`vault`]: the page's vault, the module run natively for it (`moquiDesktop.vault`, plans/Vault-Instances.md V5).
+//! - [`vault`]: the page's vault, the module run natively for it (`moquiDesktop.vault`, plans/archive/Vault-Instances.md V5).
 //!
 //! The commands are `pub` at the crate root, where `tauri::command` puts the macros `generate_handler!` looks for, so an
 //! app lists them as `moqui_client_tauri::client_state`.

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Personal keys and key checks (plans/Vault-Instances.md §3.5).
+//! Personal keys and key checks (plans/archive/Vault-Instances.md §3.5).
 //!
 //! - A user has one active personal key: both public halves in the clear, the private halves wrapped by the key
 //!   passphrase and by the recovery code, made in the client. The server keeps no hash of either.

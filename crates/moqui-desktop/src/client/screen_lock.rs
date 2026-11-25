@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The computer's screen lock and sleep, as the OS tells them, which lock the vault (plans/Vault-Instances.md §3.6: "a
+//! The computer's screen lock and sleep, as the OS tells them, which lock the vault (plans/archive/Vault-Instances.md §3.6: "a
 //! vault locks ... on the device's lock").
 //!
 //! - **macOS:** the distributed notification `com.apple.screenIsLocked` (the lock screen, the screen saver with a

@@ -61,7 +61,7 @@ along with this software (see the LICENSE.md file). If not, see
         <authz artifactAuthzId="SYSTEM_APP_ADMIN" userGroupId="ADMIN" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
     </artifactGroups>
 
-    <!-- System › Vaults' lease dialog and take-in (plans/Vault-Instances.md §3.2, §3.7, §5), which a vault's members open
+    <!-- System › Vaults' lease dialog and take-in (plans/archive/Vault-Instances.md §3.2, §3.7, §5), which a vault's members open
         from a lease's notification, a deployment's page or an incident: every signed-in user reaches these two screens and
         their transitions at /qapps/system/Vaults, nothing else of System, and the vault services they call (VaultServices,
         VaultTypeData.xml) check the caller's membership and role. ALWAYS, not inherited: an application that denies its

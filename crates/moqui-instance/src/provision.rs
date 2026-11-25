@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A provision (plans/Vault-Instances.md §4.3, step 4), under a lease or the environment's machine access
+//! A provision (plans/archive/Vault-Instances.md §4.3, step 4), under a lease or the environment's machine access
 //! ([`crate::actions::open_authority`]), each instance of the plan in order, dependencies first:
 //!
 //! 1. The credentials the kind makes (a database's admin password, an mr-moqui instance's database password and
@@ -879,7 +879,7 @@ pub(crate) fn link_settings(env: &mut Vec<(String, String)>) -> bool {
     true
 }
 
-/// The container a deploy replaces a made instance's with (plans/Vault-Instances.md §4.6, step 6): from `image`, with
+/// The container a deploy replaces a made instance's with (plans/archive/Vault-Instances.md §4.6, step 6): from `image`, with
 /// the instance's volumes, settings and secret files (each leased by its binding), its network and published port; no
 /// pairing token, since it is paired.
 pub(crate) fn replacement_spec(

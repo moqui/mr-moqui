@@ -103,7 +103,7 @@ const AUDIT_ENTITY_KEYS: &[&str] = &[
     "etlrunerror",
 ];
 
-/// Managed-instance configuration (`moqui.server.instance`, plans/Vault-Instances.md §4.1): a host type names the
+/// Managed-instance configuration (`moqui.server.instance`, plans/archive/Vault-Instances.md §4.1): a host type names the
 /// services that run, a kind's templates and secrets say what goes into a container and which vault items it binds,
 /// and a host, an image or a database host says where a leased login goes; so these rows are not written through the
 /// generic tools, REST or request loads, where an `ADMIN` without the sealed `INSTANCE_ADMIN` could point a holder's
@@ -145,7 +145,7 @@ const SERVICE_WRITTEN_ENTITY_KEYS: &[&str] = &[
     "instancedrain",
     "ingestkey",
     // a managed instance's environment (and so its machine access), dependencies and secret bindings decide which vault
-    // items its provision opens, and its actions are its record (plans/Vault-Instances.md §4.1)
+    // items its provision opens, and its actions are its record (plans/archive/Vault-Instances.md §4.1)
     "instanceenvironment",
     "instancecluster",
     "appinstance",

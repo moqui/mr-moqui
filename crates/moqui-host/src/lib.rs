@@ -83,7 +83,7 @@ mod vault_cmd;
 // What the edge link and the manager link share: the role answer, the backoff, the link key's certificate.
 #[cfg(any(feature = "edge", feature = "manage"))]
 mod link;
-// The manager link (plans/Vault-Instances.md §4.4): a managed instance's dialer, and a manager's moqui-manage/1.
+// The manager link (plans/archive/Vault-Instances.md §4.4): a managed instance's dialer, and a manager's moqui-manage/1.
 mod embedded_checksum;
 mod embedded_files;
 mod embedded_programs;

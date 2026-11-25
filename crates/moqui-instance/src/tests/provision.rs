@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! M1's Tests column (plans/Vault-Instances.md §6), against the fake engine on Docker and on Podman: a provision
+//! M1's Tests column (plans/archive/Vault-Instances.md §6), against the fake engine on Docker and on Podman: a provision
 //! deposits its items and puts no secret in any container's environment, labels or command; a provision that opens
 //! items needs a lease or machine access; dependencies are made first. And what the review of M1 added: the database is
 //! made from a one-shot on the server's network, a published port listens on loopback, a login goes only where its

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The driver for containers that stay on a real Docker or Podman API socket (plans/Vault-Instances.md §4.2, §7):
+//! The driver for containers that stay on a real Docker or Podman API socket (plans/archive/Vault-Instances.md §4.2, §7):
 //! create a container with a secret file, start it, read the file back through its logs, and remove it; the secret is
 //! in no part of what the host shows of the container. Opt-in: it is not built or run by `cargo test`, only by name,
 //! and does nothing without the socket.

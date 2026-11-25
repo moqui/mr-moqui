@@ -14,7 +14,7 @@
 
 //! `moqui vault`'s requests: one cookie session with a server, signed in by the REST login with the password and,
 //! when the account has one, the second factor's code, so the session is a strong, recent sign-in and the server
-//! sends the wrapped personal key (plans/Vault-Instances.md §9). Nothing is kept after the run: no login key, no
+//! sends the wrapped personal key (plans/archive/Vault-Instances.md §9). Nothing is kept after the run: no login key, no
 //! cookie. Plain `http://` is refused except to this machine.
 
 use std::collections::BTreeMap;

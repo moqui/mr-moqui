@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Which key version and member list a client accepts (plans/Vault-Instances.md §3.9 and §9, vault-key rotation).
+//! Which key version and member list a client accepts (plans/archive/Vault-Instances.md §3.9 and §9, vault-key rotation).
 //!
 //! A vault's member list is a chain of signed entries. Each entry is a key version and a revision of its member
 //! list: an add is a new revision of the same version, a removal a new version (the key rotates). The first entry is

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A container that stays (plans/Vault-Instances.md §4.2): what a managed instance's container is made of, its secret
+//! A container that stays (plans/archive/Vault-Instances.md §4.2): what a managed instance's container is made of, its secret
 //! files, and the check that no secret is in its environment, labels or command, where `docker inspect` and
 //! `/proc/*/environ` show them. A secret is a file: put into the created container before it starts on Docker
 //! ([`super::archive`]), a Podman secret on Podman ([`super::podman`]).
@@ -339,7 +339,7 @@ impl ContainerSpec {
             if let Some(place) = self.place_of(&secret.bytes) {
                 return Err(Error::new(format!(
                     "container {}: the value of the secret {} is in its {place}; a secret is a file, never in a \
-                     container's environment, labels or command (plans/Vault-Instances.md section 4.2)",
+                     container's environment, labels or command (plans/archive/Vault-Instances.md section 4.2)",
                     self.name, secret.name
                 )));
             }

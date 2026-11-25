@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Instance actions (plans/Vault-Instances.md §4.1, §4.3 step 3): each change to an instance is an `InstanceAction`
+//! Instance actions (plans/archive/Vault-Instances.md §4.1, §4.3 step 3): each change to an instance is an `InstanceAction`
 //! row with its state, the lease it ran under (or the environment's machine access), who did it, the versions before
 //! and after and a report that names what was made, never a value.
 //!
@@ -56,7 +56,7 @@ pub const ACTIONS: &[(&str, &str)] = &[
     ("IatRollback", "rollback"),
 ];
 
-/// The actions a deploy records (plans/Vault-Instances.md §4.6), which are not asked for by request#InstanceAction.
+/// The actions a deploy records (plans/archive/Vault-Instances.md §4.6), which are not asked for by request#InstanceAction.
 pub const DEPLOY_ACTIONS: &[(&str, &str)] = &[("IatDeploy", "deploy"), ("IatBackup", "backup")];
 
 /// The action a rotation records on each instance whose credential it rotates (M5, [`crate::rotate`]), which is asked

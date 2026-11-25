@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! M3's Tests column (plans/Vault-Instances.md §6), against the fake engine and a fake of the manager link: the gate
+//! M3's Tests column (plans/archive/Vault-Instances.md §6), against the fake engine and a fake of the manager link: the gate
 //! refuses what no passed run covers; a deploy uses only its lease's items; members change one at a time, each drained;
 //! a rollback across a schema hash change, or with a schema not known, is refused. And what the review of M3 added: a
 //! failed replacement leaves the old container running, the caller is checked against the environment's approver

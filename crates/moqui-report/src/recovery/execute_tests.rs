@@ -43,7 +43,7 @@ fn an_adapter_reads_only_recovery_properties_and_sends_no_conf_secret() {
     assert!(listed.0.is_ok() && listed.1.is_ok(), "{listed:?}");
 }
 
-// ----- the instance adapter (plans/Vault-Instances.md §4.8) -----
+// ----- the instance adapter (plans/archive/Vault-Instances.md §4.8) -----
 
 use std::collections::BTreeMap;
 use std::sync::Mutex;

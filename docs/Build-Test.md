@@ -65,7 +65,7 @@ accept tasks (once for the suites they start) and the tasks that run moqui with 
 warning). A plain `cargo build` does not: run the script first for a build with the production or all runtime built
 in, which refuses to build without the module ([Embedded runtime and programs](#embedded-runtime-and-programs)). Where
 the module is missing, the vault screens answer that it is not built and the `VaultModule` client spec fails saying
-so. The desktop and mobile shells will carry their own copy (plans/Vault-Instances.md §3.6); a shell build that
+so. The desktop and mobile shells will carry their own copy (plans/archive/Vault-Instances.md §3.6); a shell build that
 bundles it runs the script first.
 
 ### Browser libraries of a component
@@ -266,9 +266,9 @@ build, with no features of its own.
 | `xmpp` | host (`moqui-xmpp`; includes `axum`) | XMPP for local users: client streams with STARTTLS, direct TLS and WebSocket, SASL2 with SCRAM-SHA-256-PLUS and FAST, rooms as MUC, history, PEP and uploads over Moqui chat ([XMPP](interfaces/XMPP.md)); it starts only when `xmpp-server@domain` is set. In Debug too | | yes | yes |
 | `grpc` | host (includes `telemetry`, `axum`) | gRPC on tonic: the cluster's protocol on the cluster port (`cluster-member@protocol`, [Cluster](../plans/archive/Cluster.md)); the host's gRPC listener: the OTLP/gRPC receiver, opened only when `<telemetry><receiver grpc-enabled="true">` is set, and with `edge` the direct PASS authority ([Edge-Node](../plans/archive/Edge-Node.md) §5.5) | yes | yes | yes |
 | `edge` | host (includes `grpc`) | The edge link ([Edge-Node](../plans/archive/Edge-Node.md)): a local node's dialer when `edge/node@url` is set, and on an edge node (`moqui_conf__instance__node_role=front_edge`) the link's hand-off on the HTTPS listener, web access, delegated calls, the queue and replication; the PASS authority over gRPC (direct when `moqui_conf__pass_authority__grpc_enabled=true`, and on the link) and scripts' `ec.service.passAuthority` | | yes | yes |
-| `vault` | host (`moqui-vault-server`) | Vaults ([Vault-Instances](../plans/Vault-Instances.md) §3): personal and operational vaults, leases, machine access and recovery. The vault crypto (`moqui-vault`) is in every build, for `moqui vault` and `moqui operator` | yes | yes | yes |
-| `instances` | host (`moqui-instance`; includes `vault`) | Managed instances ([Vault-Instances](../plans/Vault-Instances.md) §4): instance kinds, provisioning on Docker and Podman hosts, deploys, rotation and transit by the manager | | yes | yes |
-| `manage` | host (includes `grpc`, `moqui-vault`) | The manager link ([Vault-Instances](../plans/Vault-Instances.md) §4.4): a managed instance dials its manager on ALPN `moqui-manage/1`; with `instances`, the manager's end on the HTTPS listener | yes | yes | yes |
+| `vault` | host (`moqui-vault-server`) | Vaults ([Vault-Instances](../plans/archive/Vault-Instances.md) §3): personal and operational vaults, leases, machine access and recovery. The vault crypto (`moqui-vault`) is in every build, for `moqui vault` and `moqui operator` | yes | yes | yes |
+| `instances` | host (`moqui-instance`; includes `vault`) | Managed instances ([Vault-Instances](../plans/archive/Vault-Instances.md) §4): instance kinds, provisioning on Docker and Podman hosts, deploys, rotation and transit by the manager | | yes | yes |
+| `manage` | host (includes `grpc`, `moqui-vault`) | The manager link ([Vault-Instances](../plans/archive/Vault-Instances.md) §4.4): a managed instance dials its manager on ALPN `moqui-manage/1`; with `instances`, the manager's end on the HTTPS listener | yes | yes | yes |
 | `devtools` | host, moqui-devkit (`watch`) | What only development needs ([design-dev-aide](../plans/design-dev-aide.md) 3.3): the framework's file watcher that reloads changed artifacts on a dev instance, and in the binary crates the components/dev crates of `runtime/components/dev`; in Maximal (the default) and Debug | | | yes |
 | `smtp` | host (`moqui-mail`) | Outbound mail: `send#EmailMessage`, `send#EmailTemplate`, password reset and notification mail | yes | yes | yes |
 | `imap` | host (`moqui-mail`) | Inbound mail: `poll#EmailServer`, the mail client's sync, IDLE, rules and import (includes `smtp`) | | yes | yes |
@@ -881,7 +881,8 @@ Acceptance tests can be deleted freely, since nothing depends on them.
   `component://<component>/test/...` stay in `test/`, for both suites.
 - **Rust.** Rust has no such directory: its acceptance tests are `#[ignore = "..."]` (`cargo test-slow`, which runs
   those of the host modules its alias in `.cargo/config.toml` names: `tools_screens`, `gate2`, `tool_components`,
-  `qvt_report`, `notws`, `git_storage`, `factory_restart` and `authz_revocation`; a new module of them is added there
+  `qvt_report`, `notws`, `git_storage`, `factory_restart`, `authz_revocation` and `managed_sealed_start` (the
+  framework's ManagedSealedStart, about two minutes); a new module of them is added there
   and here; and moqui-core's sweep of screen generation on both script engines) or opt-in `[[test]]`s (`gate3`, `gate3_browser`, `client_browser`, `tui_screens`). `./moq accept-all` runs them, and no
   regression command does.
 - **Who runs it.** `./moq accept-all` on a schedule (nightly, or weekly while it is long) and before a release, with
@@ -896,7 +897,16 @@ Acceptance tests can be deleted freely, since nothing depends on them.
   there: budgets are not raised, and acceptance is never part of a push's checks. The engine's own opt-in test, one
   container on a real Docker or Podman socket, is `cargo test -p moqui-git --test ci_docker` with
   `MOQUI_CI_DOCKER_SOCKET` set; the container driver's for containers that stay (a secret file put in, read back and
-  removed with its container) is `cargo test -p moqui-lib --features docker --test docker_real`, with the same variable.
+  removed with its container) is `cargo test -p moqui-lib --features docker --test docker_real`, with the same variable;
+  and a managed Postgres instance on it (provisioned with its password as a file, checked, both passwords rotated,
+  removed with its volume and network) is `cargo test -p moqui-instance docker_real -- --ignored`, whose variable is a
+  plain socket path (no `unix://`). Rootless Podman's socket is `/run/user/$UID/podman/podman.sock`
+  (`systemctl --user enable --now podman.socket`); on Ubuntu 26.04 its AppArmor profile for pasta refuses Podman's
+  signal when the last container leaves a network, so Podman answers a removal with a 500 though the container is gone,
+  which the driver takes as removed (and logs); a profile that lets pasta receive the signal ends the error
+  ([Testing-Needed](../plans/Testing-Needed.md#vaults-and-managed-instances)).
+  `InstanceDeploy`, the managed instances' acceptance walk, runs against a manager on this machine: its spec's header
+  has the steps.
 
 ### The regression budget
 

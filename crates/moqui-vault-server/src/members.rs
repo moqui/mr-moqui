@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Members, the member-list chain and rotation (plans/Vault-Instances.md §3.9, decisions (a) and (b) of §9).
+//! Members, the member-list chain and rotation (plans/archive/Vault-Instances.md §3.9, decisions (a) and (b) of §9).
 //!
 //! - The chain is the `VaultKeyVersion` rows. The server takes a new entry only when it follows the latest, is signed
 //!   by a manager of the latest with the key listed for them, and that manager is the caller with their active key

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The known-answer vectors (plans/Vault-Instances.md §6 V0: the same bytes natively and in wasm). Each section is
+//! The known-answer vectors (plans/archive/Vault-Instances.md §6 V0: the same bytes natively and in wasm). Each section is
 //! made from its own [`TestRng`] stream, so the whole of `testdata/vectors.json` is a function of this code alone.
 //! `MOQUI_REGENERATE_VECTORS=1 cargo test -p moqui-vault` writes the file; otherwise the test compares, and the
 //! browser module's `vectors` call returns the same JSON for the client spec to compare.

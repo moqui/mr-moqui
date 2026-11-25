@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Deploys to managed instances (plans/Vault-Instances.md §4.6, M3; Dogfood §8.6, DG10), in the steps of the plan:
+//! Deploys to managed instances (plans/archive/Vault-Instances.md §4.6, M3; Dogfood §8.6, DG10), in the steps of the plan:
 //!
 //! 1. **Trigger** ([`Change`]): a `GitDeployment` of an environment that names this `InstanceEnvironment`
 //!    (crates/moqui-git calls `prepare#GitDeployment` once its pipeline passed and `deploy#GitDeployment` once it is

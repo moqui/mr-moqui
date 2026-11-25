@@ -21,7 +21,7 @@
 //! (src/client/): its capabilities grant the shell's origin both and an app window's origin the sockets only. The
 //! `outbox_`, `draft_` and `file_save` commands are the client's outbox and drafts, granted to both, each for the
 //! calling window's account. The `vault_` commands are the vault module the app runs natively for the app windows' pages
-//! (plans/Vault-Instances.md V5), granted to the app windows only.
+//! (plans/archive/Vault-Instances.md V5), granted to the app windows only.
 
 fn main() {
     let manifest = tauri_build::AppManifest::new().commands(&[

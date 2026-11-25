@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Monitor for managed instances (plans/Vault-Instances.md §4.8), the manager's side:
+//! Monitor for managed instances (plans/archive/Vault-Instances.md §4.8), the manager's side:
 //!
 //! - **Identity.** A provision gives a new mr-moqui instance its `instance@id` (so its `service.instance.id` is its
 //!   `AppInstance` id), its `telemetry@deployment-environment` (the environment's id), its `telemetry@service-name`

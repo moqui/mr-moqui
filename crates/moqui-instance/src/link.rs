@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The manager's rules of the manager link (plans/Vault-Instances.md §4.4), on its rows; the link itself is the host's
+//! The manager's rules of the manager link (plans/archive/Vault-Instances.md §4.4), on its rows; the link itself is the host's
 //! (`moqui_host::manage_link`), which calls these.
 //!
 //! - **Pairing.** A provision gives a new mr-moqui instance a one-time token as a file (§4.2), and System › Instances
@@ -79,7 +79,7 @@ pub fn manager() -> Option<(String, String)> {
     lock(&MANAGER).clone().filter(|(url, _)| !url.is_empty())
 }
 
-/// The link server's deploy of a component on an instance, unsigned (M3, plans/Vault-Instances.md §4.6): the manager's
+/// The link server's deploy of a component on an instance, unsigned (M3, plans/archive/Vault-Instances.md §4.6): the manager's
 /// own deploy, which the pinned link authorizes on the instance. The host installs it ([`install_link_deploy`]); it is
 /// never a service's parameter, so only a deploy that passed [`crate::deploy`]'s gate, lease and approval sends one.
 pub type LinkDeploy = fn(instance_id: &str, deploy: &str) -> Result<String, String>;
@@ -102,7 +102,7 @@ pub(crate) fn link_deploy(instance_id: &str, deploy: &str) -> Result<String, Lib
 }
 
 /// The link server's put-secret on an instance (`moqui operator secret put` over its link): a rotation's new value
-/// (M5, plans/Vault-Instances.md §4.7), from Rust, never a service's parameter. The host installs it
+/// (M5, plans/archive/Vault-Instances.md §4.7), from Rust, never a service's parameter. The host installs it
 /// ([`install_link_put`]). An instance that is not linked now answers an error that starts `not linked`.
 pub type LinkPut = fn(instance_id: &str, name: &str, value: &str) -> Result<(), String>;
 

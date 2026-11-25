@@ -276,7 +276,7 @@ fn manager_connector(manager: &crate::manage_link::LinkKey) -> tokio_rustls::Tls
     tokio_rustls::TlsConnector::from(Arc::new(tls))
 }
 
-/// plans/Vault-Instances.md §4.4, a manager behind a firewall: its instances dial a passthrough host name of its edge
+/// plans/archive/Vault-Instances.md §4.4, a manager behind a firewall: its instances dial a passthrough host name of its edge
 /// node, and a tunnel whose ClientHello offers `moqui-manage/1` is the manager link's, under the manager's link key and
 /// answered by it, not this node's web. On a node that manages nothing no manager answers it.
 #[cfg(all(feature = "manage", feature = "instances"))]

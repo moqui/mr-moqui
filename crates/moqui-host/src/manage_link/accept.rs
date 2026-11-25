@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The manager's end of the manager link (plans/Vault-Instances.md §4.4), with the `instances` feature: the HTTPS
+//! The manager's end of the manager link (plans/archive/Vault-Instances.md §4.4), with the `instances` feature: the HTTPS
 //! listener's hand-off of ALPN `moqui-manage/1` ([`Acceptor`]), and the registry of linked instances by `AppInstance`,
 //! with each one's generation, last status and Serve stream, through which [`ManagerServer::call`] runs a command on
 //! it. The rules on the rows are `moqui_instance::link`'s.
@@ -215,7 +215,7 @@ struct Kept(Mutex<Option<Arc<ManagerServer>>>);
 struct KeptAcceptor(Mutex<Option<Arc<Acceptor>>>);
 
 /// The manager's acceptor of `factory`, when its HTTPS listener takes manager links: for a manager behind a firewall,
-/// which its instances reach at a passthrough host name of its edge node (plans/Vault-Instances.md §4.4).
+/// which its instances reach at a passthrough host name of its edge node (plans/archive/Vault-Instances.md §4.4).
 #[cfg_attr(not(feature = "edge"), allow(dead_code))]
 pub(crate) fn acceptor_of(factory: &ExecutionContextFactory) -> Option<Arc<Acceptor>> {
     lock(&factory.extension(|_| KeptAcceptor::default()).0).clone()
@@ -846,7 +846,7 @@ impl ManagerServer {
     }
 
     /// The instance's recovery bundle over its link, deposited as an operational item when it is not the one deposited
-    /// last (the first time, and after a rekey or rotate-root; plans/Vault-Instances.md §4.5): in the background, once
+    /// last (the first time, and after a rekey or rotate-root; plans/archive/Vault-Instances.md §4.5): in the background, once
     /// its Serve stream is up; a failure is logged.
     fn deposit_bundle(self: Arc<Self>, instance: &str) {
         let instance = instance.to_string();
@@ -952,7 +952,7 @@ impl ManagerServer {
         }
         if kind.needs_verified_unseal() && !verified {
             return Err(format!(
-                "AppInstance {instance} says it is unsealed, and this manager neither unsealed it on this link nor had it prove it holds its root key: {} waits, taken as sealed (plans/Vault-Instances.md §4.4)",
+                "AppInstance {instance} says it is unsealed, and this manager neither unsealed it on this link nor had it prove it holds its root key: {} waits, taken as sealed (plans/archive/Vault-Instances.md §4.4)",
                 kind.name()
             ));
         }
@@ -1080,7 +1080,7 @@ impl Manager for Service {
         let schema_hash = status.schema_hash.clone();
         self.server
             .on_pool(move |facade| {
-                // its cluster's live members, which Monitor compares (plans/Vault-Instances.md §4.8)
+                // its cluster's live members, which Monitor compares (plans/archive/Vault-Instances.md §4.8)
                 moqui_instance::monitor::note_members(facade, &instance, &members);
                 // the schema a deploy records before it and a rollback compares (M3)
                 moqui_instance::link::note_schema(facade, &instance, &schema_hash);

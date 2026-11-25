@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! What a managed instance pinned at pairing (plans/Vault-Instances.md §4.4): its manager's address and key, the id
+//! What a managed instance pinned at pairing (plans/archive/Vault-Instances.md §4.4): its manager's address and key, the id
 //! its manager knows it by, and its environment's approvers' signing keys. It is read while the instance is sealed, so
 //! it is a file of the runtime (`runtime/db/manage_link.json`, mode 0600), not a row; it holds no secret.
 

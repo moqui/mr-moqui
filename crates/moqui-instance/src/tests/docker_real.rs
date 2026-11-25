@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Opt-in, against a real Docker or Podman socket (plans/Vault-Instances.md §6 M1, §7): a Postgres instance provisioned
+//! Opt-in, against a real Docker or Podman socket (plans/archive/Vault-Instances.md §6 M1, §7): a Postgres instance provisioned
 //! with its admin password as a file, checked by a health check that signs in over TCP with that file (so the
 //! password the server made, deposited and never read back is the one Postgres took); a second instance's database
 //! and user (a SCRAM verifier) made on it by the one-shot client on their network; then a rotation (M5) of the user's

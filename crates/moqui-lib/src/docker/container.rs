@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Containers that stay, and their volumes (plans/Vault-Instances.md §4.2): create without starting (with the secret
+//! Containers that stay, and their volumes (plans/archive/Vault-Instances.md §4.2): create without starting (with the secret
 //! files put in before it can start), start, stop, restart, inspect, logs and remove, on Docker and on Podman. Every id
 //! and name that goes into a path is checked first ([`valid_name`]).
 

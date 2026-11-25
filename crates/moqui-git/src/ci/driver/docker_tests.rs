@@ -708,7 +708,7 @@ fn a_host_row_that_cannot_be_reached_says_why() {
         "{errors}"
     );
     // a TLS host with a client certificate: its key is a vault item, which a CI run (unattended) reads under the
-    // machine access of the host's environment (plans/Vault-Instances.md §4.1, §3.8); nothing is sent without it
+    // machine access of the host's environment (plans/archive/Vault-Instances.md §4.1, §3.8); nothing is sent without it
     let api = Api::new("https", "docker.example.com", Some(2376), Seen::default());
     let set = |fields: Vec<(String, Value)>| {
         let _entered = api.context.enter();

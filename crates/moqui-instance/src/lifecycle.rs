@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Start, stop, restart, remove and check (plans/Vault-Instances.md §4.1, §4.2): an action runs the services its
+//! Start, stop, restart, remove and check (plans/archive/Vault-Instances.md §4.1, §4.2): an action runs the services its
 //! instance's host type names (`InstanceHostType`'s start, stop, remove and check services, only of
 //! `org.moqui.dev.InstanceServices`: the driver contract), under a lease when its host's client key is a vault item.
 //! The `docker` host type's services are here too ([`start_container`] and the others), over the shared driver: they

@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Managed instances (framework/entity/ServerEntities.xml moqui.server.instance, plans/Vault-Instances.md §4;
+<!-- Managed instances (framework/entity/ServerEntities.xml moqui.server.instance, plans/archive/Vault-Instances.md §4;
     docs/Run-Deploy.md "Managed instances"): the environment types, desired states and actions, the host types and their
     Rust services (crates/moqui-instance), the four kinds with their templates, the vault items each needs and what each
     depends on, MR Moqui's own image (podman/build.sh's localhost/moqui, one data volume /var/lib/moqui) and the
@@ -87,7 +87,7 @@ along with this software (see the LICENSE.md file). If not, see
         made and deposited at the provision, for the bootstrap bundle and Monitor (M2, M4): the passwords reach it only in
         its bootstrap bundle; its container gets its one-time pairing token and its ingest key, each as a file. -->
     <moqui.server.instance.InstanceKind instanceKindId="mr-moqui" description="MR Moqui" containerPort="8080" runAsUser="1000:1000">
-        <!-- its Monitor identity (plans/Vault-Instances.md §4.8): instance@id, the environment and the manager's OTLP
+        <!-- its Monitor identity (plans/archive/Vault-Instances.md §4.8): instance@id, the environment and the manager's OTLP
             address are settings a provision adds (moqui-instance monitor.rs); its ingest key is a file -->
         <envs envName="moqui_conf__instance__purpose" envValue="production"/>
         <envs envName="moqui_conf__entity_facade__datasource__TRANSACTIONAL__database_conf_name" envValue="${databaseConf}"/>
@@ -164,7 +164,7 @@ along with this software (see the LICENSE.md file). If not, see
                 description="The admin user's password, which an mr-moqui instance that searches here is given (M2)"
                 rotateService="org.moqui.dev.InstanceServices.rotate#Credential"/>
     </moqui.server.instance.InstanceKind>
-    <!-- Monitor (plans/Vault-Instances.md §4.8): a provision adds each database and search instance's exporter as a
+    <!-- Monitor (plans/archive/Vault-Instances.md §4.8): a provision adds each database and search instance's exporter as a
         ScrapeTarget (scrapeUrlTemplate: postgres_exporter, mysqld_exporter, and elasticsearch_exporter for OpenSearch's
         stats, each as <instance>-exporter on the environment's network); an mr-moqui instance sends its own telemetry by
         OTLP with its ingest key. -->
@@ -195,7 +195,7 @@ along with this software (see the LICENSE.md file). If not, see
             linkTemplate="/qapps/system/Instances/InstanceList"/>
     <moqui.service.job.ServiceJob jobName="reconcile_AppInstances" description="Observe managed instances"
             serviceName="org.moqui.dev.InstanceServices.reconcile#AppInstances" cronExpression="0 0/5 * * * ?" paused="N"/>
-    <!-- Rotation at the policy age (plans/Vault-Instances.md §4.7): each environment's items past their age that have a
+    <!-- Rotation at the policy age (plans/archive/Vault-Instances.md §4.7): each environment's items past their age that have a
         rotate service are rotated under its machine access, or a lease of them is asked for (once while one waits) -->
     <!-- A due item whose last rotation failed is not tried again for manage@rotate-retry-days: told to the administrators -->
     <moqui.security.user.NotificationTopic topic="InstanceRotationFailed" inboxEnumId="NinUpdates"

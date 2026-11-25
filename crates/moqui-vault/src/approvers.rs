@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A managed instance's approvers (plans/Vault-Instances.md §4.4): the signing keys of its environment's approvers,
+//! A managed instance's approvers (plans/archive/Vault-Instances.md §4.4): the signing keys of its environment's approvers,
 //! which the instance pins at pairing and uses to check its recovery holders' keys (§4.5). A changed set reaches the
 //! instance only signed by an approver of the set it has pinned, over the instance (its id and the fingerprint of its
 //! link key, so a set signed for one manager's instance does not replay to another manager's instance of the same id),

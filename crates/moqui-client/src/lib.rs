@@ -34,7 +34,7 @@
 //!   answered when the server cannot be reached; [`sync`]: the pushes, the outbox and its sender, and the mirror.
 //! - [`modes`]: what each device mode keeps; [`renewal`]: the keys renewed before they run out; [`assets`]: the
 //!   shell's own files.
-//! - [`vault`]: the vault module run natively for the pages (plans/Vault-Instances.md V5), with rollback memory and
+//! - [`vault`]: the vault module run natively for the pages (plans/archive/Vault-Instances.md V5), with rollback memory and
 //!   device memory.
 //!
 //! Blocking I/O on threads, as `moqui tui --server` (`crates/moqui-host/src/tui_remote.rs`), whose patterns this

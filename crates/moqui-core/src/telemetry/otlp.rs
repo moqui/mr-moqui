@@ -351,7 +351,7 @@ fn merge_next(
 
 /// `otlp-headers`, or when it is empty the text of the file `otlp-headers-file` names: a `name=value` list, or a bare
 /// ingest key, sent as `Authorization: Bearer` (a managed instance's, given as a file by its provision:
-/// plans/Vault-Instances.md §4.8). Empty when neither gives one. A file that cannot be read is logged by its path, never
+/// plans/archive/Vault-Instances.md §4.8). Empty when neither gives one. A file that cannot be read is logged by its path, never
 /// its text.
 fn headers_setting(factory: &crate::context::ExecutionContextFactory) -> String {
     let headers = factory.conf_setting("telemetry", "otlp-headers");
@@ -795,7 +795,7 @@ mod tests {
     use crate::telemetry::ingest::{Decoder, Signal};
 
     /// A managed instance's `otlp-headers-file` holds its bare ingest key, sent as a bearer token; a file of a headers
-    /// list is taken as it is (plans/Vault-Instances.md §4.8).
+    /// list is taken as it is (plans/archive/Vault-Instances.md §4.8).
     #[test]
     fn a_headers_file_is_a_list_or_a_bare_key_sent_as_a_bearer_token() {
         assert_eq!(
