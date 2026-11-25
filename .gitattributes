@@ -1,0 +1,5 @@
+# Reviewed browser-library text is hashed as LF. Batch and PowerShell files stay CRLF.
+* text=auto eol=lf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.ps1 text eol=crlf

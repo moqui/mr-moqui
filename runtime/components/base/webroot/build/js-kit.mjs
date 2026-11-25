@@ -14,6 +14,13 @@ import { npmCommand, esbuildBinary } from './tools.mjs';
 export { npmCommand, esbuildBinary };
 
 export const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');
+
+/// Reviewed text is LF. A Windows checkout may have added CR; do not pass a binary.
+export function toLf(data) {
+  const buf = Buffer.isBuffer(data) ? data : Buffer.from(String(data));
+  if (!buf.includes(0x0d)) return buf;
+  return Buffer.from(buf.toString('utf8').replace(/\r\n/g, '\n').replace(/\r/g, '\n'));
+}
 export const run = (cmd, argv, opts = {}) =>
   execFileSync(cmd, argv, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'], ...opts });
 
@@ -100,7 +107,9 @@ export function installProject(project, directory) {
 /// Compare the rebuilt manifest with the committed one, naming each rebuilt file that differs. With write, the new
 /// manifest is the one to review instead.
 export function checkManifest(here, manifestText, outputs, write) {
-  if (write || manifestText === readFileSync(join(here, 'MANIFEST.json'), 'utf8')) return;
+  if (write) return;
+  const committed = toLf(readFileSync(join(here, 'MANIFEST.json'))).toString('utf8');
+  if (manifestText === committed) return;
   const previous = JSON.parse(readFileSync(join(here, 'MANIFEST.json')));
   const before = new Map(previous.libraries.flatMap(lib => lib.files.map(file => [file.path, file.sha256])));
   for (const [path, buf] of outputs) {

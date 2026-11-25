@@ -1,6 +1,7 @@
 // Rebuild the board in an isolated dependency tree. Its pinned React and Mermaid transitive versions
 // are independent of the shell. The converter takes window.mermaid, and the editor takes no Yjs.
 import { esbuildBinary, npmCommand } from '../tools.mjs';
+import { toLf } from '../js-kit.mjs';
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, cpSync } from 'node:fs';
 import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -81,13 +82,14 @@ export function buildBoard(work, installed = false) {
     for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a,b) => a.name.localeCompare(b.name, 'en'))) {
       const file = join(dir, entry.name);
       if (entry.isDirectory()) { if (entry.name !== 'Liberation') fonts(file); }
-      else outputs.set('excalidraw/' + relative(prod, file), readFileSync(file));
+      // path.relative uses the platform separator. The manifest records forward slashes.
+      else outputs.set('excalidraw/' + relative(prod, file).replaceAll('\\', '/'), readFileSync(file));
     }
   }
   fonts(join(prod, 'fonts'));
   outputs.set('excalidraw/editor.css', readFileSync(join(prod, 'index.css')));
   for (const file of ['flowchart.excalidrawlib', 'wireframe.excalidrawlib']) {
-    outputs.set('excalidraw/library/' + file, readFileSync(join(source, 'library', file)));
+    outputs.set('excalidraw/library/' + file, toLf(readFileSync(join(source, 'library', file))));
   }
   packages.add('node_modules/@fontsource/arimo');
   const notices = new Map();
@@ -98,7 +100,9 @@ export function buildBoard(work, installed = false) {
     const fallback = info.name === '@excalidraw/excalidraw' ? 'Excalidraw-LICENSE'
       : info.name.startsWith('@radix-ui/') ? 'Radix-LICENSE' : info.name === 'react-remove-scroll-bar' ? 'ScrollBar-LICENSE' : null;
     if (!file && !fallback) throw new Error('Missing license text for ' + info.name);
-    const text = readFileSync(file ? join(dir, file) : join(source, fallback), 'utf8').trim();
+    // A checkout may store the fallback license as CRLF. Normalize it before dedupe, and leave a
+    // package's own license bytes alone: the reviewed notice keeps those, including a CR.
+    const text = (file ? readFileSync(join(dir, file), 'utf8') : toLf(readFileSync(join(source, fallback))).toString('utf8')).trim();
     if (!notices.has(text)) notices.set(text, new Set());
     notices.get(text).add(info.name + '@' + info.version);
   }
@@ -108,9 +112,9 @@ export function buildBoard(work, installed = false) {
   const wrapperNotes = [...subset.matchAll(/\/\*\*[\s\S]*?\*\//g)].map(m => m[0].replace(/[ \t]+$/gm, '')).filter(s => s.includes('wasm module'));
   if (wrapperNotes.length !== 2 || !['fonteditor-core', 'harfbuzzjs'].every(pkg => wrapperNotes.some(n => n.includes('"' + pkg + '"'))))
     throw new Error('Review the upstream WASM module notices');
-  const nativeNotes = ['HarfBuzz', 'WOFF2', 'Brotli'].map(name => name + '\n' + readFileSync(join(source, name + '-LICENSE'), 'utf8').trim());
+  const nativeNotes = ['HarfBuzz', 'WOFF2', 'Brotli'].map(name => name + '\n' + toLf(readFileSync(join(source, name + '-LICENSE'))).toString('utf8').trim());
   const notice = [...[...notices].map(([text, names]) => [...names].sort().join(', ') + '\n' + text),
-    ...wrapperNotes, ...nativeNotes, readFileSync(join(source, 'Font-NOTICES.txt'), 'utf8').trim()].join('\n\n') + '\n';
+    ...wrapperNotes, ...nativeNotes, toLf(readFileSync(join(source, 'Font-NOTICES.txt'))).toString('utf8').trim()].join('\n\n') + '\n';
   outputs.set('excalidraw/NOTICES.txt', Buffer.from(notice));
   const lock = JSON.parse(readFileSync(join(work, 'package-lock.json')));
   const editor = lock.packages['node_modules/@excalidraw/excalidraw'];
