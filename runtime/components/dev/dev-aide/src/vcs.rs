@@ -698,6 +698,9 @@ fn message_of(root: &Root, parameters: &Parameters) -> Result<String, LibError> 
                 .ok()
                 .flatten()
         });
+    if task.as_deref().is_some_and(|task| !git::task_key_valid(task)) {
+        return Err(LibError::new("a task key is one short line"));
+    }
     Ok(git::with_trailer(&message, task.as_deref()))
 }
 

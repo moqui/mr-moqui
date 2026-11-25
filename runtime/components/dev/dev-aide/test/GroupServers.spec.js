@@ -75,7 +75,7 @@ feature("the app a server offers for its tasks opens them at the server, by its 
 
 feature("Settings shows the group servers and the plan of one", {
     expect() {
-        const page = dev().render("Settings", {serverId: "SPEC_SERVER"}, null)
+        const page = dev().render("Settings", {serverId: "SPEC_SERVER", chooseSignIn: "true"}, null)
         page.status == 200 && page.errorMessages.length == 0
         !page.output.includes("Error rendering") && !page.output.includes("Exception in render")
         page.output.includes("Group servers")
@@ -83,7 +83,8 @@ feature("Settings shows the group servers and the plan of one", {
         page.output.includes("Set up from Team")
         page.output.includes("Add the repository team")
         page.output.includes("opening in Team Projects (Team)")
-        // the providers the server signs in with, and its own login
+        // the providers the server signs in with, and its own login, as start#Connect asks (chooseSignIn); a connected
+        // server shows them only so
         page.output.includes("Sign in to Team")
         page.output.includes("Sign in with Team IdP")
         page.output.includes("Sign in with Team&#39;s own login") || page.output.includes("Sign in with Team's own login")

@@ -534,6 +534,13 @@ pub fn parse_remotes(out: &str) -> Vec<(String, String)> {
     remotes
 }
 
+/// Whether a task's key may name it in a commit: one short line (at most 100 bytes, no control character), so a key
+/// from a server or a request never adds lines of its own (a forged `Signed-off-by:`) to the message.
+#[must_use]
+pub fn task_key_valid(key: &str) -> bool {
+    !key.trim().is_empty() && key.len() <= 100 && !key.chars().any(char::is_control)
+}
+
 /// The trailer line of a task: `Task: PROJ-12` for a work item's key; `Fixes #12` for an issue of the repository by its
 /// number (plans/design-dev-aide.md 21.6), which closes it when the commit reaches the default branch; a line that is a
 /// closing keyword already (`Fixes PROJ-12`, `Closes #3`, `Resolves ...`) as it is.
@@ -737,5 +744,9 @@ mod tests {
         assert_eq!(with_trailer("Fix\n\nFixes #12", Some("#12")), "Fix\n\nFixes #12\n");
         assert_eq!(with_trailer("Fix", Some("Closes PROJ-3")), "Fix\n\nCloses PROJ-3\n");
         assert_eq!(with_trailer("Fix", Some("#12a")), "Fix\n\nTask: #12a\n");
+        // a key is one short line: a newline would add a trailer of its own
+        assert!(task_key_valid("PROJ-12") && task_key_valid("#12"));
+        assert!(!task_key_valid("PROJ-12\nSigned-off-by: Someone <x@example.com>"));
+        assert!(!task_key_valid("A\rB") && !task_key_valid(&"x".repeat(101)) && !task_key_valid(" "));
     }
 }

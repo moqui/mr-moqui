@@ -233,6 +233,14 @@ fn login_key(factory: &Arc<ExecutionContextFactory>, user: &str) -> String {
     key
 }
 
+/// A preference of `user`, as the dev-aide reads it.
+fn preference(factory: &Arc<ExecutionContextFactory>, user: &str, key: &str) -> Option<String> {
+    let context = factory.new_context();
+    let _entered = context.enter();
+    moqui_core::user::internal_login_user(user).unwrap();
+    moqui_core::user::get_preference(key).unwrap()
+}
+
 fn header<'a>(headers: &'a [(String, String)], name: &str) -> &'a str {
     headers
         .iter()
@@ -454,8 +462,8 @@ fn a_dev_instance_connects_to_its_group_server_and_opens_merge_requests() {
         authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_VIEW"/>
     <moqui.security.ArtifactGroup artifactGroupId="REVIEWSTUB_API" description="The stub application's REST"/>
     <moqui.security.ArtifactGroupMember artifactGroupId="REVIEWSTUB_API" artifactTypeEnumId="AT_REST_PATH" artifactName="/reviewstub" inheritAuthz="Y"/>
-    <moqui.security.ArtifactAuthz artifactAuthzId="REVIEWSTUB_API_ADMIN" artifactGroupId="REVIEWSTUB_API" userGroupId="ADMIN"
-        authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="REVIEWSTUB_API_ALL" artifactGroupId="REVIEWSTUB_API" userGroupId="ALL_USERS"
+        authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
     <moqui.security.sso.AuthFlow authFlowId="TEAM_IDP" authFlowTypeEnumId="AftOidc" description="Team IdP" sequenceNum="1"/>
 </entity-facade-xml>"#,
     );
@@ -607,6 +615,14 @@ fn a_dev_instance_connects_to_its_group_server_and_opens_merge_requests() {
         ),
     )
     .unwrap();
+    // the app john.doe chose before Connect, which Remove puts back
+    call(
+        &factory,
+        "john.doe",
+        "org.moqui.devaide.TaskServices.set#TaskSource",
+        &[("taskAppName", "marble")],
+    )
+    .unwrap();
     let applied = call(
         &factory,
         "john.doe",
@@ -628,6 +644,10 @@ fn a_dev_instance_connects_to_its_group_server_and_opens_merge_requests() {
             .as_str()
             .is_some_and(|done| done.contains("opening in Stub Projects (Team)"))),
         "{applied:?}"
+    );
+    assert_eq!(
+        preference(&factory, "john.doe", "DEV_AIDE_TASK_APP").as_deref(),
+        Some("server-GROUP")
     );
     let env_lines = moqui_lib::env::parse_dotenv(&std::fs::read_to_string(&env_file).unwrap());
     let env = |name: &str| {
@@ -1474,6 +1494,15 @@ fn a_dev_instance_connects_to_its_group_server_and_opens_merge_requests() {
     assert_eq!(tasks[1]["taskId"], "OTHER-1");
     assert_eq!(tasks[0]["url"], format!("{base}/qapps/stub/Task?taskId=SITEPROJ-2"));
     assert_eq!(json(&panel, "apps")[0]["name"], "server-GROUP", "{panel:?}");
+    // a developer who is no admin reads them with their own connection, through the server's REST for any account
+    let viewer_panel = call(
+        &factory,
+        "dev.viewer",
+        &format!("{TASKS}get#Tasks"),
+        &[("rootId", "my-site")],
+    )
+    .unwrap();
+    assert_eq!(json(&viewer_panel, "issues")[0]["key"], "#12", "{viewer_panel:?}");
     // Branch names a branch for the issue by its id, and its commits close it by its number
     git(&site, &["switch", "-q", "main"]);
     let branched = call(
@@ -1500,6 +1529,26 @@ fn a_dev_instance_connects_to_its_group_server_and_opens_merge_requests() {
     .unwrap();
     let message = git(&site, &["log", "-1", "--format=%B"]);
     assert!(message.ends_with("Fixes #12"), "{message}");
+    // a task key of more than one line would add trailers of its own (a forged sign-off): refused, nothing committed
+    let head = git(&site, &["rev-parse", "HEAD"]);
+    std::fs::write(site.join("TOTALS.md"), "Righter\n").unwrap();
+    git(&site, &["add", "TOTALS.md"]);
+    let forged = call(
+        &factory,
+        "john.doe",
+        &format!("{VCS}commit#Changes"),
+        &[
+            ("rootId", "my-site"),
+            ("summary", "Forged"),
+            ("task", "SITEPROJ-5\nSigned-off-by: Someone x@example.com"),
+        ],
+    );
+    assert!(
+        matches!(&forged, Err(err) if err.contains("one short line")),
+        "{forged:?}"
+    );
+    assert_eq!(git(&site, &["rev-parse", "HEAD"]), head);
+    git(&site, &["reset", "-q", "--hard", "HEAD"]);
     // Quick create files the issue in the repository's tracker, as the user
     let filed = call(
         &factory,
@@ -1648,9 +1697,11 @@ fn a_dev_instance_connects_to_its_group_server_and_opens_merge_requests() {
         removed.as_array().unwrap().iter().any(|part| part == "the task source"),
         "{removed}"
     );
-    // the server's app goes with its task source
-    let apps = call(&factory, "john.doe", &format!("{TASKS}get#Tasks"), &[]).unwrap();
-    assert_ne!(json(&apps, "apps")[0]["name"], "server-GROUP", "{apps:?}");
+    // the server's app goes with its task source: the one chosen before Connect is back
+    assert_eq!(
+        preference(&factory, "john.doe", "DEV_AIDE_TASK_APP").as_deref(),
+        Some("marble")
+    );
     let myaddons = std::fs::read_to_string(gate.runtime.join("myaddons.xml")).unwrap();
     assert!(!myaddons.contains("repository name=\"team\""), "{myaddons}");
     // the developer's own .env lines are back, the gateway's URL is gone, and both keys are ended (items 3, 4)

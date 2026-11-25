@@ -65,7 +65,11 @@ pub fn issue_item(item: &Json) -> Option<Json> {
         Json::Number(number) => number.to_string(),
         _ => String::new(),
     };
+    // the server's id becomes a commit's trailer and a branch's name: an issue whose id is not one short line is none
     let id = as_text(pick(&["workEffortId", "issueId", "id"]));
+    if !id.is_empty() && !crate::git::task_key_valid(&id) {
+        return None;
+    }
     let number = pick(&["issueNumber", "number"]);
     let number = number
         .as_i64()

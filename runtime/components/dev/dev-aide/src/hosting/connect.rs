@@ -857,11 +857,19 @@ fn apply_server_setup(
         source.create_or_update(&context.facade)?;
         let id = field(&source, "taskSourceId");
         moqui_core::user::set_preference(crate::tasks::TASK_SOURCE, Some(id.as_str()))?;
+        // the app chosen before Connect, kept for Remove to put back (a second apply keeps the first one's)
+        let prior_app = setup["taskSource"]["priorTaskApp"].clone();
         setup["taskSource"] = json!({ "taskSourceId": id });
         // the app the server offers for its tasks, as the source is set: the user's from now on
         match crate::tasks::offered_app(&server) {
             Some(app) => {
                 let name = app["name"].as_str().unwrap_or_default();
+                let before = moqui_core::user::get_preference(crate::tasks::TASK_APP).ok().flatten();
+                setup["taskSource"]["priorTaskApp"] = if before.as_deref() == Some(name) {
+                    prior_app
+                } else {
+                    before.map_or(Json::Null, Json::String)
+                };
                 moqui_core::user::set_preference(crate::tasks::TASK_APP, Some(name))?;
                 setup["taskSource"]["taskApp"] = json!(name);
                 done.push(format!(
@@ -1058,13 +1066,16 @@ fn remove_server(
                 source.delete(&context.facade)?;
                 any = true;
             }
-            // the server's app, where it is still the user's choice
+            // the server's app, where it is still the user's choice: the one chosen before Connect again
             if moqui_core::user::get_preference(crate::tasks::TASK_APP)
                 .ok()
                 .flatten()
                 .is_some_and(|app| app == crate::tasks::offered_app_name(&id))
             {
-                moqui_core::user::set_preference(crate::tasks::TASK_APP, None)?;
+                let prior = setup["taskSource"]["priorTaskApp"]
+                    .as_str()
+                    .filter(|prior| !prior.is_empty());
+                moqui_core::user::set_preference(crate::tasks::TASK_APP, prior)?;
             }
             Ok(any)
         })(),

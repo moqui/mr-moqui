@@ -265,7 +265,11 @@ fn rest_tasks(row: &moqui_core::entity::EntityValue) -> Result<Vec<Json>, LibErr
     for found in found["taskList"].as_array().into_iter().flatten() {
         let text = |name: &str| found[name].as_str().unwrap_or("").to_string();
         let (id, status, project) = (text("workEffortId"), text("statusId"), text("rootWorkEffortId"));
-        if id.is_empty() || DONE.contains(&status.as_str()) || (!filter.is_empty() && !filter.contains(&project)) {
+        // the server's id becomes a commit's trailer: one short line, or the task is left out
+        if !crate::git::task_key_valid(&id)
+            || DONE.contains(&status.as_str())
+            || (!filter.is_empty() && !filter.contains(&project))
+        {
             continue;
         }
         let mut task = task(

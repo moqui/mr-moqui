@@ -284,19 +284,20 @@
 
     const store = {
         get(key) { try { const raw = root.localStorage && root.localStorage.getItem(key); return raw ? JSON.parse(raw) : null; } catch (err) { return null; } },
-        set(key, value) { try { if (root.localStorage) root.localStorage.setItem(key, JSON.stringify(value)); } catch (err) { /* no storage */ } },
+        set(key, value) { try { if (root.localStorage) { root.localStorage.setItem(key, JSON.stringify(value)); return true; } } catch (err) { /* no storage */ } return false; },
         drop(key) { try { if (root.localStorage) root.localStorage.removeItem(key); } catch (err) { /* no storage */ } }
     };
     // for the views: what they keep in the browser, by the same rules
     devAide.store = store;
 
-    // The keys of the unsaved drafts an earlier version kept in localStorage (`storageKey(rootId, "draft:" + path)`),
-    // which move to IndexedDB once; not Assist's hand-off of a proposal (`moqui.devAide.draft:component://...`, which
-    // WebrootAssistCanvas.js writes there for the builder to take).
+    // The keys of the unsaved drafts kept in localStorage (`storageKey(rootId, "draft:" + path)`: an earlier version's,
+    // a browser's with no IndexedDB, and those pagehide writes), which move to IndexedDB; not Assist's hand-off of a
+    // proposal (`moqui.devAide.draft:component://...`, which WebrootAssistCanvas.js writes there for the builder to take).
     pure.isDraftKey = (key) => typeof key === "string" && key.startsWith("moqui.devAide.draft:") && !key.startsWith("moqui.devAide.draft:component://");
     pure.draftKeysToMove = (keys) => (keys || []).filter(pure.isDraftKey);
-    // The remote of an upstream branch name (fork/due-date -> fork).
-    pure.upstreamRemote = (upstream) => { const text = String(upstream || ""); const at = text.indexOf("/"); return at > 0 ? text.slice(0, at) : ""; };
+    // Whether a draft from localStorage takes the place of the one IndexedDB has: when it has none, or an older one (a
+    // draft without a time is the oldest).
+    pure.draftNewer = (local, kept) => !kept || Number((local && local.at) || 0) > Number(kept.at || 0);
     // The trailer line a commit gets for a task's key, as the server writes it (git.rs trailer_line): Fixes #12 for an
     // issue by its number, a closing keyword as it is, else Task: KEY.
     pure.trailerOf = (key) => {
@@ -305,13 +306,24 @@
         if (/^(Fixes|Closes|Resolves) \S/.test(text)) return text;
         return "Task: " + text;
     };
+    // A commit's body for Amend without the trailer the commit will get again: the last line only when it is exactly
+    // the task's trailer, or an issue's Fixes #12; a line of the user's own ("Fixes typo") stays.
+    pure.withoutTrailer = (body, task) => {
+        const lines = String(body || "").replace(/\n+$/, "").split("\n");
+        const last = (lines[lines.length - 1] || "").trim();
+        const trailer = String(task || "").trim() ? pure.trailerOf(task) : null;
+        if (last && (last === trailer || /^Fixes #\d+$/.test(last))) lines.pop();
+        return lines.join("\n").replace(/\n+$/, "");
+    };
 
     // The unsaved drafts (a whole file each, by root and path) in IndexedDB, where a few large files do not fill the
-    // origin's few MB of localStorage: store's API, each call a promise. With no IndexedDB (a private window, blocked
-    // site data) they stay in localStorage as before; an IndexedDB opened takes over the drafts localStorage has, once,
-    // and removes them there. A write in pagehide may not finish before the page goes: the drafts are written half a
-    // second after the typing stops, so only that half second can be lost.
-    devAide.makeDrafts = (name) => {
+    // origin's few MB of localStorage: store's API, each call a promise (set and drop answer whether they were written).
+    // With no IndexedDB (a private window, blocked site data) they stay in localStorage. An IndexedDB opened takes in
+    // the drafts localStorage has, each only where IndexedDB has none or an older one (each draft has its time, `at`),
+    // and removes them there once they are in; a move that fails leaves them in localStorage for the next load. pagehide
+    // writes the dirty drafts to localStorage too, since the browser may end an IndexedDB write as the page goes.
+    // `factory` is the IndexedDB to use (a test's; null for none), else the page's.
+    devAide.makeDrafts = (name, factory) => {
         let opened = null;
         const each = (db, mode, work) => new Promise((resolve, reject) => {
             const tx = db.transaction("drafts", mode);
@@ -320,7 +332,8 @@
             tx.onerror = () => reject(tx.error);
             tx.onabort = () => reject(tx.error);
         });
-        // the drafts localStorage has, put in one transaction, then removed from localStorage
+        // the drafts localStorage has, each put where IndexedDB's is absent or older, in one transaction; then removed
+        // from localStorage
         const migrate = (db) => {
             let keys = [];
             try {
@@ -330,40 +343,63 @@
             keys = pure.draftKeysToMove(keys);
             if (!keys.length) return Promise.resolve(0);
             const moving = keys.map((key) => [key, store.get(key)]).filter(([, value]) => value && typeof value.text === "string");
-            return each(db, "readwrite", (drafts) => { moving.forEach(([key, value]) => drafts.put(value, key)); return null; })
-                .then(() => { keys.forEach((key) => store.drop(key)); return moving.length; });
+            let moved = 0;
+            return each(db, "readwrite", (drafts) => {
+                moving.forEach(([key, value]) => {
+                    const kept = drafts.get(key);
+                    kept.onsuccess = () => { if (pure.draftNewer(value, kept.result)) { drafts.put(value, key); moved++; } };
+                });
+                return null;
+            }).then(() => { keys.forEach((key) => store.drop(key)); return moved; });
         };
         const open = () => opened || (opened = new Promise((resolve) => {
-            let factory = null;
-            try { factory = root.indexedDB || null; } catch (err) { factory = null; }
-            if (!factory) { resolve(null); return; }
+            let idb = null;
+            try { idb = factory !== undefined ? factory : (root.indexedDB || null); } catch (err) { idb = null; }
+            if (!idb) { resolve(null); return; }
             let request;
-            try { request = factory.open(name, 1); } catch (err) { resolve(null); return; }
+            try { request = idb.open(name, 1); } catch (err) { resolve(null); return; }
             request.onupgradeneeded = () => request.result.createObjectStore("drafts");
             request.onsuccess = () => resolve(request.result);
             request.onerror = () => resolve(null);
             request.onblocked = () => resolve(null);
         }).then((db) => db ? migrate(db).then(() => db, (err) => { console.warn("Dev AIDE: the drafts in localStorage were not moved", err); return db; }) : null));
+        const stamped = (value) => Object.assign({}, value, { at: (value && value.at) || Date.now() });
         return {
             ready: () => open().then((db) => !!db),
             get(key) {
                 return open().then((db) => db ? each(db, "readonly", (drafts) => drafts.get(key)).then((value) => value === undefined ? null : value) : store.get(key))
                     .catch(() => null);
             },
-            set(key, value) { return open().then((db) => db ? each(db, "readwrite", (drafts) => drafts.put(value, key)) : store.set(key, value)).catch(() => {}); },
-            drop(key) { return open().then((db) => db ? each(db, "readwrite", (drafts) => drafts.delete(key)) : store.drop(key)).catch(() => {}); },
+            set(key, value) {
+                return open().then((db) => db ? each(db, "readwrite", (drafts) => drafts.put(stamped(value), key)).then(() => true) : store.set(key, stamped(value)))
+                    .catch(() => false);
+            },
+            // and any copy pagehide left in localStorage, which the next load would take in
+            drop(key) {
+                store.drop(key);
+                return open().then((db) => db ? each(db, "readwrite", (drafts) => drafts.delete(key)).then(() => true) : true)
+                    .catch(() => false);
+            },
+            // pagehide's: a draft written to localStorage at once, for the next load to take in
+            setNow: (key, value) => store.set(key, stamped(value)),
             close() { return (opened || Promise.resolve(null)).then((db) => { if (db) db.close(); opened = null; }); }
         };
     };
     const drafts = devAide.drafts = devAide.makeDrafts("moqui.devAide");
 
     // The Workspace starts with the shell's app drawer closed, for the editor's width; leaving puts it back as it was,
-    // unless the user opened it again meanwhile. The closing is this page's: the QUASAR_LEFT_OPEN preference stays.
-    // Answers the function that puts it back.
+    // unless the user opened or closed it meanwhile (the shell's leftOpen changed while on the Workspace). The closing
+    // is this page's: the QUASAR_LEFT_OPEN preference stays. Answers the function that puts it back.
     devAide.closeAppDrawer = (shell) => {
         if (!shell || !("leftOpen" in shell) || !shell.leftOpen) return () => {};
         shell.leftOpen = false;
-        return () => { if (!shell.leftOpen) shell.leftOpen = true; };
+        // watched from after the closing, so only the user's own change counts
+        let changed = false;
+        const stop = typeof shell.$watch === "function" ? shell.$watch("leftOpen", () => { changed = true; }) : null;
+        return () => {
+            if (stop) stop();
+            if (!changed && !shell.leftOpen) shell.leftOpen = true;
+        };
     };
 
     const workspace = {
@@ -472,7 +508,10 @@
                 this.tellPresence(false);
             });
             this.rememberNow = () => { clearTimeout(this.rememberTimer); this.remember(); };
-            root.addEventListener("pagehide", this.rememberNow);
+            // as the page goes the browser may end an IndexedDB write: the dirty drafts go to localStorage at once too,
+            // and the next load takes them in
+            this.onPageHide = () => { this.rememberNow(); this.rememberLocally(); };
+            root.addEventListener("pagehide", this.onPageHide);
             // each view's hook after its Save all, by its tab; a view takes its own off when it unmounts
             this.saveHooks = new Map();
             if (!this.guided) this.restoreDrawer = devAide.closeAppDrawer(moqui.webrootVue);
@@ -485,7 +524,7 @@
             clearInterval(this.presenceTimer);
             Object.values(this.outlineTimers || {}).forEach(clearTimeout);
             this.rememberNow();
-            root.removeEventListener("pagehide", this.rememberNow);
+            root.removeEventListener("pagehide", this.onPageHide);
             if (this.shared && this.rootId) this.post("presence", { rootId: this.rootId, paths: [] }).catch(() => {});
             root.removeEventListener("resize", this.onResize);
             if (this.restoreDrawer) this.restoreDrawer();
@@ -549,19 +588,35 @@
                 if (!this.rootId) return;
                 if (!this.guided) store.set(pure.storageKey(this.rootId, "tabs"), { paths: this.tabs.map((tab) => tab.path), active: this.active });
                 const written = this.draftsWritten || new Map();
+                const pending = this.draftsPending || (this.draftsPending = new Map());
                 const keep = (rootId, buffer) => {
                     const key = pure.storageKey(rootId, "draft:" + buffer.path);
                     if (this.draftsOffered && this.draftsOffered.has(key)) return;
                     const text = buffer.text !== buffer.saved ? buffer.text : null;
-                    if (written.has(key) && written.get(key) === text) return;
-                    written.set(key, text);
-                    if (text !== null) drafts.set(key, { base: buffer.base, text });
-                    else drafts.drop(key);
+                    if ((written.has(key) && written.get(key) === text) || (pending.has(key) && pending.get(key) === text)) return;
+                    // written once the write succeeds: a failed one is tried again at the next remember
+                    pending.set(key, text);
+                    (text !== null ? drafts.set(key, { base: buffer.base, text }) : drafts.drop(key)).then((ok) => {
+                        if (pending.get(key) === text) pending.delete(key);
+                        if (ok) written.set(key, text);
+                    });
                 };
                 for (const tab of this.tabs) {
                     if (tab.loading) continue;
                     if (!this.guided) keep(this.rootId, tab);
                     // a view's companion buffers (the site's extend-entity, screen-extend, seed data) are kept too
+                    for (const buffer of tab.companions || []) keep(buffer.rootId, buffer);
+                }
+            },
+            // pagehide's copy of the dirty drafts in localStorage, written at once
+            rememberLocally() {
+                if (!this.rootId) return;
+                const keep = (rootId, buffer) => {
+                    if (buffer.text !== buffer.saved) drafts.setNow(pure.storageKey(rootId, "draft:" + buffer.path), { base: buffer.base, text: buffer.text });
+                };
+                for (const tab of this.tabs) {
+                    if (tab.loading) continue;
+                    if (!this.guided) keep(this.rootId, tab);
                     for (const buffer of tab.companions || []) keep(buffer.rootId, buffer);
                 }
             },
@@ -577,7 +632,7 @@
                             (draft.base !== buffer.base ? " The file changed since." : "") + " Restore them?", cancel: { label: "Discard them" },
                         ok: { label: "Restore" }
                     }).onOk(() => { this.draftsOffered.delete(key); buffer.text = draft.text; })
-                        .onCancel(() => { this.draftsOffered.delete(key); this.draftsWritten.set(key, null); drafts.drop(key); });
+                        .onCancel(() => { this.draftsOffered.delete(key); drafts.drop(key).then((ok) => { if (ok) this.draftsWritten.set(key, null); }); });
                 }, () => { this.draftsOffered.delete(key); });
             },
             refreshStatus() {
@@ -1160,11 +1215,14 @@
             // ---- the task panel (14) ----
             loadTasks() {
                 this.taskList.loading = true;
-                return this.get("tasks", { rootId: this.rootId || "" }).then((answer) => {
+                const rootId = this.rootId;
+                return this.get("tasks", { rootId: rootId || "" }).then((answer) => {
+                    // another root's answer, come late, is not this one's
+                    if (rootId !== this.rootId) return;
                     this.taskList = { tasks: answer.tasks || [], loading: false, error: answer.error || "", sourceLabel: answer.sourceLabel || "",
                         issues: answer.issues || [], issueProjects: answer.issueProjects || [], numbered: !!answer.numbered,
                         repositoryPath: answer.repositoryPath || "", issuesError: answer.issuesError || "" };
-                }, (error) => { this.taskList.loading = false; this.taskList.error = pure.errorText(error); });
+                }, (error) => { if (rootId !== this.rootId) return; this.taskList.loading = false; this.taskList.error = pure.errorText(error); });
             },
             // Quick create (21.6): an issue filed in the tracker of the root's hosted repository, in its first linked project
             // unless another is picked
@@ -1212,7 +1270,8 @@
                     if (!info || this.commitForm.summary) return;
                     const lines = String(info.message || "").split("\n");
                     this.commitForm.summary = lines[0] || "";
-                    this.commitForm.body = lines.slice(1).join("\n").replace(/^\n+/, "").replace(/\n*(?:(?:Task|Fixes): .*|(?:Fixes|Closes|Resolves) \S+)$/, "");
+                    this.commitForm.body = pure.withoutTrailer(lines.slice(1).join("\n").replace(/^\n+/, ""),
+                        this.commitForm.task || (this.status && this.status.currentTask) || "");
                 }, this.fail);
             },
             commit(andPush) {
@@ -1280,17 +1339,14 @@
                     return answer;
                 }, () => null);
             },
-            // a branch pushed to a fork's remote (Fork adds it as fork) comes from the fork: the server resolves the
-            // remote's repository (sourceRepositoryId)
+            // a branch pushed to a fork's remote (Fork adds it as fork) comes from the fork: the server takes the
+            // branch's remote (its pushRemote, else its remote) and resolves its repository (sourceRepositoryId), unless
+            // the caller names a remote
             openMergeRequest(branch, remote) {
-                const upstream = this.status && this.status.branch === branch ? pure.upstreamRemote(this.status.upstream) : "";
-                const sourceRemote = remote || upstream;
-                const hostedRemote = this.root && this.root.hosted && this.root.hosted.remote;
-                const fromFork = !!sourceRemote && !!hostedRemote && sourceRemote !== hostedRemote;
-                return this.ask("Title of the merge request of " + (fromFork ? sourceRemote + "/" : "") + branch, "").then((title) => {
+                return this.ask("Title of the merge request of " + (remote ? remote + "/" : "") + branch, "").then((title) => {
                     if (title === null || title === undefined) return null;
                     const params = { rootId: this.rootId, sourceBranch: branch, title };
-                    if (fromFork) params.sourceRemote = sourceRemote;
+                    if (remote) params.sourceRemote = remote;
                     return this.post("openMergeRequest", params).then((answer) => {
                         const made = answer.mergeRequest || {};
                         this.note("Opened merge request !" + made.mergeRequestNum + (made.sourceRepositoryId ? " from " + made.sourceRepositoryId : "") + " into " + made.target);

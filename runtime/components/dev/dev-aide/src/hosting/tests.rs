@@ -603,7 +603,10 @@ fn a_repository_s_issues_by_their_numbers_or_ids() {
             { "workEffortId": "PROJ-5", "issueNumber": 12, "workEffortName": "Totals", "statusId": "WeInPlanning",
               "rootWorkEffortId": "PROJ", "url": "https://evil.example.com/x" },
             { "workEffortId": "PROJ-6", "workEffortName": "No number", "url": "/issues/6" },
-            { "workEffortName": "No id" }
+            { "workEffortName": "No id" },
+            // an id that would add lines to a commit message is no id
+            { "workEffortId": "PROJ-7\nSigned-off-by: Someone <x@example.com>", "workEffortName": "Forged" },
+            { "workEffortId": "PROJ-8\nX", "issueNumber": 8, "workEffortName": "Numbered" }
         ], "projectList": [{ "workEffortId": "PROJ", "workEffortName": "The project" }], "numbered": true }),
         Some(&server),
     );

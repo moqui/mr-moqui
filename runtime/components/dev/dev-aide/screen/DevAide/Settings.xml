@@ -23,12 +23,14 @@ along with this software (see the LICENSE.md file). If not, see
         default-menu-title="Settings" default-menu-index="11" menu-image="sym_o_settings" menu-image-type="icon">
 
     <parameter name="serverId"/>
+    <!-- start#Connect answered the server's providers: the page asks which one -->
+    <parameter name="chooseSignIn"/>
 
     <!-- group servers (21.2) -->
     <!-- a server with identity providers answers them first: the page lists them (and the server's own login) to choose -->
     <transition name="startConnect"><service-call name="org.moqui.devaide.HostingServices.start#Connect" out-map="started"/>
         <conditional-response url="."><condition><expression>!started.authorizeUrl</expression></condition>
-            <parameter name="serverId" from="started.serverId"/></conditional-response>
+            <parameter name="serverId" from="started.serverId"/><parameter name="chooseSignIn" value="true"/></conditional-response>
         <default-response url="${started.authorizeUrl}" url-type="plain"/>
         <error-response url="."/></transition>
     <transition name="serverSignedIn" require-session-token="false">
@@ -87,8 +89,9 @@ along with this software (see the LICENSE.md file). If not, see
             offered: [server.offer &amp;&amp; server.offer.git ? 'git' : null, server.offer &amp;&amp; server.offer.gateway &amp;&amp; server.offer.gateway.enabled ? 'LLM gateway' : null,
                 server.offer &amp;&amp; server.offer.application ? server.offer.application.name : null].filter((part) => part).join(', ')}))"/>
         <set field="planServer" from="serverId ? servers.find((server) => server.serverId == serverId &amp;&amp; server.mine) : null"/>
-        <!-- the identity providers the server's app sign-in offers (signIn.providers, from its get#AppProviders) -->
-        <set field="signInProviders" from="planServer &amp;&amp; planServer.offer &amp;&amp; planServer.offer.signIn &amp;&amp; planServer.offer.signIn.providers
+        <!-- the identity providers the server's app sign-in offers (signIn.providers, from its get#AppProviders), to sign in
+            with when Connect asked which, or when the connection is not signed in -->
+        <set field="signInProviders" from="planServer &amp;&amp; (chooseSignIn == 'true' || planServer.statusText != 'connected') &amp;&amp; planServer.offer &amp;&amp; planServer.offer.signIn &amp;&amp; planServer.offer.signIn.providers
             ? planServer.offer.signIn.providers.map((provider) => Object.assign({baseUrl: planServer.baseUrl, label: planServer.label}, provider)) : []"/>
         <set field="plan" from="planServer ? planServer.plan : null"/>
         <if condition="info.shared &amp;&amp; admin &amp;&amp; full">
