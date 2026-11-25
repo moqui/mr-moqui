@@ -394,7 +394,7 @@ impl DockerHost {
             CALL_TIMEOUT,
         )?;
         if response.status() >= 300 && response.status() != 404 {
-            return Err(Self::problem(&format!("removing container {id}"), &response));
+            self.gone_anyway(id, &response)?;
         }
         Ok(())
     }
