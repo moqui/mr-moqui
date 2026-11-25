@@ -85,8 +85,8 @@ Who may use it (`data/DevAideSecurityData.xml`):
 | `DEV_AIDE_EXTEND` | `DEV_AIDE_EXTENDERS` | Write site components and publish them. |
 | `DEV_AIDE` | `ADMIN`, `DEV_AIDE_USERS` | Everything: upstream edits with the toggle on, and every git command. |
 
-Its Rust crate is linked into the Dev and Debug packages (the `devtools` feature). In another package the screens load
-and the services say they are not built in.
+Its Rust crate is linked into the Maximal package (the default) and Debug (the `devtools` feature). In another
+package the screens load and the services say they are not built in.
 
 - **Tests** ([the two suites](../../../../docs/Build-Test.md#the-two-suites)): the regression suite is `./moq test
   dev-aide` (the screens, the Workspace's terminal form on a scratch root, the docs, the terminal's guided editors against a throw-away root), `cargo test -p dev-aide` (confinement, the git parsers, the Browser's sections, the edit buffers),

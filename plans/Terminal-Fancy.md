@@ -386,6 +386,8 @@ agent's work comes back before the holder exists (§7.5), as herdr does it.
   these at a prompt already, so a profile grants nothing.
 - **The directory** is the profile's, else `host-directory`, else the directory above the runtime (the checkout that
   holds `moq`). "Open a terminal here" from another screen (the Dev AIDE's repositories, later) passes one.
+  Built Nov 11, 2026 (§13 P9): each root of the Dev AIDE's Repositories has a Terminal link, a host shell in its
+  directory.
 
 ### 7.2 The pty
 
@@ -863,7 +865,8 @@ Nov 11, 2026, the evening. The plan stays here, not archived: §15 waits for a f
 - Answering Claude Code's `OSC 7501 ; ?` as Rex does, so the agent sends its status with no hooks.
 - A per-person OS account for host sessions on a shared dev server.
 - Named workspaces: an arrangement saved with the profiles it starts.
-- A git worktree per agent session, with the Dev AIDE's repositories.
+- ~~A git worktree per agent session, with the Dev AIDE's repositories.~~ Built Nov 14, 2026 in the Dev AIDE
+  ([design-dev-aide](design-dev-aide.md) §21.8, P13): a session's tools work in its own worktree, a root of its own.
 - Images, ligatures, WebGL; a bundled font with the symbols agents' TUIs use.
 - A native window per terminal in the Desktop app.
 - Recording a session.

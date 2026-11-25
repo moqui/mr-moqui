@@ -1,4 +1,4 @@
-# The Rust side of the example component. The binaries with the dev tools (Dev and Debug) link it
+# The Rust side of the example component. The binaries with the dev tools (Maximal and Debug) link it
 # (`use example as _;`), and its submit_component! entry names the component, so its tool factory and services are
 # there only when the component loads.
 #
