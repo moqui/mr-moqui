@@ -71,6 +71,63 @@ fn an_offer_is_one_send_only_vp8_video() {
     assert!(!sdp.contains("a=candidate"));
 }
 
+/// A media server with only an ICE-TCP candidate (UDP blocked): the leg connects over TCP, RFC 4571 framed.
+#[test]
+fn the_leg_takes_ice_tcp_when_the_media_server_offers_only_that() {
+    use std::io::{Read, Write};
+    let _one = ONE_LEG.lock().unwrap_or_else(|e| e.into_inner());
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a TCP listener");
+    let addr = listener.local_addr().expect("its address");
+    let mut sfu = Sfu::new(SfuConfig {
+        udp_candidates: Vec::new(),
+        tcp_candidates: vec![addr],
+        ..SfuConfig::default()
+    });
+    let key = LegKey::new("T", "S");
+    let answer_sdp = sfu
+        .join_as(Instant::now(), &key, 1, &offer().expect("an offer"), Some("P"))
+        .expect("joined");
+    assert!(server_candidates(&answer_sdp).iter().all(|c| c.0 == Protocol::Tcp));
+    answer(answer_sdp).expect("the answer taken");
+    let (mut stream, from) = listener.accept().expect("the leg connects");
+    stream
+        .set_read_timeout(Some(Duration::from_millis(5)))
+        .expect("a timeout");
+    let mut connected = false;
+    let mut pending = Vec::new();
+    let mut buf = [0u8; 4096];
+    let until = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < until && !connected {
+        if let Ok(n) = stream.read(&mut buf) {
+            pending.extend_from_slice(&buf[..n]);
+        }
+        while pending.len() >= 2 {
+            let len = u16::from_be_bytes([pending[0], pending[1]]) as usize;
+            if pending.len() < 2 + len {
+                break;
+            }
+            let framed: Vec<u8> = pending.drain(..2 + len).skip(2).collect();
+            sfu.handle_receive(Instant::now(), Proto::Tcp, from, addr, &framed);
+        }
+        sfu.handle_timeout(Instant::now());
+        loop {
+            match sfu.poll_output() {
+                SfuOutput::Transmit(t) => {
+                    let len = u16::try_from(t.contents.len()).expect("a frame");
+                    let _ = stream.write_all(&len.to_be_bytes());
+                    let _ = stream.write_all(&t.contents);
+                }
+                SfuOutput::Event(SfuEvent::Connected { .. }) => connected = true,
+                SfuOutput::Event(_) => {}
+                SfuOutput::Timeout(_) => break,
+            }
+        }
+    }
+    let status: serde_json::Value = serde_json::from_str(&status()).expect("a status");
+    stop();
+    assert!(connected, "the leg connected over ICE-TCP: {status}");
+}
+
 /// The frames the media server forwards (a tap sees them past the stage's gate).
 struct Seen(Arc<StdMutex<Vec<(String, Source)>>>);
 
