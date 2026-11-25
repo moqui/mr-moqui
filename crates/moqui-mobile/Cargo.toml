@@ -42,6 +42,9 @@ log = "0.4"
 # The native screen share's leg (plans/MM-Spike.md): a WebRTC client of the media server, the workspace's str0m on the
 # aws-lc-rs crypto rustls already links here.
 str0m = { version = "0.25.0", default-features = false, features = ["aws-lc-rs"] }
+# SFrame (RFC 9605) of the screen leg in an end-to-end encrypted call (src/screen.rs): the workspace's crate, whose tests
+# check it against the RFC's vectors and the pages' frames (crates/moqui-rtc/tests/sframe.rs).
+sframe = { version = "2.1.0", default-features = false, features = ["rust-crypto"] }
 # moqui-client logs through tracing: with no subscriber its events go to log, so to logcat.
 tracing = { version = "0.1", features = ["log"] }
 

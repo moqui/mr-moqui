@@ -13,6 +13,12 @@
 //! candidate for its TCP ones (RFC 4571 framing), which ICE takes when UDP does not get through. The leg ends when the
 //! page stops it, when its connection is lost for [`LOST_AFTER`] or never made in [`CONNECT_WITHIN`], and the page is
 //! told (`screen`).
+//!
+//! In an end-to-end encrypted call each frame is SFrame-encrypted (RFC 9605) as the pages' worker does it
+//! (WebrootSFrameWorker.js): a VP8 frame's first 10 bytes (a keyframe) or 3 in the clear as the SFrame metadata, then
+//! `header || ciphertext || tag` under AES_128_GCM_SHA256_128, one counter for the leg across its keys. The key is the
+//! leg's own, which the page makes and sends to the others' devices (WebrootCallKeys.js) and hands here ([`set_key`]);
+//! no frame leaves before the first one.
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -22,6 +28,9 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use sframe::frame::{MediaFrame, MonotonicCounter};
+use sframe::key::EncryptionKey;
+use sframe::CipherSuite;
 use str0m::bwe::{Bitrate, BweKind};
 use str0m::change::{SdpAnswer, SdpOffer, SdpPendingOffer};
 use str0m::format::Codec;
@@ -51,6 +60,7 @@ enum Msg {
     TcpFailed(SocketAddr),
     #[cfg_attr(not(target_os = "android"), allow(dead_code))]
     Frame(Vec<u8>, i64),
+    Key(u64, Vec<u8>, Duration, Sender<Result<(), String>>),
     Status(Sender<String>),
     Stop,
 }
@@ -73,15 +83,16 @@ fn ask<T>(make: impl FnOnce(Sender<T>) -> Msg) -> Result<T, String> {
 }
 
 /// A new leg's offer: one send-only VP8 video, with no candidates (the media server is ICE-lite; this side's host
-/// candidates are added once the answer names the server's addresses). An earlier leg ends first.
-pub(crate) fn offer() -> Result<String, String> {
+/// candidates are added once the answer names the server's addresses). An earlier leg ends first. An `encrypted` leg
+/// (an end-to-end encrypted call) sends nothing until its key comes ([`set_key`]).
+pub(crate) fn offer(encrypted: bool) -> Result<String, String> {
     stop();
     let (tx, rx) = mpsc::channel();
     let id = NEXT_LEG.fetch_add(1, Ordering::Relaxed);
     *moqui_lib::sync::lock(&LEG) = Some((id, tx.clone()));
     std::thread::Builder::new()
         .name("screen-leg".into())
-        .spawn(move || run(id, rx, tx))
+        .spawn(move || run(id, encrypted, rx, tx))
         .map_err(|err| err.to_string())?;
     ask(Msg::Offer)?
 }
@@ -94,6 +105,40 @@ pub(crate) fn answer(sdp: String) -> Result<(), String> {
 /// An offer of the media server's (an ICE restart, a renegotiation): the answer for the page to send.
 pub(crate) fn remote_offer(sdp: String) -> Result<String, String> {
     ask(|reply| Msg::RemoteOffer(sdp, reply))?
+}
+
+/// The leg's SFrame key (its KID and 16-byte base key), from the page's call keys: the first is used at once, a later one
+/// after `use_after` (the page sends it to the others first, as its own).
+pub(crate) fn set_key(kid: u64, base_key: Vec<u8>, use_after: Duration) -> Result<(), String> {
+    if base_key.len() != 16 {
+        return Err("An SFrame base key is 16 bytes".to_string());
+    }
+    ask(|reply| Msg::Key(kid, base_key, use_after, reply))?
+}
+
+/// `frame` SFrame-encrypted as the pages' worker does it: its codec's leading bytes in the clear and authenticated
+/// (10 for a VP8 keyframe, 3 for another frame), then the SFrame header, the ciphertext and the tag.
+pub(crate) fn seal(key: &EncryptionKey, counter: &mut MonotonicCounter, frame: &[u8]) -> Result<Vec<u8>, String> {
+    let clear = clear_bytes(frame);
+    let media =
+        MediaFrame::try_with_meta_data(counter, &frame[clear..], &frame[..clear]).map_err(|err| err.to_string())?;
+    Ok(media.encrypt(key).map_err(|err| err.to_string())?.as_ref().to_vec())
+}
+
+/// The leading bytes of a VP8 frame the pages keep in the clear (WebrootSFrame.clearBytes).
+pub(crate) fn clear_bytes(frame: &[u8]) -> usize {
+    if frame.is_empty() {
+        0
+    } else if is_vp8_keyframe(frame) {
+        10.min(frame.len())
+    } else {
+        3.min(frame.len())
+    }
+}
+
+/// The key of `kid` from its base key, in the calls' cipher suite (AES_128_GCM_SHA256_128).
+pub(crate) fn derive_key(kid: u64, base_key: &[u8]) -> Result<EncryptionKey, String> {
+    EncryptionKey::derive_from(CipherSuite::AesGcm128Sha256, kid, base_key).map_err(|err| err.to_string())
 }
 
 /// The leg's state as JSON, for the page.
@@ -152,9 +197,16 @@ struct Leg {
     asked_bps: u64,
     asked_at: Instant,
     waiting_key: bool,
+    /// An end-to-end encrypted call's leg: its SFrame key (and KID), the next one and when it is used, its counter,
+    /// and the frames dropped for want of a key.
+    encrypted: bool,
+    sframe: Option<(u64, EncryptionKey)>,
+    next_sframe: Option<(Instant, u64, EncryptionKey)>,
+    counter: MonotonicCounter,
+    unkeyed: u64,
 }
 
-fn run(id: u64, rx: Receiver<Msg>, tx: Sender<Msg>) {
+fn run(id: u64, encrypted: bool, rx: Receiver<Msg>, tx: Sender<Msg>) {
     let now = Instant::now();
     let rtc = Rtc::builder()
         .clear_codecs()
@@ -182,6 +234,11 @@ fn run(id: u64, rx: Receiver<Msg>, tx: Sender<Msg>) {
         asked_bps: START_BPS,
         asked_at: now,
         waiting_key: true,
+        encrypted,
+        sframe: None,
+        next_sframe: None,
+        counter: MonotonicCounter::with_start_value(0, u64::MAX),
+        unkeyed: 0,
     };
     log::info!("Screen leg: started");
     let mut wait = Duration::from_millis(50);
@@ -227,6 +284,9 @@ fn run(id: u64, rx: Receiver<Msg>, tx: Sender<Msg>) {
                 leg.tcp.insert(remote, Tcp::Failed);
             }
             Some(Msg::Frame(data, pts_us)) => leg.send_frame(now, &data, pts_us),
+            Some(Msg::Key(kid, base, after, reply)) => {
+                let _ = reply.send(leg.take_key(now, kid, &base, after));
+            }
             None => {}
         }
         if let Err(err) = leg.rtc.handle_input(Input::Timeout(now)) {
@@ -351,10 +411,38 @@ impl Leg {
         Ok(answer.to_sdp_string())
     }
 
+    fn take_key(&mut self, now: Instant, kid: u64, base: &[u8], after: Duration) -> Result<(), String> {
+        if !self.encrypted {
+            return Err("This leg's call is not end-to-end encrypted".to_string());
+        }
+        let key = derive_key(kid, base)?;
+        if self.sframe.is_none() || after.is_zero() {
+            self.sframe = Some((kid, key));
+            self.next_sframe = None;
+            // its first frame under a new key, a keyframe: a subscriber that waited for the key decodes at once
+            self.waiting_key = true;
+            keyframe();
+        } else {
+            self.next_sframe = Some((now + after, kid, key));
+        }
+        log::info!("Screen leg: key {kid}");
+        Ok(())
+    }
+
     fn send_frame(&mut self, now: Instant, data: &[u8], pts_us: i64) {
         self.frames_in += 1;
         let Some(mid) = self.mid else { return };
         if self.connected_ms.is_none() {
+            return;
+        }
+        if self.next_sframe.as_ref().is_some_and(|(at, _, _)| now >= *at) {
+            if let Some((_, kid, key)) = self.next_sframe.take() {
+                self.sframe = Some((kid, key));
+            }
+        }
+        // an encrypted call's frame never leaves without its key
+        if self.encrypted && self.sframe.is_none() {
+            self.unkeyed += 1;
             return;
         }
         // a subscriber decodes nothing before a keyframe: skip to the first one after connecting
@@ -363,6 +451,20 @@ impl Leg {
             return;
         }
         self.waiting_key = false;
+        let sealed;
+        let data = match &self.sframe {
+            Some((_, sframe)) => match seal(sframe, &mut self.counter, data) {
+                Ok(out) => {
+                    sealed = out;
+                    &sealed[..]
+                }
+                Err(err) => {
+                    log::warn!("Screen leg: a frame was not encrypted, so not sent: {err}");
+                    return;
+                }
+            },
+            None => data,
+        };
         let Some(writer) = self.rtc.writer(mid) else { return };
         let Some(pt) = writer
             .payload_params()
@@ -562,6 +664,9 @@ impl Leg {
             "lastKeyframeRequestMs": self.last_keyframe_request_ms,
             "estimateBps": self.estimate_bps,
             "encoderBps": self.asked_bps,
+            "encrypted": self.encrypted,
+            "kid": self.sframe.as_ref().map(|(kid, _)| *kid),
+            "unkeyed": self.unkeyed,
         })
         .to_string()
     }

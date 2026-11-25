@@ -770,11 +770,40 @@ pub(crate) fn screen_start(app: AppHandle, webview: tauri::Webview, nonce: Optio
     Err("No screen capture here".to_string())
 }
 
-/// The screen leg's offer, for the page's `join` frame of the leg `add#ScreenLeg` made.
+/// The screen leg's offer, for the page's `join` frame of the leg `add#ScreenLeg` made; `encrypted` for an end-to-end
+/// encrypted call, whose leg sends nothing before its key (`screen_key`).
 #[tauri::command(async)]
-pub(crate) fn screen_offer(app: AppHandle, webview: tauri::Webview, nonce: Option<String>) -> Result<String, String> {
+pub(crate) fn screen_offer(
+    app: AppHandle,
+    webview: tauri::Webview,
+    nonce: Option<String>,
+    encrypted: Option<bool>,
+) -> Result<String, String> {
     require_shell(&app, &webview, nonce.as_deref())?;
-    crate::screen::offer()
+    crate::screen::offer(encrypted == Some(true))
+}
+
+/// The screen leg's SFrame key in an end-to-end encrypted call: its KID and base key (base64), from the page's call
+/// keys, used after `useAfterMs` (none for the first). The shell's page only: the key is its own leg's sender key.
+#[tauri::command(async)]
+pub(crate) fn screen_key(
+    app: AppHandle,
+    webview: tauri::Webview,
+    nonce: Option<String>,
+    kid: u64,
+    key: String,
+    use_after_ms: Option<u64>,
+) -> Result<(), String> {
+    require_shell(&app, &webview, nonce.as_deref())?;
+    use base64::Engine as _;
+    let base = base64::engine::general_purpose::STANDARD
+        .decode(key.trim())
+        .map_err(|_| "Not a key".to_string())?;
+    crate::screen::set_key(
+        kid,
+        base,
+        std::time::Duration::from_millis(use_after_ms.unwrap_or(0).min(10_000)),
+    )
 }
 
 /// The media server's answer to the screen leg's offer (its `joined` frame).

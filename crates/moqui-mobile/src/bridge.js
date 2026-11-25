@@ -385,7 +385,10 @@
         // the native screen share (plans/MM-Spike.md): the system's consent and the capture (start), the screen leg's
         // offer, the media server's answer and later offers relayed by the page on its own socket, its state, and its end
         screenStart: () => shellAsk("screen_start"),
-        screenOffer: () => shellAsk("screen_offer"),
+        screenOffer: (encrypted) => shellAsk("screen_offer", { encrypted: encrypted === true }),
+        // an end-to-end encrypted call's screen leg key (the page's call keys make it): {kid, key (base64), useAfterMs}
+        screenKey: (k) => shellAsk("screen_key", { kid: Number(k && k.kid), key: String((k && k.key) || ""),
+            useAfterMs: Number((k && k.useAfterMs) || 0) }),
         screenAnswer: (sdp) => shellAsk("screen_answer", { sdp: String(sdp || "") }),
         screenRemoteOffer: (sdp) => shellAsk("screen_remote_offer", { sdp: String(sdp || "") }),
         screenStop: () => shellAsk("screen_stop"),

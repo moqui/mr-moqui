@@ -70,6 +70,7 @@ const COMMANDS: &[&str] = &[
     "secure_screen",
     "screen_start",
     "screen_offer",
+    "screen_key",
     "screen_answer",
     "screen_remote_offer",
     "screen_stop",

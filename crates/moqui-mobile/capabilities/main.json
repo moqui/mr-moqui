@@ -45,6 +45,7 @@
     "allow-call-state",
     "allow-screen-start",
     "allow-screen-offer",
+    "allow-screen-key",
     "allow-screen-answer",
     "allow-screen-remote-offer",
     "allow-screen-stop",

@@ -140,6 +140,7 @@ pub fn run() {
             commands::secure_screen,
             commands::screen_start,
             commands::screen_offer,
+            commands::screen_key,
             commands::screen_answer,
             commands::screen_remote_offer,
             commands::screen_stop,
