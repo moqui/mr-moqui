@@ -7,6 +7,9 @@ dev instance Dev AIDE ([dev-aide](../../dev/dev-aide/README.md)) is beside them.
 Their access is three artifact groups granted to `ADMIN`: `TOOLS_APP` and `SYSTEM_APP` (`data/ToolsSecurityData.xml`)
 and `DASHBOARDS_APP` (`data/MonitoringSecurityData.xml`). Monitor has no group of its own: the telemetry datasets and
 its services and entities are members of `SYSTEM_APP`.
+Maps ([plans/Maps.md](../../../../plans/Maps.md), screens to come) has three groups in `data/MapsSecurityData.xml`:
+`MAPS_APP` (its root, for `MAPS_USERS` and `ADMIN`), `MAPS_DIALOG` (the local-map dialog and the adapter registry, for
+every user) and `MAPS_ADMIN` (Configuration and the Geo data importer, `ADMIN`'s).
 
 Another app may show the Dashboards screens under its own root, as BOSS Insights does
 ([Mounting the report screens](../../../../docs/tools/Monitoring.md#mounting-the-report-screens)): its root sets

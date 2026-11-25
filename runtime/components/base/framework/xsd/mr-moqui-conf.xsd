@@ -30,6 +30,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:element minOccurs="0" ref="channels"/>
                 <xs:element minOccurs="0" ref="push"/>
                 <xs:element minOccurs="0" ref="load-runner"/>
+                <xs:element minOccurs="0" ref="maps"/>
                 <xs:element minOccurs="0" ref="cluster-member"/>
                 <xs:element minOccurs="0" ref="xmpp-server"/>
                 <xs:element minOccurs="0" ref="sip-server"/>
@@ -2373,6 +2374,21 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="targets" type="xs:string"><xs:annotation><xs:documentation>URL prefixes (and ssh://host:port entries) a run may reach beside this server and loopback, comma separated.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="max-runs" type="non-neg-int-expandable" default="1"/>
             <xs:attribute name="max-users" type="non-neg-int-expandable" default="1000"/>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="maps">
+        <xs:annotation><xs:documentation>Maps (plans/Maps.md §4.2): the switch for the server's outside map requests and
+            the hard limits of Geo data imports and feature queries. Providers, layers and profiles are entity rows
+            (moqui.maps), not settings.</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:attribute name="external-requests" type="boolean" default="true"><xs:annotation><xs:documentation>false
+                stops the server's own outside requests for maps (a geocoder, a Geo data download) and its handing a
+                browser a profile with outside URLs; local maps and postal lookup still work.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="import-max-bytes" type="non-neg-int-expandable" default="536870912"><xs:annotation><xs:documentation>
+                The largest Geo data download or operator file, and the most it may unzip to, in bytes (512 MiB).</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="max-features" type="non-neg-int-expandable" default="5000"><xs:annotation><xs:documentation>
+                The most features one overlay or one viewport query of a layer adapter returns; 0 returns none, which turns
+                record layers off. A value that is not a whole number is logged and refuses the query.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
     <xs:element name="cluster-member">

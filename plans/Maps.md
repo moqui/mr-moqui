@@ -231,6 +231,10 @@ and import (`import-max-bytes`) and the most features one overlay or viewport qu
 environment sets them as `moqui_conf__...` and specs with `setConf`. Providers, layers and profiles are
 configuration entity rows, with the OpenFreeMap provider and profile and the outline profile as seed data.
 
+An installation upgraded from before Maps, or one whose default profile row or `maps.profile` preference is gone,
+draws the outline profile (`OUTLINE`) and says so to an administrator; P1 builds that fallback with the effective
+configuration service.
+
 Precedence: installation policy constrains all choices; consumer profile supplies context; allowed personal
 preferences override defaults; an explicit dialog target overrides the initial viewport. Removed or inaccessible
 layers fall back to a permitted profile with an explanation. Preferences cannot enable an unapproved external
@@ -445,10 +449,24 @@ Keep reference geography in `moqui.basic`, usable with only the framework instal
   representative point, place estimate), used by GeoPointAssoc and by Mantle's record-location provenance;
   `GeoPointType` has no values today.
 - Derive IDs from the country and the code, as Mantle's states are (`USA_CA`): a postal code, a county and a city
-  each get an ID an import can compute, and a point's ID adds its data set. A re-import is then a create-or-update
-  with no lookup, and a state the importer meets is the row Mantle's install data already has, not a second one.
+  each get an ID an import can compute, and a point's ID adds its source. A re-import is then a create-or-update
+  with no lookup. Confirmed in P0 (the comment above `GeoPostalCode` in `BasicEntities.xml`): a postal code
+  `{country}_Z_{code}` (`USA_Z_02134`, the code upper case without spaces or hyphens, leading zeros kept) and a prefix
+  code `{country}_ZP_{code}`; a US county `USA_C_{FIPS}` (`USA_C_25025`), a US place `USA_P_{FIPS}` and a GeoNames
+  city `{country}_G_{geonameid}`; a point the Geo's ID, `_` and its data set's `sourceKey` (at most 12 characters,
+  shared by a mirror or a later year: `USA_Z_02134_CENSUS_ZCTA`). A first- or second-level division is found by
+  lookup, not computed: Mantle's install data has more than one form (`USA_CA`, `VNM_VN-SG`, `KOR_KR-11`, and
+  `ITA_AG` a province) and GeoNames' first-level codes are FIPS for most countries, so the importer looks among the
+  country's `GAT_REGIONS` children by `geoCodeAlpha2` or `geoCodeNumeric` (a GeoNames code through a crosswalk to ISO
+  3166-2) and makes `{country}_A1_{code}` or `{country}_A2_{admin1}_{admin2}` only when nothing matches. A state the
+  importer meets is then the row Mantle's install data already has, not a second one.
+- A code's place names are `GeoPostalCodePlace` rows (code, source, name, its order in the file, admin names, the
+  source's accuracy and an optional point of its own): GeoNames has a row a code and place, and no name wins. The
+  code's one representative point from a source is its row with the highest accuracy (GeoNames 6, then 4, then 1),
+  the first in the file among equals.
 
-This is four rows a postal code (Geo, GeoPostalCode, GeoPoint, GeoPointAssoc): about 135,000 for the US, and
+This is four rows a postal code (Geo, GeoPostalCode, GeoPoint, GeoPointAssoc) and one a place name
+(GeoPostalCodePlace): about 135,000 for the US, and
 several million for every GeoNames country. The model is kept as it is for the US. P2 measures the US import, the
 lookup and a refresh before the importer offers every country at once, and the international shape is decided on
 those numbers.
@@ -469,7 +487,7 @@ set's terms.
 | --- | --- | --- | --- | --- |
 | US | Census Gazetteer ZCTA | About 34,000 postal-area points | Zip; pipe-delimited text with a header | Public domain |
 | US | Census Gazetteer Counties, and Places by choice | County and city Geos with FIPS codes, names, state and points | The same | Public domain |
-| US | Census 2020 ZCTA-to-county relationship | The county, and through it the state, of each ZCTA (the largest land share where it spans several) | Delimited text; its URL and delimiter are confirmed in P0 | Public domain |
+| US | Census 2020 ZCTA-to-county relationship | The county, and through it the state, of each ZCTA (the largest land share where it spans several) | Pipe-delimited text with a header (it starts with a byte order mark), not zipped: `rel2020/zcta520/tab20_zcta520_county20_natl.txt`; a county's part outside every ZCTA has the ZCTA columns empty | Public domain |
 | US and 123 other countries | GeoNames postal, a country at a time | Code, place name, state and county names and codes, point and accuracy; the ZIP codes that have no ZCTA | Zip; tab-delimited text, no header | CC BY 4.0, attribution shown |
 | Global | GeoNames gazetteer: `countryInfo`, `admin1CodesASCII`, `admin2Codes`, `cities15000` (larger sets by choice) | States and provinces, second-level divisions and cities with points | Tab-delimited text, zipped or bare | CC BY 4.0 |
 | Any | An operator's file: CSV with a header of our own (country, code, place, admin codes, latitude, longitude, precision) | A licensed or national data set the operator converted; an installation with no outside access | CSV from an upload or a resource location | The operator's |

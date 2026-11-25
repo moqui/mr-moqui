@@ -1,0 +1,209 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Maps (plans/Maps.md §3.2): the contracts a record or layer adapter implements, and the registry that resolves an adapter
+    from its key. A component registers an adapter as a moqui.maps.MapAdapter seed row naming its services; a browser sends
+    only the adapterKey, never a service or entity name, query, path or URL. The adapter is the owning domain's guarded
+    service: it checks the caller's access to the record (and its organization scope) itself, on every call, and the
+    registration grants nothing. Coordinates are WGS84, a point {longitude, latitude} and a geometry GeoJSON with
+    [longitude, latitude] positions; an extent is {west, south, east, north}, with west greater than east across the
+    antimeridian. The caller of an adapter, not the adapter alone, bounds what reaches a browser: it passes the limit
+    get#AdapterService answers and truncates a features list longer than that limit.
+    Access: the local-map dialog's grants (MAPS_DIALOG, tools data/MapsSecurityData.xml) are inheritAuthz N, so they reach
+    no service the dialog calls: each adapter service needs a grant of its own, from its component, to the users who open
+    the dialog. A render of LocalMap runs the always-actions of the screens above it (Maps.xml) without their own check
+    (docs/security/Attack-Surface-Web.md "Parent frames"), so those always-actions read nothing privileged.
+    Effective configuration, saved views, postal lookup and geocoding join this file in P1 and P3. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
+
+    <!-- ========== The adapter contracts ========== -->
+
+    <service verb="get" noun="RecordMapContext" type="interface">
+        <description>A record's place on a map, for the local-map dialog and a record layer's drill-down: its label, geometry,
+            precision and source, the version a later store#RecordLocation names, what the caller may do and where the
+            record's links go. The adapter checks the caller's access to the record first; a record the caller may not read,
+            or that is not there, answers only reasonCode (PERMISSION_DENIED or RECORD_UNAVAILABLE) and nothing of the
+            record, so the two are told apart by no one but the adapter. Reads change nothing: no address is rewritten, no
+            point saved, no outside service asked.</description>
+        <in-parameters>
+            <parameter name="recordKey" type="Map" required="true"><description>The record's canonical identity, its primary
+                key fields ({partyId}, {facilityId}); the adapter reads only the keys it knows</description></parameter>
+            <parameter name="addressPurpose"><description>Which of the record's locations, where it has several (a mailing
+                address, a delivery entrance): the adapter's own purpose id; empty for its default</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="label"><description>Plain text, escaped where it is shown</description></parameter>
+            <parameter name="geometry" type="Map"><description>A GeoJSON geometry; null when the record has no location the
+                adapter can give</description></parameter>
+            <parameter name="extent" type="Map"><description>A broad extent where the position is approximate (a postal
+                area), so the map does not zoom to a point it does not know</description></parameter>
+            <parameter name="precisionEnumId"><description>GeoPointPrecision: user-confirmed, address match, street range,
+                postal area or place estimate</description></parameter>
+            <parameter name="sourceText"><description>Where the position came from, in words (a data set and its edition, a
+                user's confirmation and when)</description></parameter>
+            <parameter name="recordVersion"><description>The version read (a lastUpdatedStamp, a revision, an address
+                fingerprint), handed back to store#RecordLocation</description></parameter>
+            <parameter name="permittedActions" type="List"><description>What the caller may do here, of: view, chooseLocation
+                (only when store#RecordLocation would permit the write)</description></parameter>
+            <parameter name="links" type="List"><description>Each {label, route, parameters}: route a key the application
+                showing the map resolves, never a URL</description></parameter>
+            <parameter name="reasonCode"><description>Set, with nothing else, when the record is not shown</description></parameter>
+        </out-parameters>
+    </service>
+
+    <service verb="store" noun="RecordLocation" type="interface">
+        <description>Save a location a user chose for a record (Choose location in the local-map dialog). The adapter checks
+            again that the caller may write this record, that recordVersion is still the record's and that its address is the
+            one shown, and saves through its domain's guarded services with provenance. A refusal a person can act on (a
+            changed record, no right to write) is answered: applied false, with reasonCode (STALE_VERSION, PERMISSION_DENIED,
+            RECORD_UNAVAILABLE) and reason. A postal fallback never replaces a recorded facility or asset point; the widget
+            cannot issue any other entity update.</description>
+        <in-parameters>
+            <parameter name="recordKey" type="Map" required="true"/>
+            <parameter name="addressPurpose"/>
+            <parameter name="recordVersion" required="true"><description>The version get#RecordMapContext answered</description></parameter>
+            <parameter name="point" type="Map" required="true"><description>{longitude, latitude}, WGS84, each in range</description></parameter>
+            <parameter name="precisionEnumId" default-value="GPP_USER_CONFIRMED"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="recordVersion"><description>The record's version after the save</description></parameter>
+        </out-parameters>
+    </service>
+
+    <service verb="find" noun="LayerFeatures" type="interface">
+        <description>The features of a record layer within a viewport, bounded: at most limit, which the caller has bounded
+            by maps@max-features (get#AdapterService), and truncated true when there were more. The adapter applies the
+            caller's permissions and organization scope to the query itself, on every viewport; a feature carries only what
+            the caller may read (no hidden attribute for the browser to filter out), and never a whole table.</description>
+        <in-parameters>
+            <parameter name="layerId"><description>The MapLayer asked for, for an adapter that serves more than one</description></parameter>
+            <parameter name="extent" type="Map" required="true"><description>{west, south, east, north}, WGS84</description></parameter>
+            <parameter name="zoom" type="BigDecimal"/>
+            <parameter name="limit" type="Integer" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="features" type="List"><description>Each {featureId, label, geometry, precisionEnumId, links}, as
+                get#RecordMapContext's</description></parameter>
+            <parameter name="truncated" type="Boolean"/>
+        </out-parameters>
+    </service>
+
+    <!-- ========== The adapter registry ========== -->
+
+    <service verb="find" noun="MapAdapters">
+        <description>The registered map adapters (moqui.maps.MapAdapter) in order, each with its operations (context,
+            store, features) and service names, for the server's own callers: a screen gives a browser the key, description
+            and operations, never a service name. A disabled row is left out, and so is a row naming a service that does not
+            exist or does not take the in-parameters of the interface it stands for (the implements of its definition), or
+            naming none of context and features, which is logged by name: one bad registration never takes the others with
+            it. adapterKey narrows the list to that adapter.</description>
+        <in-parameters><parameter name="adapterKey"/></in-parameters>
+        <out-parameters><parameter name="adapterList" type="List"/></out-parameters>
+        <actions>
+            <entity-find entity-name="moqui.maps.MapAdapter" list="rowList" cache="true" disable-authz="true">
+                <econdition field-name="adapterKey" ignore-if-empty="true"/>
+                <econdition field-name="disabled" operator="not-equals" value="Y" or-null="true"/>
+                <order-by field-name="sequenceNum"/>
+                <order-by field-name="adapterKey"/>
+            </entity-find>
+            <set field="adapterList" from="[]"/>
+            <set field="contracts" from="{contextServiceName: 'get#RecordMapContext', storeServiceName: 'store#RecordLocation', featuresServiceName: 'find#LayerFeatures'}"/>
+            <iterate list="rowList" entry="row">
+                <!-- the first problem of the row's services: one missing, or one without its interface's in-parameters -->
+                <script><![CDATA[
+                    problem = null
+                    for (const [field, verbNoun] of Object.entries(contracts)) {
+                        const serviceName = row[field]
+                        if (!serviceName) continue
+                        const definition = ec.service.getServiceDefinition(serviceName)
+                        if (!definition) {
+                            problem = "names a missing service " + serviceName
+                            break
+                        }
+                        const declared = Array.from(definition.inParameterNames || [])
+                        const required = Array.from(ec.service.getServiceDefinition("org.moqui.maps.MapServices." + verbNoun).inParameterNames || [])
+                        const lacking = required.filter(name => !declared.includes(name))
+                        if (lacking.length) {
+                            problem = "names " + serviceName + ", which does not implement " + verbNoun + " (no " + lacking.join(", ") + ")"
+                            break
+                        }
+                    }
+                    if (!problem && !row.contextServiceName && !row.featuresServiceName) problem = "names no context or features service"
+                ]]></script>
+                <if condition="problem">
+                    <log level="error" message="Map adapter ${row.adapterKey} ${problem}: left out"/>
+                    <continue/>
+                </if>
+                <script>
+                    adapterList.push({
+                        adapterKey: row.adapterKey,
+                        description: row.description ? ec.l10n.localize(row.description) : row.adapterKey,
+                        operations: [
+                            row.contextServiceName ? "context" : null,
+                            row.storeServiceName ? "store" : null,
+                            row.featuresServiceName ? "features" : null
+                        ].filter(operation => operation),
+                        contextServiceName: row.contextServiceName || null,
+                        storeServiceName: row.storeServiceName || null,
+                        featuresServiceName: row.featuresServiceName || null
+                    })
+                </script>
+            </iterate>
+        </actions>
+    </service>
+
+    <service verb="get" noun="AdapterService">
+        <description>The service that carries out operation (context: get#RecordMapContext, store: store#RecordLocation,
+            features: find#LayerFeatures) for the adapter registered as adapterKey, for a browser-facing transition or service
+            that has only the key the browser sent. An error for a key that is not registered (or was left out by
+            find#MapAdapters) and for an operation the adapter does not offer. For features, limit is the count to pass on:
+            the one asked for, at most maps@max-features, which it is when none is asked for; a maps@max-features that is
+            not a whole number is logged and the features operation refused, with no number of the code's own in its
+            place.</description>
+        <in-parameters>
+            <parameter name="adapterKey" required="true"/>
+            <parameter name="operation" required="true"><description>context, store or features</description></parameter>
+            <parameter name="limit" type="Integer"><description>For features: the count asked for</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="serviceName"/>
+            <parameter name="adapter" type="Map"><description>{adapterKey, description, operations}</description></parameter>
+            <parameter name="limit" type="Integer"/>
+        </out-parameters>
+        <actions>
+            <service-call name="org.moqui.maps.MapServices.find#MapAdapters" in-map="{adapterKey}" out-map="found"/>
+            <set field="registered" from="found.adapterList &amp;&amp; found.adapterList.length ? found.adapterList[0] : null"/>
+            <if condition="!registered"><return error="true" message="No map adapter is registered as ${adapterKey}"/></if>
+            <if condition="operation == 'context'"><set field="serviceName" from="registered.contextServiceName"/>
+                <else-if condition="operation == 'store'"><set field="serviceName" from="registered.storeServiceName"/></else-if>
+                <else-if condition="operation == 'features'"><set field="serviceName" from="registered.featuresServiceName"/></else-if>
+            </if>
+            <if condition="!serviceName"><return error="true" message="Map adapter ${adapterKey} does not offer ${operation}"/></if>
+            <set field="adapter" from="{adapterKey: registered.adapterKey, description: registered.description, operations: registered.operations}"/>
+            <if condition="operation == 'features'">
+                <set field="maxFeaturesText" from="String(ec.factory.getConfValue('maps@max-features') ?? '').trim()"/>
+                <if condition="!/^[0-9]+$/.test(maxFeaturesText)">
+                    <log level="error" message="maps@max-features is not a whole number (${maxFeaturesText}): no features are read"/>
+                    <return error="true" message="Map features are not available: maps@max-features is not a whole number"/>
+                </if>
+                <set field="maxFeatures" from="Number.parseInt(maxFeaturesText, 10)"/>
+                <set field="limit" from="limit == null || limit &gt; maxFeatures ? maxFeatures : Math.max(limit, 0)"/>
+                <else><set field="limit" from="null"/></else>
+            </if>
+        </actions>
+    </service>
+</services>

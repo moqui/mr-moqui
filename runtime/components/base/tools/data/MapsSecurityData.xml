@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Maps (plans/Maps.md §3.1, §3.2): three artifact groups, so the record dialog, the Maps app and its configuration are
+    granted apart. A user may open a record's map without the Maps app, System, BOSS or any app's access; an app shows the
+    dialog under its own route by the thin-wrapper rule, with its grants naming its own screen. Writes to a record are its
+    adapter's own check, never a Maps grant. -->
+<entity-facade-xml type="seed">
+    <moqui.security.UserGroup userGroupId="MAPS_USERS" description="Maps users (the Maps app)"/>
+
+    <!-- The Maps app: its root and what is under it, but Configuration (MAPS_ADMIN) -->
+    <artifactGroups artifactGroupId="MAPS_APP" description="Maps App (via root screen)">
+        <artifacts artifactName="component://tools/screen/Maps.xml" artifactTypeEnumId="AT_XML_SCREEN" inheritAuthz="Y"/>
+        <authz artifactAuthzId="MAPS_APP_USERS" userGroupId="MAPS_USERS" authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
+        <authz artifactAuthzId="MAPS_APP_ADMIN" userGroupId="ADMIN" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
+    </artifactGroups>
+
+    <!-- The local-map dialog (§3.2), which a user opens beside an address or coordinate field of any app: every signed-in user
+        reaches LocalMap and its transitions, nothing else of Maps, and the registry services that resolve an adapter by its
+        key, which read only the registrations. ALWAYS, not inherited, as SYSTEM_VAULT_DIALOGS: an application that denies its
+        groups Maps.xml does not take the dialog from them, and what runs under it is still checked by the adapter, which
+        reads the record only after its own access check and writes only through its domain's guarded services. -->
+    <artifactGroups artifactGroupId="MAPS_DIALOG" description="Maps: the local-map dialog">
+        <artifacts artifactName="component://tools/screen/Maps/LocalMap.xml" artifactTypeEnumId="AT_XML_SCREEN" inheritAuthz="N"/>
+        <artifacts artifactName="component://tools/screen/Maps/LocalMap\.xml/[A-Za-z]+" artifactTypeEnumId="AT_XML_SCREEN_TRANS"
+                nameIsPattern="Y" inheritAuthz="N"/>
+        <artifacts artifactName="org.moqui.maps.MapServices.find#MapAdapters" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+        <artifacts artifactName="org.moqui.maps.MapServices.get#AdapterService" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+        <authz artifactAuthzId="MAPS_DIALOG_USERS" userGroupId="ALL_USERS" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
+    </artifactGroups>
+
+    <!-- Configuration: providers, profiles, layers, the outside-request policy, Geo data sets and their imports (§3.1,
+        §6.4). ADMIN's; an app that shows Configuration under its own root grants its own screen. MAPS_USERS is denied it,
+        or their inherited allow of Maps.xml would reach it; ADMIN's ALWAYS outranks the deny. -->
+    <artifactGroups artifactGroupId="MAPS_ADMIN" description="Maps: configuration and Geo data imports">
+        <artifacts artifactName="component://tools/screen/Maps/Configuration.xml" artifactTypeEnumId="AT_XML_SCREEN" inheritAuthz="Y"/>
+        <artifacts artifactName="org\.moqui\.maps\.GeoDataServices\..*" artifactTypeEnumId="AT_SERVICE" nameIsPattern="Y" inheritAuthz="Y"/>
+        <authz artifactAuthzId="MAPS_ADMIN_ADMIN" userGroupId="ADMIN" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
+        <authz artifactAuthzId="MAPS_ADMIN_USERS_DENY" userGroupId="MAPS_USERS" authzTypeEnumId="AUTHZT_DENY" authzActionEnumId="AUTHZA_ALL"/>
+    </artifactGroups>
+</entity-facade-xml>

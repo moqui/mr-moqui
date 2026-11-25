@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The starting map configuration (plans/Maps.md §1, §4.2), seed-initial since an administrator changes it: a fresh install
+    makes no outside request. Its default profile, OUTLINE, draws the Natural Earth country outline the dashboard geomap
+    already vendors, from this server. The OpenFreeMap provider and its profile are disabled until an administrator enables
+    the provider with a passing test (Maps › Configuration); the browser then loads its style and tiles from
+    tiles.openfreemap.org, which sees the area viewed and the client's address. -->
+<entity-facade-xml type="seed-initial">
+    <moqui.maps.MapLayer layerId="OUTLINE_NE110" layerName="Country outlines" formatEnumId="MLF_TOPOJSON"
+            description="Natural Earth 1:110m country outlines (world-atlas), served by this server"
+            sourceUrl="/libs/naturalearth/countries-110m.json" crs="EPSG:4326" minZoom="0" maxZoom="6"
+            attribution="Natural Earth" sourceEdition="4.1.0" isBasemap="Y"/>
+    <moqui.maps.MapProfile profileId="OUTLINE" profileName="Outline" basemapLayerId="OUTLINE_NE110"
+            description="Country outlines only, with no outside request: the installation default until a basemap is configured"
+            centerLongitude="0" centerLatitude="20" zoom="2" externalAccess="N" allowedOverrides="layers,extent,units"/>
+
+    <moqui.maps.MapProvider providerId="OPENFREEMAP" providerKindEnumId="MPK_VECTOR_STYLE" providerName="OpenFreeMap"
+            description="Hosted OpenMapTiles vector basemap; no key, no published request caps, no SLA"
+            endpointUrl="https://tiles.openfreemap.org/styles/liberty"
+            attribution="OpenFreeMap&#10;© OpenMapTiles&#10;Data from OpenStreetMap"
+            attributionUrls="https://openfreemap.org&#10;https://www.openmaptiles.org/&#10;https://www.openstreetmap.org/copyright"
+            termsUrl="https://openfreemap.org/tos/" allowedOperations="style,tiles" cachePolicy="private" proxyRequests="N"
+            disabled="Y" allowPrivateNetwork="N" sequenceNum="10"/>
+    <moqui.maps.MapLayer layerId="OPENFREEMAP_LIBERTY" layerName="OpenFreeMap Liberty" providerId="OPENFREEMAP"
+            formatEnumId="MLF_VECTOR_STYLE" styleLocation="https://tiles.openfreemap.org/styles/liberty" crs="EPSG:3857"
+            minZoom="0" maxZoom="20" isBasemap="Y"/>
+    <moqui.maps.MapProfile profileId="OPENFREEMAP" profileName="OpenFreeMap" basemapLayerId="OPENFREEMAP_LIBERTY"
+            description="The OpenFreeMap Liberty basemap, loaded by the browser from tiles.openfreemap.org"
+            centerLongitude="0" centerLatitude="20" zoom="2" externalAccess="Y" allowedOverrides="basemap,layers,extent,units"
+            disabled="Y"/>
+
+    <!-- Where each registered Geo data set (MapsData.xml) is downloaded from, its year and its priority: the lower is a Geo's
+        active point where sources overlap, so in the US the Census point wins and GeoNames adds names and the codes Census
+        lacks; an operator's file, chosen deliberately, comes first. -->
+    <moqui.maps.GeoDataSet dataSetId="CENSUS_ZCTA" sourceYear="2026" priority="10"
+            urlTemplate="https://www2.census.gov/geo/docs/maps-data/data/gazetteer/{year}_Gazetteer/{year}_Gaz_zcta_national.zip"
+            archiveMember="{year}_Gaz_zcta_national.txt"/>
+    <moqui.maps.GeoDataSet dataSetId="CENSUS_COUNTY" sourceYear="2026" priority="10"
+            urlTemplate="https://www2.census.gov/geo/docs/maps-data/data/gazetteer/{year}_Gazetteer/{year}_Gaz_counties_national.zip"
+            archiveMember="{year}_Gaz_counties_national.txt"/>
+    <moqui.maps.GeoDataSet dataSetId="CENSUS_PLACE" sourceYear="2026" priority="10"
+            urlTemplate="https://www2.census.gov/geo/docs/maps-data/data/gazetteer/{year}_Gazetteer/{year}_Gaz_place_national.zip"
+            archiveMember="{year}_Gaz_place_national.txt"/>
+    <moqui.maps.GeoDataSet dataSetId="CENSUS_ZCTA_COUNTY" sourceYear="2020" priority="10"
+            urlTemplate="https://www2.census.gov/geo/docs/maps-data/data/rel2020/zcta520/tab20_zcta520_county20_natl.txt"/>
+    <moqui.maps.GeoDataSet dataSetId="GEONAMES_POSTAL" priority="20"
+            urlTemplate="https://download.geonames.org/export/zip/{country}.zip"
+            archiveMember="{country}.txt"/>
+    <moqui.maps.GeoDataSet dataSetId="GEONAMES_COUNTRY" priority="20"
+            urlTemplate="https://download.geonames.org/export/dump/countryInfo.txt"/>
+    <moqui.maps.GeoDataSet dataSetId="GEONAMES_ADMIN1" priority="20"
+            urlTemplate="https://download.geonames.org/export/dump/admin1CodesASCII.txt"/>
+    <moqui.maps.GeoDataSet dataSetId="GEONAMES_ADMIN2" priority="20"
+            urlTemplate="https://download.geonames.org/export/dump/admin2Codes.txt"/>
+    <moqui.maps.GeoDataSet dataSetId="GEONAMES_CITIES15000" priority="20"
+            urlTemplate="https://download.geonames.org/export/dump/cities15000.zip"
+            archiveMember="cities15000.txt"/>
+    <moqui.maps.GeoDataSet dataSetId="OPERATOR_CSV" priority="5"/>
+
+    <!-- the installation's default profile; a user's own is their UserPreference maps.profile -->
+    <moqui.security.UserGroupPreference userGroupId="ALL_USERS" preferenceKey="maps.profile" preferenceValue="OUTLINE"/>
+</entity-facade-xml>
