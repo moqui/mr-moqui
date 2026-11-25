@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The browser module's JSON calls (plans/Vault-Instances.md §3.6): one request `{"op": ..., ...}` in, one
+//! The browser module's JSON calls (plans/archive/Vault-Instances.md §3.6): one request `{"op": ..., ...}` in, one
 //! `{"ok": true, "result": ...}` or `{"ok": false, "error": ...}` out. Bytes cross as hex.
 //!
 //! A [`Session`] holds the opened personal key, the unwrapped vault keys and a combined recovery key, so they stay in

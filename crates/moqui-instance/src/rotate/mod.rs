@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Rotation (plans/Vault-Instances.md §4.7, M5): a managed credential changed at its source, then on each instance that
+//! Rotation (plans/archive/Vault-Instances.md §4.7, M5): a managed credential changed at its source, then on each instance that
 //! uses it, then in the vault, under a lease or the environment's machine access.
 //!
 //! The kind's `rotate#Credential` ([`InstanceKindSecret.rotateService`]) runs, for each credential, in this order:

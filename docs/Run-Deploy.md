@@ -183,7 +183,7 @@ by the prefix of each part (`./moq r-p` is `run-production`).
 | Run a load script against a server | `./moq test-load mr-marble --script OrderToCash` | |
 | Archive the runtime with the binary | `./moq archive --release` | `./gradlew addRuntime` |
 | Remove obsolete cargo artifacts | `./moq clean` | |
-| Reset the local instance and keep builds | `./moq clean-dev` | |
+| Reset the local instance, keep the current build and remove obsolete cargo artifacts | `./moq clean-dev` | |
 | Reset the local instance and remove build output | `./moq clean-all` | `./gradlew cleanAll` |
 | Show the binary's package and features | `target/release/moqui version` (`target\release\moqui.exe version` on Windows) | |
 
@@ -788,8 +788,8 @@ cluster when the entity database is not Postgres. OpenSearch is optional:
 
 `./moq save-db [name]` writes the embedded database to `runtime/save/<name>/moqui.dump`, and the content database beside
 it to `moqui_content.dump`. It also writes the OpenSearch data when there is any. `./moq reload-save [name]` empties the
-database and restores that save. `./moq load-save -n <name> [types]` runs `clean-dev`, loads, and saves. Stop the server
-before a restore. These work on the embedded database only; an external database has its own tools.
+database and restores that save. `./moq load-save -n <name> [types]` resets the instance data as `clean-dev` does,
+leaving the cargo artifacts alone, then loads and saves. Stop the server before a restore. These work on the embedded database only; an external database has its own tools.
 
 ### Backups
 
@@ -1263,7 +1263,10 @@ for the new host's TPM. The old host's TPM is not needed.
 ### Podman and Quadlet
 
 `podman/build.sh` builds the Maximal package and the image `localhost/moqui:latest`, with whatever components are in
-`runtime/components/addon`. One volume at `/var/lib/moqui` holds the database, logs, certificates and generated secrets.
+`runtime/components/addon`. The image is Debian 13, so the binary must not need a newer glibc than its 2.41: one built
+on a newer host (Ubuntu 26.04) does not start there, and `build.sh` refuses it; `podman/build.sh --in-build-image`
+builds it in the build image instead. One volume at `/var/lib/moqui` holds the database, logs, certificates and
+generated secrets.
 There are compose stacks for embedded Postgres, an external Postgres, Postgres with OpenSearch, and MySQL with
 OpenSearch, and `podman/quadlet/` runs the single container as a systemd service. Everything is in
 [podman/README.md](../podman/README.md).
@@ -2123,13 +2126,13 @@ A server can provision and run other instances, MR Moqui, Postgres, MySQL and Op
 with every credential in an operational vault ([Vaults](security/Vaults.md#operational-vaults)). This is System ›
 Instances, the services of `org.moqui.dev.InstanceServices` (Rust, `crates/moqui-instance`, in the Enterprise and
 Maximal builds) and the container driver CI's runs use too (`moqui_lib::docker`). Every service needs the sealed
-`INSTANCE_ADMIN` (`ADMIN_ADV`). The plan is [Vault-Instances](../plans/Vault-Instances.md) §4; built so far are M1,
+`INSTANCE_ADMIN` (`ADMIN_ADV`). The plan is [Vault-Instances](../plans/archive/Vault-Instances.md) §4; built so far are M1,
 the manager link (M2, [below](#the-manager-link)), Monitor for managed instances (M4: the fleet screen, each
 instance's identity and ingest key, scrape targets, alert rules and the `instance` recovery adapter,
 [Monitoring](tools/Monitoring.md#managed-instances)) and deploys (M3: an instance's or an environment's Deploy and Roll
 back, and a pipeline's deployment to an environment,
-[Component-Deploy](tools/Component-Deploy.md#a-deploy-over-the-link)) and rotation (M5, [below](#rotation)): a managed
-sealed start comes later.
+[Component-Deploy](tools/Component-Deploy.md#a-deploy-over-the-link)), rotation (M5, [below](#rotation)) and a managed
+instance's sealed start (M6, [below](#managed-sealed-start)).
 
 **The rows.** System › Instances has a tab for each:
 
@@ -2153,6 +2156,16 @@ and the dependencies the kind takes: a database (another instance of the environ
 names filled in (`${instanceName}`, `${databaseHost}` and the others of `kinds::PLACEHOLDERS`; nothing else is
 expanded), and its secret bindings (`AppInstance:<id>:admin`, `:dbPassword`, `:ingestKey`). It makes nothing on a
 host. A database instance is on the same host as the instances that use it: they reach it on its network.
+
+**Databases over TLS.** A managed MR Moqui instance is a production one, whose datasource takes only verified TLS, so a
+Postgres or MySQL instance serves TLS too. Its provision makes a key pair: an ECDSA P-256 key, deposited as the item
+`AppInstance:<id>:tls` and given as the file `tls.key`, and a certificate it signs itself for the instance's name on the
+network. The certificate is public, so it is on the instance's row (`tlsCertificate`), not in the vault, and is given as
+`tls.crt`; the kind's command (its `Cmd` host config) turns TLS on with the two. An instance whose database is a
+managed instance gets that certificate as `db-ca.crt`, named by its datasource's `sslrootcert`: it trusts it alone and
+checks the server's name against it (`verify-full`), and a deploy needs no lease for it. A database host (not managed
+here) is reached as before, by verified TLS against the public authorities or its own `sslrootcert`. To rotate the key,
+follow its binding's by-hand steps on the instance page.
 
 **Provisioning** (`provision#AppInstance`, the instance page's Provision):
 
@@ -2240,11 +2253,11 @@ every package; the manager's end needs `instances` too). The instance opens no p
 - **The manager's address.** `manage@link-url` on the manager is what its instances dial: its HTTPS listener. An edge
   node's own HTTPS listener takes no manager links. A provision sets `moqui_conf__manage__url` and
   `moqui_conf__manage__pin` (the manager's fingerprint) in a new MR Moqui instance's settings; neither is a secret.
-- **A manager behind a firewall** (§4.4: reached through its own edge node by a passthrough host name) is not built
-  yet. The edge node already passes a passthrough host's connection on before any TLS, whatever ALPN it offers, but the
-  local node's end of the tunnel ends the TLS with its web settings (`acme::accept` in `edge_link/down.rs`), not the
-  HTTPS listener's hand-off, so `moqui-manage/1` is not taken there. Until it is, such a manager's instances reach its
-  HTTPS port directly (a VPN, or a port opened to the instances' addresses only).
+- **A manager behind a firewall** (§4.4) is reached through its own edge node, by a passthrough host name of the
+  manager's node, so the manager opens no inbound port. Set `manage@link-url` to `https://<that name>`: the edge node
+  passes the connection on before any TLS, whatever ALPN it offers, and on the manager's end of the tunnel a ClientHello
+  that offers `moqui-manage/1` goes to the manager link (`edge_link/down.rs`), with the instance's address from the
+  tunnel's PROXY header, so a new address is still told apart; anything else is the node's web, as before.
 - **Pairing.** A provision gives the new container its one-time token as the file `/run/secrets/moqui-pairing-token`
   (`manage@token-file`), never in its environment, labels or command. It works once, within 15 minutes, for that
   instance only: the manager finds the row by the token's SHA-256, checks it in constant time, clears it, and pins the
@@ -2324,7 +2337,7 @@ instance's dialer in one process) and `cargo test -p moqui-instance link`.
 
 ### Managed sealed start
 
-A managed instance's seal (plans/Vault-Instances.md §4.5, M6; [Sealed start](#sealed-start) is the seal itself).
+A managed instance's seal (plans/archive/Vault-Instances.md §4.5, M6; [Sealed start](#sealed-start) is the seal itself).
 
 - **The method.** A provision sets `moqui_conf__seal__method` on a new MR Moqui container from its environment's
   `unsealMethod`: `transit` (the manager's, the default for a container) or `tpm`, each automatic, so the first start
@@ -2395,7 +2408,7 @@ A managed instance's seal (plans/Vault-Instances.md §4.5, M6; [Sealed start](#s
   `sealBundleDate` on the row): the first time, and after a rekey or rotate-root; `store#InstanceSealBundle` does the
   same on demand. The manager does not read it back without a lease, though it could unwrap the root key
   in it with the transit key (§4.9).
-- **The limits** (plans/Vault-Instances.md §4.4, §4.9). The link key works while sealed, so without a TPM it is a usable
+- **The limits** (plans/archive/Vault-Instances.md §4.4, §4.9). The link key works while sealed, so without a TPM it is a usable
   key on disk; under the automatic policy a stolen disk with the link key and `seal.json` gets the root key from the
   manager until someone revokes the instance (`revoke#InstanceLink`, after which transit refuses it): production uses
   the approval policy or a TPM-bound link key (`manage@key-store`). A compromised manager sees each instance's root key
@@ -2413,7 +2426,7 @@ it).
 ### Rotation
 
 The manager changes a managed credential at its source, then on each instance that uses it, then in the vault
-([Vault-Instances](../plans/Vault-Instances.md) §4.7; `crates/moqui-instance/src/rotate/`). Rotating opens the item and
+([Vault-Instances](../plans/archive/Vault-Instances.md) §4.7; `crates/moqui-instance/src/rotate/`). Rotating opens the item and
 what changes it (a database's admin login, a host's client key, an instance's SSH key), so it runs under a lease an
 approver opens or the environment's machine access, as a provision does.
 

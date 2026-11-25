@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The organization recovery key (plans/Vault-Instances.md §3.10, split k of n by the owner's decision of Nov 19,
+//! The organization recovery key (plans/archive/Vault-Instances.md §3.10, split k of n by the owner's decision of Nov 19,
 //! 2026).
 //!
 //! - A recovery key is a key pair of the personal key's shape: X25519 to wrap to and Ed25519 to sign. Both halves come

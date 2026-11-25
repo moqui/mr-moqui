@@ -1548,7 +1548,7 @@ interface MoquiServerEc {
     readonly search: { [method: string]: (...args: unknown[]) => unknown };
     /** The model calls of app code, in a build with the `llm` feature. */
     readonly llm: MoquiLlmFacade;
-    /** A vault value, only from the lease the code runs under (plans/Vault-Instances.md §3.7). */
+    /** A vault value, only from the lease the code runs under (plans/archive/Vault-Instances.md §3.7). */
     readonly vault: MoquiVaultFacade;
 }
 

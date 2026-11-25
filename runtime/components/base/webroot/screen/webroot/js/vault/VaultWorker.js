@@ -1,7 +1,7 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
 /*
- * The vault module's worker (plans/Vault-Instances.md §3.6; docs/security/Vaults.md): a module Worker that hosts
+ * The vault module's worker (plans/archive/Vault-Instances.md §3.6; docs/security/Vaults.md): a module Worker that hosts
  * moqui_vault.wasm, the crypto of crates/moqui-vault built by scripts/vault-wasm.sh. The opened personal key and the
  * unwrapped vault keys stay in the module's memory: the page gets public keys, wraps and the one item it asked for.
  *

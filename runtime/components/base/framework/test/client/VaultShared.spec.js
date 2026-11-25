@@ -1,5 +1,5 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
-// Shared-key vaults over REST (/rest/s1/vault, plans/Vault-Instances.md V1, docs/security/Vaults.md) with the test
+// Shared-key vaults over REST (/rest/s1/vault, plans/archive/Vault-Instances.md V1, docs/security/Vaults.md) with the test
 // client's `vault` member: each user's client is the vault crate's own session, as the browser's worker and `moqui
 // vault` are. What the server serves of a personal vault holds no item's name, type or value in the clear; a client
 // refuses a key version or a wrap no manager signed, a delivery whose signature is wrong, and a wrap to a changed key

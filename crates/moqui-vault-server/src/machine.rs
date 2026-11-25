@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Machine access (plans/Vault-Instances.md §3.8): an environment that needs unattended work holds the item keys of
+//! Machine access (plans/archive/Vault-Instances.md §3.8): an environment that needs unattended work holds the item keys of
 //! the items its operations need, sealed by the vault crate's AEAD under the server's machine key with the environment,
 //! vault and item ids as associated data, so a row moved to another environment or item does not open.
 //!

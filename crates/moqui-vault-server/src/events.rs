@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The `VaultEvent` rows (plans/Vault-Instances.md §3.13): each change writes its event in the transaction of the
+//! The `VaultEvent` rows (plans/archive/Vault-Instances.md §3.13): each change writes its event in the transaction of the
 //! change, so a change whose event cannot be written does not happen (the service fails and rolls back); a lease's use
 //! writes its event in a transaction of its own before the value is returned ([`write_alone`]), so a use whose event
 //! cannot be written returns nothing (fail closed). An event names who acted, whom it was about and what changed, in

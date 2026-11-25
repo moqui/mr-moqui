@@ -205,7 +205,7 @@ pub(crate) fn hang_up(id: &str) {
 }
 
 /// The app's screen went (`MainActivity.onStop`: the phone locked, or the app left for another): every vault session
-/// locks (plans/Vault-Instances.md §3.6, V5); a key the user had the app remember opens again with the lock or biometrics.
+/// locks (plans/archive/Vault-Instances.md §3.6, V5); a key the user had the app remember opens again with the lock or biometrics.
 pub(crate) fn vault_lock() {
     if let Some(core) = moqui_lib::sync::lock(&CORE).as_ref() {
         core.vault().lock_all();

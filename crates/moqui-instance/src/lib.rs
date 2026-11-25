@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Managed instances (plans/Vault-Instances.md §4): the services of `org.moqui.dev.InstanceServices` that are Rust,
+//! Managed instances (plans/archive/Vault-Instances.md §4): the services of `org.moqui.dev.InstanceServices` that are Rust,
 //! instance kinds, provisioning, the reconcile job, deploys, rotation and the manager's transit. Core reaches this crate
 //! only through the [`moqui_core::extension`] entry below, with the feature `instances`.
 //!

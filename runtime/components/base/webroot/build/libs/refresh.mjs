@@ -1,6 +1,6 @@
 // Build and verify the browser assets from both npm lockfiles: the webroot component's script of
 // build/js-build.json. The steps every component's build shares are in ../js-kit.mjs.
-import { checkManifest, esbuildBinary, installProject, mode, outputDir, publish, run, sha256, toLf, withWork } from '../js-kit.mjs';
+import { checkManifest, componentName, esbuildBinary, installProject, mode, outputDir, outputLabel, publish, run, sha256, status, summary, toLf, withWork } from '../js-kit.mjs';
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -990,6 +990,7 @@ process.stdout.write(JSON.stringify(out));`;
   };
 
   for (const lib of LIBS) {
+    status(publishing ? 'Bundling' : 'Checking', `${lib.id} v${lib.version} (${lib.npm})`);
     const root = packages[lib.id].root;
     const files = [];
     for (const [from, to] of lib.copy) {
@@ -1049,7 +1050,10 @@ process.stdout.write(JSON.stringify(out));`;
   libMeta.push({ id: 'license-texts', name: 'License texts', version: '-', license: 'n/a',
     source: 'see each file', files: lt });
 
-  const board = buildBoard(installProject(join(projects, 'whiteboard'), join(work, 'whiteboard')), true);
+  const boardProject = installProject(join(projects, 'whiteboard'), join(work, 'whiteboard'));
+  const editor = JSON.parse(readFileSync(join(boardProject, 'package-lock.json'))).packages['node_modules/@excalidraw/excalidraw'];
+  status(publishing ? 'Bundling' : 'Checking', `excalidraw v${editor.version} (@excalidraw/excalidraw)`);
+  const board = buildBoard(boardProject, true);
   for (const [path, data] of board.outputs) outputs.set(path, data);
   const cjk = packs['excalidraw-cjk'].sources[0];
   if (cjk.integrity !== board.lib.tarballIntegrity || cjk.version !== board.lib.version) throw new Error('Review Xiaolai source in fonts.json');
@@ -1079,7 +1083,8 @@ process.stdout.write(JSON.stringify(out));`;
     outputs.set('MANIFEST.json', Buffer.from(manifestText));
     publish(here, outputs);
   }
-  console.log(`${publishing ? 'Built' : 'Verified'} ${outputs.size} files`);
+  summary({ build: publishing, component: componentName() || 'webroot', files: outputs.size, output: outputLabel(here),
+    libraries: libMeta.filter((lib) => lib.id !== 'license-texts').length });
 }
 
 function renderNotices(notices) {

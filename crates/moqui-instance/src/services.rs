@@ -880,7 +880,7 @@ fn check_database_postgres(params: &Params, facade: &EntityFacade) -> Out {
 fn check_database_mysql(params: &Params, facade: &EntityFacade) -> Out {
     check_database(params, facade, "mysql")
 }
-// ----- deploys (M3, plans/Vault-Instances.md §4.6) -----
+// ----- deploys (M3, plans/archive/Vault-Instances.md §4.6) -----
 
 /// The deploy a screen's parameters ask for: a new image (`instanceImageId`), a component's commit (`componentName`,
 /// `repositoryUrl`, `refName`, `commitId`), or the rollback of a deploy action (`rollbackOfActionId`); narrowed to an

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The manager's calls on a managed instance (plans/Vault-Instances.md §4.4, Manager to instance), on the instance:
+//! The manager's calls on a managed instance (plans/archive/Vault-Instances.md §4.4, Manager to instance), on the instance:
 //! [`run`] takes a command off the link and answers it. Only the commands of [`CommandKind`] run, as the link's one
 //! system identity ([`Managed`]): status; seal; restart; drain and undrain; put a secret (`moqui operator secret put`'s
 //! rules, Sealed-Secrets S4); Component-Deploy's deploy (the manager's own, M3, or an attested one); export the seal
@@ -43,14 +43,14 @@ pub trait Managed: Send + Sync + 'static {
     fn drain(&self, drained: bool) -> Result<(), String>;
     fn put_secret(&self, name: &str, value: &str, force: bool) -> Result<(), String>;
     /// Component-Deploy's deploy of the commit the command names; its report. With no signature it is the manager's own
-    /// (plans/Vault-Instances.md §4.6): the link's pinned keys name the caller, so no attestation secret is needed.
+    /// (plans/archive/Vault-Instances.md §4.6): the link's pinned keys name the caller, so no attestation secret is needed.
     fn deploy_component(&self, deploy: &super::proto::DeployComponentCommand) -> Result<String, String>;
     /// The seal's recovery bundle (`moqui operator export-seal`): wrapped values only.
     fn export_seal(&self) -> Result<String, String>;
     /// Keep the bootstrap bundle's secrets in the seal's store.
     fn store_bundle(&self, values: &Values) -> Result<(), String>;
 
-    // The managed sealed start (plans/Vault-Instances.md §4.5, M6). The defaults are an instance with no seal of its
+    // The managed sealed start (plans/archive/Vault-Instances.md §4.5, M6). The defaults are an instance with no seal of its
     // own (a test's), which proves nothing and holds no share.
 
     /// The key derived from the root key, which proves on a link that this instance is unsealed; none while sealed.

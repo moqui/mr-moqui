@@ -4,7 +4,7 @@
   "title": "Managed instance sealed",
   "body": {
     "folder": "Instances",
-    "description": "Fires when a managed instance's link has said it is sealed for more than 15 minutes (moqui.instance.sealed_seconds, by instance): it serves nothing until it is unsealed (plans/Vault-Instances.md §4.8). Save a copy, then set the threshold and contact points.",
+    "description": "Fires when a managed instance's link has said it is sealed for more than 15 minutes (moqui.instance.sealed_seconds, by instance): it serves nothing until it is unsealed (plans/archive/Vault-Instances.md §4.8). Save a copy, then set the threshold and contact points.",
     "query": {
       "datasetId": "otel_metrics",
       "from": "now-5m",

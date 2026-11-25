@@ -3,7 +3,7 @@
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { esbuildBinary, installProject, run, sha256, withWork } from './js-kit.mjs';
+import { esbuildBinary, installProject, run, sha256, status, summary, withWork } from './js-kit.mjs';
 
 export const json = value => JSON.stringify(value, null, 2) + '\n';
 export const read = path => JSON.parse(readFileSync(path, 'utf8'));
@@ -103,6 +103,8 @@ export function buildLibraries({component, config, project, work, validator}) {
         !Array.isArray(targets) || !targets.length || targets.some(t => !['server', 'client'].includes(t)) ||
         new Set(targets).size !== targets.length) throw new Error('Invalid library declaration: ' + id);
     seen.add(id);
+    status(process.argv.includes('--verify') ? 'Checking' : 'Bundling',
+      `${id} v${pins[packageOf(entry)]} (${packageOf(entry)}) for ${targets.join(', ')}`);
     const files = [], packages = new Map();
     for (const target of targets) {
       const {text, inputs} = bundle(entry, target, installed, work);
@@ -184,5 +186,6 @@ if (resolve(process.argv[1] || '') === fileURLToPath(import.meta.url)) {
     const {publishFiles} = await import('./library-changes.mjs');
     publishFiles(root, files, process.env.JS_CACHE);
   }
-  console.log((process.argv.includes('--verify') ? 'Verified ' : 'Built ') + config.libraries.length + ' component libraries');
+  summary({ build: !process.argv.includes('--verify'), component: basename(root), libraries: config.libraries.length,
+    files: files.size, output: [...new Set(Object.values(outputPaths(config)))].join(', ') });
 }

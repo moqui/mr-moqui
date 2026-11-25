@@ -256,7 +256,7 @@ fn an_incident_with_no_regression_takes_no_automatic_step() {
     assert!(outcome.blocked.unwrap_or_default().contains("no regression"));
 }
 
-/// The `instance` adapter (plans/Vault-Instances.md §4.8) carries out what the manager does to a managed instance, and
+/// The `instance` adapter (plans/archive/Vault-Instances.md §4.8) carries out what the manager does to a managed instance, and
 /// none of this server's own in-process steps.
 #[test]
 fn the_instance_adapter_carries_out_the_managers_actions_only() {

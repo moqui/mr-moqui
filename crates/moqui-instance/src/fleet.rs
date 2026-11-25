@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The fleet screen's rows (plans/Vault-Instances.md §4.8, System › Instances › Fleet): each environment's instances
+//! The fleet screen's rows (plans/archive/Vault-Instances.md §4.8, System › Instances › Fleet): each environment's instances
 //! with kind, version, health, seal and link state, cluster, last deploy, open incidents and items past their rotation
 //! age, from the rows alone; nothing here reaches a host or an instance.
 //!

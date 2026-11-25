@@ -1659,7 +1659,7 @@ pub(crate) const LAST_AUTH: &str = "moquiLastAuth";
 /// The session attribute of the session's last strong sign-in, `<millis> <userId>`: a password and a second factor (the
 /// code that finishes the sign-in, or a re-authentication with both), or an SSO login. A password alone, a login key,
 /// an API key, an app password and an internal login are not; a paired device's key is, by its kind
-/// ([`strong_recent_auth`]). Fetching a wrapped personal vault key needs one (plans/Vault-Instances.md §9, Nov 19).
+/// ([`strong_recent_auth`]). Fetching a wrapped personal vault key needs one (plans/archive/Vault-Instances.md §9, Nov 19).
 pub(crate) const LAST_STRONG_AUTH: &str = "moquiLastStrongAuth";
 /// The password a re-authentication checked while it waits for the code: `<millis> <userId>`.
 pub(crate) const REAUTH_PASSWORD: &str = "moquiReauthPassword";
@@ -1767,7 +1767,7 @@ pub fn last_strong_auth_millis() -> Option<i64> {
 /// a strong sign-in made or strongly re-authenticated (`strongAuthDate` on the key), a factor the device holds, with a
 /// recent sign-in on that device ([`recent_auth`], kept on the key). Never an app password, an API or session login
 /// key, a scoped key, a device's key made after a password alone, or a password alone. The vault services ask it
-/// before they send a wrapped personal key (plans/Vault-Instances.md §3.5, §9).
+/// before they send a wrapped personal key (plans/archive/Vault-Instances.md §3.5, §9).
 pub fn strong_recent_auth(max_age_millis: i64) -> bool {
     let recent = |at: i64| (0..=max_age_millis).contains(&(now_millis() - at));
     if last_strong_auth_millis().is_some_and(recent) {

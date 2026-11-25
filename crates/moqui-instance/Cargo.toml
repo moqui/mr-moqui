@@ -1,4 +1,4 @@
-# Managed instances (plans/Vault-Instances.md §4): instance kinds (mr-moqui, postgres, mysql, opensearch),
+# Managed instances (plans/archive/Vault-Instances.md §4): instance kinds (mr-moqui, postgres, mysql, opensearch),
 # provisioning with secrets as files, the reconcile job, deploys to environments, rotation and the manager's transit
 # keys. Core reaches it only through moqui_core::extension, which this crate fills with an inventory entry;
 # moqui-host links it under its instances feature. Credentials are operational vault items (moqui-vault-server).
@@ -29,6 +29,8 @@ tracing.workspace = true
 zeroize.workspace = true
 # the pairing token compared in constant time (link.rs)
 subtle.workspace = true
+# a database instance's TLS key pair and its self-signed certificate (kinds.rs), on the aws-lc-rs the workspace links
+rcgen.workspace = true
 
 [dev-dependencies]
 # moqui_core::testing, the in-memory entity facade the tests open.
@@ -37,6 +39,8 @@ moqui-core = { workspace = true, features = ["test-support"] }
 moqui-lib = { workspace = true, features = ["docker", "docker-fake"] }
 # the approvers' vault clients (ops::Session), as the browser module is
 moqui-vault = { workspace = true, features = ["std", "json"] }
+# a client that trusts a database instance's certificate alone, as an mr-moqui instance's datasource does
+rustls.workspace = true
 
 [lints]
 workspace = true

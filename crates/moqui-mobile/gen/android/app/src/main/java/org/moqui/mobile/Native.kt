@@ -51,7 +51,7 @@ object Native {
 
     /**
      * The app's screen went (the phone locked, or another app came to the front): every vault session locks
-     * (plans/Vault-Instances.md V5). Nothing to lock before the library is loaded.
+     * (plans/archive/Vault-Instances.md V5). Nothing to lock before the library is loaded.
      */
     fun lockVault() {
         if (ready != true) return

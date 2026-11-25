@@ -16,7 +16,7 @@ getrandom = { workspace = true }
 jiff = { workspace = true }
 # http: the sign-in shared with `moqui tui --server` (moqui_lib::remote_login), on this crate's reqwest client.
 moqui-lib = { workspace = true, features = ["http"] }
-# The vault module run natively for the pages (src/vault/, plans/Vault-Instances.md V5): ops::Session, randomness from
+# The vault module run natively for the pages (src/vault/, plans/archive/Vault-Instances.md V5): ops::Session, randomness from
 # the OS.
 moqui-vault = { workspace = true, features = ["std", "json"] }
 reqwest = { workspace = true }

@@ -829,7 +829,7 @@ fn an_attested_update_puts_in_place_only_the_attested_head() {
     assert!(gate_restore(factory, "site", &second).is_ok());
     assert!(gate_restore(factory, "site", &first).is_err());
 
-    // a managed deploy (plans/Vault-Instances.md §4.6), its manager's over the pinned link with no signature: back to
+    // a managed deploy (plans/archive/Vault-Instances.md §4.6), its manager's over the pinned link with no signature: back to
     // the commit before, as a rollback goes, and recorded as the commit a start writes; a text that is not an
     // attestation of a passed run is refused
     let (text, _) = signed(SECRET, &attestation(now + 1_000));

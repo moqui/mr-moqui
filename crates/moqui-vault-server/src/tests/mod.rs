@@ -14,7 +14,7 @@
 
 //! The vault services against the in-memory entity facade (`moqui_core::testing::open()`), with clients that are the
 //! vault crate's own `ops::Session`, as the browser module and `moqui vault` are: every rule of V1's Tests column
-//! (plans/Vault-Instances.md §6) that the server keeps, and the client's refusals of what a server or a database
+//! (plans/archive/Vault-Instances.md §6) that the server keeps, and the client's refusals of what a server or a database
 //! writer could hand it.
 
 use std::collections::BTreeMap;

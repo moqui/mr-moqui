@@ -267,7 +267,7 @@
         // a File or Blob kept by the host for a draft or a send: resolves to its name in the store
         saveFile: (file, name) => base64Of(file).then((data) => ask("file_save", { name: String(name || (file && file.name) || "file"), data }))
     });
-    // The vault module the app runs natively for the window's account (moqui_client_tauri::vault, plans/Vault-Instances.md
+    // The vault module the app runs natively for the window's account (moqui_client_tauri::vault, plans/archive/Vault-Instances.md
     // V5): VaultClient.js calls it in place of its wasm worker, with the same ops; memory is device memory (state,
     // remember, restore, forget). The keys stay in the app.
     // the page's user activation (a click), read with the getter and navigator taken before any page script ran, so a

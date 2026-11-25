@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A fake container engine for tests (plans/Vault-Instances.md §6 M1, §7): a small HTTP server on a loopback port that
+//! A fake container engine for tests (plans/archive/Vault-Instances.md §6 M1, §7): a small HTTP server on a loopback port that
 //! answers the calls of [`super::DockerHost`] as Docker or as Podman would, keeps the containers, volumes, networks and
 //! Podman secrets it was asked to make, and records every request, so a test asserts what each call carried: that no
 //! secret is in a container's environment, labels or command ([`FakeEngine::secret_outside_files`]), and which secret
@@ -101,6 +101,18 @@ struct State {
     gone: BTreeMap<String, FakeContainer>,
     /// Every Podman secret made, deleted or not.
     secrets_ever: BTreeMap<String, Vec<u8>>,
+    /// How a container's removal fails, from now on (none: it does not).
+    remove_fault: Option<RemoveFault>,
+}
+
+/// How a fake engine's container removal fails ([`FakeEngine::remove_fault`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RemoveFault {
+    /// The container goes, and the answer is a 500 about cleaning up its network: rootless Podman on a host whose
+    /// AppArmor profile keeps it from stopping the network's pasta process (Ubuntu 26.04).
+    NetworkCleanup,
+    /// The answer is a 500 and the container stays.
+    Refused,
 }
 
 /// The label that makes a fake container a one-shot: it exits as soon as it starts, with [`FakeEngine::one_shot`]'s
@@ -128,6 +140,11 @@ impl FakeEngine {
     /// soon as it starts): their exit code and their logs. Exit 0 with no logs until set.
     pub fn one_shot(&self, exit_code: i64, log: &str) {
         lock(&self.state).one_shot = (exit_code, log.to_string());
+    }
+
+    /// How container removals fail from now on; none for them to succeed again.
+    pub fn remove_fault(&self, fault: Option<RemoveFault>) {
+        lock(&self.state).remove_fault = fault;
     }
 
     fn start(podman: bool) -> Self {
@@ -579,7 +596,10 @@ fn answer(state: &mut State, request: &FakeRequest) -> Answer {
             let mut frames = Vec::new();
             let lines = match &container.log {
                 Some(log) => vec![(1u8, log.clone())],
-                None => vec![(1u8, format!("{} started\n", container.name)), (2u8, "ready\n".to_string())],
+                None => vec![
+                    (1u8, format!("{} started\n", container.name)),
+                    (2u8, "ready\n".to_string()),
+                ],
             };
             for (stream, text) in lines {
                 frames.extend_from_slice(&[stream, 0, 0, 0]);
@@ -593,10 +613,22 @@ fn answer(state: &mut State, request: &FakeRequest) -> Answer {
             let Some(id) = find(state, reference).map(|container| container.id.clone()) else {
                 return message(404, "No such container");
             };
+            if state.remove_fault == Some(RemoveFault::Refused) {
+                return message(500, &format!("removing container {id}: device or resource busy"));
+            }
             if let Some(container) = state.containers.remove(&id) {
                 state.gone.insert(id.clone(), container);
             }
-            state.removed.push((id, volumes));
+            state.removed.push((id.clone(), volumes));
+            if state.remove_fault == Some(RemoveFault::NetworkCleanup) {
+                return message(
+                    500,
+                    &format!(
+                        "cleaning up container {id}: removing container {id} network: 1 error occurred:\n\t* rootless \
+                         netns: kill network process: permission denied"
+                    ),
+                );
+            }
             (204, "application/json", Vec::new())
         }
         ("POST", ["volumes", "create"]) => {

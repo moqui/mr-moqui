@@ -84,7 +84,7 @@ mod server {
                 watches.push((request.runtime_dir.to_path_buf(), watch));
             }
         }
-        // a managed instance dials its manager while sealed: no listener opens (plans/Vault-Instances.md §4.4)
+        // a managed instance dials its manager while sealed: no listener opens (plans/archive/Vault-Instances.md §4.4)
         crate::manage_link::dial::start_for_gate(request.runtime_dir, request.conf);
         match keeper.start(Mode::Operator)? {
             Start::Unsealed => {

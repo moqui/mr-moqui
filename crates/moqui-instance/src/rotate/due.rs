@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Rotation ages (plans/Vault-Instances.md §4.7, §4.8): which operational items are past their age, and which of them
+//! Rotation ages (plans/archive/Vault-Instances.md §4.7, §4.8): which operational items are past their age, and which of them
 //! the manager can rotate.
 //!
 //! - **The age.** An operational item's own `rotationDays` (its binding's policy, `set#VaultItemRotation`), else its

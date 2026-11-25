@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Device memory on the device (plans/Vault-Instances.md §3.5, V5): the open personal key wrapped
+//! Device memory on the device (plans/archive/Vault-Instances.md §3.5, V5): the open personal key wrapped
 //! (`moqui_vault::personal::wrap_with_device_key`, its memory, user and time in the associated data), kept in a file of
 //! the client's directory (`vault/<account>.memory.json`, owner-only), and the device's half of the wrap's key in the
 //! host's key store ([`MemoryKeys`]): the OS key store on the desktop, a Keystore key that opens only after the device's

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `ManagedSealedStart` (plans/Vault-Instances.md §6, M6), an acceptance test: a manager (a seeded server in this
+//! `ManagedSealedStart` (plans/archive/Vault-Instances.md §6, M6), an acceptance test: a manager (a seeded server in this
 //! process, taking `moqui-manage/1` on its HTTPS port) and a managed instance's sealed start as its gate runs it (the
 //! dialer the gate starts, the manager's transit installed, a production seal kept by its keeper), on runtimes under
 //! this test's. Each "restart" is the instance's `db` files (seal.json, its link key, its pairing) on a new runtime
@@ -223,7 +223,7 @@ fn stop_dialer(dir: &Path) {
 }
 
 #[test]
-#[ignore = "acceptance: ManagedSealedStart (plans/Vault-Instances.md §6, M6); about two minutes"]
+#[ignore = "acceptance: ManagedSealedStart (plans/archive/Vault-Instances.md §6, M6); about two minutes"]
 fn managed_sealed_start() {
     if !crate::common::own_process() {
         return;

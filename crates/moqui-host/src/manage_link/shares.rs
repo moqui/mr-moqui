@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A managed instance's recovery shares, on the instance (plans/Vault-Instances.md §4.5, M6). Nobody is present on the
+//! A managed instance's recovery shares, on the instance (plans/archive/Vault-Instances.md §4.5, M6). Nobody is present on the
 //! instance to compare a holder's fingerprint, so an approver's check stands in for it:
 //!
 //! 1. The instance takes each holder's public keys over the link with the key checks of them, and takes a key only

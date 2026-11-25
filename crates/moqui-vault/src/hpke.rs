@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Public-key wraps (plans/Vault-Instances.md §3.2): HPKE (RFC 9180) base mode with DHKEM(X25519, HKDF-SHA256),
+//! Public-key wraps (plans/archive/Vault-Instances.md §3.2): HPKE (RFC 9180) base mode with DHKEM(X25519, HKDF-SHA256),
 //! HKDF-SHA256 and AES-256-GCM, single shot. The `info` carries the [`Names`] of what is wrapped. Base mode names no
 //! sender, so every wrap the vaults store is also signed ([`crate::sign`]).
 //!

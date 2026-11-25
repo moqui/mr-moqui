@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Containers that stay, and their volumes (plans/Vault-Instances.md §4.2): create without starting (with the secret
+//! Containers that stay, and their volumes (plans/archive/Vault-Instances.md §4.2): create without starting (with the secret
 //! files put in before it can start), start, stop, restart, inspect, logs and remove, on Docker and on Podman. Every id
 //! and name that goes into a path is checked first ([`valid_name`]).
 
@@ -337,10 +337,22 @@ impl DockerHost {
             CALL_TIMEOUT,
         )?;
         if response.status() >= 300 && response.status() != 404 {
-            return Err(Self::problem(&format!("removing container {id}"), &response));
+            self.gone_anyway(id, &response)?;
         }
         self.delete_podman_secrets(&secrets);
         Ok(())
+    }
+
+    /// After a removal the engine answered with an error: `Ok` (and the answer logged) when the container is gone all
+    /// the same, which rootless Podman does when only its network's cleanup fails (on Ubuntu 26.04 its AppArmor
+    /// profile for pasta refuses Podman's signal); else the engine's error.
+    pub(crate) fn gone_anyway(&self, id: &str, response: &crate::http::RestResponse) -> Result<(), Error> {
+        let problem = Self::problem(&format!("removing container {id}"), response);
+        if matches!(self.inspect(id), Ok(None)) {
+            tracing::warn!("{problem}; the container is gone, so it is taken as removed");
+            return Ok(());
+        }
+        Err(problem)
     }
 
     /// Make the named volume `name` (the `local` driver); one there already is kept as it is.

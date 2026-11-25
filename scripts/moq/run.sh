@@ -147,7 +147,8 @@ EOF
 
 help_load_save() {
     cat <<'EOF'
-gradle loadSave: clean-dev, then load with the given arguments, then save-db.
+gradle loadSave: reset the instance data as clean-dev does (cargo artifacts stay), then load with the given
+arguments, then save-db.
   ./moq load-save
   ./moq load-save -n demo seed seed-initial install demo
 

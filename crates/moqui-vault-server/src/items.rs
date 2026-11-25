@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Vault items (plans/Vault-Instances.md §3.2 to §3.4): each with its own item key, wrapped by the vault key, and its
+//! Vault items (plans/archive/Vault-Instances.md §3.2 to §3.4): each with its own item key, wrapped by the vault key, and its
 //! body sealed whole, both made in the client.
 //!
 //! - A write is taken only at the vault's current key version, so after a removal a write at the old version is
@@ -408,7 +408,7 @@ fn delete_vault_item(params: &Params, facade: &EntityFacade) -> Out {
     Ok(out([("vaultItemId", Value::string(item_id))]))
 }
 
-/// `set#VaultItemRotation`: an operational item's own rotation age in days, over its type's (plans/Vault-Instances.md
+/// `set#VaultItemRotation`: an operational item's own rotation age in days, over its type's (plans/archive/Vault-Instances.md
 /// §4.7), by a manager of its vault; empty clears it, so the type's applies. An event, with no value.
 fn set_vault_item_rotation(params: &Params, facade: &EntityFacade) -> Out {
     let _authz = authz_off();

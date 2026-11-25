@@ -1,4 +1,4 @@
-// org.moqui.security.VaultServices' access as a server spec (plans/Vault-Instances.md V1, docs/security/Vaults.md;
+// org.moqui.security.VaultServices' access as a server spec (plans/archive/Vault-Instances.md V1, docs/security/Vaults.md;
 // crates/moqui-vault-server, whose cargo tests hold the rules of the signed records): a vault, its items and an item's
 // history are not found to a non-member, and a write by one is refused; a delivery is listed and filed only by its
 // recipient; a wrapped personal key is sent only after a strong, recent sign-in (a password and a second factor), and an

@@ -133,7 +133,7 @@ pub struct UpdatePreview {
 /// The commit an attested deploy on this thread may put in place ([`deploy_attested`]): the attestation, verified with
 /// the secret this server issued, stands for the `COMPONENT_DEPLOY` permission, and pins the component and commit. A
 /// managed deploy ([`deploy_managed`]) is its manager's, over the pinned manager link: the link stands for both the
-/// permission and `component-deploy` `enabled` (plans/Vault-Instances.md §4.6).
+/// permission and `component-deploy` `enabled` (plans/archive/Vault-Instances.md §4.6).
 #[derive(Clone, Debug)]
 struct Attested {
     component: String,
@@ -491,7 +491,7 @@ pub fn preview_update(factory: &Arc<ExecutionContextFactory>, name: &str) -> Res
 }
 
 /// [`preview_update`] to the commit `at` of the component's repository instead of its branch's head: a managed
-/// deploy's rollback to the commit an instance action recorded (plans/Vault-Instances.md §4.6, step 8). Only a
+/// deploy's rollback to the commit an instance action recorded (plans/archive/Vault-Instances.md §4.6, step 8). Only a
 /// component kept in the database or a bare repository moves to another commit; a clone moves by a fast-forward to its
 /// branch's head.
 ///
@@ -940,7 +940,7 @@ enum Taken {
     ManagedRollback,
 }
 
-/// A managed deploy (plans/Vault-Instances.md §4.6): the commit its manager names over the manager link, with no
+/// A managed deploy (plans/archive/Vault-Instances.md §4.6): the commit its manager names over the manager link, with no
 /// signature, since the link's pinned keys name the caller and the manager checked the passed run itself; so the
 /// instance needs no `attestation-secret` and no `allow` entry. Not a service: only the link's command handler calls
 /// it, as the link's one identity. Only a rollback (`"rollback": true` in the deploy, to the commits an instance action

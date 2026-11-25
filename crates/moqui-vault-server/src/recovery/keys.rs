@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The organization's recovery keys and their holders (plans/Vault-Instances.md §3.10): made in a holder's client,
+//! The organization's recovery keys and their holders (plans/archive/Vault-Instances.md §3.10): made in a holder's client,
 //! kept here as the signed record and one sealed share per holder.
 
 use std::collections::{BTreeMap, BTreeSet};

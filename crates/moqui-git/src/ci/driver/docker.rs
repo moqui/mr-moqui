@@ -29,7 +29,7 @@ use std::time::Duration;
 use serde_json::json;
 
 pub use moqui_lib::docker::DockerHost;
-use moqui_lib::docker::{Created, HostAddress, CALL_TIMEOUT, NETWORK_KEYWORDS};
+use moqui_lib::docker::{Created, Engine, HostAddress, CALL_TIMEOUT, NETWORK_KEYWORDS};
 use moqui_lib::error::Error as LibError;
 use moqui_lib::http::Method;
 use moqui_lib::object::{to_plain_string, Value};
@@ -53,7 +53,7 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, moqui_core::extension::R
 }
 
 /// The values of an `InstanceHost` row that say where its host is and how it is reached. The client key of an https
-/// host with a client certificate is a vault item (`InstanceHost:<id>:tlsClientKey`, plans/Vault-Instances.md §4.1). A
+/// host with a client certificate is a vault item (`InstanceHost:<id>:tlsClientKey`, plans/archive/Vault-Instances.md §4.1). A
 /// CI run is unattended, so it is read under the machine access of the environment the host names
 /// (`InstanceHost.environmentId`): a lease approved by "machine" for this one call, ended when the client is made
 /// (`moqui_core::vault_hooks::machine_run`). A host with a client key and no environment, or an environment with no
@@ -76,10 +76,11 @@ fn host_address(host: &EntityValue) -> Result<HostAddress, Error> {
         };
         let address = field(host, "hostAddress").unwrap_or_default();
         let operation = format!("CI run on InstanceHost {host_id} at {address}");
-        let key = moqui_core::vault_hooks::machine_run(&environment, std::slice::from_ref(&binding), &operation, || {
-            moqui_core::vault_hooks::leased(&binding, Some("privateKey"))
-        })
-        .map_err(|err| Error::new(format!("the host's client key {binding}: {}", err.message())))?;
+        let key =
+            moqui_core::vault_hooks::machine_run(&environment, std::slice::from_ref(&binding), &operation, || {
+                moqui_core::vault_hooks::leased(&binding, Some("privateKey"))
+            })
+            .map_err(|err| Error::new(format!("the host's client key {binding}: {}", err.message())))?;
         Some(to_plain_string(&key))
     } else {
         None
@@ -184,12 +185,36 @@ fn create(
         }
     };
     cover_volumes(&mut body, &volumes, hardening).map_err(|why| Error::new(format!("container {name}: {why}")))?;
+    if host.engine()? == Engine::Podman {
+        podman_tmpfs(&mut body);
+    }
     if pull {
         return Ok(host.create(name, &body, true)?);
     }
     match host.create_container(name, &body)? {
         Created::Id(id) => Ok(id),
         Created::NoSuchImage => Err(not_on_host(&image)),
+    }
+}
+
+/// A body's tmpfs options as Podman takes them. Podman refuses `uid=` and `gid=` on a tmpfs ("unknown mount option"),
+/// which Docker passes to the kernel; its `U` makes the mount the container user's, the same uid and gid as the body's
+/// `User` ([`Hardening::tmpfs`] names them only for a numeric user). A mount with neither is left as it is.
+fn podman_tmpfs(body: &mut serde_json::Value) {
+    let Some(mounts) = body["HostConfig"]["Tmpfs"].as_object_mut() else {
+        return;
+    };
+    for options in mounts.values_mut() {
+        let Some(text) = options.as_str() else {
+            continue;
+        };
+        let kept: Vec<&str> = text
+            .split(',')
+            .filter(|option| !option.starts_with("uid=") && !option.starts_with("gid="))
+            .collect();
+        if kept.len() != text.split(',').count() {
+            *options = json!(format!("{},U", kept.join(",")));
+        }
     }
 }
 

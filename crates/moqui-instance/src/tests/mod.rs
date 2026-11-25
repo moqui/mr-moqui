@@ -15,7 +15,7 @@
 //! Managed instances against the in-memory entity facade (`moqui_core::testing::open()`) and the fake container engine
 //! (moqui-lib's `docker-fake`), with the framework's own seed data (InstanceTypeData.xml, VaultTypeData.xml), an
 //! operational vault whose members are the vault crate's own client sessions, and a recording database driver for
-//! the conf connections `create#Database` makes: the rules of M1's Tests column (plans/Vault-Instances.md §6).
+//! the conf connections `create#Database` makes: the rules of M1's Tests column (plans/archive/Vault-Instances.md §6).
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, OnceLock};

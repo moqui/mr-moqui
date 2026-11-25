@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A recovery (plans/Vault-Instances.md §3.10): a session the recovering holder starts, the k − 1 shares other holders
+//! A recovery (plans/archive/Vault-Instances.md §3.10): a session the recovering holder starts, the k − 1 shares other holders
 //! seal to it, and its end, which gives the member their new personal key in the vault's member list. The server
 //! stores signed records and ciphertext; the shares, the recovery key and the vault key stay in the clients.
 

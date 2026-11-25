@@ -259,7 +259,7 @@ pub fn answer(
         .map_or_else(|| "/".to_string(), |path| path.as_str().to_string());
     let bare = path.split_once('?').map_or(path.as_str(), |(bare, _)| bare).to_string();
     // The app runs its own vault module (`moqui_client::vault`, `moquiDesktop.vault`): the server's copy of it is never
-    // loaded in the app, on any origin, the shell's included (plans/Vault-Instances.md §3.6, V5). By path, so best
+    // loaded in the app, on any origin, the shell's included (plans/archive/Vault-Instances.md §3.6, V5). By path, so best
     // effort: a page of the server's can still carry code of its own, which is §3.12's limit.
     if vault_module_path(&bare) {
         return plain(StatusCode::FORBIDDEN, "The app runs its own vault module");

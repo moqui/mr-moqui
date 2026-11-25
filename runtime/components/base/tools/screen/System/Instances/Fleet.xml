@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The fleet (plans/Vault-Instances.md §4.8; docs/tools/Monitoring.md "Managed instances"): each environment's instances
+<!-- The fleet (plans/archive/Vault-Instances.md §4.8; docs/tools/Monitoring.md "Managed instances"): each environment's instances
     with kind, version, health (the host's check and how fresh the instance's telemetry is), seal and link state,
     cluster, last deploy, open incidents and items past their rotation age, from get#InstanceFleet (INSTANCE_ADMIN; rows
     only, nothing reaches a host). Each instance links to its page, to Monitor › Services narrowed to it (its

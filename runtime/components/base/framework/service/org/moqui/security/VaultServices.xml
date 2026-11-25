@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Vaults (plans/Vault-Instances.md §3, docs/security/Vaults.md; framework/entity/VaultEntities.xml). The server stores and
+<!-- Vaults (plans/archive/Vault-Instances.md §3, docs/security/Vaults.md; framework/entity/VaultEntities.xml). The server stores and
     serves what a client made with the vault crate: public keys, signed records and ciphertext. It never decrypts a
     personal item or holds a vault key; what it can check it checks (a key version signed by a manager of the version
     before, a wrap by a manager of its version, a key check and a delivery by their maker's active key, a member's key
@@ -64,7 +64,7 @@ along with this software (see the LICENSE.md file). If not, see
         <description>The caller's own wrapped personal key (the passphrase wrap and the recovery code's wrap), only after a
             strong sign-in in the last vault@key-fetch-max-age seconds: a password and a second factor, SSO, or a paired
             device's key with a recent sign-in on it; never an app password or a login, API or scoped key, never a password
-            alone (plans/Vault-Instances.md §9). Refused otherwise, saying to set up a second factor (reasonCode
+            alone (plans/archive/Vault-Instances.md §9). Refused otherwise, saying to set up a second factor (reasonCode
             strongAuthNeedsFactor) or to confirm it is you (strongAuthRequired). An event.</description>
         <out-parameters>
             <parameter name="hasKey" type="Boolean"/>
@@ -263,7 +263,7 @@ along with this software (see the LICENSE.md file). If not, see
                 vault crate's item_seal answers new_item_key): an environment's machine access to the item goes stale and
                 is given again</description></parameter>
             <parameter name="rotated" type="Boolean"><description>The value was changed at its source by hand (a credential the
-                manager cannot rotate, plans/Vault-Instances.md §4.7): the item's age starts again (rotatedDate). Taking a
+                manager cannot rotate, plans/archive/Vault-Instances.md §4.7): the item's age starts again (rotatedDate). Taking a
                 deposit in, or changing notes, leaves it</description></parameter>
         </in-parameters>
         <out-parameters><parameter name="revision" type="Long"/></out-parameters>
@@ -280,7 +280,7 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
     <service verb="list" noun="VaultItemHistory" type="rust" location="moqui_vault_server::items::list_vault_item_history">
         <description>An item's earlier revisions, newest first, to a member of its vault; and a rotation's new values
-            staged or kept as pending (pendingList, plans/Vault-Instances.md §4.7). An operational item's bodies are left
+            staged or kept as pending (pendingList, plans/archive/Vault-Instances.md §4.7). An operational item's bodies are left
             out: reveal#VaultItem sends one to the reveal role.</description>
         <in-parameters><parameter name="vaultItemId" required="true"/></in-parameters>
         <out-parameters>
@@ -306,7 +306,7 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="set" noun="VaultItemRotation" type="rust" location="moqui_vault_server::items::set_vault_item_rotation">
         <description>An operational item's own rotation age in days (1 to 3650), over its type's
             (VaultItemType.rotationDays), by a manager of its vault; empty clears it. Past its age from rotatedDate the item
-            is due (plans/Vault-Instances.md §4.7). An event.</description>
+            is due (plans/archive/Vault-Instances.md §4.7). An event.</description>
         <in-parameters>
             <parameter name="vaultItemId" required="true"/>
             <parameter name="rotationDays"/>
@@ -352,7 +352,7 @@ along with this software (see the LICENSE.md file). If not, see
             cleared. Two events: the removal and the rotation. A removed member may have kept item keys or values, so the
             answer of an operational vault's removal offers to rotate the credentials at their source (rotationOffer: each
             item's binding, name, whether the instance manager can rotate it, else what to do by hand;
-            plans/Vault-Instances.md §3.9, §4.7), which request#InstanceRotation does.</description>
+            plans/archive/Vault-Instances.md §3.9, §4.7), which request#InstanceRotation does.</description>
         <in-parameters>
             <parameter name="vaultId" required="true"/>
             <parameter name="userId" required="true"/>
@@ -579,7 +579,7 @@ along with this software (see the LICENSE.md file). If not, see
             the reveal role, whose client opens it with the vault key. The VeReveal event is written first, in the same
             transaction. Otherwise the server sends no operational body to any client. With pendingId: a rotation's new
             value of the item kept as pending (list#VaultItemHistory's pendingList), wrapped to the deposit key, to
-            recover it when the rotation could not put the old value back (plans/Vault-Instances.md §4.7).</description>
+            recover it when the rotation could not put the old value back (plans/archive/Vault-Instances.md §4.7).</description>
         <in-parameters>
             <parameter name="vaultItemId" required="true"/>
             <parameter name="pendingId"/>

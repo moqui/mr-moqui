@@ -65,6 +65,24 @@ pub(crate) mod accept {
         pub(crate) async fn serve(&self, _stream: TlsStream<TcpStream>, _remote: SocketAddr) {
             match *self {}
         }
+
+        // the edge link's passthrough calls it, in a host with the edge feature
+        #[cfg_attr(not(feature = "edge"), allow(dead_code))]
+        pub(crate) async fn serve_passthrough<S>(
+            &self,
+            _accepted: rustls::server::Accepted,
+            _stream: S,
+            _remote: SocketAddr,
+            _limit: std::time::Duration,
+        ) {
+            match *self {}
+        }
+    }
+
+    /// None: no acceptor exists.
+    #[cfg_attr(not(feature = "edge"), allow(dead_code))]
+    pub(crate) fn acceptor_of(_factory: &ExecutionContextFactory) -> Option<Arc<Acceptor>> {
+        None
     }
 }
 

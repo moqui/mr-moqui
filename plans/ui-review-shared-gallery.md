@@ -825,8 +825,9 @@ Not rechecked live:
 - The reviewer's disabled Save for DEVA-UI-002, which was not reproduced.
 - The origin of AI-UI-002's 302, which is still unknown; the likely cause is a peer redirecting http to https.
 
-The Analysis ungrouped-count assertion added to the slow `tools_screens` test does not run yet. An earlier,
-unrelated check in that test fails first: Datasets no longer offers the fixture's DataDocument.
+The slow `tools_screens` test passes in full, including its Analysis ungrouped-count assertion (9526ed139). Two of
+its earlier checks had fallen behind security rules: the fixture's DataDocument now has an ADMIN user group, so
+Datasets offers it (SEC-TLS-92), and the export filter is a JSON object (SEC-TLS-01).
 
 ## 7. Decisions
 

@@ -29,7 +29,7 @@ The counts include them.
 This is the findings register of the security review that the pre-0.1.0 notice in the [README](../README.md) names:
 until 0.1.0, findings are recorded openly in this repository. The map of what can be reached is
 [Attack-Surface](../docs/security/Attack-Surface.md) and its area files; this document holds what looks wrong with
-it. The two secrets plans, [Sealed-Secrets](Sealed-Secrets.md) and [Vault-Instances](Vault-Instances.md), were
+it. The two secrets plans, [Sealed-Secrets](Sealed-Secrets.md) and [Vault-Instances](archive/Vault-Instances.md), were
 reviewed in the same pass and changed in place.
 
 Sections: [method](#method) · [the findings that matter most](#the-findings-that-matter-most) ·
@@ -192,7 +192,7 @@ All twelve are fixed (2026-11-18), each entry's **Fix** saying how; the Medium, 
 | 17 Forum and Smithy | `mr-mantle/service/mantle/forum`, `smithy` | Read in two rounds; not reached: the delivery worker, the Forum import and integrations, repository transfer, branch rules, releases, the templates (how cleaned HTML reaches a page), the git authorization hook | Apps-PASS-Forum-Smithy: written by its reviewer |
 | 18 BOSS access model; Admin, Commons, People, Accounting | `mr-boss` | Read in the second round, on a small budget; not reached: the report-data grants, most of the authorization-disabled reads, the share, calendar and intake services, most of Commons, People and Accounting beyond sampled gates, the skills beyond their front matter | Apps-BOSS: written by its reviewer (access model, row isolation, external and device users, token-route screens, Admin, Commons, People, Accounting, skills) |
 | 19 BOSS business apps; the Mantle REST root | `mr-boss`, `mr-mantle` | Read in the second round, on a small budget; not reached: Customer Service, Marketing sends and imports, Warehouse, Manufacturing, Products, Maintenance, Insights, the 360 screens; the price, discount, credit and refund services; the existing Sales and Marketing paragraphs were not checked | Apps-BOSS: written by its reviewer (the Mantle REST root, integrations and stored credentials, Commerce, order approval, Projects, shared record panels) |
-| 20 The two secrets plans | `plans/Sealed-Secrets.md`, `plans/Vault-Instances.md` | Read whole against the code | the plans: edited in place |
+| 20 The two secrets plans | `plans/Sealed-Secrets.md`, `plans/archive/Vault-Instances.md` | Read whole against the code | the plans: edited in place |
 
 A reviewer's report says under "Read" what it read whole, what it sampled and what it did not reach. The partial
 ones above are partial for the reasons their reports give.

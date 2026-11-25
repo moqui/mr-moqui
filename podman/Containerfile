@@ -1,5 +1,6 @@
 # MR Moqui. One image for every compose file: the Maximal package, which includes embedded
-# Postgres and the MySQL driver. The binary needs glibc 2.38 or newer (Debian 13, Ubuntu 24.04).
+# Postgres and the MySQL driver. The binary needs glibc 2.38 or newer, and no newer than this base's (2.41): one built
+# on a newer host (Ubuntu 26.04's 2.43) does not start here, so build.sh refuses it; --in-build-image builds it here.
 # Debian 12 and Ubuntu 22.04 are too old.
 #
 # Embedded Postgres also loads libssl.so.3, libcrypto.so.3, libzstd.so.1, liblz4.so.1, libz.so.1,

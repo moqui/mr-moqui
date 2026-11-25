@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The lease dialog (plans/Vault-Instances.md §3.7, §5): opened from a VaultLeaseWaiting notification, a deploy's page or
+<!-- The lease dialog (plans/archive/Vault-Instances.md §3.7, §5): opened from a VaultLeaseWaiting notification, a deploy's page or
     an instance's page with ?leaseId=. Lease.qvue shows what the signed lease names (each item's name, binding and type,
     the operation, the cluster member and the time limit), read from the lease the server signed, never from a column,
     and approves it in the browser through the vault worker (js/vault/VaultClient.js, its worker and wasm module loaded

@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
-    <!-- The manager link (plans/Vault-Instances.md §4.4, crates/moqui-host/src/manage_link/). On a manager, each checks
+    <!-- The manager link (plans/archive/Vault-Instances.md §4.4, crates/moqui-host/src/manage_link/). On a manager, each checks
         the instance's environment and the caller: INSTANCE_ADMIN, and a member of the environment's approver group when
         it names one. Nothing here runs an arbitrary service on an instance: only the link's commands. -->
 
@@ -102,7 +102,7 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters><parameter name="appInstanceId" required="true"/></in-parameters>
     </service>
 
-    <!-- the managed sealed start (plans/Vault-Instances.md §4.5, M6) -->
+    <!-- the managed sealed start (plans/archive/Vault-Instances.md §4.5, M6) -->
     <service verb="approve" noun="InstanceUnseal" type="rust"
             location="moqui_host::manage_link::services::approve_instance_unseal" allow-remote="false" transaction="ignore">
         <description>A member approves an unseal that waits under its environment's approval policy (an unseal

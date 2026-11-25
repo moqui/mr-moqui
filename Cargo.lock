@@ -4968,6 +4968,8 @@ dependencies = [
  "moqui-lib",
  "moqui-vault",
  "moqui-vault-server",
+ "rcgen",
+ "rustls",
  "serde_json",
  "sha2 0.11.1",
  "subtle",

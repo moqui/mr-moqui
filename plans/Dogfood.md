@@ -607,7 +607,7 @@ a release, budgets not raised.
   pipeline.
 - On moqui.org: a demo instance deploys main after every green merge; moqui.org itself deploys after a pass and a
   maintainer's approval.
-- **Managed instances** (Vault-Instances M3, [§4.6](Vault-Instances.md#46-deploys)): an environment that names an
+- **Managed instances** (Vault-Instances M3, [§4.6](archive/Vault-Instances.md#46-deploys)): an environment that names an
   `InstanceEnvironment` deploys over the manager link to its instances, with no token or attestation, the gate checked
   by the manager, approval opening the deploy's lease (or the environment's machine access, for the demo), a backup
   first, a roll one instance at a time with drain, and rollback to recorded versions. A target not managed here keeps
@@ -906,7 +906,7 @@ suites within budget, and its **Built** note here; the acceptance test a phase n
   the gate's whole element is read once at start (restart class), since a reload must not turn it off; a bad
   signature and a server with no secret are one generic refusal, counted as a failed sign-in; addresses and the
   target's error text are a Maintainer's, and public statuses say only Deployed, failed, refused or cancelled; Smithy
-  has no approver groups. With an eye to [Vault-Instances](Vault-Instances.md) §4.6, the token is read in one place
+  has no approver groups. With an eye to [Vault-Instances](archive/Vault-Instances.md) §4.6, the token is read in one place
   (`ci::deploy::target_token`) so it can become a vault item, and `decide#` stays the one approval step. Fixed on the
   way: `component-deploy` was left out of the conf merge, so a runtime conf could not turn the gate on; and inside a
   transaction with the cache on, a held insert was not seen by the conditional update that moved it (the frame's rows

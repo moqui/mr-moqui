@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The instance kinds (plans/Vault-Instances.md §4.1, §4.2): `mr-moqui`, `postgres`, `mysql` and `opensearch`. A kind's
+//! The instance kinds (plans/archive/Vault-Instances.md §4.1, §4.2): `mr-moqui`, `postgres`, `mysql` and `opensearch`. A kind's
 //! rows (`InstanceKind` with its env, volume, host config, secret and dependency rows, framework/data/
 //! InstanceTypeData.xml) say what its container is made of; this module turns an instance's rows into the container
 //! that stays ([`ContainerSpec`]), with each secret a file under `/run/secrets` and the image's `*_FILE` setting naming
@@ -34,6 +34,50 @@ use moqui_lib::error::Error as LibError;
 use zeroize::Zeroizing;
 
 use crate::common::fail;
+
+/// The file a database instance's TLS certificate is given as, beside its key (the kind's `tls` secret, `tls.key`), which
+/// its kind's command names. The certificate is public: on the instance's row (`AppInstance.tlsCertificate`), not in the
+/// vault.
+pub const TLS_CERT_FILE: &str = "tls.crt";
+/// The file an instance's database's certificate is given as: what its datasource trusts in place of the public
+/// authorities ([`DATABASE_CA_SETTING`]), and checks the server's name against (verify-full, the default).
+pub const DATABASE_CA_FILE: &str = "db-ca.crt";
+/// The setting that names [`DATABASE_CA_FILE`] to an mr-moqui instance's transactional datasource.
+pub const DATABASE_CA_SETTING: &str = "moqui_conf__entity_facade__datasource__TRANSACTIONAL__sslrootcert";
+
+/// A database instance's TLS key pair, made at its provision: a new ECDSA P-256 key, and a certificate it signs itself
+/// for `name`, the instance's name on the environment's network, which its clients connect to and check
+/// (verify-full against this certificate alone). The key as PKCS#8 PEM, and the certificate as PEM.
+///
+/// # Errors
+///
+/// When the key cannot be made, or `name` is not a name a certificate holds.
+pub fn tls_key_pair(name: &str) -> Result<(Zeroizing<String>, String), LibError> {
+    let key = rcgen::KeyPair::generate().map_err(|err| fail(format!("a TLS key for {name}: {err}")))?;
+    let mut params = rcgen::CertificateParams::new(vec![name.to_string()])
+        .map_err(|err| fail(format!("a TLS certificate for {name}: {err}")))?;
+    params.distinguished_name.push(rcgen::DnType::CommonName, name);
+    let certificate = params
+        .self_signed(&key)
+        .map_err(|err| fail(format!("a TLS certificate for {name}: {err}")))?;
+    Ok((
+        Zeroizing::new(pem("PRIVATE KEY", &key.serialize_der())),
+        pem("CERTIFICATE", certificate.der()),
+    ))
+}
+
+/// PEM of `der` under `label`, in lines of 64 (the workspace's rcgen has no pem feature).
+fn pem(label: &str, der: &[u8]) -> String {
+    use base64::Engine as _;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(der);
+    let mut text = format!("-----BEGIN {label}-----\n");
+    for line in encoded.as_bytes().chunks(64) {
+        text.push_str(std::str::from_utf8(line).unwrap_or_default());
+        text.push('\n');
+    }
+    text.push_str(&format!("-----END {label}-----\n"));
+    text
+}
 
 /// The file an mr-moqui instance's one-time pairing token is given as (§4.2, §4.4); the manager link (M2) reads it.
 pub const PAIRING_TOKEN_FILE: &str = "moqui-pairing-token";
@@ -97,7 +141,8 @@ pub struct ContainerInput {
     pub env: Vec<(String, String)>,
     /// Each mount point with its volume's name.
     pub volumes: Vec<(String, String)>,
-    /// The host config rows, by name: RestartPolicy, HealthCmd, User.
+    /// The host config rows, by name: RestartPolicy, HealthCmd, User, and Cmd (the command, its words split on white
+    /// space, when not the image's).
     pub host_config: BTreeMap<String, String>,
     pub labels: Vec<(String, String)>,
     pub network: Option<String>,
@@ -183,10 +228,17 @@ pub fn container_spec(input: ContainerInput) -> Result<ContainerSpec, LibError> 
     } else {
         Vec::new()
     };
+    // a command that names files, never a value ([`ContainerSpec::check`] refuses a secret in it)
+    let cmd = input
+        .host_config
+        .get("Cmd")
+        .map(|command| command.split_whitespace().map(str::to_string).collect())
+        .unwrap_or_default();
     Ok(ContainerSpec {
         name: input.name,
         image: input.image,
         pull: input.pull,
+        cmd,
         entrypoint,
         env,
         labels: input.labels,

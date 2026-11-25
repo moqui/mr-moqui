@@ -13,7 +13,7 @@
  */
 
 //! `moqui vault shares` and `moqui vault seal-share`: a recovery holder's steps for a managed instance
-//! (plans/Vault-Instances.md §4.5, M6), against the manager's server. A share never goes to the server in the clear.
+//! (plans/archive/Vault-Instances.md §4.5, M6), against the manager's server. A share never goes to the server in the clear.
 //!
 //! - `shares --vault <id>`: each recovery share an instance delivered to this user, checked against the instance's
 //!   link key as the manager pinned it, filed into one of this user's personal vaults with that link key's fingerprint

@@ -12,11 +12,11 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Reveal (plans/Vault-Instances.md §3.7): a member with the reveal role sees one operational value. The server sends
+//! Reveal (plans/archive/Vault-Instances.md §3.7): a member with the reveal role sees one operational value. The server sends
 //! that item's ciphertext and wrapped key to the member's client, which opens it with the vault key there, and the
 //! reveal is a `VeReveal` event, written before the ciphertext is answered. Otherwise no operational body goes to any
 //! client (`list#VaultItems` leaves it out). A rotation's new value kept as pending, when its source may hold it, is
-//! revealed the same way (`pendingId`), to recover it (plans/Vault-Instances.md §4.7).
+//! revealed the same way (`pendingId`), to recover it (plans/archive/Vault-Instances.md §4.7).
 
 use std::collections::BTreeMap;
 

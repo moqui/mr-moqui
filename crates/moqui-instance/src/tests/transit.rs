@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! M6's rules on the manager (plans/Vault-Instances.md §6): transit unseals an instance only for its pinned link key
+//! M6's rules on the manager (plans/archive/Vault-Instances.md §6): transit unseals an instance only for its pinned link key
 //! and not after a revoke, and only to its own root key (a wrap a holder of its link key made is refused, and the key
 //! pinned stays); the first pin is the instance's first start's, or a member's approval; the approval policy waits for
 //! a member, the approval bound to the ask; an unseal from a new address is told apart; the manager takes "unsealed"

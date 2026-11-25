@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A managed instance's sealed start (plans/Vault-Instances.md §4.4, §4.5, M6): what the instance, its manager and its
+//! A managed instance's sealed start (plans/archive/Vault-Instances.md §4.4, §4.5, M6): what the instance, its manager and its
 //! recovery holders' clients each check, with no I/O, so the three use one implementation.
 //!
 //! - **The link key** is an Ed25519 key; the manager pins it by the SHA-256 of its SubjectPublicKeyInfo

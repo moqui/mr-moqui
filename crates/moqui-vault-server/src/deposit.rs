@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The deposit key of an operational vault (plans/Vault-Instances.md §3.2): a key pair whose public half is on the
+//! The deposit key of an operational vault (plans/archive/Vault-Instances.md §3.2): a key pair whose public half is on the
 //! vault in the clear, signed by the manager who made it, and whose private half is wrapped by the vault key. The server
 //! writes a new item with no lease (a password it makes while provisioning) by wrapping its item key to the public
 //! half, after it checks that signature against the vault's signed member list (`Chain::accept_deposit`): it can write
@@ -212,7 +212,7 @@ fn accepted_key(
 }
 
 /// Whether the server could deposit into `vault_id` now: its deposit key is there and its signature checks. A rotation
-/// asks this before it changes anything at a source (plans/Vault-Instances.md §4.7), since its last step deposits.
+/// asks this before it changes anything at a source (plans/archive/Vault-Instances.md §4.7), since its last step deposits.
 pub fn check_deposit_key(facade: &EntityFacade, vault_id: &str) -> Result<(), LibError> {
     let _authz = authz_off();
     let vault = vault_row(facade, vault_id, false)?;
@@ -344,7 +344,7 @@ pub fn withdraw_item(facade: &EntityFacade, vault_id: &str, item_id: &str, bindi
     })
 }
 
-// ----- a rotation's new value (plans/Vault-Instances.md §4.7) -----
+// ----- a rotation's new value (plans/archive/Vault-Instances.md §4.7) -----
 
 /// A rotation's new body of an item, to stage before its source changes: the item, by id and binding, the revision the
 /// rotation started from, and the whole new JSON body (the item's own, with the rotated field changed: the lease's

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Randomness, passed in (plans/Vault-Instances.md §3.2). Native builds use [`OsRng`]; the wasm module fills from the
+//! Randomness, passed in (plans/archive/Vault-Instances.md §3.2). Native builds use [`OsRng`]; the wasm module fills from the
 //! page's `crypto.getRandomValues`; the known-answer vectors use [`TestRng`], a fixed stream.
 
 /// A source of random bytes. Every key, nonce, salt and share coefficient the crate makes comes from one.

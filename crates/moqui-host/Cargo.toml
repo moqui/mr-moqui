@@ -125,13 +125,13 @@ grpc = [
 # edge node (instance@node-role front_edge) the ALPN moqui-edge/1 hand-off on the HTTPS listener; gRPC both ways on HTTP/2. In Maximal
 # and Enterprise, whose graph already has all of it (§5.6); not Lite.
 edge = ["grpc", "dep:webpki-roots", "dep:sha1"]
-# Vaults (crates/moqui-vault-server, plans/Vault-Instances.md §3): personal and operational vaults, leases, machine
+# Vaults (crates/moqui-vault-server, plans/archive/Vault-Instances.md §3): personal and operational vaults, leases, machine
 # access and recovery. In every package.
 vault = ["dep:moqui-vault-server", "dep:moqui-vault"]
-# Managed instances (crates/moqui-instance, plans/Vault-Instances.md §4): kinds, provisioning on Docker and Podman hosts,
+# Managed instances (crates/moqui-instance, plans/archive/Vault-Instances.md §4): kinds, provisioning on Docker and Podman hosts,
 # deploys, rotation and transit by the manager. In Maximal and Enterprise; not Lite.
 instances = ["vault", "dep:moqui-instance"]
-# The manager link (src/manage_link/, plans/Vault-Instances.md §4.4): a managed instance dials its manager on ALPN
+# The manager link (src/manage_link/, plans/archive/Vault-Instances.md §4.4): a managed instance dials its manager on ALPN
 # moqui-manage/1, gRPC both ways on HTTP/2; with instances, the manager's end on the HTTPS listener. The bootstrap
 # bundle is HPKE and the approver set Ed25519 (moqui-vault). In every package, so any build can be managed.
 manage = ["grpc", "dep:moqui-vault"]

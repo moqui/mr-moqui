@@ -9,7 +9,8 @@ the row. **Tests to write** are missing automated tests that an open item names.
 Testing that another open plan already lists as needed stays in that plan: the deployed edge node checks
 ([Edge-Node2 §2.1](Edge-Node2.md#21-checks-on-a-deployed-edge-node)), the Dogfood pipeline and deploy runs on a
 second machine ([Dogfood](Dogfood.md)), the live Qwen 3.8 and 8B evaluation runs and the Constitution's published
-anchors ([LLM-A2A-Assist](LLM-A2A-Assist.md)), relevance and cover density on a real corpus
+anchors ([LLM-A2A-Assist](LLM-A2A-Assist.md)), the sealed start's TPM reboot `SealedStart` and the other unbuilt
+phases' checks ([Sealed-Secrets](Sealed-Secrets.md)), relevance and cover density on a real corpus
 ([Performance](Performance.md)), the screen walks of the `ui-review-*` plans, the browser terminal hand checks
 ([Mobile-Desktop-Exit-Checks](Mobile-Desktop-Exit-Checks.md)), and the Comms live checks that
 [Comms-Messaging](Comms-Messaging.md) lists. Open work that is not testing is in [Remaining-Work](Remaining-Work.md)
@@ -83,6 +84,24 @@ Guide [Build-Test, Offline source release](../docs/Build-Test.md#offline-source-
 | Item | Source |
 |---|---|
 | The opt-in acceptance scenarios the high-level review proposed and nobody wrote: sustained load; prolonged delivery failures; one of two members killed mid-job, timing how long until the job runs elsewhere; TURN and SIP connection floods; downloads, requests and agents saturating together; endpoint slots on two nodes; transitions calling AI tasks under load; a purge of millions of `ServiceJobRun` rows; 25 messages of 20 MiB through mail sync | [High-Level-Review, Verification follow-ups](archive/High-Level-Review.md#verification-follow-ups) |
+
+### Vaults and managed instances
+
+Plan [Vault-Instances](archive/Vault-Instances.md) (archived 2026-11-25); guides [Vaults](../docs/security/Vaults.md),
+[Run-Deploy, Managed instances](../docs/Run-Deploy.md#managed-instances). Run here on 2026-11-25 (Ubuntu 26.04,
+rootless Podman 5.7, Docker 29.7): the real-engine tests on both engines, `ManagedSealedStart`, `InstanceDeploy` against
+a `./moq run` manager, the Android checks with the emulator smoke, and the desktop's lock watchers compiled for Linux
+and Windows.
+
+| Area | Item | Source |
+|---|---|---|
+| Sealed start | `SealedStart` (a TPM2 host and a reboot): on a spare machine or a VM with a TPM (swtpm under QEMU), MR Moqui installed under `systemd/moqui.service` and sealed with `--method tpm`. The user `moqui` runs as needs `systemd-creds` to reach the TPM: libtss2's libraries (`systemd-analyze has-tpm2` lists them; libtss2-rc was missing here) and `/dev/tpmrm0`, the tss group's | `test/acceptance/client/SealedStart.spec.js`, [Sealed-Secrets](Sealed-Secrets.md) S3 |
+| Desktop, Windows | The vault locks on the session's lock (Win+L) and on sleep in the installed app: compiled for x86_64-pc-windows-msvc with cargo-xwin, never run | `moqui-desktop` `src/client/screen_lock.rs`; [Mobile-Desktop-Exit-Checks, V5](Mobile-Desktop-Exit-Checks.md#v5-the-vault-in-the-apps) |
+| Desktop, Linux | The vault locks on the screen lock and on suspend in the installed app, under GNOME and KDE, Wayland and X11 (logind's `Lock`, `LockedHint` and `PrepareForSleep`, the screen saver's `ActiveChanged`): its unit test ran, and logind's `auto` session resolved here, but no lock was watched live | same |
+| Android | The vault on a real phone: device memory in the Keystore behind the fingerprint or the lock screen. Built and smoke-tested on the emulator only (no screen lock there, so device memory was refused, as it should be) | [Mobile-Desktop-Exit-Checks, V5](Mobile-Desktop-Exit-Checks.md#v5-the-vault-in-the-apps) |
+| A manager behind a firewall | A managed instance's link to a manager reached through the manager's edge node, by a passthrough host name, on deployed nodes; covered by a unit test of the passthrough here | `edge_link/down.rs`, [Run-Deploy, The manager link](../docs/Run-Deploy.md#the-manager-link) |
+| Hosts | Managed instances on a second machine's Docker or Podman over HTTPS with a client key, and over SSH; here only this machine's sockets were used | [Run-Deploy, Managed instances](../docs/Run-Deploy.md#managed-instances) |
+| Ubuntu 26.04 hosts | Rootless Podman cannot stop a network's pasta process (its AppArmor profile for pasta refuses Podman's signal), so every container removal there answers 500; the driver takes a removal as done when the container is gone, but the pasta processes may stay. Check that a profile allowing `signal (receive) peer=podman` ends them, and file it upstream | [Build-Test](../docs/Build-Test.md) |
 
 ## Tests to write
 

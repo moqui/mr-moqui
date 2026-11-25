@@ -23,7 +23,7 @@
         <default-response url="."/>
     </transition>
     <!-- Approve runs the decision's action. An instance adapter's step that opens vault items waits for its lease
-        (plans/Vault-Instances.md §4.8): an approver of the lease's vault goes on in the same click to the lease dialog,
+        (plans/archive/Vault-Instances.md §4.8): an approver of the lease's vault goes on in the same click to the lease dialog,
         which approves it in the browser through the vault worker (the signed lease shown, the module loaded with its
         integrity hashes); anyone else is told who approves it. -->
     <transition name="approveDecision">
@@ -52,7 +52,7 @@
         <default-response url="." parameter-map="{incidentId:incidentId}"/>
     </transition>
     <!-- an instance adapter's action that waits for its vault lease: the lease dialog, where an approver opens it
-        (plans/Vault-Instances.md §4.8) -->
+        (plans/archive/Vault-Instances.md §4.8) -->
     <transition name="vaultLease"><default-response url="../../Vaults/Lease"/></transition>
     <transition name="refuseDecision">
         <service-call name="org.moqui.monitor.MonitorServices.refuse#RecoveryDecision" in-map="{decisionId:decisionId}"/>

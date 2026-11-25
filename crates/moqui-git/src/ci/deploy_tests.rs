@@ -75,7 +75,7 @@ fn a_deployments_public_status_says_how_it_ended_only() {
 
 /// A target's token is the item of a binding of its own environment, its machine access an environment of its own,
 /// and its lease names the deployment and where the attestation goes, never more than a lease holds and never with
-/// credentials of the URL (plans/Vault-Instances.md §4.6).
+/// credentials of the URL (plans/archive/Vault-Instances.md §4.6).
 #[test]
 fn a_targets_token_is_its_environments_vault_item_and_its_lease_names_the_deployment() {
     assert_eq!(super::token_binding("100042"), "GitCiEnvironment:100042:targetToken");

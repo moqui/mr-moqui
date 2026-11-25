@@ -30,7 +30,7 @@ members = [
     "crates/moqui-embedded",
     "crates/moqui-drivers",
     # Vaults: the crypto with no I/O (native and wasm), the framework's vault services, and managed instances
-    # (plans/Vault-Instances.md).
+    # (plans/archive/Vault-Instances.md).
     "crates/moqui-vault",
     "crates/moqui-vault-server",
     "crates/moqui-instance",
@@ -99,12 +99,12 @@ moqui-collab = { path = "crates/moqui-collab" }
 moqui-tools = { path = "crates/moqui-tools" }
 moqui-calc = { path = "crates/moqui-calc" }
 # The vault crypto, with no I/O and no framework dependency, linked natively and built to wasm for the browser
-# (plans/Vault-Instances.md §3.2). default-features off so the wasm build leaves out getrandom.
+# (plans/archive/Vault-Instances.md §3.2). default-features off so the wasm build leaves out getrandom.
 moqui-vault = { path = "crates/moqui-vault", default-features = false }
-# Vaults, leases, machine access and recovery on moqui-core (plans/Vault-Instances.md §3); the host links it under its
+# Vaults, leases, machine access and recovery on moqui-core (plans/archive/Vault-Instances.md §3); the host links it under its
 # vault feature.
 moqui-vault-server = { path = "crates/moqui-vault-server" }
-# Managed instances: kinds, provisioning, deploys, rotation and the manager's transit (plans/Vault-Instances.md §4);
+# Managed instances: kinds, provisioning, deploys, rotation and the manager's transit (plans/archive/Vault-Instances.md §4);
 # the host links it under its instances feature.
 moqui-instance = { path = "crates/moqui-instance" }
 # Calls: the WebRTC endpoint and the selective forwarding unit on str0m, sans-IO (plans/archive/Comms-Framework.md §6); the host
@@ -398,9 +398,9 @@ huskarl = "0.11"
 # as it links a second p256 (0.13), aes-gcm 0.10 and jwt-simple.
 hkdf = "0.13"
 # HPKE (RFC 9180) base mode, DHKEM(X25519), HKDF-SHA256, AES-256-GCM: the vault's public-key wraps
-# (plans/Vault-Instances.md §3.2). On the same RustCrypto releases as aes-gcm, hkdf and sha2 here.
+# (plans/archive/Vault-Instances.md §3.2). On the same RustCrypto releases as aes-gcm, hkdf and sha2 here.
 hpke = { version = "0.15", default-features = false, features = ["x25519", "aes", "alloc"] }
-# Ed25519 signatures on vault wraps, key versions and leases (plans/Vault-Instances.md §3.2).
+# Ed25519 signatures on vault wraps, key versions and leases (plans/archive/Vault-Instances.md §3.2).
 ed25519-dalek = { version = "3.0", default-features = false, features = ["zeroize"] }
 # Key material cleared on drop, and comparisons in constant time (plans/Sealed-Secrets.md §3.5, §3.6).
 zeroize = { version = "1.9", features = ["derive"] }

@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- System › Vaults (plans/Vault-Instances.md §5; docs/security/Vaults.md): the operational vaults the user is a member of
+<!-- System › Vaults (plans/archive/Vault-Instances.md §5; docs/security/Vaults.md): the operational vaults the user is a member of
     (VaultList), a vault's members and roles, items (names, bindings, types, revisions and their age; never a value),
     leases with Revoke, machine access and events (VaultDetail), and the lease dialog (Lease: what a signed lease names,
     approved in the browser through the vault worker). Every list comes from org.moqui.security.VaultServices, which

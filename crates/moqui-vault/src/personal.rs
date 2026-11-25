@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The personal key (plans/Vault-Instances.md §3.5): an X25519 key pair to receive wraps and an Ed25519 key pair to
+//! The personal key (plans/archive/Vault-Instances.md §3.5): an X25519 key pair to receive wraps and an Ed25519 key pair to
 //! sign what the member makes. The two private halves are wrapped together, by the key passphrase through Argon2id
 //! and by the recovery code through HKDF; the server stores both wraps and never sees either secret.
 
