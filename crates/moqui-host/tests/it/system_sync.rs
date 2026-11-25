@@ -54,7 +54,10 @@ const DATA: &str = r#"<entity-facade-xml type="seed">
     <moqui.entity.sync.EntitySync entitySyncId="GATE_REDIRECT" description="Gate redirected push" statusId="EsNotStarted"
         forPull="N" delayBufferMillis="1" syncSplitMillis="60000" targetUsername="john.doe"
         allowPrivateNetwork="Y"/>
-    <moqui.entity.sync.EntitySyncArtifact entitySyncId="GATE_REDIRECT" artifactGroupId="GATE_SYNC_DATA" applEnumId="EsaaInclude"/>
+    <moqui.security.ArtifactGroup artifactGroupId="GATE_REDIRECT_DATA" description="Gate push's history"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="GATE_REDIRECT_DATA" artifactName="moqui.entity.sync.EntitySyncHistory"
+        artifactTypeEnumId="AT_ENTITY" nameIsPattern="N" filterMap="{entitySyncId: 'GATE_PUSH'}"/>
+    <moqui.entity.sync.EntitySyncArtifact entitySyncId="GATE_REDIRECT" artifactGroupId="GATE_REDIRECT_DATA" applEnumId="EsaaInclude"/>
 </entity-facade-xml>"#;
 
 fn call(address: SocketAddr, method: &str, path: &str, auth: Option<&str>, body: &str) -> (u16, serde_json::Value) {
@@ -415,8 +418,8 @@ fn an_entity_sync_push_and_a_pull_complete_with_a_history_row(gate: &crate::comm
 /// (plans/ui-review-system-ai-integrations.md AI-UI-002, where one run repeated 772 times).
 fn a_redirected_entity_sync_fails_once_and_names_the_redirect(gate: &crate::common::Gate) {
     use std::io::{Read, Write};
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     let address = gate.server.address();
     let john = basic("john.doe", "moqui");
@@ -465,8 +468,9 @@ fn a_redirected_entity_sync_fails_once_and_names_the_redirect(gate: &crate::comm
     };
 
     let row_path = "/rest/e1/moqui.entity.sync.EntitySync/GATE_REDIRECT";
-    // a success 15 minutes ago, before the server seeded the enumerations it pushes: past the delay buffer, so the old
-    // code queued another run after every failure
+    // a success 15 minutes ago: past the delay buffer, so the old code queued another run after every failure. What
+    // the sync pushes is the History of GATE_PUSH's run above, written minutes ago at most, so the window has a record
+    // to send however old the cached template database is.
     let since = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
