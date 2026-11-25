@@ -69,6 +69,14 @@ Guide [Monitoring](../docs/tools/Monitoring.md).
 | People | The design §14.3 review walks (PeopleReviewWalk, PeopleNavigationWalk, PeoplePhoneWalk), written and not yet run | mr-boss `plan/impl-people.md` |
 | Marble ERP | Acceptance work after the migration: wiki fixtures, exhaustive role and organization isolation, CSRF, every mounted QVT interaction, physical checks and scanners | [MarbleERPMigration, Limits](archive/MarbleERPMigration.md#limits) |
 
+### Build and release
+
+Guide [Build-Test, Offline source release](../docs/Build-Test.md#offline-source-release).
+
+| Item | Source |
+|---|---|
+| The release pipeline's `offline-source` job (`ci.xml`) needs its `linux-offline` pool: a runner with rootless Podman or Docker and the `localhost/moqui-build` image built with Chromium. The same check ran by hand on 2026-11-24 (`scripts/test-source-archive.sh`, Linux x86-64): the offline build and the Rust and moq tests passed, and the specs but for the Assist canvas frame in Chromium 156 ([Remaining-Work](Remaining-Work.md#tests)), so what is left is provisioning the pool and one tagged run | [JS-Build, Linux checks](archive/JS-Build.md#linux-checks); [Build-Test, Offline source release](../docs/Build-Test.md#offline-source-release) |
+
 ### Load and failure
 
 | Item | Source |

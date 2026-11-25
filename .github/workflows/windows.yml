@@ -1,0 +1,46 @@
+# Compiles and tests #[cfg(windows)]: cargo lint over the whole workspace and its tests. The ci.xml jobs run in the
+# Linux moqui-build image, so cargo lint there never builds that code. The dev profile's split-debuginfo=unpacked is
+# not a Windows option; moq sets packed, and so does this job (docs/Build-Test.md, Windows).
+
+name: windows
+
+# A push to master and a pull request; a branch push alone does not run it, so a pull request's branch runs once.
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_BUILD_JOBS: "4"
+  CARGO_PROFILE_DEV_SPLIT_DEBUGINFO: packed
+
+jobs:
+  lint:
+    name: cargo lint
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # The theseus Postgres archive that moqui-drivers' build script embeds: kept in ~/.theseus (USERPROFILE), and
+      # fetched and stripped of psql when the cache has none. Its version is POSTGRESQL_VERSION in .cargo/config.toml.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.theseus
+          key: theseus-${{ hashFiles('.cargo/config.toml') }}
+      - name: Postgres archive
+        shell: bash
+        run: scripts/pg-payload.sh strip
+      - name: cargo lint
+        run: cargo lint
+      - name: test_cmd
+        run: 'cargo test -p moqui-host --lib test_cmd::'

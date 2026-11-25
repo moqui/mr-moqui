@@ -189,12 +189,16 @@ pub fn run(program: &str, target: &SshTarget, key: &[u8], command: &SshCommand) 
     let mut nonce = [0_u8; 8];
     moqui_vault::rng::Rng::fill(&mut moqui_vault::rng::OsRng, &mut nonce);
     let dir = std::env::temp_dir().join(format!("moqui-ssh-{}", moqui_vault::text::hex(&nonce)));
-    let mut builder = std::fs::DirBuilder::new();
+    // `mode` is the only mutation, and it is Unix. On Windows the builder is used as created.
     #[cfg(unix)]
-    {
+    let builder = {
         use std::os::unix::fs::DirBuilderExt as _;
+        let mut builder = std::fs::DirBuilder::new();
         builder.mode(0o700);
-    }
+        builder
+    };
+    #[cfg(not(unix))]
+    let builder = std::fs::DirBuilder::new();
     builder
         .create(&dir)
         .map_err(|err| fail(format!("could not make {}: {err}", dir.display())))?;

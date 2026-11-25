@@ -1400,21 +1400,30 @@ fn entity_rest_does_not_write_the_audit_log_or_the_monitor_rows() {
     let facade = crate::testing::open();
     let unauthorized = |err: &Error| crate::error::ErrorKind::of(err) == crate::error::ErrorKind::Unauthorized;
     let mut audit = BTreeMap::new();
-    audit.insert("changedEntityName".to_string(), Value::string("moqui.security.UserAccount"));
+    audit.insert(
+        "changedEntityName".to_string(),
+        Value::string("moqui.security.UserAccount"),
+    );
     audit.insert("changedFieldName".to_string(), Value::string("disabled"));
     audit.insert("changedByUserId".to_string(), Value::string("EX_JOHN_DOE"));
     let err = facade.rest("post", "moqui.entity.EntityAuditLog", &audit).unwrap_err();
     assert!(unauthorized(&err), "{err}");
     let mut key = BTreeMap::new();
     key.insert("keyId".to_string(), Value::string("planted"));
-    for entity in ["moqui.monitor.IngestKey", "moqui.monitor.RecoveryAction", "moqui.monitor.RecoveryControl"] {
+    for entity in [
+        "moqui.monitor.IngestKey",
+        "moqui.monitor.RecoveryAction",
+        "moqui.monitor.RecoveryControl",
+    ] {
         let err = facade.rest("post", entity, &key).unwrap_err();
         assert!(unauthorized(&err), "{entity}: {err}");
     }
     assert_eq!(facade.find("moqui.entity.EntityAuditLog").unwrap().count().unwrap(), 0);
     // still read
     assert!(matches!(
-        facade.rest("get", "moqui.entity.EntityAuditLog", &BTreeMap::new()).unwrap(),
+        facade
+            .rest("get", "moqui.entity.EntityAuditLog", &BTreeMap::new())
+            .unwrap(),
         Value::List(_)
     ));
 }
@@ -1443,12 +1452,17 @@ fn generic_reads_leave_out_restricted_related_rows_and_answer_encrypted_fields_a
 
     let mut dependents = BTreeMap::new();
     dependents.insert("dependents".to_string(), Value::string("true"));
-    let user = facade.rest("get", "moqui.security.UserAccount/U1", &dependents).unwrap();
+    let user = facade
+        .rest("get", "moqui.security.UserAccount/U1", &dependents)
+        .unwrap();
     let text = format!("{user:?}");
     assert!(text.contains("u1"), "{text}");
     assert!(!text.contains("key-hash") && !text.contains("hash\""), "{text}");
 
-    let Value::List(rows) = facade.rest("get", "moqui.entity.sync.EntitySync", &BTreeMap::new()).unwrap() else {
+    let Value::List(rows) = facade
+        .rest("get", "moqui.entity.sync.EntitySync", &BTreeMap::new())
+        .unwrap()
+    else {
         panic!("a list");
     };
     let Value::Map(row) = &rows[0] else { panic!("a row") };
@@ -1463,7 +1477,11 @@ fn generic_reads_leave_out_restricted_related_rows_and_answer_encrypted_fields_a
         }
         writer.full(full).dependent_levels(1).text().unwrap().0
     };
-    let all = ["moqui.security.UserAccount", "moqui.security.UserLoginKey", "moqui.entity.sync.EntitySync"];
+    let all = [
+        "moqui.security.UserAccount",
+        "moqui.security.UserLoginKey",
+        "moqui.entity.sync.EntitySync",
+    ];
     let text = export(&all, false);
     assert!(text.contains("u1") && text.contains("partner"), "{text}");
     assert!(
@@ -1675,15 +1693,15 @@ impl ParityFixture {
             std::fs::create_dir_all(dir.join(name)).unwrap();
         }
         let real = framework_dir();
-        std::os::unix::fs::symlink(
-            real.join("conf/MoquiDefaultConf.xml"),
-            dir.join("conf/MoquiDefaultConf.xml"),
+        moqui_lib::fs_link::link(
+            &real.join("conf/MoquiDefaultConf.xml"),
+            &dir.join("conf/MoquiDefaultConf.xml"),
         )
         .unwrap();
         for entry in std::fs::read_dir(real.join("entity")).unwrap() {
             let entry = entry.unwrap();
             if entry.file_type().unwrap().is_file() {
-                std::os::unix::fs::symlink(entry.path(), dir.join("entity").join(entry.file_name())).unwrap();
+                moqui_lib::fs_link::link(&entry.path(), &dir.join("entity").join(entry.file_name())).unwrap();
             }
         }
         std::fs::write(dir.join("entity/ParityEntities.xml"), PARITY_ENTITIES).unwrap();
@@ -2213,7 +2231,12 @@ fn create_db_view(facade: &EntityFacade, name: &str, members: &[(&str, &str, &st
 fn a_db_view_alias_takes_only_the_listed_functions() {
     let facade = crate::testing::open();
     for (name, function) in [("EnumPgRead", "pg_read_file"), ("EnumMax", "max")] {
-        create_db_view(&facade, name, &[("E", "moqui.basic.Enumeration", "")], &[("enumTypeId", "E", "enumTypeId")]);
+        create_db_view(
+            &facade,
+            name,
+            &[("E", "moqui.basic.Enumeration", "")],
+            &[("enumTypeId", "E", "enumTypeId")],
+        );
         create_row(
             &facade,
             "moqui.entity.view.DbViewEntityAlias",

@@ -62,5 +62,10 @@ path = "tests/docker_real.rs"
 test = false
 required-features = ["docker"]
 
+[target.'cfg(windows)'.dependencies]
+# Directory junctions (src/fs_link.rs). A symlink needs Developer Mode or an extra privilege; a junction does not.
+# MIT OR Apache-2.0. 1.4.1 strips the `\\?\` prefix canonicalize adds.
+junction = "1.4.1"
+
 [lints]
 workspace = true

@@ -154,8 +154,9 @@ impl Default for Options {
 }
 
 /// The runner's variables a step of a registered runner gets, with the `LC_` ones; the job's variables come on top.
-pub const STEP_BASE_ENV: &[&str] =
-    &["PATH", "HOME", "USER", "LOGNAME", "LANG", "LANGUAGE", "TZ", "TMPDIR", "SHELL", "TERM"];
+pub const STEP_BASE_ENV: &[&str] = &[
+    "PATH", "HOME", "USER", "LOGNAME", "LANG", "LANGUAGE", "TZ", "TMPDIR", "SHELL", "TERM",
+];
 
 /// Whether a variable of the runner is a credential of the runner (its job token, its runner token, a pool token, and
 /// the file that holds the runner token), which no step gets, whatever passes the environment on.
@@ -488,6 +489,7 @@ fn output_of(program: &str, args: &[&str]) -> String {
 }
 
 /// Seconds from a `ps` `etime` (`[[dd-]hh:]mm:ss`), the time since a process started.
+#[cfg(unix)]
 fn etime_seconds(text: &str) -> Option<u64> {
     let text = text.trim();
     let (days, clock) = match text.split_once('-') {
@@ -502,6 +504,7 @@ fn etime_seconds(text: &str) -> Option<u64> {
 }
 
 /// The processes of a `ps -o pid=,etime=` listing started within `within_seconds`, but those of `keep`.
+#[cfg(unix)]
 fn started_within(listing: &str, within_seconds: u64, keep: &[u32]) -> Vec<u32> {
     listing
         .lines()
@@ -601,7 +604,11 @@ fn run_step(
         spawn.process_group(0);
         // as the step user: std drops root's supplementary groups when it sets the uid
         if let Some(user) = &options.step_user {
-            spawn.uid(user.uid).gid(user.gid).env("USER", &user.name).env("LOGNAME", &user.name);
+            spawn
+                .uid(user.uid)
+                .gid(user.gid)
+                .env("USER", &user.name)
+                .env("LOGNAME", &user.name);
         }
     }
     let mut child = spawn
@@ -832,19 +839,13 @@ impl Drop for WorkDir {
     }
 }
 
-/// The effective user id of this process (on unix; 0 elsewhere, where the checks that use it do not run).
+/// The effective user id of this process.
+#[cfg(unix)]
 fn effective_uid() -> u32 {
-    #[cfg(unix)]
-    {
-        rustix::process::geteuid().as_raw()
-    }
-    #[cfg(not(unix))]
-    {
-        0
-    }
+    rustix::process::geteuid().as_raw()
 }
 
-/// The effective group id of this process (on unix; 0 elsewhere).
+/// The effective group id of this process.
 #[cfg(unix)]
 fn effective_gid() -> u32 {
     rustix::process::getegid().as_raw()
@@ -885,7 +886,10 @@ pub(crate) fn parent_refusal(uid: u32, gid: u32, mode: u32, me: u32, my_group: u
     if uid != 0 && uid != me {
         Some(format!("is another user's (owner {uid})"))
     } else if mode & 0o002 != 0 && !sticky {
-        Some(format!("other users may write with no sticky bit (mode {:o})", mode & 0o7777))
+        Some(format!(
+            "other users may write with no sticky bit (mode {:o})",
+            mode & 0o7777
+        ))
     } else if mode & 0o020 != 0 && !sticky && gid != my_group {
         Some(format!(
             "group {gid}, not the runner's own, may write with no sticky bit (mode {:o})",
@@ -1038,15 +1042,12 @@ fn run_job(transport: &dyn Transport, options: &Options) -> Result<bool, Stop> {
         }
         let scratch = Scratch::new(&options.workspace, "cache.tar.gz");
         match transport.download(&format!("caches?{}", query(&[("key", &key)])), &scratch.0) {
-            Ok(200) => match archive::unpack_within(
-                &scratch.0,
-                &options.workspace,
-                max_unpack,
-                archive::MAX_UNPACK_ENTRIES,
-            ) {
-                Ok(count) => log.line(None, &format!("Cache {key} restored to {path} ({count} entries)"))?,
-                Err(err) => log.line(None, &format!("Cache {key} was not restored: {err}"))?,
-            },
+            Ok(200) => {
+                match archive::unpack_within(&scratch.0, &options.workspace, max_unpack, archive::MAX_UNPACK_ENTRIES) {
+                    Ok(count) => log.line(None, &format!("Cache {key} restored to {path} ({count} entries)"))?,
+                    Err(err) => log.line(None, &format!("Cache {key} was not restored: {err}"))?,
+                }
+            }
             Ok(404) => {
                 log.line(None, &format!("No cache for {key}"))?;
                 missed.push((key, path.to_string()));
@@ -1058,7 +1059,11 @@ fn run_job(transport: &dyn Transport, options: &Options) -> Result<bool, Stop> {
     }
     // the steps' user owns what they work in: the checkout with its caches, and the home the runner gave them
     if let Some(user) = &options.step_user {
-        let home = options.env.iter().find(|(name, _)| name == "HOME").map(|(_, home)| PathBuf::from(home));
+        let home = options
+            .env
+            .iter()
+            .find(|(name, _)| name == "HOME")
+            .map(|(_, home)| PathBuf::from(home));
         for path in std::iter::once(options.workspace.clone()).chain(home) {
             if let Err(err) = hand_over(&path, user) {
                 log.line(None, &format!("The workspace was not handed to {}: {err}", user.name))?;

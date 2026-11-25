@@ -50,7 +50,7 @@ fn project(name: &str) -> PathBuf {
     ))
     .unwrap();
     std::fs::create_dir_all(root.join("runtime/components/base")).unwrap();
-    std::os::unix::fs::symlink(framework, root.join("runtime/components/base/framework")).unwrap();
+    moqui_lib::fs_link::link(&framework, &root.join("runtime/components/base/framework")).unwrap();
     // only the sets the manifest lists load
     std::fs::copy(
         concat!(env!("CARGO_MANIFEST_DIR"), "/../../runtime/components/components.xml"),

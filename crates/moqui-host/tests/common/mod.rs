@@ -732,7 +732,7 @@ fn prepare_runtime(runtime: &Path, fixtures: &Template, extra_conf: &str) {
     // the gates have it on their production purpose; in the repository runtime it loads only on a dev instance.
     let example = std::fs::canonicalize(repo_root().join("runtime/components/dev/example")).unwrap();
     std::fs::create_dir_all(runtime.join("components/addon")).unwrap();
-    std::os::unix::fs::symlink(&example, runtime.join("components/addon/example")).unwrap();
+    moqui_lib::fs_link::link(&example, &runtime.join("components/addon/example")).unwrap();
 }
 
 /// Load the seed (the framework files and each component's `data` directory), the demo users, and the grants of the fixture.
@@ -1055,7 +1055,7 @@ fn start_seeded_under(
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent).unwrap();
         }
-        std::os::unix::fs::symlink(from, &dest).unwrap();
+        moqui_lib::fs_link::link(Path::new(from), &dest).unwrap();
     }
     let framework = repo_root().join("runtime/components/base/framework");
     if let Some((data, data_types)) = data {

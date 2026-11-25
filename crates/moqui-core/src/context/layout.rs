@@ -177,16 +177,15 @@ pub fn warn_old_dirs(runtime: &Path, listed: &[String]) {
 
 /// Link the base set `base` (another runtime's `components/base`) into `runtime` as its base set, with a copy of the
 /// sets' manifest beside it, so a scratch runtime loads the framework's components as the real one does. For tests
-/// and tools that build a runtime from another.
+/// and tools that build a runtime from another. The link is a symlink on Unix and a junction on Windows.
 ///
 /// # Errors
 ///
 /// Returns the error of creating `components/`, linking or copying.
-#[cfg(unix)]
 pub fn link_base_set(base: &Path, runtime: &Path) -> std::io::Result<()> {
     let sets = runtime.join(COMPONENTS_DIR);
     std::fs::create_dir_all(&sets)?;
-    std::os::unix::fs::symlink(base, set_dir(runtime, Set::Base))?;
+    moqui_lib::fs_link::link(base, &set_dir(runtime, Set::Base))?;
     if let Some(manifest) = base
         .parent()
         .map(|parent| parent.join("components.xml"))

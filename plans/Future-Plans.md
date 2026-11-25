@@ -92,6 +92,9 @@ day partitions, gRPC, business operations, regressions and incidents, recovery) 
 - **Public and anonymous dashboard links**, if they are wanted: deferred because ERP data on a self-hosted server
   should not get a bearer URL by default ([Sharing](archive/Monitoring.md#scheduled-reports-and-sharing)).
 
+## Component JavaScript libraries
+Built ([JS-Build](archive/JS-Build.md#component-javascript-libraries-in-dev-aide-built-2026-11-23); guide [Build-Test](../docs/Build-Test.md#add-a-component-library)). Next: removing a library (`add-js` adds and `update-js --component` changes a pin, but taking one out of `js-build.json`, its pin and lock, its outputs and its `.gitignore` lines is by hand), and client libraries in the desktop shell's bundled screens (`precompiled_qvue` registers no library list, so a bundled `.qvue` that declares one does not load it).
+
 ## Messaging — runtime-reflective FlatBuffers ([Messaging.md](proposals/Messaging.md), 1286 lines)
 Binary request/response and WebSocket document subscriptions using FlatBuffers `.bfbs` schemas generated at runtime from service, screen-transition and Data Document definitions, with a Rust reflective reader, a browser reader/writer on Emscripten WASM, shared message buffers and large-scale fan-out. JSON and other contracts stay. Status: roadmap shows 0 of 6 phases done. Today `moqui-browser` speaks JSON ([`crates/moqui-browser/src/api.rs`](../crates/moqui-browser/src/api.rs)) and cites this plan for the binary forms. Prerequisites in place: Wasm browser build, cached QuickJS service functions, committed-update path. Go/no-go gates are in §19; capacity model in §12–13.
 

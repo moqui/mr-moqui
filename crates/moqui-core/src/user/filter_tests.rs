@@ -699,9 +699,9 @@ fn product_facade() -> (EntityFacade, TempDir) {
     std::fs::create_dir_all(&entity_dir).unwrap();
     std::fs::create_dir_all(&conf_dir).unwrap();
     let real = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
-    std::os::unix::fs::symlink(
-        real.join("conf/MoquiDefaultConf.xml"),
-        conf_dir.join("MoquiDefaultConf.xml"),
+    moqui_lib::fs_link::link(
+        &real.join("conf/MoquiDefaultConf.xml"),
+        &conf_dir.join("MoquiDefaultConf.xml"),
     )
     .unwrap();
     for entry in std::fs::read_dir(real.join("entity")).unwrap() {
@@ -709,7 +709,7 @@ fn product_facade() -> (EntityFacade, TempDir) {
         if !entry.file_type().unwrap().is_file() {
             continue;
         }
-        std::os::unix::fs::symlink(entry.path(), entity_dir.join(entry.file_name())).unwrap();
+        moqui_lib::fs_link::link(&entry.path(), &entity_dir.join(entry.file_name())).unwrap();
     }
     std::fs::write(entity_dir.join("TestProductAuthz.xml"), PRODUCT_XML).unwrap();
     (open_mem(root.path()), root)

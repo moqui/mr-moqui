@@ -256,12 +256,15 @@ fn scratch(name: &str) -> std::path::PathBuf {
 
 #[test]
 fn the_link_key_is_kept_owner_only_and_gives_the_same_keys_again() {
-    use std::os::unix::fs::PermissionsExt as _;
     let dir = scratch("key");
     let file = dir.join("db").join(super::KEY_FILE);
     let made = LinkKey::load_or_create(&file, &KeyStore::File, "i").unwrap();
-    let mode = std::fs::metadata(&file).unwrap().permissions().mode() & 0o777;
-    assert_eq!(mode, 0o600);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let mode = std::fs::metadata(&file).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+    }
     let again = LinkKey::load_or_create(&file, &KeyStore::File, "i").unwrap();
     assert_eq!(made.fingerprint(), again.fingerprint());
     assert_eq!(made.bundle_public().unwrap(), again.bundle_public().unwrap());
@@ -270,28 +273,32 @@ fn the_link_key_is_kept_owner_only_and_gives_the_same_keys_again() {
     assert!(!debug.contains("seed"), "{debug}");
 
     // with systemd-creds the file holds what it made, and only it opens it (a stub that records its calls)
-    let stub = dir.join("systemd-creds");
-    let log = dir.join("calls");
-    std::fs::write(
-        &stub,
-        format!(
-            "#!/bin/sh\necho \"$1\" >> '{}'\nLC_ALL=C exec tr 'A-Za-z' 'N-ZA-Mn-za-m'\n",
-            log.display()
-        ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o700)).unwrap();
-    let store = KeyStore::SystemdCreds {
-        command: stub.display().to_string(),
-    };
-    let tpm_file = dir.join("db").join("tpm_key");
-    let made = LinkKey::load_or_create(&tpm_file, &store, "i").unwrap();
-    let again = LinkKey::load_or_create(&tpm_file, &store, "i").unwrap();
-    assert_eq!(made.fingerprint(), again.fingerprint());
-    assert_eq!(std::fs::read_to_string(&log).unwrap(), "encrypt\ndecrypt\n");
-    // the bytes the stub wrote are not taken as a plain file's seed
-    let plain = LinkKey::load_or_create(&tpm_file, &KeyStore::File, "i").unwrap();
-    assert_ne!(plain.fingerprint(), made.fingerprint());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let stub = dir.join("systemd-creds");
+        let log = dir.join("calls");
+        std::fs::write(
+            &stub,
+            format!(
+                "#!/bin/sh\necho \"$1\" >> '{}'\nLC_ALL=C exec tr 'A-Za-z' 'N-ZA-Mn-za-m'\n",
+                log.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let store = KeyStore::SystemdCreds {
+            command: stub.display().to_string(),
+        };
+        let tpm_file = dir.join("db").join("tpm_key");
+        let made = LinkKey::load_or_create(&tpm_file, &store, "i").unwrap();
+        let again = LinkKey::load_or_create(&tpm_file, &store, "i").unwrap();
+        assert_eq!(made.fingerprint(), again.fingerprint());
+        assert_eq!(std::fs::read_to_string(&log).unwrap(), "encrypt\ndecrypt\n");
+        // the bytes the stub wrote are not taken as a plain file's seed
+        let plain = LinkKey::load_or_create(&tpm_file, &KeyStore::File, "i").unwrap();
+        assert_ne!(plain.fingerprint(), made.fingerprint());
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }
 

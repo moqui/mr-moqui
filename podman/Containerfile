@@ -6,6 +6,8 @@
 # libgssapi_krb5.so.2, and libxml2.so.2. Its streaming standby loads libpq.so.5.
 # A newer host that only has libxml2.so.16 is handled by the server's shim; this image does not
 # need the compiler. Chromium is not installed; PDF stays unavailable until screen-facade/pdf@chromium-path is set.
+# Time zones are read from the system's zoneinfo: tzdata-legacy holds the old IANA names (US/Central and the like) that
+# a user's or an organization's time zone may be stored as, which Debian 13 moved out of tzdata.
 
 FROM docker.io/library/debian:13-slim
 
@@ -20,6 +22,8 @@ RUN apt-get update \
         libssl3t64 \
         libxml2 \
         libzstd1 \
+        tzdata \
+        tzdata-legacy \
         zlib1g \
     && rm -rf /var/lib/apt/lists/*
 

@@ -152,7 +152,8 @@ its checks of the builds (test-all needs no Node).
 - **Debug info.** The dev profile keeps debug info unpacked in the object files ([Profiles](#profiles)), which is
   not a Windows option, and cargo has no per-target profile, so `moq` sets `CARGO_PROFILE_DEV_SPLIT_DEBUGINFO=packed`
   on Windows (a PDB beside the binary). A dev `cargo build` or `cargo test` that does not go through `moq` needs that
-  variable set too.
+  variable set too. `.github/workflows/windows.yml` sets it and runs `cargo lint` and
+  `cargo test -p moqui-host --lib test_cmd::` on `windows-latest`, which is what compiles `#[cfg(windows)]`.
 
 ### Native code and C libraries
 
@@ -398,7 +399,8 @@ tag, or else the commit, labels the archive in its `SOURCE-RELEASE.txt`. It incl
 at its recorded revision, all locked npm tarballs and vendored Cargo sources. The Postgres payloads cover Linux and
 macOS on arm64 and x86-64, and Windows on x86-64. The archive includes the stripped payloads and checksums.
 Install the pinned Rust toolchain with the wasm32-unknown-unknown target, Node 22.13 or later with npm, and the platform build
-prerequisites before disconnecting. On Debian the embedded Postgres standby also needs `libpq5` for WAL replay.
+prerequisites before disconnecting. On Debian the embedded Postgres standby also needs `libpq5` for WAL replay, and the
+specs' legacy time zone names (`US/Central`) need `tzdata-legacy`.
 Unpack the archive and run `./moq build --offline --release` in its root.
 An ordinary checkout can also use `--offline` once the package and Postgres caches are populated.
 
@@ -407,7 +409,10 @@ Provision that pool with a rootless Podman or Docker engine, disk for a cold Rus
 `localhost/moqui-build:latest` image built with Chromium. The runner can reach its CI server to restore the archive.
 `scripts/test-source-archive.sh <archive>` streams it into a fresh container with `--network none` and empty caches,
 checks the expected revision when `MOQUI_CI_COMMIT` is set, builds the release and runs `./moq test-framework`.
-That job has not yet run on a provisioned pool, so an offline build is not yet proven there.
+That job has not yet run on a provisioned pool. The same check passed by hand on 2026-11-24 (Linux x86-64, rootless
+Podman, the archive of 7e48e1a69): the offline release build in about 8 minutes, then `./moq test-framework` with one
+cargo job, 84 minutes in all; its browser proofs need the Chromium named in
+[Remaining-Work](../plans/Remaining-Work.md#tests).
 Set `MOQUI_BUILD_IMAGE` to use another locally installed build image.
 
 ### Instance archive
@@ -882,7 +887,9 @@ Acceptance tests can be deleted freely, since nothing depends on them.
   one (then that test, and its component's acceptance suite), never because code it uses changed (AGENTS.md).
 - **In CI.** A server that hosts the repository runs the suites as pipelines ([Pipelines](interfaces/Pipelines.md)):
   the `ci.xml` at this repository's root runs the lints and `./moq test-framework` on every push and merge request,
-  `./moq test-all` on main, and `./moq accept-all --junit` nightly, in the `moqui-build` image; a component's own
+  `./moq test-all` on main, and `./moq accept-all --junit` nightly, in the `moqui-build` image. `#[cfg(windows)]` is
+  compiled on `windows-latest` by `.github/workflows/windows.yml` (`cargo lint` and
+  `cargo test -p moqui-host --lib test_cmd::`), on a push to master and on a pull request. A component's own
   repository needs no file and gets `./moq test <component> --junit` as its built-in pipeline. The same rules hold
   there: budgets are not raised, and acceptance is never part of a push's checks. The engine's own opt-in test, one
   container on a real Docker or Podman socket, is `cargo test -p moqui-git --test ci_docker` with

@@ -475,7 +475,9 @@ fn a_cluster_with_its_password_given_keeps_no_password_file_and_a_cold_start_ope
         ..StartOptions::new(20)
     };
     // its tools put the password into a URL as it is: base64's / and + are refused before anything starts
-    let err = EmbeddedCluster::start_with(&dir, &with("a/b+c=")).map(|_| ()).unwrap_err();
+    let err = EmbeddedCluster::start_with(&dir, &with("a/b+c="))
+        .map(|_| ())
+        .unwrap_err();
     assert!(err.to_string().contains("letters, digits"), "{err}");
     let password = "the-sealed-superuser-password-7f3a";
     {
@@ -577,7 +579,29 @@ fn adopt_live_postmaster_keeps_the_same_pid() {
     let data_dir = owner.data_dir().to_path_buf();
     drop(driver);
     let pid = postmaster_pid(&data_dir);
+    // initdb's clear-text `password` on the host lines is SCRAM after a start; one put back is rewritten again, and the
+    // live postmaster adopted below is reloaded with it
+    let hba = data_dir.join("pg_hba.conf");
+    let host_methods = |text: &str| -> Vec<String> {
+        text.lines()
+            .map(str::trim)
+            .filter(|line| line.starts_with("host"))
+            .filter_map(|line| line.split_whitespace().nth(4).map(str::to_string))
+            .collect()
+    };
+    let started = std::fs::read_to_string(&hba).unwrap();
+    let methods = host_methods(&started);
+    assert!(
+        !methods.is_empty() && methods.iter().all(|method| method == "scram-sha-256"),
+        "{started}"
+    );
+    std::fs::write(&hba, started.replace("scram-sha-256", "password")).unwrap();
     let (cluster, driver) = EmbeddedCluster::start(&dir, 20).unwrap();
+    let adopted = std::fs::read_to_string(&hba).unwrap();
+    assert!(
+        host_methods(&adopted).iter().all(|method| method == "scram-sha-256"),
+        "{adopted}"
+    );
     assert_eq!(postmaster_pid(&data_dir), pid);
     let mut conn = driver.connect_postgres().unwrap();
     let rows = conn.query_once("SELECT 1", &[]).unwrap();
@@ -1497,6 +1521,7 @@ fn a_cluster_under_a_path_with_a_space_starts_with_its_socket_in_temp() {
 
 /// SEC-DAT-06: the superuser's password file is written `0600` before the setup reads it, and one already there (an
 /// older run's, made with the umask) is made so, its password kept.
+#[cfg(unix)]
 #[test]
 fn the_password_file_is_this_user_s_alone() {
     use std::os::unix::fs::PermissionsExt as _;
@@ -1515,6 +1540,7 @@ fn the_password_file_is_this_user_s_alone() {
 
 /// SEC-OUT-06: a socket directory under temp that was already there is used only when it is this user's with mode
 /// 0700; one another user could write in is refused before the server starts.
+#[cfg(unix)]
 #[test]
 fn a_socket_dir_that_is_not_this_user_s_alone_is_refused() {
     use std::os::unix::fs::PermissionsExt as _;
@@ -1542,7 +1568,6 @@ fn a_socket_dir_that_is_not_this_user_s_alone_is_refused() {
 #[test]
 fn a_sealed_dump_opens_for_a_restore_only_with_its_key_and_leaves_no_plain_file() {
     use std::io::Write as _;
-    use std::os::unix::fs::PermissionsExt as _;
 
     let runtime = temp_cluster_dir();
     let _guard = DirGuard(runtime.clone());
@@ -1571,7 +1596,11 @@ fn a_sealed_dump_opens_for_a_restore_only_with_its_key_and_leaves_no_plain_file(
     let path = opened.path().to_path_buf();
     assert!(path.starts_with(runtime.join("db")), "{}", path.display());
     assert_eq!(std::fs::read(&path).unwrap(), b"PGDMP and the rest of a dump");
-    assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+    }
     drop(opened);
     assert!(!path.exists(), "the plain file stays after the restore");
 

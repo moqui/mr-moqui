@@ -419,7 +419,9 @@ impl Dialer {
         let _ = self.stop.send(true);
     }
 
-    /// Keep a bootstrap bundle that waits for the seal to open, with `managed`; true when one was kept.
+    /// Keep a bootstrap bundle that waits for the seal to open, with `managed`; true when one was kept. The operator
+    /// gate is the only caller, and it is Unix.
+    #[cfg(unix)]
     fn store_pending(&self, managed: &dyn Managed) -> bool {
         store_pending(&self.shared, managed)
     }
@@ -1432,7 +1434,9 @@ fn start_thread(runtime_dir: &Path, setting: super::Settings<'_>) {
 }
 
 /// After the gate's seal opened: on a first start, wait up to `manage@bootstrap-wait-seconds` for the bootstrap bundle
-/// and keep it in the seal before the boot reads its datasource password.
+/// and keep it in the seal before the boot reads its datasource password. The operator gate is the only caller, and
+/// it is Unix.
+#[cfg(unix)]
 pub(crate) fn after_unseal(runtime_dir: &Path, conf: &moqui_lib::node::MNode) {
     let Some(dialer) = dialer_of(runtime_dir) else {
         return;

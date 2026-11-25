@@ -185,15 +185,15 @@ impl ParityFixture {
             std::fs::create_dir_all(dir.join(name)).unwrap();
         }
         let real = framework_dir();
-        std::os::unix::fs::symlink(
-            real.join("conf/MoquiDefaultConf.xml"),
-            dir.join("conf/MoquiDefaultConf.xml"),
+        moqui_lib::fs_link::link(
+            &real.join("conf/MoquiDefaultConf.xml"),
+            &dir.join("conf/MoquiDefaultConf.xml"),
         )
         .unwrap();
         for entry in std::fs::read_dir(real.join("entity")).unwrap() {
             let entry = entry.unwrap();
             if entry.file_type().unwrap().is_file() {
-                std::os::unix::fs::symlink(entry.path(), dir.join("entity").join(entry.file_name())).unwrap();
+                moqui_lib::fs_link::link(&entry.path(), &dir.join("entity").join(entry.file_name())).unwrap();
             }
         }
         std::fs::write(dir.join("entity/ParityEntities.xml"), PARITY_ENTITIES).unwrap();
