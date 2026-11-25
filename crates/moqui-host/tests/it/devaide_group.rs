@@ -1000,6 +1000,29 @@ fn a_dev_instance_connects_to_its_group_server_and_opens_merge_requests() {
                 "a comment from a sim"
             );
         }
+        // each of the tool's writes is refused from a request logged in by a header (an API key), as the Workspace's
+        // are: a program's request never stands for the person who approves
+        let writes = [
+            card.args.clone(),
+            serde_json::json!({"action": "reply", "root": "my-site", "number": number.clone(), "threadId": "1",
+                "body": "From a key"}),
+            serde_json::json!({"action": "open_merge_request", "root": "my-site", "title": "From a key",
+                "source": "main", "target": "main"}),
+        ];
+        for args in &writes {
+            let refused = moqui_core::screen::gate::with_request_frame(
+                moqui_core::screen::gate::RenderOrigin::Browser,
+                true,
+                true,
+                || dev_aide::agent::hosting::execute(args),
+            )
+            .expect_err("a hosting write from a header login");
+            assert!(
+                refused.instruction.contains("logged in by a header"),
+                "{args}: {}",
+                refused.instruction
+            );
+        }
         dev_aide::agent::hosting::execute(&card.args).unwrap();
     }
     let (status, _, body) = exchange(
