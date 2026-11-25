@@ -43,7 +43,7 @@ use std::time::Duration;
 
 use common::{
     basic, cookies_of, exchange, header, http_request, merge_cookies, session_token, sign_in, start, start_with,
-    FIXTURE,
+    start_with_conf, FIXTURE,
 };
 
 #[test]
@@ -76,7 +76,8 @@ fn artifact_group_detail_renders_as_text_csv_xml_and_html_print() {
         lines[1],
         format!("{:>26}: {:<105}", "Description", "System App (via root screen)")
     );
-    let line = |wanted: &str| lines.contains(&wanted);
+    // a line's trailing spaces left out: an empty last column (a field link's caption, padded since b43ac94bf) is spaces
+    let line = |wanted: &str| lines.iter().any(|line| line.trim_end() == wanted.trim_end());
     assert!(line("Artifact Type     |Artifact Name     |Name Is Pattern   |Inherit Authz     |Filter Map        |Update            |Delete Link       "), "{text}");
     assert!(line("------------------+------------------+------------------+------------------+------------------+------------------+------------------"), "{text}");
     assert!(
@@ -113,7 +114,8 @@ fn artifact_group_detail_renders_as_text_csv_xml_and_html_print() {
         "User Group,Max Hits Count,Max Hits Duration,Tarpit Duration,Delete Link",
         "All Users (all users members by default) - ALL_USERS,100,60,30,",
     ] {
-        assert!(rows.contains(&wanted), "{wanted}\n{csv}");
+        // the Delete Link value is the link's caption, a space, as in the xml (b43ac94bf), so a row's trailing spaces are left out
+        assert!(rows.iter().any(|row| row.trim_end() == wanted), "{wanted}\n{csv}");
     }
     let mut columns = 0;
     for row in &rows {
@@ -491,7 +493,13 @@ fn the_login_page_and_the_root_render_as_html_and_a_failed_login_comes_back_with
     if !crate::common::own_process() {
         return;
     }
-    let gate = start("login");
+    // a 1k cap on uploads, for the multipart login over it below: the conf the server starts with (a setting read from the
+    // factory's conf, not a property set while it runs)
+    let gate = start_with_conf(
+        "login",
+        r#"<webapp-list><webapp name="webroot"><web-protection><requests max-upload="1k"/></web-protection></webapp></webapp-list>"#,
+        &[],
+    );
     let address = gate.server.address();
     let get = |path: &str, cookie: &str| {
         let headers: Vec<(&str, &str)> = if cookie.is_empty() {
@@ -580,16 +588,11 @@ fn the_login_page_and_the_root_render_as_html_and_a_failed_login_comes_back_with
     let (status, headers, text) = multipart("fields", "");
     assert_eq!(status, 302, "{text}");
     assert_eq!(header(&headers, "location").as_deref(), Some("/Login"));
-    moqui_lib::env::set_property(
-        "moqui_conf__webapp_list__webapp__WEBROOT__web_protection__requests__max_upload",
-        "1k",
-    );
     let big = format!(
         "--B0\r\nContent-Disposition: form-data; name=\"doc\"; filename=\"a.txt\"\r\n\r\n{}\r\n",
         "x".repeat(2000)
     );
     let (status, _, text) = multipart("big", &big);
-    moqui_lib::env::clear_property("moqui_conf__webapp_list__webapp__WEBROOT__web_protection__requests__max_upload");
     assert_eq!(status, 413, "{text}");
 
     // the applications screen is html for a signed-in user, with the navbar the shell builds

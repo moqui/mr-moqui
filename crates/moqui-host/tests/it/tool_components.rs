@@ -34,7 +34,7 @@ use std::io::{BufRead, BufReader, Cursor, Read, Write};
 use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
 
-use crate::common::{basic, exchange_bytes, header, http_request, start_with_data};
+use crate::common::{basic, exchange_bytes, header, http_request, start_with_properties};
 use calamine::{Data, Reader};
 use ipp::attribute::IppAttribute;
 use ipp::model::{DelimiterTag, IppVersion, Operation, StatusCode};
@@ -164,7 +164,9 @@ fn xlsx_spreadsheets_images_and_ipp_printing() {
     if !crate::common::own_process() {
         return;
     }
-    let gate = start_with_data("tool-components", DATA);
+    // the print servers are stubs on loopback, which a production instance never asks (get#ServerPrinters, SEC-OUT-02):
+    // the test runs off production, as edge_chat's fake Telnyx does
+    let gate = start_with_properties("tool-components", Some(DATA), &[("moqui_conf__instance__purpose", "test")]);
     let address = gate.server.address();
     let john = basic("john.doe", "moqui");
 

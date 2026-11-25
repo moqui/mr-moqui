@@ -49,7 +49,9 @@ fn empty_db_recreates_factory_once_and_existing_db_does_not() {
     if !crate::common::own_process() {
         return;
     }
-    let root = std::env::temp_dir().join(format!("moqui-factory-restart-{}", std::process::id()));
+    // under /tmp: the embedded Postgres socket, db/data/.s.PGSQL.5432, must stay within the 103 bytes macOS allows, which a
+    // $TMPDIR under /var/folders/... exceeds
+    let root = crate::common::temp_dir("moqui-factory-restart");
     let _ = std::fs::remove_dir_all(&root);
     let runtime = root.join("runtime");
     let component = runtime.join("components/addon/probe");
