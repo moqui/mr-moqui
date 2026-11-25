@@ -801,6 +801,63 @@ fn an_action_asked_from_a_screen_waits_for_its_lease_then_runs() {
     assert!(!field_of(&facade, INSTANCE, "appInstanceId", &app, "instanceUuid").is_empty());
 }
 
+/// The thread that waits for a waiting action's lease reads the action and lease rows its request wrote, so it starts
+/// once that request's transaction commits (InstanceDeploy found it starting at once, seeing neither row, and leaving
+/// the action waiting for good); and it runs as the member who asked, signed in by their username.
+#[test]
+fn a_waiting_action_starts_once_its_request_commits_and_runs_as_who_asked() {
+    let (ctx, facade) = setup();
+    let _guard = ctx.enter();
+    let mut fleet = fleet(&facade, "commit", FakeEngine::docker());
+    let app = on_database_host(&facade, &mut fleet, "commit", "app-commit", "commit.db.test");
+    login(&fleet.vault.maker.user);
+    let registry = lease::registry(ctx.factory());
+    let tx = facade.transactions_for(ACTION).unwrap();
+    assert!(tx.begin(None).unwrap());
+    let requested = crate::actions::request(ctx.factory(), &facade, &registry, &app, "provision", false).unwrap();
+    let lease_id = requested.lease_id.clone().unwrap();
+    fleet.vault.approve(&lease_id);
+    login(&fleet.vault.maker.user);
+    let status = || {
+        field_of(
+            &facade,
+            ACTION,
+            "instanceActionId",
+            &requested.action_id,
+            "statusEnumId",
+        )
+    };
+    std::thread::sleep(Duration::from_millis(500));
+    // its lease is open, and nothing ran: the request has not committed
+    assert_eq!(status(), crate::actions::WAITING);
+    tx.commit().unwrap();
+    let until = std::time::Instant::now() + Duration::from_secs(10);
+    while (status() == crate::actions::WAITING || status() == crate::actions::RUNNING)
+        && std::time::Instant::now() < until
+    {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(status(), crate::actions::DONE);
+    // the provision it ran is recorded as the maker's, so the thread signed in as them
+    let ran: Vec<String> = sys(|| {
+        facade
+            .find(ACTION)
+            .unwrap()
+            .eq("appInstanceId", Value::string(&app))
+            .list()
+            .unwrap()
+            .into_values()
+            .into_iter()
+            .filter(|row| crate::common::field(row, "instanceActionId") != requested.action_id)
+            .map(|row| crate::common::field(&row, "userId"))
+            .collect()
+    });
+    assert!(
+        !ran.is_empty() && ran.iter().all(|user| *user == fleet.vault.maker.user),
+        "{ran:?}"
+    );
+}
+
 #[test]
 fn stop_start_and_remove_go_through_the_host_type_and_the_reconcile_job_observes() {
     let (ctx, facade) = setup();
