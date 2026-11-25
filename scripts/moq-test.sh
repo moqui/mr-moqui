@@ -180,6 +180,20 @@ check "a relative shared path cannot install trust" 1 'absolute directory' -- \
     env MOQUI_SHARED_RUNTIME=relative "$M" trust-dev-cert
 check "trust dry run" 0 'would update dev CA trust' -- \
     env MOQ_DRY_RUN=1 MOQUI_SHARED_RUNTIME="$FIX/no-signer" "$M" trust-dev-cert --system
+# Linux system removal refreshes with --fresh, which drops the removed root's /etc/ssl/certs links; sudo, certutil and
+# update-ca-certificates are stubs that change nothing, and HOME has no NSS store
+if [ "$(uname -s)" = Linux ] && command -v openssl >/dev/null; then
+    mkdir -p "$FIX/trust/bin" "$FIX/trust/home" "$FIX/trust/shared/cert/dev-ca"
+    printf '#!/bin/sh\necho "sudo: $*"\n' > "$FIX/trust/bin/sudo"
+    printf '#!/bin/sh\nexit 0\n' > "$FIX/trust/bin/certutil"
+    cp "$FIX/trust/bin/certutil" "$FIX/trust/bin/update-ca-certificates"
+    chmod +x "$FIX/trust/bin/"*
+    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -keyout "$FIX/trust/root.key" \
+        -subj '/CN=MR Moqui development root' -days 1 -out "$FIX/trust/shared/cert/dev-ca/ca.crt" 2>/dev/null
+    check "system untrust refreshes the store fresh" 0 'sudo: update-ca-certificates --fresh' -- \
+        env HOME="$FIX/trust/home" PATH="$FIX/trust/bin:$PATH" MOQUI_SHARED_RUNTIME="$FIX/trust/shared" \
+        "$M" trust-dev-cert --system --untrust
+fi
 
 # ========== run and load ==========
 

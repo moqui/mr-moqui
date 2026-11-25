@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# moq's save-db, reload-save, clean-db, clean-log, clean-all and tidy-cargo. Sourced by moq, which holds the task table; bash 3.2, as moq is.
+# moq's save-db, reload-save, clean-db, clean-log, clean-dev, clean-all and tidy-cargo. Sourced by moq, which holds the task table; bash 3.2, as moq is.
 
 # ========== database and files ==========
 
@@ -65,9 +65,12 @@ clean_dev() {
     remove_dev_paths
 }
 
+# The task also drops the old cargo artifacts, after the data reset so that a tidy failure leaves the instance reset.
+# clean_dev alone stays data only, for load-save.
 task_clean_dev() {
     [ $# -eq 0 ] || die "clean-dev takes no arguments"
-    clean_dev
+    clean_dev || return 1
+    tidy_cargo
 }
 
 task_clean_all() {
@@ -992,7 +995,7 @@ help_clean_log() {
 help_clean() { help_tidy_cargo; }
 
 help_clean_dev() {
-    echo 'Reset the stopped instance: database, transaction log, OpenSearch data and logs, runtime/log and tmp. Build output, runtime/types among it, stays.'
+    echo 'Reset the stopped instance: database, transaction log, OpenSearch data and logs, runtime/log and tmp. Then tidy-cargo drops the old cargo artifacts; the current build, runtime/types among it, stays.'
 }
 
 help_clean_all() {

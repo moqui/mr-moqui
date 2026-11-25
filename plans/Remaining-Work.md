@@ -80,10 +80,14 @@ Dashboards); the deliberate differences from Java are in [Parity-Diffs](Parity-D
 
 ## Maps
 
-Initial design, not built: [Maps](Maps.md) owns the OpenLayers Tools app, shared full-screen and local-map interface,
-global/personal configuration, OpenFreeMap and ResourceFacade PMTiles delivery. [Delivery stages](Maps.md#9-delivery-and-acceptance)
-include local postal-code coordinates using basic Geo data, Mantle record adapters and BOSS/HOME integration.
-Resource streaming is shared with Media; the LFS placement item below remains a dependency for filesystem git/LFS.
+Design reviewed against the code on November 25, 2026, not built: [Maps](Maps.md) owns the OpenLayers Tools app,
+shared full-screen and local-map interface, global/personal configuration, OpenFreeMap (seeded disabled) and
+ResourceFacade PMTiles delivery. [Delivery stages](Maps.md#9-delivery-and-acceptance) include local postal-code
+coordinates from Geo data an administrator imports ([the Geo data importer](Maps.md#64-geo-data-importer); none
+ships), Mantle record adapters and BOSS/HOME integration. [Stage R](Maps.md#5-resourcefacade-and-tile-streaming),
+the byte access Maps shares with HOME Media, is the first prerequisite: a filesystem-git object that is not in LFS
+and any `location#version` are still read whole for a ranged request, and the LFS placement item below remains a
+dependency for a disk-backed archive in filesystem git.
 
 ## Chat and presence
 
@@ -287,9 +291,12 @@ items) and say how apps plug into the framework in §1.5. The framework items th
 
 ## Framework internals
 
-- **Dev over HTTPS only and the shared runtime** ([Install-DevCA](Install-DevCA.md), plan): the dev conf with no
-  8080 or 4317, a dev CA trusted once, the dev tools on `https://localhost:8443`, and `~/.mr-moqui/` with
-  `moqui install` and `--installed`. Waiting on the user's review before any phase starts.
+- **Left from the dev CA's Linux run** ([Install-DevCA](archive/Install-DevCA.md#linux-verification), archived):
+  Monitor › Logs (the Explore dataset `otel_logs`) showed no rows for any service in a dev run whose receiver accepted
+  OTLP log records over gRPC and HTTP, and whose spans showed in Traces. Not looked into. On Linux,
+  `./moq trust-dev-cert --system` also changes the user's NSS stores, and `--system --untrust` removes the root from
+  them too, while on macOS `--system` touches only the System keychain: decide whether that is wanted and say so in
+  `moq help trust-dev-cert`.
 - **Left from the high-level review** ([High-Level-Review](archive/High-Level-Review.md), archived): the opt-in gRPC
   listener has admission and a TLS deadline but no total connection cap (the family of HL-027 and HL-031); TURN reads
   its UDP sockets by polling on its main thread, though its TCP and TLS connections are now tasks (HL-031); a job run

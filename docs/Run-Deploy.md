@@ -183,7 +183,7 @@ by the prefix of each part (`./moq r-p` is `run-production`).
 | Run a load script against a server | `./moq test-load mr-marble --script OrderToCash` | |
 | Archive the runtime with the binary | `./moq archive --release` | `./gradlew addRuntime` |
 | Remove obsolete cargo artifacts | `./moq clean` | |
-| Reset the local instance and keep builds | `./moq clean-dev` | |
+| Reset the local instance, keep the current build and remove obsolete cargo artifacts | `./moq clean-dev` | |
 | Reset the local instance and remove build output | `./moq clean-all` | `./gradlew cleanAll` |
 | Show the binary's package and features | `target/release/moqui version` (`target\release\moqui.exe version` on Windows) | |
 
@@ -787,8 +787,8 @@ cluster when the entity database is not Postgres. OpenSearch is optional:
 
 `./moq save-db [name]` writes the embedded database to `runtime/save/<name>/moqui.dump`, and the content database beside
 it to `moqui_content.dump`. It also writes the OpenSearch data when there is any. `./moq reload-save [name]` empties the
-database and restores that save. `./moq load-save -n <name> [types]` runs `clean-dev`, loads, and saves. Stop the server
-before a restore. These work on the embedded database only; an external database has its own tools.
+database and restores that save. `./moq load-save -n <name> [types]` resets the instance data as `clean-dev` does,
+leaving the cargo artifacts alone, then loads and saves. Stop the server before a restore. These work on the embedded database only; an external database has its own tools.
 
 ### Backups
 
@@ -955,8 +955,13 @@ A subdomain falls back one label up only: first to `_wildcard.<parent>` (mkcert)
 After that, `default` serves any other name. A domain with no certificate gets a refused handshake. The files are read
 again within seconds of a change, so a renewal needs no restart.
 
-In dev (`moqui_conf__instance__purpose=dev`), an empty certificate directory gets a localhost leaf for DNS, IPv4 and IPv6 loopback.
-The server sends it with its constrained signing intermediate. The public root is `cert/dev-ca/ca.crt`.
+In dev (`moqui_conf__instance__purpose=dev`), an empty certificate directory gets two leaves with one key. `localhost`
+names only `localhost` and is served when the client asks for that name. `default` also names 127.0.0.1 and ::1 and is
+served when the client sends no name, as for `https://127.0.0.1:8443`. gRPC clients built on BoringSSL (grpcio, so
+the Python, Ruby, PHP and C++ OTLP exporters) refuse an address under the intermediate's IP constraints, so point them
+at `https://localhost:8443`. The server sends a leaf with its constrained signing intermediate. The public root is
+`cert/dev-ca/ca.crt`. An issuer made before 2026-11-25 lacks the authority key identifier that Python's strict
+verification wants: `moqui dev-cert --rotate`, then `./moq trust-dev-cert`.
 Run `./moq trust-dev-cert` once per user to establish the shared issuer and trust the root in the
 macOS login keychain or Linux browser NSS stores (`~/.pki/nssdb` for Chromium and Chrome, their snap and Flatpak
 stores, and Firefox's profiles). A system-store client on Linux can use

@@ -75,6 +75,7 @@ Guide [Build-Test, Offline source release](../docs/Build-Test.md#offline-source-
 
 | Item | Source |
 |---|---|
+| `./moq trust-dev-cert --system --untrust` on Debian or Ubuntu now runs `update-ca-certificates --fresh`, so the removed root's `/etc/ssl/certs` links go too (they stayed dangling in the 2026-11-25 run). Checked only by a moq test with a stubbed store: run it on a real one and see that no `mr-moqui` link is left | [Install-DevCA, Linux verification](archive/Install-DevCA.md#linux-verification) |
 | The release pipeline's `offline-source` job (`ci.xml`) needs its `linux-offline` pool: a runner with rootless Podman or Docker and the `localhost/moqui-build` image built with Chromium. The same check ran by hand on 2026-11-24 (`scripts/test-source-archive.sh`, Linux x86-64): the offline build and the Rust and moq tests passed, and the specs but for the Assist canvas frame in Chromium 156 ([Remaining-Work](Remaining-Work.md#tests)), so what is left is provisioning the pool and one tagged run | [JS-Build, Linux checks](archive/JS-Build.md#linux-checks); [Build-Test, Offline source release](../docs/Build-Test.md#offline-source-release) |
 
 ### Load and failure

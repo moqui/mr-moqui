@@ -15,6 +15,11 @@
 //! Local development CA. Only the name-constrained intermediate's signing key persists. The root is valid ten years and
 //! its key is dropped once it signs the intermediate; the intermediate two years, when `moqui dev-cert --rotate` makes a
 //! new pair (and the new root is trusted again). `moqui dev-cert --replace` moves an older self-signed pair aside.
+//!
+//! The two leaves share one key and differ in their names. `localhost` (served for SNI `localhost`) names only the DNS
+//! name: BoringSSL, the TLS of grpcio and so of the Python, Ruby, PHP and C++ OTLP/gRPC exporters, cannot check an IP
+//! address against the intermediate's IP constraints and refuses a leaf that carries one, even for `localhost`.
+//! `default` (served when a client sends no SNI, as for `https://127.0.0.1`) adds the loopback addresses.
 use moqui_lib::{error::Error, private_fs};
 use rcgen::{
     BasicConstraints, CertificateParams, CidrSubnet, DistinguishedName, DnType, ExtendedKeyUsagePurpose,
@@ -56,6 +61,8 @@ fn parameters(name: &str, days: u64) -> CertificateParams {
     params.not_after = (now + Duration::from_secs(days * DAY - 300)).into();
     params.distinguished_name = DistinguishedName::new();
     params.distinguished_name.push(DnType::CommonName, name);
+    // Python's ssl (3.13 and later) verifies strictly and refuses a certificate under a CA without this extension
+    params.use_authority_key_identifier_extension = true;
     params
 }
 
@@ -319,21 +326,28 @@ fn issue(dir: &Path, source: &Path, establish: bool, at: SystemTime) -> io::Resu
     let issuer_pem = zeroize::Zeroizing::new(fs::read(signer_dir.join("issuer.key"))?);
     let der = PrivateKeyDer::from_pem_slice(&issuer_pem).map_err(io::Error::other)?;
     let signer = Issuer::new(authority(true), KeyPair::try_from(&der).map_err(io::Error::other)?);
-    let mut params = parameters("localhost", 397);
-    params.not_after = params.not_after.min((UNIX_EPOCH + Duration::from_secs(end)).into());
-    params.subject_alt_names = vec![
-        SanType::DnsName("localhost".try_into().map_err(io::Error::other)?),
-        SanType::IpAddress(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-        SanType::IpAddress(IpAddr::V6(Ipv6Addr::LOCALHOST)),
-    ];
-    params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
-    let cert = params.signed_by(&key, &signer).map_err(io::Error::other)?;
-    let chain = super::pem("CERTIFICATE", cert.der()) + &issuer_cert;
+    let mut chains = Vec::with_capacity(STEMS.len());
+    for stem in STEMS {
+        let mut params = parameters("localhost", 397);
+        params.not_after = params.not_after.min((UNIX_EPOCH + Duration::from_secs(end)).into());
+        params.subject_alt_names = vec![SanType::DnsName("localhost".try_into().map_err(io::Error::other)?)];
+        if stem == "default" {
+            params.subject_alt_names.extend([
+                SanType::IpAddress(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+                SanType::IpAddress(IpAddr::V6(Ipv6Addr::LOCALHOST)),
+            ]);
+        }
+        params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
+        let cert = params.signed_by(&key, &signer).map_err(io::Error::other)?;
+        chains.push(super::pem("CERTIFICATE", cert.der()) + &issuer_cert);
+    }
     let key = key_pem(&key);
-    let hash = format!("{}\nkey {}", fingerprint(&chain), fingerprint(&key));
+    let mut hash: Vec<String> = chains.iter().map(|chain| fingerprint(chain)).collect();
+    hash.push(format!("key {}", fingerprint(&key)));
+    let hash = hash.join("\n");
     publish(&marker, &format!("{known}\n{hash}"))?;
     let mut sealed = true;
-    for stem in STEMS {
+    for (stem, chain) in STEMS.into_iter().zip(&chains) {
         let name = format!("{}{stem}", moqui_core::seal::secrets::TLS_KEY_PREFIX);
         let disk_key = dir.join(format!("{stem}.key"));
         if moqui_core::seal::secrets::put_named(&name, &key).is_err() {
@@ -342,7 +356,7 @@ fn issue(dir: &Path, source: &Path, establish: bool, at: SystemTime) -> io::Resu
         } else if disk_key.is_file() {
             fs::remove_file(&disk_key)?;
         }
-        publish(&dir.join(format!("{stem}.crt")), &chain)?;
+        publish(&dir.join(format!("{stem}.crt")), chain)?;
     }
     if sealed && !replaced_held.is_empty() {
         // the seal now holds this issue's key under each stem

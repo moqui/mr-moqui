@@ -3,12 +3,13 @@
 // temporary trees), JS_OUTPUT (the served directory that holds the committed MANIFEST.json), JS_PROJECTS (where the
 // npm projects are, when update-js hands it candidate locks) and JS_PACKS. A script installs only with
 // installProject, so lifecycle scripts never run, and ends with finish(), which checks every output against the
-// reviewed MANIFEST.json and publishes the tree in one rename.
+// reviewed MANIFEST.json and publishes the tree in one rename. The progress lines (status) name each npm project
+// installed and each library bundled, as cargo names each crate it compiles.
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 import { npmCommand, esbuildBinary } from './tools.mjs';
 
 export { npmCommand, esbuildBinary };
@@ -21,6 +22,31 @@ export function toLf(data) {
   if (!buf.includes(0x0d)) return buf;
   return Buffer.from(buf.toString('utf8').replace(/\r\n/g, '\n').replace(/\r/g, '\n'));
 }
+/// One progress line: the verb right-aligned in 12 columns, bold on a terminal unless NO_COLOR, as cargo writes them.
+/// On stderr, as cargo's, so a script whose stdout is data (add-library.mjs prints JSON) is not disturbed.
+export function status(verb, text) {
+  const bold = process.stderr.isTTY && !process.env.NO_COLOR && (process.env.TERM || 'dumb') !== 'dumb';
+  const padded = verb.padStart(12);
+  process.stderr.write((bold ? `\x1b[1m${padded}\x1b[0m` : padded) + ' ' + text + '\n');
+}
+
+/// The closing line of a build or a verify: how many npm libraries of which component, and the files they made.
+export function summary({ build, component, libraries, files, output }) {
+  const what = libraries == null ? '' : `${libraries} npm ${libraries === 1 ? 'library' : 'libraries'}` +
+    (component ? ` of ${component}` : '') + ': ';
+  status(build ? 'Built' : 'Verified', `${what}${files} ${files === 1 ? 'file' : 'files'}${output ? ' in ' + output : ''}`);
+}
+
+/// The component a build script runs for: the directory holding the build/ that moq names in JS_BUILD_DIR.
+export function componentName() {
+  return process.env.JS_BUILD_DIR ? basename(dirname(resolve(process.env.JS_BUILD_DIR))) : null;
+}
+
+/// A served directory as the summary names it: relative to its component when moq names one.
+export function outputLabel(dir) {
+  return process.env.JS_BUILD_DIR ? relative(dirname(resolve(process.env.JS_BUILD_DIR)), resolve(dir)) : resolve(dir);
+}
+
 export const run = (cmd, argv, opts = {}) =>
   execFileSync(cmd, argv, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'], ...opts });
 
@@ -100,6 +126,8 @@ export function withWork(workArg, build) {
 export function installProject(project, directory) {
   mkdirSync(directory, { recursive: true });
   for (const name of ['package.json', 'package-lock.json']) cpSync(join(project, name), join(directory, name));
+  const locked = Object.keys(JSON.parse(readFileSync(join(directory, 'package-lock.json'))).packages || {}).filter(Boolean).length;
+  status('Installing', `${basename(project)} from package-lock.json (${locked} ${locked === 1 ? 'package' : 'packages'})`);
   run(npmCommand[0], [...npmCommand.slice(1), 'ci', '--ignore-scripts', '--prefer-offline', '--no-audit', '--no-fund'], { cwd: directory });
   return directory;
 }
@@ -142,7 +170,8 @@ export function publish(here, outputs) {
   }
 }
 
-/// The usual end of a build: check the manifest, then in build mode publish the outputs with the manifest.
+/// The usual end of a build: check the manifest, then in build mode publish the outputs with the manifest. The
+/// summary counts the manifest's libraries.
 export function finish({ here, outputs, manifest, write, build }) {
   const manifestText = JSON.stringify(manifest, null, 2) + '\n';
   checkManifest(here, manifestText, outputs, write);
@@ -150,5 +179,6 @@ export function finish({ here, outputs, manifest, write, build }) {
     outputs.set('MANIFEST.json', Buffer.from(manifestText));
     publish(here, outputs);
   }
-  console.log(`${build ? 'Built' : 'Verified'} ${outputs.size} files`);
+  summary({ build, component: componentName(), libraries: Array.isArray(manifest.libraries) ? manifest.libraries.length : null,
+    files: outputs.size, output: outputLabel(here) });
 }
