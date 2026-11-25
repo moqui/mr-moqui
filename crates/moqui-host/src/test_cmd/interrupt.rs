@@ -241,7 +241,9 @@ fn owned(dir: &Path) -> bool {
 /// The owner of `dir` is this process. On Windows that is the token owner, the SID a new object of this process
 /// receives. A directory under `C:\` inherits Authenticated Users' Modify, so a write probe would accept another
 /// user's leftover scratch runtime and the sweep would remove it. A missing path, a refused read, or a PowerShell
-/// that did not start counts as not owned, and the directory stays.
+/// that did not start counts as not owned, and the directory stays. The owner is read through .NET rather than
+/// `Get-Acl`: Windows PowerShell started from PowerShell 7 inherits its `PSModulePath` and cannot load the module
+/// `Get-Acl` is in, so that variable is not passed on either.
 #[cfg(windows)]
 fn owned(dir: &Path) -> bool {
     std::process::Command::new("powershell")
@@ -252,12 +254,14 @@ fn owned(dir: &Path) -> bool {
             concat!(
                 "$ErrorActionPreference = 'Stop'; ",
                 "$mine = [Security.Principal.WindowsIdentity]::GetCurrent().Owner.Value; ",
-                "$owner = (Get-Acl -LiteralPath $env:MOQUI_OWNED_DIR)",
+                "$owner = [IO.Directory]::GetAccessControl($env:MOQUI_OWNED_DIR, ",
+                "[Security.AccessControl.AccessControlSections]::Owner)",
                 ".GetOwner([Security.Principal.SecurityIdentifier]).Value; ",
                 "if ($owner -eq $mine) { exit 0 } else { exit 1 }"
             ),
         ])
         .env("MOQUI_OWNED_DIR", dir)
+        .env_remove("PSModulePath")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
