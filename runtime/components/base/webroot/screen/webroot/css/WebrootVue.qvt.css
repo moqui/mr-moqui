@@ -210,7 +210,7 @@ body:not(.body--dark) .q-field--outlined .q-field__control { background:var(--m-
 .body--dark .m-drawer > .q-item.m-drawer-current { background:var(--m-drawer-current-bg, color-mix(in srgb, var(--q-primary) 26%, transparent)); }
 
 /* the app title as the menu of the app's top-level screens: the same size as the toolbar title, not a toolbar button */
-.q-btn.m-app-screens { min-height:0; padding:0 8px 0 0; }
+.q-btn.m-app-screens { min-height:0; padding:2px 8px 0 0; }
 .q-btn.m-app-screens .q-icon { font-size:18px; }
 #m-breadcrumbs .q-breadcrumbs__el { color:var(--m-header-fg); }
 .q-btn.m-breadcrumb-menu { min-height:1.5em; margin:0; padding:0 2px; font:inherit; }
