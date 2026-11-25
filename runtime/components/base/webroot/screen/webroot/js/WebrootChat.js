@@ -2497,6 +2497,7 @@
                 '<q-item v-for="option in options" :key="option.value" dense clickable v-close-popup :active="current === option.value" :data-status="option.value" @click="choose(option.value)">' +
                     '<q-item-section avatar class="m-status-avatar"><span class="m-status-dot" :class="\'m-presence-\' + option.dot"></span></q-item-section>' +
                     '<q-item-section>{{option.label}}</q-item-section>' +
+                    '<q-item-section side v-if="current === option.value"><q-icon flat round dense name="sym_o_check"/></q-item-section>' +
                 '</q-item>' +
                 '<q-item dense clickable v-close-popup data-status="message" @click="openDialog">' +
                     '<q-item-section avatar class="m-status-avatar"><q-icon name="sym_o_edit" size="xs"></q-icon></q-item-section>' +
