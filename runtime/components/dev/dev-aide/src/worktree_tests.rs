@@ -14,7 +14,9 @@
 
 use std::path::{Path, PathBuf};
 
-use super::{default_branch, in_worktrees, redirects, removal_refusal, session_refusal, tag_of, worktree_dir};
+use super::{
+    default_branch, ending, in_worktrees, redirects, removal_refusal, session_refusal, tag_of, worktree_dir, Ending,
+};
 use crate::roots::{Root, RootKind};
 
 fn root(id: &str, worktree_of: Option<&str>, conversation: Option<&str>) -> Root {
@@ -145,4 +147,15 @@ fn only_a_worktree_under_the_runtime_is_removed() {
         runtime,
         Path::new("/nowhere/runtime/components/addon/my-site")
     ));
+}
+
+/// When a session's conversation ends, a worktree seen clean is removed; one with uncommitted changes, or one whose
+/// status could not be read, is kept, and its user told once.
+#[test]
+fn a_worktree_of_an_ended_session_goes_only_when_clean() {
+    assert_eq!(ending(Some(""), false), Ending::Remove);
+    assert_eq!(ending(Some("\n"), true), Ending::Remove);
+    assert_eq!(ending(Some(" M NOTE.md\n"), false), Ending::Keep { tell: true });
+    assert_eq!(ending(Some("?? new.txt\n"), true), Ending::Keep { tell: false });
+    assert_eq!(ending(None, false), Ending::Keep { tell: true });
 }

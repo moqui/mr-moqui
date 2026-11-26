@@ -275,7 +275,9 @@ along with this software (see the LICENSE.md file). If not, see
         services they call), and commit statuses from outside CI in GitHub's shape. The paths are open to every user
         (MOQUI_API_GIT in ToolsSecurityData.xml): each service checks the repository's rights (AT_GIT_REPOSITORY), and
         before each write the application that keeps the repository is asked (git-server rest-write-check-service). -->
-    <resource name="git" description="Repositories, merge requests, reviews and pipeline runs">
+    <!-- key-scope: a key made for git alone (an access token, or create#UserScopedKey's git key) signs in here and on the
+        hosting reads below, and nowhere else of this API (SEC-PFS-61, SEC-RTE-85) -->
+    <resource name="git" description="Repositories, merge requests, reviews and pipeline runs" key-scope="git">
         <id name="repositoryId">
             <method type="get"><service name="org.moqui.git.GitRestServices.get#Repository"/></method>
             <resource name="cloneUrls"><method type="get"><service name="org.moqui.git.GitServices.get#GitCloneUrls"/></method></resource>
@@ -351,16 +353,17 @@ along with this software (see the LICENSE.md file). If not, see
         a caller with no credentials), the repository behind a clone or page URL, and the merge requests of every
         repository the caller may view (MOQUI_API_HOSTING in ToolsSecurityData.xml). -->
     <resource name="hosting" description="What the server offers, and the repository behind a URL">
-        <resource name="offer" require-authentication="anonymous-view">
+        <resource name="offer" require-authentication="anonymous-view" key-scope="git">
             <method type="get" require-authentication="anonymous-view"><service name="org.moqui.git.GitRestServices.get#HostingOffer"/></method>
         </resource>
-        <resource name="repository"><method type="get"><service name="org.moqui.git.GitRestServices.resolve#RepositoryUrl"/></method></resource>
-        <resource name="mergeRequests"><method type="get"><service name="org.moqui.git.GitRestServices.find#MergeRequests"/></method></resource>
-        <resource name="agreement"><method type="get"><service name="org.moqui.git.GitRestServices.get#AuthorSigned"/></method></resource>
-        <!-- a client's own keys (plans/design-dev-aide.md 21.2): a key for the LLM gateway alone, and the end of a key it
-            holds, when it is let go -->
+        <resource name="repository" key-scope="git"><method type="get"><service name="org.moqui.git.GitRestServices.resolve#RepositoryUrl"/></method></resource>
+        <resource name="mergeRequests" key-scope="git"><method type="get"><service name="org.moqui.git.GitRestServices.find#MergeRequests"/></method></resource>
+        <resource name="agreement" key-scope="git"><method type="get"><service name="org.moqui.git.GitRestServices.get#AuthorSigned"/></method></resource>
+        <!-- a client's own keys (plans/design-dev-aide.md 21.2, question 18): a key for one service alone (the LLM gateway,
+            git or tasks: scope), made by the account's key only, and the end of a key it holds, when it is let go, which
+            a scoped key may ask for itself alone -->
         <resource name="gatewayKey"><method type="post"><service name="org.moqui.impl.UserServices.create#UserScopedKey"/></method></resource>
-        <resource name="keyRevoke"><method type="post"><service name="org.moqui.impl.UserServices.revoke#UserHeldKey"/></method></resource>
+        <resource name="keyRevoke" key-scope="git tasks gateway"><method type="post"><service name="org.moqui.impl.UserServices.revoke#UserHeldKey"/></method></resource>
     </resource>
 
     <!-- A source server's deploy step (docs/tools/Component-Deploy.md "The gate"): no session; the attestation, signed

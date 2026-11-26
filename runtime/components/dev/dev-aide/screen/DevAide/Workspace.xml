@@ -145,6 +145,10 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/></transition>
     <transition name="startLocalRun"><service-call name="org.moqui.devaide.LocalRunServices.start#LocalRun" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
+    <transition name="localRun" read-only="true"><service-call name="org.moqui.devaide.LocalRunServices.get#LocalRun" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="stopLocalRun"><service-call name="org.moqui.devaide.LocalRunServices.stop#LocalRun" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
     <!-- worktrees for agents' sessions (21.8, P13) -->
     <transition name="hostedRoot" read-only="true"><service-call name="org.moqui.devaide.HostedRootServices.get#HostedRoot" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>

@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<eecas xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-entity-eca.xsd">
+    <!-- An Assist conversation that ends (archived) or is deleted ends its session's worktrees (plans/design-dev-aide.md
+        21.8): once the write commits, a clean one is removed and one with uncommitted changes is kept, its user told
+        (WorktreeServices.end#ConversationWorktrees); one restored from archived clears that notice. The condition is
+        narrow: only a delete, or an update that writes a status into or out of AgcArchived (the stored row read before
+        the write, get-original-value), registers it. A write with no transaction runs it at once, on its own thread.
+        One that cannot be registered is logged, and the conversation's write goes on. -->
+    <eeca id="DevAideConversationWorktrees" entity="moqui.agent.AgentConversation" on-update="true" on-delete="true"
+            get-original-value="true">
+        <condition><expression>eecaOperation == 'delete' || (statusId != null &amp;&amp; originalValue != null
+            &amp;&amp; (statusId == 'AgcArchived') != (originalValue.statusId == 'AgcArchived'))</expression></condition>
+        <actions><script><![CDATA[
+            const name = 'org.moqui.devaide.WorktreeServices.end#ConversationWorktrees'
+            try {
+                // a write with no transaction is in the database already
+                if (ec.transaction.isTransactionInPlace())
+                    ec.service.special().name(name).parameter('conversationId', conversationId).registerOnCommit()
+                else ec.service.async().name(name).parameter('conversationId', conversationId).call()
+            } catch (err) {
+                ec.logger.error(`The worktrees of conversation ${conversationId} were not ended: ${err && err.message ? err.message : err}`)
+            }
+        ]]></script></actions>
+    </eeca>
+</eecas>
