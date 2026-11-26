@@ -481,7 +481,7 @@ pub(crate) fn heap_line() -> String {
             engine.units.borrow().bytes(),
             engine.modules.borrow().len(),
             engine.keys.borrow().len(),
-            engine.entities.borrow().list.len(),
+            engine.entities.borrow().len(),
         );
         for (arena, held) in report.arenas() {
             let _ = write!(line, " {arena}={}/{}/{}", held.live, held.used_bytes, held.reserved_bytes);
@@ -1250,17 +1250,25 @@ impl OxideEngine {
         &self.run
     }
 
-    /// The entity value object this run made for a cell.
+    /// The entity value object this run made for a cell, while it keeps it ([`EntityObjects`]).
     pub(super) fn entity_proxy(&self, cell: &Arc<EntityCell>) -> Option<ObjectRef> {
-        let entities = self.entities.borrow();
-        entities.by_cell.get(&cell_key(cell)).map(|&at| entities.list[at].0.clone())
+        self.entities.borrow_mut().get(cell)
     }
 
+    /// Keep `proxy` as the object of `cell` for the rest of the run, or until it is among the least recently used of
+    /// more than [`MAX_ENTITY_OBJECTS`].
     pub(super) fn keep_entity(&self, proxy: ObjectRef, cell: Arc<EntityCell>) {
-        let mut entities = self.entities.borrow_mut();
-        let at = entities.list.len();
-        entities.by_cell.insert(cell_key(&cell), at);
-        entities.list.push((proxy, cell));
+        self.entities.borrow_mut().keep(proxy, cell);
+    }
+
+    /// Whether this run keeps an object for `cell`, which counts as a use of it.
+    pub(super) fn keeps_entity(&self, cell: &Arc<EntityCell>) -> bool {
+        self.entities.borrow_mut().get(cell).is_some()
+    }
+
+    #[cfg(test)]
+    pub(super) fn kept_entities(&self) -> usize {
+        self.entities.borrow().len()
     }
 
     /// The prototype of `class` (the entity value's or the list's), kept on the engine once made; another class's
@@ -1511,12 +1519,60 @@ pub(super) struct RunState<'a> {
     outer: Option<Outer>,
 }
 
-/// The entity value objects a run made, with their cells, so one converts back to its cell; by the cell's address
-/// too, which the kept cell keeps from being reused.
+/// Most entity value objects a run keeps ([`EntityObjects`]). Past it the least recently used half goes.
+pub(super) const MAX_ENTITY_OBJECTS: usize = 1024;
+
+/// The entity value objects a run made, by their cell's address (which the kept cell keeps from being reused), so a
+/// cell that comes back from the host (`value.create()`, a context read) is the object the script holds.
+///
+/// A kept object is a root: it and its row stay as long as it is kept, whether the script still holds it or not. So
+/// only the most recently used [`MAX_ENTITY_OBJECTS`] are kept, not every value of the run: a script that read a row
+/// at a time for a long while (a loop polling a job's run row) held every row it read until it ended, about 5 KB a
+/// row, a GB over a ServiceJob's 20,000-row import. An object the script hands to the host is kept again
+/// ([`super::bind::entities::object_to_host`], [`super::bind::entities::receiver_state`]), so a method that returns
+/// its receiver returns the same object. Only a cell that comes back another way (a context or a host map) after its
+/// object went is a new object over the same cell: the same fields, but `===` is false.
 #[derive(Default)]
 pub(super) struct EntityObjects {
-    list: Vec<(ObjectRef, Arc<EntityCell>)>,
-    by_cell: std::collections::HashMap<usize, usize, foldhash::fast::RandomState>,
+    by_cell: std::collections::HashMap<usize, KeptEntity, foldhash::fast::RandomState>,
+    /// The use count: a kept object's `used` is its value when the object was last made, found or handed back.
+    uses: u64,
+}
+
+struct KeptEntity {
+    object: ObjectRef,
+    /// Kept with its object, so its address is not reused while the entry is there.
+    cell: Arc<EntityCell>,
+    used: u64,
+}
+
+impl EntityObjects {
+    fn get(&mut self, cell: &Arc<EntityCell>) -> Option<ObjectRef> {
+        self.uses += 1;
+        let uses = self.uses;
+        self.by_cell.get_mut(&cell_key(cell)).map(|kept| {
+            kept.used = uses;
+            kept.object.clone()
+        })
+    }
+
+    fn keep(&mut self, object: ObjectRef, cell: Arc<EntityCell>) {
+        self.uses += 1;
+        let used = self.uses;
+        let kept = KeptEntity { object, cell, used };
+        self.by_cell.insert(cell_key(&kept.cell), kept);
+        if self.by_cell.len() > MAX_ENTITY_OBJECTS {
+            // the newest half stays: the median use and later
+            let mut uses: Vec<u64> = self.by_cell.values().map(|kept| kept.used).collect();
+            let middle = uses.len() / 2;
+            let (_, &mut cutoff, _) = uses.select_nth_unstable(middle);
+            self.by_cell.retain(|_, kept| kept.used >= cutoff);
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.by_cell.len()
+    }
 }
 
 fn cell_key(cell: &Arc<EntityCell>) -> usize {
