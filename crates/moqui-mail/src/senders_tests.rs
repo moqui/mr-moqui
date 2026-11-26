@@ -228,8 +228,8 @@ fn mail_topic(facade: &EntityFacade) -> (EntityValue, String) {
     (server, topic)
 }
 
-/// COM-UI-032: a notification sent inside a transaction is emailed at its commit, its `EmailMessage` id then stored on
-/// the recipient's row, and not at all when it rolls back.
+/// COM-UI-032: a notification sent inside a transaction has its rows in it and is emailed at its commit, its
+/// `EmailMessage` id then stored on the recipient's row; a rollback takes the rows away and sends no email.
 #[test]
 fn a_notification_email_waits_for_the_senders_commit() {
     let _lock = moqui_core::user::session::cookie_property_lock();
@@ -280,6 +280,8 @@ fn a_notification_email_waits_for_the_senders_commit() {
     tx.run(moqui_core::transaction::TransactionAttribute::UseOrBegin, None, || {
         kept = send("Committed");
         assert!(sink.sent().is_empty(), "no email before the commit");
+        let row = user_row(&kept).expect("the row is in the transaction");
+        assert!(text(&row, "emailMessageId").is_empty(), "no email id before the commit");
         Ok::<(), moqui_lib::error::Error>(())
     })
     .unwrap();

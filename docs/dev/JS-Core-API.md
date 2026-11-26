@@ -1261,7 +1261,7 @@ A notification to users, by topic. Each setter returns the builder.
 | `record(entityName, recordId)`, `recordEntityName(name)`, `recordId(id)` | The record the notification is about |
 | `actorUserId(userId)` | Who did what the notification tells of; the current user when not set |
 | `appName(name)` | The app root the notification comes from |
-| `send(persist)` | Sends it; returns the builder. Inside a transaction it is delivered (saved, on the socket, emailed and pushed) when the transaction commits, and dropped if it rolls back; the recipients, title, link and id are set at once |
+| `send(persist)` | Sends it; returns the builder. Inside a transaction the saved notification is written in that transaction (a find there sees it, and a rollback takes it away), and the socket message, email and push go out only when it commits, none if it rolls back |
 | `getTopic()` | The topic |
 | `getNotificationTopic()` | The `NotificationTopic` value of the topic, or null |
 | `getTitle()`, `getLink()` | As expanded by the last send; null before |

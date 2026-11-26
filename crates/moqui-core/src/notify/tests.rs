@@ -180,9 +180,9 @@ fn recipients_dedup_group_explicit_terminated_and_all() {
     assert_eq!(select_count(&sqls, "user_account"), 1, "{sqls:?}");
 }
 
-/// COM-UI-032: a send inside a transaction writes, publishes and mails nothing until it commits, and nothing at all when
-/// it rolls back; at the commit each recipient gets the message once. The id is the caller's at once. With no
-/// transaction in place the send delivers in the call, as before.
+/// COM-UI-032: a send inside a transaction writes its rows in it, which a find in the transaction sees and a rollback
+/// takes away, and publishes nothing until it commits, then once for every recipient; nothing at all for a rollback.
+/// With no transaction in place the send writes and publishes in the call, as before.
 #[test]
 fn a_send_in_a_transaction_waits_for_its_commit() {
     let (ctx, facade) = open();
@@ -232,7 +232,7 @@ fn a_send_in_a_transaction_waits_for_its_commit() {
     // rolled back: no rows, no socket message
     facade.begin(MESSAGE, None).unwrap();
     let dropped = send();
-    assert!(message_of(&dropped).is_none(), "no row before the commit");
+    assert!(message_of(&dropped).is_some(), "the row is in the transaction");
     assert!(lock(&seen).is_empty(), "no socket message before the commit");
     facade.rollback(MESSAGE).unwrap();
     assert!(message_of(&dropped).is_none());
@@ -242,9 +242,10 @@ fn a_send_in_a_transaction_waits_for_its_commit() {
     // committed: one message, a row for each recipient, one socket message for both
     facade.begin(MESSAGE, None).unwrap();
     let id = send();
+    assert_eq!(users_of(&id), ["alice", "bob"], "the rows are in the transaction");
     assert!(lock(&seen).is_empty(), "no socket message before the commit");
     facade.commit(MESSAGE).unwrap();
-    let row = message_of(&id).expect("persisted at the commit");
+    let row = message_of(&id).expect("committed");
     assert_eq!(text(&row, "titleText"), label);
     assert!(text(&row, "messageJson").contains("kept-body"));
     assert!(row.get("sentDate").is_some_and(|value| !value.is_null()));

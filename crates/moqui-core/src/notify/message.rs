@@ -289,18 +289,18 @@ impl NotificationMessage {
 
     /// Resolve recipients, persist when required, publish, then try email and Web Push.
     ///
-    /// Inside a transaction the topic, the settings and the recipients are read now, in it, and the title and link
-    /// expanded, but nothing is written or sent until it commits: the rows, the socket message, the emails and the
-    /// pushes go then, and none of them if it rolls back. [`Self::notification_message_id`] is set at once (its row is
-    /// written at the commit); [`Self::email_message_id_by_user_id`] stays empty, the emails being sent later. With no
-    /// transaction in place all of it happens in this call.
+    /// Inside a transaction the topic, the settings and the recipients are read in it and the rows written in it, so
+    /// they commit or roll back with it, but nothing leaves the process until it commits: the socket message, the
+    /// emails and the pushes go then, and none of them if it rolls back. [`Self::email_message_id_by_user_id`] then
+    /// stays empty, the emails being sent later. With no transaction in place all of it happens in this call, the rows
+    /// in a transaction of their own.
     ///
     /// Email failure is logged. It does not fail this call.
     ///
     /// # Errors
     ///
-    /// Returns an error when the topic name or type is invalid, expansion fails, or, with no transaction in place, the
-    /// rows cannot be written or the message published. At a commit those failures are logged.
+    /// Returns an error when the topic name or type is invalid, expansion fails, the rows cannot be written, or, with no
+    /// transaction in place, the message cannot be published. After a commit a failed publish is logged.
     pub fn send(&mut self) -> Result<(), Error> {
         if self.topic.is_empty() {
             return Err(Error::new("notification topic is required"));
@@ -342,8 +342,7 @@ impl NotificationMessage {
             self.direct_only,
         )?;
         self.notify_user_ids = resolved.users;
-        // The id is sequenced now, so the caller has it at once (getNotificationMessageId) though the row may be written
-        // only at its commit.
+        let caller_tx = open_transaction(&facade);
         let (stored, sent) = if persist {
             let sent = now_value();
             let row = message_row(
@@ -361,8 +360,23 @@ impl NotificationMessage {
                 self.show_alert.unwrap_or(false),
                 &self.record,
             )?;
-            self.notification_message_id = field_str(&row, "notificationMessageId");
-            (Some(row), Some(sent))
+            let id = field_str(&row, "notificationMessageId").unwrap_or_default();
+            self.notification_message_id = Some(id.clone());
+            // In a transaction the rows are its own: they commit or roll back with the change they tell of, a write
+            // that fails is this call's error, and a later find in the transaction sees them. Else they go out with
+            // the rest, below.
+            if caller_tx.is_some() {
+                persist_rows(
+                    &facade,
+                    &row,
+                    &id,
+                    &self.notify_user_ids,
+                    TransactionAttribute::UseOrBegin,
+                )?;
+                (None, Some(sent))
+            } else {
+                (Some(row), Some(sent))
+            }
         } else {
             (None, None)
         };
@@ -396,6 +410,7 @@ impl NotificationMessage {
         let delivery = Delivery {
             topic_name: self.topic.clone(),
             stored,
+            notification_message_id: self.notification_message_id.clone(),
             message_id,
             wrapped,
             topic,
@@ -408,7 +423,7 @@ impl NotificationMessage {
             title: self.title_text.clone().unwrap_or_default(),
             link: self.link_text.clone().unwrap_or_default(),
         };
-        self.email_message_id_by_user_id = match open_transaction(&facade) {
+        self.email_message_id_by_user_id = match caller_tx {
             Some(tx) => {
                 defer_to_commit(&tx, facade, delivery);
                 HashMap::new()
@@ -614,12 +629,18 @@ fn message_row(
     Ok(row)
 }
 
-/// Write the message and its users in a transaction of their own, force-cache, so they go to the database in one batch
-/// at its commit (plans/archive/TX-Cache.md F1). [`NotificationMessage::send`] calls it with no transaction in place:
-/// a sender's transaction is waited for ([`defer_to_commit`]), so no row is written for one that rolls back.
-fn persist_rows(facade: &EntityFacade, row: &EntityValue, id: &str, users: &[String]) -> Result<(), Error> {
+/// Write the message and its users: in the sender's transaction (`UseOrBegin`), so they are kept only if it commits,
+/// or with none in place in one of their own, force-cache, so they go to the database in one batch at its commit
+/// (plans/archive/TX-Cache.md F1).
+fn persist_rows(
+    facade: &EntityFacade,
+    row: &EntityValue,
+    id: &str,
+    users: &[String],
+    attribute: TransactionAttribute,
+) -> Result<(), Error> {
     let tx = facade.transactions_for(MESSAGE)?;
-    tx.run(TransactionAttribute::ForceCache, None, || {
+    tx.run(attribute, None, || {
         row.create(facade)?;
         for user_id in users {
             let mut user = facade.make_value(MESSAGE_USER)?;
@@ -632,13 +653,15 @@ fn persist_rows(facade: &EntityFacade, row: &EntityValue, id: &str, users: &[Str
     .map_err(Error::from)
 }
 
-/// What a send does once its recipients, title and link are known: write the rows, publish to the sockets, email and
-/// push. Built in [`NotificationMessage::send`] from the topic, the user settings and the recipients read then, in the
-/// sender's transaction, so a setting the sender just changed counts; done at once, or at the sender's commit.
+/// What a send does once its recipients, title and link are known: publish to the sockets, email and push, and with no
+/// transaction in place write the rows first. Built in [`NotificationMessage::send`] from the topic, the user settings
+/// and the recipients read then, in the sender's transaction, so a setting the sender just changed counts; done at
+/// once, or at the sender's commit.
 struct Delivery {
     topic_name: String,
-    /// The `NotificationMessage` row to write, for a persisted message.
+    /// The `NotificationMessage` row still to write: a persisted message sent with no transaction in place.
     stored: Option<EntityValue>,
+    notification_message_id: Option<String>,
     message_id: String,
     wrapped: moqui_lib::object::ValueMap,
     topic: Option<EntityValue>,
@@ -653,15 +676,13 @@ struct Delivery {
 }
 
 impl Delivery {
-    /// Persist, publish, then email and push. A failed write or publish is an error and nothing after it is done; one
-    /// recipient's email or push failing is logged and the rest go on. Returns each recipient's saved `EmailMessage` id.
+    /// Persist (when the rows are still to write), publish, then email and push. A failed write or publish is an error
+    /// and nothing after it is done; one recipient's email or push failing is logged and the rest go on. Returns each
+    /// recipient's saved `EmailMessage` id.
     fn deliver(self, facade: &EntityFacade) -> Result<HashMap<String, String>, Error> {
-        let notification_message_id = self
-            .stored
-            .as_ref()
-            .and_then(|row| field_str(row, "notificationMessageId"));
+        let notification_message_id = self.notification_message_id;
         if let (Some(row), Some(id)) = (&self.stored, &notification_message_id) {
-            persist_rows(facade, row, id, &self.users)?;
+            persist_rows(facade, row, id, &self.users, TransactionAttribute::ForceCache)?;
         }
         // The topic carries who the message is for, beside Java's wrapped message, so a socket (here or on a cluster
         // peer) can pick its users. The socket sends the client the wrapped message without it.
@@ -712,10 +733,10 @@ fn open_transaction(facade: &EntityFacade) -> Option<TransactionManager> {
         .find(TransactionManager::in_transaction)
 }
 
-/// Deliver at the commit of `tx`, and never on its rollback, so a notice is not sent for a change that did not happen
-/// (plans/ui-review-basic-comms.md COM-UI-032). The hook runs after the commit, on this thread, with no transaction in
-/// place, so its failures are logged and reach no caller; a send from inside it (an entity ECA rule on the message's
-/// row) waits for that write's own transaction. A hook that cannot be registered delivers now.
+/// Publish, email and push at the commit of `tx`, and never on its rollback, so no notice leaves the process for a change
+/// that did not happen (plans/ui-review-basic-comms.md COM-UI-032); the rows are written in `tx` already. The hook runs
+/// after the commit, on this thread, with no transaction in place, so its failures are logged and reach no caller, and
+/// a send from inside it goes at once. A hook that cannot be registered delivers now.
 fn defer_to_commit(tx: &TransactionManager, facade: EntityFacade, delivery: Delivery) {
     let factory = ExecutionContext::with_current(|ec| Arc::downgrade(ec.factory()));
     let topic_name = delivery.topic_name.clone();
