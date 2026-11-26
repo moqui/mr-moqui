@@ -1043,6 +1043,20 @@ fn the_drawer_calls_over_http_on_postgres() {
         .len(),
         0
     );
+
+    // a turn in an archived conversation brings it back first
+    let (status, _) = john.post("archive", &json!({"conversationId": conversation_id}));
+    assert_eq!(status, 200);
+    fake::script(ENDPOINT, vec![fake::Reply::text("Back again.")]);
+    let again = json!({"text": "One more", "clientMessageId": "john-m-archived", "clientId": "tab-a",
+        "conversationId": conversation_id});
+    let (status, started) = john.post("turn", &again);
+    assert_eq!(status, 200, "{started}");
+    if let Some(run_id) = started["runId"].as_str() {
+        wait(&factory, run_id);
+    }
+    let (_, list) = john.get("conversations", "search=hello");
+    assert_eq!(list["conversations"][0]["statusId"], "AgcActive", "{list}");
 }
 
 const CANVAS_DATA: &str = r#"<entity-facade-xml type="seed">

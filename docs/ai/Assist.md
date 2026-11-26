@@ -307,7 +307,8 @@ once; one working stops at its next check, and the text streamed so far is kept.
 
 `conversationId` (required), `archived` (true by default; false restores). The user's own conversation is archived
 (`AgcArchived`) or restored (`AgcActive`); History marks an archived one and offers Restore. Archiving is refused with
-409 while a run of the conversation is active. What hears a conversation's end acts then: the Dev AIDE ends the
+409 while a run of the conversation is active; a `turn` in an archived conversation restores it first. What hears a
+conversation's end acts then: the Dev AIDE ends the
 session's worktree (plans/design-dev-aide.md 21.8). `{"conversationId", "statusId"}`.
 
 ### `POST retry`
