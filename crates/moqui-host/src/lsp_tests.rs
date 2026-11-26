@@ -120,22 +120,24 @@ impl LspBed {
         }
         std::fs::create_dir_all(dir.join("framework")).unwrap();
         let dir = std::fs::canonicalize(&dir).unwrap();
-        let component = |name: &str| moqui_core::context::ComponentInfo {
+        // `dep` depends on `up`, and nothing refers to it
+        let component = |name: &str, depends_on: &[&str]| moqui_core::context::ComponentInfo {
             name: name.to_string(),
             version: String::new(),
             location: dir.join(name),
-            depends_on: Vec::new(),
+            depends_on: depends_on.iter().map(|on| (*on).to_string()).collect(),
             purposes: Vec::new(),
         };
         let ctx = ExecutionContextFactory::test_context_with_components(
             conf,
             moqui_core::service::ServicePools::idle(),
             dir.join("framework"),
-            vec![component("up"), component("site")],
+            vec![component("up", &[]), component("site", &[]), component("dep", &["up"])],
         );
         let factory = Arc::clone(ctx.factory());
         let mut files = index::directory_files("up", &dir.join("up"));
         files.extend(index::directory_files("site", &dir.join("site")));
+        files.extend(index::directory_files("dep", &dir.join("dep")));
         let index = Box::new(MemoryIndex::of_files(&factory, &files));
         Self {
             dir,
@@ -397,7 +399,7 @@ fn a_rename_edits_a_key_maps_related_and_refuses_an_implied_one() {
     let uri = bed.uri("up/entity/UpEntities.xml");
     let message = bed.rename(&uri, line, character, "thingKey").unwrap_err();
     assert!(
-        message.contains("has no related, so it joins to the field by its own name thingId"),
+        message.contains("has no related, so it joins to the field thingId by its own field"),
         "{message}"
     );
 }
@@ -411,7 +413,7 @@ fn a_rename_is_refused_where_the_quoted_name_is_left() {
     let uri = bed.services_uri();
     let message = bed.rename(&uri, 8, 94, "caption").unwrap_err();
     assert!(
-        message.contains("label is written where the rename does not know what it names"),
+        message.contains("label is written where the rename does not know it is this name"),
         "{message}"
     );
     assert!(message.contains("Uses.xml:2"), "{message}");
@@ -564,4 +566,59 @@ fn a_rename_goes_through_alias_all_auto_parameters_and_a_form_binding() {
             ("UpEntities.xml".to_string(), vec![title(3, 45)]),
         ]
     );
+}
+
+/// The safety scan reaches every component that depends on the target's, and matches the name as a token in any text:
+/// an expression's `row.name` in a `.qvue` of a component that refers to nothing.
+#[test]
+fn the_safety_scan_reaches_dependent_components_and_expressions() {
+    let qvue = "<template><div>{{ row.name }}</div></template>\n";
+    let conf = r#"<moqui-conf><dev-aide site-component="site,up,dep"/></moqui-conf>"#;
+    let mut bed = LspBed::with("dependents", conf, &[("dep/screen/Thing.qvue", qvue)]);
+    let uri = bed.uri("up/entity/UpEntities.xml");
+    let (line, character) = position(UP_ENTITIES, "name=\"name\"", 7);
+    let message = bed.rename(&uri, line, character, "title").unwrap_err();
+    assert!(message.contains("dep/screen/Thing.qvue:1"), "{message}");
+}
+
+/// A relationship with no key-map joins the related primary key to an own field of its name, and a key-map with no
+/// related joins a field of its own name: renaming a field in such an implied map is refused, on either side.
+#[test]
+fn a_rename_is_refused_where_a_relationship_implies_the_key() {
+    let conf = r#"<moqui-conf><dev-aide site-component="site,up"/></moqui-conf>"#;
+    let thing_id = position(UP_ENTITIES, "name=\"thingId\"", 7);
+    let refused = |name: &str, entities: &str| {
+        let mut bed = LspBed::with(name, conf, &[("site/entity/SiteEntities.xml", entities)]);
+        let uri = bed.uri("up/entity/UpEntities.xml");
+        bed.rename(&uri, thing_id.0, thing_id.1, "thingKey").unwrap_err()
+    };
+    let no_key_map = refused(
+        "implied-pk",
+        r#"<entities><entity entity-name="Part" package="site">
+    <field name="partId" type="id" is-pk="true"/><field name="thingId" type="id"/>
+    <relationship type="one" related="up.Thing"/>
+</entity></entities>"#,
+    );
+    assert!(
+        no_key_map.contains("has no key-map, so it joins to the primary key thingId"),
+        "{no_key_map}"
+    );
+    let many = refused(
+        "implied-many",
+        r#"<entities><entity entity-name="Part" package="site">
+    <field name="partId" type="id" is-pk="true"/><field name="thingId" type="id"/>
+    <relationship type="many" related="up.Thing"><key-map field-name="thingId"/></relationship>
+</entity></entities>"#,
+    );
+    assert!(many.contains("has no related"), "{many}");
+    // a view member joining from a member the index cannot follow
+    let unknown = refused(
+        "unknown-member",
+        r#"<entities><view-entity entity-name="PartView" package="site">
+    <member-entity entity-alias="T" entity-name="up.Thing"/>
+    <member-relationship entity-alias="X" join-from-alias="T" relationship="Nope"/>
+    <member-entity entity-alias="U" entity-name="up.Thing" join-from-alias="X"><key-map field-name="thingId" related="thingId"/></member-entity>
+</view-entity></entities>"#,
+    );
+    assert!(unknown.contains("of a member the index cannot follow"), "{unknown}");
 }

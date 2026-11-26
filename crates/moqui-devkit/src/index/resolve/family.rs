@@ -147,6 +147,18 @@ impl Resolver {
             .any(|mark| matches!(mark, Mark::AutoParameters { entity: None, .. }))
     }
 
+    /// The members of the view entity `view` (its id) in the order written, each with its entity's full name: a
+    /// `member-entity`'s, and a `member-relationship`'s by the relationship it follows; none for one the index cannot
+    /// follow.
+    #[must_use]
+    pub fn view_member_entities(&self, view: &str) -> Vec<(String, Option<String>)> {
+        let marks = self.marks_of(view);
+        self.view_members(&marks)
+            .into_iter()
+            .map(|(alias, entity)| (alias.to_string(), entity))
+            .collect()
+    }
+
     /// Each row the owner `owner` (of `kind`) expands, with its name and what it was made from.
     fn provenance(&self, owner: &str, kind: &str) -> Vec<(String, String, Vec<String>)> {
         let mut rows = Vec::new();

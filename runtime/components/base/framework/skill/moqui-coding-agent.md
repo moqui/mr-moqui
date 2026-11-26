@@ -113,11 +113,18 @@ service keeps its file's prefix: give the new `verb#Noun`. It is refused, with t
 name does not resolve; when something reads the name by another name (a prefixed `alias-all`, a REST path
 parameter, a form field posting to a parameter outside the rename); when a use depends on the name itself (an
 `econdition` or `field-map` with no `from`, a `key-map` with no `related`, a relationship with no `key-map` on the
-field as a key); when a service's noun change would change its entity (`entity-auto`, an `auto-parameters` with no
-`entity-name`, a noun that names an entity); when the quoted name is left anywhere else in the components it touches
-(each place is listed: change or check them first); and when an edit would land in an upstream component while
-`dev-aide@allow-upstream-edits` is off: the site components are those of `dev-aide@site-component` in the conf, and
-with none there a rename that edits more than one component is refused. Code actions offer the nearest known names
+field as a key or by its name); when a service's noun change would change its entity (`entity-auto`, an
+`auto-parameters` with no `entity-name`, a noun that names an entity); and when an edit would land in an upstream
+component while `dev-aide@allow-upstream-edits` is off: the site components are those of `dev-aide@site-component` in
+the conf, and with none there a rename that edits more than one component is refused.
+
+Expressions and scripts are not references: a `from="row.statusId"`, a `${statusId}`, a script's or a `.qvue`'s use
+of the name is not something rename can follow. So a rename ends with a scan that decides it: the name as a whole word
+anywhere in the components it may reach (the target's own, every component that depends on it, every component that
+refers to the entity, service or form it is of), in any file, refuses the rename unless the place is one the rename
+edits or one the index proves names another artifact. Each place is listed (up to 20): change or check them, then
+rename again. For a common name this refuses often, by design; rename by hand where it does. Code actions offer the
+nearest known names
 for an unknown entity, service, field or in-parameter (`reference.entity`, `reference.service`, `reference.field`,
 `reference.parameter`). With `--server` rename is refused and the quick fixes find entities and services there.
 
