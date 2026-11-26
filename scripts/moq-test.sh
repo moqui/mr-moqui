@@ -104,6 +104,8 @@ chmod +x "$R/moq"
 mkdir -p "$R/scripts/moq"
 cp "$SRC"/scripts/moq/*.sh "$R/scripts/moq/"
 cp "$SRC/scripts/js-state.pl" "$R/scripts/"
+# need_cargo downloads NASM on Windows (scripts/nasm.sh). The fixture is this tree, so the script has to be here.
+cp "$SRC/scripts/nasm.sh" "$R/scripts/"
 # Minimal verified webroot; CLI command tests run offline with the stub binary.
 webroot="$R/runtime/components/base/webroot"
 mkdir -p "$webroot/build" "$webroot/screen/webroot/libs"
@@ -357,8 +359,31 @@ printf '[workspace]\n\n[patch.crates-io]\n# a patched crate\ncrate-p = { path = 
     >"$R/Cargo.toml"
 : >"$R/Cargo.lock"
 check "build links an add-on component crate" 0 'Linking component crate crate-x' -- "$M" build --debug
-check "the generated crate takes the repository's patches" 0 "^crate-p = \\{ path = \"$R/patches/crate-p\" \\}\$" -- \
+# On Windows the path in that Cargo.toml is a forward-slash drive path (D:/...), which cargo.exe can open. A Git Bash
+# /d/... path is not: cargo.exe looks for D:\d\... and does not find the crate. A backslash in a TOML basic string is
+# an escape. Linux and macOS keep the path the shell already uses.
+patch_root=$R
+case $(uname -s) in
+    MINGW*|MSYS*|CYGWIN*) patch_root=$(cygpath -m "$R") ;;
+esac
+check "the generated crate takes the repository's patches" 0 "^crate-p = \\{ path = \"$patch_root/patches/crate-p\" \\}\$" -- \
     cat "$R/target/moqui-app/Cargo.toml"
+check "the generated crate's component path is one cargo can open" 0 \
+    "^crate-x = \\{ path = \"$patch_root/runtime/components/addon/crate-x\" \\}\$" -- \
+    cat "$R/target/moqui-app/Cargo.toml"
+case $(uname -s) in
+    MINGW*|MSYS*|CYGWIN*)
+        if [ ! -f "$R/target/moqui-app/Cargo.toml" ]; then
+            bad "generated Cargo.toml is missing"
+        elif grep -Eq 'path = "/[A-Za-z]/' "$R/target/moqui-app/Cargo.toml"; then
+            bad "generated Cargo.toml has an MSYS drive path" "$(grep 'path =' "$R/target/moqui-app/Cargo.toml")"
+        elif grep -Eq 'path = "[^"]*\\' "$R/target/moqui-app/Cargo.toml"; then
+            bad "generated Cargo.toml has a backslash in a path" "$(grep 'path =' "$R/target/moqui-app/Cargo.toml")"
+        else
+            ok
+        fi
+        ;;
+esac
 lacks "the generated crate takes no other table of the repository's" '^lto = true' -- cat "$R/target/moqui-app/Cargo.toml"
 rm -rf "$R/runtime/components/addon/crate-x" "$R/patches" "$R/Cargo.toml" "$R/Cargo.lock" "$R/target/moqui-app" "$R/cargo.log"
 check "release flag is gone" 1 'unknown option -r' -- "$M" run -r
