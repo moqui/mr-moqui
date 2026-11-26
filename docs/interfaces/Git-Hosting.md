@@ -135,10 +135,17 @@ first branch pushed) its default branch.
   may listen on a loopback port, which is why the confirmation names the port and the code is good only with the
   app's PKCE verifier; a server whose users never connect an installed app may turn it off. A shared dev server that
   is not on loopback is listed in `webapp-list/webapp[webroot]@app-redirect-uris`, or its users paste a token.
-- **A key for one service.** `create#UserScopedKey` makes a key of the current user that opens only the LLM gateway
-  (`UserLoginKey.scope` `gateway`): every other login (the web, REST, git, a socket) refuses it, and it is in the
-  user's device list. A client that is let go ends what it held with `revoke#UserHeldKey` (the key itself, the user's
-  own only). The REST has both as `hosting/gatewayKey` and `hosting/keyRevoke` (POST).
+- **A key for one service.** `create#UserScopedKey` makes a key of the current user that opens one service alone
+  (`UserLoginKey.scope`): `gateway`, the LLM gateway; `git`, git over HTTP and the REST resources that declare
+  `key-scope="git"` (the `git` resource and the `hosting` reads: `offer`, `repository`, `mergeRequests`, `agreement`);
+  `tasks`, the REST resources that declare `key-scope="tasks"` (Mantle's `my/tasks` and a repository's `issues`). Every
+  other login (the web, any other REST resource, a socket) refuses it, and it is in the user's device list. A REST
+  resource names the scopes it takes (`key-scope`, for it and the resources below it; `mr-rest-api.xsd`), so an
+  application declares its own routes. A client that is let go ends what it held with `revoke#UserHeldKey` (the key
+  itself, the user's own only); a request a scoped key signed in ends that key alone. The REST has both as
+  `hosting/gatewayKey` (made only with the account's key) and `hosting/keyRevoke` (POST; it takes every scope). The Dev
+  AIDE's Connect keeps a `git`, a `tasks` and a `gateway` key, never the account's (plans/design-dev-aide.md 21.2,
+  question 18).
 
 An account page adds and removes SSH keys and creates and revokes access tokens through
 `org.moqui.impl.UserServices` (My Account, Git Access of mr-marble; BOSS's Git Access): `create#UserSshKey`,
@@ -1124,7 +1131,7 @@ call `GitServices`, `GitReviewServices` and `GitCiServices`.
 | `hosting/repository` | GET `url` | `resolve#RepositoryUrl`: the repository a clone, SSH or page URL names, as `get#Repository` |
 | `hosting/mergeRequests` | GET | `find#MergeRequests` across the repositories the caller may view |
 | `hosting/agreement` | GET | `get#AuthorSigned` |
-| `hosting/gatewayKey`, `hosting/keyRevoke` | POST | `create#UserScopedKey` (a key for the LLM gateway alone), `revoke#UserHeldKey` |
+| `hosting/gatewayKey`, `hosting/keyRevoke` | POST | `create#UserScopedKey` (a key for the LLM gateway, git or tasks alone: `scope`), `revoke#UserHeldKey` |
 | `.../mergeRequests/{n}/threads` | GET, POST | `find#ReviewThreads` (`path`), `create#ReviewComment` (a new thread on a line, or a reply: `threadId`) |
 | `.../mergeRequests/{n}/threads/{threadId}/resolve` | POST | `resolve#ReviewThread` (`resolved`, true by default) |
 
@@ -1152,10 +1159,13 @@ with `${name}`, as a `myaddons.xml` location takes them, `sshHost`, `sshPort`, `
 `rest` (the paths above and the OpenAPI document); `signIn` (an installed app's sign-in: `appLogin`, `appToken`,
 `appProviders`, `loopbackRedirect`, `keyRevoke`; [Logging in](#logging-in)); `gateway` (`enabled`, `url`: the LLM
 gateway, `keyPath`: where a key for it alone is made, `requireClient`: whether the key needs an `LlmApiClient`,
-docs/ai/Gateway.md); `agreement` (`path`, `decided`); `forks`. `git-server` `offer-service` (interface
-`add#GitHostingOffer`, with the offer and the user, authorization off) returns the offer as the application has it:
-its REST (`application`: `name`, `restBase`), its task source (`tasks`: `kind`, `path`, and a task app's paths),
-whether it makes forks, and so on. It is asked for callers with no credentials too, so it gives no one's data.
+docs/ai/Gateway.md); `agreement` (`path`, `decided`); `forks`; `pages` (a repository's pages for a person: none
+here). `git-server` `offer-service` (interface `add#GitHostingOffer`, with the offer and the user, authorization off)
+returns the offer as the application has it: its REST (`application`: `name`, `restBase`, and `pages`, the templates of
+a repository's pages it keeps: `file` with `{repositoryPath}`, `{ref}`, `{file}` and `{line}`, `commit` with
+`{commitId}`, `branch` with `{branch}`, absolute URLs on the server's own address, which the Dev AIDE's "Open on the
+server" fills), its task source (`tasks`: `kind`, `path`, and a task app's paths), whether it makes forks, and so on.
+It is asked for callers with no credentials too, so it gives no one's data.
 
 **An application that keeps a repository.** A hosting application with rules of its own (Smithy's roles, confirmed
 addresses, gate and conversation) names `git-server` `rest-write-check-service` (interface `check#GitRestWrite`; none by

@@ -879,3 +879,63 @@ fn an_image_volume_is_a_sized_tmpfs_and_one_that_cannot_be_is_refused() {
         && target.contains("/containers/c0")
         && target.contains("v=true")));
 }
+
+/// A developer's local run is a job's container with the working tree bound over the working directory, as its owner,
+/// `HOME` off the read-only root, and on Podman the host's user kept; never root, never privileged.
+#[test]
+fn a_local_run_mounts_the_working_tree_and_is_kept_in_as_a_job() {
+    let run = super::LocalRun {
+        name: "moqui-devaide-x-1".into(),
+        image: "busybox".into(),
+        command: vec!["sh".into(), "-c".into(), "true".into()],
+        labels: vec![("moqui.devaide.user".into(), "EX_ANN".into())],
+        tree: std::path::PathBuf::from("/home/ann/my-site"),
+        user: Some("1000:1000".into()),
+        memory_mb: 4096,
+        pids_limit: 1024,
+    };
+    let hardening = Hardening::default();
+    let body = super::local_body(&run, &hardening, super::Engine::Docker);
+    let host = &body["HostConfig"];
+    assert_eq!(body["User"], "1000:1000");
+    assert_eq!(body["WorkingDir"], "/workspace");
+    assert_eq!(body["Cmd"], serde_json::json!(["sh", "-c", "true"]));
+    assert!(
+        body["Env"].as_array().unwrap().iter().any(|env| env == "HOME=/tmp"),
+        "{body}"
+    );
+    assert_eq!(body["Labels"]["moqui.devaide.user"], "EX_ANN");
+    assert_eq!(host["Mounts"][0]["Type"], "bind");
+    assert_eq!(host["Mounts"][0]["Source"], "/home/ann/my-site");
+    assert_eq!(host["Mounts"][0]["Target"], "/workspace");
+    assert!(
+        host["Tmpfs"].get("/workspace").is_none() && host["Tmpfs"].get("/tmp").is_some(),
+        "{body}"
+    );
+    assert_eq!(host["Privileged"], false);
+    assert_eq!(host["CapDrop"], serde_json::json!(["ALL"]));
+    assert_eq!(host["ReadonlyRootfs"], true);
+    assert_eq!(host["NetworkMode"], "bridge");
+    assert_eq!(host["Memory"], 4096_i64 * 1024 * 1024);
+    assert!(host.get("UsernsMode").is_none());
+    let podman = super::local_body(&run, &hardening, super::Engine::Podman);
+    assert_eq!(podman["HostConfig"]["UsernsMode"], "keep-id");
+    // a tree root owns runs as the conf's user, never root; an image's user is held to the default
+    let as_root = super::LocalRun {
+        user: Some("0:0".into()),
+        ..run.clone()
+    };
+    assert_eq!(
+        super::local_body(&as_root, &hardening, super::Engine::Docker)["User"],
+        "1000:1000"
+    );
+    let image_user = Hardening {
+        user: None,
+        ..Hardening::default()
+    };
+    let unowned = super::LocalRun { user: None, ..run };
+    assert_eq!(
+        super::local_body(&unowned, &image_user, super::Engine::Docker)["User"],
+        "1000:1000"
+    );
+}
