@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The prompts of @Title@: chips the Assist drawer suggests (docs/ai/Assist.md, GET prompts) on the pages whose /apps path
+    matches screenPathPattern (a regular expression over the whole path), for the agent agentId. sendMode prefill puts
+    the text in the composer; send sends it at once. -->
+<entity-facade-xml type="seed">
+    <moqui.agent.AgentSuggestedPrompt promptId="@ID@_PROMPT_1" agentId="assist" label="@Title@"
+            promptText="Help me with @Title@ on this page." sendMode="prefill" screenPathPattern="/apps/.*" sequenceNum="50"/>
+</entity-facade-xml>

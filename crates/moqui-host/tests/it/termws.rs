@@ -563,20 +563,41 @@ pub fn helper_property() -> (&'static str, String) {
     ("terminal_exec_helper", command.to_string())
 }
 
+/// The Terminal screen with a transition that passes a host session's first `input` too, as the Dev AIDE's Run locally
+/// calls `open#TerminalSession` from its own transition (the Terminal's `open` takes no input from the page).
+const OPEN_WITH_INPUT: &str = r#"<screen-extend>
+    <transition name="openWithInput" method="post" begin-transaction="false" authz-action="view">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/terminal/TerminalWeb.js').execute('web', {verb: 'open#TerminalSession', names: ['kind', 'profileName', 'cols', 'rows', 'input']})</script></actions>
+        <default-response type="none"/>
+    </transition>
+</screen-extend>
+"#;
+
 /// A host session (plans/Terminal-Fancy.md §7): a program on a pty for a user with TERMINAL_HOST on a dev instance,
 /// refused to one without; it echoes, takes the window's size, replays its output to a window that comes back, and
-/// ends with its exit status.
+/// ends with its exit status. One opened with `input` runs it as typed, and its output shows what it ran. The pty is
+/// Unix's: this module is `cfg(unix)`, as the host sessions are, so Windows, with no host session, has none to test.
 #[test]
 fn a_host_session_runs_a_program_on_a_pty() {
     if !crate::common::own_process() {
         return;
     }
     let helper = helper_property();
-    let gate = crate::common::start_with_conf_properties(
+    let gate = crate::common::start_with_conf_files(
         "termws-host",
         Some(PLAIN_USER),
         r#"<terminal><host-profile name="plain" title="Plain sh" command="sh"/></terminal>"#,
         &[("moqui_conf__instance__purpose", "dev"), (helper.0, &helper.1)],
+        &[
+            (
+                "components/addon/term-input/component.xml",
+                r#"<component name="term-input"/>"#,
+            ),
+            (
+                "components/addon/term-input/screen-extend/webroot/screen/webroot/apps/Terminal.xml",
+                OPEN_WITH_INPUT,
+            ),
+        ],
     );
     let address = gate.server.address();
     let page = Page::signed_in(address, "john.doe");
@@ -655,6 +676,24 @@ fn a_host_session_runs_a_program_on_a_pty() {
         Some(serde_json::json!(3)),
         "{listed}"
     );
+
+    // a session opened with input runs it as typed: the shell's output is what the line computes, beside its echo
+    let opened = page.call(
+        "openWithInput",
+        Some(serde_json::json!({"kind": "host", "profileName": "plain", "input": "echo in-$((2+3))\n"})),
+    );
+    let id = opened["sessionId"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{opened}"))
+        .to_string();
+    let mut socket = page.attach(&id, None);
+    let (_, seen) = read_messages_until(&mut socket, "in-5").unwrap();
+    assert!(
+        String::from_utf8_lossy(&seen).contains("echo in-$((2+3))"),
+        "the input as typed: {}",
+        String::from_utf8_lossy(&seen)
+    );
+    socket.send(Message::Binary(b"exit\r".to_vec().into())).unwrap();
 }
 
 /// The holder (plans/Terminal-Fancy.md §7.5): a host session's program runs on through a restart of the server, and the

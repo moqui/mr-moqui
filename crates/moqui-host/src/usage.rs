@@ -375,7 +375,8 @@ changes (the checks of moqui check), go to definition and references (the artifa
 memory and kept current with the open files), hover (an artifact's summary, an element's or
 attribute's documentation from the XSDs), completion (elements, attributes, enumerated values, entity
 and service names) and document and workspace symbols. --server URL answers from a running dev
-instance instead, as moqui check --server does. Logs go to stderr. In the Dev and Debug packages.
+instance instead, as moqui check --server does. Logs go to stderr. In the Maximal (default) and Debug packages,
+and in Lite built with --features devtools.
 --project DIR (or --java DIR) reads another Moqui project, as moqui refs --project does.
 
   moqui lsp

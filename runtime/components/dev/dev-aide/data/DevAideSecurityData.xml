@@ -62,6 +62,17 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.basic.Enumeration enumId="DAA_LOAD" enumTypeId="DevAideAction" description="Data file loaded"/>
     <moqui.basic.Enumeration enumId="DAA_TRY" enumTypeId="DevAideAction" description="Service run for real"/>
     <moqui.basic.Enumeration enumId="DAA_EXPORT" enumTypeId="DevAideAction" description="Docs exported"/>
+    <moqui.basic.Enumeration enumId="DAA_BUILD" enumTypeId="DevAideAction" description="Rebuild (./moq build)"/>
+    <moqui.basic.Enumeration enumId="DAA_CONVERT" enumTypeId="DevAideAction" description="DbForm converted to a site extension"/>
+
+    <!-- The preference an admin sets for a user on System › User (src/vcs.rs PUBLISH_BRANCH): the branch Publish pushes
+        to when the root has none in Settings, `{user}` the username, as `review/{user}`. -->
+    <moqui.basic.Enumeration enumId="DEV_AIDE_PUBLISH_BRANCH" enumTypeId="UserPreferenceKey"
+            description="Dev AIDE publish branch ({user} is the username)"/>
+    <!-- A user's editor settings (src/editor.rs EDITOR), JSON that Dev AIDE › Settings › Editor writes: fontSize, tabSize,
+        wrap, whitespace, keymap, and keys (a command's keys by its name, over the keymap). -->
+    <moqui.basic.Enumeration enumId="DEV_AIDE_EDITOR" enumTypeId="UserPreferenceKey"
+            description="Dev AIDE editor settings (JSON: font size, tab size, wrap, white space, keymap, keys)"/>
 
     <moqui.security.user.NotificationTopic topic="DevReload" description="Dev AIDE reload" typeString="info" showAlert="N"
             persistOnSend="N"/>

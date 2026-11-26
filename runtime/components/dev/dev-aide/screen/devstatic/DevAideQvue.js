@@ -18,8 +18,10 @@
  * with their lines (F10, `stamp_qvue`), under an overlay that selects them; the selection's actions are text edits of
  * the template block (remove, move among its siblings, insert a snippet before, after or inside, edit its tag), so the
  * Text view and this one share one buffer and one undo history. The elements come from `pure.vueElements`, the same
- * scan as the server's stamps. The screen's XML is the `.qvue`'s sibling of the same name; its terminal form, when it
- * has one, is the `.tui.json` beside them.
+ * scan as the server's stamps. The screen's XML is the `.qvue`'s sibling of the same name, a companion buffer of the
+ * same tab (P5): its own view, "Text .xml" (m-dev-qvue-xml), edits it beside "Text .qvue", the canvas renders both
+ * buffers' unsaved text, and the tab's Save writes both. Its terminal form, when it has one, is the `.tui.json` beside
+ * them.
  */
 (function (root) {
     "use strict";
@@ -161,6 +163,14 @@
         return null;
     };
 
+    // The sibling XML screen of a `.qvue`: Board.qvue's Board.xml.
+    pure.qvueXmlPath = (path) => String(path || "").replace(/\.qvue$/, ".xml");
+    // What the canvas renders from (put#CanvasBuffer's files): the `.qvue`'s buffer and its XML's, each only when it has
+    // unsaved text; the files saved are read from disk.
+    pure.canvasFiles = (rootId, tab, xml) => [tab, xml]
+        .filter((buffer) => buffer && !buffer.missing && typeof buffer.text === "string" && buffer.text !== buffer.saved)
+        .map((buffer) => ({ rootId: buffer === tab ? rootId : buffer.rootId || rootId, path: buffer.path, text: buffer.text }));
+
     // The snippets of the insert palette (11.4): Quasar components, the m-* widgets and layout.
     pure.VUE_SNIPPETS = [
         { group: "Layout", label: "Row", text: "<div class=\"row q-col-gutter-md\"></div>" },
@@ -192,11 +202,11 @@
         props: { ctx: { type: Object, required: true }, tab: { type: Object, required: true } },
         data() {
             return { view: null, error: "", mode: "design", width: 0, bufferId: newId(), frameSrc: "", version: 0, selected: -1, hover: null,
-                selectedBox: null, tui: null, rendering: false, frameError: "", tagText: "" };
+                selectedBox: null, tui: null, rendering: false, frameError: "", tagText: "", xml: null };
         },
         computed: {
             elements() { return pure.vueElements(this.tab.text); },
-            xmlPath() { return this.tab.path.replace(/\.qvue$/, ".xml"); },
+            xmlPath() { return pure.qvueXmlPath(this.tab.path); },
             location() { return this.view && this.view.location ? this.view.location.replace(/\.xml$/, ".qvue") : ""; },
             canEdit() { return this.ctx.mayWrite && !this.tab.readOnly; },
             element() { return this.elements[this.selected] || null; },
@@ -208,6 +218,8 @@
         },
         watch: {
             "tab.text"() { this.scheduleRender(); },
+            // the sibling XML's buffer, edited in Text .xml
+            "xml.text"() { this.scheduleRender(); },
             element(element) { this.tagText = element ? this.tab.text.slice(element.start, element.openEnd) : ""; }
         },
         mounted() {
@@ -220,6 +232,8 @@
         methods: {
             t(text) { return moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text; },
             load() {
+                // the sibling XML as a companion buffer of this tab, so its unsaved text renders and Save writes it
+                if (this.ctx.companion) this.ctx.companion(this.ctx.rootId, this.xmlPath).then((buffer) => { this.xml = buffer; }, () => {});
                 this.ctx.get("screenView", { rootId: this.ctx.rootId, path: this.xmlPath }).then((answer) => {
                     this.view = answer.view;
                     this.render();
@@ -236,7 +250,7 @@
             render() {
                 if (!this.view || !this.view.urlPath) { this.frameError = this.view ? moqui.l10n.localize("This screen is not mounted under the apps, so it has no page to show.") : ""; return; }
                 this.rendering = true;
-                const files = this.tab.text !== this.tab.saved ? [{ rootId: this.ctx.rootId, path: this.tab.path, text: this.tab.text }] : [];
+                const files = pure.canvasFiles(this.ctx.rootId, this.tab, this.xml);
                 this.ctx.post("canvasBuffer", { bufferId: this.bufferId, files: JSON.stringify(files) }).then(() => {
                     // Replacing the preview can cancel its fetches before its pagehide listener runs.
                     try {
@@ -363,8 +377,35 @@
     };
     qvueView.data = ((data) => function () { return Object.assign(data.call(this), { widths: WIDTHS, snippets: pure.VUE_SNIPPETS }); })(qvueView.data);
 
+    // "Text .xml" of a .qvue tab: the sibling XML screen's companion buffer in the editor, saved with the tab.
+    const qvueXmlView = {
+        name: "mDevQvueXml",
+        props: { ctx: { type: Object, required: true }, tab: { type: Object, required: true } },
+        data() { return { buffer: null, error: "", schema: null }; },
+        computed: { xmlPath() { return pure.qvueXmlPath(this.tab.path); } },
+        mounted() {
+            this.ctx.companion(this.ctx.rootId, this.xmlPath).then((buffer) => { this.buffer = buffer; }, (error) => { this.error = pure.errorText(error); });
+            this.ctx.schema("screen").then((digest) => { this.schema = digest; }, () => {});
+        },
+        methods: {
+            lint(text) {
+                return this.ctx.post("check", { rootId: this.ctx.rootId, path: this.xmlPath, text }).then((answer) => answer.problems || []);
+            }
+        },
+        template: `
+<div class="column no-wrap m-dev-qvue-xml" id="DevQvueXml">
+  <div v-if="error" class="q-pa-md text-negative">{{error}}</div>
+  <template v-else-if="buffer">
+    <div v-if="buffer.missing" class="q-px-sm text-caption text-warning" id="DevQvueXmlMissing">There is no {{xmlPath.split('/').pop()}} beside this .qvue yet: Save makes it from this text.</div>
+    <div v-if="buffer.readOnly" class="q-px-sm text-caption m-muted">{{buffer.readOnlyReason || 'read only'}}</div>
+    <m-code-editor class="col" v-model="buffer.text" :file-name="xmlPath" :state-key="ctx.rootId + ':' + xmlPath + ':companion'" :read-only="buffer.readOnly || !ctx.mayWrite"
+        :schema="schema" :lint="lint" height="100%" @save="ctx.save()"></m-code-editor>
+  </template>
+</div>`
+    };
+
     const qvt = moqui.qvt;
-    if (qvt && qvt.registerLate) qvt.registerLate("m-dev-qvue-view", qvueView);
+    if (qvt && qvt.registerLate) { qvt.registerLate("m-dev-qvue-view", qvueView); qvt.registerLate("m-dev-qvue-xml", qvueXmlView); }
     if (root.document && !root.document.getElementById("m-dev-qvue-style")) {
         const style = root.document.createElement("style");
         style.id = "m-dev-qvue-style";

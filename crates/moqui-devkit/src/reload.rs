@@ -239,6 +239,15 @@ pub(crate) fn reload_paths_held(factory: &Arc<ExecutionContextFactory>, paths: &
 /// Note a change that takes a restart and that no reload sees, such as a component made in a directory the server did
 /// not load: a report of it, with `summary`, so Dev AIDE's Home offers the restart and its reload log says why.
 pub fn note_restart(factory: &Arc<ExecutionContextFactory>, path: &Path, component: Option<&str>, summary: &str) {
+    note(factory, path, component, summary, false);
+}
+
+/// [`note_restart`] for a change that takes a rebuild (`./moq build`) before the restart, such as a new component crate.
+pub fn note_rebuild(factory: &Arc<ExecutionContextFactory>, path: &Path, component: Option<&str>, summary: &str) {
+    note(factory, path, component, summary, true);
+}
+
+fn note(factory: &Arc<ExecutionContextFactory>, path: &Path, component: Option<&str>, summary: &str, rebuild: bool) {
     let report = ReloadReport {
         at: now_millis(),
         files: vec![FileReload {
@@ -251,9 +260,10 @@ pub fn note_restart(factory: &Arc<ExecutionContextFactory>, path: &Path, compone
             problems: Vec::new(),
             ddl: Vec::new(),
             restart: true,
-            rebuild: false,
+            rebuild,
         }],
         restart: true,
+        rebuild,
         ..ReloadReport::default()
     };
     let reloads = reloads_of(factory);

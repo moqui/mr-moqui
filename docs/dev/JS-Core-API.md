@@ -982,6 +982,7 @@ A response:
 | `getReasonPhrase()` | The reason phrase, or null |
 | `checkError()` | Throws for a status outside 200 to 299; else returns the response |
 | `text()`, `getBodyText()`, `getResponseText()` | The body as text |
+| `text(maxBytes)`, `bytes(maxBytes)` | As `text()` and `bytes()`, throwing when the body is larger than `maxBytes`; a body `send()` left on the server is not read past that, so an answer with no `Content-Length` is bounded too |
 | `bytes()` | The body as a `Uint8Array` |
 | `jsonObject()` | The body parsed as JSON; throws when it is not JSON |
 | `xmlNode()` | The body parsed as XML, an `MNode` |
