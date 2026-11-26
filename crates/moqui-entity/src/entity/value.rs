@@ -33,6 +33,9 @@ use super::load_feed::EcaRule;
 
 use super::{cache, fk, load_feed, sequence};
 
+mod create_values;
+use create_values::convert_fields;
+
 /// The fields of a record by name. A name is shared, not copied: the rows of one read share each column's name, and a
 /// copy of a map shares its names, as Java's entity values share interned field names.
 pub type FieldMap = BTreeMap<Arc<str>, Value>;
@@ -1831,30 +1834,15 @@ impl EntityFacade {
     pub(crate) fn normalize_values(
         &self,
         entity_name: &str,
-        mut values: FieldMap,
+        values: FieldMap,
         update: bool,
     ) -> Result<FieldMap, Error> {
         self.with_entity(entity_name, |entity, _, _| {
-            // Converted in place: the map is usually all fields of the entity, so it is not built again.
-            let mut known = 0;
-            for field in &entity.fields {
-                let Some(value) = values.get_mut(field.name.as_str()) else {
-                    continue;
-                };
-                known += 1;
-                let java = field.java_type.as_str();
-                // Text is a script's or a caller's, so a timestamp without an offset is in the session time zone.
-                if !moqui_lib::object::is_java_type(value, java) {
-                    *value = crate::hooks::basic_convert(value, java).value;
-                }
-            }
-            if known != values.len() {
-                values.retain(|name, _| entity.field(name).is_some());
-            }
-            if !update && entity.field(STAMP).is_some() && values.get(STAMP).is_none_or(Value::is_null) {
-                values.insert(Arc::from(STAMP), self.write_stamp(entity_name));
-            }
-            Ok(values)
+            Ok(convert_fields(
+                entity,
+                values,
+                (!update).then_some(|| self.write_stamp(entity_name)),
+            ))
         })
     }
 

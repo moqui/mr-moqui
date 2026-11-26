@@ -428,3 +428,114 @@ fn an_artifact_groups_patterns_resolve_to_the_artifacts_they_match() {
     let inherited = bed.ids(REF, "operation", "authz-inherit", "toArtifactId");
     assert_eq!(inherited, ["entity:rows.Thing"]);
 }
+
+/// An entity two files define, written in one batch: one row, the later file's, as when each file is written on its
+/// own; an update of the earlier file then takes it.
+#[test]
+fn an_id_two_files_of_a_batch_define_is_the_later_files() {
+    let bed = RowsBed::new("shared");
+    let first = bed.write("entity/AEntities.xml", ROWS_ENTITIES);
+    let second = bed.write("entity/BEntities.xml", ROWS_ENTITIES);
+    let _enter = bed.ctx.enter();
+    let _authz = bed.ctx.disable_authz();
+    let files = bed.files();
+    let later = files
+        .iter()
+        .rposition(|file| file.path == first || file.path == second)
+        .map(|at| files[at].path.display().to_string())
+        .unwrap();
+    let earlier = if later == first.display().to_string() {
+        &second
+    } else {
+        &first
+    };
+    build_files(bed.factory(), files, false).unwrap();
+    let entity = "entity:rows.Thing";
+    let paths = || bed.ids(ARTIFACT, "artifactId", entity, "filePath");
+    assert_eq!(paths(), [later]);
+    assert_eq!(
+        bed.ids(ARTIFACT, "artifactId", "field:rows.Thing.name", "filePath")
+            .len(),
+        1
+    );
+    update_files(bed.factory(), std::slice::from_ref(earlier)).unwrap();
+    assert_eq!(paths(), [earlier.display().to_string()]);
+}
+
+/// A build that finds the rows as the last one read them reads no ids again; one after a write, or a file row another
+/// server changed, does.
+#[test]
+fn a_build_reads_the_ids_again_only_after_the_rows_changed() {
+    let bed = RowsBed::new("loads");
+    let entities = bed.write("entity/ThingEntities.xml", ROWS_ENTITIES);
+    let _enter = bed.ctx.enter();
+    let _authz = bed.ctx.disable_authz();
+    let loads = || state(bed.factory()).loads.load(Ordering::SeqCst);
+    build_files(bed.factory(), bed.files(), false).unwrap();
+    // the first build wrote rows: the next reads the ids, and the one after it not
+    build_files(bed.factory(), bed.files(), false).unwrap();
+    let after = loads();
+    build_files(bed.factory(), bed.files(), false).unwrap();
+    assert_eq!(loads(), after, "nothing changed");
+    assert!(bed.has_artifact("entity:rows.Thing"));
+
+    // a file row changed outside this build: read again
+    {
+        let facade = bed.factory().entity().unwrap();
+        let _lifted = fence::lift();
+        let mut row = facade
+            .find(FILE)
+            .unwrap()
+            .disable_authz()
+            .eq("filePath", Value::string(entities.display().to_string()))
+            .one()
+            .unwrap()
+            .unwrap();
+        row.set("fileHash", Value::string("another server's"));
+        row.update(&facade).unwrap();
+    }
+    let report = build_files(bed.factory(), bed.files(), false).unwrap();
+    assert_eq!(loads(), after + 1);
+    assert_eq!(report.read, 1, "the file read again");
+    build_files(bed.factory(), bed.files(), false).unwrap();
+    assert_eq!(loads(), after + 2, "the build before wrote its rows");
+}
+
+/// A batch with a file whose rows fail (a duplicate key) is written again file by file: the other files' rows are
+/// written, the failing file is logged alone and has no rows, and the next build reads it again.
+#[test]
+fn a_batch_that_fails_is_written_again_file_by_file() {
+    let bed = RowsBed::new("retry-files");
+    let entity = |name: &str| {
+        format!(
+            r#"<entities><entity entity-name="{name}" package="rows"><field name="id" type="id" is-pk="true"/></entity></entities>"#
+        )
+    };
+    bed.write("entity/AEntities.xml", &entity("Apple"));
+    let bad = bed.write("entity/BEntities.xml", &entity("Banana"));
+    bed.write("entity/CEntities.xml", &entity("Cherry"));
+    let bad_path = bad.display().to_string();
+    let _enter = bed.ctx.enter();
+    let _authz = bed.ctx.disable_authz();
+    lock(&FAIL_FILE_WRITE).push(bad_path.clone());
+    let report = build_files(bed.factory(), bed.files(), false).unwrap();
+    lock(&FAIL_FILE_WRITE).retain(|path| *path != bad_path);
+    let logged: Vec<String> = lock(&UNWRITTEN)
+        .iter()
+        .filter(|path| path.starts_with(&bed.dir.display().to_string()))
+        .cloned()
+        .collect();
+    assert_eq!(logged, std::slice::from_ref(&bad_path), "the failing file is logged alone");
+    assert_eq!(report.read, 2, "{report:?}");
+    assert!(bed.has_artifact("entity:rows.Apple"));
+    assert!(bed.has_artifact("entity:rows.Cherry"));
+    assert!(
+        !bed.has_artifact("entity:rows.Banana"),
+        "its batch's rows were rolled back"
+    );
+    assert!(bed.ids(FILE, "filePath", &bad_path, "filePath").is_empty());
+
+    let report = build_files(bed.factory(), bed.files(), false).unwrap();
+    assert_eq!((report.read, report.unchanged), (1, 2), "{report:?}");
+    assert!(bed.has_artifact("entity:rows.Banana"));
+}

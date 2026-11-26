@@ -53,7 +53,7 @@ pub use eca::{
 pub(crate) use eca::{match_rules_with, EcaIndex};
 pub(super) use feed::clear_frame_touches;
 pub use feed::register_feed_insert;
-pub(crate) use feed::{feed_keeps_values, feed_wants_old, note_touch};
+pub(crate) use feed::{feed_keeps_values, feed_wants_old, note_creates, note_touch};
 pub use loader::{
     convert_entity_fields, is_restricted_entity, load_entity_data, load_entity_text, load_entity_xml_text,
     location_in_components, seed_load_running,

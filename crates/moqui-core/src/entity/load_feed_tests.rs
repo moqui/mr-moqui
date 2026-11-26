@@ -854,6 +854,25 @@ fn a_loads_switch_is_this_threads_and_leaves_the_security_checks() {
     assert_eq!(WriteSwitches::current(), WriteSwitches::default());
 }
 
+/// Rows created together run their entity's create ECA rules as a create does, the entity named by its short name too:
+/// each row then goes through its own create, and the security check refuses the admin group's member.
+#[test]
+fn rows_created_together_by_a_short_name_run_the_create_eca_rules() {
+    let (facade, context) = open_eca();
+    let _entered = context.enter();
+    let mut member = facade.make_value("moqui.security.UserGroupMember").unwrap();
+    member.set("userId", Value::string("SEC-NONE"));
+    member.set("userGroupId", Value::string("ADMIN"));
+    member.set("fromDate", Value::string("2001-02-03 04:05:06.0"));
+    let err = facade.create_values("UserGroupMember", vec![member]).unwrap_err();
+    let text = error_chain(&err);
+    assert!(
+        text.contains("not authorized to change membership of group ADMIN"),
+        "{text}"
+    );
+    assert_eq!(admin_member_count(&facade), 0);
+}
+
 #[test]
 fn disable_entity_eca_stores_an_admin_group_member() {
     let (facade, context) = open_eca();
