@@ -154,7 +154,7 @@ pub struct ResponseAction {
 }
 
 /// A `page-action`: an action the Assist drawer offers on every app page of a user who may open the app (the dev-aide's
-/// "Customize this screen", plans/design-dev-aide.md 3.5): it opens the drawer with `agent` and its prompts for the page,
+/// "Customize this screen", plans/archive/design-dev-aide.md 3.5): it opens the drawer with `agent` and its prompts for the page,
 /// or, with `screen`, opens that screen of the app with the page's path and query as `page` (the screen builder's "Open
 /// in screen builder", 11.2).
 #[derive(Clone, Debug, Default)]

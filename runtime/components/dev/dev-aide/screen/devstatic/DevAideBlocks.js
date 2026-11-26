@@ -1,7 +1,7 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
 /*
- * The block tree of the Dev AIDE (plans/design-dev-aide.md 9.2, 11.3, D10): m-dev-block-tree draws the elements of an
+ * The block tree of the Dev AIDE (plans/archive/design-dev-aide.md 9.2, 11.3, D10): m-dev-block-tree draws the elements of an
  * XML outline as blocks, containers holding their children, and turns a gesture into an operation of the lossless XML
  * layer that its view applies to the buffer: a drag within or across containers (the vendored SortableJS, nested
  * groups) a move, Delete a remove, Alt+Up and Alt+Down a move past the sibling, + between blocks an insert. The tree holds

@@ -125,7 +125,7 @@ fn rules_of(factory: &ExecutionContextFactory) -> Arc<EcaRules> {
     Arc::clone(&guard)
 }
 
-/// Read a factory's SECA, EmECA and gitECA rules again from their files and swap them in (plans/design-dev-aide.md
+/// Read a factory's SECA, EmECA and gitECA rules again from their files and swap them in (plans/archive/design-dev-aide.md
 /// 6.1, F4); a call in flight keeps the rules it has. A file that does not parse is logged and skipped, as at a boot.
 /// Answers how many rules of each kind there are now.
 pub fn reload(factory: &ExecutionContextFactory) -> EcaRuleCounts {

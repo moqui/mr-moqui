@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The entity modeler (plans/design-dev-aide.md 8): the entities as the server merged them, with each field's origin
+<!-- The entity modeler (plans/archive/design-dev-aide.md 8): the entities as the server merged them, with each field's origin
     and where an edit goes (the site's extend-entity for an upstream entity, D17), the table against the fields, the
     changes the table check never makes (the full tier, typed confirm, audited) and the load of a modeler's seed data. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
@@ -98,7 +98,7 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="plan" noun="DataLoad" authz-action="view" type="rust" location="dev_aide::data_load::plan_data_load" allow-remote="false" read-only="true">
         <description>What Load the changed records would do with a data file (the buffer's text, or the file): each record
             by entity and primary key compared in the base (the text the last load of the file loaded, else the last
-            commit's), the file and the database (plans/design-dev-aide.md 12). Unchanged in the file: no write; changed
+            commit's), the file and the database (plans/archive/design-dev-aide.md 12). Unchanged in the file: no write; changed
             or added with the database still the base's (or without the row): write; the database already the file's:
             applied; the database changed too: a conflict; removed from the file: a removal to choose, or a conflict when
             the database changed it. The counts, and each record but the unchanged with the fields that differ. A password

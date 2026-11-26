@@ -13,7 +13,7 @@
  */
 
 //! The three-way plan of Load the changed records as vectors: base, file and database for each rule of
-//! plans/design-dev-aide.md 12, and the choices that settle it.
+//! plans/archive/design-dev-aide.md 12, and the choices that settle it.
 
 use std::collections::BTreeMap;
 

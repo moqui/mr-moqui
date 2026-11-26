@@ -432,7 +432,8 @@ pub static CATALOG: &[Unit] = &[
     ),
     single("report", Class::Live),
     single("resource-watch", Class::Live),
-    single("dev-reload", Class::Restart("the file watcher starts at boot")),
+    // the artifact index reads index-writers at each write
+    single("dev-reload", Class::Restart("the file watcher starts at boot")).attrs(&[("index-writers", Class::Live)]),
     single("dev-aide", Class::Live).attrs(&[("shared", BOOT)]),
     // the gate is read once at start, so a conf editor of a running server does not turn it off or point it at another
     // secret or repository (docs/tools/Component-Deploy.md "The gate")

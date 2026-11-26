@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The schema digest (plans/design-dev-aide.md 5.3, F8): the framework's XSDs read into one digest per root element of
+//! The schema digest (plans/archive/design-dev-aide.md 5.3, F8): the framework's XSDs read into one digest per root element of
 //! a Moqui XML file: each element that can appear, the children it takes, and each attribute with its enumerated values,
 //! default, whether it is required, and documentation. It feeds the editor's XML completion (`lang-xml`'s `elements`),
 //! hovers, the schema checks, and later the composer's palette and the properties panels.

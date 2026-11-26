@@ -16,9 +16,10 @@ along with this software (see the LICENSE.md file). If not, see
     (whose files the extend tier writes; the others are upstream and read only), shared mode for a team dev server of one
     instance (with coedit-max-rooms, the most files one user co-edits at once, and coedit-max-total-bytes, the most bytes
     of every co-edited file's room on the server together, F15), the git command and its timeouts
-    (plans/design-dev-aide.md 16), and the limits of Run locally in a job's image (21.5): local-run-memory-mb and
+    (plans/archive/design-dev-aide.md 16), and the limits of Run locally in a job's image (21.5): local-run-memory-mb and
     local-run-pids of each container, local-run-timeout-minutes before a run is stopped, local-run-limit, the runs a user
-    may have going at once, and local-run-copy-mb, the most the copy of a working tree a run works on may hold. -->
+    may have going at once, and local-run-copy-mb, the most the copy of a working tree a run works on may hold; and
+    hosted-max-deleted, the most files a delete of a hosted root's folder removes in its one commit. -->
 <moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-moqui-conf.xsd">
     <screen-facade>
         <screen location="component://webroot/screen/webroot/apps.xml">
@@ -33,8 +34,8 @@ along with this software (see the LICENSE.md file). If not, see
             allow-upstream-edits="false" git-command="git" git-read-timeout="15" git-network-timeout="300" git-write-timeout="120"
             max-edit-bytes="2097152" local-run-memory-mb="4096" local-run-pids="1024" local-run-timeout-minutes="60"
             local-run-limit="2" local-run-copy-mb="1024"
-            coedit-max-rooms="20" coedit-max-total-bytes="67108864">
-        <!-- the apps a task opens in (plans/design-dev-aide.md 14); Settings adds more as DevAideTaskApp rows -->
+            coedit-max-rooms="20" coedit-max-total-bytes="67108864" hosted-max-deleted="2000">
+        <!-- the apps a task opens in (plans/archive/design-dev-aide.md 14); Settings adds more as DevAideTaskApp rows -->
         <task-app name="projects" title="IronStone Projects"
                 project-path="/qapps/Projects/Projects/ProjectDetail?workEffortId={projectId}"
                 task-path="/qapps/Projects/WorkItems/WorkItemDetail?workEffortId={taskId}"/>

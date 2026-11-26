@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Replace across files (plans/design-dev-aide.md 4.3): `replace#Files` of the Workspace. With no `files` it is the
+//! Replace across files (plans/archive/design-dev-aide.md 4.3): `replace#Files` of the Workspace. With no `files` it is the
 //! preview: each file of the root (what git tracks and the untracked files it does not ignore, or a walk of a plain
 //! root) that the query matches, with Rust's regular expressions alone so the preview and the replace read the query
 //! one way; its matches with their lines before and after, its hash, and why it may not be written when the user may

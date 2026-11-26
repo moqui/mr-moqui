@@ -1,7 +1,7 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
 /*
- * The Dev AIDE Workspace client (plans/design-dev-aide.md 4 and 5): m-dev-workspace, the IDE of a root (a repository or a
+ * The Dev AIDE Workspace client (plans/archive/design-dev-aide.md 4 and 5): m-dev-workspace, the IDE of a root (a repository or a
  * plain directory): the repository bar (root, branch, ahead and behind, Fetch, Pull, Push, Commit, Publish), the Code tab
  * (the file tree with git status, Search, the editor tabs in CodeMirror with the file status strip, Problems, the status
  * bar), Changes (staged, changes, untracked; stage, unstage, discard, diff; the commit form with the task trailer) and
@@ -125,7 +125,7 @@
     };
 
     // The changed regions between two texts, by lines: a common prefix and suffix taken off, the rest by the longest common
-    // subsequence of lines (a review's hunks: plans/design-dev-aide.md 13.3).
+    // subsequence of lines (a review's hunks: plans/archive/design-dev-aide.md 13.3).
     pure.hunks = (a, b) => {
         const x = String(a || "").split("\n");
         const y = String(b || "").split("\n");
@@ -210,7 +210,7 @@
         return "M" + x1 + " " + y1 + " C" + (x1 + bend) + " " + y1 + " " + (x2 - bend) + " " + y2 + " " + x2 + " " + y2;
     };
 
-    // The visual views of a file tab (plans/design-dev-aide.md 5.2): each matches the file's root element, and its script
+    // The visual views of a file tab (plans/archive/design-dev-aide.md 5.2): each matches the file's root element, and its script
     // loads on first use and registers its component. A view edits the tab's buffer by the operations of the lossless
     // XML layer, so Text and the view share one undo history and one Save.
     devAide.viewSpecs = devAide.viewSpecs || [];
@@ -1311,7 +1311,7 @@
                 });
             },
             gotoFile(path) { if (!path || this.goto.loading) return; this.goto.open = false; this.openFile(path); },
-            // ---- Assist on this page (plans/design-dev-aide.md 13.4) ----
+            // ---- Assist on this page (plans/archive/design-dev-aide.md 13.4) ----
             editorState() {
                 const tab = this.current;
                 if (!tab) return null;

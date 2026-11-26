@@ -14,7 +14,7 @@
 
 //! The pure parts of the group server connection: the addresses a token goes to, the remotes a server owns, the
 //! `myaddons.xml` edits, and the REST contract of each kind of server: the framework's and an application's (Smithy's
-//! operations under its `restBase`, plans/design-dev-aide.md 21, mr-pass design-smithy §15.5). The calls against a
+//! operations under its `restBase`, plans/archive/design-dev-aide.md 21, mr-pass design-smithy §15.5). The calls against a
 //! server are the host's integration test (`crates/moqui-host/tests/it/devaide_group.rs`), with the instance as its own
 //! group server; a Smithy server is checked here by its contract only, as mr-pass and mr-mantle do not load there.
 

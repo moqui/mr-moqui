@@ -1,4 +1,4 @@
-// The evaluation tasks of the dev agent (plans/design-dev-aide.md P4, 13.1, 19): extend an upstream entity and its form
+// The evaluation tasks of the dev agent (plans/archive/design-dev-aide.md P4, 13.1, 19): extend an upstream entity and its form
 // from the site component, add a list column, find where a service is used, write a spec from a Try in the sim, and
 // try a service as proposed text defines it (F14: an edit, a change set of the user's; another user's change set, a
 // real run over proposed text and a reader's try refused).

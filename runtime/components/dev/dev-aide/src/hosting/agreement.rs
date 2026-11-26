@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The contributor agreement in the Workspace (plans/design-dev-aide.md 21.7, P12; docs/dev/Contributions.md): for a
+//! The contributor agreement in the Workspace (plans/archive/design-dev-aide.md 21.7, P12; docs/dev/Contributions.md): for a
 //! hosted repository whose agreement is on, Changes and Commit warn when the commit's author (git's `user.email` in
 //! the working tree) has not signed, as the server reports it (`/rest/s1/moqui/hosting/agreement`, F18). Sign adds the
 //! author's line under both lists of the repository's `AUTHORS.md` and commits that file alone, by the user. It is a
@@ -141,7 +141,7 @@ pub(crate) fn author_signed(hosted: &super::review::Hosted, email: &str) -> Resu
 }
 
 /// The authors of `emails` who have not signed the hosted repository's agreement where the server decides it
-/// (`known` and `required`): an agent is not given the diff of a merge request of theirs (plans/design-dev-aide.md
+/// (`known` and `required`): an agent is not given the diff of a merge request of theirs (plans/archive/design-dev-aide.md
 /// 21.8, Dogfood §10). A repository an application keeps must have each author decided: there `known` false is a
 /// check that did not answer (the server says so when its agreement hook fails), never a pass. A framework repository
 /// whose server decides no agreement has none to keep.

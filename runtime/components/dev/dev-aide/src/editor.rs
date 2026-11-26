@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The editor settings (plans/design-dev-aide.md 5.1, 16): the user's `DEV_AIDE_EDITOR` preference, JSON of the font
+//! The editor settings (plans/archive/design-dev-aide.md 5.1, 16): the user's `DEV_AIDE_EDITOR` preference, JSON of the font
 //! size, the tab size (none: CodeMirror's), wrap, white space shown, the keymap (CodeMirror's, VS Code's or Vim), the
 //! TypeScript check of a script file (5.4, off by default), and the keys of the code editor's commands a user rebound.
 //! The Workspace hands them to the dev-aide's `m-code-editor`s (`moqui.codeEditor.setSettings`, `WebrootCode.js`), which
@@ -82,7 +82,7 @@ pub(crate) struct EditorSettings {
     pub wrap: bool,
     pub whitespace: bool,
     pub keymap: String,
-    /// The TypeScript checker of a JavaScript tab (plans/design-dev-aide.md 5.4): its diagnostics in the editor's lint.
+    /// The TypeScript checker of a JavaScript tab (plans/archive/design-dev-aide.md 5.4): its diagnostics in the editor's lint.
     pub type_check: bool,
     /// The keys of each command the user rebound, by its name; a command not here has its default keys.
     pub keys: BTreeMap<String, String>,

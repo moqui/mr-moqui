@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Reload reports as notifications (plans/design-dev-aide.md 6.4): each report of the framework (a save, or the file
+//! Reload reports as notifications (plans/archive/design-dev-aide.md 6.4): each report of the framework (a save, or the file
 //! watcher seeing an edit from outside) goes to the dev-aide's users as a `DevReload` notification, which the open
 //! Workspace pages take to refresh their tree, their status and the tabs of the files. The listener is installed by the
 //! first dev-aide service a factory runs (the Workspace asks for its roots when it opens), so the component needs no tool

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Load the changed records of a data file, three ways (plans/design-dev-aide.md 12, the part of
+//! Load the changed records of a data file, three ways (plans/archive/design-dev-aide.md 12, the part of
 //! plans/proposals/Data.md that the Dev AIDE has): each record, by entity and primary key, is compared in the base (the
 //! file's text as it was last loaded, a `DevDataLoadBaseline` row, else the last commit's), the file (the buffer) and
 //! the database. A record unchanged in the file is not written; one changed in the file is written only where the

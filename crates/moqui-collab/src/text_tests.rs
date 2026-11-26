@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A co-edited file's room (plans/design-dev-aide.md F15) with the dev-aide's answers stood in for: who may join, the
+//! A co-edited file's room (plans/archive/design-dev-aide.md F15) with the dev-aide's answers stood in for: who may join, the
 //! seed from the file's text, two editors converging, the bounds on an update, the document and a user's rooms, the
 //! room dropped with its last member, and a writer who lost the right dropped at the next check.
 
@@ -47,7 +47,7 @@ fn writer(text: &str) -> Result<TextAccess, u16> {
 fn not_a_writer() -> Result<TextAccess, u16> {
     Ok(TextAccess {
         can_edit: false,
-        reason: "runtime/component/x is upstream: extend it in site".into(),
+        reason: "runtime/components/addon/x is upstream: extend it in site".into(),
         text: None,
         hash: None,
         max_bytes: 64,

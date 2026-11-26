@@ -2021,7 +2021,7 @@ mod signal_tests {
     use std::process::{Command, Stdio};
     use std::time::Duration;
 
-    /// A restart asked for from the app ends the listeners as a signal does (plans/design-dev-aide.md 6.5); `serve` then
+    /// A restart asked for from the app ends the listeners as a signal does (plans/archive/design-dev-aide.md 6.5); `serve` then
     /// runs the binary again.
     #[test]
     fn a_restart_request_shuts_down_as_a_signal_does() {

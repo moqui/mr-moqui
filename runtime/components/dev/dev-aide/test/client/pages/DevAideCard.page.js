@@ -1,6 +1,6 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
-// The change set card from a patch, in the page (plans/design-dev-aide.md 13.3): m-assist-change-set of
+// The change set card from a patch, in the page (plans/archive/design-dev-aide.md 13.3): m-assist-change-set of
 // js/WebrootAssist.js, mounted with Vue and Quasar on the card the server makes of a patch. The card and its files are
 // test/vectors/change-card-vectors.json, whose cards src/agent/propose_card_tests.rs holds to change_card: what it
 // changes as artifacts, its files with their counts and side, and the new titles a business user may word, written

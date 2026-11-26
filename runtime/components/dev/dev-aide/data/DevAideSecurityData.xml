@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Who may use Dev AIDE (plans/design-dev-aide.md 3.4): the app's screens for ADMIN and the two dev-aide groups, and the
+<!-- Who may use Dev AIDE (plans/archive/design-dev-aide.md 3.4): the app's screens for ADMIN and the two dev-aide groups, and the
     three tiers the services check: DEV_AIDE_VIEW reads, DEV_AIDE_EXTEND writes inside site components, DEV_AIDE does
     everything. Seed of the dev-aide, so it exists only where the component loads (a dev instance). -->
 <entity-facade-xml type="seed">

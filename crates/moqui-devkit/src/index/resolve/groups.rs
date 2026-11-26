@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The artifact groups' members whose names are patterns (plans/design-dev-aide.md 7.1, `super::super::rows`): each
+//! The artifact groups' members whose names are patterns (plans/archive/design-dev-aide.md 7.1, `super::super::rows`): each
 //! group's patterns as its marks keep them, compiled once, and each pattern member's reference made one for each
 //! artifact it matches. A pattern is matched whole by `moqui_lib`'s Java-compatible matcher, as authorization matches
 //! it (`moqui_core::user::authz`); one that does not compile matches nothing.

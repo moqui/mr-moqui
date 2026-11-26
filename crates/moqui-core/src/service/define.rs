@@ -1036,7 +1036,7 @@ fn comment_failures(files: &BTreeSet<PathBuf>) -> Vec<String> {
     failures
 }
 
-/// What [`reload`] changed for the service files it was given (plans/design-dev-aide.md 6.1, F3).
+/// What [`reload`] changed for the service files it was given (plans/archive/design-dev-aide.md 6.1, F3).
 #[derive(Clone, Debug, Default)]
 pub struct ServiceReload {
     /// Services of the changed files that the registry did not define before.
@@ -1169,7 +1169,7 @@ fn failures_of(registry: &Registry, changed: &[PathBuf], names: &BTreeSet<String
         .collect()
 }
 
-/// What the service files of an overlay define (plans/design-dev-aide.md F14, for services): each service of the
+/// What the service files of an overlay define (plans/archive/design-dev-aide.md F14, for services): each service of the
 /// files' groups as a reload of them would resolve it, and each that implements or includes one of them, transitively;
 /// `None` for one the groups defined before and do not now. The registry is not changed.
 pub(crate) struct OverlaidDefinitions {

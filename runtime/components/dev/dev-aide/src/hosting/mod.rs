@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.devaide.HostingServices`: the Dev AIDE with a group server (plans/design-dev-aide.md 21, P11). A group
+//! `org.moqui.devaide.HostingServices`: the Dev AIDE with a group server (plans/archive/design-dev-aide.md 21, P11). A group
 //! server is a connection ([`connect`]: what it offers, the user's token, and what Connect sets from it); a working
 //! tree's remote resolves to its hosted repository there, whose merge requests are listed, opened, proposed and checked
 //! out ([`review`]), and reviewed with the server's threads ([`threads`]); the checks of its commits and their jobs

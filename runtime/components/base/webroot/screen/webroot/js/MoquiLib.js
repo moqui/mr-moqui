@@ -555,7 +555,7 @@
             }
             if (method !== "GET" && moqui.sessionToken && !headers["X-CSRF-Token"]) headers["X-CSRF-Token"] = moqui.sessionToken;
             // a page opened as a preview of proposed screen text (moquiPreview in its URL, a dev instance) asks for every
-            // part of itself the same way (plans/design-dev-aide.md F14)
+            // part of itself the same way (plans/archive/design-dev-aide.md F14)
             if (moqui.previewToken) headers["X-Moqui-Preview"] = moqui.previewToken;
             if (moqui.aideMode) headers["X-Moqui-Aide"] = moqui.aideMode;
             const init = { method, headers, credentials: "same-origin", signal: opts.signal };

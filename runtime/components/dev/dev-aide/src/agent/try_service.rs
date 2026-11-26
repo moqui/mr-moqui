@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `try_service` (plans/design-dev-aide.md 9.4 and 13.2): run a service in the sim overlay (the default) as the user,
+//! `try_service` (plans/archive/design-dev-aide.md 9.4 and 13.2): run a service in the sim overlay (the default) as the user,
 //! and answer its out-parameters, messages and errors and the rows it would write, which a spec's `checkData` can be
 //! written from; nothing is kept. A real run is a write the user approves, as any service call of an agent. In the sim
 //! it may run as a proposal defines it (F14 for services, 13.3's "a Try on proposed text"): a change set of the

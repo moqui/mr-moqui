@@ -1,7 +1,7 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
 /*
- * The entity view of the Dev AIDE (plans/design-dev-aide.md 8): m-dev-entity-view, a visual view of an entity file's
+ * The entity view of the Dev AIDE (plans/archive/design-dev-aide.md 8): m-dev-entity-view, a visual view of an entity file's
  * tab. One entity at a time, as the server merged it (get#EntityView): its header with the origin (the defining
  * component, each component whose extend-entity adds to it), the fields, the relationships, the incoming ones, the
  * indexes, the EECA rules, the table against the fields and the first rows; for a view entity its members, aliases,

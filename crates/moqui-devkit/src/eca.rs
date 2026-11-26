@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The ECA rules as the framework holds them (plans/design-dev-aide.md 10), for the dev-aide's ECA list: each SECA,
+//! The ECA rules as the framework holds them (plans/archive/design-dev-aide.md 10), for the dev-aide's ECA list: each SECA,
 //! EECA, EmECA and gitECA rule with its file and line, read from the files in the order and with the rules the loads
 //! use (components in order, files by name; a later rule with an id replacing an earlier one with that id; SECA and
 //! gitECA by priority, an entity's EECA rules with no id first), and the rules a later one replaced, marked so with

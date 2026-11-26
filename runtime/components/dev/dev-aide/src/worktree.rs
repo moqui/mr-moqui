@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A worktree for an agent's session (plans/design-dev-aide.md 21.8, question 19): `git worktree add` of a working
+//! A worktree for an agent's session (plans/archive/design-dev-aide.md 21.8, question 19): `git worktree add` of a working
 //! tree, on a branch of its own, under the runtime's `worktrees` directory, kept as a temporary root ("worktree of X")
 //! bound to an Assist conversation. The file and git tools of that conversation are rooted in it in place of X
 //! (`agent::session_context`), so two sessions edit two worktrees of one repository and share no uncommitted change. A

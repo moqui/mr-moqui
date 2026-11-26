@@ -505,7 +505,7 @@
             https-listen-port: the port the built-in HTTPS listener binds, with certificates from runtime/cert: empty is
                 8443, "off" none.
             http-bind: the address the HTTP listener binds, every address when empty; 127.0.0.1 keeps it local (a dev
-                instance with the dev-aide gives code execution to its users: plans/design-dev-aide.md 15).
+                instance with the dev-aide gives code execution to its users: plans/archive/design-dev-aide.md 15).
             allowed-hosts: the Host names (with the port, as the header gives it: 127.0.0.1:8080) a request straight to a
                 listener must name, comma separated, or it is answered 421; empty takes any. The Desktop app's node sets
                 its own loopback names, against DNS rebinding.
@@ -1532,8 +1532,10 @@
         <allow component="site" repository-url="https://git.example.com/git/site.git" branch="main"/>). With
         require-passed-run true, deploy#Component, update#Component and load#Component refuse anything else: a deploy
         from this server's own pages needs such an attestation too. -->
-    <!-- The dev tools' project cache (crates/moqui-devkit): projects is how many it keeps (at least 1). -->
-    <dev-reload projects="3"/>
+    <!-- The dev tools (crates/moqui-devkit): projects is how many projects their cache keeps (at least 1); index-writers
+        the connections the artifact index writes its rows on at once, at most one more than the pool's connections the
+        request and service workers leave (at least 1). -->
+    <dev-reload projects="3" index-writers="3"/>
 
     <!-- enabled: deploying a component from a git URL (System > Components) runs its code and loads its data: it needs
         the sealed COMPONENT_DEPLOY permission, and on a production instance also this set to true

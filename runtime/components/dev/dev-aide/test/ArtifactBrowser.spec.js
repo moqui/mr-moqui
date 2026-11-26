@@ -1,4 +1,4 @@
-// The Artifact Browser in the terminal (plans/design-dev-aide.md 7.3, D14): the BrowseTui twin with the
+// The Artifact Browser in the terminal (plans/archive/design-dev-aide.md 7.3, D14): the BrowseTui twin with the
 // artifact-browser component and the find below it, and the browse transition's answer, the references grouped and
 // filtered on the server (get#ArtifactBrowse). The component's keys are the moqui-tui crate's tests
 // (src/components/artifact_browser_tests.rs, tests/artifact_browser.rs); the grouping's cases are the dev-aide crate's

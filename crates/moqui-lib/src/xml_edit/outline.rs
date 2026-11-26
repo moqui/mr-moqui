@@ -14,7 +14,7 @@
 
 //! The outline of an XML text: its elements as a tree, each with the [`Locator::Path`](super::Locator) the operations
 //! take, its attributes as values (entities expanded), its line and its span in UTF-16 code units, as a browser editor
-//! counts. The visual views of the dev-aide read it (plans/design-dev-aide.md 5.2), so the paths they write are the
+//! counts. The visual views of the dev-aide read it (plans/archive/design-dev-aide.md 5.2), so the paths they write are the
 //! ones this layer reads.
 
 use serde::Serialize;

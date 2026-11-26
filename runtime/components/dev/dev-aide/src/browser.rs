@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `get#ArtifactBrowse`: the Artifact Browser's graph for the terminal (plans/design-dev-aide.md 7.3, D14), the answer
+//! `get#ArtifactBrowse`: the Artifact Browser's graph for the terminal (plans/archive/design-dev-aide.md 7.3, D14), the answer
 //! of `Artifacts/BrowseTui`'s `browse` transition that the `artifact-browser` component draws. An artifact as
 //! `get#ArtifactDetail` shows it with the browser's links, and its references both ways as `get#Refs` reads them,
 //! grouped into sections by the other side's kind and filtered as the browser filters them ([`sections`], the port of

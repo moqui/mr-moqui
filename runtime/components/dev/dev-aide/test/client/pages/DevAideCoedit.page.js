@@ -1,6 +1,6 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
-// Co-editing a file (DevAideCoedit.js, plans/design-dev-aide.md F15), in the page: the pure parts, and two Workspace
+// Co-editing a file (DevAideCoedit.js, plans/archive/design-dev-aide.md F15), in the page: the pure parts, and two Workspace
 // tabs on one room of a fake server (the protocol of moqui.coedit.Provider, the room seeded from the file as
 // moqui-collab's text rooms are), each bound to an m-code-editor's extensions (y-codemirror.next): an edit in one shows
 // in the other and in its tab's text, a tab's unsaved edits go into a room still at the file, the other's caret shows

@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The screen tree (plans/design-dev-aide.md 11.1): a screen's subscreens as the screen facade mounts them (a file in
+<!-- The screen tree (plans/archive/design-dev-aide.md 11.1): a screen's subscreens as the screen facade mounts them (a file in
     the parent's directory, a subscreens-item, a conf mount, a row), each with its menu title and index, whether it is the
     default, its render modes and authentication; Children goes a level down, Design opens it in the builder. New
     subscreen makes a file from a gallery archetype in the parent's directory. A list, so the terminal reaches it. -->

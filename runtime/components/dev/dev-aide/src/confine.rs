@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Path confinement (plans/design-dev-aide.md 4.1): a path the client names is relative to a root, and resolves inside
+//! Path confinement (plans/archive/design-dev-aide.md 4.1): a path the client names is relative to a root, and resolves inside
 //! the root's canonical directory or not at all: no absolute path (`/x`, `C:\x`, `\\server\share`, `\\?\`), no `..`, no
 //! symlink that leads out, nothing under `.git`, and nothing on the deny list (the runtime's database and its saved
 //! copies, logs, transaction log, temporary files, `.env` and its copies, certificates, SFTP root and installed
@@ -49,7 +49,7 @@ pub const ENV_PREFIX: &str = ".env";
 /// only at the full tier ([`hidden_below_full`]).
 pub const CONF: &str = "conf";
 
-/// The runtime directory of the agents' worktrees (plans/design-dev-aide.md 21.8): reached only as their own roots.
+/// The runtime directory of the agents' worktrees (plans/archive/design-dev-aide.md 21.8): reached only as their own roots.
 pub const WORKTREES: &str = "worktrees";
 
 /// A path the client may use, inside `root`.

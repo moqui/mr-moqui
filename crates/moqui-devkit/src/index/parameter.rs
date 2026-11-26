@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The parameters of the artifacts that have them (plans/design-dev-aide.md 7.1): a service, a screen, a transition and
+//! The parameters of the artifacts that have them (plans/archive/design-dev-aide.md 7.1): a service, a screen, a transition and
 //! a REST method. Each owner gives its parameters as [`ParamSpec`]s (a direction, a name, a type, whether it is
 //! required and a default), and [`parameter_row`] makes the one id, name and summary form of a parameter artifact for
 //! every owner kind, read from a file, expanded or derived.

@@ -13,7 +13,7 @@
  */
 
 /*
- * The Artifact Browser canvas (plans/design-dev-aide.md 7.3, D9, P9): the current artifact in the center, what uses it
+ * The Artifact Browser canvas (plans/archive/design-dev-aide.md 7.3, D9, P9): the current artifact in the center, what uses it
  * in a card to its left and what it uses in a card to its right (above and below in the vertical orientation), each
  * card a section per kind; expanding a row adds a card in the next column out with that row's own users or uses, joined
  * to the row by one connector. Absolutely placed Quasar cards on m-pan-zoom (the wheel zooms at the pointer, a drag pans,

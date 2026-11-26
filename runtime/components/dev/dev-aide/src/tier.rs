@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The tiers of access (plans/design-dev-aide.md 3.4): `DEV_AIDE_VIEW` reads, `DEV_AIDE_EXTEND` also writes inside site
+//! The tiers of access (plans/archive/design-dev-aide.md 3.4): `DEV_AIDE_VIEW` reads, `DEV_AIDE_EXTEND` also writes inside site
 //! components, `DEV_AIDE` does everything. Every dev-aide service asks [`require`] first, which also refuses on any
 //! instance purpose but dev: the tools give code execution as the server's OS user (D15), and refuses a write to a
 //! request logged in by a header.

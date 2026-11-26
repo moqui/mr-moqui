@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.devaide.VcsServices`, git depth (plans/design-dev-aide.md 4.5 to 4.7, P8): hunks staged, unstaged and
+//! `org.moqui.devaide.VcsServices`, git depth (plans/archive/design-dev-aide.md 4.5 to 4.7, P8): hunks staged, unstaged and
 //! discarded one at a time; branches renamed, deleted, merged and compared; tags and stashes; revert and cherry-pick;
 //! a commit's files browsed; blame; the operation in progress and its conflicts, resolved or aborted; remotes; and a
 //! clone into a component directory. Each write takes the user's tier, is audited, and answers a conflict as a state
@@ -286,7 +286,7 @@ fn get_branches(
             continue;
         }
         let Tracking { ahead, behind, gone } = track(fields[3]);
-        // the head commit: the status chip of the branch (plans/design-dev-aide.md 21.5)
+        // the head commit: the status chip of the branch (plans/archive/design-dev-aide.md 21.5)
         let row = json!({
             "name": fields[1], "upstream": fields[2], "ahead": ahead, "behind": behind, "gone": gone,
             "current": fields[4] == "*", "date": fields[5], "commit": fields[6], "subject": fields[7],

@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Screens › Design's terminal twin (plans/design-dev-aide.md 11.2, D14): a screen from get#ScreenView, from its file
+<!-- Screens › Design's terminal twin (plans/archive/design-dev-aide.md 11.2, D14): a screen from get#ScreenView, from its file
     (rootId, path) or an app page (page), with the pending line of the user's edit buffer, and tabs: Design (the screen's
     outline as a tree, each element opening its properties from the schema digest and the intents its kind offers: Add
     field or column, filter, row action, section or button, Insert before, after or inside, Remove, Move up and down,

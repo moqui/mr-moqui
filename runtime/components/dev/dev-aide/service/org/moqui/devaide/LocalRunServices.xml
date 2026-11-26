@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Run locally (plans/design-dev-aide.md 21.5, question 20), implemented in the dev-aide crate (src/local_run.rs):
+<!-- Run locally (plans/archive/design-dev-aide.md 21.5, question 20), implemented in the dev-aide crate (src/local_run.rs):
     one job of the working tree's ci.xml, its script steps and its variables, run in a host session of the Terminal on
     this machine, not in the job's image, with none of its secrets; or, where Docker or Podman answers here, in a
     container of the job's image through the CI driver (moqui_git::ci::driver::docker::start_local), on a copy of the
@@ -88,7 +88,7 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters><parameter name="removed" type="Boolean"/></out-parameters>
     </service>
 
-    <!-- Rebuild from the app (plans/design-dev-aide.md 6.5), src/rebuild.rs. -->
+    <!-- Rebuild from the app (plans/archive/design-dev-aide.md 6.5), src/rebuild.rs. -->
     <service verb="rebuild" noun="Server" type="rust" location="dev_aide::rebuild::rebuild_server" allow-remote="false">
         <description>./moq build of the package this server runs (--debug for target/debug/moqui, and so on), typed into
             a new host session of the Terminal in the checkout as exec ./moq build, so the session ends with the build's

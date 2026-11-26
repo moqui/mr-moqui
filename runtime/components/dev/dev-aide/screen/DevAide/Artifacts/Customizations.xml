@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Customizations (plans/design-dev-aide.md 7.2, D17): every extension the site components make (an extend-entity, a
+<!-- Customizations (plans/archive/design-dev-aide.md 7.2, D17): every extension the site components make (an extend-entity, a
     screen-extend and each anchor it names, an ECA rule on an upstream service or entity), with whether what it extends is
     still there: the upgrade checklist after a pull. Broken first. Below them the DbForms that change a screen form, each
     with Convert (7.2, question 16: one way): the review of the site's screen-extend it writes and the rows that go, and

@@ -124,7 +124,8 @@ fn delete_rows_of(entity: &EntityFacade, repository_id: &str) -> Result<(), Erro
     delete_where(entity, GIT_REF, &of_repository)?;
     let self_references = entity.with_entity(GIT_OBJECT, |_, dialect, _| Ok(moqui_db::sql::is_mysql(dialect)))?;
     if self_references && entity.table_ready(GIT_OBJECT) {
-        // MySQL checks the delta base's foreign key a row at a time: a delta goes before its base
+        // MySQL checks the delta base's foreign key a row at a time: a delta goes before its base. The key is gone
+        // from the model (GitObject's DeltaBase is one-nofk); this serves a database made before, which keeps it
         let deepest = entity
             .find(GIT_OBJECT)?
             .eq("repositoryId", Value::string(repository_id))

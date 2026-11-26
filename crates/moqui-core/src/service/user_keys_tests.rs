@@ -317,7 +317,7 @@ fn a_scoped_key_opens_only_its_scope_and_its_holder_ends_it() {
     assert!(made_by(true), "a client by its own key");
 }
 
-/// A git key and a tasks key (plans/design-dev-aide.md question 18) each sign in only where a REST resource declares
+/// A git key and a tasks key (plans/archive/design-dev-aide.md question 18) each sign in only where a REST resource declares
 /// their scope (`key-scope`), an application's as the framework's, and neither where it declares the other's or none;
 /// signed in by one, its holder ends that key alone (SEC-RTE-85).
 #[test]

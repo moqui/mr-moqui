@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `textDocument/rename` of `moqui lsp` (plans/design-dev-aide.md 13.6): an entity field, a service, a form field or a
+//! `textDocument/rename` of `moqui lsp` (plans/archive/design-dev-aide.md 13.6): an entity field, a service, a form field or a
 //! parameter, through the memory index's references, as edits across files.
 //!
 //! The target is the artifact the attribute value (or script string) under the cursor names, or defines: an attribute

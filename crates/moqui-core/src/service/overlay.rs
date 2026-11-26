@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The request-scoped location overlay for services (plans/design-dev-aide.md F14, 9.4): service files and script
+//! The request-scoped location overlay for services (plans/archive/design-dev-aide.md F14, 9.4): service files and script
 //! files from unsaved or proposed text, standing at their locations for the calls on this thread while the overlay is
 //! held. The service files' definitions are made as a reload of them would make them ([`super::define`]'s
 //! `overlaid_definitions`), over the registry as it is, and the registry is not changed: a lookup on this thread

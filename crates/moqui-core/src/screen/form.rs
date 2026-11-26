@@ -761,7 +761,7 @@ pub(super) fn merge_field_node(base: &MNode, over: &MNode, deep_copy: bool) {
 }
 
 /// A new field's `field-ref` in the form's `field-layout`: after the `field-ref` of the field its `after` names, in
-/// whatever row or group that one is (plans/design-dev-aide.md F16), else at the end of the layout.
+/// whatever row or group that one is (plans/archive/design-dev-aide.md F16), else at the end of the layout.
 fn add_field_to_layout(form: &MNode, field: &MNode) {
     let Some(layout) = form.first_named("field-layout") else {
         return;
@@ -777,7 +777,7 @@ fn add_field_to_layout(form: &MNode, field: &MNode) {
 }
 
 /// A new field of a form-list with `form-list-column`s gets a column of its own: after the column that holds the
-/// field its `after` names, else last (plans/design-dev-aide.md F16).
+/// field its `after` names, else last (plans/archive/design-dev-aide.md F16).
 fn add_field_column(form: &MNode, field: &MNode) {
     let column = MNode::new("form-list-column");
     let reference = column.append("field-ref");

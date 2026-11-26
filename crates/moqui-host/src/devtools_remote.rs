@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `moqui check`, `moqui refs` and `moqui lsp` with `--server URL` (plans/design-dev-aide.md 13.6, F13): the checks and
+//! `moqui check`, `moqui refs` and `moqui lsp` with `--server URL` (plans/archive/design-dev-aide.md 13.6, F13): the checks and
 //! the artifact index of a running dev instance, over its MCP tools `check` and `artifact` (`POST /mcp`, `tools/call`),
 //! as the user of the login key `moqui tui --server` keeps for that server (or `MOQUI_LOGIN_KEY`). A local file is the
 //! `component://` location of the nearest directory above it with a `component.xml`, and a location the file of the

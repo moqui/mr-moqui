@@ -1374,7 +1374,7 @@ pub const KEY_SCOPES: [&str; 3] = ["gateway", ACCESS_TOKEN_SCOPE, "tasks"];
 
 /// A new key of the logged-in user that opens only `scope` (one of [`KEY_SCOPES`]), named `device` in the user's
 /// device list and good for the conf's `login-key/@device-expire-hours`: a dev instance keeps one for each of a group
-/// server's git, tasks and LLM gateway (plans/design-dev-aide.md 21.2, question 18), where the account's own key would
+/// server's git, tasks and LLM gateway (plans/archive/design-dev-aide.md 21.2, question 18), where the account's own key would
 /// open everything.
 ///
 /// # Errors

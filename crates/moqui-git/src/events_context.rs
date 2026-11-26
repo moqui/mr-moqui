@@ -14,7 +14,7 @@
 
 //! The contexts a gitECA rule of each event had, or would have had, from a change of the push log (a `GitUpdate`
 //! and its refs), built by the same parts as the events themselves: for trying a rule's condition against a recorded
-//! push (the Dev AIDE's ECA view, plans/design-dev-aide.md 10). The post events (ref-update, commit, tag,
+//! push (the Dev AIDE's ECA view, plans/archive/design-dev-aide.md 10). The post events (ref-update, commit, tag,
 //! post-receive) are of the refs the change made; the pre events (pre-receive, pre-ref-update) of every ref it asked
 //! for. What a recorded change does not keep is as for a push: no merge, and the refs before it are its `priorTips`.
 //!

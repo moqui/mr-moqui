@@ -3380,7 +3380,7 @@ along with this software (see the LICENSE.md file). If not, see
     </xs:element>
 
     <xs:element name="dev-reload">
-        <xs:annotation><xs:documentation>The dev file watcher (plans/design-dev-aide.md 6.3): on a dev instance
+        <xs:annotation><xs:documentation>The dev file watcher (plans/archive/design-dev-aide.md 6.3): on a dev instance
             (instance@purpose dev) of a build with the devtools feature (the Maximal package, the default, and Debug,
             or another package built with the feature), every component directory is watched, and a changed file
             reloads what it defines: its services, its screen, the ECA rule set of its kind, its REST API or skill; an
@@ -3394,11 +3394,15 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="debounce-ms" type="xs:string" default="300"><xs:annotation><xs:documentation>
                 How long after the last change in a burst the reload runs, so an editor's write and rename is one
                 change.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="index-writers" type="xs:string" default="3"><xs:annotation><xs:documentation>The
+                connections the artifact index writes its rows on at once, each batch of files in a transaction of its
+                own (a build's write is bound by the database); at most one more than the connections of the pool the
+                request and service workers leave, at least one.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
 
     <xs:element name="dev-aide">
-        <xs:annotation><xs:documentation>The settings of the dev-aide component (Dev AIDE, plans/design-dev-aide.md
+        <xs:annotation><xs:documentation>The settings of the dev-aide component (Dev AIDE, plans/archive/design-dev-aide.md
             16), in its MoquiConf.xml or a runtime conf; Settings in the app stores some of them over these.</xs:documentation></xs:annotation>
         <xs:complexType>
             <xs:sequence>
@@ -3414,7 +3418,7 @@ along with this software (see the LICENSE.md file). If not, see
                     <xs:complexType><xs:attribute name="pattern" type="xs:string" use="required"/></xs:complexType>
                 </xs:element>
                 <xs:element name="task-app" minOccurs="0" maxOccurs="unbounded">
-                    <xs:annotation><xs:documentation>An app a task opens in (plans/design-dev-aide.md 14): its paths to a
+                    <xs:annotation><xs:documentation>An app a task opens in (plans/archive/design-dev-aide.md 14): its paths to a
                         project, a task and a new task with {projectId} and {taskId}, and a base URL when it is another
                         instance.</xs:documentation></xs:annotation>
                     <xs:complexType>
@@ -3453,11 +3457,14 @@ along with this software (see the LICENSE.md file). If not, see
                 in a job's image works on a copy of the working tree's files: a tree whose files come to more than this many
                 MB is refused.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="coedit-max-rooms" type="xs:string" default="20"><xs:annotation><xs:documentation>In
-                shared mode, the most files one user co-edits at once (plans/design-dev-aide.md F15); a join past it is
+                shared mode, the most files one user co-edits at once (plans/archive/design-dev-aide.md F15); a join past it is
                 refused.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="coedit-max-total-bytes" type="xs:string" default="67108864"><xs:annotation><xs:documentation>In
                 shared mode, the most bytes of every co-edited file's room on the server together (their state with its
                 edits); a join or an update past it is refused.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="hosted-max-deleted" type="xs:string" default="2000"><xs:annotation><xs:documentation>The
+                most files a delete of a folder of a hosted root removes in its one commit; a folder with more is
+                refused, never deleted in part.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
 

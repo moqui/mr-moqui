@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Which artifact a reference names (plans/design-dev-aide.md 7.1). The artifacts' ids are kept in memory, a few MB for
+//! Which artifact a reference names (plans/archive/design-dev-aide.md 7.1). The artifacts' ids are kept in memory, a few MB for
 //! the corpus, so resolving a reference never asks the database: an entity by its full or short name, a field through
 //! its entity, a service or the entity of an entity-auto name, a screen by its location or its path under a `screen`
 //! directory, a transition or anchor of a screen.

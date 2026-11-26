@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The Workspace's roots, directories and files (plans/design-dev-aide.md 4 and 5.7), implemented in the dev-aide crate
+<!-- The Workspace's roots, directories and files (plans/archive/design-dev-aide.md 4 and 5.7), implemented in the dev-aide crate
     (src/workspace.rs). Each checks the instance purpose (dev) and the user's tier first: DEV_AIDE_VIEW reads,
     DEV_AIDE_EXTEND writes in site components, DEV_AIDE does everything; paths are confined to their root. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
@@ -72,7 +72,7 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
     <service verb="save" noun="File" type="rust" location="dev_aide::workspace::save_file" allow-remote="false">
         <description>Write a file read at baseHash (its line endings, byte order mark and mode kept); conflict with the disk's text when it changed since. Answers the reload report, the problems and the git status.
-            On a hosted root (plans/design-dev-aide.md 4.10) the write is a commit to the root's branch by the user through
+            On a hosted root (plans/archive/design-dev-aide.md 4.10) the write is a commit to the root's branch by the user through
             commit#GitFiles, with message (Edit [path] when empty) and the root's task trailer; baseHash is the blob the
             file had when opened, and the conflict's diskText is the branch's when the branch moved past it. Nothing is
             reloaded.</description>
@@ -362,7 +362,7 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters><parameter name="location" required="true"/></in-parameters>
     </service>
 
-    <!-- The edit buffers of the terminal's guided editors (plans/design-dev-aide.md D14): edits staged per user and
+    <!-- The edit buffers of the terminal's guided editors (plans/archive/design-dev-aide.md D14): edits staged per user and
         artifact, nothing written until Save. -->
     <service verb="get" noun="EditBuffer" type="rust" location="dev_aide::buffers::get_edit_buffer" allow-remote="false" read-only="true">
         <description>A guided editor's buffer: what it holds and when it expires, whether it expired with edits in it,

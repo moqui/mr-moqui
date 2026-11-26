@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Connect (plans/design-dev-aide.md 21.2, D20): a group server is a `DevAideServer` row. Connect asks the server what
+//! Connect (plans/archive/design-dev-aide.md 21.2, D20): a group server is a `DevAideServer` row. Connect asks the server what
 //! it offers, then signs in there as an installed app does (F17: the server's `/sso/appLogin` in the browser with a PKCE
 //! challenge and this instance's own address as the loopback redirect, the code taken at `/sso/appToken` for a login
 //! key), or takes a token pasted from the server's Git access page. The app sign-in's key is the account's, so Connect
