@@ -187,6 +187,10 @@ fn refresh(context: &Context, row: &mut moqui_core::entity::EntityValue) -> Resu
                 (Some(_), false) => "signed-out",
                 (None, _) => "reachable",
             };
+            let mut offer = offer;
+            if let Some(providers) = providers_of(&server, &offer) {
+                offer["signIn"]["providers"] = providers;
+            }
             row.set("offerJson", Value::string(offer.to_string()));
             row.set("offerDate", moqui_core::user::now_value());
             row.set("statusText", Value::string(state));
@@ -210,6 +214,45 @@ fn refresh(context: &Context, row: &mut moqui_core::entity::EntityValue) -> Resu
     row.create_or_update(&context.facade)?;
     server.username = field(row, "username");
     Ok(server)
+}
+
+/// The identity providers the server's app sign-in offers (`signIn.appProviders`, `get#AppProviders`): each one's
+/// `authFlowId` and `description`, for Connect to sign in with. `None` when the server names no such path or its answer
+/// fails, which is logged; the server's own login is always there.
+fn providers_of(server: &Server, offer: &Json) -> Option<Json> {
+    let path = offer["signIn"]["appProviders"]
+        .as_str()
+        .filter(|path| path.starts_with('/') && !path.starts_with("//"))?;
+    // a public list, asked with no key: a key for git alone signs in nothing there
+    match server.anonymous().get(path, &[]) {
+        Ok(answer) => Some(Json::Array(provider_list(&answer))),
+        Err(err) => {
+            tracing::warn!("Dev AIDE: {} did not list its sign-in providers: {err}", server.base);
+            None
+        }
+    }
+}
+
+/// The providers of an `/sso/appProviders` answer, each an id of letters, digits, `_`, `-` and `.` with its text.
+#[must_use]
+pub fn provider_list(answer: &Json) -> Vec<Json> {
+    answer["authFlowList"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|flow| {
+            let id = flow["authFlowId"].as_str()?.trim();
+            let valid = !id.is_empty()
+                && id.len() <= 60
+                && id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'));
+            valid.then(|| {
+                let text: String = flow["description"].as_str().unwrap_or(id).chars().take(100).collect();
+                json!({ "authFlowId": id, "description": text })
+            })
+        })
+        .collect()
 }
 
 /// Keep the user's token for a server, sent only to its address.
@@ -281,9 +324,10 @@ fn get_servers(
 }
 
 /// `start#Connect`: ask the server at `baseUrl` what it offers, keep the connection, and start the sign-in there: the
-/// URL to open in the browser, with a PKCE challenge, a state and this instance's own page as the redirect. A server
-/// that offers no app sign-in, or this instance at a non-loopback address the server does not list, is connected by a
-/// pasted token instead (`store#ServerToken`).
+/// URL to open in the browser, with a PKCE challenge, a state and this instance's own page as the redirect, through the
+/// identity provider `authFlowId` or (`ownLogin`) the server's own login. A server with providers and neither of those
+/// answers its `providers` and no URL, for the user to choose. A server that offers no app sign-in, or this instance at
+/// a non-loopback address the server does not list, is connected by a pasted token instead (`store#ServerToken`).
 fn start_connect(
     ec: &ExecutionContext,
     _service: &ServiceInfo<'_>,
@@ -299,6 +343,24 @@ fn start_connect(
         return Err(LibError::new(format!(
             "{base} did not answer what it offers: {}",
             field(&row, "lastError")
+        )));
+    }
+    let flow = text(parameters, "authFlowId");
+    // a server with identity providers: the user picks one, or the server's own login, before the sign-in starts
+    let providers = server.offer["signIn"]["providers"].clone();
+    if flow.is_empty() && !flag(parameters, "ownLogin") && providers.as_array().is_some_and(|list| !list.is_empty()) {
+        let mut out = Parameters::new();
+        out.insert("serverId".into(), Value::string(&server.id));
+        out.insert("providers".into(), json_value(&providers));
+        return Ok(out);
+    }
+    if !flow.is_empty()
+        && !providers
+            .as_array()
+            .is_some_and(|list| list.iter().any(|provider| provider["authFlowId"] == flow.as_str()))
+    {
+        return Err(LibError::new(format!(
+            "{base} offers no sign-in with {flow}: check the server again"
         )));
     }
     let origin = own_origin().ok_or_else(|| LibError::new("this request has no address to come back to"))?;
@@ -322,7 +384,6 @@ fn start_connect(
         ("redirectUri", redirect.clone()),
         ("deviceName", device),
     ];
-    let flow = text(parameters, "authFlowId");
     if !flow.is_empty() {
         query.push(("authFlowId", flow));
     }
@@ -785,7 +846,11 @@ fn plan(context: &Context, server: &Server) -> Json {
             "url": server.offered("git.httpsUrlTemplate"), "sshUrl": server.offered("git.sshUrlTemplate"),
             "file": file.display().to_string(), "present": present, "writable": instance_files,
         },
-        "taskSource": { "available": server.token.is_some(), "path": tasks_path(server), "present": task_source },
+        "taskSource": {
+            "available": server.token.is_some(), "path": tasks_path(server), "present": task_source,
+            // the app a task opens in, as the server offers it (Connect makes it the user's)
+            "app": crate::tasks::offered_app(server).map_or(Json::Null, |app| json!({ "name": app["name"], "title": app["title"] })),
+        },
         "gateway": {
             "available": gateway, "url": server.offered("gateway.url"), "alias": "default", "writable": instance_files,
             "lines": [format!("{ENV_URL}={}", server.offered("gateway.url")),
@@ -899,8 +964,28 @@ fn apply_server_setup(
         source.create_or_update(&context.facade)?;
         let id = field(&source, "taskSourceId");
         moqui_core::user::set_preference(crate::tasks::TASK_SOURCE, Some(id.as_str()))?;
+        // the app chosen before Connect, kept for Remove to put back (a second apply keeps the first one's)
+        let prior_app = setup["taskSource"]["priorTaskApp"].clone();
         setup["taskSource"] = json!({ "taskSourceId": id });
-        done.push("the task source".into());
+        // the app the server offers for its tasks, as the source is set: the user's from now on
+        match crate::tasks::offered_app(&server) {
+            Some(app) => {
+                let name = app["name"].as_str().unwrap_or_default();
+                let before = moqui_core::user::get_preference(crate::tasks::TASK_APP).ok().flatten();
+                setup["taskSource"]["priorTaskApp"] = if before.as_deref() == Some(name) {
+                    prior_app
+                } else {
+                    before.map_or(Json::Null, Json::String)
+                };
+                moqui_core::user::set_preference(crate::tasks::TASK_APP, Some(name))?;
+                setup["taskSource"]["taskApp"] = json!(name);
+                done.push(format!(
+                    "the task source, its tasks opening in {}",
+                    app["title"].as_str().unwrap_or(name)
+                ));
+            }
+            None => done.push("the task source".into()),
+        }
     }
     if flag(parameters, "gateway") {
         instance_files()?;
@@ -1090,6 +1175,17 @@ fn remove_server(
                 }
                 source.delete(&context.facade)?;
                 any = true;
+            }
+            // the server's app, where it is still the user's choice: the one chosen before Connect again
+            if moqui_core::user::get_preference(crate::tasks::TASK_APP)
+                .ok()
+                .flatten()
+                .is_some_and(|app| app == crate::tasks::offered_app_name(&id))
+            {
+                let prior = setup["taskSource"]["priorTaskApp"]
+                    .as_str()
+                    .filter(|prior| !prior.is_empty());
+                moqui_core::user::set_preference(crate::tasks::TASK_APP, prior)?;
             }
             Ok(any)
         })(),

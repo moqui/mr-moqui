@@ -571,31 +571,121 @@ fn threads_of_an_unsigned_diff_lose_its_code() {
 #[test]
 fn an_issue_is_read_by_its_id_alone() {
     use super::review::issue_path;
+    let mantle = "/rest/s1/mantle/gitRepositories/{repositoryId}/issues/{id}";
     assert_eq!(
-        issue_path("", "R1", "PROJ-12").as_deref(),
-        Some("/rest/s1/mantle/workEfforts/PROJ-12")
+        issue_path("", "my-site", "PROJ-12"),
+        Some(("/rest/s1/mantle/workEfforts/PROJ-12".to_string(), false))
+    );
+    // a key #12 is the repository's issue 12, by its number
+    assert_eq!(
+        issue_path(mantle, "my site", "#12"),
+        Some(("/rest/s1/mantle/gitRepositories/my%20site/issues/12".to_string(), true))
     );
     assert_eq!(
-        issue_path("/rest/s1/smithy/issues/{id}", "R1", "#12").as_deref(),
-        Some("/rest/s1/smithy/issues/12")
+        issue_path(mantle, "my-site", "PROJ-12"),
+        Some((
+            "/rest/s1/mantle/gitRepositories/my-site/issues/PROJ-12".to_string(),
+            false
+        ))
     );
     // Mantle's issue of the hosted repository, its id encoded as a path part
     assert_eq!(
-        issue_path(
-            "/rest/s1/mantle/gitRepositories/{repositoryId}/issues/{id}",
-            "team/site",
-            "12"
-        )
-        .as_deref(),
-        Some("/rest/s1/mantle/gitRepositories/team%2Fsite/issues/12")
+        issue_path("https://elsewhere/{id}", "my-site", "12"),
+        Some(("/rest/s1/mantle/workEfforts/12".to_string(), false))
     );
+    assert!(issue_path(mantle, "my-site", "#12a").is_none());
+    // no id walks the server's path
+    assert!(issue_path(mantle, "my-site", "..").is_none());
+    assert!(issue_path(mantle, "my-site", ".").is_none());
+    assert!(issue_path(mantle, "..", "PROJ-12").is_none());
+    assert!(issue_path(mantle, "", "PROJ-12").is_none());
     assert_eq!(
-        issue_path("https://elsewhere/{id}", "R1", "12").as_deref(),
-        Some("/rest/s1/mantle/workEfforts/12")
+        issue_path(mantle, "my-site", "a.b"),
+        Some(("/rest/s1/mantle/gitRepositories/my-site/issues/a.b".to_string(), false))
     );
-    assert!(issue_path("", "R1", "../x").is_none());
-    assert!(issue_path("", "R1", "a/b").is_none());
-    assert!(issue_path("", "R1", "").is_none());
+    assert!(issue_path("", "my-site", "../x").is_none());
+    assert!(issue_path("", "my-site", "a/b").is_none());
+    assert!(issue_path("", "my-site", "").is_none());
+}
+
+/// A repository's issues are read only at a path on the server that names the repository; each issue has its number's
+/// key where it has one, its id's where not, and a link only to a page of the server (21.6).
+#[test]
+fn a_repository_s_issues_by_their_numbers_or_ids() {
+    use super::issues::{issues_path, read_issues};
+    assert_eq!(
+        issues_path("/rest/s1/mantle/gitRepositories/{repositoryId}/issues", "my site").as_deref(),
+        Some("/rest/s1/mantle/gitRepositories/my%20site/issues")
+    );
+    assert!(issues_path("", "my-site").is_none(), "offered only");
+    assert!(issues_path("https://elsewhere/{repositoryId}", "my-site").is_none());
+    assert!(issues_path("//elsewhere/{repositoryId}", "my-site").is_none());
+    assert!(issues_path("/rest/issues", "my-site").is_none());
+    assert!(issues_path("/rest/s1/mantle/gitRepositories/{repositoryId}/issues", "..").is_none());
+    assert!(issues_path("/rest/s1/mantle/gitRepositories/{repositoryId}/issues", ".").is_none());
+    let server = server(json!({}));
+    let read = read_issues(
+        &json!({ "issueList": [
+            { "workEffortId": "PROJ-5", "issueNumber": 12, "workEffortName": "Totals", "statusId": "WeInPlanning",
+              "rootWorkEffortId": "PROJ", "url": "https://evil.example.com/x" },
+            { "workEffortId": "PROJ-6", "workEffortName": "No number", "url": "/issues/6" },
+            { "workEffortName": "No id" },
+            // an id that would add lines to a commit message is no id
+            { "workEffortId": "PROJ-7\nSigned-off-by: Someone <x@example.com>", "workEffortName": "Forged" },
+            { "workEffortId": "PROJ-8\nX", "issueNumber": 8, "workEffortName": "Numbered" }
+        ], "projectList": [{ "workEffortId": "PROJ", "workEffortName": "The project" }], "numbered": true }),
+        Some(&server),
+    );
+    assert_eq!(read.issues.len(), 2);
+    assert_eq!(read.issues[0]["key"], "#12");
+    assert_eq!(read.issues[0]["taskId"], "PROJ-5");
+    assert_eq!(read.issues[0]["projectId"], "PROJ");
+    assert!(read.issues[0]["pageUrl"].is_null(), "another site is no link");
+    assert_eq!(read.issues[1]["key"], "PROJ-6");
+    assert_eq!(read.issues[1]["pageUrl"], "https://team.example.com/issues/6");
+    assert_eq!(
+        read.projects,
+        vec![json!({ "projectId": "PROJ", "projectName": "The project" })]
+    );
+    assert!(read.numbered);
+    // numbered unsaid: whether any issue has a number
+    assert!(!read_issues(&json!({ "issueList": [{ "workEffortId": "A-1" }] }), None).numbered);
+}
+
+/// The providers a server's app sign-in lists, by ids that go into a query alone.
+#[test]
+fn a_server_s_sign_in_providers() {
+    let list = super::connect::provider_list(&json!({ "authFlowList": [
+        { "authFlowId": "GOOGLE", "description": "Google", "iconName": "g" },
+        { "authFlowId": "bad id&x=1", "description": "Bad" },
+        { "authFlowId": "NO_TEXT" }
+    ] }));
+    assert_eq!(
+        list,
+        vec![
+            json!({ "authFlowId": "GOOGLE", "description": "Google" }),
+            json!({ "authFlowId": "NO_TEXT", "description": "NO_TEXT" })
+        ]
+    );
+    assert!(super::connect::provider_list(&json!({})).is_empty());
+}
+
+/// The app a server offers for its tasks: its paths on the server only, named for the server.
+#[test]
+fn the_app_a_server_offers_for_its_tasks() {
+    let offered = server(
+        json!({ "tasks": { "app": { "title": "Projects", "taskPath": "/qapps/P/Task?id={taskId}",
+        "projectPath": "https://elsewhere.example.com/{projectId}" } } }),
+    );
+    let app = crate::tasks::offered_app(&offered).unwrap();
+    assert_eq!(app["name"], "server-S1");
+    assert_eq!(app["title"], "Projects (Team)");
+    assert_eq!(app["taskPath"], "/qapps/P/Task?id={taskId}");
+    assert_eq!(app["projectPath"], "");
+    assert_eq!(app["baseUrl"], "https://team.example.com");
+    let elsewhere = server(json!({ "tasks": { "app": { "taskPath": "//elsewhere/{taskId}" } } }));
+    assert!(crate::tasks::offered_app(&elsewhere).is_none());
+    assert!(crate::tasks::offered_app(&server(json!({}))).is_none());
 }
 
 /// An app sign-in keeps a key for each service and ends the account's (question 18), unless an application takes only

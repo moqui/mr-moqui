@@ -1291,9 +1291,11 @@ interface MoquiRestResponse {
     getReasonPhrase(): string | null;
     /** Throws for a status outside 200 to 299; else the response. */
     checkError(): MoquiRestResponse;
-    text(): string | null;
+    /** The body as text; with maxBytes, a body larger than that throws, and a kept body (send()) is not read past it. */
+    text(maxBytes?: number): string | null;
     getBodyText(): string | null;
-    bytes(): Uint8Array | null;
+    /** The body as received; maxBytes as text's. */
+    bytes(maxBytes?: number): Uint8Array | null;
     jsonObject(): unknown;
     /** The body parsed as XML. */
     xmlNode(): unknown;

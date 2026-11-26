@@ -63,6 +63,14 @@ pub(crate) fn on_server(server: &Server, url: &str) -> Result<String, LibError> 
     Ok(url.trim().to_string())
 }
 
+/// A path segment of a server's URL, or `None` for one that is empty or all dots (`.`, `..`), which a URL would take
+/// as a step up or none: a repository's or an issue's id from a server never walks its path.
+#[must_use]
+pub fn path_segment(value: &str) -> Option<String> {
+    let value = value.trim();
+    (!value.is_empty() && !value.bytes().all(|byte| byte == b'.')).then(|| query_text(value))
+}
+
 /// `value` encoded for a URL's query or as one part of its path: a part that is `.` or `..` is encoded too, so it never
 /// names the part above it.
 pub(crate) fn query_text(value: &str) -> String {
@@ -255,6 +263,16 @@ impl Server {
         }
     }
 
+    /// This server with no key: a call of what it shows anyone (its sign-in's providers).
+    pub(crate) fn anonymous(&self) -> Self {
+        Self {
+            token: None,
+            tasks_token: None,
+            app_token: None,
+            ..self.clone()
+        }
+    }
+
     /// Whether `url` (on this server) is under the application's REST.
     fn on_application(&self, url: &str) -> bool {
         let Some(application) = self.application() else {
@@ -291,10 +309,27 @@ impl Server {
         self.request_as(token.as_deref(), method, url, query, body)
     }
 
-    /// A read of the task panel's (the user's tasks, a repository's issues, one issue): with the key for tasks alone,
-    /// or for the issues of a repository an application keeps (`kept_by_application`) the installed app's, which is
-    /// all the application takes; else the user's token.
-    pub(crate) fn tasks_get(&self, path: &str, kept_by_application: bool) -> Result<Json, LibError> {
+    /// A read of the task panel's (the user's tasks, a repository's issues, one issue): [`Self::tasks_request`].
+    pub(crate) fn tasks_get(
+        &self,
+        path: &str,
+        query: &[(&str, &str)],
+        kept_by_application: bool,
+    ) -> Result<Json, LibError> {
+        self.tasks_request(moqui_core::outbound::Method::Get, path, query, None, kept_by_application)
+    }
+
+    /// A call of the task panel's (the user's tasks, a repository's issues read or filed, one issue): with the key for
+    /// tasks alone, or for the issues of a repository an application keeps (`kept_by_application`) the installed app's,
+    /// which is all the application takes; else the user's token.
+    pub(crate) fn tasks_request(
+        &self,
+        method: moqui_core::outbound::Method,
+        path: &str,
+        query: &[(&str, &str)],
+        body: Option<&Json>,
+        kept_by_application: bool,
+    ) -> Result<Json, LibError> {
         let url = self.url(path)?;
         let token = if kept_by_application {
             self.app_token.as_ref().or(self.tasks_token.as_ref())
@@ -303,7 +338,7 @@ impl Server {
         }
         .or(self.token.as_ref())
         .cloned();
-        self.request_as(token.as_deref(), moqui_core::outbound::Method::Get, url, &[], None)
+        self.request_as(token.as_deref(), method, url, query, body)
     }
 
     fn request_as(

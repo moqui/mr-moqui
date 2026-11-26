@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- @Title@, a theme of the /qapps shell built on the Default theme (parentScreenThemeId; docs/ui/Qvt-Client.md, Themes): it
+    sets only what it changes, so the shell values the apps seed on DEFAULT_QUASAR (tray screens, counts, hooks, logo) are
+    its own too. Its style sheets replace the parent's, so they list the Default's in order and then its own
+    (/@component@/@Class@.css, served by MoquiConf.xml); a body class scopes its rules; its color scheme comes before the
+    Default's in Appearance, and is its default. A user picks it in the account menu's Theme. -->
+<entity-facade-xml type="seed">
+    <moqui.screen.ScreenTheme screenThemeId="@ID@_QUASAR" screenThemeTypeEnumId="STT_INTERNAL_QUASAR" parentScreenThemeId="DEFAULT_QUASAR"
+            description="@Title@"/>
+    <moqui.screen.ScreenThemeResource screenThemeId="@ID@_QUASAR" sequenceNum="1" resourceTypeEnumId="STRT_STYLESHEET"
+            resourceValue="/libs/fontawesome/css/font-awesome.min.css"/>
+    <moqui.screen.ScreenThemeResource screenThemeId="@ID@_QUASAR" sequenceNum="2" resourceTypeEnumId="STRT_STYLESHEET"
+            resourceValue="/libs/material-symbols/outlined.css"/>
+    <moqui.screen.ScreenThemeResource screenThemeId="@ID@_QUASAR" sequenceNum="3" resourceTypeEnumId="STRT_STYLESHEET"
+            resourceValue="/libs/material-icons/material-icons.css"/>
+    <moqui.screen.ScreenThemeResource screenThemeId="@ID@_QUASAR" sequenceNum="4" resourceTypeEnumId="STRT_STYLESHEET"
+            resourceValue="/libs/quasar/quasar.prod.css"/>
+    <moqui.screen.ScreenThemeResource screenThemeId="@ID@_QUASAR" sequenceNum="20" resourceTypeEnumId="STRT_STYLESHEET"
+            resourceValue="/css/WebrootVue.qvt.css"/>
+    <moqui.screen.ScreenThemeResource screenThemeId="@ID@_QUASAR" sequenceNum="21" resourceTypeEnumId="STRT_STYLESHEET"
+            resourceValue="/@component@/@Class@.css"/>
+    <moqui.screen.ScreenThemeResource screenThemeId="@ID@_QUASAR" sequenceNum="50" resourceTypeEnumId="STRT_QUASAR_CONFIG"
+            resourceValue="{&quot;brand&quot;:{&quot;primary&quot;:&quot;#7c3aed&quot;,&quot;secondary&quot;:&quot;#0f766e&quot;,&quot;accent&quot;:&quot;#db2777&quot;}}"/>
+    <moqui.screen.ScreenThemeResource screenThemeId="@ID@_QUASAR" sequenceNum="102" resourceTypeEnumId="STRT_BODY_CLASS"
+            resourceValue="m-theme-@component@"/>
+    <moqui.screen.ScreenThemeResource screenThemeId="@ID@_QUASAR" sequenceNum="110" resourceTypeEnumId="STRT_DEFAULT_COLOR_SCHEME"
+            resourceValue="@ID@"/>
+
+    <moqui.screen.ScreenColorScheme colorSchemeId="@ID@" screenThemeId="@ID@_QUASAR" sequenceNum="1" description="@Title@"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="@ID@" colorModeEnumId="SCM_LIGHT" colorName="primary" colorValue="#7c3aed"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="@ID@" colorModeEnumId="SCM_LIGHT" colorName="secondary" colorValue="#0f766e"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="@ID@" colorModeEnumId="SCM_LIGHT" colorName="accent" colorValue="#db2777"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="@ID@" colorModeEnumId="SCM_DARK" colorName="primary" colorValue="#a78bfa"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="@ID@" colorModeEnumId="SCM_DARK" colorName="secondary" colorValue="#2dd4bf"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="@ID@" colorModeEnumId="SCM_DARK" colorName="accent" colorValue="#f472b6"/>
+</entity-facade-xml>

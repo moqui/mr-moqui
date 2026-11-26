@@ -89,7 +89,10 @@ impl Context {
         crate::notify::ensure(&factory);
         let facade = factory.entity().ok_or_else(|| LibError::new("no entity facade"))?;
         let settings = Settings::of(&factory, Some(&facade));
-        let roots = roots::roots(&factory, &settings, Some(&facade));
+        let mut roots = roots::roots(&factory, &settings, Some(&facade));
+        // a hosted root only for a user who may view its repository (crate::hosted): every listing and `root` of this
+        // context answers alike, as if the others were not there
+        roots.retain(|root| root.hosted_branch.as_ref().is_none_or(crate::hosted::visible));
         Ok(Self {
             factory,
             facade,
@@ -101,12 +104,14 @@ impl Context {
     }
 
     /// The context of a rule the server runs itself, not a person's request (a conversation that ended, 21.8): no
-    /// tier is asked, so what it does is the rule's own to bound.
+    /// tier is asked, so what it does is the rule's own to bound. Its roots are the directories only: a hosted root
+    /// (crate::hosted) is no rule's.
     pub(crate) fn of_rule(ec: &ExecutionContext) -> Result<Self, LibError> {
         let factory = Arc::clone(ec.factory());
         let facade = factory.entity().ok_or_else(|| LibError::new("no entity facade"))?;
         let settings = Settings::of(&factory, Some(&facade));
-        let roots = roots::roots(&factory, &settings, Some(&facade));
+        let mut roots = roots::roots(&factory, &settings, Some(&facade));
+        roots.retain(|root| root.hosted_branch.is_none());
         Ok(Self {
             factory,
             facade,
@@ -123,6 +128,13 @@ impl Context {
 
     /// `relative` of `root`, confined ([`confine::resolve`]); the runtime's conf files only at the full tier.
     pub(crate) fn resolve(&self, root: &Root, relative: &str) -> Result<confine::Resolved, LibError> {
+        if root.hosted_branch.is_some() {
+            // a hosted root has no directory: its files are the hosting's (crate::hosted)
+            return Err(LibError::new(format!(
+                "{} is a hosted repository: it has no working tree",
+                root.label
+            )));
+        }
         let resolved = confine::resolve(&root.path, self.factory.runtime_dir(), relative)?;
         if self.tier != Tier::Full && confine::hidden_below_full(&resolved.path, self.factory.runtime_dir()) {
             return Err(LibError::new(format!(
@@ -164,7 +176,8 @@ impl Context {
                 root.label
             )));
         }
-        if self.upstream_edits() {
+        // a hosted root's commits are the hosting's to allow (its rights and branch rules), and it is never loaded
+        if self.upstream_edits() || root.hosted_branch.is_some() {
             return Ok(());
         }
         // where the path leads: a symlink in a site component to an upstream one is the upstream one
@@ -224,7 +237,7 @@ pub(crate) fn sha256(bytes: &[u8]) -> String {
 const BOM: &[u8] = b"\xEF\xBB\xBF";
 
 /// A file's bytes as an editor's text: the byte order mark taken off, `None` for bytes that are not UTF-8 text.
-fn decode(bytes: &[u8]) -> Option<(String, bool)> {
+pub(crate) fn decode(bytes: &[u8]) -> Option<(String, bool)> {
     if confine::is_binary(bytes) {
         return None;
     }
@@ -395,6 +408,9 @@ fn list_directory(
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::View)?;
     let root = context.root(&text(parameters, "rootId"))?;
+    if let Some(hosted) = &root.hosted_branch {
+        return crate::hosted::list_directory(hosted, &text(parameters, "path"));
+    }
     let resolved = context.resolve(root, &text(parameters, "path"))?;
     let entries = directory_entries(&context.git(), root, &resolved.relative, &resolved.path)?;
     let mut out = Parameters::new();
@@ -473,6 +489,9 @@ fn get_file(
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::View)?;
     let root = context.root(&text(parameters, "rootId"))?;
+    if let Some(hosted) = &root.hosted_branch {
+        return crate::hosted::get_file(&context, root, hosted, parameters);
+    }
     let resolved = context.resolve(root, &text(parameters, "path"))?;
     let mut out = Parameters::new();
     if !resolved.path.exists() && text(parameters, "missingOk") == "true" {
@@ -621,8 +640,12 @@ fn save_file(
     parameters: &Parameters,
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::Extend)?;
-    let _authz = ec.disable_authz();
     let root = context.root(&text(parameters, "rootId"))?;
+    if let Some(hosted) = &root.hosted_branch {
+        // a commit as the user, with the hosting's checks on (crate::hosted)
+        return crate::hosted::save_file(&context, root, hosted, parameters);
+    }
+    let _authz = ec.disable_authz();
     let resolved = context.resolve(root, &text(parameters, "path"))?;
     save_text(
         &context,
@@ -650,6 +673,32 @@ pub(crate) fn save_text(
     base_hash: &str,
     detail: Option<serde_json::Value>,
 ) -> Result<Parameters, LibError> {
+    save_text_with(context, root, resolved, content, base_hash, detail, Endings::File)
+}
+
+/// The line endings a save writes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Endings {
+    /// The file's: CRLF when most of its line breaks are, else LF (an editor's text has LF).
+    File,
+    /// The text's, as given: a replace in the file's own text, whose mixed endings stay mixed.
+    AsGiven,
+}
+
+/// [`save_text`], with the line endings of `endings`.
+///
+/// # Errors
+///
+/// As [`save_text`].
+pub(crate) fn save_text_with(
+    context: &Context,
+    root: &Root,
+    resolved: &confine::Resolved,
+    content: &str,
+    base_hash: &str,
+    detail: Option<serde_json::Value>,
+    endings: Endings,
+) -> Result<Parameters, LibError> {
     context.may_write(root, &resolved.relative)?;
     if content.len() as u64 > context.settings.max_edit_bytes {
         return Err(LibError::new(format!(
@@ -676,11 +725,16 @@ pub(crate) fn save_text(
         }
         None => (false, false),
     };
-    let normalized = content.replace("\r\n", "\n");
-    let body = if crlf_file {
-        normalized.replace('\n', "\r\n")
-    } else {
-        normalized
+    let body = match endings {
+        Endings::AsGiven => content.to_string(),
+        Endings::File => {
+            let normalized = content.replace("\r\n", "\n");
+            if crlf_file {
+                normalized.replace('\n', "\r\n")
+            } else {
+                normalized
+            }
+        }
     };
     let mut bytes = Vec::with_capacity(body.len() + 3);
     if bom {
@@ -754,8 +808,12 @@ fn create_file(
     parameters: &Parameters,
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::Extend)?;
-    let _authz = ec.disable_authz();
     let root = context.root(&text(parameters, "rootId"))?;
+    if let Some(hosted) = &root.hosted_branch {
+        // a commit as the user, with the hosting's checks on (crate::hosted)
+        return crate::hosted::create_file(&context, root, hosted, parameters);
+    }
+    let _authz = ec.disable_authz();
     let resolved = context.resolve(root, &text(parameters, "path"))?;
     context.may_write(root, &resolved.relative)?;
     if resolved.path.exists() {
@@ -788,8 +846,12 @@ fn create_directory(
     parameters: &Parameters,
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::Extend)?;
-    let _authz = ec.disable_authz();
     let root = context.root(&text(parameters, "rootId"))?;
+    if let Some(hosted) = &root.hosted_branch {
+        // a commit as the user, with the hosting's checks on (crate::hosted)
+        return crate::hosted::create_directory(&context, root, hosted, parameters);
+    }
+    let _authz = ec.disable_authz();
     let resolved = context.resolve(root, &text(parameters, "path"))?;
     context.may_write(root, &resolved.relative)?;
     unfenced(moqui_core::entity::fence::Effect::Resource, &resolved.relative)?;
@@ -816,8 +878,12 @@ fn rename_path(
     parameters: &Parameters,
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::Extend)?;
-    let _authz = ec.disable_authz();
     let root = context.root(&text(parameters, "rootId"))?;
+    if let Some(hosted) = &root.hosted_branch {
+        // a commit as the user, with the hosting's checks on (crate::hosted)
+        return crate::hosted::rename_path(&context, root, hosted, parameters);
+    }
+    let _authz = ec.disable_authz();
     let from = context.resolve(root, &text(parameters, "path"))?;
     let to = context.resolve(root, &text(parameters, "to"))?;
     context.may_write(root, &from.relative)?;
@@ -881,8 +947,12 @@ fn delete_path(
     parameters: &Parameters,
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::Extend)?;
-    let _authz = ec.disable_authz();
     let root = context.root(&text(parameters, "rootId"))?;
+    if let Some(hosted) = &root.hosted_branch {
+        // a commit as the user, with the hosting's checks on (crate::hosted)
+        return crate::hosted::delete_path(&context, root, hosted, parameters);
+    }
+    let _authz = ec.disable_authz();
     let resolved = context.resolve(root, &text(parameters, "path"))?;
     if resolved.relative.is_empty() {
         return Err(LibError::new("a root is not deleted from here"));
@@ -914,18 +984,32 @@ fn delete_path(
 
 /// The files of a root a search or Go to file reads: what git tracks and the untracked files it does not ignore, or a
 /// walk of a plain root that leaves out hidden directories and build output.
-fn root_files(context: &Context, root: &Root, limit: usize) -> Vec<String> {
+pub(crate) fn root_files(context: &Context, root: &Root, limit: usize) -> Vec<String> {
+    root_files_where(context, root, limit, &|_| true).0
+}
+
+/// [`root_files`] that `keep` takes (a search's path filter, before the cap), at most `limit`, and whether there were
+/// more.
+pub(crate) fn root_files_where(
+    context: &Context,
+    root: &Root,
+    limit: usize,
+    keep: &dyn Fn(&str) -> bool,
+) -> (Vec<String>, bool) {
     if root.kind == RootKind::Git {
         if let Ok(out) = context.git().read(
             &root.path,
             &["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
         ) {
-            return out
+            let mut files: Vec<String> = out
                 .split('\0')
-                .filter(|path| !path.is_empty())
-                .take(limit)
+                .filter(|path| !path.is_empty() && keep(path))
+                .take(limit.saturating_add(1))
                 .map(str::to_string)
                 .collect();
+            let more = files.len() > limit;
+            files.truncate(limit);
+            return (files, more);
         }
     }
     let mut files = Vec::new();
@@ -954,16 +1038,16 @@ fn root_files(context: &Context, root: &Root, limit: usize) -> Vec<String> {
                 if context.resolve(root, &path).is_ok() {
                     stack.push((entry.path(), path));
                 }
-            } else {
-                files.push(path);
+            } else if keep(&path) {
                 if files.len() >= limit {
-                    return files;
+                    return (files, true);
                 }
+                files.push(path);
             }
         }
     }
     files.sort();
-    files
+    (files, false)
 }
 
 /// `find#Files`: every file of a root, for Go to file (the client filters).
@@ -974,14 +1058,22 @@ fn find_files(
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::View)?;
     let root = context.root(&text(parameters, "rootId"))?;
+    if let Some(hosted) = &root.hosted_branch {
+        return Ok(crate::hosted::find_files(hosted));
+    }
     let files = root_files(&context, root, 50_000);
     let mut out = Parameters::new();
     out.insert("files".into(), json_value(&files));
     Ok(out)
 }
 
-/// `search#Files`: lines matching `query` (text, or a regular expression with `regex`), at most 500, with `git grep`
-/// in a repository (its .gitignore respected) and a walk of the files in a plain root.
+/// The most bytes of `git grep`'s output a search reads.
+const GREP_MAX_BYTES: usize = 1 << 20;
+
+/// `search#Files`: lines matching `query` (text, or a regular expression with `regex`), at most 500: a text with `git
+/// grep` in a repository (its .gitignore respected); a regular expression, and any query in a plain root, by Rust's
+/// regex over the root's files (what git tracks and the untracked ones it does not ignore), as Replace across files
+/// reads it, each file up to `max-edit-bytes`.
 fn search_files(
     ec: &ExecutionContext,
     _service: &ServiceInfo<'_>,
@@ -993,14 +1085,25 @@ fn search_files(
     if query.is_empty() {
         return Err(LibError::new("nothing to search for"));
     }
+    if query.len() > crate::replace::MAX_QUERY_BYTES {
+        return Err(LibError::new(format!(
+            "the text to find is over {} bytes",
+            crate::replace::MAX_QUERY_BYTES
+        )));
+    }
     let regex = flag(parameters, "regex");
     let case = flag(parameters, "caseSensitive");
     let filter = text(parameters, "pathFilter");
     const LIMIT: usize = 500;
     let mut results = Vec::new();
-    if root.kind == RootKind::Git {
-        let mut args = vec!["grep", "-n", "-I", "--no-color", "-z", "--untracked"];
-        args.push(if regex { "-E" } else { "-F" });
+    // text through git grep; a regular expression by Rust's, as Replace across files reads it, so the two agree
+    let truncated;
+    if let Some(hosted) = &root.hosted_branch {
+        // a hosted root through the hosting's reads, with the same matcher and the scan's budgets (crate::hosted)
+        let matcher = crate::replace::compile(&query, regex, case).map_err(LibError::new)?;
+        truncated = crate::hosted::search_files(&context, hosted, &matcher, &filter, LIMIT, &mut results);
+    } else if root.kind == RootKind::Git && !regex {
+        let mut args = vec!["grep", "-n", "-I", "--no-color", "-z", "--untracked", "-F"];
         if !case {
             args.push("-i");
         }
@@ -1008,12 +1111,19 @@ fn search_files(
         if !filter.is_empty() {
             args.push(&filter);
         }
-        let output = context.git().run(&root.path, git::Mode::Read, &args, &[], None)?;
-        // exit 1 is "no match"
-        if output.code != Some(0) && output.code != Some(1) {
+        // the first lines only: git stops at its closed pipe, not reading the rest of the root
+        let (output, capped) = context.git().read_capped(&root.path, &args, GREP_MAX_BYTES)?;
+        // exit 1 is "no match"; a cut output ends at the broken pipe
+        if !capped && output.code != Some(0) && output.code != Some(1) {
             return Err(LibError::new(format!("git grep: {}", output.stderr.trim())));
         }
-        for line in output.stdout.lines().take(LIMIT) {
+        truncated = capped;
+        let mut lines: Vec<&str> = output.stdout.lines().collect();
+        if capped {
+            // the last line may be part of one
+            lines.pop();
+        }
+        for line in lines.into_iter().take(LIMIT) {
             let mut parts = line.splitn(3, '\0');
             if let (Some(path), Some(number), Some(text)) = (parts.next(), parts.next(), parts.next()) {
                 // what an open would refuse is not shown: the runtime's denied files, its conf below the full tier
@@ -1026,37 +1136,17 @@ fn search_files(
             }
         }
     } else {
-        let pattern = if regex { query.clone() } else { regex::escape(&query) };
-        let matcher = regex::RegexBuilder::new(&pattern)
-            .case_insensitive(!case)
-            .build()
-            .map_err(|err| LibError::new(format!("the regular expression: {err}")))?;
-        'files: for path in root_files(&context, root, 20_000) {
-            if !filter.is_empty() && !path.contains(filter.trim_matches('*')) {
-                continue;
+        // over the whole text, as Replace across files matches (`\n` across lines), answered by line
+        let matcher = crate::replace::compile(&query, regex, case).map_err(LibError::new)?;
+        truncated = crate::replace::scan_files(&context, root, &filter, &mut |file| {
+            for (line, text) in crate::replace::matched_lines(&matcher, file.body, LIMIT - results.len()) {
+                results.push(serde_json::json!({ "path": file.relative, "line": line, "text": text }));
             }
-            // confined as an open is: a symlink leading out, .git and the runtime's denied directories are passed over
-            let Ok(resolved) = context.resolve(root, &path) else {
-                continue;
-            };
-            let Ok(bytes) = std::fs::read(&resolved.path) else {
-                continue;
-            };
-            let Some((body, _)) = decode(&bytes) else {
-                continue;
-            };
-            for (index, line) in body.lines().enumerate() {
-                if matcher.is_match(line) {
-                    results.push(serde_json::json!({ "path": path, "line": index + 1, "text": line }));
-                    if results.len() >= LIMIT {
-                        break 'files;
-                    }
-                }
-            }
-        }
+            results.len() < LIMIT
+        });
     }
     let mut out = Parameters::new();
-    out.insert("truncated".into(), Value::Bool(results.len() >= LIMIT));
+    out.insert("truncated".into(), Value::Bool(truncated || results.len() >= LIMIT));
     out.insert("results".into(), json_value(&results));
     Ok(out)
 }
@@ -1069,6 +1159,9 @@ fn check_file(
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::View)?;
     let root = context.root(&text(parameters, "rootId"))?;
+    if root.hosted_branch.is_some() {
+        return crate::hosted::check_file(&context, parameters);
+    }
     let resolved = context.resolve(root, &text(parameters, "path"))?;
     let content = text(parameters, "text");
     let problems = if resolved.relative.ends_with(".xml") {
@@ -1380,6 +1473,7 @@ fn create_site_component(
     if let Some(refusal) = site_dependency_refusal(&context.factory.components(), &depends) {
         return Err(LibError::new(refusal));
     }
+    let remote = remote_of(parameters)?;
     let target =
         moqui_core::context::layout::set_dir(context.factory.runtime_dir(), moqui_core::context::layout::Set::Addon)
             .join(&name);
@@ -1408,15 +1502,7 @@ fn create_site_component(
         },
         &|file_name: &str| file_name.replace("Site", &class),
     )?;
-    let git = context.git();
-    if git.available() {
-        if let Err(err) = git
-            .run(&target, git::Mode::Write, &["init", "-q"], &[], None)
-            .and_then(|output| output.checked("init"))
-        {
-            tracing::warn!("git init in {}: {err}", target.display());
-        }
-    }
+    let remote_added = init_repository(&context, &target, remote.as_deref());
     if context.settings.site_components.is_empty() {
         let mut row = context.facade.make_value(crate::settings::SETTING)?;
         row.set("settingName", Value::string("siteComponents"));
@@ -1429,7 +1515,8 @@ fn create_site_component(
             action: "DAA_CREATE",
             root: "component",
             path: &name,
-            detail: Some(serde_json::json!({ "template": "site" })),
+            detail: Some(serde_json::json!({ "template": "site",
+                "remote": remote_added.then_some(remote.as_deref()).flatten() })),
             ..Write::default()
         },
     );
@@ -1443,12 +1530,15 @@ fn create_site_component(
     let mut out = Parameters::new();
     out.insert("location".into(), Value::string(target.display().to_string()));
     out.insert("restart".into(), Value::Bool(true));
+    out.insert("remoteAdded".into(), Value::Bool(remote_added));
     Ok(out)
 }
 
 /// `create#Component`: a component from the component template, `runtime/components/dev/template` (its README), in
-/// runtime/components/addon/<name>, or runtime/components/dev/<name> with `dev`, with a git repository of its own; its screens
-/// and REST API, or one of them (`part`). `./moq component-create` makes the same. It loads after a restart.
+/// runtime/components/addon/<name>, or runtime/components/dev/<name> with `dev` (always for a dev tool), with a git
+/// repository of its own and an optional `origin`: an App with its screens and REST API, or one of them (`part`), or
+/// another kind (`kind`: data, native, theme, skills, dev-tool). `./moq component-create` makes the same. It loads after
+/// a restart, a native one after a rebuild first.
 fn create_component(
     ec: &ExecutionContext,
     _service: &ServiceInfo<'_>,
@@ -1462,12 +1552,31 @@ fn create_component(
             "a component name starts with a letter and has letters, digits, - and _",
         ));
     }
-    let part = template::Part::of(&text(parameters, "part"))
-        .ok_or_else(|| LibError::new("the part is all, screens or rest"))?;
+    let kind = template::Kind::of(&text(parameters, "kind"), &text(parameters, "part")).ok_or_else(|| {
+        LibError::new("the kind is app (with the part all, screens or rest), data, native, theme, skills or dev-tool")
+    })?;
+    let remote = remote_of(parameters)?;
     let runtime = context.factory.runtime_dir();
-    let target = moqui_core::context::layout::set_dir(runtime, placed_set(parameters)).join(&name);
+    // a dev tool loads only on dev instances: in runtime/components/dev wherever it was asked for
+    let set = if kind.dev_only() {
+        if flag(parameters, "test") {
+            return Err(LibError::new(
+                "a dev tool goes in runtime/components/dev, not the test set",
+            ));
+        }
+        moqui_core::context::layout::Set::Dev
+    } else {
+        placed_set(parameters)
+    };
+    let target = moqui_core::context::layout::set_dir(runtime, set).join(&name);
     if target.exists() {
         return Err(LibError::new(format!("{} is there already", target.display())));
+    }
+    // its package another component's, or a theme on a webroot path: moq's template_name_refusal refuses the same
+    if let Some(components) = target.parent().and_then(Path::parent) {
+        if let Some(why) = template::name_refusal(components, &name, kind) {
+            return Err(LibError::new(why));
+        }
     }
     let source = moqui_core::context::layout::set_dir(runtime, moqui_core::context::layout::Set::Dev).join("template");
     if !source.join("component.xml").is_file() {
@@ -1476,41 +1585,99 @@ fn create_component(
             source.display()
         )));
     }
-    if let Err(err) = template::create(&source, &target, &name, part) {
+    if let Err(err) = template::create(&source, &target, &name, kind) {
         // a component half made would load at the next start
         let _ = std::fs::remove_dir_all(&target);
         return Err(err);
     }
-    let git = context.git();
-    if git.available() {
-        if let Err(err) = git
-            .run(&target, git::Mode::Write, &["init", "-q"], &[], None)
-            .and_then(|output| output.checked("init"))
-        {
-            tracing::warn!("git init in {}: {err}", target.display());
-        }
-    }
+    let remote_added = init_repository(&context, &target, remote.as_deref());
+    let part = match kind {
+        template::Kind::App(part) => part.name(),
+        _ => "",
+    };
     audit::record(
         &context.facade,
         &Write {
             action: "DAA_CREATE",
-            root: placed_set(parameters).dir_name(),
+            root: set.dir_name(),
             path: &name,
-            detail: Some(serde_json::json!({ "template": "template", "part": part.name() })),
+            detail: Some(
+                serde_json::json!({ "template": "template", "kind": kind.name(), "part": part,
+                "remote": remote_added.then_some(remote.as_deref()).flatten() }),
+            ),
             ..Write::default()
         },
     );
-    // no reload sees a new component: the report tells Home a restart is needed
-    moqui_devkit::note_restart(
-        &context.factory,
-        &target.join("component.xml"),
-        Some(&name),
-        "new component: it loads after a restart",
-    );
+    // no reload sees a new component: the report tells Home a restart is needed, and a crate a rebuild first
+    if kind == template::Kind::Native {
+        moqui_devkit::note_rebuild(
+            &context.factory,
+            &target.join("Cargo.toml"),
+            Some(&name),
+            "new native component: it loads after a rebuild (./moq build) and a restart",
+        );
+    } else {
+        moqui_devkit::note_restart(
+            &context.factory,
+            &target.join("component.xml"),
+            Some(&name),
+            "new component: it loads after a restart",
+        );
+    }
     let mut out = Parameters::new();
     out.insert("location".into(), Value::string(target.display().to_string()));
     out.insert("restart".into(), Value::Bool(true));
+    out.insert("rebuild".into(), Value::Bool(kind == template::Kind::Native));
+    out.insert("remoteAdded".into(), Value::Bool(remote_added));
     Ok(out)
+}
+
+/// The `gitRemote` a new component's repository starts with, checked ([`crate::vcs::checked_remote`]); none when empty.
+fn remote_of(parameters: &Parameters) -> Result<Option<String>, LibError> {
+    let remote = text(parameters, "gitRemote");
+    if remote.trim().is_empty() {
+        Ok(None)
+    } else {
+        crate::vcs::checked_remote(&remote).map(Some)
+    }
+}
+
+/// A git repository in a new component's `target`, with `remote` as its `origin`; whether the remote was added. A
+/// failure is logged and the component stays, as a component without a repository is still a component.
+fn init_repository(context: &Context, target: &Path, remote: Option<&str>) -> bool {
+    let git = context.git();
+    if !git.available() {
+        if remote.is_some() {
+            tracing::warn!("{}: no git, so no repository and no remote", target.display());
+        }
+        return false;
+    }
+    if let Err(err) = git
+        .run(target, git::Mode::Write, &["init", "-q"], &[], None)
+        .and_then(|output| output.checked("init"))
+    {
+        tracing::warn!("git init in {}: {err}", target.display());
+        return false;
+    }
+    let Some(remote) = remote else {
+        return false;
+    };
+    match git
+        .run(
+            target,
+            git::Mode::Write,
+            &["remote", "add", "--", "origin", remote],
+            &[],
+            None,
+        )
+        .and_then(|output| output.checked("remote add"))
+    {
+        Ok(_) => true,
+        Err(err) => {
+            tracing::warn!("git remote add origin in {}: {err}", target.display());
+            false
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1585,6 +1752,7 @@ mod tests {
             worktree_of: None,
             conversation_id: None,
             worktree_user_id: None,
+            hosted_branch: None,
         };
         let git = Git {
             command: "git".into(),

@@ -494,7 +494,13 @@ fn service_xml(def: &define::ServiceDef) -> String {
     if !def.location.is_empty() {
         node.set_attribute("location", def.location.as_str());
     }
-    for (element, params) in [("in-parameters", &def.in_params), ("out-parameters", &def.out_params)] {
+    // merged by name with the auto-parameters expanded, as Java's node holds them once the definition is made; where
+    // they cannot be expanded (no facade), as declared, the auto-parameters elements kept
+    let facade = super::validate::current_facade();
+    let in_params: Vec<define::ParamDef> = super::validate::declared_in(def, facade.as_ref())
+        .map_or_else(|_| def.in_params.clone(), |params| params.to_vec());
+    let out_params: Vec<define::ParamDef> = super::validate::expanded_out(def).to_vec();
+    for (element, params) in [("in-parameters", &in_params), ("out-parameters", &out_params)] {
         if params.is_empty() {
             continue;
         }

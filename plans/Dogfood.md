@@ -104,7 +104,7 @@ them.
 | Containers | Services that create, start, stop and remove a container through the Docker Remote API, with `InstanceHost` and `InstanceHostType` rows that name a host type's services. A container image of the server. | `fw/service/org/moqui/dev/InstanceServices.xml`, `fw/entity/ServerEntities.xml`, `podman/` |
 | Tests | `moqui test --workers N` runs specs in N processes, each with its own database, and writes JUnit. | [Build-Test](../docs/Build-Test.md) |
 | Deploy | A component is fetched from git, previewed and deployed live, on one server or a cluster. | [Component-Deploy](../docs/tools/Component-Deploy.md) |
-| Dev AIDE | Working trees through the `git` command, Publish, the task panel over a Mantle or a `moqui-rest` source, a shared mode. It has no merge request, review or check screens, and a working tree does not know its hosted repository. | [design-dev-aide](design-dev-aide.md) |
+| Dev AIDE | Working trees through the `git` command, Publish, the task panel over a Mantle or a `moqui-rest` source, a shared mode. It has no merge request, review or check screens, and a working tree does not know its hosted repository. Since Nov 14, 2026 ([§11](#11-dev-aide), design-dev-aide P11 to P13) it has them: a connection to a group server, the hosted repository of a working tree, merge requests, review threads and checks in the Workspace, the agreement's warning and Sign, the `hosting` tool and worktrees for agents. | [design-dev-aide](design-dev-aide.md) |
 | Group server | A production instance with BOSS that hosts a team's repositories, work items and LLM gateway. | [Run-Deploy](../docs/Run-Deploy.md#dev-instances-with-a-dev-group-server) |
 
 ---
@@ -555,7 +555,9 @@ A pipeline is defined in the repository, in `ci.xml` at its root, read at the co
   speak it (`init#InstanceDocker` and the rest, API v1.24) over plain HTTP on loopback, and they start a server that
   stays; F8 adds a run that ends, limits, and the socket and TLS. Kubernetes, AWS and other providers' APIs are
   drivers for later. A **registered runner** is a long-lived machine that asks for jobs, for what a container cannot
-  be: macOS and Windows, which design-dev-aide's "Still open" says run nowhere today.
+  be: macOS and Windows, which design-dev-aide's "Still open" says run nowhere today. Since Nov 21, 2026 Windows has a
+  GitHub runner (`.github/workflows/windows.yml`: `cargo lint` and the `test_cmd::` tests); macOS has none, and the
+  Dev AIDE's Windows checks run on neither yet (design-dev-aide §19, "Platforms").
 - **Images** come from the files in `podman/`. The server's image is the one `podman/build.sh` makes today. The
   runner's, `moqui-build`, is a second Containerfile beside `podman/Containerfile`, on the same Debian base: the
   pinned Rust toolchain (`rust-toolchain.toml`), the embedded Postgres payload, and optionally Chromium and
@@ -592,7 +594,7 @@ optionally Chromium and OpenSearch. Node is not needed.
 | A merge to main | `./moq test-all` |
 | Nightly, and before a release | `./moq accept-all --junit` |
 | A tag | the release's archives and image, uploaded as its assets |
-| macOS and Windows | the checks of design-dev-aide §19 "Platforms", on registered runners |
+| macOS and Windows | the checks of design-dev-aide §19 "Platforms", on registered runners (until then, Windows: `cargo lint` and `cargo test -p moqui-host --lib test_cmd::` on GitHub's `windows-latest`, `.github/workflows/windows.yml`) |
 
 The suites' rules hold in CI as on a laptop: the regression suite on every change, acceptance only nightly and before
 a release, budgets not raised.
@@ -732,7 +734,8 @@ suites within budget, and its **Built** note here; the acceptance test a phase n
 | DG10 | Deploy environments and the gate | mr-moqui | moqui.org deploys itself from a passed pipeline, with an approval |
 
 - DG3, DG5 and DG6 do not depend on each other, and DG8's importer needs DG3 and DG4.
-- The Dev AIDE's P11 follows DG2 and DG4, and P12 follows DG5.
+- The Dev AIDE's P11 follows DG2 and DG4, and P12 follows DG5. All of them were built Nov 13 and 14, 2026, P11 to P13
+  on Nov 14 (design-dev-aide §21).
 - DG1 alone is worth having: a public, read-only moqui.org over mirrors, before anything moves.
 - F10 and F11 are taken up when DG9 and DG5 need them, not before.
 

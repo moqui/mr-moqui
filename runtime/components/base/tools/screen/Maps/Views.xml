@@ -17,7 +17,9 @@ along with this software (see the LICENSE.md file). If not, see
     views only (another's is read, never changed). Each shows its place, its owner and whether all its layers are still
     available (a layer that is not is left out of what is drawn, and said here); its name opens it in Browse, and View map
     shows its place in the local-map dialog (LocalMap), as an app opens it beside an address. Views are saved from
-    Browse. -->
+    Browse. Below them, the user's overlays and saved places and, read-only, those whose file another user shared with
+    them in Files (find#Overlays): sharing one is sharing its file there, and Remove takes one of one's own off the map,
+    leaving its file. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Saved views" default-menu-index="2" menu-image="sym_o_bookmarks" menu-image-type="icon">
 
@@ -43,8 +45,23 @@ along with this software (see the LICENSE.md file). If not, see
         <error-response url="."/>
     </transition>
 
+    <transition name="removeOverlay">
+        <service-call name="org.moqui.maps.MapServices.delete#Overlay" in-map="{overlayId:overlayId}" out-map="removed"/>
+        <actions>
+            <if condition="!ec.message.hasError()">
+                <script>ec.message.addMessage(removed.applied ? ec.l10n.localize('The overlay is off your maps; its file stays in your files') : removed.reason, removed.applied ? 'success' : 'warning')</script>
+            </if>
+        </actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+
     <actions>
         <service-call name="org.moqui.maps.MapServices.find#SavedViews" out-map="found" transaction="force-new" ignore-error="true"/>
+        <service-call name="org.moqui.maps.MapServices.find#Overlays" out-map="overlaysFound" transaction="force-new" ignore-error="true"/>
+        <set field="overlayRows" from="Array.from(overlaysFound?.overlayList || []).map(row =&gt; ({overlayId: row.overlayId, label: row.label, isOwn: row.isOwn,
+                ownerText: row.isOwn ? (row.isPlaces ? ec.l10n.localize('Your places') : ec.l10n.localize('Yours')) : ec.l10n.localize('Shared by') + ' ' + (row.ownerName || ''),
+                fileText: row.path || row.fileName, featuresText: String(row.featureCount) + (row.rejectedCount ? ' (' + row.rejectedCount + ' ' + ec.l10n.localize('left out') + ')' : '')}))"/>
         <set field="available" from="!!found?.savedViewList"/>
         <set field="viewRows" from="Array.from(found?.savedViewList || []).map(row =&gt; {
                 const view = row.view || {}
@@ -103,6 +120,32 @@ along with this software (see the LICENSE.md file). If not, see
                     <columns type="mobile">
                         <column><field-ref name="description"/><field-ref name="ownerText"/></column>
                         <column><field-ref name="statusText"/><field-ref name="actions"/></column>
+                    </columns>
+                </form-list>
+            </widgets>
+        </section>
+
+        <label text="Overlays and places" type="h6" style="q-mt-lg"/>
+        <label type="p" style="text-caption m-muted"
+                text="Your overlays (added in Browse with Add overlay) and saved places, and those others shared with you. To share one, share its file in your files (Maps/overlays, Maps/places.geojson); a shared one is read-only here."/>
+        <label type="p" style="m-muted" condition="!overlayRows.length" text="No overlay or saved place yet."/>
+        <section name="OverlaySection" condition="overlayRows.length">
+            <widgets>
+                <form-list name="OverlayList" list="overlayRows" skip-form="true" paginate="false">
+                    <field name="label"><default-field title="Overlay"><display/></default-field></field>
+                    <field name="ownerText"><default-field title="Owner"><display/></default-field></field>
+                    <field name="fileText"><default-field title="File"><display/></default-field></field>
+                    <field name="featuresText"><default-field title="Features"><display/></default-field></field>
+                    <field name="actions">
+                        <default-field title="">
+                            <link url="removeOverlay" text="Remove" icon="sym_o_delete" link-type="hidden-form-link" condition="isOwn"
+                                    confirmation="Take ${label} off your maps? Its file stays in your files."
+                                    parameter-map="{overlayId:overlayId}"/>
+                        </default-field>
+                    </field>
+                    <columns type="mobile">
+                        <column><field-ref name="label"/><field-ref name="ownerText"/></column>
+                        <column><field-ref name="featuresText"/><field-ref name="actions"/></column>
                     </columns>
                 </form-list>
             </widgets>

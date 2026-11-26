@@ -58,7 +58,27 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="worktreeUserId" type="id"><description>Who made the worktree</description></field>
         <field name="worktreeEndedDate" type="date-time"><description>When its conversation ended (archived or deleted)
             while the worktree had uncommitted changes, so it was kept and its user told once (21.8)</description></field>
+        <field name="rootKind" type="text-short"><description>hosted: a repository of this server's git hosting at a
+            branch (plans/design-dev-aide.md 4.10), with no directory; empty for a directory</description></field>
+        <field name="gitRepositoryId" type="text-medium"><description>A hosted root's GitRepository</description></field>
+        <field name="gitBranch" type="text-medium"><description>A hosted root's branch: each Save is a commit to it</description></field>
+        <field name="hostedByUserId" type="id"><description>Who added the hosted root</description></field>
         <index name="DEV_AIDE_ROOT_LOC" unique="true"><index-field name="location"/></index>
+    </entity>
+    <entity entity-name="DevDataLoadBaseline" package="moqui.dev" use="configuration" cache="never">
+        <description>A data file's text as Load the changed records last loaded it (plans/design-dev-aide.md 12): the
+            base of the next load's three-way compare, written only after that load committed. One per root and file,
+            not per user: the database is the instance's, so what it last took from a file is too.</description>
+        <field name="rootId" type="text-short" is-pk="true"/>
+        <field name="filePath" type="text-medium" is-pk="true"/>
+        <field name="textHash" type="text-medium"><description>The text's SHA-256</description></field>
+        <field name="baselineText" type="text-very-long"/>
+        <field name="timeZone" type="text-short"><description>The zone the load read the text's time stamps in: the next
+            plan reads the base and the file in it, so a user in another zone sees the same instants</description></field>
+        <field name="loadedByUserId" type="id"/>
+        <field name="loadedDate" type="date-time"/>
+        <relationship type="one-nofk" title="LoadedBy" related="moqui.security.UserAccount">
+            <key-map field-name="loadedByUserId" related="userId"/></relationship>
     </entity>
     <entity entity-name="DevAideSetting" package="moqui.dev" use="configuration">
         <description>An instance-wide setting Settings stores over the conf: siteComponents (a comma list), networkGit

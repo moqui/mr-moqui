@@ -26,6 +26,7 @@ pub mod census;
 pub mod geonames;
 pub mod ids;
 pub mod operator;
+pub mod overlay;
 pub mod postal;
 pub mod text;
 

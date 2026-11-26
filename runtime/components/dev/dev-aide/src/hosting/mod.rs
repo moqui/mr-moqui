@@ -16,7 +16,8 @@
 //! server is a connection ([`connect`]: what it offers, the user's token, and what Connect sets from it); a working
 //! tree's remote resolves to its hosted repository there, whose merge requests are listed, opened, proposed and checked
 //! out ([`review`]), and reviewed with the server's threads ([`threads`]); the checks of its commits and their jobs
-//! ([`checks`], P12); and its contributor agreement, with Sign ([`agreement`]). Every call goes to the server's REST as
+//! ([`checks`], P12); its contributor agreement, with Sign ([`agreement`]); and its open issues and Quick create there
+//! ([`issues`]). Every call goes to the server's REST as
 //! the connected user ([`client`]), so the server's rules decide; a repository an application keeps goes through that
 //! application's REST, which the server offers.
 
@@ -24,6 +25,7 @@ pub(crate) mod agreement;
 pub(crate) mod checks;
 pub(crate) mod client;
 pub(crate) mod connect;
+pub(crate) mod issues;
 pub(crate) mod review;
 #[cfg(test)]
 mod tests;
@@ -37,5 +39,6 @@ pub(crate) fn register(registry: &mut NativeRegistry) -> Result<(), Error> {
     review::register(registry)?;
     threads::register(registry)?;
     checks::register(registry)?;
-    agreement::register(registry)
+    agreement::register(registry)?;
+    issues::register(registry)
 }

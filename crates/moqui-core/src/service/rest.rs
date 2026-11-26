@@ -1091,8 +1091,9 @@ fn service_parameters(
     if !parameters.is_empty() {
         operation.insert("parameters".to_string(), Value::List(parameters));
     }
-    let out_params: Vec<&ParamDef> = def
-        .out_params
+    // merged by name, with the auto-parameters' fields
+    let merged_out = super::define::merged_out_params(&def);
+    let out_params: Vec<&ParamDef> = merged_out
         .iter()
         .filter(|param| !param.name.is_empty() && param.required != Required::Disabled)
         .collect();

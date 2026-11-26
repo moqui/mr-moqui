@@ -240,7 +240,7 @@ pub(super) static METHODS: &[Method] = &[
     method!("tools", "webSendRedirect", [Text], web_send_redirect),
     method!("tools", "webForward", [Int, Value, Value], web_forward),
     method!("tools", "restOpen", [Value], rest_open),
-    method!("tools", "restReadBody", [Int], rest_read_body),
+    method!("tools", "restReadBody", [Int, OptInt], rest_read_body),
 ];
 
 fn texts(texts: Vec<String>) -> Ret {
@@ -705,10 +705,17 @@ fn rest_open(call: &mut Call<'_>) -> Result<Ret, HostError> {
 }
 
 /// The whole body of a response `send()` kept, as `{text, bytes}`.
+/// A kept response body read whole: at most the second argument's bytes when given (a larger body is an error, and is
+/// not read past that), else at most [`MAX_READ_BODY`].
 fn rest_read_body(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let max = call
+        .int(1)
+        .and_then(|max| u64::try_from(max).ok())
+        .filter(|max| *max > 0)
+        .map_or(MAX_READ_BODY, |max| max.min(MAX_READ_BODY));
     let bytes = u32::try_from(call.int(0).unwrap_or_default())
         .map_err(|_| crate::context::Error::new("no such response body"))
-        .and_then(|id| crate::web::upstream::read_all(id, MAX_READ_BODY))
+        .and_then(|id| crate::web::upstream::read_all(id, max))
         .map_err(|err| HostError::message(err.message()))?;
     let mut map = indexmap::IndexMap::default();
     map.insert("text".to_string(), Value::string(String::from_utf8_lossy(&bytes)));

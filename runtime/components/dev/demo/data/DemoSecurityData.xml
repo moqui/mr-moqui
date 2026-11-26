@@ -48,6 +48,10 @@ along with this software (see the LICENSE.md file). If not, see
             authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_VIEW"/>
     <moqui.security.ArtifactAuthz artifactAuthzId="AIDE_PROJECTS_ADMIN" artifactGroupId="AIDE_PROJECTS" userGroupId="ADMIN"
             authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_VIEW"/>
+    <!-- Maps › Configuration: map providers (outside endpoints and their test requests), profiles, archives on the server
+        and Geo data downloads, which a visitor does not change (component://tools/data/MapsSecurityData.xml) -->
+    <moqui.security.ArtifactAuthz artifactAuthzId="MAPS_ADMIN_ADMIN" artifactGroupId="MAPS_ADMIN" userGroupId="ADMIN"
+            authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_VIEW"/>
 
     <!-- ADMIN permissions ended: the search store and OpenSearch Dashboards proxies
         (component://framework/data/MoquiSetupData.xml), another user's password without the old one, SFTP and git over

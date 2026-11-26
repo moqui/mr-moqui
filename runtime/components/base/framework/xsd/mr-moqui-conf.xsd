@@ -2388,8 +2388,13 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="import-max-bytes" type="non-neg-int-expandable" default="536870912"><xs:annotation><xs:documentation>
                 The largest Geo data download or operator file, and the most it may unzip to, in bytes (512 MiB).</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="max-features" type="non-neg-int-expandable" default="5000"><xs:annotation><xs:documentation>
-                The most features one overlay or one viewport query of a layer adapter returns; 0 returns none, which turns
-                record layers off. A value that is not a whole number is logged and refuses the query.</xs:documentation></xs:annotation></xs:attribute>
+                The most features one viewport query of a layer adapter returns, and one user's overlay or places file may
+                have; 0 returns none, which turns record layers off (an overlay may then have 5000). A value that is not a
+                whole number is logged and refuses the query (an overlay may then have 5000).</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="overlay-max-bytes" type="non-neg-int-expandable" default="10485760"><xs:annotation><xs:documentation>
+                The largest GeoJSON, GPX or KML file a user adds as an overlay, and their places file, in bytes (10 MiB),
+                within import-max-bytes: an overlay is drawn whole in the browser. Its GeoJSON is served up to 4 MiB of
+                characters.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
     <xs:element name="cluster-member">
@@ -3369,10 +3374,12 @@ along with this software (see the LICENSE.md file). If not, see
 
     <xs:element name="dev-reload">
         <xs:annotation><xs:documentation>The dev file watcher (plans/design-dev-aide.md 6.3): on a dev instance
-            (instance@purpose dev) of a build with the devtools feature (the Dev and Debug packages), every component
-            directory is watched, and a changed file reloads what it defines: its services, its screen, the ECA rule
-            set of its kind, its REST API or skill; an entity, conf or Rust change logs that it needs a restart or a
-            rebuild. On unless enabled is false. Not on any other purpose.</xs:documentation></xs:annotation>
+            (instance@purpose dev) of a build with the devtools feature (the Maximal package, the default, and Debug,
+            or another package built with the feature), every component directory is watched, and a changed file
+            reloads what it defines: its services, its screen, the ECA rule set of its kind, its REST API or skill; an
+            entity file relinks the model, a conf file goes to the conf reload, and a component.xml or Rust change logs
+            that it needs a restart or a rebuild. On unless enabled is false. Not on any other
+            purpose.</xs:documentation></xs:annotation>
         <xs:complexType>
             <xs:attribute name="projects" type="xs:string" default="3"><xs:annotation><xs:documentation>How many projects
                 the dev tools' project cache keeps.</xs:documentation></xs:annotation></xs:attribute>
