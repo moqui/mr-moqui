@@ -69,8 +69,8 @@ The assisted IDE of mr-moqui (`plans/design-dev-aide.md`), at `/qapps/dev` on a 
   an issue) as untrusted data, opens a merge request or comments only by your approval, never approves, merges,
   re-runs, resolves or signs, and is refused the diff of a merge request whose authors have not signed. A commit's
   checks have **Run locally**: a job of the working tree's `ci.xml` in a host session of the Terminal, its steps and
-  variables but not its image or secrets, or, where Docker or Podman answers, in the job's image with the working tree
-  mounted, its log in the dialog. The **Sessions** tab makes a worktree of a root for an Assist session
+  variables but not its image or secrets, or, where Docker or Podman answers, in the job's image on a copy of the
+  working tree's files that is deleted after, its log in the dialog. The **Sessions** tab makes a worktree of a root for an Assist session
   (`runtime/worktrees`, a branch of its own), where that session's file and git tools work; a worktree is not loaded,
   so its changes are checked and committed there, not run live; when its conversation ends, a clean one is removed and
   one with changes is kept, with a notice. The server's REST decides, as you there: the framework's

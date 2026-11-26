@@ -41,8 +41,9 @@ along with this software (see the LICENSE.md file). If not, see
             typed into the server user's shell. Not the job's image. From a session only. With where image: the same
             steps in a container of the job's image (its image pulled when the engine does not have it), kept in as a
             CI job's container is (no privilege or capability, a read-only root, an init, a user that is not root, the
-            dev-aide conf's local-run-memory-mb and local-run-pids), the working tree mounted at the working directory
-            and written as its owner, its .git read only; no network on a shared dev server. It needs TERMINAL_HOST, a
+            dev-aide conf's local-run-memory-mb and local-run-pids), on a copy of the working tree's files (no .git,
+            links as links, at most local-run-copy-mb) mounted at the working directory and deleted when the run ends:
+            nothing comes back to the tree; no network on a shared dev server. It needs TERMINAL_HOST, a
             root the tier may write that does not hold the runtime, and fewer than local-run-limit runs of the user's
             going; one past local-run-timeout-minutes is stopped. The user's earlier ended runs are removed. Out runId,
             which get#LocalRun follows.</description>

@@ -50,6 +50,7 @@ pub struct Settings {
     pub local_run_pids: i64,
     pub local_run_timeout_minutes: u64,
     pub local_run_limit: usize,
+    pub local_run_copy_mb: u64,
 }
 
 impl Settings {
@@ -83,6 +84,7 @@ impl Settings {
             local_run_pids: attr("local-run-pids").parse().unwrap_or(1024),
             local_run_timeout_minutes: attr("local-run-timeout-minutes").parse().unwrap_or(60),
             local_run_limit: attr("local-run-limit").parse().unwrap_or(2),
+            local_run_copy_mb: attr("local-run-copy-mb").parse().unwrap_or(1024),
         };
         if let Ok(conf) = MNode::parse_shared("moqui-conf", &factory.conf_text()) {
             for element in conf.named_iter("dev-aide") {

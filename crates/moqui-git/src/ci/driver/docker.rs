@@ -602,31 +602,27 @@ pub fn service_body(
 /// A developer's own run of a job in its image, on their machine (the Dev AIDE's Run locally, plans/design-dev-aide.md
 /// 21.5, question 20). Its container is a job's ([`create_body`]: no privilege, no capabilities, no new privileges, an
 /// init, a read-only root with a sized tmpfs at `/tmp`, a user that is not root, an image `VOLUME` on a tmpfs), with one
-/// thing no pool's run has: the developer's working tree mounted at the working directory, read and written as
-/// `user`, as their own shell would. Never made for a pool.
+/// thing no pool's run has: a tree of the host mounted at the working directory, read and written as `user` (the Dev
+/// AIDE's copy of the developer's working tree, which nothing on the host reads). Never made for a pool.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LocalRun {
     pub name: String,
     pub image: String,
     pub command: Vec<String>,
     pub labels: Vec<(String, String)>,
-    /// The working tree on the host, mounted at the working directory.
+    /// The tree on the host mounted at the working directory: the Dev AIDE's copy of a working tree, never the tree.
     pub tree: std::path::PathBuf,
-    /// The container's user, `uid:gid` (the working tree's owner); the conf's when `None` or root.
+    /// The container's user, `uid:gid` (the tree's owner); the conf's when `None` or root.
     pub user: Option<String>,
     pub memory_mb: i64,
     pub pids_limit: i64,
-    /// Paths in the tree (a plain relative name each, such as `.git`) mounted read only over themselves: what the
-    /// developer's own tools read and the job must not write.
-    pub read_only: Vec<String>,
     /// `bridge`, or `none` ([`egress_mode`] holds it to a mode a pool may have).
     pub network_mode: String,
 }
 
 /// The body of `POST /containers/create` for a [`LocalRun`] on `engine`: a job's container's ([`create_body`]) with the
-/// working tree bound over the working directory in place of its tmpfs (with its `read_only` paths bound read only over
-/// themselves), `HOME` at `/tmp`, on its network (bridge, or none), and on Podman the host's user kept as the
-/// container's (`keep-id`), so a rootless Podman writes the tree as its owner.
+/// tree bound over the working directory in place of its tmpfs, `HOME` at `/tmp`, on its network (bridge, or none), and
+/// on Podman the host's user kept as the container's (`keep-id`), so a rootless Podman writes the tree as its owner.
 pub fn local_body(run: &LocalRun, hardening: &Hardening, engine: Engine) -> serde_json::Value {
     let mut hardening = hardening.clone();
     if let Some(user) = run.user.as_deref().filter(|user| !is_root_user(user)) {
@@ -663,29 +659,12 @@ pub fn local_body(run: &LocalRun, hardening: &Hardening, engine: Engine) -> serd
     if let Some(tmpfs) = body["HostConfig"]["Tmpfs"].as_object_mut() {
         tmpfs.remove(&hardening.workdir);
     }
-    let mut mounts = vec![json!({
+    body["HostConfig"]["Mounts"] = json!([{
         "Type": "bind",
         "Source": run.tree.display().to_string(),
         "Target": hardening.workdir,
         "ReadOnly": false,
-    })];
-    for path in &run.read_only {
-        // a plain relative name in the tree only: nothing above it or beside it
-        let plain = !path.is_empty()
-            && !path.starts_with('/')
-            && path
-                .split('/')
-                .all(|part| !part.is_empty() && part != "." && part != "..");
-        if plain {
-            mounts.push(json!({
-                "Type": "bind",
-                "Source": run.tree.join(path).display().to_string(),
-                "Target": format!("{}/{path}", hardening.workdir.trim_end_matches('/')),
-                "ReadOnly": true,
-            }));
-        }
-    }
-    body["HostConfig"]["Mounts"] = json!(mounts);
+    }]);
     if engine == Engine::Podman {
         body["HostConfig"]["UsernsMode"] = json!("keep-id");
     }

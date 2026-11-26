@@ -22,9 +22,11 @@
 //! shell, so what runs is there to read.
 //!
 //! Where Docker or Podman answers on this machine, a job also runs in its image: a container of the CI driver's
-//! (`moqui_git::ci::driver::docker::start_local`, kept in as a pool's job is), the working tree mounted at the working
-//! directory and written as its owner, the same steps and variables, its secrets unset, its log read by the checks
-//! dialog until it ends (`get#LocalRun`) and the container removed by Remove or the next run.
+//! (`moqui_git::ci::driver::docker::start_local`, kept in as a pool's job is), on a copy of the working tree (the files
+//! git sees, no `.git` anywhere, links copied as links) under the runtime's `tmp`, mounted at the working directory and
+//! deleted when the run ends: nothing of it comes back to the tree, and git never runs in it. The same steps and
+//! variables, its secrets unset, its log read by the checks dialog until it ends (`get#LocalRun`) and the container
+//! removed by Remove or the next run.
 
 use std::path::{Path, PathBuf};
 
@@ -50,9 +52,9 @@ pub const NOT_THE_IMAGE: &str =
     of the Terminal: not in the job's image, with none of its secrets, caches, services or artifacts.";
 
 /// What the page says of a run in the job's image.
-pub const IN_THE_IMAGE: &str = "In the job's image runs its steps in a container of that image on this machine, the \
-    working tree mounted at the working directory and written as its owner: with none of the job's secrets, caches, \
-    services or artifacts.";
+pub const IN_THE_IMAGE: &str = "In the job's image runs its steps in a container of that image on this machine, on a \
+    copy of the working tree that is deleted when the run ends (nothing comes back to the tree; the log is its output): \
+    with none of the job's secrets, caches, services or artifacts.";
 
 /// The labels of a local run's container: whose it is (with the CI driver's server label, which says this server made
 /// it) and its working tree.
@@ -629,6 +631,8 @@ pub struct ImageLimits {
     pub pids: i64,
     pub timeout: std::time::Duration,
     pub per_user: usize,
+    /// The most a working tree's copy may hold, in bytes.
+    pub copy_bytes: u64,
 }
 
 impl ImageLimits {
@@ -638,13 +642,14 @@ impl ImageLimits {
             pids: settings.local_run_pids,
             timeout: std::time::Duration::from_secs(settings.local_run_timeout_minutes.saturating_mul(60)),
             per_user: settings.local_run_limit,
+            copy_bytes: settings.local_run_copy_mb.saturating_mul(1024 * 1024),
         }
     }
 }
 
 /// The [`LocalRun`] of `job` in its image for `user`: its container's name, the script as its command, the labels
-/// that say whose it is, the working tree and its owner, its `.git` (a directory, or a worktree's file) mounted read
-/// only over itself, the network (none on a shared dev server: `shared`), and the limits.
+/// that say whose it is, the tree it mounts (the working tree's copy, [`copy_tree`]) and its owner, the network (none
+/// on a shared dev server: `shared`), and the limits.
 #[must_use]
 #[allow(clippy::too_many_arguments)]
 pub fn image_run(
@@ -657,12 +662,6 @@ pub fn image_run(
     limits: &ImageLimits,
     shared: bool,
 ) -> LocalRun {
-    // what git reads to run a hook or a command (its hooks, config, a worktree's link) the job never writes
-    let read_only = if std::fs::symlink_metadata(tree.join(".git")).is_ok() {
-        vec![".git".to_string()]
-    } else {
-        Vec::new()
-    };
     LocalRun {
         name: name.to_string(),
         image: job.image.clone(),
@@ -679,7 +678,6 @@ pub fn image_run(
         user: owner_of(tree).map(|(uid, gid)| format!("{uid}:{gid}")),
         memory_mb: limits.memory_mb,
         pids_limit: limits.pids,
-        read_only,
         network_mode: if shared { "none".into() } else { "bridge".into() },
     }
 }
@@ -722,78 +720,149 @@ pub fn with_time_limit(script: &str, secs: u64) -> String {
     )
 }
 
-/// The paths under a working tree that a run in its image gets read only over themselves: what git reads to run a
-/// hook or a command there (`core.fsmonitor`, a hook, a worktree's link), so a step plants nothing the Dev AIDE's next
-/// git command runs on the host. Each `.git` (a directory or a file) found under the tree without following a link,
-/// each submodule's path (`gitlinks`, from `git ls-files -s`: an uninitialized one is an empty directory a step could
-/// make a repository of), and each nested root's `.git`; relative to the tree, sorted. Refused (the tree is not mounted)
-/// when the tree has more than [`MAX_SCANNED`] entries to look through.
+/// Where the copies of working trees that runs in an image work on are: under the runtime's `tmp`, which no root
+/// reaches.
+fn copies_dir(runtime: &Path) -> PathBuf {
+    runtime.join("tmp").join("dev-aide-image")
+}
+
+/// A working tree's copy that is deleted when it is dropped: a run's, from its start to its end.
+pub struct TreeCopy(pub PathBuf);
+
+impl Drop for TreeCopy {
+    fn drop(&mut self) {
+        if let Err(err) = std::fs::remove_dir_all(&self.0) {
+            if err.kind() != std::io::ErrorKind::NotFound {
+                tracing::warn!("Dev AIDE: a run's copy {} was not deleted: {err}", self.0.display());
+            }
+        }
+    }
+}
+
+/// Make `parent` (relative) under `dest`, a directory at a time, never through a link: what the copy's files go in.
+fn make_dirs(dest: &Path, parent: &Path) -> Result<(), String> {
+    let mut at = dest.to_path_buf();
+    for part in parent.components() {
+        at.push(part);
+        match std::fs::symlink_metadata(&at) {
+            Ok(meta) if meta.is_dir() => {}
+            Ok(_) => return Err(format!("{} is not a directory in the copy", at.display())),
+            Err(_) => std::fs::create_dir(&at).map_err(|err| format!("{}: {err}", at.display()))?,
+        }
+    }
+    Ok(())
+}
+
+/// Copy the files of `tree` that `listed` names (what git sees: `git ls-files --cached --others --exclude-standard`) to
+/// `dest`, a new directory: never a path with a `.git` part, nor one whose directory leads out of the tree by a link;
+/// a link is copied as a link, never followed; a directory (a submodule) is left out. Refused when the files come to
+/// more than `max_bytes`. The bytes copied.
 ///
 /// # Errors
 ///
-/// The refusal, when the tree is too big to look through, or a directory cannot be read.
-pub fn git_paths(tree: &Path, gitlinks: &[String], nested_roots: &[PathBuf]) -> Result<Vec<String>, String> {
-    let mut found: Vec<String> = Vec::new();
-    let mut pending: Vec<PathBuf> = vec![tree.to_path_buf()];
-    let mut scanned = 0usize;
-    while let Some(dir) = pending.pop() {
-        let entries = std::fs::read_dir(&dir).map_err(|err| format!("{}: {err}", dir.display()))?;
-        for entry in entries {
-            let entry = entry.map_err(|err| format!("{}: {err}", dir.display()))?;
-            scanned += 1;
-            if scanned > MAX_SCANNED {
+/// The refusal, or a file that could not be copied.
+pub fn copy_tree(tree: &Path, listed: &[String], dest: &Path, max_bytes: u64) -> Result<u64, String> {
+    let tree = std::fs::canonicalize(tree).map_err(|err| format!("{}: {err}", tree.display()))?;
+    std::fs::create_dir(dest).map_err(|err| format!("{}: {err}", dest.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(dest, std::fs::Permissions::from_mode(0o700))
+            .map_err(|err| format!("{}: {err}", dest.display()))?;
+    }
+    let mut total = 0u64;
+    for relative in listed {
+        let path = Path::new(relative);
+        let plain = !relative.is_empty()
+            && path.components().all(|part| match part {
+                std::path::Component::Normal(name) => name != ".git",
+                _ => false,
+            });
+        if !plain {
+            continue;
+        }
+        let source = tree.join(path);
+        let Ok(meta) = std::fs::symlink_metadata(&source) else {
+            continue;
+        };
+        // the file's directory is the tree's own, not a link out of it
+        let inside = source
+            .parent()
+            .and_then(|parent| std::fs::canonicalize(parent).ok())
+            .is_some_and(|parent| parent.starts_with(&tree));
+        if !inside || meta.is_dir() {
+            continue;
+        }
+        if let Some(parent) = path.parent() {
+            make_dirs(dest, parent)?;
+        }
+        let target = dest.join(path);
+        if meta.file_type().is_symlink() {
+            #[cfg(unix)]
+            {
+                let link = std::fs::read_link(&source).map_err(|err| format!("{relative}: {err}"))?;
+                std::os::unix::fs::symlink(link, &target).map_err(|err| format!("{relative}: {err}"))?;
+            }
+        } else if meta.is_file() {
+            total = total.saturating_add(meta.len());
+            if total > max_bytes {
                 return Err(format!(
-                    "the working tree has more than {MAX_SCANNED} files and directories to look through for a .git: run it \
-                     in a terminal"
+                    "the working tree's files come to more than {} MB, the most a run in an image copies \
+                     (dev-aide local-run-copy-mb): run it in a terminal",
+                    max_bytes / (1024 * 1024)
                 ));
             }
-            let path = entry.path();
-            let Ok(kind) = entry.file_type() else {
-                continue;
-            };
-            if entry.file_name() == ".git" {
-                if let Ok(relative) = path.strip_prefix(tree) {
-                    found.push(relative.display().to_string());
-                }
-            } else if kind.is_dir() && !kind.is_symlink() {
-                pending.push(path);
-            }
+            std::fs::copy(&source, &target).map_err(|err| format!("{relative}: {err}"))?;
         }
     }
-    for link in gitlinks {
-        let plain = !link.is_empty()
-            && link
-                .split('/')
-                .all(|part| !part.is_empty() && part != "." && part != "..");
-        if plain {
-            found.push(link.clone());
-        }
-    }
-    for nested in nested_roots {
-        if let Ok(relative) = nested.strip_prefix(tree) {
-            if !relative.as_os_str().is_empty() && std::fs::symlink_metadata(nested.join(".git")).is_ok() {
-                found.push(relative.join(".git").display().to_string());
-            }
-        }
-    }
-    found.sort();
-    found.dedup();
-    Ok(found)
+    Ok(total)
 }
 
-/// The most entries [`git_paths`] looks through.
-pub const MAX_SCANNED: usize = 200_000;
-
-/// The submodules of the repository at `tree`: the paths of its gitlinks (mode 160000 in `git ls-files -s`).
-#[must_use]
-pub fn gitlinks_of(ls_files: &str) -> Vec<String> {
-    ls_files
+/// The copy of `root`'s working tree a run (`name`) works on, under the runtime's `tmp`: the files git sees
+/// ([`copy_tree`]), deleted when it is dropped.
+fn make_copy(
+    context: &Context,
+    root: &crate::roots::Root,
+    runtime: &Path,
+    name: &str,
+    max_bytes: u64,
+) -> Result<TreeCopy, LibError> {
+    let copies = copies_dir(runtime);
+    std::fs::create_dir_all(&copies).map_err(|err| LibError::new(format!("{}: {err}", copies.display())))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&copies, std::fs::Permissions::from_mode(0o700))
+            .map_err(|err| LibError::new(format!("{}: {err}", copies.display())))?;
+    }
+    let listed: Vec<String> = context
+        .git()
+        .read(
+            &root.path,
+            &["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+        )?
         .split('\0')
-        .filter_map(|entry| {
-            let (meta, path) = entry.split_once('\t')?;
-            meta.starts_with("160000 ").then(|| path.to_string())
-        })
-        .collect()
+        .filter(|path| !path.is_empty())
+        .map(str::to_string)
+        .collect();
+    let copy = TreeCopy(copies.join(name));
+    copy_tree(&root.path, &listed, &copy.0, max_bytes).map_err(LibError::new)?;
+    Ok(copy)
+}
+
+/// Delete the copies a server that stopped while it ran left: every copy no run of this server follows.
+fn sweep_copies(runtime: &Path) {
+    let dir = copies_dir(runtime);
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return;
+    };
+    let followed: Vec<String> = moqui_lib::sync::lock(starts()).keys().cloned().collect();
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !followed.contains(&name) {
+            drop(TreeCopy(entry.path()));
+        }
+    }
 }
 
 /// The permission a program on this machine needs, a run in the image as the Terminal's host session.
@@ -860,19 +929,6 @@ fn start_in_image(
     if job.image.trim().is_empty() {
         return Err(LibError::new(format!("{}/{} names no image", job.pipeline, job.job)));
     }
-    // every .git under the tree, each submodule and each nested root's, read only in the container
-    let gitlinks = context
-        .git()
-        .read(&root.path, &["ls-files", "-s", "-z"])
-        .map(|out| gitlinks_of(&out))
-        .unwrap_or_default();
-    let nested: Vec<PathBuf> = context
-        .roots
-        .iter()
-        .filter(|other| other.path != root.path && crate::confine::inside(&other.path, &root.path))
-        .map(|other| other.path.clone())
-        .collect();
-    let read_only = git_paths(&root.path, &gitlinks, &nested).map_err(LibError::new)?;
     let engine = local_engine_for(Some(&root.path))
         .ok_or_else(|| LibError::new("Neither Docker nor Podman answers on this machine: run it in a terminal"))?;
     let user = moqui_core::user::current_user_id().ok().flatten().unwrap_or_default();
@@ -880,18 +936,6 @@ fn start_in_image(
     let running = running_runs(&engine.host, &user);
     let tag = moqui_core::user::random_string(12)?.to_ascii_lowercase();
     let name = format!("{NAME_PREFIX}{}-{tag}", moqui_git::ci::driver::server_name_part());
-    let mut run = image_run(
-        job,
-        &root.path,
-        &user,
-        &root.id,
-        &name,
-        Path::new(&hardening.workdir),
-        &limits,
-        context.settings.shared,
-    );
-    run.read_only = read_only;
-    run.command[2] = body;
     {
         // counted and kept under one lock: two starts at once do not both pass the limit
         let mut starts = moqui_lib::sync::lock(starts());
@@ -914,12 +958,40 @@ fn start_in_image(
             },
         );
     }
+    // the run works on a copy of the files git sees, never the working tree: nothing of it comes back, and git never
+    // runs in it. Made once the run is kept, so another start's sweep leaves it; one not made ends the run
+    let runtime = context.factory.runtime_dir();
+    sweep_copies(runtime);
+    let unkept = || {
+        moqui_lib::sync::lock(starts()).remove(&name);
+    };
+    let copy = match make_copy(context, root, runtime, &name, limits.copy_bytes) {
+        Ok(copy) => copy,
+        Err(err) => {
+            unkept();
+            return Err(err);
+        }
+    };
+    let mut run = image_run(
+        job,
+        &copy.0,
+        &user,
+        &root.id,
+        &name,
+        Path::new(&hardening.workdir),
+        &limits,
+        context.settings.shared,
+    );
+    run.command[2] = body;
     let socket = engine.socket.clone();
     let thread_name = name.clone();
-    std::thread::Builder::new()
+    if let Err(err) = std::thread::Builder::new()
         .name("dev-aide-local-run".into())
-        .spawn(move || follow(&socket, &thread_name, &run, &hardening, limits.timeout))
-        .map_err(|err| LibError::new(format!("the local run could not start: {err}")))?;
+        .spawn(move || follow(&socket, &thread_name, &run, &hardening, limits.timeout, copy))
+    {
+        unkept();
+        return Err(LibError::new(format!("the local run could not start: {err}")));
+    }
     crate::vcs::audit_git(
         context,
         root,
@@ -935,9 +1007,19 @@ fn start_in_image(
 }
 
 /// The thread of a run in the image: make and start its container, then follow it until it ends, Remove asks for it
-/// to stop (it is removed), or it runs past `timeout` (it is stopped, and its log kept). The container's own watchdog
-/// ([`with_time_limit`]) stops it at the same time if this server is gone.
-fn follow(socket: &Path, name: &str, run: &LocalRun, hardening: &Hardening, timeout: std::time::Duration) {
+/// to stop (it is removed), or it runs past `timeout` (it is stopped, and its log kept); then the working tree's copy it
+/// ran on is deleted. The container's own watchdog ([`with_time_limit`]) stops it at the same time if this server is
+/// gone, and a later start deletes the copy then.
+fn follow(
+    socket: &Path,
+    name: &str,
+    run: &LocalRun,
+    hardening: &Hardening,
+    timeout: std::time::Duration,
+    copy: TreeCopy,
+) {
+    // the copy goes however the run ends: its log is its output
+    let _copy = copy;
     let host = DockerHost::unix(socket);
     let id = match moqui_git::ci::driver::docker::start_local(&host, run, hardening) {
         Ok(id) => id,

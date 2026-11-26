@@ -15,8 +15,8 @@
 use std::path::Path;
 
 use super::{
-    digest, digest_refusal, engine_sockets, git_paths, gitlinks_of, image_refusal, image_run, jobs_of, pick, quoted,
-    script, script_in, valid_run_name, with_time_limit, ImageLimits, Place, LABEL_ROOT, LABEL_USER,
+    copy_tree, digest, digest_refusal, engine_sockets, image_refusal, image_run, jobs_of, pick, quoted, script,
+    script_in, valid_run_name, with_time_limit, ImageLimits, Place, TreeCopy, LABEL_ROOT, LABEL_USER,
 };
 
 const LIMITS: ImageLimits = ImageLimits {
@@ -24,6 +24,7 @@ const LIMITS: ImageLimits = ImageLimits {
     pids: 512,
     timeout: std::time::Duration::from_secs(600),
     per_user: 2,
+    copy_bytes: 64 * 1024 * 1024,
 };
 
 const CI: &str = r#"<ci>
@@ -207,13 +208,67 @@ fn the_engine_is_found_by_its_socket_and_a_run_by_its_name() {
     }
 }
 
-/// A job run in its image on a real engine (opt-in, as moqui-git's `ci_docker`): its steps run from the mounted working
-/// tree, write there as the tree's owner, and its log says what ran.
+/// git in `dir`, isolated from the desktop's config and credential helpers.
+fn git_in(dir: &Path, args: &[&str]) -> String {
+    let out = std::process::Command::new("git")
+        .args([
+            "-c",
+            "credential.helper=",
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+        ])
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_ASKPASS", "false")
+        .env("SSH_ASKPASS", "false")
+        .env_remove("XDG_CONFIG_HOME")
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+/// Every path under `dir` (no link followed) with a file's text: what a run must leave as it was.
+fn snapshot(dir: &Path) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut pending = vec![dir.to_path_buf()];
+    while let Some(at) = pending.pop() {
+        for entry in std::fs::read_dir(&at).unwrap().flatten() {
+            let path = entry.path();
+            let kind = entry.file_type().unwrap();
+            let relative = path.strip_prefix(dir).unwrap().display().to_string();
+            if kind.is_symlink() {
+                out.push((relative, format!("-> {}", std::fs::read_link(&path).unwrap().display())));
+            } else if kind.is_dir() {
+                out.push((relative, String::new()));
+                pending.push(path);
+            } else {
+                out.push((relative, std::fs::read_to_string(&path).unwrap_or_default()));
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// A job run in its image on a real engine (opt-in, as moqui-git's `ci_docker`) works on a copy of the working tree's
+/// files: no `.git` comes with it, a link is a link, an ignored file stays behind, and what the steps do (a hook
+/// written, a write through a link to `/`, a nested repository renamed and another planted) leaves the working tree as
+/// it was; the copy is deleted after.
 /// `MOQUI_CI_DOCKER_SOCKET=/var/run/docker.sock cargo test -p dev-aide --lib in_a_real -- --ignored --nocapture` (an
 /// image `busybox` on the engine; `MOQUI_CI_IMAGE` names another).
 #[test]
 #[ignore = "opt-in: a real Docker or Podman socket"]
-fn in_a_real_engine_a_job_runs_in_its_image_on_the_mounted_tree() {
+fn in_a_real_engine_a_job_runs_on_a_copy_of_the_tree() {
     let Some(socket) = std::env::var("MOQUI_CI_DOCKER_SOCKET")
         .ok()
         .filter(|socket| !socket.is_empty())
@@ -222,29 +277,52 @@ fn in_a_real_engine_a_job_runs_in_its_image_on_the_mounted_tree() {
         return;
     };
     let image = std::env::var("MOQUI_CI_IMAGE").unwrap_or_else(|_| "busybox".into());
+    let escape = format!("/tmp/dev-aide-escape-{}", std::process::id());
     let ci = format!(
         r#"<ci><pipeline name="check" on="push"><job name="unit" image="{image}">
             <env name="MODE" value="local"/><secret name="DEPLOY_KEY"/>
-            <step name="Write" run="echo made-in-$MODE > made.txt"/>
-            <step name="Show" run="cat made.txt; echo key=${{DEPLOY_KEY:-unset}}; id -u"/>
-            <step name="Hook" run="echo x > .git/hooks/post-checkout &amp;&amp; echo hook-written || echo hook-refused"/>
-            <step name="Nested" run="echo fsmonitor >> component/.git/config &amp;&amp; echo nested-written || echo nested-refused"/>
+            <step name="Write" run="echo made-in-$MODE > made.txt; cat made.txt"/>
+            <step name="Show" run="echo key=${{DEPLOY_KEY:-unset}}; id -u; cat README.md"/>
+            <step name="Git" run="test -e .git &amp;&amp; echo git-came || echo git-absent"/>
+            <step name="Ignored" run="test -e secret.env &amp;&amp; echo secret-came || echo secret-absent"/>
+            <step name="Hook" run="mkdir -p .git/hooks &amp;&amp; echo x > .git/hooks/post-checkout &amp;&amp; echo hook-in-copy"/>
+            <step name="Link" run="echo escape > rootlink{escape} &amp;&amp; echo link-in-container"/>
+            <step name="Rename" run="mv component component_old; mkdir -p component/.git &amp;&amp; echo fsmonitor > component/.git/config &amp;&amp; echo planted"/>
         </job></pipeline></ci>"#
     );
     let jobs = jobs_of(&ci).unwrap();
     let job = pick(&jobs, "check", "unit", "").unwrap();
-    let tree = std::env::temp_dir().join(format!("dev-aide-image-run-{}", std::process::id()));
-    std::fs::create_dir_all(&tree).unwrap();
+    let base = std::env::temp_dir().join(format!("dev-aide-image-run-{}", std::process::id()));
+    let tree = base.join("site");
+    std::fs::create_dir_all(tree.join("component")).unwrap();
+    git_in(&tree, &["init", "-q", "-b", "main"]);
+    std::fs::write(tree.join("README.md"), "the site\n").unwrap();
+    std::fs::write(tree.join(".gitignore"), "secret.env\n").unwrap();
+    std::fs::write(tree.join("secret.env"), "TOKEN=x\n").unwrap();
+    git_in(&tree, &["add", "README.md", ".gitignore"]);
+    git_in(&tree, &["commit", "-q", "-m", "Start"]);
+    // a nested repository, and a link to the host's root, untracked
+    git_in(&tree.join("component"), &["init", "-q", "-b", "main"]);
+    std::fs::write(tree.join("component/a.txt"), "a\n").unwrap();
+    std::os::unix::fs::symlink("/", tree.join("rootlink")).unwrap();
+    let before = snapshot(&tree);
+    let listed: Vec<String> = git_in(&tree, &["ls-files", "-z", "--cached", "--others", "--exclude-standard"])
+        .split('\0')
+        .filter(|path| !path.is_empty())
+        .map(str::to_string)
+        .collect();
+    let copy = TreeCopy(base.join("copy"));
+    copy_tree(&tree, &listed, &copy.0, LIMITS.copy_bytes).unwrap();
+    assert!(std::fs::symlink_metadata(copy.0.join("rootlink"))
+        .unwrap()
+        .file_type()
+        .is_symlink());
     let host = moqui_git::ci::driver::docker::DockerHost::unix(&socket);
     let hardening = moqui_git::ci::driver::docker::Hardening::default();
     let name = format!("moqui-devaide-test-{}", std::process::id());
-    std::fs::create_dir_all(tree.join(".git/hooks")).unwrap();
-    // a nested repository's .git, as a component's inside a site's
-    std::fs::create_dir_all(tree.join("component/.git")).unwrap();
-    std::fs::write(tree.join("component/.git/config"), "[core]\n").unwrap();
     let run = image_run(
         job,
-        &tree,
+        &copy.0,
         "EX_TEST",
         "test",
         &name,
@@ -252,9 +330,6 @@ fn in_a_real_engine_a_job_runs_in_its_image_on_the_mounted_tree() {
         &LIMITS,
         false,
     );
-    let mut run = run;
-    run.read_only = git_paths(&tree, &[], &[]).unwrap();
-    assert_eq!(run.read_only, [".git", "component/.git"]);
     let id = moqui_git::ci::driver::docker::start_local(&host, &run, &hardening).unwrap();
     let started = std::time::Instant::now();
     let info = loop {
@@ -270,25 +345,94 @@ fn in_a_real_engine_a_job_runs_in_its_image_on_the_mounted_tree() {
     };
     let log = host.logs(&id, 200).unwrap();
     host.remove(&id).unwrap();
-    let made = std::fs::read_to_string(tree.join("made.txt")).unwrap_or_default();
-    let _ = std::fs::remove_dir_all(&tree);
+    let copy_path = copy.0.clone();
+    drop(copy);
+    let after = snapshot(&tree);
+    let escaped = Path::new(&escape).exists();
+    let _ = std::fs::remove_file(&escape);
+    let _ = std::fs::remove_dir_all(&base);
     eprintln!("{log}");
     assert_eq!(info.exit_code, Some(0), "{log}");
-    assert_eq!(made.trim(), "made-in-local", "{log}");
-    assert!(
-        log.contains("key=unset") && log.contains("== The job succeeded"),
-        "{log}"
-    );
-    assert!(log.contains("hook-refused"), "the tree's .git is read only: {log}");
-    assert!(
-        log.contains("nested-refused"),
-        "a nested repository's .git is read only: {log}"
-    );
+    for said in [
+        "made-in-local",
+        "key=unset",
+        "the site",
+        "git-absent",
+        "secret-absent",
+        "hook-in-copy",
+        "link-in-container",
+        "planted",
+        "== The job succeeded",
+    ] {
+        assert!(log.contains(said), "{said}: {log}");
+    }
     assert!(!log.lines().any(|line| line.trim() == "0"), "not root: {log}");
+    assert_eq!(after, before, "the working tree is as it was");
+    assert!(!escaped, "a write through a link to / stays in the container");
+    assert!(!copy_path.exists(), "the copy is deleted");
 }
 
-/// A run in the image needs TERMINAL_HOST, a root the run may write, and never mounts a tree that holds the runtime;
-/// the tree's .git is mounted read only, and a shared server's run has no network.
+/// A working tree's copy has the files git lists and nothing else: no `.git` part, no path through a link out of the
+/// tree, a link as a link, no directory; one over its size is refused, and the copy goes when it is dropped.
+#[test]
+fn a_runs_copy_has_the_files_git_sees_and_no_git() {
+    let base = std::env::temp_dir().join(format!("dev-aide-copy-{}", std::process::id()));
+    let tree = base.join("site");
+    let outside = base.join("outside");
+    for dir in [
+        tree.join(".git"),
+        tree.join("sub"),
+        tree.join("module"),
+        outside.clone(),
+    ] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    std::fs::write(tree.join("a.txt"), "a\n").unwrap();
+    std::fs::write(tree.join(".git/config"), "[core]\n").unwrap();
+    std::fs::write(tree.join("sub/.git"), "gitdir: x\n").unwrap();
+    std::fs::write(tree.join("sub/b.txt"), "b\n").unwrap();
+    std::fs::write(outside.join("x"), "outside\n").unwrap();
+    std::os::unix::fs::symlink("/", tree.join("rootlink")).unwrap();
+    std::os::unix::fs::symlink(&outside, tree.join("linkdir")).unwrap();
+    let listed: Vec<String> = [
+        "a.txt",
+        ".git/config",
+        "sub/.git",
+        "sub/b.txt",
+        "rootlink",
+        "linkdir/x",
+        "module",
+        "../a.txt",
+    ]
+    .iter()
+    .map(|path| (*path).to_string())
+    .collect();
+    let copy = TreeCopy(base.join("copy"));
+    let copied = copy_tree(&tree, &listed, &copy.0, 1024).unwrap();
+    assert_eq!(copied, 4);
+    let mut found = snapshot(&copy.0);
+    found.sort();
+    assert_eq!(
+        found,
+        [
+            ("a.txt".to_string(), "a\n".to_string()),
+            ("rootlink".to_string(), "-> /".to_string()),
+            ("sub".to_string(), String::new()),
+            ("sub/b.txt".to_string(), "b\n".to_string()),
+        ]
+    );
+    let path = copy.0.clone();
+    drop(copy);
+    assert!(!path.exists(), "dropped, the copy is gone");
+    let small = TreeCopy(base.join("small"));
+    let refused = copy_tree(&tree, &listed, &small.0, 2).unwrap_err();
+    assert!(refused.contains("local-run-copy-mb"), "{refused}");
+    drop(small);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// A run in the image needs TERMINAL_HOST, a root the run may write, and never copies a tree that holds the runtime; a
+/// shared server's run has no network.
 #[test]
 fn a_run_in_the_image_is_refused_a_tree_it_may_not_write() {
     let base = std::env::temp_dir().join(format!("dev-aide-image-refusal-{}", std::process::id()));
@@ -323,7 +467,6 @@ fn a_run_in_the_image_is_refused_a_tree_it_may_not_write() {
         &LIMITS,
         true,
     );
-    assert_eq!(run.read_only, [".git".to_string()]);
     assert_eq!(run.network_mode, "none", "a shared server's run reaches no network");
     let plain = image_run(
         unit,
@@ -335,36 +478,8 @@ fn a_run_in_the_image_is_refused_a_tree_it_may_not_write() {
         &LIMITS,
         false,
     );
-    assert!(plain.read_only.is_empty());
+    assert_eq!(plain.network_mode, "bridge");
     let _ = std::fs::remove_dir_all(&base);
-}
-
-/// Every .git under a tree (a nested repository's, a submodule's file, one in a dependency's directory), each
-/// submodule's path and each nested root's .git are read only in the image; a link out of the tree is not followed.
-#[test]
-fn every_git_a_tree_holds_is_found() {
-    let base = std::env::temp_dir().join(format!("dev-aide-git-paths-{}", std::process::id()));
-    let tree = base.join("site");
-    let outside = base.join("outside");
-    for dir in [
-        tree.join(".git/hooks"),
-        tree.join("component/.git"),
-        tree.join("deps/lib/.git"),
-        tree.join("module"),
-        outside.join(".git"),
-    ] {
-        std::fs::create_dir_all(dir).unwrap();
-    }
-    std::fs::create_dir_all(tree.join("sub")).unwrap();
-    std::fs::write(tree.join("sub/.git"), "gitdir: ../.git/modules/sub\n").unwrap();
-    #[cfg(unix)]
-    std::os::unix::fs::symlink(&outside, tree.join("linked")).unwrap();
-    let found = git_paths(&tree, &["module".into(), "../escape".into()], &[tree.join("component")]).unwrap();
-    assert_eq!(found, [".git", "component/.git", "deps/lib/.git", "module", "sub/.git"]);
-    let _ = std::fs::remove_dir_all(&base);
-
-    let listed = ["100644 aa 0\tREADME.md", "160000 bb 0\tmodule", "160000 cc 0\tlibs/two", ""].join("\0");
-    assert_eq!(gitlinks_of(&listed), ["module", "libs/two"]);
 }
 
 /// A run in the image has a time limit of its own, so it stops whatever becomes of the server that started it.

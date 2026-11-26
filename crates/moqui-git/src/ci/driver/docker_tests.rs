@@ -893,7 +893,6 @@ fn a_local_run_mounts_the_working_tree_and_is_kept_in_as_a_job() {
         user: Some("1000:1000".into()),
         memory_mb: 4096,
         pids_limit: 1024,
-        read_only: vec![".git".into(), "../escape".into(), "/etc".into()],
         network_mode: "bridge".into(),
     };
     let hardening = Hardening::default();
@@ -910,11 +909,7 @@ fn a_local_run_mounts_the_working_tree_and_is_kept_in_as_a_job() {
     assert_eq!(host["Mounts"][0]["Type"], "bind");
     assert_eq!(host["Mounts"][0]["Source"], "/home/ann/my-site");
     assert_eq!(host["Mounts"][0]["Target"], "/workspace");
-    // the tree's .git read only over itself; a name out of the tree is no mount
-    assert_eq!(host["Mounts"][1]["Source"], "/home/ann/my-site/.git");
-    assert_eq!(host["Mounts"][1]["Target"], "/workspace/.git");
-    assert_eq!(host["Mounts"][1]["ReadOnly"], true);
-    assert_eq!(host["Mounts"].as_array().unwrap().len(), 2, "{body}");
+    assert_eq!(host["Mounts"].as_array().unwrap().len(), 1, "{body}");
     assert!(
         host["Tmpfs"].get("/workspace").is_none() && host["Tmpfs"].get("/tmp").is_some(),
         "{body}"
