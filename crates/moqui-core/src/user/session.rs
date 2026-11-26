@@ -323,6 +323,8 @@ struct KeptView {
     csrf_token: Option<String>,
     locale: Option<String>,
     time_zone: Option<String>,
+    /// The session's attributes as the hold found them: what the request writes to them stays the request's.
+    attributes: BTreeMap<String, Json>,
 }
 
 impl Memory {
@@ -1711,7 +1713,7 @@ pub(crate) fn hold_for_scoped_key() -> bool {
     if !in_request {
         return false;
     }
-    with_session(|session| {
+    let held = with_session(|session| {
         if session.device.is_some() {
             return false;
         }
@@ -1724,10 +1726,48 @@ pub(crate) fn hold_for_scoped_key() -> bool {
                 csrf_token: session.csrf_token.clone(),
                 locale: session.locale.clone(),
                 time_zone: session.time_zone.clone(),
+                attributes: session.attributes.clone(),
             }),
         });
         true
-    })
+    });
+    if held {
+        REQUEST_SESSION.with(|slot| {
+            if let Some(request) = slot.borrow_mut().as_mut() {
+                request.held = true;
+            }
+        });
+    }
+    held
+}
+
+/// End a scoped key's hold ([`hold_for_scoped_key`]), as [`leave_device`] ends a device's: the context's identity,
+/// token, locale, time zone and attributes are the session's own again. A device's hold is left alone.
+pub(crate) fn release_scoped_hold() {
+    with_session(|session| {
+        if !session.device.as_ref().is_some_and(|hold| hold.kept.is_some()) {
+            return;
+        }
+        if let Some(hold) = session.device.take() {
+            session.user_id = hold.user_id;
+            session.username = hold.username;
+            session.anonymous = hold.anonymous;
+            session.authz = AuthzCache::default();
+            session.login_key_kind = None;
+            session.scoped_key = None;
+            if let Some(kept) = hold.kept {
+                session.csrf_token = kept.csrf_token;
+                session.locale = kept.locale;
+                session.time_zone = kept.time_zone;
+                session.attributes = kept.attributes;
+            }
+        }
+    });
+    REQUEST_SESSION.with(|slot| {
+        if let Some(request) = slot.borrow_mut().as_mut() {
+            request.held = false;
+        }
+    });
 }
 
 /// Whether this request runs as a key's user the web session does not hold ([`hold_for_scoped_key`]).
@@ -2301,6 +2341,8 @@ struct RequestSession {
     /// A key made for one service alone signed this request in ([`note_scoped_login`]): its login is the request's
     /// alone, never the session's.
     scoped_login: bool,
+    /// This request began a scoped key's hold ([`hold_for_scoped_key`]), which its scope ends.
+    held: bool,
 }
 
 /// A `moqui.server.Visit` this request created, with the `moqui.server.Visitor` it created for it, if any.
@@ -2326,12 +2368,11 @@ impl RequestSessionScope {
 
 impl Drop for RequestSessionScope {
     fn drop(&mut self) {
-        // a scoped key's hold is this request's alone
-        with_session(|session| {
-            if session.device.as_ref().is_some_and(|hold| hold.kept.is_some()) {
-                session.device = None;
-            }
-        });
+        // a scoped key's hold is this request's alone: one it began ends with it, the session's identity put back
+        let began = REQUEST_SESSION.with(|slot| slot.borrow().as_ref().is_some_and(|request| request.held));
+        if began {
+            release_scoped_hold();
+        }
         let previous = self.previous.take();
         REQUEST_SESSION.with(|slot| *slot.borrow_mut() = previous);
     }
@@ -3052,17 +3093,18 @@ fn thread_view(session: &mut Memory) -> ThreadView {
     };
     // under a scoped key's request the session keeps its own token, locale and time zone too
     let kept = session.device.as_ref().and_then(|hold| hold.kept.clone());
-    // and the mark of a header login, which is that request's alone
+    // and its attributes: what the request wrote to them (the mark of a header login) is that request's alone
     let mut dirty_json = session.dirty_json.clone();
     if kept.is_some() {
-        dirty_json.remove(super::login::HEADER_LOGIN);
+        dirty_json.clear();
     }
-    let (csrf_token, locale, time_zone) = match kept {
-        Some(kept) => (kept.csrf_token, kept.locale, kept.time_zone),
+    let (csrf_token, locale, time_zone, attributes) = match kept {
+        Some(kept) => (kept.csrf_token, kept.locale, kept.time_zone, kept.attributes),
         None => (
             session.csrf_token.clone(),
             session.locale.clone(),
             session.time_zone.clone(),
+            session.attributes.clone(),
         ),
     };
     ThreadView {
@@ -3076,7 +3118,7 @@ fn thread_view(session: &mut Memory) -> ThreadView {
         time_zone,
         csrf_token,
         anonymous,
-        attributes: session.attributes.clone(),
+        attributes,
         dirty_columns: session.dirty_columns.clone(),
         dirty_json,
     }

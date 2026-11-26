@@ -791,7 +791,10 @@ fn internal_login(username: &str, queued: bool, person: bool) -> (Option<String>
     if username.is_empty() {
         return (None, Err(Error::new("No username specified")));
     }
-    clear_pre_authc();
+    // a scoped key's login under its hold touches no second factor the session waits for
+    if !session::identity_held() {
+        clear_pre_authc();
+    }
     let _authz = without_authz();
     let facade = match entity_facade() {
         Ok(facade) => facade,
@@ -1052,11 +1055,6 @@ fn check_login_key(key: &str, session_user: Option<&str>, scopes: &[&str]) -> Re
     if !key_scope.is_empty() && !scopes.contains(&key_scope.as_str()) {
         return Err(refused_credential());
     }
-    // a key for one service alone signs in its own request alone: the web session keeps its own identity, and gets no
-    // cookie or token from it, so a later request by cookie is not the account's
-    if !key_scope.is_empty() && session_user.is_none() && session::hold_for_scoped_key() {
-        session::note_scoped_login();
-    }
     if let Some(thru) = field_millis(&row, "thruDate") {
         if key_ended(thru, now_millis()) {
             save_history(&user_id, false);
@@ -1066,7 +1064,19 @@ fn check_login_key(key: &str, session_user: Option<&str>, scopes: &[&str]) -> Re
     let Some(account) = find_user_id(&facade, &user_id)? else {
         return Err(refused_credential());
     };
-    recorded_login(&text_field(&account, "username"), false)?;
+    // a key for one service alone signs in its own request alone: the web session keeps its own identity, and gets no
+    // cookie or token from it, so a later request by cookie is not the account's. Held only for the login itself, after
+    // the key's own checks; a login that fails puts the session's identity back
+    let held = !key_scope.is_empty() && session_user.is_none() && session::hold_for_scoped_key();
+    if let Err(err) = recorded_login(&text_field(&account, "username"), false) {
+        if held {
+            session::release_scoped_hold();
+        }
+        return Err(err);
+    }
+    if held {
+        session::note_scoped_login();
+    }
     let kind = LoginKeyKind::of(&row);
     session::set_login_key_kind(Some(kind));
     if kind == LoginKeyKind::Device {

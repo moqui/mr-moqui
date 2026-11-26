@@ -537,6 +537,8 @@ fn a_scoped_keys_login_is_held_for_its_request_and_never_the_sessions() {
     let held = {
         let guard = crate::user::bind(context.factory(), None, None, false).unwrap();
         crate::user::session::set_visit("visit-eve", "visitor-eve");
+        // a password sign-in waiting for its second factor, which the key's login leaves as it is
+        crate::user::session::set_session_attribute("moquiPreAuthcUsername", Some("keys.eve"));
         guard.session_id()
     };
     {
@@ -555,11 +557,37 @@ fn a_scoped_keys_login_is_held_for_its_request_and_never_the_sessions() {
             crate::user::session::http_log_identity().username.as_deref(),
             Some("keys.eve")
         );
+        // what the request writes to the session's attributes is the request's
+        crate::user::note_header_login();
     }
+    assert!(!crate::user::session::identity_held(), "the hold ends with its request");
+    {
+        let _guard = crate::user::session::bind_id(context.factory(), Some(&held), false).unwrap();
+        assert_eq!(
+            crate::user::current_user_id().unwrap(),
+            None,
+            "the held session has nobody in it"
+        );
+        assert_eq!(
+            crate::user::session::session_attribute("moquiPreAuthcUsername").as_deref(),
+            Some("keys.eve"),
+            "the pending second factor is the session's still"
+        );
+        assert_eq!(crate::user::session::session_attribute("moquiHeaderLogin"), None);
+    }
+    // a key whose login fails (its account disabled) leaves the session's own identity, and no hold
+    {
+        let _authz = context.disable_authz();
+        facade
+            .find("moqui.security.UserAccount")
+            .unwrap()
+            .eq("userId", Value::string("keys.eve"))
+            .update_all([("disabled".to_string(), Value::string("Y"))])
+            .unwrap();
+    }
+    let _request = crate::user::session::RequestSessionScope::begin();
     let _guard = crate::user::session::bind_id(context.factory(), Some(&held), false).unwrap();
-    assert_eq!(
-        crate::user::current_user_id().unwrap(),
-        None,
-        "the held session has nobody in it"
-    );
+    assert!(crate::user::apply_header_keys_scoped(Some(&key), None, &["tasks"]).is_err());
+    assert!(!crate::user::session::identity_held());
+    assert_eq!(crate::user::current_user_id().unwrap(), None);
 }
