@@ -407,19 +407,42 @@ impl Resolver {
 
     /// The full name of the entity the relationship `name` of the entity `entity` (full) leads to, matched as moqui-db's
     /// `Relationship::matches`: its `[title#]related` name, its short alias, or, with no title, its related entity's
-    /// name.
+    /// name as written, full or short. With none of its own of the name, the auto-reverse relationship moqui-db adds
+    /// for another entity's relationship to it (`[title#]<that entity>`, by its full or short name), as
+    /// `add_reverse_relationships` makes them.
     #[must_use]
     pub fn relationship(&self, entity: &str, name: &str) -> Option<String> {
-        let relation = self.relationships.get(entity)?.iter().find(|relation| {
+        let short = |full: &str| full.rsplit('.').next().unwrap_or(full).to_string();
+        let related_of = |relation: &Relation| {
+            let related = relation
+                .key
+                .rsplit_once('#')
+                .map_or(relation.key.as_str(), |(_, related)| related);
+            self.entity(related).unwrap_or_else(|| related.to_string())
+        };
+        let own = self.relationships.get(entity).into_iter().flatten().find(|relation| {
+            let untitled = !relation.key.contains('#');
             relation.key == name
                 || relation.short_alias.as_deref() == Some(name)
-                || (!relation.key.contains('#') && relation.related == name)
-        })?;
-        let related = relation
-            .key
-            .rsplit_once('#')
-            .map_or(relation.key.as_str(), |(_, related)| related);
-        Some(self.entity(related).unwrap_or_else(|| related.to_string()))
+                || (untitled
+                    && (relation.related == name || short(&relation.related) == name || short(&relation.key) == name))
+        });
+        if let Some(relation) = own {
+            return Some(related_of(relation));
+        }
+        // an auto-reverse relationship: another entity's relationship to this one, named by that entity
+        let (title, source) = match name.split_once('#') {
+            Some((title, source)) => (Some(title), source),
+            None => (None, name),
+        };
+        self.relationships.iter().find_map(|(from, relations)| {
+            let named = from == source || short(from) == source || self.entity(source).as_deref() == Some(from);
+            let back = relations.iter().any(|relation| {
+                let relation_title = relation.key.split_once('#').map(|(title, _)| title);
+                relation_title == title && related_of(relation) == entity
+            });
+            (named && back).then(|| from.clone())
+        })
     }
 
     /// The location of a screen named by its location, or by a location whose component differs but whose path under

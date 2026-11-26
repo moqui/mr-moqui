@@ -72,6 +72,8 @@ pub(super) struct Param {
     given: Option<Vec<String>>,
     /// Its summary as its row has it, which [`Expansion::summaries`] writes again when the merge changes it.
     stored: String,
+    /// Its line: a name declared twice (before and after an `auto-parameters`) is two declarations, merged in order.
+    line: u32,
 }
 
 /// A field a form declares, in the file `path`.
@@ -438,6 +440,7 @@ fn declared_param(path: &str, direction: &str, name: &str, summary: &str, given:
         default,
         given,
         stored: summary.to_string(),
+        line: 0,
     }
 }
 
@@ -510,10 +513,15 @@ impl Resolver {
                         Some(Mark::Given(given)) => Some(given.into_iter().map(str::to_string).collect()),
                         _ => None,
                     });
-                let param = declared_param(&artifact.path, direction, name, &artifact.summary, given);
+                let mut param = declared_param(&artifact.path, direction, name, &artifact.summary, given);
+                param.line = artifact.line;
                 let params = self.params.entry(owner.to_string()).or_default();
-                params
-                    .retain(|known| !(known.path == param.path && known.direction == direction && known.name == name));
+                params.retain(|known| {
+                    !(known.path == param.path
+                        && known.direction == direction
+                        && known.name == name
+                        && known.line == param.line)
+                });
                 params.push(param);
             }
             "entity" | "view-entity" => {
@@ -572,7 +580,10 @@ impl Resolver {
             "parameter" => {
                 if let Some((owner, direction, name)) = parse_parameter_id(&artifact.id) {
                     super::remove_one(&mut self.params, owner, |param| {
-                        param.path == artifact.path && param.direction == direction && param.name == name
+                        param.path == artifact.path
+                            && param.direction == direction
+                            && param.name == name
+                            && param.line == artifact.line
                     });
                 }
             }
@@ -1121,7 +1132,7 @@ impl Resolver {
     /// `auto-parameters` and the parameters it declares in the order written, as `moqui_core::service::validate`'s
     /// `expand_params` merges them: an entity field sets the type and `required` of a parameter of its name written
     /// before it, and a parameter written after one merges into it, setting what it gives. An `auto-parameters` with no
-    /// entity reads the entity of `noun`, the implementing service's. `visited` holds the services on the way, so a
+    /// entity reads the entity of `noun`, the service's own (an implemented service's its own, as Java expands it there). `visited` holds the services on the way, so a
     /// cycle ends.
     pub(super) fn full_params(
         &self,
@@ -1144,11 +1155,13 @@ impl Resolver {
             else {
                 continue;
             };
+            // its auto-parameters with no entity-name read its own noun
+            let target_noun = target.rsplit_once('#').map(|(_, noun)| noun);
             let target = format!("service:{target}");
             if !visited.insert(target.clone()) {
                 continue;
             }
-            for mut param in self.full_params(&target, direction, visited, depth + 1, noun) {
+            for mut param in self.full_params(&target, direction, visited, depth + 1, target_noun) {
                 if param.required == "disabled" || out.iter().any(|known| known.name == param.name) {
                     continue;
                 }
@@ -1161,7 +1174,9 @@ impl Resolver {
                 out.push(param);
             }
         }
-        let declared = self.declared_params(service, direction);
+        let mut declared = self.declared_params(service, direction);
+        // in the order written: a name declared before and after an auto-parameters is two merges
+        declared.sort_by_key(|param| param.line);
         let declared_full = |param: &Param| FullParam {
             name: param.name.clone(),
             kind: param.kind.clone(),
@@ -1171,8 +1186,9 @@ impl Resolver {
             stored: Some(param.stored.clone()),
             from: vec![parameter_id(service, direction, &param.name)],
         };
-        // the declared parameters merged so far: those written before an auto-parameters go before it
-        let mut merged: HashSet<&str> = HashSet::new();
+        // the declarations merged so far, by their place in `declared`: of a name an auto-parameters' `before` lists n
+        // times, the first n declarations go before it
+        let mut merged: Vec<bool> = vec![false; declared.len()];
         let auto_given = ["type".to_string(), "required".to_string()];
         for mark in &marks {
             let Mark::AutoParameters {
@@ -1189,8 +1205,11 @@ impl Resolver {
             if *of != direction {
                 continue;
             }
-            for param in &declared {
-                if before.contains(&param.name.as_str()) && merged.insert(param.name.as_str()) {
+            for (at, param) in declared.iter().enumerate() {
+                let written_before = before.iter().filter(|name| **name == param.name).count();
+                let earlier = declared[..at].iter().filter(|known| known.name == param.name).count();
+                if !merged[at] && earlier < written_before {
+                    merged[at] = true;
                     merge_into(&mut out, declared_full(param), param.given.as_deref());
                 }
             }
@@ -1262,8 +1281,8 @@ impl Resolver {
                     .collect();
             }
         }
-        for param in &declared {
-            if !merged.contains(param.name.as_str()) {
+        for (at, param) in declared.iter().enumerate() {
+            if !merged[at] {
                 merge_into(&mut out, declared_full(param), param.given.as_deref());
             }
         }
