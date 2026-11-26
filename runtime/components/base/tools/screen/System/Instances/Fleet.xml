@@ -34,6 +34,8 @@ along with this software (see the LICENSE.md file). If not, see
     </actions>
     <widgets>
         <label text="Managed instances need the INSTANCE_ADMIN permission." type="p" condition="!ec.user.hasPermission('INSTANCE_ADMIN')"/>
+        <!-- the last deploy's time stamp reaches the screen as epoch milliseconds: shown in the user's zone -->
+        <label condition="fleetList.length" text="Times shown in ${ec.user.timeZone}." type="p" style="m-muted"/>
         <form-list name="FleetList" list="fleetList" skip-form="true">
             <field name="environmentId"><default-field title="Environment">
                 <display text="${environmentName || environmentId}${rolloutPaused == 'Y' ? ' (rollout paused)' : ''}"/></default-field></field>
@@ -47,7 +49,7 @@ along with this software (see the LICENSE.md file). If not, see
             <field name="clusterId"><default-field title="Cluster">
                 <display text="${clusterName || clusterId}${clusterMembers ? ' (' + clusterMembers + ' live)' : ''}"/></default-field></field>
             <field name="lastDeployDate"><default-field title="Last deploy">
-                <display text="${lastDeployDate || ''} ${lastDeployStatus || ''}"/></default-field></field>
+                <display text="${lastDeployDate ? ec.l10n.format(lastDeployDate, 'yyyy-MM-dd HH:mm:ss') : ''} ${lastDeployStatus || ''}"/></default-field></field>
             <field name="openIncidents"><default-field title="Open incidents"><display/></default-field></field>
             <field name="itemsPastRotation"><default-field title="Items past rotation"><display/></default-field></field>
             <field name="monitor"><default-field title="Monitor">

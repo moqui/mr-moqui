@@ -449,6 +449,8 @@ Following the synthetic result opened its trace with a 3 ms check, 2.97 ms HTTP 
 
 Local evidence is under `plans/ui-refinement-evidence/closeout-d10e22f/`.
 
+Follow-up, 2026-11-25 (with DASH-UI-005): Releases showed Released as raw UTC date text; it is now shown in the viewer's zone, with the zone named once, as ReleaseDetail shows it. Log context's times likewise. Not rechecked live.
+
 #### Remaining branches
 
 The ledger records the strongest observed outcome. The remaining steps, recovery paths and modes in each section 4 activity are deferred to the fixture and next check below. An explicitly blocked or failed result keeps that status.
