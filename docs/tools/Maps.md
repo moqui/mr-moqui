@@ -475,6 +475,7 @@ A geocoder is a map provider of a geocoder kind (`MapProviderKind` under `MPK_GE
 | `MPK_GEOCODER_CENSUS` | The US Census geocoder's one-line address search (`.../geocoder/locations/onelineaddress`, the current benchmark); US addresses only | An address matched, placed by street-range interpolation (`GPP_STREET_RANGE`): a position along the street's address range, never a rooftop or an entrance |
 | `MPK_GEOCODER_NOMINATIM` | A Nominatim server's `/search` (self-hosted: the public OSM endpoint's policy forbids an application's searches beyond one a second and autocomplete) | An address point `GPP_ADDRESS_MATCH`; a postal code `GPP_POSTAL_AREA`; a street or a place `GPP_PLACE_ESTIMATE` |
 | `MPK_GEOCODER_PHOTON` | A Photon server's `/api` (self-hosted) | As Nominatim's, by the result's type |
+| `MPK_GEOCODER_OVERTURE` | This server's own index of the imported Overture address points ([Overture addresses](#overture-addresses)): no URL, nothing sent | A number and street matched, an address point (`GPP_ADDRESS_MATCH`) whose position kind the data does not state; a number found without its suffix, or a street, `GPP_PLACE_ESTIMATE`; a text it lacks, the postal area of its code (`GPP_POSTAL_AREA`) |
 
 The seed has the US Census geocoder, `CENSUS_GEOCODER`, disabled. It is enabled as every map provider is: its test
 (System › Integrations or Maps › Configuration) sends a fixed search, a public address for the Census geocoder and a city
@@ -482,8 +483,10 @@ name for the others, never a user's text, and a provider is enabled only after a
 is. While `maps@external-requests` is false nothing is sent. The test and the readiness check name the public demo servers
 (`nominatim.openstreetmap.org`, `photon.komoot.io`), whose policies allow an application very little.
 
-`MapServices.find#Places` (`MapGeocoders.js`) asks one provider, the enabled, tested geocoder first by `sequenceNum`, for a
-text: one GET with no credentials, following no redirect, ten seconds, reading at most 1 MiB of the answer whether or
+`MapServices.find#Places` (`MapGeocoders.js`) asks one provider, the enabled, tested geocoder first by `sequenceNum` that may
+be asked now (an outside one while outside requests are on, the local one while a region's addresses are active), for a
+text. The local geocoder answers from this server's rows ([Overture addresses](#overture-addresses)); an outside one is asked by
+one GET with no credentials, following no redirect, ten seconds, reading at most 1 MiB of the answer whether or
 not it says its length (`text(maxBytes)` of the RestClient), to no internal address unless the provider is allowed the
 private network, and only when its allowed operations are empty or name geocode or search. Each candidate has its label, point, match kind (address, street, postal,
 place), precision in words and source; several candidates are ambiguous and shown as choices. A failure says so beside the
@@ -786,6 +789,65 @@ layer guards it, and the import sets no `viewPermission`; give the layer one or 
 The readiness provider `maps.overture` (`check#OvertureReadiness`) says when a run waits for license review, when the last
 import of a region theme failed, and when regions are set up on a server built without the feature.
 
+## Overture addresses
+
+Stage O2 ([Maps-Overture §8](../../plans/Maps-Overture.md#8-o2-regional-addresses)): Overture's **Addresses** theme for a
+region, imported as Places are (Configuration › Overture: the theme `ADDRESSES`, a run pinned to a release, read by range,
+staged, checked, activated, rolled back, removed), and searched by a geocoder of this server, **Overture addresses (local)**
+(`MPK_GEOCODER_OVERTURE`, seeded disabled as `OVERTURE_ADDRESSES`). The dataset alone is not a geocoder: the parsing,
+normalization, ranking and ambiguity are ours (`moqui-maps` `address.rs`).
+
+**Limits, from the evaluation of release 2026-11-18.0.** The theme is alpha with partial coverage, the US included (downtown
+Austin has a tenth of Boston's density); a source may give no postal code (none of Italy's do); the schema does not say what a
+point stands for (an entrance, a building or parcel centre, a position on the road); several points may share a number with
+nothing to tell them apart (in central Florence 44 % of numbers, 43 % of those more than 50 m apart); and address IDs are not
+stable. So a match is never called exact or a rooftop, several points are choices, a missing number is the street's
+estimate (no interpolation), the points are no postal-code directory (the [postal lookup](#postal-lookup) stays the
+fallback), and a refresh is compared by address, not by ID.
+
+- **Licenses by source.** Sources vary by country and dataset (Italy's `CC-BY-4.0`, the Dutch BAG's `CC0-1.0`, the US
+  National Address Database's `LicenseRef-Public-Domain-US`, and Massachusetts' points, which Overture marks
+  `LicenseRef-Proprietary`). The theme's acknowledgement covers none at first: a region's first run waits for review naming
+  the licenses its sources give, and an administrator acknowledges each after reading its terms. Each address found names
+  its source dataset and license.
+- **The import.** Rows `moqui.maps.OvertureAddress` (street, number, unit, postal code, postal city, locality, region, point,
+  sources; `gersId` and release as an external reference only), 2,000 a transaction, at most 1,000,000 a run
+  (`TOO_MANY_ROWS`: about 115 km² at Boston's density, a point per unit). A row with no ISO country, or neither street nor
+  number, is rejected. The run records its countries and what it changed against the run active before it, by address:
+  added, removed, moved more than 25 m, unchanged (Configuration's runs; a change of the matching's tables between two runs
+  shows as addresses removed and added). Activation changes the index as a whole; the run
+  before is kept for rollback. An import never reads or writes a record, a Geo or a point outside its rows, so a user's
+  confirmed point at an address a release removes stays as it is.
+- **The provider.** No URL; its test is a fixed query made from a row of its own data, passed when it comes back as an
+  address match within 30 m of that row, so it passes only once a region's addresses are active. It is tested, enabled and
+  asked with `maps@external-requests` false, and sends nothing. It is asked only while a region's addresses are active and
+  the server has the `overture` feature (on a server without it, it is not asked and its test says why). Readiness says when it is
+  enabled with no active addresses (`NO_ADDRESS_DATA`).
+- **Matching.** The text is read into number, street, unit, postal code and locality as an address of the country given (a
+  Browse search's country) or of each country of the active regions: the number first in a number-first country (the US,
+  Canada, Britain, Ireland, Australia, New Zealand, France) and after the street elsewhere, a unit after `Apt`, `Unit`,
+  `Suite`, `#`, `Interno` and the like followed by a unit's name (never `Ste` where French is written), the postal code by
+  its country's shape; an ordinal (`5th Ave`) is never a number, and where a comma ends the street only the number that ends
+  it is the house number (`Piazza 1 Maggio, Firenze` has none). Streets are compared by a key: case and
+  diacritics folded, dots dropped, and the words of the country's languages read one way (English with its directionals,
+  Italian, French, German, Spanish, Portuguese and Dutch: `St`/`Street`, `Ave`/`Avenue`/`Avenida`, `P.za`/`Piazza`,
+  `Bd`/`Boulevard`, `-straße`/`-str.`, `-straat`), with particles (`di`, `de'`, `du`, `von`, `van`) left out of a street of
+  more words. The rows of the street and number are ranked: the postal code agreeing, then the locality; points of one
+  address within 30 m are one candidate (its units: named without a unit unless it is the one asked for), candidates within
+  a margin of the best are choices (`ambiguous`), the nearest the view's middle first. A number and street whose postal
+  code or locality differs from the one asked for is an estimate offered as a choice, never an address match. A number's letter that the source keeps as the unit (Italy's `12/A`) is an address match; a
+  number found only without its suffix (`51` for `51r`) and a street without the number are estimates. A text the index
+  does not have is answered with the postal area of the code it gave (`NO_ADDRESS_MATCH`, approximate), else nothing
+  (`NO_MATCH`): choose the point on the map. A search sends at most 24 indexed queries, and one user at most 20 searches a
+  second (`RATE_LIMITED`).
+- **Browse and the local-map dialog.** Browse asks it third, as any geocoder, each candidate with its precision and its own
+  source. A record whose adapter answers an address with no point (`address1`, `address2` when it names a unit, `city`,
+  `postalCode`, `countryGeoId`) is matched by it when it is enabled, as the dialog's own read (a user with no Maps app grant
+  has it too): one address match whose postal code and locality agree is shown, said to be found from the address and not
+  saved; several are shown as choices, none chosen, over the postal area; none is the postal area. The
+  record keeps its own point, and Choose location saves through the adapter: the record's point, then an address match,
+  then the postal area, then a point chosen by hand.
+
 ## Tests
 
 The regression spec is `tools/test/MapsScreens.spec.js` (Browse in qvue and tui, its terminal's overlays and postal search; LocalMap, a plain XML screen, once in
@@ -858,4 +920,11 @@ Parquet fixtures (`framework/test/fixtures/overture`) goldens of the reader's te
 `parquet` crate's files, v1 and v2 pages, dictionary, delta and byte-stream-split encodings, Snappy, ZSTD and GZIP, bounds,
 corrupted pages and crafted counts (delta block sizes, width-0 runs, row counts, deep schemas, a zero type length); the STAC catalog; WKB; the themes' rows). The real latest release for central Florence, with its
 times, bytes, rows and memory, is the acceptance test `OvertureRegionImport` (`./moq accept framework --spec
-OvertureRegionImport`).
+OvertureRegionImport`). Overture addresses: `framework/test/MapsOvertureAddresses.spec.js` (a non-holder's import refused,
+a first run held for its sources' licenses and activated; the local geocoder tested by its own data and asked with outside
+requests off, sending nothing: an exact match, two points of one number as choices, `12/A`, an estimate for `51r` and for a
+street, the postal area of a code it lacks, nothing else; a record's address matched, offered as choices, or its postal
+area, nothing saved; a refresh that moves one address and removes one, counted by address, rolled back, a confirmed point
+untouched), with the parsing, keys and ranking in Rust (`moqui-maps` `address_tests.rs`, `address_service_tests.rs`), and
+the real release for central Florence and part of Boston's Back Bay with sample lookups, the acceptance test
+`OvertureAddressLookup`.

@@ -69,6 +69,16 @@ along with this software (see the LICENSE.md file). If not, see
             termsUrl="https://www.census.gov/data/developers/about/terms-of-service.html" allowedOperations="geocode"
             cachePolicy="none" proxyRequests="N" disabled="Y" allowPrivateNetwork="N" sequenceNum="50"/>
 
+    <!-- The local address search (plans/Maps-Overture.md §O2), disabled: the address points of the regions whose Overture
+        Addresses are imported and active (Maps › Configuration › Overture), searched on this server with no outside request.
+        It passes its test (a fixed query made from its own data) only once a region's addresses are active, and is enabled
+        then as any geocoder. Its points are address points whose position kind the data does not state, never rooftops;
+        a text it does not find falls back to the local postal lookup and to choosing the point on the map. -->
+    <moqui.maps.MapProvider providerId="OVERTURE_ADDRESSES" providerKindEnumId="MPK_GEOCODER_OVERTURE" providerName="Overture addresses (local)"
+            description="Address points of the imported Overture regions, matched on this server; nothing is sent anywhere"
+            attribution="Overture Maps Foundation; address sources as each result names them" attributionUrls="https://docs.overturemaps.org/attribution/"
+            allowedOperations="geocode" cachePolicy="none" proxyRequests="N" disabled="Y" allowPrivateNetwork="N" sequenceNum="40"/>
+
     <!-- The local Protomaps profile (plans/Maps.md §4.1, §5): a regional Protomaps PMTiles extract an administrator places in
         a drive, in a git repository as a Git LFS object, or on disk, and registers under Configuration › Archives
         (MapSourceServices.register#ArchiveLayer, which records its revision and enables the layer). Drawn with the styles,

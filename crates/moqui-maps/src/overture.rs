@@ -14,9 +14,10 @@
 
 //! Overture's themes in its schema 2.x (plans/Maps-Overture.md §3.2): the columns each theme reads, and a region read
 //! from one GeoParquet file ([`read_region`]): the row groups whose `bbox` statistics meet the region, only the
-//! projected columns of each, one column at a time, and the rows whose own box meets it, each a [`Place`] or a
-//! [`Building`] handed to the caller with its source datasets and licenses. A row with no ID or a geometry that does not
-//! read is counted as rejected and the rest go on. The caller is asked between row groups whether to go on.
+//! projected columns of each, one column at a time, and the rows whose own box meets it, each a [`Place`], a
+//! [`Building`] or an [`AddressPoint`] handed to the caller with its source datasets and licenses. A row with no ID or a
+//! geometry that does not read is counted as rejected and the rest go on. The caller is asked between row groups whether
+//! to go on.
 
 use std::collections::BTreeMap;
 
@@ -26,11 +27,12 @@ use crate::parquet::{double_range, ColumnData, Limits, ParquetFile, RangeSource}
 use crate::stac::{meets, Bbox};
 use crate::wkb::{self, Geometry};
 
-/// A theme O1 imports.
+/// A theme imported: O1's Places and Buildings, O2's Addresses.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Theme {
     Places,
     Buildings,
+    Addresses,
 }
 
 const BBOX: [&[&str]; 4] = [
@@ -41,14 +43,16 @@ const BBOX: [&[&str]; 4] = [
 ];
 const SOURCE_DATASET: &[&str] = &["sources", "list", "element", "dataset"];
 const SOURCE_LICENSE: &[&str] = &["sources", "list", "element", "license"];
+const ADDRESS_LEVEL: &[&str] = &["address_levels", "list", "element", "value"];
 
 impl Theme {
-    /// The `OvertureTheme` row's ID (`PLACES`, `BUILDINGS`).
+    /// The `OvertureTheme` row's ID (`PLACES`, `BUILDINGS`, `ADDRESSES`).
     #[must_use]
     pub fn parse(id: &str) -> Option<Self> {
         match id {
             "PLACES" => Some(Self::Places),
             "BUILDINGS" => Some(Self::Buildings),
+            "ADDRESSES" => Some(Self::Addresses),
             _ => None,
         }
     }
@@ -59,16 +63,20 @@ impl Theme {
         match self {
             Self::Places => ("places", "place"),
             Self::Buildings => ("buildings", "building"),
+            Self::Addresses => ("addresses", "address"),
         }
     }
 
-    /// The columns a file must have: the ID, the geometry, its covering box and the sources' licenses.
+    /// The columns a file must have: the ID, the geometry, its covering box and the sources' licenses (and a place's
+    /// name, an address's country).
     #[must_use]
     pub fn required(self) -> Vec<&'static [&'static str]> {
         let mut out: Vec<&[&str]> = vec![&["id"], &["geometry"], SOURCE_LICENSE];
         out.extend(BBOX);
-        if self == Self::Places {
-            out.push(&["names", "primary"]);
+        match self {
+            Self::Places => out.push(&["names", "primary"]),
+            Self::Addresses => out.push(&["country"]),
+            Self::Buildings => {}
         }
         out
     }
@@ -99,6 +107,16 @@ impl Theme {
                 &["subtype"],
                 &["height"],
                 &["num_floors"],
+            ],
+            Self::Addresses => vec![
+                &["version"],
+                SOURCE_DATASET,
+                &["street"],
+                &["number"],
+                &["unit"],
+                &["postcode"],
+                &["postal_city"],
+                ADDRESS_LEVEL,
             ],
         }
     }
@@ -147,11 +165,33 @@ pub struct Building {
     pub licenses: Vec<String>,
 }
 
+/// An address point read (O2). Overture's schema 2.0 says nothing of what the point stands for (an entrance, a building
+/// or parcel centre, a position on the road): the matching says so rather than call it exact.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AddressPoint {
+    pub gers_id: String,
+    pub version: Option<i64>,
+    /// ISO 3166-1 alpha-2, upper case.
+    pub country: String,
+    pub street: Option<String>,
+    pub number: Option<String>,
+    pub unit: Option<String>,
+    pub postcode: Option<String>,
+    pub postal_city: Option<String>,
+    /// The address levels, the most general first (a US state, then its locality); a level not known is left out.
+    pub levels: Vec<String>,
+    pub lon: f64,
+    pub lat: f64,
+    pub datasets: Vec<String>,
+    pub licenses: Vec<String>,
+}
+
 /// A row read.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Row {
     Place(Place),
     Building(Building),
+    Address(AddressPoint),
 }
 
 /// What reading a file came to.
@@ -483,6 +523,15 @@ pub fn read_region(
                 height: columns.scalar_number(&["height"], rows),
                 floors: columns.scalar_number(&["num_floors"], rows),
             },
+            Theme::Addresses => Extra::Addresses {
+                country: columns.scalar_text(&["country"], rows),
+                street: columns.scalar_text(&["street"], rows),
+                number: columns.scalar_text(&["number"], rows),
+                unit: columns.scalar_text(&["unit"], rows),
+                postcode: columns.scalar_text(&["postcode"], rows),
+                postal_city: columns.scalar_text(&["postal_city"], rows),
+                levels: columns.list_text(ADDRESS_LEVEL, rows),
+            },
         };
         drop(columns);
         for (row, keep) in inside.iter().enumerate() {
@@ -605,8 +654,72 @@ pub fn read_region(
                         licenses: row_licenses,
                     })
                 }
+                (
+                    Extra::Addresses {
+                        country,
+                        street,
+                        number,
+                        unit,
+                        postcode,
+                        postal_city,
+                        levels,
+                    },
+                    Geometry::Point([lon, lat]),
+                ) => {
+                    if !meets(&[lon, lat, lon, lat], region) {
+                        continue;
+                    }
+                    let given = |list: &[Option<String>]| {
+                        list.get(row)
+                            .cloned()
+                            .flatten()
+                            .map(|text| text.trim().to_string())
+                            .filter(|text| !text.is_empty())
+                    };
+                    let Some(country) = given(country)
+                        .map(|code| code.to_ascii_uppercase())
+                        .filter(|code| code.len() == 2 && code.bytes().all(|b| b.is_ascii_alphabetic()))
+                    else {
+                        counts.reject(format!("{id}: no ISO country code"));
+                        continue;
+                    };
+                    let (street, number) = (given(street), given(number));
+                    if street.is_none() && number.is_none() {
+                        counts.reject(format!("{id}: neither a street nor a number"));
+                        continue;
+                    }
+                    Row::Address(AddressPoint {
+                        gers_id: id,
+                        version,
+                        country,
+                        street,
+                        number,
+                        unit: given(unit),
+                        postcode: given(postcode),
+                        postal_city: given(postal_city),
+                        levels: levels
+                            .get(row)
+                            .map(|items| {
+                                items
+                                    .iter()
+                                    .flatten()
+                                    .map(|level| level.trim().to_string())
+                                    .filter(|level| !level.is_empty())
+                                    .collect()
+                            })
+                            .unwrap_or_default(),
+                        lon,
+                        lat,
+                        datasets: row_datasets,
+                        licenses: row_licenses,
+                    })
+                }
                 (Extra::Places { .. }, _) => {
                     counts.reject(format!("{id}: a place that is not a point"));
+                    continue;
+                }
+                (Extra::Addresses { .. }, _) => {
+                    counts.reject(format!("{id}: an address that is not a point"));
                     continue;
                 }
                 (Extra::Buildings { .. }, _) => {
@@ -648,6 +761,15 @@ enum Extra {
         subtype: Vec<Option<String>>,
         height: Vec<Option<f64>>,
         floors: Vec<Option<f64>>,
+    },
+    Addresses {
+        country: Vec<Option<String>>,
+        street: Vec<Option<String>>,
+        number: Vec<Option<String>>,
+        unit: Vec<Option<String>>,
+        postcode: Vec<Option<String>>,
+        postal_city: Vec<Option<String>>,
+        levels: Vec<Vec<Option<String>>>,
     },
 }
 

@@ -97,6 +97,8 @@ function endpointText(value, what) {
 }
 // The geocoders (MapGeocoders.js), loaded when asked: that module loads this one for tested
 const geocoders = () => ec.resource.script("component://framework/service/org/moqui/maps/MapGeocoders.js")
+// A geocoder of this server (MPK_GEOCODER_OVERTURE): no URL, nothing sent
+const localKind = kind => text(kind) === "MPK_GEOCODER_OVERTURE"
 // The OGC services (MapOgc.js), loaded when asked
 const ogc = () => ec.resource.script("component://framework/service/org/moqui/maps/MapOgc.js")
 // A whole number from 1 to max, or empty
@@ -501,8 +503,10 @@ const definition = {
     incomplete: parts => {
         const kind = text(parts.main.providerKindEnumId)
         if (!kind) return L("Choose the provider's kind")
-        if (kind === "MPK_GEOCODER") return L("Choose the geocoder's service: US Census, Nominatim or Photon")
-        if (kind !== "MPK_ARCHIVE" && !text(parts.main.endpointUrl)) return L("Give the provider's style, tile or service URL")
+        if (kind === "MPK_GEOCODER")
+            return L("Choose the geocoder's service: US Census, Nominatim, Photon or Overture addresses (local)")
+        if (kind !== "MPK_ARCHIVE" && !localKind(kind) && !text(parts.main.endpointUrl))
+            return L("Give the provider's style, tile or service URL")
         return null
     },
     // an archive provider's layers are this server's resources: a URL would be an outside host no test asks; and a key goes
@@ -513,9 +517,11 @@ const definition = {
                   "ARCHIVE_ENDPOINT",
                   L("A provider of self-hosted archives has no URL: its archives are this server's resources")
               )
-            : plainKeyed(after.main)
-              ? refused("PROXY_NOT_HTTPS", L("A provider reached through this server with a key needs an https URL"))
-              : null,
+            : localKind(after.main?.providerKindEnumId) && text(after.main?.endpointUrl)
+              ? refused("LOCAL_ENDPOINT", L("A local geocoder has no URL: it searches this server's own address index"))
+              : plainKeyed(after.main)
+                ? refused("PROXY_NOT_HTTPS", L("A provider reached through this server with a key needs an https URL"))
+                : null,
     test: providerTest,
     newParts: values => {
         if (!plainText(values.providerName, "The name")) throw new Error(L("Give the provider a name"))
@@ -566,7 +572,9 @@ function runMapProviderAdapter(p) {
     if (offline() && (operation === "test" || (operation === "store" && yes(p.enabled)))) {
         lib.requireManage(MANAGE)
         const parts = kind.load(text(p.connectionKey))
-        if (!parts || text(parts.main.providerKindEnumId) !== "MPK_ARCHIVE")
+        // an archive provider and a local geocoder send nothing: they are tested and enabled with outside requests off
+        const own = parts && (text(parts.main.providerKindEnumId) === "MPK_ARCHIVE" || localKind(parts.main.providerKindEnumId))
+        if (!own)
             return {
                 result: refused(
                     "EXTERNAL_REQUESTS_OFF",
@@ -1314,6 +1322,30 @@ function providerChecks() {
                         fix
                     )
         )
+        // a local geocoder sends nothing: it is ready while a region's Overture addresses are active
+        if (localKind(provider.providerKindEnumId)) {
+            const ready = geocoders().localReady()
+            out.push(
+                ready || !tested(provider)
+                    ? check(
+                          key + ".local",
+                          "Local geocoder",
+                          "ready",
+                          null,
+                          say("${name} searches this server's own index; nothing is sent", {name}),
+                          fix
+                      )
+                    : check(
+                          key + ".local",
+                          "Local geocoder",
+                          "warning",
+                          "NO_ADDRESS_DATA",
+                          say("${name} is enabled, but no region's Overture addresses are active: it is not asked", {name}),
+                          fix
+                      )
+            )
+            continue
+        }
         // a geocoder is asked by this server, never by a browser: no key rule and no page policy apply
         const geocoder = geocoders().isGeocoderKind(provider.providerKindEnumId)
         // its key would be in the URLs a browser asks: it is not offered to a browser, so the page policy does not matter

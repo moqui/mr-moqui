@@ -66,6 +66,11 @@ along with this software (see the LICENSE.md file). If not, see
                 shows its local postal-area position (get#PostalLocation, approximate, with a broad extent) and no outside
                 service is asked; never a substitute for a recorded point</description></parameter>
             <parameter name="countryGeoId"><description>The country of postalCode: a Geo ID or an ISO alpha-2 or alpha-3 code</description></parameter>
+            <parameter name="address1"><description>With no geometry: the address's street line (number and street), which the
+                installation's local geocoder (MPK_GEOCODER_OVERTURE, this server's own index, no outside request) matches when
+                one is enabled, before the postal area; the point found is shown, never saved</description></parameter>
+            <parameter name="address2"><description>Its second line, used only when it names a unit (Apt, Suite, #)</description></parameter>
+            <parameter name="city"><description>Its locality</description></parameter>
         </out-parameters>
     </service>
 
@@ -767,7 +772,12 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="find" noun="Places">
         <description>Candidate places for a text from one configured geocoder (plans/Maps.md §6.1, §6.2, §8): the provider named,
             or the enabled geocoder (a MapProvider of a kind under MPK_GEOCODER: the US Census geocoder, a self-hosted
-            Nominatim or Photon) that passed its test as it is configured now, first by sequenceNum. Each candidate is
+            Nominatim or Photon, or this server's own index of Overture address points, MPK_GEOCODER_OVERTURE) that passed its
+            test as it is configured now and may be asked now (an outside one with outside requests on, the local one while a
+            region's addresses are active), first by sequenceNum. The local geocoder sends nothing: its candidates are address
+            matches (GPP_ADDRESS_MATCH, the point's position kind not stated), a number found without its suffix or a street
+            (GPP_PLACE_ESTIMATE), each with its source dataset, license, GERS ID and release; a text it does not match is
+            answered with the postal area of the code read from it (NO_ADDRESS_MATCH, approximate) or none (NO_MATCH). Each candidate is
             {label (plain text), lon, lat, matchKind (address, street, postal, place), precisionEnumId and precisionText
             (the Census geocoder's: an address placed by street-range interpolation, GPP_STREET_RANGE, never a rooftop; an address point
             GPP_ADDRESS_MATCH; a postal code GPP_POSTAL_AREA; a street or place GPP_PLACE_ESTIMATE), extent}; several are

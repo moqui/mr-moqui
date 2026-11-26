@@ -92,6 +92,10 @@ along with this software (see the LICENSE.md file). If not, see
                     enumTypeId="MapProviderKind" parentEnumId="MPK_GEOCODER" sequenceNum="6"/>
             <moqui.basic.Enumeration description="Geocoder: Photon (self-hosted)" enumId="MPK_GEOCODER_PHOTON"
                     enumTypeId="MapProviderKind" parentEnumId="MPK_GEOCODER" sequenceNum="7"/>
+            <!-- a geocoder of this server (O2): the address points of the active Overture Addresses runs, no URL and no
+                outside request; tested by a fixed query made from its own data -->
+            <moqui.basic.Enumeration description="Geocoder: Overture addresses (local, imported regions)" enumId="MPK_GEOCODER_OVERTURE"
+                    enumTypeId="MapProviderKind" parentEnumId="MPK_GEOCODER" sequenceNum="11"/>
             <!-- OGC services (P4a; MapOgc.js): the endpoint is the service's URL, whose GetCapabilities the test reads -->
             <moqui.basic.Enumeration description="OGC Web Map Service (WMS 1.3.0)" enumId="MPK_WMS" enumTypeId="MapProviderKind" sequenceNum="8"/>
             <moqui.basic.Enumeration description="OGC Web Map Tile Service (WMTS 1.0.0)" enumId="MPK_WMTS" enumTypeId="MapProviderKind" sequenceNum="9"/>

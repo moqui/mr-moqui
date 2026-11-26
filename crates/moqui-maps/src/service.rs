@@ -14,9 +14,11 @@
 
 //! `org.moqui.maps.OvertureServices`' Rust services (plans/Maps-Overture.md §3): `read#OvertureReleases` lists the
 //! catalog's releases, and `read#OvertureTheme` reads one run's theme for its region: the release's catalog (its schema
-//! version checked), the items whose extent meets the region, and each file by range ([`crate::overture`]); Places are
-//! written as the run's `OverturePlace` rows in batches, each in a transaction of its own, and Buildings are cut into
-//! vector tiles and answered as a PMTiles archive for OvertureData.js to store. The counts are written to the run's row
+//! version checked), the items whose extent meets the region, and each file by range ([`crate::overture`]); Places and
+//! Addresses are written as the run's `OverturePlace` and `OvertureAddress` rows in batches, each in a transaction of
+//! its own (Addresses then compared with the run active before, [`crate::address_service`]), and Buildings are cut into
+//! vector tiles and answered as a PMTiles archive for OvertureData.js to store. `search#OvertureAddresses`, the local
+//! geocoder's search, is [`crate::address_service`]'s. The counts are written to the run's row
 //! after each file and at most once a second within one, and its `cancelRequested` read then. Both are no group's and
 //! not remote: OvertureData.js calls them after its own checks (the caller's own MAPS_ADMIN grant, the license, outside
 //! requests), and they refuse again while `maps@external-requests` is false.
@@ -33,8 +35,9 @@ use moqui_lib::geo::tiles::{build_tiles, project, Shape, TileFeature, TilerLimit
 use moqui_lib::object::{to_plain_string, Value};
 use moqui_lib::pmtiles::{write_archive, ArchiveOptions, Compression, TileType};
 
+use crate::address_service::{self, AddressSet, Keys};
 use crate::http::{fetch_json, HttpSource};
-use crate::overture::{self, Building, Counts, Place, Row, Theme};
+use crate::overture::{self, AddressPoint, Building, Counts, Place, Row, Theme};
 use crate::parquet::Limits;
 use crate::stac::{self, meets, Bbox};
 
@@ -51,6 +54,8 @@ const BATCH: usize = 2000;
 /// The most rows a run keeps of a theme: a region of a few cities, not a country.
 const MAX_PLACES: u64 = 200_000;
 const MAX_BUILDINGS: u64 = 250_000;
+/// Address points: the O2 evaluation's Boston Back Bay has about 8,800 a km² (a point per unit), so about 115 km² of it.
+const MAX_ADDRESSES: u64 = 1_000_000;
 /// The most items read one by one when a collection's extent does not match its items.
 const MAX_ITEMS: usize = 1024;
 const REPORT_EVERY: Duration = Duration::from_secs(1);
@@ -59,7 +64,7 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, moqui_core::extension::R
     use moqui_core::rust_service;
     rust_service!(map, find_overture_releases)?;
     rust_service!(map, read_overture_theme)?;
-    Ok(())
+    address_service::register(map)
 }
 
 fn text(parameters: &BTreeMap<String, Value>, key: &str) -> String {
@@ -536,16 +541,19 @@ pub(crate) fn read_overture_theme(parameters: &BTreeMap<String, Value>, facade: 
     let limits = Limits::standard();
     let mut counts = Counts::default();
     let mut places: Vec<(u64, Place)> = Vec::with_capacity(BATCH);
+    let mut addresses: Vec<(u64, AddressPoint, Keys)> = Vec::new();
+    let mut address_set = AddressSet::default();
+    let mut countries: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     let mut buildings: Vec<TileFeature> = Vec::new();
     let mut bounds: Bbox = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
     let mut next = 0u64;
     let mut cancelled = false;
     let mut too_many = false;
     let mut last_report = Instant::now();
-    let max_rows = if theme == Theme::Places {
-        MAX_PLACES
-    } else {
-        MAX_BUILDINGS
+    let max_rows = match theme {
+        Theme::Places => MAX_PLACES,
+        Theme::Buildings => MAX_BUILDINGS,
+        Theme::Addresses => MAX_ADDRESSES,
     };
     for url in &discovered.files {
         let source = match HttpSource::open(url) {
@@ -604,6 +612,27 @@ pub(crate) fn read_overture_theme(parameters: &BTreeMap<String, Value>, facade: 
                         }
                         if let Some(feature) = building_feature(&building, next) {
                             buildings.push(feature);
+                        }
+                    }
+                    Row::Address(point) => {
+                        bounds = [
+                            bounds[0].min(point.lon),
+                            bounds[1].min(point.lat),
+                            bounds[2].max(point.lon),
+                            bounds[3].max(point.lat),
+                        ];
+                        let keys = Keys::of(&point);
+                        address_set.add(keys.digest(&point.country), point.lon, point.lat);
+                        if !countries.contains(&point.country) {
+                            countries.insert(point.country.clone());
+                        }
+                        addresses.push((next, point, keys));
+                        if addresses.len() >= BATCH {
+                            if let Err(err) = address_service::write_addresses(facade, &import_id, &addresses) {
+                                write_error = Some(err);
+                                return Ok(false);
+                            }
+                            addresses.clear();
                         }
                     }
                 }
@@ -675,7 +704,37 @@ pub(crate) fn read_overture_theme(parameters: &BTreeMap<String, Value>, facade: 
         return finish_failed(out, &counts, "WRITE_FAILED", err.message());
     }
     drop(places);
+    if let Err(err) = address_service::write_addresses(facade, &import_id, &addresses) {
+        return finish_failed(out, &counts, "WRITE_FAILED", err.message());
+    }
+    drop(addresses);
     let mut out = with_counts(out, &counts);
+    if theme == Theme::Addresses {
+        out.insert(
+            "countryCodes".to_string(),
+            Value::string(countries.iter().cloned().collect::<Vec<_>>().join(",")),
+        );
+        // what the release changed against the run active now, by address: a failure to compare is logged and the
+        // run goes on, the comparison being a report, not a check
+        let compared = {
+            let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+            address_service::active_run(facade, &field(&region_row, "regionId")).and_then(|active| match active {
+                Some(active) if active != import_id => address_service::read_set(facade, &active)
+                    .map(|old| Some(address_service::compare(&address_set, &old, &active))),
+                _ => Ok(None),
+            })
+        };
+        match compared {
+            Ok(Some(changes)) => {
+                out.insert("changes".to_string(), address_service::changes_value(&changes));
+            }
+            Ok(None) => {}
+            Err(err) => {
+                tracing::error!(error = %err, import = %import_id, "Could not compare an Overture address run with the one active")
+            }
+        }
+        drop(address_set);
+    }
     if theme == Theme::Buildings {
         if buildings.is_empty() {
             return refusal(out, "NO_TILES", "no building of the release is in the region");

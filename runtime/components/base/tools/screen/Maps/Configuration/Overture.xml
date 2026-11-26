@@ -138,16 +138,16 @@ along with this software (see the LICENSE.md file). If not, see
             runRows = Array.from(found?.runs || []).map(run => Object.assign({}, run, {statusColor: colorOf(run.statusId),
                 countsText: [run.rowsKept != null ? run.rowsKept + ' ' + L('kept') : '', run.rowsRejected ? run.rowsRejected + ' ' + L('rejected') : '',
                     run.rowGroupsRead != null ? run.rowGroupsRead + '/' + ((run.rowGroupsRead || 0) + (run.rowGroupsSkipped || 0)) + ' ' + L('row groups') : '',
-                    run.bytesRead != null ? Math.round(run.bytesRead / 1024) + ' KiB' : ''].filter(Boolean).join(' · ')}))
+                    run.bytesRead != null ? Math.round(run.bytesRead / 1024) + ' KiB' : '', run.changesText || ''].filter(Boolean).join(' · ')}))
             notBuilt = available && found.built === false
             externalOff = available && found.offline === true
             maxArea = found?.maxArea
         ]]></script>
     </actions>
     <widgets>
-        <label text="Overture places and buildings" type="h5"/>
+        <label text="Overture places, buildings and addresses" type="h5"/>
         <label type="p" style="text-caption m-muted"
-                text="Optional regional data from an Overture Maps release: places for the search of Browse, and building footprints as a map layer. A region of up to ${maxArea} km² is read from a release you choose, by range from Overture's files, staged, checked and only then made active; the release before it is kept for rollback. Nothing outside these places and footprints is changed: no party, facility, address or record's location."/>
+                text="Optional regional data from an Overture Maps release: places for the search of Browse, building footprints as a map layer, and address points for the local address search (the Overture addresses geocoder, enabled under Providers once a region's addresses are active). A region of up to ${maxArea} km² is read from a release you choose, by range from Overture's files, staged, checked and only then made active; the release before it is kept for rollback. Nothing outside these places, footprints and address points is changed: no party, facility, address or record's location."/>
         <label type="p" style="text-negative" condition="!available" text="Overture settings are not available to you."/>
         <label type="p" style="text-warning" condition="notBuilt" text="This server is built without the overture feature: what is imported stays usable, but nothing can be imported or refreshed here."/>
         <label type="p" style="text-warning" condition="externalOff" text="Outside requests for maps are off (maps@external-requests): nothing is downloaded, and imported data stays usable."/>

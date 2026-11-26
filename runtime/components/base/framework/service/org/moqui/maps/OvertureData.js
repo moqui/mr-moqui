@@ -1,12 +1,13 @@
-// Optional Overture data for Maps, org.moqui.maps.OvertureServices (plans/Maps-Overture.md, stage O1 of plans/Maps.md §4.3;
-// docs/tools/Maps.md "Overture places and buildings"): what Maps › Configuration › Overture shows, the license
+// Optional Overture data for Maps, org.moqui.maps.OvertureServices (plans/Maps-Overture.md, stages O1 and O2 of plans/Maps.md
+// §4.3; docs/tools/Maps.md "Overture places and buildings", "Overture addresses"): what Maps › Configuration › Overture shows, the license
 // acknowledgement, regions, an import started as a run of the OvertureImport ServiceJob (never in the request) and its run
 // (read#OvertureTheme of the moqui-maps crate stages the rows or the archive; this checks and activates), activation,
 // rollback and removal, the maps.overture readiness checks, and the Places search Browse's search asks after the postal
 // codes and before the geocoder (searchPlaces: local rows only, no outside request).
 //
 // A region theme has an active run and the one before it (kept for rollback); the places of the active runs are searched,
-// and a Buildings run's archive is its region's layer. A run that fails, is cancelled or is superseded past the previous
+// the address points of the active Addresses runs are the local geocoder's index (MapGeocoders.js, moqui-maps
+// search#OvertureAddresses), and a Buildings run's archive is its region's layer. A run that fails, is cancelled or is superseded past the previous
 // one has its rows and archive deleted. An import writes only moqui.maps.Overture* rows, its archive and its own layer:
 // never a Mantle record, a Geo, a point or a record's location.
 //
@@ -17,6 +18,7 @@ const REGION = "moqui.maps.OvertureRegion"
 const REGION_THEME = "moqui.maps.OvertureRegionTheme"
 const IMPORT = "moqui.maps.OvertureImport"
 const PLACE = "moqui.maps.OverturePlace"
+const ADDRESS = "moqui.maps.OvertureAddress"
 const LAYER = "moqui.maps.MapLayer"
 const PROFILE = "moqui.maps.MapProfile"
 const PROFILE_LAYER = "moqui.maps.MapProfileLayer"
@@ -98,8 +100,31 @@ const userName = userId => {
 }
 
 // ===== a run's own rows and archive =====
+// A run's address points, a page at a time, each page in a transaction of its own: a run of up to a million rows is removed
+// within the transaction timeout, and a failure leaves the rest for the next removal
+const DELETE_PAGE = 2000
+function deleteAddresses(importId) {
+    for (let page = 0; page < 1000; page++) {
+        const ids = Array.from(
+            ec.entity
+                .find(ADDRESS)
+                .condition({importId})
+                .selectField("addressId")
+                .orderBy("addressId")
+                .limit(DELETE_PAGE)
+                .disableAuthz()
+                .list()
+        ).map(row => row.addressId)
+        if (!ids.length) return
+        ec.transaction.runRequireNew(null, "Removing an Overture run's address points", () =>
+            asSystem(() => ec.entity.find(ADDRESS).condition("addressId", "in", ids).disableAuthz().deleteAll())
+        )
+        if (ids.length < DELETE_PAGE) return
+    }
+}
 function deleteRunData(run) {
     asSystem(() => ec.entity.find(PLACE).condition({importId: run.importId}).disableAuthz().deleteAll())
+    if (run.themeId === "ADDRESSES" || !run.themeId) deleteAddresses(run.importId)
     const location = text(run.archiveLocation)
     if (location) {
         try {
@@ -166,12 +191,34 @@ function runRow(run, regions, themes) {
         newLicenses: text(run.newLicenses),
         failureText: text(run.failureText),
         tileCount: num(run.tileCount),
+        countryCodes: text(run.countryCodes),
+        changesText: changesText(run.changesJson),
         userName: userName(run.userId),
         startedText: stampText(run.startedDate),
         finishedText: stampText(run.finishedDate),
         inProgress: IN_PROGRESS.includes(run.statusId),
         review: run.statusId === "OviReview"
     }
+}
+// What an Addresses run changed against the run active before it, in words (by address, never by ID)
+function changesText(json) {
+    let changes = null
+    try {
+        changes = json ? JSON.parse(String(json)) : null
+    } catch (error) {
+        changes = null
+    }
+    if (!changes || typeof changes !== "object") return ""
+    return say(
+        "Against run ${comparedWith}: ${added} added, ${removed} removed, ${moved} moved, ${unchanged} unchanged addresses",
+        {
+            comparedWith: changes.comparedWith || "",
+            added: Number(changes.added) || 0,
+            removed: Number(changes.removed) || 0,
+            moved: Number(changes.moved) || 0,
+            unchanged: Number(changes.unchanged) || 0
+        }
+    )
 }
 function findData() {
     const themes = rows(THEME).filter(theme => theme.disabled !== "Y")
@@ -453,7 +500,9 @@ function runImport(p) {
         rowsKept: num(read?.rowsKept),
         rowsRejected: num(read?.rowsRejected),
         licensesJson: JSON.stringify(Array.from(read?.licenses || [])),
-        rejectionsJson: JSON.stringify(Array.from(read?.rejections || []).slice(0, 20))
+        rejectionsJson: JSON.stringify(Array.from(read?.rejections || []).slice(0, 20)),
+        countryCodes: text(read?.countryCodes).slice(0, 60) || null,
+        changesJson: read?.changes ? JSON.stringify(read.changes) : null
     }
     setRun(run.importId, counts)
     const current = Object.assign({}, run, counts)

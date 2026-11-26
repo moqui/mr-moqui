@@ -12,14 +12,14 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Optional Overture data for Maps (plans/Maps-Overture.md §4, stage O1 of plans/Maps.md §4.3): the themes with their
-    licenses, an administrator's regions, the runs that import a theme of a region from a pinned release, and the places
-    of each run. An import writes only these, its PMTiles archives and its own map layer: never a Mantle record, a Geo,
+<!-- Optional Overture data for Maps (plans/Maps-Overture.md §4, stages O1 and O2 of plans/Maps.md §4.3): the themes with
+    their licenses, an administrator's regions, the runs that import a theme of a region from a pinned release, and the
+    places and address points of each run. An import writes only these, its PMTiles archives and its own map layer: never a Mantle record, a Geo,
     a point or a record's location. The services are service/org/moqui/maps/OvertureServices.xml; the reader is the
     moqui-maps crate, linked under the host's overture feature. -->
 <entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-entity-definition.xsd">
 
-    <!-- A theme O1 imports, seeded: PLACES and BUILDINGS. licenses is the source licenses an administrator's
+    <!-- A theme imported, seeded: PLACES and BUILDINGS (O1), ADDRESSES (O2). licenses is the source licenses an administrator's
         acknowledgement covers (comma separated SPDX IDs); a run that finds another is held for review (OviReview) until
         it is acknowledged too. -->
     <entity entity-name="OvertureTheme" package="moqui.maps" use="configuration" cache="true">
@@ -92,6 +92,11 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="newLicenses" type="text-medium"><description>The licenses found that the theme's acknowledgement
             did not cover: the run waits for review</description></field>
         <field name="rejectionsJson" type="text-very-long"><description>The first rows rejected, each with why</description></field>
+        <field name="countryCodes" type="text-short"><description>Addresses: the countries of its rows (ISO alpha-2, comma
+            separated), which the local geocoder reads a text as when no country is given</description></field>
+        <field name="changesJson" type="text-long"><description>Addresses: what it changed against the run active when it was
+            read, by address (country, street, number, unit and postal code; never by GERS ID, which Overture does not keep
+            stable for addresses): {comparedWith, added, removed, moved, unchanged}</description></field>
         <field name="archiveLocation" type="text-medium"><description>Buildings: its PMTiles archive</description></field>
         <field name="archiveSize" type="number-integer"/>
         <field name="tileCount" type="number-integer"/>
@@ -159,5 +164,39 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="one" related="moqui.maps.OvertureImport" short-alias="import"/>
         <index name="MAPS_OVT_PLACE_IMPORT"><index-field name="importId"/><index-field name="nameSearch"/></index>
         <index name="MAPS_OVT_PLACE_GERS"><index-field name="gersId"/></index>
+    </entity>
+
+    <!-- An address point of an Addresses run (O2): the local geocoder's index (MPK_GEOCODER_OVERTURE; moqui-maps
+        address.rs and address_service.rs). addressId is internal (the run and the row's place in it); gersId with the
+        run's release is an external reference only: Overture's address IDs are not stable. The *Norm fields are the
+        matching's keys (case, diacritics and the street words of the country's languages folded); the others are as the
+        source wrote them. positionKind is what the point stands for when its source says (an entrance, a building or
+        parcel centre, a road position): Overture's schema 2.0 says none, so it is empty and a match says the kind is not
+        stated. Nothing links to a row across runs, and no record, Geo or point is written from one. -->
+    <entity entity-name="OvertureAddress" package="moqui.maps" use="transactional" cache="never">
+        <field name="addressId" type="id-long" is-pk="true"/>
+        <field name="importId" type="id"/>
+        <field name="gersId" type="text-short"/>
+        <field name="featureVersion" type="number-integer"/>
+        <field name="countryCode" type="text-short"><description>ISO 3166-1 alpha-2</description></field>
+        <field name="streetName" type="text-medium"/>
+        <field name="streetNorm" type="text-medium"/>
+        <field name="houseNumber" type="text-short"/>
+        <field name="numberNorm" type="text-short"/>
+        <field name="unitText" type="text-short"/>
+        <field name="unitNorm" type="text-short"/>
+        <field name="postcode" type="text-short"/>
+        <field name="postcodeNorm" type="text-short"/>
+        <field name="postalCity" type="text-medium"/>
+        <field name="locality" type="text-medium"><description>The last (most particular) address level</description></field>
+        <field name="region" type="text-short"><description>The first address level, when there are several</description></field>
+        <field name="levelsText" type="text-medium"><description>Every address level, the most general first, separated by " | "</description></field>
+        <field name="latitude" type="number-float"/>
+        <field name="longitude" type="number-float"/>
+        <field name="positionKind" type="text-short"/>
+        <field name="sourceDatasets" type="text-medium"/>
+        <field name="sourceLicenses" type="text-medium"/>
+        <relationship type="one" related="moqui.maps.OvertureImport" short-alias="import"/>
+        <index name="MAPS_OVT_ADDR_STREET"><index-field name="importId"/><index-field name="streetNorm"/><index-field name="numberNorm"/></index>
     </entity>
 </entities>

@@ -660,6 +660,38 @@ function postalPlace(postalCode, countryGeoId) {
     return matches.length === 1 ? matches[0] : null
 }
 
+// An address with no point, matched by the installation's local geocoder (MPK_GEOCODER_OVERTURE: this server's own index of
+// Overture address points, no outside request) when one is enabled, tested and its data active: {candidates, ambiguous} of
+// the address matches only, none whose postal code or locality differs (an estimate is no better than the postal area), or
+// null when there is no such geocoder. Searched as this read's own step (the adapter let the caller read the record), so a
+// user with no Maps app grant has it too.
+const UNIT_LINE = /^\s*(#|apt\b|apartment\b|unit\b|suite\b|ste\b|fl\b|floor\b|rm\b|room\b|int\b|interno\b|app\b)/i
+function addressMatch(out) {
+    const geocoders = ec.resource.script("component://framework/service/org/moqui/maps/MapGeocoders.js")
+    const line = [text(out.address1), UNIT_LINE.test(text(out.address2)) ? text(out.address2) : ""].filter(Boolean).join(" ")
+    const place = [text(out.postalCode), text(out.city)].filter(Boolean).join(" ")
+    let found = null
+    ec.message.pushErrors()
+    try {
+        found = geocoders.localSearch([line, place].filter(Boolean).join(", ").slice(0, 200), text(out.countryGeoId) || null, 5)
+    } catch (error) {
+        ec.logger.warn("The local address match of a record failed: " + (error?.message ?? error))
+        found = null
+    } finally {
+        ec.message.clearErrors()
+        ec.message.popErrors()
+    }
+    if (!found) return null
+    const candidates = Array.from(found.candidates || []).filter(
+        candidate =>
+            candidate.precisionEnumId === "GPP_ADDRESS_MATCH" &&
+            candidate.matchKind === "address" &&
+            candidate.postcodeAgrees !== false &&
+            candidate.localityAgrees !== false
+    )
+    return {candidates, ambiguous: candidates.length > 1, providerName: text(found.providerName)}
+}
+
 function effectiveConfig(p) {
     const configurer = canConfigure()
     const fallbacks = []
@@ -947,10 +979,53 @@ function effectiveConfig(p) {
                             properties: {label: record.label, precisionEnumId: record.precisionEnumId}
                         })
                         if (extent) setView({extent})
-                    } else if (text(out.postalCode)) {
-                        // an address with no point: its local postal-area position, approximate, with a broad extent
-                        // (§6.1); no outside service is asked and nothing is saved to the record
-                        const postal = postalPlace(out.postalCode, out.countryGeoId)
+                    } else if (text(out.postalCode) || text(out.address1)) {
+                        // an address with no point (§6.1): the address point the local geocoder matches, when the
+                        // installation has one (this server's index); else its local postal-area position, approximate,
+                        // with a broad extent. No outside service is asked and nothing is saved to the record: Choose
+                        // location saves through the adapter
+                        const matched = text(out.address1) ? addressMatch(out) : null
+                        const postal =
+                            matched?.candidates.length === 1 || !text(out.postalCode)
+                                ? null
+                                : postalPlace(out.postalCode, out.countryGeoId)
+                        if (matched?.candidates.length === 1) {
+                            const found = matched.candidates[0]
+                            Object.assign(record, {
+                                precisionEnumId: found.precisionEnumId,
+                                precisionText: found.precisionText,
+                                sourceText: found.sourceText,
+                                approximate: true,
+                                addressMatched: true,
+                                addressNote: say(
+                                    "Found from the record's address by ${name}, not saved to the record: Choose location saves a point",
+                                    {name: matched.providerName}
+                                )
+                            })
+                            points.push({
+                                id: "record",
+                                lon: found.lon,
+                                lat: found.lat,
+                                label: record.label || found.label,
+                                precision: found.precisionText,
+                                source: found.sourceText
+                            })
+                            setView(found.extent ? {extent: found.extent} : {center: [found.lon, found.lat], zoom: 17})
+                        } else if (matched?.candidates.length > 1) {
+                            // several address points: choices on the map, none chosen; the postal area is the view
+                            record.addressNote = L(
+                                "Several address points match the record's address: they are shown, none is chosen; Choose location saves one"
+                            )
+                            record.addressChoices = matched.candidates.map((found, index) => ({
+                                id: "address:" + index,
+                                label: found.label,
+                                lon: found.lon,
+                                lat: found.lat,
+                                precision: found.precisionText,
+                                source: found.sourceText
+                            }))
+                            points.push(...record.addressChoices)
+                        }
                         if (postal) {
                             Object.assign(record, {
                                 precisionEnumId: postal.precisionEnumId,
@@ -967,7 +1042,19 @@ function effectiveConfig(p) {
                                 source: postal.sourceText
                             })
                             setView({extent: postal.extent})
-                        } else if (extent) setView({extent})
+                        } else if (record.addressChoices) {
+                            const lons = record.addressChoices.map(choice => choice.lon)
+                            const lats = record.addressChoices.map(choice => choice.lat)
+                            const pad = 0.002
+                            setView({
+                                extent: [
+                                    Math.min(...lons) - pad,
+                                    Math.min(...lats) - pad,
+                                    Math.max(...lons) + pad,
+                                    Math.max(...lats) + pad
+                                ]
+                            })
+                        } else if (!record.addressMatched && extent) setView({extent})
                     } else if (extent) setView({extent})
                 }
             }

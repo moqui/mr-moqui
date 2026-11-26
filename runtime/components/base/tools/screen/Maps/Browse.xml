@@ -268,9 +268,10 @@ along with this software (see the LICENSE.md file). If not, see
         south, east, north), which get#EffectiveConfig reads through their adapters, which check the caller; and a postal code
         of the local Geo data (get#PostalLocation, kind postal: a code's point and broad extent, approximate, and its several
         places as choices), of the country chosen (country), named in the text ("US 02134", "02134, US") or the user's; and
-        third, only when outside requests are on and an administrator enabled a geocoder that passed its test, the
-        geocoder's candidates (find#Places, kind geocoder: one provider, never another on its failure, which is said beside
-        the local results), the text sent only because the user searched. Each result with its source and precision. -->
+        third, only when an administrator enabled a geocoder that passed its test and may be asked now (an outside one with
+        outside requests on, the local Overture address index while a region's addresses are active), the geocoder's
+        candidates (find#Places, kind geocoder: one provider, never another on its failure, which is said beside the local
+        results, each with its own source where it names one), the text sent outside only because the user searched. Each result with its source and precision. -->
     <transition name="search" method="get" read-only="true">
         <actions><script><![CDATA[
             const term = String(q || '').trim().toLowerCase()
@@ -326,7 +327,8 @@ along with this software (see the LICENSE.md file). If not, see
                         overture = {attribution: overtureFound.attribution || ''}
                         overturePlaces.push(...Array.from(overtureFound.results))
                     }
-                    // last: the configured geocoder, only when one is enabled and tested and outside requests are on
+                    // last: the configured geocoder, only when one is enabled and tested and may be asked now (an outside one
+                    // with outside requests on; this server's own Overture address index while a region's addresses are active)
                     const geocoders = ec.resource.script('component://framework/service/org/moqui/maps/MapGeocoders.js')
                     if (geocoders.availability().available) {
                         const found = ec.service.sync().name('org.moqui.maps.MapServices.find#Places').requireNewTransaction(true)
@@ -339,7 +341,8 @@ along with this software (see the LICENSE.md file). If not, see
                             const sourceText = [found.providerName, found.attribution].filter(Boolean).join(' · ')
                             Array.from(found.candidates || []).forEach((place, index) => geocoded.push({kind: 'geocoder', id: 'geocoder:' + index,
                                 label: place.label, lon: place.lon, lat: place.lat, extent: place.extent || null, matchKind: place.matchKind,
-                                precisionEnumId: place.precisionEnumId, precisionText: place.precisionText, sourceText}))
+                                precisionEnumId: place.precisionEnumId, precisionText: place.precisionText,
+                                sourceText: place.sourceText ? [found.providerName, place.sourceText].filter(Boolean).join(' · ') : sourceText}))
                         }
                     }
                 }

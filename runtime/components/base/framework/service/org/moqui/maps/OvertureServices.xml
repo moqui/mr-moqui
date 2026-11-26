@@ -13,13 +13,15 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
-    <!-- Optional Overture data (plans/Maps-Overture.md, stage O1 of plans/Maps.md §4.3; docs/tools/Maps.md "Overture places
-        and buildings"): an administrator's region, a theme of it (Places, Buildings) imported from a pinned release as a run
+    <!-- Optional Overture data (plans/Maps-Overture.md, stages O1 and O2 of plans/Maps.md §4.3; docs/tools/Maps.md "Overture
+        places and buildings" and "Overture addresses"): an administrator's region, a theme of it (Places, Buildings,
+        Addresses) imported from a pinned release as a run
         (moqui.maps.OvertureImport, MapOvertureEntities.xml), staged, checked and activated, and rolled back or removed. The
-        services but the two read# ones are MAPS_ADMIN's (tools data/MapsSecurityData.xml), asked again of the caller's own
-        grant (isPermittedOwn) as Geo data's are; their logic is OvertureData.js. The two read# services are the moqui-maps
-        crate's, which the host links under its overture feature: no group's and not remote, called by OvertureData.js
-        after its checks. An import never writes a Mantle record, a Geo, a point or a record's location. -->
+        services but the two read# ones and search#OvertureAddresses are MAPS_ADMIN's (tools data/MapsSecurityData.xml), asked
+        again of the caller's own grant (isPermittedOwn) as Geo data's are; their logic is OvertureData.js. Those three are the
+        moqui-maps crate's, which the host links under its overture feature: no group's and not remote, the read# ones called
+        by OvertureData.js after its checks, search#OvertureAddresses by the local geocoder (MapGeocoders.js) for any user
+        who may search. An import never writes a Mantle record, a Geo, a point or a record's location. -->
 
     <service verb="read" noun="OvertureReleases" type="rust" location="moqui_maps::service::find_overture_releases" allow-remote="false">
         <description>The releases of the catalog at maps@overture-catalog (Overture's STAC root when empty), the newest
@@ -41,7 +43,10 @@ along with this software (see the LICENSE.md file). If not, see
             box statistics meet it and only the theme's columns). Places are written as the run's OverturePlace rows in
             batches of 2,000, a transaction each; Buildings answer the footprints as a PMTiles archive (bytes). The counts
             are written to the run as it goes and its cancelRequested read then. valid false with reasonCode and reason
-            when it does not complete; cancelled true when it was cancelled.</description>
+            when it does not complete; cancelled true when it was cancelled. Addresses are written as the run's
+            OvertureAddress rows in batches of 2,000 (at most 1,000,000 a run), with countryCodes, and changes: what the
+            release changed against the run active now, by address (country, street, number, unit and postal code; never by
+            GERS ID): {comparedWith, added, removed, moved (more than 25 m), unchanged}.</description>
         <in-parameters><parameter name="importId" required="true"/></in-parameters>
         <out-parameters>
             <parameter name="valid" type="Boolean"/>
@@ -64,6 +69,36 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="maxZoom" type="Integer"/>
             <parameter name="bounds" type="List"/>
             <parameter name="stoppedReason"/>
+            <parameter name="countryCodes"/>
+            <parameter name="changes" type="Map"/>
+        </out-parameters>
+    </service>
+
+    <service verb="search" noun="OvertureAddresses" type="rust" location="moqui_maps::address_service::search_overture_addresses"
+            allow-remote="false">
+        <description>The local geocoder's search (MPK_GEOCODER_OVERTURE, MapGeocoders.js) of the address points of the
+            active Addresses runs: the text read into number, street, unit, postal code and locality (as an address of
+            country, else of each country of the active runs), the rows of its street and number read by their indexed keys
+            (case, diacritics and the street words of the country's languages folded), ranked: number and street matched an
+            address match (GPP_ADDRESS_MATCH; a source's position kind is not stated), the postal code agreeing then the
+            locality; points of one address within 30 m one candidate; candidates within 15 points of the best choices
+            (ambiguous); a number found without its suffix, and a street without the number, estimates (GPP_PLACE_ESTIMATE).
+            No outside request, and nothing written. reasonCode NO_DATA (no Addresses run active), QUERY_UNREAD (no street in
+            the text) or NO_MATCH, with parsed (the parts read) for the postal fallback.</description>
+        <in-parameters>
+            <parameter name="query" required="true"/>
+            <parameter name="country"><description>ISO alpha-2</description></parameter>
+            <parameter name="viewport" type="Object"><description>west, south, east, north: its middle breaks ties</description></parameter>
+            <parameter name="limit" type="Integer" default="10"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="valid" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="candidates" type="List"/>
+            <parameter name="ambiguous" type="Boolean"/>
+            <parameter name="parsed" type="Map"/>
+            <parameter name="countries" type="List"/>
         </out-parameters>
     </service>
 
