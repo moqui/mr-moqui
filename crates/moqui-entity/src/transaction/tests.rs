@@ -44,6 +44,8 @@ struct Shared {
     /// Connects wait while set, as on a database slow to accept one; `connecting` counts those waiting.
     hold_connects: AtomicBool,
     connecting: AtomicUsize,
+    /// The next connect panics, as a driver with a bug would.
+    panic_connect: AtomicBool,
 }
 
 struct FakeDriver {
@@ -79,6 +81,7 @@ impl FakeDriver {
                 read_timeouts: Mutex::new(Vec::new()),
                 hold_connects: AtomicBool::new(false),
                 connecting: AtomicUsize::new(0),
+                panic_connect: AtomicBool::new(false),
             }),
         })
     }
@@ -260,15 +263,19 @@ fn eventually(done: impl Fn() -> bool) -> bool {
 
 impl DbDriver for FakeDriver {
     fn connect(&self) -> Result<Box<dyn DbConnection>, Error> {
-        if self.shared.fail_connect.load(Ordering::SeqCst) {
-            return Err(Error::new("connection refused"));
-        }
+        // a held connect fails or not by `fail_connect` as it is when let go
         if self.shared.hold_connects.load(Ordering::SeqCst) {
             self.shared.connecting.fetch_add(1, Ordering::SeqCst);
             while self.shared.hold_connects.load(Ordering::SeqCst) {
                 std::thread::sleep(Duration::from_millis(1));
             }
             self.shared.connecting.fetch_sub(1, Ordering::SeqCst);
+        }
+        if self.shared.fail_connect.load(Ordering::SeqCst) {
+            return Err(Error::new("connection refused"));
+        }
+        if self.shared.panic_connect.swap(false, Ordering::SeqCst) {
+            panic!("the driver panicked in connect (test)");
         }
         let id = self.shared.next_id.fetch_add(1, Ordering::Relaxed);
         self.shared.connects.fetch_add(1, Ordering::SeqCst);
@@ -312,6 +319,23 @@ fn small() -> PoolConfig {
         test_after_idle: Duration::ZERO,
         ..Default::default()
     }
+}
+
+/// A pool of one ordinary and one reserve connection, none open yet.
+fn one_reserve() -> PoolConfig {
+    PoolConfig {
+        min: 0,
+        max: 2,
+        reserve: 1,
+        acquire_timeout: Duration::from_secs(5),
+        ..Default::default()
+    }
+}
+
+/// A reserve checkout on a thread of its own, its work one statement.
+fn reserve_checkout(mgr: &TransactionManager) -> std::thread::JoinHandle<Result<(), Error>> {
+    let mgr = mgr.clone();
+    std::thread::spawn(move || mgr.with_reserve(|conn| conn.query_once("work", &[]).map(|_| ())))
 }
 
 fn conn_id(conn: &mut dyn DbConnection) -> Result<i64, Error> {
@@ -514,27 +538,100 @@ fn ordinary_checkout_fails_when_only_reserve_is_idle() {
 /// the first few.
 #[test]
 fn a_checkout_waits_for_a_connection_another_checkout_is_opening() {
-    let (mgr, driver) = harness(PoolConfig {
-        min: 0,
-        max: 2,
-        reserve: 1,
-        acquire_timeout: Duration::from_secs(5),
-        ..Default::default()
-    });
+    let (mgr, driver) = harness(one_reserve());
     driver.shared.hold_connects.store(true, Ordering::SeqCst);
-    let checkout = |mgr: &TransactionManager| {
-        let mgr = mgr.clone();
-        std::thread::spawn(move || mgr.with_reserve(|conn| conn.query_once("work", &[]).map(|_| ())))
-    };
-    let opener = checkout(&mgr);
+    let opener = reserve_checkout(&mgr);
     assert!(eventually(|| driver.shared.connecting.load(Ordering::SeqCst) == 1));
-    let second = checkout(&mgr);
+    let second = reserve_checkout(&mgr);
     let waiting = eventually(|| mgr.stats().waiting == 1);
     driver.shared.hold_connects.store(false, Ordering::SeqCst);
     let (opened, second) = (opener.join().unwrap(), second.join().unwrap());
     opened.expect("the first checkout");
     second.expect("the second checkout gets the first's connection");
     assert!(waiting, "the second checkout waited");
+    assert_eq!(driver.connects(), 1);
+}
+
+/// A checkout waiting for the one connection being opened, whose connect fails, is woken and tries its own, failing
+/// with the connect's error at once rather than at its deadline.
+#[test]
+fn a_waiter_on_a_connect_that_fails_tries_its_own_at_once() {
+    let (mgr, driver) = harness(one_reserve());
+    driver.shared.hold_connects.store(true, Ordering::SeqCst);
+    let opener = reserve_checkout(&mgr);
+    assert!(eventually(|| driver.shared.connecting.load(Ordering::SeqCst) == 1));
+    let second = reserve_checkout(&mgr);
+    assert!(eventually(|| mgr.stats().waiting == 1), "the second checkout waits");
+    driver.shared.fail_connect.store(true, Ordering::SeqCst);
+    let failed_at = Instant::now();
+    driver.shared.hold_connects.store(false, Ordering::SeqCst);
+    let opened = opener.join().unwrap().expect_err("the held connect fails");
+    let second = second
+        .join()
+        .unwrap()
+        .expect_err("the second checkout's own connect fails too");
+    assert!(
+        failed_at.elapsed() < Duration::from_secs(2),
+        "waited {:?}",
+        failed_at.elapsed()
+    );
+    assert!(opened.to_string().contains("connection refused"), "{opened}");
+    assert!(second.to_string().contains("connection refused"), "{second}");
+}
+
+/// The failed connect of the only connection being opened, between a checkout's decision to wait and its wait (the
+/// pool's lock let go between them), still wakes it: it looks again at once and opens its own connection, rather than
+/// sleeping to its deadline on a wakeup sent before it waited.
+#[test]
+fn a_wakeup_before_a_checkout_starts_to_wait_is_not_lost() {
+    let (mgr, driver) = harness(one_reserve());
+    driver.shared.hold_connects.store(true, Ordering::SeqCst);
+    let opener = reserve_checkout(&mgr);
+    assert!(eventually(|| driver.shared.connecting.load(Ordering::SeqCst) == 1));
+    let (in_gap, gap_reached) = std::sync::mpsc::channel();
+    let (go_on, go) = std::sync::mpsc::channel::<()>();
+    let waiter_mgr = mgr.clone();
+    let waiter = std::thread::spawn(move || {
+        super::pool::BEFORE_WAIT.with(|hook| {
+            hook.set(Some(Box::new(move || {
+                in_gap.send(()).unwrap();
+                go.recv().unwrap();
+            })))
+        });
+        let started = Instant::now();
+        let result = waiter_mgr.with_reserve(|conn| conn.query_once("work", &[]).map(|_| ()));
+        (result, started.elapsed())
+    });
+    gap_reached
+        .recv_timeout(Duration::from_secs(2))
+        .expect("the second checkout decided to wait");
+    // the held connect fails while the waiter is between its decision and its wait: the wakeup reaches no waiter
+    driver.shared.fail_connect.store(true, Ordering::SeqCst);
+    driver.shared.hold_connects.store(false, Ordering::SeqCst);
+    assert!(opener.join().unwrap().is_err());
+    driver.shared.fail_connect.store(false, Ordering::SeqCst);
+    go_on.send(()).unwrap();
+    let (result, elapsed) = waiter.join().unwrap();
+    result.expect("the second checkout opens its own connection");
+    assert!(elapsed < Duration::from_secs(2), "waited {elapsed:?}");
+}
+
+/// A connect that panics gives its place back: the next checkout opens a connection at once, rather than waiting
+/// to its deadline for one the pool counts as being opened.
+#[test]
+fn a_connect_that_panics_leaves_no_connection_counted_as_opening() {
+    let (mgr, driver) = harness(one_reserve());
+    driver.shared.panic_connect.store(true, Ordering::SeqCst);
+    let panicked = reserve_checkout(&mgr).join();
+    assert!(panicked.is_err(), "the connect panicked");
+    let started = Instant::now();
+    mgr.with_reserve(|conn| conn.query_once("work", &[]).map(|_| ()))
+        .expect("a connection in its place");
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "waited {:?}",
+        started.elapsed()
+    );
     assert_eq!(driver.connects(), 1);
 }
 
