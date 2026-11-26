@@ -898,7 +898,8 @@ impl DbStore {
                 }
                 let mut insert = moqui_db::sql::insert(definition, dialect, &columns)?;
                 // another writer may store the same object at the same time: the row is the same, so the second insert
-                // does nothing (and only a duplicate key is passed over, never a missing delta base)
+                // does nothing (only a duplicate key is passed over; a delta's base is not a foreign key, and the base
+                // goes in before the delta, insert_chunk)
                 let key = |name: &str| {
                     moqui_db::sql::quote_column(
                         dialect,

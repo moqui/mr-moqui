@@ -540,19 +540,34 @@ fn a_batch_that_fails_is_written_again_file_by_file() {
     assert!(bed.has_artifact("entity:rows.Banana"));
 }
 
-/// Batches of `size` files for a test of batches written at once; the size as it was when dropped.
-struct SmallBatches(usize);
+/// Batches of `size` files written on three connections at once (the test pool has no spare ones), for a test of
+/// batches written at once; the size and writers as they were when dropped.
+struct SmallBatches(usize, Option<usize>);
 
 impl SmallBatches {
     fn of(size: usize) -> Self {
-        Self(TEST_BATCH_FILES.with(|batch| batch.replace(size)))
+        Self(
+            TEST_BATCH_FILES.with(|batch| batch.replace(size)),
+            TEST_WRITERS.with(|writers| writers.replace(Some(3))),
+        )
     }
 }
 
 impl Drop for SmallBatches {
     fn drop(&mut self) {
         TEST_BATCH_FILES.with(|batch| batch.set(self.0));
+        TEST_WRITERS.with(|writers| writers.set(self.1));
     }
+}
+
+/// The paths logged as not written under `bed`'s directory.
+fn unwritten(bed: &RowsBed) -> Vec<String> {
+    let dir = bed.dir.display().to_string();
+    lock(&UNWRITTEN)
+        .iter()
+        .filter(|path| path.starts_with(&dir))
+        .cloned()
+        .collect()
 }
 
 /// Entity files, `count` of them, each with an entity of its own.
@@ -636,4 +651,74 @@ fn a_file_that_fails_among_batches_written_at_once_fails_alone() {
     let report = build_files(bed.factory(), bed.files(), false).unwrap();
     assert_eq!((report.read, report.unchanged), (1, 8), "{report:?}");
     assert!(bed.has_artifact("entity:rows.F04"));
+}
+
+/// An entity two files define whose later file (its row's owner) fails: the earlier file, which passed the id over,
+/// writes its row once the batches are in, so the table has the definition the resolver knows.
+#[test]
+fn an_id_whose_owner_fails_is_written_from_the_other_file() {
+    let bed = RowsBed::new("shared-owner-fails");
+    entity_files(&bed, 6);
+    let first = bed.write("entity/AEntities.xml", ROWS_ENTITIES);
+    let second = bed.write("entity/ZEntities.xml", ROWS_ENTITIES);
+    let _enter = bed.ctx.enter();
+    let _authz = bed.ctx.disable_authz();
+    let _small = SmallBatches::of(1);
+    let files = bed.files();
+    let later = files
+        .iter()
+        .rposition(|file| file.path == first || file.path == second)
+        .map(|at| files[at].path.display().to_string())
+        .unwrap();
+    let earlier = [first, second]
+        .iter()
+        .map(|path| path.display().to_string())
+        .find(|path| *path != later)
+        .unwrap();
+    lock(&FAIL_FILE_WRITE).push(later.clone());
+    let report = build_files(bed.factory(), files, false).unwrap();
+    lock(&FAIL_FILE_WRITE).retain(|path| *path != later);
+    assert_eq!(
+        unwritten(&bed),
+        std::slice::from_ref(&later),
+        "the owner is logged alone"
+    );
+    assert_eq!(report.read, 7, "{report:?}");
+    for id in ["entity:rows.Thing", "field:rows.Thing.thingId", "field:rows.Thing.name"] {
+        assert_eq!(
+            bed.ids(ARTIFACT, "artifactId", id, "filePath"),
+            std::slice::from_ref(&earlier),
+            "{id}"
+        );
+    }
+}
+
+/// An entity moved from a file to another, both updated in batches written at once, the new file's batch first: its
+/// row is the new file's, and no file fails on the old row.
+#[test]
+fn an_id_moved_to_another_file_is_written_after_its_old_file() {
+    let bed = RowsBed::new("moved-parallel");
+    entity_files(&bed, 6);
+    let entity = |name: &str| {
+        format!(
+            r#"<entities><entity entity-name="{name}" package="rows"><field name="id" type="id" is-pk="true"/></entity></entities>"#
+        )
+    };
+    let a = bed.write("entity/AEntities.xml", &entity("Apple"));
+    let z = bed.write("entity/ZEntities.xml", ROWS_ENTITIES);
+    let _enter = bed.ctx.enter();
+    let _authz = bed.ctx.disable_authz();
+    let _small = SmallBatches::of(1);
+    build_files(bed.factory(), bed.files(), false).unwrap();
+    let paths = || bed.ids(ARTIFACT, "artifactId", "entity:rows.Thing", "filePath");
+    assert_eq!(paths(), [z.display().to_string()]);
+
+    bed.write("entity/AEntities.xml", ROWS_ENTITIES);
+    bed.write("entity/ZEntities.xml", &entity("Zebra"));
+    let report = update_files(bed.factory(), &[a.clone(), z]).unwrap();
+    assert_eq!(report.read, 2, "{report:?}");
+    assert!(unwritten(&bed).is_empty(), "{:?}", unwritten(&bed));
+    assert_eq!(paths(), [a.display().to_string()]);
+    assert!(bed.has_artifact("entity:rows.Zebra"));
+    assert!(!bed.has_artifact("entity:rows.Apple"));
 }

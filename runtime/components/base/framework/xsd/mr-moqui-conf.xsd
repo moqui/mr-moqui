@@ -3389,8 +3389,8 @@ along with this software (see the LICENSE.md file). If not, see
                 change.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="index-writers" type="xs:string" default="3"><xs:annotation><xs:documentation>The
                 connections the artifact index writes its rows on at once, each batch of files in a transaction of its
-                own (a build's write is bound by the database); at most the pool's size less two, at least
-                one.</xs:documentation></xs:annotation></xs:attribute>
+                own (a build's write is bound by the database); at most one more than the connections of the pool the
+                request and service workers leave, at least one.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
 

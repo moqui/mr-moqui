@@ -49,7 +49,7 @@ use self::sources::{expand_source, refresh, refresh_locked, screen_rows_moved, s
 use super::ArtifactKind;
 use moqui_core::context::{framework_thread, ExecutionContextFactory};
 use moqui_core::entity::{fence, EntityFacade, EntityValue};
-use moqui_core::transaction::{TransactionAttribute, TransactionManager};
+use moqui_core::transaction::TransactionAttribute;
 
 const FILE: &str = "moqui.devtools.DevArtifactFile";
 const ARTIFACT: &str = "moqui.devtools.DevArtifact";
@@ -1680,7 +1680,7 @@ fn apply(
     };
     let mut outcomes: Vec<Option<Result<(), Error>>> = changes.iter().map(|_| None).collect();
     // the files whose rows no other batch touches at once, then the others one batch after another
-    let writers = index_writers(factory, &tx);
+    let writers = index_writers(factory);
     let stopped = write_batches(factory, &plan.parallel, writers, &write, &mut outcomes)
         || write_batches(factory, &plan.ordered, 1, &write, &mut outcomes);
     if stopped {
@@ -1688,6 +1688,7 @@ fn apply(
         tracing::info!("Artifact index: the rows of {left} files were not written for the shutdown");
         return Ok(());
     }
+    let written: Vec<bool> = outcomes.iter().map(|outcome| matches!(outcome, Some(Ok(())))).collect();
     for (change, outcome) in changes.iter().zip(outcomes) {
         let outcome = outcome.unwrap_or_else(|| Err(Error::new("its writer stopped")));
         match (outcome, change) {
@@ -1708,6 +1709,19 @@ fn apply(
                 #[cfg(test)]
                 lock(&UNWRITTEN).push(path);
             }
+        }
+    }
+    // a shared id whose owner's rows were not written: the owner's transaction, which deleted the id's row elsewhere
+    // first, was rolled back, and the other files written now passed it over; the last of them that defines it writes
+    // its row, so the table has a definition the resolver knows
+    let unowned = plan.unowned(&changes, &written);
+    if !unowned.is_empty() {
+        let rewritten = tx.run(TransactionAttribute::ForceNew, None, || write_unowned(facade, &unowned));
+        if let Err(err) = rewritten {
+            tracing::error!(
+                "Artifact index: the rows of {} ids whose file was not written were not written from another file: {err}",
+                unowned.len()
+            );
         }
     }
     unresolve(facade, &tx, &gone, &changed_paths)?;
@@ -1805,13 +1819,75 @@ impl<'a> WritePlan<'a> {
     }
 }
 
-/// How many connections the index writes its rows on at once: `dev-reload@index-writers` (3), at most the pool's size
-/// less two, so requests keep their connections, and at least one.
-fn index_writers(factory: &ExecutionContextFactory, tx: &TransactionManager) -> usize {
-    let room = usize::try_from(tx.pool_max()).unwrap_or(usize::MAX).saturating_sub(2);
+#[cfg(test)]
+thread_local! {
+    /// Under test, the writers in place of [`index_writers`]' count, so a test's small pool still writes at once.
+    pub(crate) static TEST_WRITERS: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+}
+
+impl WritePlan<'_> {
+    /// Of each shared id whose owner was not `written`, the last change written that defines it: its path, the id's
+    /// sequence in it and the artifact.
+    fn unowned<'c>(&self, changes: &'c [Change], written: &[bool]) -> Vec<(String, usize, &'c ArtifactRow)> {
+        let failed: HashSet<&str> = self
+            .owners
+            .iter()
+            .filter(|(_, owner)| !written.get(**owner).copied().unwrap_or(false))
+            .map(|(id, _)| *id)
+            .collect();
+        if failed.is_empty() {
+            return Vec::new();
+        }
+        let mut last: HashMap<&str, (String, usize, &ArtifactRow)> = HashMap::new();
+        for (at, change) in changes.iter().enumerate() {
+            let Change::Read { file, index, .. } = change else {
+                continue;
+            };
+            if !written.get(at).copied().unwrap_or(false) {
+                continue;
+            }
+            let path = file.path.display().to_string();
+            let mut seen = HashSet::new();
+            for (sequence, artifact) in index.artifacts.iter().enumerate() {
+                // a file naming one id twice keeps the first, as its own write does
+                if failed.contains(artifact.id.as_str()) && seen.insert(artifact.id.as_str()) {
+                    last.insert(artifact.id.as_str(), (path.clone(), sequence, artifact));
+                }
+            }
+        }
+        last.into_values().collect()
+    }
+}
+
+/// Write the rows of `unowned` ([`WritePlan::unowned`]) in place of any row of their ids.
+fn write_unowned(facade: &EntityFacade, unowned: &[(String, usize, &ArtifactRow)]) -> Result<(), Error> {
+    let ids: Vec<Value> = unowned
+        .iter()
+        .map(|(_, _, artifact)| Value::string(&artifact.id))
+        .collect();
+    delete_in(facade, ARTIFACT, "artifactId", &ids)?;
+    let template = facade.make_value(ARTIFACT)?;
+    facade.create_values(
+        ARTIFACT,
+        unowned
+            .iter()
+            .map(|(path, sequence, artifact)| artifact_value(&template, path, *sequence, artifact)),
+    )
+}
+
+/// How many connections the index writes its rows on at once: `dev-reload@index-writers` (3), at most one more than
+/// the pool's spare connections, those the request and service workers leave ([`moqui_core::service::spare_connections`];
+/// the build's own thread holds one already), and at least one.
+fn index_writers(factory: &ExecutionContextFactory) -> usize {
+    #[cfg(test)]
+    if let Some(writers) = TEST_WRITERS.with(std::cell::Cell::get) {
+        return writers;
+    }
+    let spare =
+        moqui_core::service::spare_connections(factory).map_or(0, |spare| usize::try_from(spare).unwrap_or(usize::MAX));
     factory
         .conf_number("dev-reload", "index-writers", 3_usize)
-        .min(room)
+        .min(spare.saturating_add(1))
         .max(1)
 }
 
@@ -2399,31 +2475,36 @@ fn insert_artifacts(
     let template = facade.make_value(ARTIFACT)?;
     facade.create_values(
         ARTIFACT,
-        kept.into_iter().flatten().map(|(path, sequence, artifact)| {
-            let mut row = template.clone();
-            row.set("artifactId", Value::string(&artifact.id));
-            row.set("artifactKind", Value::string(&artifact.kind));
-            row.set("artifactName", Value::string(&artifact.name));
-            row.set("shortName", Value::string(&artifact.short_name));
-            row.set("searchKey", Value::string(extract::search_key(&artifact.short_name)));
-            row.set("component", Value::string(&artifact.component));
-            row.set("filePath", Value::string(path));
-            row.set("lineNumber", Value::I64(i64::from(artifact.line)));
-            row.set("columnNumber", Value::I64(i64::from(artifact.column)));
-            row.set("summary", Value::string(&artifact.summary));
-            if let Some(parent) = &artifact.parent {
-                row.set("parentArtifactId", Value::string(parent));
-            }
-            row.set("sequenceNum", Value::I64(i64::try_from(sequence).unwrap_or(0)));
-            if !artifact.origin.is_empty() {
-                row.set("origin", Value::string(&artifact.origin));
-            }
-            if !artifact.marks.is_empty() {
-                row.set("marks", Value::string(&artifact.marks));
-            }
-            row
-        }),
+        kept.into_iter()
+            .flatten()
+            .map(|(path, sequence, artifact)| artifact_value(&template, path, sequence, artifact)),
     )
+}
+
+/// The `DevArtifact` row of `artifact`, the one at `sequence` in the file at `path`.
+fn artifact_value(template: &EntityValue, path: &str, sequence: usize, artifact: &ArtifactRow) -> EntityValue {
+    let mut row = template.clone();
+    row.set("artifactId", Value::string(&artifact.id));
+    row.set("artifactKind", Value::string(&artifact.kind));
+    row.set("artifactName", Value::string(&artifact.name));
+    row.set("shortName", Value::string(&artifact.short_name));
+    row.set("searchKey", Value::string(extract::search_key(&artifact.short_name)));
+    row.set("component", Value::string(&artifact.component));
+    row.set("filePath", Value::string(path));
+    row.set("lineNumber", Value::I64(i64::from(artifact.line)));
+    row.set("columnNumber", Value::I64(i64::from(artifact.column)));
+    row.set("summary", Value::string(&artifact.summary));
+    if let Some(parent) = &artifact.parent {
+        row.set("parentArtifactId", Value::string(parent));
+    }
+    row.set("sequenceNum", Value::I64(i64::try_from(sequence).unwrap_or(0)));
+    if !artifact.origin.is_empty() {
+        row.set("origin", Value::string(&artifact.origin));
+    }
+    if !artifact.marks.is_empty() {
+        row.set("marks", Value::string(&artifact.marks));
+    }
+    row
 }
 
 fn fill_ref(row: &mut EntityValue, reference: &RefRow) {
