@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The Dev AIDE with a group server (plans/design-dev-aide.md 21.10, P11), the instance its own group server over
+//! The Dev AIDE with a group server (plans/archive/design-dev-aide.md 21.10, P11), the instance its own group server over
 //! loopback: the site component's working tree has the instance's hosted `my-site` repository as its origin. Connect
 //! signs in as an installed app does (F17: `/sso/appLogin` with no identity provider, this server's own login, the
 //! confirmation, the code at `/sso/appToken` for a login key), then sets the addons repository, the task source and
@@ -49,7 +49,7 @@ const SITE_COMPONENT: &str = r#"<component name="my-site"/>"#;
 const SITE_SERVICES: &str = "<services>\n    <service verb=\"get\" noun=\"Thing\"/>\n</services>\n";
 const HS: &str = "org.moqui.devaide.HostingServices.";
 /// The group server's application, as Mantle would be for threads and Smithy for the agreement: a review-thread service
-/// over a table of its own, and an agreement check that knows one signed address (plans/design-dev-aide.md 21.10); and
+/// over a table of its own, and an agreement check that knows one signed address (plans/archive/design-dev-aide.md 21.10); and
 /// as Mantle is for tasks, an offer-service with a task source (its tasks, a repository's issues with numbers, as
 /// Smithy's are, and an app tasks open in) over a REST of its own.
 const STUB_COMPONENT: &str = r#"<component name="review-stub"/>"#;

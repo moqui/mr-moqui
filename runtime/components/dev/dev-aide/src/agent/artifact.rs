@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `artifact` (plans/design-dev-aide.md 13.2, READ): `find`, `describe`, `refs` and `at` over the artifact index. An
+//! `artifact` (plans/archive/design-dev-aide.md 13.2, READ): `find`, `describe`, `refs` and `at` over the artifact index. An
 //! answer gives each artifact's id, kind, name, location and line, its component and whether that component is the
 //! site's or upstream (D17), so the model knows where an extension goes.
 //!

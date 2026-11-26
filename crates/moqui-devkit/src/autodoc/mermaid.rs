@@ -120,7 +120,7 @@ fn is_keyword(id: &str) -> bool {
 }
 
 /// An artifact's users to its left and its uses to its right, one subgraph per group with at most [`GROUP_ROWS`]
-/// names and "+ n more", and one connector per group, as the Artifact Browser draws them (plans/design-dev-aide.md D9).
+/// names and "+ n more", and one connector per group, as the Artifact Browser draws them (plans/archive/design-dev-aide.md D9).
 #[must_use]
 pub fn usage_flowchart(center: &str, used_by: &[UsageGroup], uses: &[UsageGroup]) -> String {
     let mut out = String::from("flowchart LR\n");

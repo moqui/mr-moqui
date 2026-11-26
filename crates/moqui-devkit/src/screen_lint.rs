@@ -271,7 +271,7 @@ pub struct FileReport {
     /// may lag what the framework reads.
     pub unknown_attributes: Vec<(u32, String)>,
     /// Containers, boxes, rows and sections of a screen with no `name` or `id`, which a `screen-extend` cannot anchor
-    /// to (plans/design-dev-aide.md F16). Information: an upstream screen names the places sites extend.
+    /// to (plans/archive/design-dev-aide.md F16). Information: an upstream screen names the places sites extend.
     pub unnamed_anchors: Vec<(u32, String)>,
     /// `client-context` names that the actions element they are on never sets or mentions ([`scan_client_context`]):
     /// a typo, or a name that is set elsewhere and sent anyway if the context has it. A warning.

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Co-editing a file on a shared dev server (plans/design-dev-aide.md F15): `get#CoeditAccess`, which moqui-collab's
+//! Co-editing a file on a shared dev server (plans/archive/design-dev-aide.md F15): `get#CoeditAccess`, which moqui-collab's
 //! text rooms ask (`moqui_collab::text`) who may join the room of a root's file, as the user. Only in shared mode
 //! (`dev-aide shared="true"`), only for a user who may write the file as Save would (the tier, the upstream lock, a
 //! read-only root: [`Context::may_write`]), the path confined as a read's is, and only the path as the Workspace names

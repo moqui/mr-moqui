@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- An artifact's references as lists (plans/design-dev-aide.md 7.3, the browser's List view): the artifact, then what
+<!-- An artifact's references as lists (plans/archive/design-dev-aide.md 7.3, the browser's List view): the artifact, then what
     uses it and what it uses, each by kind, static and observed (with the calls counted on this dev instance). A row's
     name makes it the center; its file opens in the Workspace at the line. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"

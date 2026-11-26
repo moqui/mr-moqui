@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The unsaved buffers of the visual views (plans/design-dev-aide.md F14, D14): by user and buffer id, the texts of
+//! The unsaved buffers of the visual views (plans/archive/design-dev-aide.md F14, D14): by user and buffer id, the texts of
 //! files at their locations, for two hours since their last put. A Design frame's canvas buffer
 //! (`put#CanvasBuffer`, `crate::screens`) holds the texts its frame renders; a guided editor's edit buffer (the
 //! terminal's guided editors, `Entities/EditTui`, `Services/EditTui` and `Screens/DesignTui`) holds the files its

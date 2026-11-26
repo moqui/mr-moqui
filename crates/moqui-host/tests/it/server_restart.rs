@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Restart from the app (plans/design-dev-aide.md 6.5): the binary's server (`moqui_host::serve`, the loop the `moqui`
+//! Restart from the app (plans/archive/design-dev-aide.md 6.5): the binary's server (`moqui_host::serve`, the loop the `moqui`
 //! binary runs) in a child process on a seeded dev runtime, asked by an administrator's `restart#Server` (System › Conf ›
 //! Changes, Restart Now), shuts down and runs itself again with the same arguments. On Unix the process is replaced in
 //! place (`exec`), so its id stays and `./moq run` keeps it: the new image starts from `main` again, boots the runtime

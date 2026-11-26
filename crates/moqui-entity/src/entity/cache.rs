@@ -1711,7 +1711,7 @@ pub fn clear_list_cache(facade: &EntityFacade, cache_name: &str) -> Result<bool,
     })
 }
 
-/// After the model was swapped (plans/design-dev-aide.md F5): the views of each member built again on next use, and
+/// After the model was swapped (plans/archive/design-dev-aide.md F5): the views of each member built again on next use, and
 /// every list and count cache cleared, as their rows were read with the old definitions.
 pub(crate) fn forget_model(facade: &EntityFacade) {
     facade.with_slot(OneCaches::default, |caches| caches.views_by_member = None);

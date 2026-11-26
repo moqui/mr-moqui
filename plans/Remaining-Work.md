@@ -154,6 +154,18 @@ Guides [Git-Hosting](../docs/interfaces/Git-Hosting.md), [Revision-Management](.
 | LFS storage placement | LFS payloads currently stay in Postgres content blobs even when git metadata is on the filesystem. Add filesystem-backed LFS payloads through ResourceFacade and the shared blob/provider storage; default payload placement to the repository's backend (`local` on disk, `db` in Postgres), with any override explicit. Reads, range streaming, authorization, garbage collection and backups must follow the actual payload store. No pre-release data migration is required. | [Git LFS](../docs/interfaces/Git-Hosting.md#large-files-git-lfs); [HOME Media design](../runtime/components/addon/mr-home/plan/initial-design.md#32-media-photos-music-videos-ebooks-and-audiobooks); `resource/blob.rs`, `resource/git/server/lfs.rs` |
 | LFS | gc of a `local` repository does not let go of LFS objects no kept file points to (only `db` gc sweeps LFS); a `remote` mirror does not fetch LFS objects; no transfer adapters other than basic (`git-lfs-transfer` over SSH, multipart) | `resource/git/server/lfs.rs` |
 
+## Dev AIDE
+
+Built: [design-dev-aide](archive/design-dev-aide.md) (P1a to P13, the template and the finishing work, archived 2026-11-26); guide
+[Dev-AIDE](../docs/tools/Dev-AIDE.md). Its checks still to run are in [Testing-Needed](Testing-Needed.md#dev-aide); what
+comes after v0.1.0 is in [Future-Plans](Future-Plans.md#dev-aide).
+
+| Item | Source |
+|---|---|
+| Hosted roots in the terminal twin: its Workspace saves a hosted root's file as a commit named "Edit <path>", with no message asked and none of the browser's hosted-root details | [§4.10](archive/design-dev-aide.md#410-projects-code-reviewed), `screen/DevAide/WorkspaceTui.xml` |
+| Load the changed records leaves a record with no whole primary key out: not compared or written, so only Load this file loads it | [§12](archive/design-dev-aide.md#12-data-files-and-new-components), `src/data_load.rs` |
+| The TypeScript checker takes a component's `script/` files only, not the inline scripts of XML (a `<script>` in actions) | [§5.4](archive/design-dev-aide.md#54-javascript), `screen/devstatic/DevAideTypes.js` |
+
 ## Search
 
 | Item | Source |
@@ -204,7 +216,7 @@ Built Nov 11, 2026 ([Terminal-Fancy](Terminal-Fancy.md), guide [Terminal](../doc
 | Hand checks on installed apps, a real phone and the Android app against a remote dev server over HTTPS, and a shell through a deployed edge node in both modes across a dropped link (the emulator, the Desktop app's development run and the in-process edge node have run these paths) | [Mobile-Desktop-Exit-Checks](Mobile-Desktop-Exit-Checks.md#the-browser-terminal-the-apps-and-the-edge-node) |
 | Codex's hook line run against Codex (Claude Code's were, Nov 11, 2026) | Terminal-Fancy §11.1, guide "Hooks for agents" |
 | A long press on a phone opens the terminal's context menu beside copying the line | Terminal-Fancy §13.1 |
-| Later (§15): Windows host sessions (ConPTY); a server-side emulator for the screen as text; sessions driven by a program; answering Claude Code's `OSC 7501 ; ?`; the kitty keyboard protocol; mirrored viewers; a per-person OS account; named workspaces; images, ligatures, WebGL; a native window per terminal in the Desktop app; recording; more kinds of float (worktrees per agent were built Nov 14, 2026, [design-dev-aide](design-dev-aide.md) §21.8, P13) | Terminal-Fancy §15 |
+| Later (§15): Windows host sessions (ConPTY); a server-side emulator for the screen as text; sessions driven by a program; answering Claude Code's `OSC 7501 ; ?`; the kitty keyboard protocol; mirrored viewers; a per-person OS account; named workspaces; images, ligatures, WebGL; a native window per terminal in the Desktop app; recording; more kinds of float (worktrees per agent were built Nov 14, 2026, [design-dev-aide](archive/design-dev-aide.md) §21.8, P13) | Terminal-Fancy §15 |
 
 ## Tooling: lint and XSD
 
@@ -309,6 +321,10 @@ items) and say how apps plug into the framework in §1.5. The framework items th
 ## Java functionality review
 
 The entity and service modules ([EntityService-Parity-Review](archive/EntityService-Parity-Review.md)) and the screen and web parts ([ScreenWeb-Parity-Review](archive/ScreenWeb-Parity-Review.md)) were reviewed phase by phase against their Java sources, with the accepted differences in [Parity-Diffs](Parity-Diffs.md). The rest of [Parity-Mapping](Parity-Mapping.md) (moqui-lib, moqui-db, context and resources, user and session, transactions and drivers, script and templates, search, notifications and cluster, mail and the tool components, tooling, browser host) has had no phase review yet; the threads to carry through one are [Parity-Mapping, Cross-cutting threads](Parity-Mapping.md#cross-cutting-threads).
+
+- **Nested `auto-parameters`** (found by the Dev AIDE's index work, [design-dev-aide §18](archive/design-dev-aide.md#18-phases)): an
+  `auto-parameters` inside a `<parameter>` (a Map's fields from an entity) is not expanded; `define::parse_parameter`
+  takes only the nested `parameter` elements, so such a Map parameter has no fields to validate or document.
 
 ## Related documents
 [Future-Plans](Future-Plans.md) (digest of the unbuilt [proposals](proposals/)), [Testing-Needed](Testing-Needed.md) (live and platform checks, and tests to write), [Performance-Summary](Performance-Summary.md) (the next phase), [Parity-Mapping](Parity-Mapping.md) and [Parity-Diffs](Parity-Diffs.md) (reference for the review). The index is [README](README.md).

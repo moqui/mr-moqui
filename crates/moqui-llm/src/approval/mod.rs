@@ -158,7 +158,7 @@ pub enum TargetKind {
     Service,
     /// Any other tool call (another system's tool, an add-on tool): the arguments are the call's.
     Tool,
-    /// A change set of files (plans/design-dev-aide.md 13.3): the arguments are the files with their base hashes and
+    /// A change set of files (plans/archive/design-dev-aide.md 13.3): the arguments are the files with their base hashes and
     /// texts; the snapshot's `changeSet` is what the card shows. Review hands it to the editor.
     File,
 }

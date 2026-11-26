@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Services › Edit's terminal twin (plans/design-dev-aide.md 9, D14): one service from get#ServiceView, its header
+<!-- Services › Edit's terminal twin (plans/archive/design-dev-aide.md 9, D14): one service from get#ServiceView, its header
     with the pending line of the user's edit buffer (N unsaved changes, Save with Ctrl+S, Discard), and tabs: Try (a
     field per in-parameter, Run in sim or for real, the out, messages, the rows it would write and the log; Save as spec,
     Run spec; a snippet), Overview (the service's settings), Parameters (in and out, nested ones too: Add, Add child in a Map's

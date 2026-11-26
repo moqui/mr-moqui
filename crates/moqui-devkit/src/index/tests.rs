@@ -319,7 +319,7 @@ const ROWS_SERVICES: &str = r#"<services><service verb="save" noun="Thing">
     <in-parameters><auto-parameters entity-name="rows.Thing"/></in-parameters>
 </service></services>"#;
 
-/// The index's fault hook (plans/design-dev-aide.md 19): an expansion of a file not read now whose write fails is
+/// The index's fault hook (plans/archive/design-dev-aide.md 19): an expansion of a file not read now whose write fails is
 /// written again at the next update, though nothing it reads changed again.
 #[test]
 fn an_expansions_write_that_fails_is_written_again_at_the_next_update() {

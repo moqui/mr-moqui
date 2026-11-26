@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Hosted roots (plans/design-dev-aide.md 4.10), implemented in the dev-aide crate (src/hosted.rs): a repository of
+<!-- Hosted roots (plans/archive/design-dev-aide.md 4.10), implemented in the dev-aide crate (src/hosted.rs): a repository of
     this server's git hosting at a branch, a root of the Workspace with no working tree. The Workspace's file services
     read it through org.moqui.git.GitServices as the user, and each Save is a commit by the user (commit#GitFiles, with
     the update right and the branch rules a push meets). Not loaded or run. -->

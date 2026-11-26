@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The lossless XML layer (plans/design-dev-aide.md 5.2, F7): structural operations on an XML text (set, remove and
+//! The lossless XML layer (plans/archive/design-dev-aide.md 5.2, F7): structural operations on an XML text (set, remove and
 //! rename an attribute; insert, remove, move and replace an element; set an element's text; wrap and unwrap) that answer
 //! the smallest text edits, so the rest of the file keeps its comments, order, formatting and line endings and its git
 //! diff is the change. The visual views of the dev-aide turn gestures into these, and agents' edits by element use them.

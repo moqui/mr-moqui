@@ -663,7 +663,7 @@ impl ScreenFacade {
 
     /// Drop at once every cached definition read from one of `files` (a screen file, a `screen-extend` file, a form or
     /// widget template it includes), or from a directory holding one (a `screen-extend` directory a new file appears
-    /// in), with the resolved paths and `//` searches that hold them (plans/design-dev-aide.md 6.1, F6). The 2 s check
+    /// in), with the resolved paths and `//` searches that hold them (plans/archive/design-dev-aide.md 6.1, F6). The 2 s check
     /// would see the change later; this is for a save and the dev file watcher. Answers the screen locations dropped.
     pub fn forget(&self, factory: &ExecutionContextFactory, files: &[std::path::PathBuf]) -> Vec<String> {
         let files: Vec<std::path::PathBuf> = files.iter().map(|file| canonical(file)).collect();

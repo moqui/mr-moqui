@@ -13,7 +13,7 @@
  */
 
 /*
- * The Design view of a `.qvue` screen (plans/design-dev-aide.md 11.4, P9): the screen rendered from the tab's buffer
+ * The Design view of a `.qvue` screen (plans/archive/design-dev-aide.md 11.4, P9): the screen rendered from the tab's buffer
  * (F14: the canvas buffer stands at the `.qvue`'s location) in a frame of the page, its template's elements stamped
  * with their lines (F10, `stamp_qvue`), under an overlay that selects them; the selection's actions are text edits of
  * the template block (remove, move among its siblings, insert a snippet before, after or inside, edit its tag), so the

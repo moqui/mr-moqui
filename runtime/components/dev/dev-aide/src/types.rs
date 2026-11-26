@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The declarations of the TypeScript checker (plans/design-dev-aide.md 5.4, question 10): `get#TypeDeclarations`
+//! The declarations of the TypeScript checker (plans/archive/design-dev-aide.md 5.4, question 10): `get#TypeDeclarations`
 //! answers the `moqui types` files a server script is checked against (`moqui_devkit::typegen`: `moqui-host.d.ts`,
 //! `moqui-globals.d.ts`, and the entities, services and tools of the loaded definitions), which the Workspace's worker
 //! (`screen/devstatic/DevAideTsWorker.js`) runs the compiler over. The screens' declarations are left out: they type

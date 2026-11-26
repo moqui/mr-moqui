@@ -4,7 +4,7 @@ The assisted IDE of mr-moqui, at `/qapps/dev` on a dev instance: the Workspace (
 the artifact index and Browser, the entity modeler, the service writer and ECA rules, the screen builder, tasks and
 group servers, and Dev Assist. How to use it is in the guide,
 [docs/tools/Dev-AIDE.md](../../../../docs/tools/Dev-AIDE.md); the design and its build record are in
-[plans/design-dev-aide.md](../../../../plans/design-dev-aide.md).
+[plans/archive/design-dev-aide.md](../../../../plans/archive/design-dev-aide.md).
 
 It gives its users code execution as the server's OS user, so it loads only when `instance@purpose` is dev
 (`runtime/components/dev` is a dev-only component directory, and its `component.xml` says `purpose="dev"`). Its Rust

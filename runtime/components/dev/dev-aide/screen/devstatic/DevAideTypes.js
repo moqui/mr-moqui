@@ -1,7 +1,7 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
 /*
- * The Workspace's TypeScript checker (plans/design-dev-aide.md 5.4, question 10; the browser path, as the framework does
+ * The Workspace's TypeScript checker (plans/archive/design-dev-aide.md 5.4, question 10; the browser path, as the framework does
  * not take TypeScript for scripts): a worker (DevAideTsWorker.js) runs the vendored compiler (libs/typescript, 3.6 MB,
  * with the ES2023 declarations) over the project's `moqui types` declarations (the Workspace's typeDeclarations
  * transition) and checks a server script's buffer, its diagnostics going into m-code-editor's lint and Problems. Off by

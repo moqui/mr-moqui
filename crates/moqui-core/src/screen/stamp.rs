@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Source stamps (plans/design-dev-aide.md F10): on a dev instance each widget element of a screen keeps, as its
+//! Source stamps (plans/archive/design-dev-aide.md F10): on a dev instance each widget element of a screen keeps, as its
 //! `mq-src` attribute, the file that wrote it and its line and column (the base screen, or the `screen-extend` whose
 //! merged element it is), and the generated code of a stamped element names it to `sri.stamp` before its macro runs.
 //! A render that asks for stamps (`moquiAide=source` or `X-Moqui-Aide: source`, a Dev AIDE user) writes the pending

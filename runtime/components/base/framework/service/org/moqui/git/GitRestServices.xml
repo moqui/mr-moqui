@@ -13,7 +13,7 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- The framework's REST for hosting (tools/service/moqui.rest.xml, /rest/s1/moqui/git and /rest/s1/moqui/hosting;
-    plans/Dogfood.md F9, plans/design-dev-aide.md F18), implemented in moqui-git (src/service/rest.rs): what the server
+    plans/Dogfood.md F9, plans/archive/design-dev-aide.md F18), implemented in moqui-git (src/service/rest.rs): what the server
     offers its clients, the repository behind a URL, the contributor agreement, and the merge request and pipeline
     resources over GitServices, GitReviewServices and GitCiServices by a repository's own numbers. The services they
     call check the repository's rights as they do without REST. Before each write on a repository the conf's git-server

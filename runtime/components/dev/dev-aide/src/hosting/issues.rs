@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The issues of a working tree's hosted repository (plans/design-dev-aide.md 21.6): its open issues and the projects
+//! The issues of a working tree's hosted repository (plans/archive/design-dev-aide.md 21.6): its open issues and the projects
 //! it is linked to, read through the offer's `tasks.issuesPath` (Mantle's `gitRepositories/{repositoryId}/issues`) as
 //! the connected user, for the task panel; and Quick create, which files one there. A server that offers no such path
 //! has no issues here, and the panel shows the user's tasks alone.

@@ -53,7 +53,7 @@ const CODEMIRROR_PACKAGES = [
 const YJS_PACKAGES = ['yjs', 'y-protocols', 'lib0'];
 const Y_CODEMIRROR_PACKAGES = ['y-codemirror.next', 'lib0'];
 const CODEMIRROR_VIM_PACKAGES = ['@replit/codemirror-vim', '@replit/codemirror-vim-core'];
-// The second bundle of CodeMirror's languages (plans/design-dev-aide.md 5.1): the legacy modes of @codemirror/legacy-modes
+// The second bundle of CodeMirror's languages (plans/archive/design-dev-aide.md 5.1): the legacy modes of @codemirror/legacy-modes
 // that lang-* has no package for, each a stream parser's spec that js/WebrootCode.js gives StreamLanguage.define. SQL and
 // YAML are lang-sql's and lang-yaml's, in the main bundle.
 const LEGACY_MODES = [['shell', 'shell'], ['groovy', 'groovy'], ['properties', 'properties'], ['toml', 'toml'],
@@ -652,7 +652,7 @@ licenses/Unicode-3.0.txt, from ${UNICODE_URL}.
     produce: (ctx) => [['tiptap/tiptap.min.js', ctx.esbuildTiptap()]],
   },
   {
-    // The code editor of m-code-editor, m-diff-view and the dev-aide (plans/design-dev-aide.md 5.1), loaded only when an
+    // The code editor of m-code-editor, m-diff-view and the dev-aide (plans/archive/design-dev-aide.md 5.1), loaded only when an
     // editor mounts. CodeMirror ships ES modules, so this is a bundle of the packages in CODEMIRROR_DEPS.
     id: 'codemirror', name: 'CodeMirror 6 (bundled)', npm: '@codemirror/view', license: 'MIT',
     licenseNote: 'Bundles @codemirror/state, view, language, commands, search, autocomplete, lint, merge, streamparser, ' +
@@ -671,7 +671,7 @@ licenses/Unicode-3.0.txt, from ${UNICODE_URL}.
   },
   {
     // Yjs and its awareness protocol, the shared types of co-editing (m-coedit, Tiptap's collaboration, the whiteboard, a
-    // co-edited code editor: plans/design-dev-aide.md F15), loaded before any of them. One library, so a page has one
+    // co-edited code editor: plans/archive/design-dev-aide.md F15), loaded before any of them. One library, so a page has one
     // copy of Yjs: two break its constructor checks.
     id: 'yjs', name: 'Yjs with y-protocols (bundled)', npm: 'yjs', license: 'MIT',
     licenseNote: 'Bundles yjs, y-protocols (its awareness protocol) and the lib0 modules they use: all MIT. Each license ' +
@@ -700,7 +700,7 @@ licenses/Unicode-3.0.txt, from ${UNICODE_URL}.
     produce: (ctx) => [['codemirror/y-codemirror.min.js', ctx.esbuildYCodeMirror()]],
   },
   {
-    // The Vim keymap of the code editor (the editor settings' keymap "vim", plans/design-dev-aide.md 5.1), loaded only for
+    // The Vim keymap of the code editor (the editor settings' keymap "vim", plans/archive/design-dev-aide.md 5.1), loaded only for
     // a user who picks it. Built against the CodeMirror global.
     id: 'codemirror-vim', name: 'Vim keybindings for CodeMirror 6 (bundled)', npm: '@replit/codemirror-vim', license: 'MIT',
     licenseNote: 'Bundles @replit/codemirror-vim and @replit/codemirror-vim-core: both MIT. @codemirror/* are read from ' +
@@ -714,7 +714,7 @@ licenses/Unicode-3.0.txt, from ${UNICODE_URL}.
     produce: (ctx) => [['codemirror/vim.min.js', ctx.esbuildCodeMirrorVim()]],
   },
   {
-    // The second bundle of the code editor's languages (plans/design-dev-aide.md 5.1): legacy stream modes, loaded only
+    // The second bundle of the code editor's languages (plans/archive/design-dev-aide.md 5.1): legacy stream modes, loaded only
     // when a file needs one (js/WebrootCode.js LEGACY_EXTENSIONS).
     id: 'codemirror-legacy', name: 'CodeMirror legacy modes (bundled)', npm: '@codemirror/legacy-modes', license: 'MIT',
     licenseNote: 'The shell, groovy, properties, toml, dockerfile and nginx modes of @codemirror/legacy-modes (MIT), with ' +
@@ -727,7 +727,7 @@ licenses/Unicode-3.0.txt, from ${UNICODE_URL}.
     produce: (ctx) => [['codemirror/legacy-modes.min.js', ctx.esbuildLegacyModes()]],
   },
   {
-    // The TypeScript compiler of the dev-aide's type checker (plans/design-dev-aide.md 5.4, question 10): a browser worker
+    // The TypeScript compiler of the dev-aide's type checker (plans/archive/design-dev-aide.md 5.4, question 10): a browser worker
     // runs it over the project's `moqui types` declarations, loaded only on the first JS tab with checking turned on. It
     // is large (lib/typescript.js is 8.8 MB, about 3.4 MB minified) and never loads with a page.
     id: 'typescript', name: 'TypeScript', npm: 'typescript', license: 'Apache-2.0',

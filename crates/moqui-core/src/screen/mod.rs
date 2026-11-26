@@ -21,7 +21,7 @@
 pub(crate) mod aggregate;
 mod cache;
 pub(crate) mod db_form;
-// the form a DbForm makes, for the Dev AIDE's "Convert to site extension" (plans/design-dev-aide.md 7.2)
+// the form a DbForm makes, for the Dev AIDE's "Convert to site extension" (plans/archive/design-dev-aide.md 7.2)
 pub use db_form::{db_form_xml, AsOf as DbFormAsOf};
 mod definition;
 mod dispatch;

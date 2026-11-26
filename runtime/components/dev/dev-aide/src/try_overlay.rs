@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! What a Try in sim runs over (plans/design-dev-aide.md F14 for services, 9.4, 13.3): the unsaved texts of the
+//! What a Try in sim runs over (plans/archive/design-dev-aide.md F14 for services, 9.4, 13.3): the unsaved texts of the
 //! Workspace's buffers (`files`, each `{rootId, path, text}`), a canvas or guided editor's buffer (`buffer:<id>`), or a
 //! change set of the user's own (`approval:<id>`), as the framework's service overlay
 //! (`moqui_core::service::overlay`): the service files' definitions and the script files' texts at their locations,

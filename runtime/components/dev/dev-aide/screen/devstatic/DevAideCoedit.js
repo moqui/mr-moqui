@@ -1,7 +1,7 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
 /*
- * Co-editing a file in the Workspace on a shared dev server (plans/design-dev-aide.md F15): each open tab of a file the
+ * Co-editing a file in the Workspace on a shared dev server (plans/archive/design-dev-aide.md F15): each open tab of a file the
  * user may write is a session on the file's room (moqui-collab's text rooms, key DevFile:<rootId>:<path>), over the
  * notification socket with the protocol of m-coedit (moqui.coedit.Provider, docs/ui/Qvt-Client.md). The room is seeded
  * from the file by the server; the tab's text is the room's Y.Text from the join on (the editor binds it with

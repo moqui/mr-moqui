@@ -13,7 +13,7 @@
  */
 
 //! `org.moqui.git.GitRestServices`, the framework's REST for hosting (`/rest/s1/moqui/git` and `/rest/s1/moqui/hosting`
-//! in `tools/service/moqui.rest.xml`; plans/Dogfood.md F9, plans/design-dev-aide.md F18): what the server offers its
+//! in `tools/service/moqui.rest.xml`; plans/Dogfood.md F9, plans/archive/design-dev-aide.md F18): what the server offers its
 //! clients, the repository behind a clone or page URL with the caller's rights and settings, whether an author signed a
 //! repository's agreement, and the merge request, review and pipeline resources over the framework's services, by the
 //! repository's own numbers. Each service under them checks the repository's rights as without REST. Before each write

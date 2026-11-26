@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.devaide.EntityServices`: the entity modeler's server side (plans/design-dev-aide.md 8). The entity view
+//! `org.moqui.devaide.EntityServices`: the entity modeler's server side (plans/archive/design-dev-aide.md 8). The entity view
 //! reads an entity as the server merged it, with the origin of each field (the defining file, each `extend-entity`),
 //! where its edits go (the site's `extend-entity` for an upstream entity, D17; the defining file with the upstream
 //! toggle on), its incoming relationships, its EECA rules, its table against its fields and its first rows. Saving the

@@ -1,4 +1,4 @@
-// Replace across files (WorkspaceServices.replace#Files, plans/design-dev-aide.md 4.3) on a throw-away root
+// Replace across files (WorkspaceServices.replace#Files, plans/archive/design-dev-aide.md 4.3) on a throw-away root
 // (test/GuidedFixture.js): the preview lists each file's matches with their lines before and after and its hash; the
 // matches chosen are written through the save pipeline (audited), the others kept; a file changed since its preview is
 // refused by its hash while the others are still written; and with the upstream lock on every file of the root is

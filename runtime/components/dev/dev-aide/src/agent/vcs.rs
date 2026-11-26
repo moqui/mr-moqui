@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `vcs` (plans/design-dev-aide.md 13.2): a root's git status, a file's diff and the log (reads); a commit of named
+//! `vcs` (plans/archive/design-dev-aide.md 13.2): a root's git status, a file's diff and the log (reads); a commit of named
 //! files with its message (a write the user approves, the card naming the files); and a push (EXTERNAL, the card naming
 //! the remote and the commits). For the extend tier the push is Publish of the site component. Each runs the dev-aide's
 //! own VcsServices as the user, so the git layer's rules (argv, no prompt, the author, the audit) hold.

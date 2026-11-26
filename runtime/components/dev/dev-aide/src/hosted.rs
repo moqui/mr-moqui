@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Hosted roots (plans/design-dev-aide.md 4.10, P10): a repository of this server's git hosting at a branch, edited in
+//! Hosted roots (plans/archive/design-dev-aide.md 4.10, P10): a repository of this server's git hosting at a branch, edited in
 //! the Workspace with no working tree. Its tree, files, Go to file and search are read through
 //! `org.moqui.git.GitServices` (`get#GitTree`, `get#GitBlob`) as the user, so `AT_GIT_REPOSITORY` decides what they
 //! read, at the root's branch; each Save, new file, new folder, move and delete is a commit by the user through

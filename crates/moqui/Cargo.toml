@@ -43,7 +43,7 @@ embed-opensearch = ["moqui-host/embed-opensearch"]
 embed-chromium = ["moqui-host/embed-chromium"]
 # The terminal client (`moqui tui`), in every package.
 tui = ["moqui-host/tui"]
-# The dev tools (plans/design-dev-aide.md 3.3), in the Maximal (the `./moq build` default) and Debug packages: the framework's file watcher and the
+# The dev tools (plans/archive/design-dev-aide.md 3.3), in the Maximal (the `./moq build` default) and Debug packages: the framework's file watcher and the
 # components/dev crates kept in runtime/components/dev.
 devtools = ["moqui-host/devtools", "dep:dev-aide", "dep:example"]
 

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The indexes of other projects a running dev server answers about, kept in memory (plans/design-dev-aide.md 13.6).
+//! The indexes of other projects a running dev server answers about, kept in memory (plans/archive/design-dev-aide.md 13.6).
 //!
 //! [`open`] gives a project's [`ProjectIndex`]: booted ([`super::boot`]) and read into a [`MemoryIndex`] on first use,
 //! then kept for the next requests. At most [`capacity`] projects are kept (`dev-reload@projects`, 3), the least
@@ -567,7 +567,7 @@ pub fn requested(
     open(found, dirs, model).map(Some)
 }
 
-/// The project of an allowed directory (a `DevArtifactProject` row an admin allowed, plans/design-dev-aide.md 7.4),
+/// The project of an allowed directory (a `DevArtifactProject` row an admin allowed, plans/archive/design-dev-aide.md 7.4),
 /// read against the server `own`. Unlike [`requested`] it is read on any instance, production too: the row is the
 /// admin's decision to expose its index. It is always the project's own index, read into memory, also when the
 /// directory is the server's own runtime, so a read that names a project never answers from the server's rows.

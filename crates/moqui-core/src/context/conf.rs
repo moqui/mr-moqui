@@ -458,7 +458,7 @@ fn merge_config_nodes(base: &MNode, over: &MNode) {
         "board",
         // the thresholds of the resource readings (plans/archive/Tools-Fancy.md B2)
         "resource-watch",
-        // the dev tools (plans/design-dev-aide.md 16): the file watcher, and the dev-aide component's settings
+        // the dev tools (plans/archive/design-dev-aide.md 16): the file watcher, and the dev-aide component's settings
         "dev-reload",
         "dev-aide",
         // a client's settings (plans/Mobile-Desktop.md §6, MD4): read by the desktop and mobile apps, not the server

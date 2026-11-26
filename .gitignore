@@ -20,7 +20,7 @@ node_modules/
 # exports a user names: a drive's zip (FileServices.export#Drive), a repository (GitServices.export#GitRepository)
 /runtime/drive-export
 /runtime/git-export
-# the Dev AIDE's worktrees for agents' sessions (plans/design-dev-aide.md 21.8)
+# the Dev AIDE's worktrees for agents' sessions (plans/archive/design-dev-aide.md 21.8)
 /runtime/worktrees
 /myaddons.xml
 /runtime/install

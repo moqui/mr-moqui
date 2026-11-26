@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Run locally (plans/design-dev-aide.md 21.5, question 20): one job of the working tree's `ci.xml`, read with the CI
+//! Run locally (plans/archive/design-dev-aide.md 21.5, question 20): one job of the working tree's `ci.xml`, read with the CI
 //! engine's own parser and planner (`moqui_git::ci::file`, `moqui_git::ci::plan`), run in a host session of the
 //! Terminal in the working tree. The job's script steps run in order as a runner runs them (`sh -c` each, ending at the
 //! first that fails unless it continues on error), with the pipeline's and the job's variables, a matrix job's one
@@ -201,7 +201,7 @@ pub fn script_in(job: &LocalJob, dir: &Path, place: Place) -> String {
     let one_line = |text: &str| text.replace(['\n', '\r'], " ");
     let mut out = String::from("#!/bin/sh\n");
     out.push_str(&format!(
-        "# Run locally by the Dev AIDE (plans/design-dev-aide.md 21.5): the job {} of {CI_FILE}.\n",
+        "# Run locally by the Dev AIDE (plans/archive/design-dev-aide.md 21.5): the job {} of {CI_FILE}.\n",
         one_line(&title)
     ));
     match place {

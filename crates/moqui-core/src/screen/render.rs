@@ -811,7 +811,7 @@ impl Drop for SampleFlush<'_> {
 /// Resolve and run one job. Anything written is in the thread's web slot.
 ///
 /// A job with a `moquiPreview` token on a dev instance renders from the proposed text the token names (F14,
-/// plans/design-dev-aide.md 13.3): under the read fence, so nothing it runs writes, and framed by the page that asked.
+/// plans/archive/design-dev-aide.md 13.3): under the read fence, so nothing it runs writes, and framed by the page that asked.
 /// The `Content-Security-Policy` of a preview of proposed screen text, which replaces the conf's: framed by the app
 /// only, and nothing it loads (an image, a style's `url()`, a font, a fetch or a socket) goes to another site, so what
 /// a proposed screen shows does not leave with no click (plans/Security-Review-Low.md SEC-AI-102). Scripts and styles

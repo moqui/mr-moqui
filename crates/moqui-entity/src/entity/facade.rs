@@ -438,7 +438,7 @@ impl EntityFacade {
     }
 
     /// Drop the slot of `T`, so its next use starts it again: a cache read from the entity model, when the model is
-    /// swapped (plans/design-dev-aide.md F5).
+    /// swapped (plans/archive/design-dev-aide.md F5).
     pub(crate) fn drop_slot<T: Any + Send + Sync + 'static>(&self) {
         write(&self.inner.slots).remove(&TypeId::of::<T>());
     }

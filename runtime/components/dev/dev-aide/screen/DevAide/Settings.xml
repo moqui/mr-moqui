@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Dev AIDE Settings (plans/design-dev-aide.md 16): the site components (whose files the extend tier writes; the rest is
+<!-- Dev AIDE Settings (plans/archive/design-dev-aide.md 16): the site components (whose files the extend tier writes; the rest is
     upstream), "Allow editing upstream components" for a full-tier user (D17), the roots with their labels, read only
     flags and publish branches (question 15), the editor's settings and keys (5.1, DEV_AIDE_EDITOR), roots of other
     directories, git init of a plain root, network git on a shared dev server (an admin's), the task apps added here

@@ -126,7 +126,7 @@ Found by grep for the screen paths; repeat the grep after the move. The componen
   once after the change, since we changed it.
 - **Dev AIDE:** `runtime/dev-component/dev-aide/screen/devstatic/DevAideEntity.js:396` `dataEditUrl()` (today
   `/qapps/tools/Entity/DataEdit/EntityDataFind`, used at :919) changes to `/qapps/tools/Data/Grid?entityName=…`. Its
-  entity view's "Data" section (`plans/design-dev-aide.md` §8.1) links there too.
+  entity view's "Data" section (`plans/archive/design-dev-aide.md` §8.1) links there too.
 - **Other component repositories** (each a commit in its own repository):
   - mr-boss `screen/Insights/Reports.xml:20` and `screen/Insights/ReportBuilder/DatasetView.xml:20`, and mr-marble
     `screen/SimpleScreens/SimpleReport/ViewReport.xml:20` and `QuickViewReport.xml:20`: each `transition-include`s
@@ -297,7 +297,7 @@ Indexes and keys are read from the catalog in one query per database, not one pe
 (`crates/moqui-db/src/sql/statement.rs:753`, `:776`), and for MySQL foreign keys the columns, not the name
 (Parity-Diffs P3-11).
 
-The Dev AIDE's entity view (`plans/design-dev-aide.md` §8.1, "The table") uses this same comparison and does not
+The Dev AIDE's entity view (`plans/archive/design-dev-aide.md` §8.1, "The table") uses this same comparison and does not
 build its own.
 
 ### 5.2 Statements

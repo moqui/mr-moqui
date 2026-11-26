@@ -836,7 +836,7 @@ pub struct SubscreensItem {
     pub disable_when: Option<String>,
     /// From a `SubscreensItem` row: only members of this group see the item.
     pub user_group_id: Option<String>,
-    /// How it is mounted, for the screen builder's tree (plans/design-dev-aide.md 11.1): `directory` (a file in the
+    /// How it is mounted, for the screen builder's tree (plans/archive/design-dev-aide.md 11.1): `directory` (a file in the
     /// directory named like the parent), `item <file>:<line>` (a `subscreens-item` of the parent), `conf <file>:<line>`
     /// (a `screen-facade` mount) or `row` (a `SubscreensItem` row).
     pub mounted_by: String,
@@ -1973,7 +1973,7 @@ fn merge_extend(screen: &MNode, extend: &MNode, location: &str, extended: &mut E
             };
             let place = widgets_extend.attribute("where").unwrap_or_default();
             if place == "prepend" || place == "append" {
-                // Inside the named element, first or last (plans/design-dev-aide.md F16): a section's widgets, a box's
+                // Inside the named element, first or last (plans/archive/design-dev-aide.md F16): a section's widgets, a box's
                 // body, or the element itself.
                 let inner = widget_body(&matched);
                 let start = if place == "prepend" { 0 } else { inner.child_count() };

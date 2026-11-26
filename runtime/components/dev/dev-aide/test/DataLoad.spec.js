@@ -1,4 +1,4 @@
-// Load the changed records, three ways (plans/design-dev-aide.md 12, src/data_load.rs): on a throw-away plain root, the
+// Load the changed records, three ways (plans/archive/design-dev-aide.md 12, src/data_load.rs): on a throw-away plain root, the
 // first load writes every record and keeps the file's text as the baseline; a changed file is planned against that
 // baseline and the database, a record the database changed too is a conflict a load refuses without a choice and
 // writes nothing for, and the choices settle it (Keep database, Take file deleting a removed record); a load whose

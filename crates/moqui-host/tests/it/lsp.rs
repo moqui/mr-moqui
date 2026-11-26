@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `moqui lsp` (plans/design-dev-aide.md P9, 13.6) on a model with a site component: an open file's diagnostics as it
+//! `moqui lsp` (plans/archive/design-dev-aide.md P9, 13.6) on a model with a site component: an open file's diagnostics as it
 //! changes, go to definition of an entity name, its references across the files (the open buffer's among them),
 //! completion of entity names in a value and of a form's attributes, hover, and the document's and the workspace's
 //! symbols. The server is driven as a client drives it, by its requests and notifications.

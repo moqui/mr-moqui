@@ -31,7 +31,7 @@
 //! loopback one (RFC 8252 §7.3 and §8.3: `http://127.0.0.1:<port>/...` or `http://[::1]:<port>/...`, any port; not
 //! `localhost`, which a hosts file or a resolver may send elsewhere), unless `webapp-list/webapp[webroot]@app-loopback-redirect` is false (on
 //! by default: a dev instance signs in to its group server so, with its own address as the redirect,
-//! plans/design-dev-aide.md 21.2, F17). Any program on the user's computer can listen on a loopback port, so the
+//! plans/archive/design-dev-aide.md 21.2, F17). Any program on the user's computer can listen on a loopback port, so the
 //! confirmation names the port the code goes to and says the app's name is the app's own word.
 //!
 //! With no `authFlowId` the browser signs in at this server's own login instead of an identity provider (a server

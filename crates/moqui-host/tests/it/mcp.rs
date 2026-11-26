@@ -757,7 +757,7 @@ fn screen_writes(factory: &Arc<ExecutionContextFactory>, ann: &Caller, address: 
     assert!(text(&resolved).contains("saved this write themselves"), "{resolved}");
 }
 
-/// The dev tools over MCP (plans/design-dev-aide.md 13.6, P3): on a dev instance with the dev-aide loaded, a caller with a
+/// The dev tools over MCP (plans/archive/design-dev-aide.md 13.6, P3): on a dev instance with the dev-aide loaded, a caller with a
 /// Dev AIDE permission lists `artifact`, `source` and `check` beside the server's own read tools and calls each; a caller
 /// without one does not see them.
 #[cfg(feature = "devtools")]
@@ -954,7 +954,7 @@ fn batch_screen(service: &str) -> String {
     )
 }
 
-/// The dev tools about another project (plans/design-dev-aide.md 13.6): a Java Moqui checkout named by its directory is
+/// The dev tools about another project (plans/archive/design-dev-aide.md 13.6): a Java Moqui checkout named by its directory is
 /// read on first use, answers refs, describe (an entity's fields, a service's parameters) and check, and a file
 /// changed on disk changes the next answer with no restart; a relative or `..` path is refused.
 #[cfg(feature = "devtools")]

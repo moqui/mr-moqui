@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Repositories (plans/design-dev-aide.md 4.7): every root as ./moq git-status lists it, with Fetch all and Pull all (root
+<!-- Repositories (plans/archive/design-dev-aide.md 4.7): every root as ./moq git-status lists it, with Fetch all and Pull all (root
     by root; one that fails is reported and the others go on; a pull reloads what it changed and says when it broke a
     site extension); Get a component through ./moq component-get, Clone a URL into the component directory, and a site
     component from Home. A change to the set of components needs a restart. A list, so the terminal reaches it. Terminal
@@ -33,7 +33,7 @@ along with this software (see the LICENSE.md file). If not, see
         }
         if (done.extensionsAffected) ec.message.addMessage('Extensions affected: ' + done.extensionsAffected + ' (Artifacts, Customizations)', 'warning');</script></actions>
         <default-response url="."/></transition>
-    <!-- A component got or cloned is offered for loading now when its load needs no restart (plans/design-dev-aide.md
+    <!-- A component got or cloned is offered for loading now when its load needs no restart (plans/archive/design-dev-aide.md
         4.7); otherwise it loads at the next restart, with the reasons said. -->
     <transition name="getComponent"><service-call name="org.moqui.devaide.VcsServices.get#Component" out-map="got"/>
         <actions><message type="success">${got.loadable ? 'Got ' + name + ': Load it now, or it loads at the next restart' : 'Got ' + name + ': it loads after a restart (Home)' + ((got.restartReasons || []).length ? '; ' + got.restartReasons.join('; ') : '')}</message></actions>

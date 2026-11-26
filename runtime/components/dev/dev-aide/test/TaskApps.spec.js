@@ -1,4 +1,4 @@
-// The task apps added in Settings (plans/design-dev-aide.md 14, 16: DevAideTaskApp, src/tasks.rs): an extend-tier user
+// The task apps added in Settings (plans/archive/design-dev-aide.md 14, 16: DevAideTaskApp, src/tasks.rs): an extend-tier user
 // adds one with its title and a project's and a task's path, each a path on this server with its placeholder, and it is
 // among the apps a task opens in; another extend-tier user may neither change nor remove it, nor replace a conf
 // task-app; who added it removes it, and the full tier removes anyone's. Settings renders them in GroupServers.spec.js.

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The log lines of one run on this thread (plans/design-dev-aide.md 9.4: a Try in sim answers its log): the host's
+//! The log lines of one run on this thread (plans/archive/design-dev-aide.md 9.4: a Try in sim answers its log): the host's
 //! log subscriber hands each line it writes to [`note`], kept only while [`with`] runs on the line's thread, at most
 //! [`MAX_LINES`] of them.
 

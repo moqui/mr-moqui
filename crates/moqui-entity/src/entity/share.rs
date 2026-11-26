@@ -16,7 +16,7 @@
 //!
 //! The model holds no `MNode`, so it is `Send` and `Sync` on its own; the assertion below keeps
 //! it that way. On a dev instance the model is swapped when entity files change
-//! (plans/design-dev-aide.md F5): each facade call takes the model once, as an `Arc`, so a find in
+//! (plans/archive/design-dev-aide.md F5): each facade call takes the model once, as an `Arc`, so a find in
 //! flight keeps the model it started with while a new one is linked and put in its place. Before the swap, the relink
 //! checks the tables against the new model on its own thread alone ([`SharedModel::with_staged`]), so a column the new
 //! model reads exists before any other thread can read it (plans/archive/Component-Deploy.md, Phase 0).

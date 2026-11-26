@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A trace of the XML actions a Try runs (plans/design-dev-aide.md 9.2, 9.4): while [`traced`] holds the thread, each
+//! A trace of the XML actions a Try runs (plans/archive/design-dev-aide.md 9.2, 9.4): while [`traced`] holds the thread, each
 //! actions block runs a script generated with trace calls (`TemplateSupport.js`'s `options.trace`), not the one kept
 //! for it, and those calls (`__moquiTrace`, a global of the host's) count each statement element as it starts, by its
 //! path under the `actions` element, read the names it set as it ends, and leave the element that failed marked. The
