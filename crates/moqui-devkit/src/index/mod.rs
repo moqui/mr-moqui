@@ -1635,25 +1635,13 @@ fn apply(
             );
         }
     }
-    // files a hundred to a transaction; a batch that fails is written again file by file, so one file's failure is
-    // that file's alone
-    let write = |change: &Change| -> Result<(), Error> {
-        match change {
-            Change::Read { file, hash, index } => {
-                let path = file.path.display().to_string();
-                write_file(facade, file, hash, index, &shared, known.contains(&path))
-            }
-            Change::Stale { file, hash, problem } => mark_stale(facade, file, hash, problem),
-            Change::Removed(path) => remove_file(facade, path),
-        }
-    };
+    // files a hundred to a transaction, each entity's rows of them in statements of many rows; a batch that fails is
+    // written again file by file, so one file's failure is that file's alone
     let run = |batch: &[Change]| -> Result<(), Error> {
         tx.run(TransactionAttribute::ForceNew, None, || {
-            // the rows go without waiting for each result, as a data file's do, and are all in before the commit
+            // the statements go without waiting for each result, as a data file's do, and are all in before the commit
             let _pipeline = moqui_core::entity::exec::PipelineWrites::enter();
-            for change in batch {
-                write(change)?;
-            }
+            write_changes(facade, batch, &shared, &known)?;
             tx.finish_deferred()
         })
     };
@@ -1908,14 +1896,15 @@ fn write_expanded(factory: &ExecutionContextFactory, facade: &EntityFacade, rewr
     write_artifacts(facade, &rewrite.path, &rewrite.expansion.artifacts, &ids)?;
     // sequence ids of the owner's own, apart from the file's numbered ones
     let tag: String = hash_of(&rewrite.owner).chars().take(8).collect();
+    let mut rows = Vec::with_capacity(rewrite.expansion.bindings.len());
     for (sequence, binding) in rewrite.expansion.bindings.iter().enumerate() {
         let mut row = facade.make_value(BINDING)?;
         row.set("filePath", Value::string(&rewrite.path));
         row.set("bindingSeqId", Value::string(format!("{tag}{sequence:04}")));
         fill_binding(&mut row, binding);
-        row.create(facade)?;
+        rows.push(row);
     }
-    Ok(())
+    facade.create_values(BINDING, rows)
 }
 
 /// The derived entity-auto services an update changes ([`Resolver::derive`]).
@@ -2060,42 +2049,93 @@ fn old_artifacts(facade: &EntityFacade, path: &str) -> Result<Vec<ArtifactRow>, 
         .collect())
 }
 
-fn write_file(
+/// Write the rows of `changes`, files that were read, went stale or were removed: the rows the files had (`known`)
+/// deleted first, then the rows of all of them, each entity's in statements of many rows
+/// ([`EntityFacade::create_values`]), so a build's writes are a few statements a hundred files rather than one a row.
+/// Each row is made as its statement is, so the database inserts one statement's rows while the next are made.
+fn write_changes(
     facade: &EntityFacade,
-    file: &Located,
-    hash: &str,
-    index: &FileIndex,
+    changes: &[Change],
     shared: &HashSet<String>,
-    known: bool,
+    known: &HashSet<String>,
 ) -> Result<(), Error> {
-    let path = file.path.display().to_string();
-    if known {
+    // the paths whose artifact, reference and binding rows go, and those whose file row goes
+    let mut cleared: Vec<Value> = Vec::new();
+    let mut unfiled: Vec<Value> = Vec::new();
+    // the files read, with their paths
+    let mut read: Vec<(String, &FileIndex)> = Vec::new();
+    let mut files: Vec<EntityValue> = Vec::new();
+    for change in changes {
+        match change {
+            Change::Read { file, hash, index } => {
+                let path = file.path.display().to_string();
+                if known.contains(&path) {
+                    cleared.push(Value::string(&path));
+                    unfiled.push(Value::string(&path));
+                }
+                files.push(file_row(facade, file, hash, false, "")?);
+                read.push((path, index));
+            }
+            // its rows stay, marked stale by its file row
+            Change::Stale { file, hash, problem } => {
+                unfiled.push(Value::string(file.path.display().to_string()));
+                files.push(file_row(facade, file, hash, true, problem)?);
+            }
+            Change::Removed(path) => {
+                cleared.push(Value::string(path.as_str()));
+                unfiled.push(Value::string(path.as_str()));
+            }
+        }
+    }
+    for entity in [ARTIFACT, REF, BINDING] {
+        delete_in(facade, entity, "filePath", &cleared)?;
+    }
+    delete_in(facade, FILE, "filePath", &unfiled)?;
+    insert_artifacts(
+        facade,
+        read.iter()
+            .map(|(path, index)| (path.as_str(), index.artifacts.as_slice()))
+            .collect(),
+        shared,
+    )?;
+    let template = &facade.make_value(REF)?;
+    facade.create_values(
+        REF,
+        read.iter().flat_map(|(path, index)| {
+            index.refs.iter().enumerate().map(move |(sequence, reference)| {
+                let mut row = template.clone();
+                row.set("filePath", Value::string(path));
+                row.set("refSeqId", Value::string(format!("{sequence:05}")));
+                fill_ref(&mut row, reference);
+                row
+            })
+        }),
+    )?;
+    let template = &facade.make_value(BINDING)?;
+    facade.create_values(
+        BINDING,
+        read.iter().flat_map(|(path, index)| {
+            index.bindings.iter().enumerate().map(move |(sequence, binding)| {
+                let mut row = template.clone();
+                row.set("filePath", Value::string(path));
+                row.set("bindingSeqId", Value::string(format!("{sequence:05}")));
+                fill_binding(&mut row, binding);
+                row
+            })
+        }),
+    )?;
+    facade.create_values(FILE, files)
+}
+
+/// Delete the rows of `entity` whose `field` is one of `values`, five hundred values to a find.
+fn delete_in(facade: &EntityFacade, entity: &str, field: &str, values: &[Value]) -> Result<(), Error> {
+    for chunk in values.chunks(500) {
         facade
-            .find(ARTIFACT)?
-            .eq("filePath", Value::string(&path))
-            .delete_all()?;
-        facade.find(REF)?.eq("filePath", Value::string(&path)).delete_all()?;
-        facade
-            .find(BINDING)?
-            .eq("filePath", Value::string(&path))
+            .find(entity)?
+            .condition(Condition::is_in(field, chunk.to_vec()))
             .delete_all()?;
     }
-    write_artifacts(facade, &path, &index.artifacts, shared)?;
-    for (sequence, reference) in index.refs.iter().enumerate() {
-        let mut row = facade.make_value(REF)?;
-        row.set("filePath", Value::string(&path));
-        row.set("refSeqId", Value::string(format!("{sequence:05}")));
-        fill_ref(&mut row, reference);
-        row.create(facade)?;
-    }
-    for (sequence, binding) in index.bindings.iter().enumerate() {
-        let mut row = facade.make_value(BINDING)?;
-        row.set("filePath", Value::string(&path));
-        row.set("bindingSeqId", Value::string(format!("{sequence:05}")));
-        fill_binding(&mut row, binding);
-        row.create(facade)?;
-    }
-    store_file(facade, file, hash, false, "", known)
+    Ok(())
 }
 
 /// Write the artifact rows of `path` (a file's, or the derived ones of [`extract::DERIVED_PATH`]).
@@ -2105,42 +2145,65 @@ fn write_artifacts(
     artifacts: &[ArtifactRow],
     shared: &HashSet<String>,
 ) -> Result<(), Error> {
-    let mut seen = HashSet::new();
-    for (sequence, artifact) in artifacts.iter().enumerate() {
-        // a file naming one id twice (a field repeated) keeps the first
-        if !seen.insert(artifact.id.as_str()) {
-            continue;
+    insert_artifacts(facade, vec![(path, artifacts)], shared)
+}
+
+/// Insert the artifact rows of `files`, each a path and its artifacts, in the order written. A file naming one id twice
+/// (a field repeated) keeps the first; of one id in two files the later file's row is written, and an id another file
+/// defines too (`shared`) has its row elsewhere deleted first: a file's later definition replaces the earlier one, as
+/// when each file is written on its own.
+fn insert_artifacts(
+    facade: &EntityFacade,
+    files: Vec<(&str, &[ArtifactRow])>,
+    shared: &HashSet<String>,
+) -> Result<(), Error> {
+    // each row kept, by its file and its sequence in the file, with where each id's row is
+    let mut kept: Vec<Option<(&str, usize, &ArtifactRow)>> = Vec::new();
+    let mut at: HashMap<&str, usize> = HashMap::new();
+    let mut replaced: Vec<Value> = Vec::new();
+    for (path, artifacts) in files {
+        let mut seen = HashSet::new();
+        for (sequence, artifact) in artifacts.iter().enumerate() {
+            if !seen.insert(artifact.id.as_str()) {
+                continue;
+            }
+            if let Some(earlier) = at.insert(artifact.id.as_str(), kept.len()) {
+                kept[earlier] = None;
+            } else if shared.contains(&artifact.id) {
+                replaced.push(Value::string(&artifact.id));
+            }
+            kept.push(Some((path, sequence, artifact)));
         }
-        let mut row = facade.make_value(ARTIFACT)?;
-        row.set("artifactId", Value::string(&artifact.id));
-        row.set("artifactKind", Value::string(&artifact.kind));
-        row.set("artifactName", Value::string(&artifact.name));
-        row.set("shortName", Value::string(&artifact.short_name));
-        row.set("searchKey", Value::string(extract::search_key(&artifact.short_name)));
-        row.set("component", Value::string(&artifact.component));
-        row.set("filePath", Value::string(path));
-        row.set("lineNumber", Value::I64(i64::from(artifact.line)));
-        row.set("columnNumber", Value::I64(i64::from(artifact.column)));
-        row.set("summary", Value::string(&artifact.summary));
-        if let Some(parent) = &artifact.parent {
-            row.set("parentArtifactId", Value::string(parent));
-        }
-        row.set("sequenceNum", Value::I64(i64::try_from(sequence).unwrap_or(0)));
-        if !artifact.origin.is_empty() {
-            row.set("origin", Value::string(&artifact.origin));
-        }
-        if !artifact.marks.is_empty() {
-            row.set("marks", Value::string(&artifact.marks));
-        }
-        if shared.contains(&artifact.id) {
-            facade
-                .find(ARTIFACT)?
-                .eq("artifactId", Value::string(&artifact.id))
-                .delete_all()?;
-        }
-        row.create(facade)?;
     }
-    Ok(())
+    delete_in(facade, ARTIFACT, "artifactId", &replaced)?;
+    let template = facade.make_value(ARTIFACT)?;
+    facade.create_values(
+        ARTIFACT,
+        kept.into_iter().flatten().map(|(path, sequence, artifact)| {
+            let mut row = template.clone();
+            row.set("artifactId", Value::string(&artifact.id));
+            row.set("artifactKind", Value::string(&artifact.kind));
+            row.set("artifactName", Value::string(&artifact.name));
+            row.set("shortName", Value::string(&artifact.short_name));
+            row.set("searchKey", Value::string(extract::search_key(&artifact.short_name)));
+            row.set("component", Value::string(&artifact.component));
+            row.set("filePath", Value::string(path));
+            row.set("lineNumber", Value::I64(i64::from(artifact.line)));
+            row.set("columnNumber", Value::I64(i64::from(artifact.column)));
+            row.set("summary", Value::string(&artifact.summary));
+            if let Some(parent) = &artifact.parent {
+                row.set("parentArtifactId", Value::string(parent));
+            }
+            row.set("sequenceNum", Value::I64(i64::try_from(sequence).unwrap_or(0)));
+            if !artifact.origin.is_empty() {
+                row.set("origin", Value::string(&artifact.origin));
+            }
+            if !artifact.marks.is_empty() {
+                row.set("marks", Value::string(&artifact.marks));
+            }
+            row
+        }),
+    )
 }
 
 fn fill_ref(row: &mut EntityValue, reference: &RefRow) {
@@ -2177,18 +2240,15 @@ fn fill_binding(row: &mut EntityValue, binding: &BindingRow) {
     row.set("lineNumber", Value::I64(i64::from(binding.line)));
 }
 
-fn store_file(
+/// The file row of `file`, read with `hash`, stale with `problem` when it no longer parses.
+fn file_row(
     facade: &EntityFacade,
     file: &Located,
     hash: &str,
     stale: bool,
     problem: &str,
-    known: bool,
-) -> Result<(), Error> {
+) -> Result<EntityValue, Error> {
     let path = file.path.display().to_string();
-    if known {
-        facade.find(FILE)?.eq("filePath", Value::string(&path)).delete_all()?;
-    }
     let mut row = facade.make_value(FILE)?;
     row.set("filePath", Value::string(&path));
     row.set("location", Value::string(&file.location));
@@ -2200,22 +2260,7 @@ fn store_file(
     if !problem.is_empty() {
         row.set("problem", Value::string(problem));
     }
-    row.create(facade)
-}
-
-fn mark_stale(facade: &EntityFacade, file: &Located, hash: &str, problem: &str) -> Result<(), Error> {
-    store_file(facade, file, hash, true, problem, true)
-}
-
-fn remove_file(facade: &EntityFacade, path: &str) -> Result<(), Error> {
-    facade
-        .find(ARTIFACT)?
-        .eq("filePath", Value::string(path))
-        .delete_all()?;
-    facade.find(REF)?.eq("filePath", Value::string(path)).delete_all()?;
-    facade.find(BINDING)?.eq("filePath", Value::string(path)).delete_all()?;
-    facade.find(FILE)?.eq("filePath", Value::string(path)).delete_all()?;
-    Ok(())
+    Ok(row)
 }
 
 /// The references elsewhere to artifacts no file defines any more: unresolved now.
