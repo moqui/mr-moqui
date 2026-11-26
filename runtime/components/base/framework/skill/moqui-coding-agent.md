@@ -119,11 +119,14 @@ component while `dev-aide@allow-upstream-edits` is off: the site components are 
 the conf, and with none there a rename that edits more than one component is refused.
 
 Expressions and scripts are not references: a `from="row.statusId"`, a `${statusId}`, a script's or a `.qvue`'s use
-of the name is not something rename can follow. So a rename ends with a scan that decides it: the name as a whole word
-anywhere in the components it may reach (the target's own, every component that depends on it, every component that
-refers to the entity, service or form it is of), in any file, refuses the rename unless the place is one the rename
-edits or one the index proves names another artifact. Each place is listed (up to 20): change or check them, then
-rename again. For a common name this refuses often, by design; rename by hand where it does. Code actions offer the
+of the name is not something rename can follow. So a rename ends with a scan that decides it: the name as a plain-text
+token (bounded by anything but a letter or digit, so `row.name`, `name_op`, `$name` and `<name>` count), its upper
+snake form in any case (`STATUS_ID`, for SQL) and a service's name without its `#`, in any text file of every component
+and every open buffer (markup, CDATA and data files included), refuses the rename unless the place is one the rename
+edits or another entity's field definition. Each place is listed (up to 20): change or check them, then rename again.
+A file that cannot be read or is not UTF-8 refuses it too; binary files are passed over. A common name such as `name`
+or `statusId` is written in so many places that its rename practically always refuses: rename it by hand. Code actions
+offer the
 nearest known names
 for an unknown entity, service, field or in-parameter (`reference.entity`, `reference.service`, `reference.field`,
 `reference.parameter`). With `--server` rename is refused and the quick fixes find entities and services there.

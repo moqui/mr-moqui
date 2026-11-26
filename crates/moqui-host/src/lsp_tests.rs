@@ -63,7 +63,7 @@ fn a_flag_without_its_value_is_the_usage_error() {
 const UP_ENTITIES: &str = r#"<entities>
     <entity entity-name="Thing" package="up">
         <field name="thingId" type="id" is-pk="true"/>
-        <field name="name" type="text-medium"/>
+        <field name="heading" type="text-medium"/>
     </entity>
 </entities>
 "#;
@@ -72,7 +72,7 @@ const SITE_SERVICES: &str = r#"<services>
     <service verb="save" noun="Thing">
         <in-parameters><parameter name="label"/></in-parameters>
         <actions>
-            <entity-find entity-name="up.Thing" list="things"><econdition field-name="name" value="x"/></entity-find>
+            <entity-find entity-name="up.Thing" list="things"><econdition field-name="heading" value="x"/></entity-find>
         </actions>
     </service>
     <service verb="make" noun="Thing">
@@ -270,7 +270,7 @@ fn a_rename_into_an_upstream_component_is_refused_under_the_lock() {
     // a find of an entity the index does not know names the field too: it may be this one
     let other = both.uri("site/service/site/OtherServices.xml");
     let text = r#"<services><service verb="find" noun="Other"><actions>
-    <entity-find entity-name="other.Missing" list="found"><econdition field-name="name" value="x"/></entity-find>
+    <entity-find entity-name="other.Missing" list="found"><econdition field-name="heading" value="x"/></entity-find>
 </actions></service></services>"#;
     both.server.notify(&Notification::new(
         "textDocument/didOpen".into(),
@@ -278,7 +278,7 @@ fn a_rename_into_an_upstream_component_is_refused_under_the_lock() {
     ));
     let message = both.rename(&uri, 4, 87, "title").unwrap_err();
     assert!(
-        message.contains("OtherServices.xml:2 names name and does not resolve"),
+        message.contains("OtherServices.xml:2 names heading and does not resolve"),
         "{message}"
     );
 }
@@ -371,8 +371,8 @@ fn the_nearest_names_are_within_a_third_of_the_names_length() {
 #[test]
 fn a_rename_edits_a_key_maps_related_and_refuses_an_implied_one() {
     let site = r#"<entities><entity entity-name="Part" package="site">
-    <field name="partId" type="id" is-pk="true"/><field name="thingId" type="id"/>
-    <relationship type="one" related="up.Thing"><key-map field-name="thingId" related="thingId"/></relationship>
+    <field name="partId" type="id" is-pk="true"/><field name="partThing" type="id"/>
+    <relationship type="one" related="up.Thing"><key-map field-name="partThing" related="thingId"/></relationship>
 </entity></entities>"#;
     let conf = r#"<moqui-conf><dev-aide site-component="site,up"/></moqui-conf>"#;
     let mut bed = LspBed::with("key-maps", conf, &[("site/entity/SiteEntities.xml", site)]);
@@ -413,7 +413,7 @@ fn a_rename_is_refused_where_the_quoted_name_is_left() {
     let uri = bed.services_uri();
     let message = bed.rename(&uri, 8, 94, "caption").unwrap_err();
     assert!(
-        message.contains("label is written where the rename does not know it is this name"),
+        message.contains("label is written where the rename does not edit it"),
         "{message}"
     );
     assert!(message.contains("Uses.xml:2"), "{message}");
@@ -496,10 +496,10 @@ fn a_rename_is_refused_where_it_cannot_follow_the_name() {
 </view-entity></entities>"#;
     let mut viewed = LspBed::with("prefixed", "", &[("up/entity/UpViews.xml", views)]);
     let entities = viewed.uri("up/entity/UpEntities.xml");
-    let (line, character) = position(UP_ENTITIES, "name=\"name\"", 7);
+    let (line, character) = position(UP_ENTITIES, "name=\"heading\"", 7);
     let prefixed = viewed.rename(&entities, line, character, "title").unwrap_err();
     assert!(
-        prefixed.contains("aliases it as thingName by a prefixed alias-all"),
+        prefixed.contains("aliases it as thingHeading by a prefixed alias-all"),
         "{prefixed}"
     );
 }
@@ -510,13 +510,13 @@ fn a_rename_is_refused_where_it_cannot_follow_the_name() {
 /// of a view follows with no text of its own.
 #[test]
 fn a_rename_goes_through_alias_all_auto_parameters_and_a_form_binding() {
-    let entities = "<entities>\r\n    <entity entity-name=\"Thing\" package=\"up\">\r\n        <field name=\"thingId\" type=\"id\" is-pk=\"true\"/>\r\n        <field description=\"\u{dc}n\u{ef}code \u{2713}\" name=\"name\" type=\"text-medium\"/>\r\n    </entity>\r\n    <view-entity entity-name=\"ThingView\" package=\"up\"><member-entity entity-alias=\"T\" entity-name=\"up.Thing\"/><alias-all entity-alias=\"T\"/></view-entity>\r\n</entities>\r\n";
+    let entities = "<entities>\r\n    <entity entity-name=\"Thing\" package=\"up\">\r\n        <field name=\"thingId\" type=\"id\" is-pk=\"true\"/>\r\n        <field description=\"\u{dc}n\u{ef}code \u{2713}\" name=\"heading\" type=\"text-medium\"/>\r\n    </entity>\r\n    <view-entity entity-name=\"ThingView\" package=\"up\"><member-entity entity-alias=\"T\" entity-name=\"up.Thing\"/><alias-all entity-alias=\"T\"/></view-entity>\r\n</entities>\r\n";
     let services = r#"<services>
     <service verb="save" noun="Item">
         <in-parameters><auto-parameters entity-name="up.Thing"/></in-parameters>
     </service>
     <service verb="make" noun="Item">
-        <actions><service-call name="site.ThingServices.save#Item"><field-map field-name="name" value="x"/></service-call></actions>
+        <actions><service-call name="site.ThingServices.save#Item"><field-map field-name="heading" value="x"/></service-call></actions>
     </service>
 </services>
 "#;
@@ -524,10 +524,10 @@ fn a_rename_goes_through_alias_all_auto_parameters_and_a_form_binding() {
     <transition name="save"><service-call name="site.ThingServices.save#Item"/><default-response url="."/></transition>
     <widgets>
         <form-single name="Edit" transition="save">
-            <field name="name"><default-field><text-line/></default-field></field>
-            <field-layout><field-ref name="name"/></field-layout>
+            <field name="heading"><default-field><text-line/></default-field></field>
+            <field-layout><field-ref name="heading"/></field-layout>
         </form-single>
-        <form-list name="List" list="things"><auto-fields-entity entity-name="up.Thing"><exclude field-name="name"/></auto-fields-entity></form-list>
+        <form-list name="List" list="things"><auto-fields-entity entity-name="up.Thing"><exclude field-name="heading"/></auto-fields-entity></form-list>
     </widgets>
 </screen>
 "#;
@@ -553,14 +553,14 @@ fn a_rename_goes_through_alias_all_auto_parameters_and_a_form_binding() {
         [
             (
                 "ThingServices.xml".to_string(),
-                vec![place(services, "field-name=\"name\"", 12)]
+                vec![place(services, "field-name=\"heading\"", 12)]
             ),
             (
                 "Things.xml".to_string(),
                 vec![
-                    place(screen, "<field name=\"name\"", 13),
-                    place(screen, "<field-ref name=\"name\"", 17),
-                    place(screen, "<exclude field-name=\"name\"", 21),
+                    place(screen, "<field name=\"heading\"", 13),
+                    place(screen, "<field-ref name=\"heading\"", 17),
+                    place(screen, "<exclude field-name=\"heading\"", 21),
                 ]
             ),
             ("UpEntities.xml".to_string(), vec![title(3, 45)]),
@@ -569,14 +569,14 @@ fn a_rename_goes_through_alias_all_auto_parameters_and_a_form_binding() {
 }
 
 /// The safety scan reaches every component that depends on the target's, and matches the name as a token in any text:
-/// an expression's `row.name` in a `.qvue` of a component that refers to nothing.
+/// an expression's `row.heading` in a `.qvue` of a component that refers to nothing.
 #[test]
 fn the_safety_scan_reaches_dependent_components_and_expressions() {
-    let qvue = "<template><div>{{ row.name }}</div></template>\n";
+    let qvue = "<template><div>{{ row.heading }}</div></template>\n";
     let conf = r#"<moqui-conf><dev-aide site-component="site,up,dep"/></moqui-conf>"#;
     let mut bed = LspBed::with("dependents", conf, &[("dep/screen/Thing.qvue", qvue)]);
     let uri = bed.uri("up/entity/UpEntities.xml");
-    let (line, character) = position(UP_ENTITIES, "name=\"name\"", 7);
+    let (line, character) = position(UP_ENTITIES, "name=\"heading\"", 7);
     let message = bed.rename(&uri, line, character, "title").unwrap_err();
     assert!(message.contains("dep/screen/Thing.qvue:1"), "{message}");
 }
@@ -621,4 +621,80 @@ fn a_rename_is_refused_where_a_relationship_implies_the_key() {
 </view-entity></entities>"#,
     );
     assert!(unknown.contains("of a member the index cannot follow"), "{unknown}");
+}
+
+/// The scan reads plain text in every component and every open buffer: a data record's child element of the field,
+/// a search suffix (`heading_op`), a `$heading`, a CDATA script, the upper snake form for SQL, a new buffer not saved
+/// yet each refuse the rename; a binary file is passed over, and a file that is not UTF-8 refuses it, named.
+#[test]
+fn the_safety_scan_reads_plain_text_everywhere() {
+    let conf = r#"<moqui-conf><dev-aide site-component="site,up,dep"/></moqui-conf>"#;
+    let heading = position(UP_ENTITIES, "name=\"heading\"", 7);
+    let thing_id = position(UP_ENTITIES, "name=\"thingId\"", 7);
+    let refused = |name: &str, path: &str, text: &str, (line, character): (u32, u32), new: &str| {
+        let mut bed = LspBed::with(name, conf, &[(path, text)]);
+        let uri = bed.uri("up/entity/UpEntities.xml");
+        bed.rename(&uri, line, character, new).unwrap_err()
+    };
+    let cases = [
+        (
+            "child",
+            "dep/data/Things.xml",
+            "<entity-facade-xml>\n<up.Thing thingId=\"1\"><heading>x</heading></up.Thing>\n</entity-facade-xml>\n",
+            heading,
+            "Things.xml:2",
+        ),
+        (
+            "suffix",
+            "dep/screen/Find.xml",
+            "<screen>\n<parameter name=\"heading_op\"/>\n</screen>\n",
+            heading,
+            "Find.xml:2",
+        ),
+        (
+            "dollar",
+            "dep/template/Thing.ftl",
+            "<p>$heading</p>\n",
+            heading,
+            "Thing.ftl:1",
+        ),
+        (
+            "cdata",
+            "dep/service/dep/Scripts.xml",
+            "<services><service verb=\"run\" noun=\"It\"><actions><script><![CDATA[\nif (a < 3) x = row.heading\n]]></script></actions></service></services>\n",
+            heading,
+            "Scripts.xml:2",
+        ),
+        (
+            "sql",
+            "dep/sql/things.sql",
+            "SELECT THING_ID FROM THING\n",
+            thing_id,
+            "things.sql:1",
+        ),
+    ];
+    for (name, path, text, at, place) in cases {
+        let new = if at == heading { "title" } else { "thingKey" };
+        let message = refused(name, path, text, at, new);
+        assert!(message.contains(place), "{name}: {message}");
+    }
+    // a binary file is passed over; a text file that is not UTF-8 refuses the rename, named
+    let mut binary = LspBed::with("binary", conf, &[]);
+    std::fs::create_dir_all(binary.dir.join("dep/images")).unwrap();
+    std::fs::write(binary.dir.join("dep/images/thing.png"), b"\x89PNG heading").unwrap();
+    std::fs::write(binary.dir.join("dep/images/raw.dat"), b"heading\x00").unwrap();
+    let uri = binary.uri("up/entity/UpEntities.xml");
+    binary.rename(&uri, heading.0, heading.1, "title").unwrap();
+    std::fs::write(binary.dir.join("dep/images/latin.txt"), b"caf\xe9").unwrap();
+    let not_utf8 = binary.rename(&uri, heading.0, heading.1, "title").unwrap_err();
+    assert!(not_utf8.contains("latin.txt is not UTF-8"), "{not_utf8}");
+    std::fs::remove_file(binary.dir.join("dep/images/latin.txt")).unwrap();
+    // a new buffer not saved yet
+    let new_file = binary.uri("dep/screen/New.xml");
+    binary.server.notify(&Notification::new(
+        "textDocument/didOpen".into(),
+        json!({ "textDocument": { "uri": new_file, "text": "<screen><label text=\"${heading}\"/></screen>" } }),
+    ));
+    let unsaved = binary.rename(&uri, heading.0, heading.1, "title").unwrap_err();
+    assert!(unsaved.contains("New.xml:1"), "{unsaved}");
 }

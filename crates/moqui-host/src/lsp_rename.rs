@@ -31,10 +31,10 @@
 //! - when a reference of the name does not resolve, or its text is not the name as an attribute value or string literal;
 //! - when a service's noun change would change the entity it uses: an `entity-auto` service, an `auto-parameters` with
 //!   no `entity-name` (its own or an implemented service's), a noun that names an entity;
-//! - by the safety scan, which decides: the name as a whole token in any file of the components the rename may reach
-//!   (the target's own, those that depend on it, those that refer to its entity, service or form), an expression's
-//!   or a script's use included, anywhere but an edit of the rename or a place the index proves names another
-//!   artifact ([`safety_scan`]): each place is listed;
+//! - by the safety scan, which decides: the name (and its upper snake form, and a service's name without `#`) as a
+//!   plain-text token in any text file of every component and in every open buffer, markup and CDATA included,
+//!   anywhere but an edit of the rename or another entity's field definition ([`safety_scan`]): each place is listed;
+//!   a file that cannot be read, is not UTF-8 or is too large refuses it too;
 //! - when an edit would land in an upstream component while the upstream lock applies. The model-only boot knows the
 //!   split from the conf (`dev-aide@site-component`, `dev-aide@allow-upstream-edits`), not from the database's
 //!   settings: with no site component in the conf, a rename that would edit more than one component is refused, as it
@@ -534,13 +534,14 @@ impl Plan<'_> {
 }
 
 /// The edits of renaming `target` to `new_name`, by file, or why the rename is refused. `text_of` gives a file's text
-/// (an open buffer's, else the file's).
+/// (an open buffer's, else the file's), and `open` the open buffers' paths, which the safety scan reads too.
 pub(crate) fn rename_edits(
     factory: &ExecutionContextFactory,
     index: &MemoryIndex,
     target: &RenameTarget,
     new_name: &str,
     text_of: &dyn Fn(&Path) -> Option<String>,
+    open: &[PathBuf],
 ) -> Result<BTreeMap<PathBuf, Vec<Edit>>, String> {
     let new_name = new_name.trim();
     let is_service = target.kind == "service";
@@ -589,7 +590,7 @@ pub(crate) fn rename_edits(
     }
     data_files(index, target, old, &new, &family.ids, &mut plan)?;
     proven_others(index, old, &ids, &mut plan);
-    safety_scan(factory, index, target, old, &mut plan)?;
+    safety_scan(factory, index, old, open, &mut plan)?;
     let mut edits: BTreeMap<PathBuf, Vec<Edit>> = BTreeMap::new();
     for (path, list) in &plan.edits {
         let text = plan.texts.get(path).cloned().flatten().unwrap_or_default();
@@ -979,6 +980,22 @@ impl WrittenMap {
     }
 }
 
+/// The related field a key-map with no `related` and the `field-name` `field` joins, one of `count` key-maps of a
+/// relationship of `relationship_type` to `related` ([`expand_pairs`]): the related single primary key of a `one` when
+/// it is the only key-map or the related entity has no field of the name, else the field of the name.
+fn implied_related(index: &MemoryIndex, relationship_type: &str, count: usize, field: &str, related: &str) -> String {
+    let pks = pk_names(index, related);
+    let one_pk = match pks.as_slice() {
+        [pk] if relationship_type.starts_with("one") => Some(pk.clone()),
+        _ => None,
+    };
+    let has_field = index.describe(&format!("field:{related}.{field}")).is_some();
+    match one_pk {
+        Some(pk) if count == 1 || !has_field => pk,
+        _ => field.to_string(),
+    }
+}
+
 /// The field pairs (own field, related field) of a relationship of `relationship_type` with the key-maps `maps` to
 /// the entity `related`, as moqui-db's `expand_key_map` expands them: with no key-map a `one` relationship joins the
 /// related primary key to own fields of the same names; a key-map with no `related` joins the field of its own name,
@@ -1085,17 +1102,18 @@ fn key_maps(index: &MemoryIndex, old: &str, new: &str, ids: &[String], plan: &mu
         {
             let written = maps.get(place);
             if own_renamed && field == old {
+                // with no related, the related field implied by the new name: the same as now, or the rename moves it
+                let implied_after = written
+                    .filter(|map| map.related.is_none())
+                    .map(|_| implied_related(index, relationship_type, maps.len(), new, &related));
+                let keeps = written.is_some_and(|map| map.related.is_some())
+                    || related_renamed
+                    || (related_field != old && implied_after.as_deref() == Some(related_field.as_str()));
                 match written.and_then(|map| map.field.as_ref()) {
-                    Some((_, range))
-                        if related_field != old
-                            || related_renamed
-                            || written.is_some_and(|map| map.related.is_some()) =>
-                    {
-                        plan.edit(&path, range.clone(), new);
-                    }
+                    Some((_, range)) if keeps => plan.edit(&path, range.clone(), new),
                     Some(_) => {
                         return Err(format!(
-                            "rename refused: the key-map at {at} has no related, so the related field is named {old} too: write its related first"
+                            "rename refused: the key-map at {at} has no related, so the related field it joins is named by {old}: write its related first"
                         ))
                     }
                     None => {
@@ -1103,15 +1121,6 @@ fn key_maps(index: &MemoryIndex, old: &str, new: &str, ids: &[String], plan: &mu
                             "rename refused: the relationship at {at} has no key-map, so it joins by the primary key {old}: write its key-map first"
                         ))
                     }
-                }
-            } else if !own_renamed
-                && written
-                    .and_then(|map| map.field.as_ref())
-                    .is_some_and(|(name, _)| name == old)
-            {
-                // the field of another entity of the name, known
-                if let Some((_, range)) = written.and_then(|map| map.field.as_ref()) {
-                    plan.others.entry(path.clone()).or_default().push(range.clone());
                 }
             }
             if related_renamed && related_field == old {
@@ -1129,13 +1138,6 @@ fn key_maps(index: &MemoryIndex, old: &str, new: &str, ids: &[String], plan: &mu
                             "rename refused: the relationship at {at} has no key-map, so it joins to the primary key {old}: write its key-map first"
                         ))
                     }
-                }
-            } else if !related_renamed {
-                if let Some((_, range)) = written
-                    .and_then(|map| map.related.as_ref())
-                    .filter(|(name, _)| name == old)
-                {
-                    plan.others.entry(path.clone()).or_default().push(range.clone());
                 }
             }
         }
@@ -1214,28 +1216,20 @@ fn view_key_maps(
                             ))
                         }
                     },
-                    _ => {
-                        if let Some((_, range)) = &map.field {
-                            plan.others.entry(path.clone()).or_default().push(range.clone());
-                        }
-                    }
+                    _ => {}
                 }
             }
-            if related == old {
-                if entities.contains(&own) {
-                    match &map.related {
-                        Some((_, range)) => plan.edit(&path, range.clone(), new),
-                        None => {
-                            let from_renamed = from.clone().flatten().is_some_and(|from| entities.contains(&from));
-                            if !(from_renamed && field == old) {
-                                return Err(format!(
-                                    "rename refused: the key-map at {at} has no related, so it joins to the field {old} by its field-name or the primary key: write its related first"
-                                ));
-                            }
+            if related == old && entities.contains(&own) {
+                match &map.related {
+                    Some((_, range)) => plan.edit(&path, range.clone(), new),
+                    None => {
+                        let from_renamed = from.clone().flatten().is_some_and(|from| entities.contains(&from));
+                        if !(from_renamed && field == old) {
+                            return Err(format!(
+                                "rename refused: the key-map at {at} has no related, so it joins to the field {old} by its field-name or the primary key: write its related first"
+                            ));
                         }
                     }
-                } else if let Some((_, range)) = &map.related {
-                    plan.others.entry(path.clone()).or_default().push(range.clone());
                 }
             }
         }
@@ -1297,13 +1291,23 @@ fn data_files(
     Ok(())
 }
 
-/// The places proven to name another artifact, which the safety scan passes over: the defining attribute of another
-/// artifact of the name (its `name`), and a reference the index resolved to another artifact (the attribute its
-/// reference rule names, or a script string at its column). Nothing is passed over for not being of the family.
+/// The places the safety scan passes over besides the rename's edits: the defining `name` attribute of an entity's
+/// field the index resolves to another id (another entity's field of the name). Nothing else: a form field, a
+/// parameter or a view alias of the name may read the renamed name by its name (a hand-written `<field name="old">` of
+/// a form-list over the entity reads its field), and a reference elsewhere is not proven to be the other one's alone.
 fn proven_others(index: &MemoryIndex, old: &str, ids: &HashSet<&str>, plan: &mut Plan<'_>) {
     for artifact in &index.artifacts {
-        let named = artifact.short_name == old || artifact.name == old;
-        if !named || ids.contains(artifact.id.as_str()) || !artifact.origin.is_empty() {
+        let other_field = artifact.kind == "field"
+            && artifact.short_name == old
+            && artifact.origin.is_empty()
+            && !ids.contains(artifact.id.as_str())
+            && !artifact.marks.starts_with("alias ")
+            && !artifact
+                .parent
+                .as_deref()
+                .and_then(|parent| index.describe(parent))
+                .is_some_and(|parent| parent.kind == "view-entity");
+        if !other_field {
             continue;
         }
         let path = PathBuf::from(&artifact.path);
@@ -1319,114 +1323,33 @@ fn proven_others(index: &MemoryIndex, old: &str, ids: &HashSet<&str>, plan: &mut
             plan.others.entry(path).or_default().push(found.value);
         }
     }
-    for (path, row) in &index.refs {
-        let other = row.to_id.as_deref().is_some_and(|to| !ids.contains(to));
-        if !other || row.to_name != old {
-            continue;
-        }
-        let file = PathBuf::from(path);
-        let Ok(text) = plan.text(&file) else {
-            continue;
-        };
-        let range = if matches!(row.origin.as_str(), "js" | "groovy") || row.column == 0 && row.origin != "xml" {
-            literal_at(&text, row.line, row.column, old)
-        } else {
-            start_tag(&text, row.line, row.column)
-                .and_then(|tag| reference_attribute(&tag, &text, old).map(|found| found.value.clone()))
-        };
-        if let Some(range) = range {
-            plan.others.entry(file).or_default().push(range);
-        }
-    }
 }
 
-/// The directories a safety scan does not walk, as the index does not.
+/// The directories a safety scan does not walk, as the index does not (version control, build output, third-party
+/// libraries).
 const SKIPPED_DIRS: [&str; 6] = [".git", "target", "node_modules", "libs", "build", "tmp"];
 
-/// The largest file the safety scan reads.
-const MAX_SCAN_BYTES: u64 = 4 * 1024 * 1024;
+/// The largest text file the safety scan reads; a larger one refuses the rename.
+const MAX_SCAN_BYTES: u64 = 16 * 1024 * 1024;
 
-/// The components a rename's leftovers may be in: the target's own, every component that depends on it (in turn, by
-/// `component.xml`), and every component with a reference to the target's owner (the service, entity or form), with
-/// their directories when the factory knows them.
-fn scan_components(
-    factory: &ExecutionContextFactory,
-    index: &MemoryIndex,
-    target: &RenameTarget,
-    plan: &Plan<'_>,
-) -> BTreeMap<String, Option<PathBuf>> {
-    let component_of = |path: &str| -> String {
-        index::locate(factory, Path::new(path))
-            .map(|located| located.component)
-            .or_else(|| {
-                index
-                    .artifacts
-                    .iter()
-                    .find(|artifact| artifact.path == path)
-                    .map(|artifact| artifact.component.clone())
-            })
-            .unwrap_or_default()
-    };
-    let owner = match target.kind.as_str() {
-        "field" => target
-            .id
-            .strip_prefix("field:")
-            .and_then(|field| field.rsplit_once('.'))
-            .map(|(entity, _)| format!("entity:{entity}")),
-        "parameter" => parse_parameter_id(&target.id).map(|(owner, _, _)| owner.to_string()),
-        "form-field" => target
-            .id
-            .strip_prefix("form-field:")
-            .and_then(|field| field.rsplit_once('@'))
-            .map(|(form, _)| format!("form:{form}")),
-        _ => Some(target.id.clone()),
-    };
-    let mut names: HashSet<String> = index
-        .artifacts
-        .iter()
-        .filter(|artifact| artifact.id == target.id || Some(&artifact.id) == owner.as_ref())
-        .map(|artifact| artifact.component.clone())
-        .collect();
-    // with the components the edits are in: a component of no artifact row is still scanned by its files
-    names.extend(plan.edits.keys().map(|path| component_of(&path.display().to_string())));
-    let components = factory.components();
-    let mut grew = true;
-    while grew {
-        grew = false;
-        for component in components.iter() {
-            if !names.contains(&component.name) && component.depends_on.iter().any(|on| names.contains(on)) {
-                names.insert(component.name.clone());
-                grew = true;
-            }
-        }
-    }
-    if let Some(owner) = &owner {
-        for (path, row) in &index.refs {
-            if row.to_id.as_deref() == Some(owner.as_str()) {
-                names.insert(component_of(path));
-            }
-        }
-    }
-    names
-        .into_iter()
-        .map(|name| {
-            let dir = components
-                .iter()
-                .find(|component| component.name == name)
-                .map(|component| component.location.clone());
-            (name, dir)
-        })
-        .collect()
-}
+/// The extensions of the files the safety scan passes over as binary (a file with a NUL byte is so too).
+const BINARY_EXTENSIONS: [&str; 36] = [
+    "png", "jpg", "jpeg", "gif", "ico", "webp", "bmp", "tif", "tiff", "pdf", "zip", "jar", "war", "gz", "tgz", "bz2",
+    "xz", "7z", "woff", "woff2", "ttf", "otf", "eot", "class", "so", "dylib", "dll", "exe", "bin", "wasm", "mp3",
+    "mp4", "webm", "ogg", "wav", "p12",
+];
 
-/// The files of `dir`, walked as the index walks a component (its skipped directories left out), sorted.
+/// The files of `dir`, every file under it but the skipped directories, a symlinked directory not followed.
 fn files_of(dir: &Path, into: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.is_dir() {
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        if kind.is_dir() {
             let skipped = path
                 .file_name()
                 .and_then(|name| name.to_str())
@@ -1434,94 +1357,142 @@ fn files_of(dir: &Path, into: &mut Vec<PathBuf>) {
             if !skipped {
                 files_of(&path, into);
             }
-        } else if entry.metadata().is_ok_and(|meta| meta.len() <= MAX_SCAN_BYTES) {
+        } else if kind.is_file() || (kind.is_symlink() && path.is_file()) {
             into.push(path);
         }
     }
 }
 
-/// Whether `ch` continues an identifier: a token of the name ends where one does not.
-fn identifier_char(ch: char) -> bool {
-    ch.is_alphanumeric() || ch == '_' || ch == '$'
+/// The text of the file `path` for the scan: an open buffer's, else the file's; none for a binary file (by its
+/// extension, or a NUL byte); an error naming the file for one that cannot be read, is not UTF-8 or is too large.
+fn scan_text(path: &Path, plan: &mut Plan<'_>) -> Result<Option<String>, String> {
+    if let Some(Some(text)) = plan.texts.get(path) {
+        return Ok(Some(text.clone()));
+    }
+    let binary_extension = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| BINARY_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str()));
+    if binary_extension {
+        return Ok(None);
+    }
+    if let Some(text) = (plan.text_of)(path).filter(|_| !path.exists()) {
+        // an open buffer of a file not saved yet
+        plan.texts.insert(path.to_path_buf(), Some(text.clone()));
+        return Ok(Some(text));
+    }
+    let refused = |why: &str| {
+        format!(
+            "rename refused: {} {why}, so the rename cannot tell what it holds",
+            path.display()
+        )
+    };
+    let size = std::fs::metadata(path)
+        .map_err(|err| refused(&format!("cannot be read ({err})")))?
+        .len();
+    if size > MAX_SCAN_BYTES {
+        return Err(refused(&format!("is over {MAX_SCAN_BYTES} bytes")));
+    }
+    let bytes = std::fs::read(path).map_err(|err| refused(&format!("cannot be read ({err})")))?;
+    if bytes.contains(&0) {
+        return Ok(None);
+    }
+    let text = match (plan.text_of)(path) {
+        // an open buffer over the file
+        Some(buffer) => buffer,
+        None => String::from_utf8(bytes).map_err(|_| refused("is not UTF-8"))?,
+    };
+    plan.texts.insert(path.to_path_buf(), Some(text.clone()));
+    Ok(Some(text))
 }
 
-/// The byte ranges of `old` in `text` as a whole token: no identifier character before or after it (for a service's
-/// name, no `.` or `#` before it either, which would make it part of a longer name). In an XML file the markup's own
-/// names are left out (an element's name, an attribute's name), but for a data file (`entity-facade-xml`), whose
-/// attribute names are the fields of its records.
-fn tokens_of(text: &str, old: &str, xml: bool) -> Vec<Range<usize>> {
-    let dotted = old.contains(['.', '#']);
-    let data = text.contains("<entity-facade-xml") || text.contains("<seed-data");
-    let mut found = Vec::new();
-    let mut from = 0;
-    while let Some(at) = text[from..].find(old).map(|at| from + at) {
-        let end = at + old.len();
+/// The forms of the old name the scan looks for: the name; its upper snake form (`statusId` as `STATUS_ID`, for SQL),
+/// matched without regard to case; and a service's name without its `#` (`a.B.verb#Noun` as `a.B.verbNoun`).
+fn name_forms(old: &str) -> Vec<(String, bool)> {
+    let mut forms = vec![(old.to_string(), false)];
+    if let Some((head, noun)) = old.split_once('#') {
+        let mut chars = noun.chars();
+        if let Some(first) = chars.next() {
+            forms.push((format!("{head}{}{}", first.to_uppercase(), chars.as_str()), false));
+        }
+    } else {
+        let mut snake = String::new();
+        for (at, ch) in old.chars().enumerate() {
+            if ch.is_uppercase() && at > 0 {
+                snake.push('_');
+            }
+            snake.extend(ch.to_uppercase());
+        }
+        if snake.contains('_') {
+            forms.push((snake, true));
+        }
+    }
+    forms
+}
+
+/// The byte ranges in `text` of each form of the name ([`name_forms`]) as a token: an occurrence with no ASCII letter
+/// or digit just before or after it (so `_`, `$`, `-`, `.`, `#`, quotes and markup are all boundaries, and `old_op`,
+/// `$old`, `row.old` and `<old>` are found). Plain text: no markup is parsed, CDATA, element and attribute names
+/// included.
+fn tokens_of(text: &str, forms: &[(String, bool)]) -> Vec<Range<usize>> {
+    let bounded = |at: usize, end: usize| {
         let before = text[..at].chars().next_back();
         let after = text[end..].chars().next();
-        let starts = before.is_none_or(|ch| !identifier_char(ch) && !(dotted && matches!(ch, '.' | '#')));
-        let ends = after.is_none_or(|ch| !identifier_char(ch) && !(dotted && matches!(ch, '.' | '#')));
-        from = end;
-        if !starts || !ends {
-            continue;
-        }
-        if xml && !dotted {
-            let element_name = matches!(before, Some('<' | '/')) && in_markup(text, at);
-            let attribute_name = text[end..].trim_start().starts_with('=') && in_markup(text, at);
-            if element_name || (attribute_name && !data) {
-                continue;
+        before.is_none_or(|ch| !ch.is_ascii_alphanumeric()) && after.is_none_or(|ch| !ch.is_ascii_alphanumeric())
+    };
+    let mut found = Vec::new();
+    for (form, any_case) in forms {
+        let (haystack, needle) = if *any_case {
+            (text.to_ascii_lowercase(), form.to_ascii_lowercase())
+        } else {
+            (text.to_string(), form.clone())
+        };
+        let mut from = 0;
+        while let Some(at) = haystack[from..].find(&needle).map(|at| from + at) {
+            let end = at + needle.len();
+            if bounded(at, end) {
+                found.push(at..end);
             }
+            from = end;
         }
-        found.push(at..end);
     }
+    found.sort_by_key(|range| range.start);
     found
 }
 
-/// Whether the byte `at` of `text` is inside a tag's markup, outside an attribute value: a `<` before it with no `>`
-/// between, and an even number of quotes since that `<`.
-fn in_markup(text: &str, at: usize) -> bool {
-    let Some(open) = text[..at].rfind('<') else {
-        return false;
-    };
-    let inside = &text[open..at];
-    !inside.contains('>')
-        && inside.matches('"').count().is_multiple_of(2)
-        && inside.matches('\'').count().is_multiple_of(2)
-}
-
-/// The decisive gate of a rename: the name as a whole token anywhere in a file of the components it may reach
-/// ([`scan_components`]), artifact or not (an expression's `row.old`, `${old}`, a script, a `.qvue`, a data record's
-/// attribute, JSON or CSV), refuses it, listing up to 20 places, unless the place is an edit of the rename or proven to
-/// name another artifact ([`proven_others`]).
+/// The decisive gate of a rename: each form of the name as a token ([`tokens_of`]) in any text file of every
+/// component of the runtime, and in each open buffer (a new file not saved yet too), refuses it, listing up to 20
+/// places, unless the place is an edit of the rename or another entity's field definition ([`proven_others`]). A file
+/// that cannot be read, is not UTF-8 or is too large refuses it too, naming the file; a binary one is passed over.
 fn safety_scan(
     factory: &ExecutionContextFactory,
     index: &MemoryIndex,
-    target: &RenameTarget,
     old: &str,
+    open: &[PathBuf],
     plan: &mut Plan<'_>,
 ) -> Result<(), String> {
-    let components = scan_components(factory, index, target, plan);
     let mut files: Vec<PathBuf> = Vec::new();
-    for dir in components.values().flatten() {
-        files_of(dir, &mut files);
+    for component in factory.components().iter() {
+        files_of(&component.location, &mut files);
     }
-    // the files the index has of those components, the open buffers among them, and the edited ones
     files.extend(
         index
             .artifacts
             .iter()
-            .filter(|artifact| components.contains_key(&artifact.component) && artifact.path.starts_with('/'))
+            .filter(|artifact| artifact.path.starts_with('/'))
             .map(|artifact| PathBuf::from(&artifact.path)),
     );
+    files.extend(open.iter().cloned());
     files.extend(plan.edits.keys().cloned());
     files.sort();
     files.dedup();
+    let forms = name_forms(old);
     let mut left: Vec<String> = Vec::new();
     for file in files {
-        let Ok(text) = plan.text(&file) else {
+        let Some(text) = scan_text(&file, plan)? else {
             continue;
         };
-        let xml = file.extension().is_some_and(|ext| ext == "xml");
-        for token in tokens_of(&text, old, xml) {
+        for token in tokens_of(&text, &forms) {
             if !plan.edited(&file, &token) {
                 left.push(format!("{}:{}", file.display(), line_number(&text, token.start)));
             }
@@ -1539,8 +1510,9 @@ fn safety_scan(
         String::new()
     };
     Err(format!(
-        "rename refused: {old} is written where the rename does not know it is this name (an expression, a script, \
-         a use it does not edit): {}{more}; change or check those first",
+        "rename refused: {old} is written where the rename does not edit it (an expression, a script, text, another \
+         artifact of the name): {}{more}. Change or check those first, or rename by hand; a common name is written in \
+         many places, so its rename is refused almost always",
         shown.join(", ")
     ))
 }

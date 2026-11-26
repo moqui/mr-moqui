@@ -121,9 +121,10 @@ impl Backend {
         target: &rename::RenameTarget,
         new_name: &str,
         text_of: &dyn Fn(&Path) -> Option<String>,
+        open: &[PathBuf],
     ) -> Result<std::collections::BTreeMap<PathBuf, Vec<edit::Edit>>, String> {
         match self {
-            Self::Local { factory, index } => rename::rename_edits(factory, index, target, new_name, text_of),
+            Self::Local { factory, index } => rename::rename_edits(factory, index, target, new_name, text_of, open),
             Self::Remote(_) => Err("moqui lsp renames on the local index only, not with --server".to_string()),
         }
     }
@@ -635,7 +636,8 @@ impl Server {
                 .map(|text| (*text).clone())
                 .or_else(|| std::fs::read_to_string(path).ok())
         };
-        let edits = self.backend.rename(&target, new_name, &text_of)?;
+        let open: Vec<PathBuf> = documents.keys().cloned().collect();
+        let edits = self.backend.rename(&target, new_name, &text_of, &open)?;
         Ok(json!({ "changes": workspace_changes(&edits) }))
     }
 
