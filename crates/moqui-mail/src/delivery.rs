@@ -140,7 +140,7 @@ fn over_quota_of(facade: &EntityFacade, account: &EntityValue) -> Result<bool, L
 /// so a change is told once though several sessions find it. A mark set runs `tell` in that same transaction, so the
 /// notice is stored and sent at its commit and the mark and the notice are kept or lost together: whatever transaction
 /// the caller is in, a notice that fails leaves the account unmarked, to be marked and told at the next check.
-fn mark_full(
+pub(super) fn mark_full(
     facade: &EntityFacade,
     account_id: &str,
     full: bool,

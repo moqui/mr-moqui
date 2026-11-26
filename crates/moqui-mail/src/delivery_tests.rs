@@ -669,6 +669,56 @@ fn the_gateways_spam_verdict_files_in_junk() {
     assert_eq!(eca_lines().len(), 1);
 }
 
+/// A full mark whose notice fails is rolled back with it, so the next check marks the account and tells its users then
+/// (COM-UI-032: the mark and the notice are kept or lost together).
+#[test]
+fn a_full_mark_whose_notice_fails_is_rolled_back_and_told_at_the_next_check() {
+    let _lock = moqui_core::user::session::cookie_property_lock();
+    let (ctx, facade) = setup();
+    let _entered = ctx.enter();
+    install();
+    alice(&facade);
+    let sales = account("EakHosted", "sales@example.com", &[]);
+    moqui_core::user::logout().unwrap();
+    let first = plain("<qf1@example.org>", "One", "sales@example.com", "");
+    receive(
+        &facade,
+        &first,
+        "dan@example.org",
+        &[to(&sales, &["sales@example.com"])],
+    )
+    .unwrap();
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let mut topic = facade.make_value("moqui.security.user.NotificationTopic").unwrap();
+    topic.set("topic", Value::string(FULL_TOPIC));
+    topic.set("persistOnSend", Value::string("Y"));
+    topic.create(&facade).unwrap();
+    update(
+        &facade,
+        ACCOUNT,
+        ("emailAccountId", &sales),
+        &[("quotaBytes", Value::I64(1))],
+    );
+    let marked = || !field(&one(&facade, ACCOUNT, "emailAccountId", &sales), "quotaFullDate").is_empty();
+    let notices = || {
+        facade
+            .find("moqui.security.user.NotificationMessage")
+            .unwrap()
+            .eq("topic", Value::string(FULL_TOPIC))
+            .count()
+            .unwrap()
+    };
+    let refused = super::delivery::mark_full(&facade, &sales, true, || {
+        Err(moqui_lib::error::Error::new("the notice fails"))
+    });
+    assert!(refused.is_err());
+    assert!(!marked(), "the mark is rolled back with its notice");
+    assert_eq!(notices(), 0);
+    assert!(over_quota(&facade, &sales).unwrap());
+    assert!(marked(), "the next check marks it");
+    assert_eq!(notices(), 1, "and tells its users");
+}
+
 /// SEC-MAIL-07: an account that keeps its quota of mail (`quotaBytes`, else the conf's 10 GiB) is over it, and a message
 /// for it is held (a temporary failure, the listener's 451, an edge node's retry) while another account takes it; once
 /// it has room, the retry stores it.
