@@ -421,7 +421,15 @@ keeps, or `MOQUI_LOGIN_KEY`) and `--project DIR` or `--java DIR` for another Moq
   maps, data records); it is refused, naming the place, where a reference does not resolve, something reads the name
   under another, an edit would land in an upstream component under the lock, or under `--server`. Its last gate is a
   strict plain-text scan of every component for the old name, so renaming a common name practically always refuses.
-  **Code actions** offer the nearest known names for an unknown entity, service, field or parameter.
+  **Code actions** offer the nearest known names for an unknown entity, service, field or parameter, and **Extend in
+  my-site** for an in-place edit of an upstream component while the lock is on: the open text against the file at git's
+  `HEAD` is reported as `upstream.edit`, and where the edit is mechanical (fields added to an upstream entity, a field
+  added to an upstream form with its layout ref, a column added to an upstream list with a column of its own, each
+  after another field) the quick fix is one edit that puts the upstream file back as committed and writes the fields
+  as the entity modeler and the screen builder do: an `extend-entity` in the site component's entity file, or a form
+  merge with `after=` in its `screen-extend` of the screen, the file made when there is none. The site component is the
+  first of the conf's `dev-aide@site-component`; with none there nothing is upstream and nothing is offered (Settings ›
+  Site components is the database's, which the command line does not read).
 
 ## Settings
 

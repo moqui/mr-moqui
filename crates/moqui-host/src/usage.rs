@@ -374,9 +374,26 @@ Speaks the Language Server Protocol on stdin and stdout: diagnostics of each ope
 changes (the checks of moqui check), go to definition and references (the artifact index, read into
 memory and kept current with the open files), hover (an artifact's summary, an element's or
 attribute's documentation from the XSDs), completion (elements, attributes, enumerated values, entity
-and service names) and document and workspace symbols. --server URL answers from a running dev
-instance instead, as moqui check --server does. Logs go to stderr. In the Maximal (default) and Debug packages,
-and in Lite built with --features devtools.
+and service names) and document and workspace symbols.
+
+Rename (with prepare) of an entity field, a service, a form field or a parameter edits each
+definition, each reference the index resolves and what takes the name from it (aliases,
+auto-parameters, form fields, key maps, data records). It is refused, naming the place, where a
+reference does not resolve, something reads the name by another name, an edit would land in an
+upstream component under the lock (dev-aide@site-component, dev-aide@allow-upstream-edits), and with
+--server. Its last gate is a plain-text scan of every component for the old name, so a common name
+practically always refuses.
+
+Code actions (quick fixes): the nearest known names for an unknown entity, service, field or
+in-parameter; and Extend in <site> for an in-place edit of an upstream component under the lock
+(diagnostic upstream.edit), where it is mechanical: a field added to an upstream entity becomes an
+extend-entity in the site component's entity file, a field or column added to an upstream form or list
+a form merge in the site's screen-extend of the screen, and the upstream file goes back to its text at
+git HEAD. With no dev-aide@site-component in the conf, nothing is upstream.
+
+--server URL answers from a running dev instance instead, as moqui check --server does (no rename,
+no Extend). Logs go to stderr. In the Maximal (default) and Debug packages, and in Lite built with
+--features devtools.
 --project DIR (or --java DIR) reads another Moqui project, as moqui refs --project does.
 
   moqui lsp

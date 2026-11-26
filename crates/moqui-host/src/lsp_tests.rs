@@ -698,3 +698,267 @@ fn the_safety_scan_reads_plain_text_everywhere() {
     let unsaved = binary.rename(&uri, heading.0, heading.1, "title").unwrap_err();
     assert!(unsaved.contains("New.xml:1"), "{unsaved}");
 }
+
+// ---- Extend in my-site ----
+
+const UP_SCREEN: &str = r#"<screen>
+    <widgets>
+        <form-single name="EditThing" transition="update">
+            <field name="thingId"><default-field><display/></default-field></field>
+            <field name="heading"><default-field><text-line/></default-field></field>
+            <field-layout><field-ref name="thingId"/><field-ref name="heading"/></field-layout>
+        </form-single>
+        <form-list name="ThingList" list="things">
+            <field name="thingId"><default-field><display/></default-field></field>
+            <field name="heading"><default-field><display/></default-field></field>
+            <form-list-column><field-ref name="thingId"/></form-list-column>
+            <form-list-column><field-ref name="heading"/></form-list-column>
+        </form-list>
+    </widgets>
+</screen>
+"#;
+
+/// `git` in `dir`, kept from the desktop's configuration and prompts (the testing skill).
+fn git_in(dir: &Path, args: &[&str]) {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args([
+            "-c",
+            "credential.helper=",
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+        ])
+        .args(["-c", "commit.gpgsign=false"])
+        .args(args)
+        .env("GIT_CONFIG_GLOBAL", if cfg!(windows) { "NUL" } else { "/dev/null" })
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_ASKPASS", "false")
+        .env("SSH_ASKPASS", "false")
+        .env("HOME", dir)
+        .env_remove("XDG_CONFIG_HOME")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// A bed whose files are committed, with the upstream screen beside the entity.
+fn committed_bed(name: &str, conf: &str) -> LspBed {
+    let bed = LspBed::with(name, conf, &[("up/screen/Things.xml", UP_SCREEN)]);
+    git_in(&bed.dir, &["init", "-q"]);
+    git_in(&bed.dir, &["add", "-A"]);
+    git_in(&bed.dir, &["commit", "-q", "-m", "base"]);
+    bed
+}
+
+/// `text` with one protocol `TextEdit` applied.
+fn applied(text: &str, edit: &Json) -> String {
+    let offset = |position: &Json| {
+        let line = usize::try_from(position["line"].as_u64().unwrap()).unwrap();
+        let character = usize::try_from(position["character"].as_u64().unwrap()).unwrap();
+        let start: usize = text.split_inclusive('\n').take(line).map(str::len).sum();
+        let rest = &text[start..];
+        let mut units = 0;
+        let at = rest
+            .char_indices()
+            .find(|(_, ch)| {
+                let here = units >= character;
+                units += ch.len_utf16();
+                here
+            })
+            .map_or(rest.len(), |(at, _)| at);
+        start + at
+    };
+    let (from, to) = (offset(&edit["range"]["start"]), offset(&edit["range"]["end"]));
+    format!("{}{}{}", &text[..from], edit["newText"].as_str().unwrap(), &text[to..])
+}
+
+impl LspBed {
+    /// Open `path` with `text`: its diagnostics' (0-based line, rule) pairs.
+    fn open(&mut self, path: &str, text: &str) -> Vec<(u64, String)> {
+        let notes = self.server.notify(&Notification::new(
+            "textDocument/didOpen".into(),
+            json!({ "textDocument": { "uri": self.uri(path), "text": text } }),
+        ));
+        notes
+            .iter()
+            .flat_map(|note| note.params["diagnostics"].as_array().cloned().unwrap_or_default())
+            .map(|diagnostic| {
+                (
+                    diagnostic["range"]["start"]["line"].as_u64().unwrap(),
+                    diagnostic["code"].as_str().unwrap_or_default().to_string(),
+                )
+            })
+            .collect()
+    }
+
+    /// The code actions at the 0-based `line` of `path`, with no diagnostics sent.
+    fn actions_at(&mut self, path: &str, line: u32) -> Vec<Json> {
+        let result = self
+            .ask(
+                "textDocument/codeAction",
+                json!({ "textDocument": { "uri": self.uri(path) },
+                    "range": { "start": { "line": line, "character": 0 }, "end": { "line": line, "character": 0 } },
+                    "context": { "diagnostics": [] } }),
+            )
+            .unwrap();
+        result.as_array().unwrap().clone()
+    }
+}
+
+const SITE_CONF: &str = r#"<moqui-conf><dev-aide site-component="site"/></moqui-conf>"#;
+
+/// A field added in place to an upstream entity: an `upstream.edit` diagnostic at it, and Extend in site, which takes
+/// the entity file back to its committed text and makes the site's entity file with the field in an extend-entity.
+#[test]
+fn a_field_added_to_an_upstream_entity_is_extended_in_the_site() {
+    let mut bed = committed_bed("extend-entity", SITE_CONF);
+    let path = "up/entity/UpEntities.xml";
+    let edited = UP_ENTITIES.replace(
+        "        <field name=\"heading\" type=\"text-medium\"/>\n",
+        "        <field name=\"heading\" type=\"text-medium\"/>\n        <field name=\"note\" type=\"text-long\">\n            <description>A note on it</description>\n        </field>\n",
+    );
+    assert!(edited != UP_ENTITIES);
+    let diagnostics = bed.open(path, &edited);
+    assert!(
+        diagnostics.contains(&(4, "upstream.edit".to_string())),
+        "{diagnostics:?}"
+    );
+    // nothing on a line it did not add
+    assert!(bed.actions_at(path, 1).is_empty());
+    let actions = bed.actions_at(path, 5);
+    assert_eq!(actions.len(), 1, "{actions:?}");
+    assert_eq!(actions[0]["title"], "Extend in site: field note of up.Thing");
+    let changes = actions[0]["edit"]["documentChanges"].as_array().unwrap();
+    assert_eq!(changes[0]["textDocument"]["uri"], bed.uri(path));
+    assert_eq!(applied(&edited, &changes[0]["edits"][0]), UP_ENTITIES);
+    let site_file = bed.uri("site/entity/SiteEntities.xml");
+    assert_eq!(changes[1]["kind"], "create");
+    assert_eq!(changes[1]["uri"], site_file);
+    assert_eq!(changes[2]["textDocument"]["uri"], site_file);
+    let made = applied("", &changes[2]["edits"][0]);
+    assert!(
+        made.contains("    <extend-entity entity-name=\"Thing\" package=\"up\">\n        <field name=\"note\" type=\"text-long\">\n            <description>A note on it</description>\n        </field>\n    </extend-entity>\n</entities>"),
+        "{made}"
+    );
+    // a site file that extends the entity already gets the field in its extend-entity
+    let existing = "<entities>\n    <extend-entity entity-name=\"Thing\" package=\"up\">\n        <field name=\"other\" type=\"id\"/>\n    </extend-entity>\n</entities>\n";
+    std::fs::create_dir_all(bed.dir.join("site/entity")).unwrap();
+    std::fs::write(bed.dir.join("site/entity/Ext.xml"), existing).unwrap();
+    let actions = bed.actions_at(path, 4);
+    let changes = actions[0]["edit"]["documentChanges"].as_array().unwrap();
+    assert_eq!(changes.len(), 2, "no file made: {changes:?}");
+    assert_eq!(changes[1]["textDocument"]["uri"], bed.uri("site/entity/Ext.xml"));
+    assert_eq!(
+        applied(existing, &changes[1]["edits"][0]),
+        "<entities>\n    <extend-entity entity-name=\"Thing\" package=\"up\">\n        <field name=\"other\" type=\"id\"/>\n        <field name=\"note\" type=\"text-long\">\n            <description>A note on it</description>\n        </field>\n    </extend-entity>\n</entities>\n"
+    );
+    // more than an added field is no mechanical edit: the diagnostic at the top, no action
+    let changed = edited.replace("type=\"text-medium\"", "type=\"text-long\"");
+    let diagnostics = bed.open(path, &changed);
+    assert!(
+        diagnostics.contains(&(0, "upstream.edit".to_string())),
+        "{diagnostics:?}"
+    );
+    assert!(bed.actions_at(path, 4).is_empty());
+}
+
+/// A field added to an upstream form with its layout ref, and a column added to an upstream list with a column of its
+/// own: form merges in the site's screen-extend of the screen, each field after the one before it.
+#[test]
+fn a_field_and_a_column_added_to_upstream_forms_are_form_merges() {
+    let mut bed = committed_bed("extend-screen", SITE_CONF);
+    let path = "up/screen/Things.xml";
+    let form_field = "<field name=\"heading\"><default-field><text-line/></default-field></field>\n";
+    let list_field = "<field name=\"heading\"><default-field><display/></default-field></field>\n";
+    let edited = UP_SCREEN
+        .replace(
+            form_field,
+            &format!("{form_field}            <field name=\"note\"><default-field><text-area/></default-field></field>\n"),
+        )
+        .replace(
+            "<field-ref name=\"heading\"/></field-layout>",
+            "<field-ref name=\"heading\"/><field-ref name=\"note\"/></field-layout>",
+        )
+        .replace(
+            list_field,
+            &format!("{list_field}            <field name=\"note\"><default-field><display/></default-field></field>\n"),
+        )
+        .replace(
+            "<form-list-column><field-ref name=\"heading\"/></form-list-column>\n",
+            "<form-list-column><field-ref name=\"heading\"/></form-list-column>\n            <form-list-column><field-ref name=\"note\"/></form-list-column>\n",
+        );
+    assert_eq!(edited.matches("\"note\"").count(), 4, "{edited}");
+    bed.open(path, &edited);
+    let actions = bed.actions_at(path, 5);
+    assert_eq!(actions.len(), 1, "{actions:?}");
+    assert_eq!(
+        actions[0]["title"],
+        "Extend in site: field note of form EditThing, column note of form ThingList"
+    );
+    let changes = actions[0]["edit"]["documentChanges"].as_array().unwrap();
+    assert_eq!(applied(&edited, &changes[0]["edits"][0]), UP_SCREEN);
+    assert_eq!(changes[1]["uri"], bed.uri("site/screen-extend/up/screen/Things.xml"));
+    let made = applied("", &changes[2]["edits"][0]);
+    assert!(made.starts_with("<?xml"), "{made}");
+    assert!(
+        made.contains("xsi:noNamespaceSchemaLocation=\"http://moqui.org/xsd/mr-xml-screen.xsd\">\n    <form-single name=\"EditThing\">\n        <field name=\"note\" after=\"heading\"><default-field><text-area/></default-field></field>\n    </form-single>\n    <form-list name=\"ThingList\">\n        <field name=\"note\" after=\"heading\"><default-field><display/></default-field></field>\n    </form-list>\n</screen-extend>"),
+        "{made}"
+    );
+    // a field put first, which a merge's after= cannot place, is not mechanical
+    let first = UP_SCREEN.replace(
+        "<form-single name=\"EditThing\" transition=\"update\">\n",
+        "<form-single name=\"EditThing\" transition=\"update\">\n            <field name=\"note\"><default-field><text-area/></default-field></field>\n",
+    );
+    bed.open(path, &first);
+    assert!(bed.actions_at(path, 3).is_empty());
+    // nor a field of a list with columns that has no column of its own
+    let no_column = UP_SCREEN.replace(
+        list_field,
+        &format!("{list_field}            <field name=\"note\"><default-field><display/></default-field></field>\n"),
+    );
+    bed.open(path, &no_column);
+    assert!(bed.actions_at(path, 10).is_empty());
+}
+
+/// With no site component in the conf nothing is upstream: no diagnostic and no action, and the same with the lock off.
+#[test]
+fn with_no_site_component_nothing_is_extended() {
+    let path = "up/entity/UpEntities.xml";
+    let edited = UP_ENTITIES.replace(
+        "        <field name=\"heading\" type=\"text-medium\"/>\n",
+        "        <field name=\"heading\" type=\"text-medium\"/>\n        <field name=\"note\" type=\"text-long\"/>\n",
+    );
+    for (name, conf) in [
+        ("extend-none", ""),
+        (
+            "extend-unlocked",
+            r#"<moqui-conf><dev-aide site-component="site" allow-upstream-edits="true"/></moqui-conf>"#,
+        ),
+    ] {
+        let mut bed = committed_bed(name, conf);
+        let diagnostics = bed.open(path, &edited);
+        assert!(
+            !diagnostics.iter().any(|(_, rule)| rule == "upstream.edit"),
+            "{name}: {diagnostics:?}"
+        );
+        let diagnostic = json!({ "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 1 } },
+            "code": "upstream.edit", "message": "x" });
+        let actions = bed
+            .ask(
+                "textDocument/codeAction",
+                json!({ "textDocument": { "uri": bed.uri(path) },
+                    "range": { "start": { "line": 4, "character": 0 }, "end": { "line": 4, "character": 0 } },
+                    "context": { "diagnostics": [diagnostic] } }),
+            )
+            .unwrap();
+        assert_eq!(actions, json!([]), "{name}");
+    }
+}
