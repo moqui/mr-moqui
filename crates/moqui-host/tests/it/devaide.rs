@@ -1734,6 +1734,167 @@ fn a_stamped_render_names_each_widgets_file() {
     assert!(!plain.contains("dbform:"));
 }
 
+/// Convert to site extension (plans/design-dev-aide.md 7.2, question 16): a DbForm that changes an upstream form (a
+/// required text field with a tooltip, a drop-down with options and a widget attribute, a dependency) becomes the form
+/// merge of the site's screen-extend, after the field the site's merge has already; a review's digest that no longer
+/// holds is refused and keeps the rows; the accepted one deletes them and writes the file, and the form renders as it
+/// did.
+#[test]
+fn a_db_form_converts_to_a_site_extension() {
+    if !crate::common::own_process() {
+        return;
+    }
+    let screen = "<screen require-authentication=\"false\">\n    <widgets>\n        <form-single name=\"Facts\"><field name=\"upId\"><default-field title=\"Up Id\"><display/></default-field></field></form-single>\n    </widgets>\n</screen>\n";
+    let extend = "<screen-extend>\n    <form-single name=\"Facts\"><field name=\"extraNote\" after=\"upId\"><default-field title=\"Extra Note\"><display/></default-field></field></form-single>\n</screen-extend>\n";
+    let dev_aide = std::fs::canonicalize(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../runtime/components/dev/dev-aide"
+    ))
+    .unwrap();
+    let extend_path = "screen-extend/upstream-app/screen/UpApp/Detail.xml";
+    let files = [
+        ("components/addon/my-site/component.xml", SITE_COMPONENT),
+        (
+            "components/addon/my-site/screen-extend/upstream-app/screen/UpApp/Detail.xml",
+            extend,
+        ),
+        ("components/addon/upstream-app/component.xml", UPSTREAM_COMPONENT),
+        ("components/addon/upstream-app/screen/UpApp/Detail.xml", screen),
+    ];
+    let gate = start_with_files_and_links(
+        "dev-aide-dbform",
+        Some(&include_str!("../../../../runtime/components/dev/dev-aide/data/DevAideSecurityData.xml").replace(
+            "</entity-facade-xml>",
+            r#"    <moqui.screen.form.DbForm formId="DBF_CONVERT" description="Facts for the office" modifyXmlScreenForm="component://upstream-app/screen/UpApp/Detail.xml#Facts"/>
+    <moqui.screen.form.DbFormField formId="DBF_CONVERT" fieldName="dbNote" title="Db Note" tooltip="What the office notes" isRequired="Y" fieldTypeEnumId="DBFFT_text-line" layoutSequenceNum="1"/>
+    <moqui.screen.form.DbFormField formId="DBF_CONVERT" fieldName="dbKind" title="Db Kind" fieldTypeEnumId="DBFFT_drop-down" layoutSequenceNum="2"/>
+    <moqui.screen.form.DbFormFieldAttribute formId="DBF_CONVERT" fieldName="dbKind" attributeName="allow-empty" value="true"/>
+    <moqui.screen.form.DbFormFieldOption formId="DBF_CONVERT" fieldName="dbKind" sequenceNum="1" keyValue="A" text="Alpha Kind"/>
+    <moqui.screen.form.DbFormFieldOption formId="DBF_CONVERT" fieldName="dbKind" sequenceNum="2" keyValue="B" text="Beta Kind"/>
+    <moqui.screen.form.DbFormFieldDependency formId="DBF_CONVERT" dependencySeqId="01" sourceFieldName="dbNote" operator="not-empty" targetFieldName="dbKind" effect="show"/>
+    <moqui.screen.form.DbFormUserGroup formId="DBF_CONVERT" userGroupId="ADMIN"/>
+</entity-facade-xml>"#,
+        )),
+        &[("moqui_conf__instance__purpose", "dev"), ("moqui_conf__dev_aide__site_component", "my-site")],
+        &files,
+        &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
+    );
+    let factory = Arc::clone(gate.server.factory());
+    let site = gate.runtime.join("components/addon/my-site");
+    let render = || {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        moqui_core::user::internal_login_user("john.doe").unwrap();
+        moqui_core::screen::ScreenTest::new(&factory)
+            .root_screen("component://upstream-app/screen/UpApp/Detail.xml")
+            .render_mode("qvt")
+            .render("", BTreeMap::new())
+            .unwrap()
+            .text()
+    };
+    let rows = |entity: &str| {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        factory
+            .entity()
+            .unwrap()
+            .find(entity)
+            .unwrap()
+            .disable_authz()
+            .eq("formId", Value::string("DBF_CONVERT"))
+            .count()
+            .unwrap()
+    };
+    let before = render();
+    assert!(before.contains("Db Note") && before.contains("Beta Kind"), "{before}");
+
+    let changes = call(
+        &factory,
+        "john.doe",
+        "org.moqui.devaide.ArtifactServices.get#DbFormChanges",
+        &[],
+    )
+    .unwrap();
+    let listed = moqui_lib::json::to_json(&changes["dbForms"]);
+    assert!(
+        listed
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["formId"] == "DBF_CONVERT" && row["formName"] == "Facts"),
+        "{listed}"
+    );
+    let review = call(
+        &factory,
+        "john.doe",
+        "org.moqui.devaide.ArtifactServices.get#DbFormConversion",
+        &[("formId", "DBF_CONVERT")],
+    )
+    .unwrap();
+    assert_eq!(text(&review, "path"), extend_path);
+    let proposed = text(&review, "proposedText");
+    assert!(
+        proposed.contains(r#"title="Db Note" tooltip="What the office notes" required="true""#),
+        "{proposed}"
+    );
+    assert!(proposed.contains(r#"<option key="B" text="Beta Kind"/>"#), "{proposed}");
+    assert!(proposed.contains(r#"<drop-down allow-empty="true">"#), "{proposed}");
+    assert!(
+        proposed.contains(r#"<visible-when field="dbNote" value="" operator="not-empty"/>"#),
+        "{proposed}"
+    );
+    assert!(!proposed.contains("layoutSequenceNum"), "{proposed}");
+    // one merge, the site's field first and the DbForm's after it
+    assert_eq!(
+        proposed.matches("<form-single name=\"Facts\">").count(),
+        1,
+        "{proposed}"
+    );
+    assert!(proposed.find("extraNote").unwrap() < proposed.find("dbNote").unwrap());
+    let notes = moqui_lib::json::to_json(&review["notes"]).to_string();
+    assert!(notes.contains("ADMIN"), "the groups it applied to: {notes}");
+    assert!(text(&review, "diff").contains("+"), "{}", text(&review, "diff"));
+
+    // a review that no longer holds is refused and changes nothing
+    let convert = |digest: &str| {
+        call(
+            &factory,
+            "john.doe",
+            "org.moqui.devaide.ArtifactServices.convert#DbForm",
+            &[("formId", "DBF_CONVERT"), ("digest", digest)],
+        )
+    };
+    let stale = convert("0123").unwrap_err();
+    assert!(stale.contains("review the conversion again"), "{stale}");
+    assert_eq!(rows("moqui.screen.form.DbForm"), 1);
+    assert_eq!(std::fs::read_to_string(site.join(extend_path)).unwrap(), extend);
+
+    let converted = convert(&text(&review, "digest")).unwrap();
+    assert_eq!(text(&converted, "path"), extend_path);
+    for entity in [
+        "moqui.screen.form.DbForm",
+        "moqui.screen.form.DbFormField",
+        "moqui.screen.form.DbFormFieldAttribute",
+        "moqui.screen.form.DbFormFieldOption",
+        "moqui.screen.form.DbFormFieldDependency",
+        "moqui.screen.form.DbFormUserGroup",
+    ] {
+        assert_eq!(rows(entity), 0, "{entity}");
+    }
+    assert_eq!(std::fs::read_to_string(site.join(extend_path)).unwrap(), proposed);
+    let after = render();
+    assert!(after.contains("Db Note") && after.contains("Beta Kind"), "{after}");
+    assert_eq!(before, after, "the form renders as the DbForm made it");
+    // nothing is left to convert
+    assert!(call(
+        &factory,
+        "john.doe",
+        "org.moqui.devaide.ArtifactServices.get#DbFormConversion",
+        &[("formId", "DBF_CONVERT")]
+    )
+    .is_err());
+}
+
 const SCREENS: &str = "org.moqui.devaide.ScreenServices.";
 
 /// The screen tree's actions (plans/design-dev-aide.md 11.1): Set default and a menu index in the parent's file; Move

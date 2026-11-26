@@ -63,6 +63,7 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.basic.Enumeration enumId="DAA_TRY" enumTypeId="DevAideAction" description="Service run for real"/>
     <moqui.basic.Enumeration enumId="DAA_EXPORT" enumTypeId="DevAideAction" description="Docs exported"/>
     <moqui.basic.Enumeration enumId="DAA_BUILD" enumTypeId="DevAideAction" description="Rebuild (./moq build)"/>
+    <moqui.basic.Enumeration enumId="DAA_CONVERT" enumTypeId="DevAideAction" description="DbForm converted to a site extension"/>
 
     <moqui.security.user.NotificationTopic topic="DevReload" description="Dev AIDE reload" typeString="info" showAlert="N"
             persistOnSend="N"/>

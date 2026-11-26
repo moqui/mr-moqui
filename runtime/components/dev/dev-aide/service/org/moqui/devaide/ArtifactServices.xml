@@ -98,6 +98,48 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="siteComponents" type="List"/>
         </out-parameters>
     </service>
+    <!-- Convert to site extension (plans/design-dev-aide.md 7.2, question 16), src/dbform.rs: a DbForm that modifies a
+        screen form becomes the form merge of the site's screen-extend of that screen, one way. -->
+    <service verb="get" noun="DbFormChanges" type="rust" location="dev_aide::dbform::get_db_form_changes" allow-remote="false" read-only="true">
+        <description>The DbForms that modify a screen form (modifyXmlScreenForm): formId, description, screenLocation,
+            formName, userGroups and fieldCount, the rows Customizations offers Convert on.</description>
+        <out-parameters><parameter name="dbForms" type="List"/></out-parameters>
+    </service>
+    <service verb="get" noun="DbFormConversion" type="rust" location="dev_aide::dbform::get_db_form_conversion" allow-remote="false" read-only="true">
+        <description>The conversion of a DbForm to review: the site's screen-extend file it writes (rootId, path, exists),
+            its text now and converted with the diff, the rows that go (each entity and its count), what is not carried
+            (notes: the user groups, a dated form's drafts and history, the print layout) and the digest convert#DbForm
+            takes. Refused for a DbForm with responses, one that modifies no screen form, or with no site component.</description>
+        <in-parameters><parameter name="formId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="rootId"/>
+            <parameter name="path"/>
+            <parameter name="component"/>
+            <parameter name="exists" type="Boolean"/>
+            <parameter name="currentText"/>
+            <parameter name="proposedText"/>
+            <parameter name="diff"/>
+            <parameter name="rows" type="List"/>
+            <parameter name="notes" type="List"/>
+            <parameter name="digest"/>
+        </out-parameters>
+    </service>
+    <service verb="convert" noun="DbForm" type="rust" location="dev_aide::dbform::convert_db_form" allow-remote="false">
+        <description>The accepted conversion: when the digest is still the review's, the DbForm's rows are deleted and
+            the screen-extend written through the save pipeline in one transaction (a refused or conflicting write keeps
+            the rows). Audited (DAA_CONVERT, and the file's save). Out as a save, with the deleted rows' counts.</description>
+        <in-parameters>
+            <parameter name="formId" required="true"/>
+            <parameter name="digest" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="rootId"/>
+            <parameter name="path"/>
+            <parameter name="deleted" type="Map"/>
+            <parameter name="hash"/>
+            <parameter name="problems" type="List"/>
+        </out-parameters>
+    </service>
     <service verb="search" noun="Palette" type="rust" location="dev_aide::artifacts::search_palette" allow-remote="false" read-only="true">
         <description>The shell palette's Artifacts group: entities, services, screens and rules matching the text.</description>
         <in-parameters>
