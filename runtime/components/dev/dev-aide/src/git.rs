@@ -750,3 +750,7 @@ mod tests {
         assert!(!task_key_valid("A\rB") && !task_key_valid(&"x".repeat(101)) && !task_key_valid(" "));
     }
 }
+
+#[cfg(test)]
+#[path = "git_cli_tests.rs"]
+mod cli_tests;

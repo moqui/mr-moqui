@@ -15,9 +15,10 @@ component: it loads when `instance@purpose` is `dev` (`./moq run` and `./moq tes
   <component-list><component name="example" location="components/dev/example"/></component-list>
   ```
 
-The binaries with the dev tools (Maximal, the default, and Debug) link this crate. Its implementations are only used
-when the component loads. A binary without it (Lite, Enterprise) on the dev conf loads the component and leaves its tool factory
-out with an error line, so the gallery works and the rust services and tool do not.
+The binaries with the dev tools (Maximal, the default, and Debug; Lite only with `--features devtools`) link this crate.
+Its implementations are only used when the component loads. A binary without it (Lite, Enterprise) on the dev conf
+loads the component and leaves its tool factory out with an error line, so the gallery works and the rust services and
+tool do not.
 
 ## What is here
 

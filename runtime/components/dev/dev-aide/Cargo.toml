@@ -1,7 +1,7 @@
 # The Rust side of the dev-aide (plans/design-dev-aide.md 3.3): the workspace file operations with their confinement, the
 # git layer over the developer's own git command, and the services the screens call. A member of the mr-moqui workspace,
-# linked by crates/moqui under the devtools feature (the Maximal package, the default, and Debug); in a binary without
-# it the component's screens load on a dev instance but its services are not built in.
+# linked by crates/moqui under the devtools feature (Maximal, the default, and Debug; Lite only with --features devtools);
+# in a binary without it the component's screens load on a dev instance but its services are not built in.
 
 [package]
 name = "dev-aide"

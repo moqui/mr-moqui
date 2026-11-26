@@ -159,7 +159,7 @@ The hazard scan is by name within one service: the names it declares as `BigDeci
 
 ## `moqui lsp`
 
-`moqui lsp` is a Language Server Protocol server over stdin and stdout for editors and coding agents. It serves Moqui XML files, not JavaScript files; for those use TypeScript's own language server with the generated declarations. Logs go to stderr. It is in the Maximal (default) and Debug packages, and any build with the `devtools` feature; another build answers that it is not built into this host.
+`moqui lsp` is a Language Server Protocol server over stdin and stdout for editors and coding agents. It serves Moqui XML files, not JavaScript files; for those use TypeScript's own language server with the generated declarations. Logs go to stderr. It is in the Maximal (default) and Debug packages, and in Lite built with `--features devtools`; another build answers that it is not built into this host.
 
 | Feature | |
 |---|---|

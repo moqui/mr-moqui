@@ -54,17 +54,14 @@ The assisted IDE of mr-moqui (`plans/design-dev-aide.md`), at `/qapps/dev` on a 
 - **Settings** has the site components, "Allow editing upstream components", the roots' labels, read-only flags and
   publish branches, more directories, network git on a shared dev server, and the **group servers**
   ([plans/design-dev-aide.md](../../../../plans/design-dev-aide.md) §21): Connect signs in at a team's server (or
-  moqui.org) as an installed app does, through one of its identity providers or its own login, with this instance's own
-  address as the redirect, or takes a pasted token, and then sets what you confirm: the `myaddons.xml` repository, the
-  task source and the app its tasks open in, the LLM gateway's `.env` lines (with a key for the gateway alone) and
-  git's credential; Remove takes back only what it set. The Workspace then knows each
+  moqui.org) as an installed app does, with this instance's own address as the redirect, or takes a pasted token, and
+  then sets what you confirm: the `myaddons.xml` repository, the task source, the LLM gateway's `.env` lines (with a
+  key for the gateway alone) and git's credential; Remove takes back only what it set. The Workspace then knows each
   working tree's hosted repository: a Merge requests tab (Check out, New, Review with the server's threads: reply,
   resolve, a comment on a line, a review), open threads in the editor's gutter, check chips on Commits and Branches
   (the runs, a job's log, failed tests as links, Re-run), the contributor agreement's warning and Sign, Propose (push
   to review) for a repository you may only view, Fork where the server makes forks, and Push or Publish that opens a
-  merge request (from the fork, for a branch on the fork's remote). The task panel lists the repository's open issues,
-  its linked projects' tasks first: Use in commit writes `Fixes #12` where issues have numbers, New issue files one
-  there, and Branch names a branch for one. None of Dev AIDE's own writes (a file, a git command that changes a repository, a call of a group
+  merge request. None of Dev AIDE's own writes (a file, a git command that changes a repository, a call of a group
   server) runs under an agent's fence or in a sim: `try_service` refuses its write services, and the writes refuse
   themselves. Dev Assist's `hosting` tool reads the same (merge requests, threads, checks, a job's log and failed tests,
   an issue) as untrusted data, opens a merge request or comments only by your approval, never approves, merges,
@@ -88,8 +85,8 @@ Who may use it (`data/DevAideSecurityData.xml`):
 | `DEV_AIDE_EXTEND` | `DEV_AIDE_EXTENDERS` | Write site components and publish them. |
 | `DEV_AIDE` | `ADMIN`, `DEV_AIDE_USERS` | Everything: upstream edits with the toggle on, and every git command. |
 
-Its Rust crate is linked into the Maximal package (the default) and Debug (the `devtools` feature). In another
-package the screens load and the services say they are not built in.
+Its Rust crate is linked into the Maximal package (the default) and Debug, and into Lite built with `--features devtools`
+(the `devtools` feature). In another package the screens load and the services say they are not built in.
 
 - **Tests** ([the two suites](../../../../docs/Build-Test.md#the-two-suites)): the regression suite is `./moq test
   dev-aide` (the screens, the Workspace's terminal form on a scratch root, the docs, the terminal's guided editors against a throw-away root), `cargo test -p dev-aide` (confinement, the git parsers, the Browser's sections, the edit buffers),

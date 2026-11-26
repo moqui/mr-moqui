@@ -414,7 +414,13 @@ pub(crate) fn git_in_with(dir: &Path, home: &Path, args: &[&str], stdin: std::pr
         .env("GIT_ASKPASS", "false")
         .env("SSH_ASKPASS", "false")
         .env_remove("SSH_ASKPASS_REQUIRE")
-        .env("GIT_ALLOW_PROTOCOL", "file:git:http:https");
+        .env("GIT_ALLOW_PROTOCOL", "file:git:http:https")
+        // a test run from a git hook (a pre-commit or pre-push check) inherits the outer repository's: never touch it
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_COMMON_DIR")
+        .env_remove("GIT_OBJECT_DIRECTORY");
     // MOQUI_GIT_TRACE=1 shows each pkt-line in the failure output
     if std::env::var_os("MOQUI_GIT_TRACE").is_some() {
         command.env("GIT_TRACE_PACKET", "1");
