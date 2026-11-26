@@ -89,7 +89,10 @@ impl Context {
         crate::notify::ensure(&factory);
         let facade = factory.entity().ok_or_else(|| LibError::new("no entity facade"))?;
         let settings = Settings::of(&factory, Some(&facade));
-        let roots = roots::roots(&factory, &settings, Some(&facade));
+        let mut roots = roots::roots(&factory, &settings, Some(&facade));
+        // a hosted root only for a user who may view its repository (crate::hosted): every listing and `root` of this
+        // context answers alike, as if the others were not there
+        roots.retain(|root| root.hosted_branch.as_ref().is_none_or(crate::hosted::visible));
         Ok(Self {
             factory,
             facade,
@@ -106,6 +109,13 @@ impl Context {
 
     /// `relative` of `root`, confined ([`confine::resolve`]); the runtime's conf files only at the full tier.
     pub(crate) fn resolve(&self, root: &Root, relative: &str) -> Result<confine::Resolved, LibError> {
+        if root.hosted_branch.is_some() {
+            // a hosted root has no directory: its files are the hosting's (crate::hosted)
+            return Err(LibError::new(format!(
+                "{} is a hosted repository: it has no working tree",
+                root.label
+            )));
+        }
         let components = self.factory.components();
         let loaded: Vec<&Path> = components.iter().map(|component| component.location.as_path()).collect();
         let resolved = confine::resolve(&root.path, self.factory.runtime_dir(), &loaded, relative)?;
@@ -149,7 +159,8 @@ impl Context {
                 root.label
             )));
         }
-        if self.upstream_edits() {
+        // a hosted root's commits are the hosting's to allow (its rights and branch rules), and it is never loaded
+        if self.upstream_edits() || root.hosted_branch.is_some() {
             return Ok(());
         }
         // where the path leads: a symlink in a site component to an upstream one is the upstream one
@@ -380,6 +391,9 @@ fn list_directory(
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::View)?;
     let root = context.root(&text(parameters, "rootId"))?;
+    if let Some(hosted) = &root.hosted_branch {
+        return crate::hosted::list_directory(hosted, &text(parameters, "path"));
+    }
     let resolved = context.resolve(root, &text(parameters, "path"))?;
     let entries = directory_entries(&context.git(), root, &resolved.relative, &resolved.path)?;
     let mut out = Parameters::new();
@@ -458,6 +472,9 @@ fn get_file(
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::View)?;
     let root = context.root(&text(parameters, "rootId"))?;
+    if let Some(hosted) = &root.hosted_branch {
+        return crate::hosted::get_file(&context, root, hosted, parameters);
+    }
     let resolved = context.resolve(root, &text(parameters, "path"))?;
     let mut out = Parameters::new();
     if !resolved.path.exists() && text(parameters, "missingOk") == "true" {
@@ -606,8 +623,12 @@ fn save_file(
     parameters: &Parameters,
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::Extend)?;
-    let _authz = ec.disable_authz();
     let root = context.root(&text(parameters, "rootId"))?;
+    if let Some(hosted) = &root.hosted_branch {
+        // a commit as the user, with the hosting's checks on (crate::hosted)
+        return crate::hosted::save_file(&context, root, hosted, parameters);
+    }
+    let _authz = ec.disable_authz();
     let resolved = context.resolve(root, &text(parameters, "path"))?;
     save_text(
         &context,
@@ -770,8 +791,12 @@ fn create_file(
     parameters: &Parameters,
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::Extend)?;
-    let _authz = ec.disable_authz();
     let root = context.root(&text(parameters, "rootId"))?;
+    if let Some(hosted) = &root.hosted_branch {
+        // a commit as the user, with the hosting's checks on (crate::hosted)
+        return crate::hosted::create_file(&context, root, hosted, parameters);
+    }
+    let _authz = ec.disable_authz();
     let resolved = context.resolve(root, &text(parameters, "path"))?;
     context.may_write(root, &resolved.relative)?;
     if resolved.path.exists() {
@@ -804,8 +829,12 @@ fn create_directory(
     parameters: &Parameters,
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::Extend)?;
-    let _authz = ec.disable_authz();
     let root = context.root(&text(parameters, "rootId"))?;
+    if let Some(hosted) = &root.hosted_branch {
+        // a commit as the user, with the hosting's checks on (crate::hosted)
+        return crate::hosted::create_directory(&context, root, hosted, parameters);
+    }
+    let _authz = ec.disable_authz();
     let resolved = context.resolve(root, &text(parameters, "path"))?;
     context.may_write(root, &resolved.relative)?;
     unfenced(moqui_core::entity::fence::Effect::Resource, &resolved.relative)?;
@@ -832,8 +861,12 @@ fn rename_path(
     parameters: &Parameters,
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::Extend)?;
-    let _authz = ec.disable_authz();
     let root = context.root(&text(parameters, "rootId"))?;
+    if let Some(hosted) = &root.hosted_branch {
+        // a commit as the user, with the hosting's checks on (crate::hosted)
+        return crate::hosted::rename_path(&context, root, hosted, parameters);
+    }
+    let _authz = ec.disable_authz();
     let from = context.resolve(root, &text(parameters, "path"))?;
     let to = context.resolve(root, &text(parameters, "to"))?;
     context.may_write(root, &from.relative)?;
@@ -897,8 +930,12 @@ fn delete_path(
     parameters: &Parameters,
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::Extend)?;
-    let _authz = ec.disable_authz();
     let root = context.root(&text(parameters, "rootId"))?;
+    if let Some(hosted) = &root.hosted_branch {
+        // a commit as the user, with the hosting's checks on (crate::hosted)
+        return crate::hosted::delete_path(&context, root, hosted, parameters);
+    }
+    let _authz = ec.disable_authz();
     let resolved = context.resolve(root, &text(parameters, "path"))?;
     if resolved.relative.is_empty() {
         return Err(LibError::new("a root is not deleted from here"));
@@ -1004,6 +1041,9 @@ fn find_files(
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::View)?;
     let root = context.root(&text(parameters, "rootId"))?;
+    if let Some(hosted) = &root.hosted_branch {
+        return Ok(crate::hosted::find_files(hosted));
+    }
     let files = root_files(&context, root, 50_000);
     let mut out = Parameters::new();
     out.insert("files".into(), json_value(&files));
@@ -1041,7 +1081,11 @@ fn search_files(
     let mut results = Vec::new();
     // text through git grep; a regular expression by Rust's, as Replace across files reads it, so the two agree
     let truncated;
-    if root.kind == RootKind::Git && !regex {
+    if let Some(hosted) = &root.hosted_branch {
+        // a hosted root through the hosting's reads, with the same matcher and the scan's budgets (crate::hosted)
+        let matcher = crate::replace::compile(&query, regex, case).map_err(LibError::new)?;
+        truncated = crate::hosted::search_files(&context, hosted, &matcher, &filter, LIMIT, &mut results);
+    } else if root.kind == RootKind::Git && !regex {
         let mut args = vec!["grep", "-n", "-I", "--no-color", "-z", "--untracked", "-F"];
         if !case {
             args.push("-i");
@@ -1098,6 +1142,9 @@ fn check_file(
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::View)?;
     let root = context.root(&text(parameters, "rootId"))?;
+    if root.hosted_branch.is_some() {
+        return crate::hosted::check_file(&context, parameters);
+    }
     let resolved = context.resolve(root, &text(parameters, "path"))?;
     let content = text(parameters, "text");
     let problems = if resolved.relative.ends_with(".xml") {
@@ -1698,6 +1745,7 @@ mod tests {
             worktree_of: None,
             conversation_id: None,
             worktree_user_id: None,
+            hosted_branch: None,
         };
         let git = Git {
             command: "git".into(),

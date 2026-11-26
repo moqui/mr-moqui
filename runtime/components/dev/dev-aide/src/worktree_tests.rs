@@ -36,6 +36,7 @@ fn rooted(id: &str, path: &str, worktree_of: Option<&str>, conversation: Option<
         worktree_of: worktree_of.map(str::to_string),
         conversation_id: conversation.map(str::to_string),
         worktree_user_id: worktree_of.and(user).map(str::to_string),
+        hosted_branch: None,
     }
 }
 

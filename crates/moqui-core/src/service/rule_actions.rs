@@ -61,23 +61,38 @@ pub(crate) fn condition_allows(condition: &str) -> Result<bool, crate::context::
     crate::script::eval_condition(trimmed)
 }
 
-/// Run action XML on the shared action runner. A bare element is wrapped in `<actions>`.
-pub(crate) fn run_stored_actions(actions: &str) -> Result<(), crate::context::Error> {
+/// Where a rule's `actions` element is in its file, so a trace (`script::trace`) and a generated script's name tell its
+/// block apart. `None` for a rule with no actions or read from no file.
+pub(crate) fn actions_source(rule: &moqui_lib::node::MNode) -> Option<moqui_lib::error::SourceLocation> {
+    rule.first_named("actions")
+        .map(|actions| moqui_lib::error::SourceLocation {
+            file: actions.file_location(),
+            line: actions.line(),
+            column: actions.column(),
+        })
+}
+
+/// Run action XML on the shared action runner, named after `source`. A bare element is wrapped in `<actions>`.
+pub(crate) fn run_stored_actions(
+    actions: &str,
+    source: Option<&moqui_lib::error::SourceLocation>,
+) -> Result<(), crate::context::Error> {
     let trimmed = actions.trim();
     if trimmed.is_empty() {
         return Ok(());
     }
     let _authz = keep_authz();
     if trimmed.starts_with("<actions") {
-        return crate::script::run_actions(trimmed);
+        return crate::script::run_actions_at(trimmed, source);
     }
-    crate::script::run_actions(&format!("<actions>{trimmed}</actions>"))
+    crate::script::run_actions_at(&format!("<actions>{trimmed}</actions>"), source)
 }
 
 /// [`run_stored_actions`] with the rule's prepared script kept in `prepared` (plans/Profiling3.md W1).
 pub(crate) fn run_prepared_actions(
     actions: &str,
     prepared: &crate::script::PreparedActions,
+    source: Option<&moqui_lib::error::SourceLocation>,
 ) -> Result<(), crate::context::Error> {
     let trimmed = actions.trim();
     if trimmed.is_empty() {
@@ -92,7 +107,7 @@ pub(crate) fn run_prepared_actions(
                 std::borrow::Cow::Owned(format!("<actions>{trimmed}</actions>"))
             }
         },
-        None,
+        source,
     )
 }
 
@@ -135,6 +150,7 @@ mod tests {
         );
         super::run_stored_actions(
             "<script>ec.artifactExecution.disableAuthz(); ec.artifactExecution.disableEntityEca()</script>",
+            None,
         )
         .unwrap();
         assert!(
@@ -149,6 +165,7 @@ mod tests {
         let failed = super::run_prepared_actions(
             "<script>ec.artifactExecution.disableTarpit(); throw new Error('down')</script>",
             &prepared,
+            None,
         );
         assert!(failed.is_err());
         assert!(

@@ -16,12 +16,17 @@ The assisted IDE of mr-moqui (`plans/design-dev-aide.md`), at `/qapps/dev` on a 
   (stage, unstage, discard, commit with the task trailer), Commits, Fetch, Pull, Push and Publish. In the
   terminal (`moqui tui`) it is a simpler form, `WorkspaceTui.xml`: the tree, Go to file and Search, one file in the
   `code` editor with Save and its problems (and References and Browse for the artifacts it defines), Changes with the commit form, Commits with Cherry-pick and Revert, and a Git
-  menu; branches, tags, stashes, merge requests, review and blame open in the browser.
+  menu; branches, tags, stashes, merge requests, review and blame open in the browser. A hosted root (Repositories ›
+  Add hosted root) is a repository of this server's git hosting at a branch, with no working tree: each Save (its
+  message asked), new file or folder, move and delete is a commit there as you, which its rights and branch rules allow
+  or refuse, and nothing of it is loaded or run.
 - **Entities** is the entity modeler: an entity as the server merged it, with each field's origin, its edits going to the
   site's `extend-entity` when it is upstream; Add field by kind (Picklist and Status write their seed records too), the
   relationships, the incoming ones, indexes, a view entity's members and aliases, the table against the fields, and for
   the full tier the changes the table check never makes, behind a typed confirm. Saving relinks the model and adds the
-  columns, no restart. A data file's records show as tables, with Load this file.
+  columns, no restart. A data file's records show as tables, with Load this file and Load the changed records, which
+  compares each record with the text last loaded and the database and shows the conflicts before it writes (in the
+  terminal, from the file's menu, when nothing needs a choice).
 - **Screens** is the screen builder: the screen tree as the screen facade mounts it, and a screen on the design canvas,
   its real render in a frame from the unsaved buffers with each widget stamped with its source, an upstream screen in
   extension mode (every edit into the site's `screen-extend`), Add column and Add field (placed by `after=` in the layout
@@ -35,12 +40,17 @@ The assisted IDE of mr-moqui (`plans/design-dev-aide.md`), at `/qapps/dev` on a 
 - **Services** is the service writer: a service's settings and parameters (nested ones too: Add child in a Map or a
   List, Edit and Remove on each, as the terminal twin's), its actions in the logic composer (blocks as sentences, chips
   that edit an attribute, the palette, the generated JavaScript), its SECA rules, and Try in sim with the rows it would
-  write, Save as spec and Run spec (in the sim). In the terminal it is `Services/EditTui`: Try, the settings, the
-  parameters (nested ones too), the actions read only and the SECA rules (the service a new rule calls is searched by
-  name, as is the one a new button of the screen builder's twin calls), its edits staged in the user's edit buffer
-  until Save (below). **ECA Rules** lists the active rules of each kind with their files; a rules file opens in the ECA
-  view, where Try the condition runs a rule's condition against a context (a SECA's service's last Try, a record, or
-  for a gitECA rule a push from the push log).
+  write, Save as spec and Run spec (in the sim). A Try in sim runs the service as the unsaved service and script buffers
+  define it, and the composer then marks each block run (its count and the values it set on hover), not run, or failed;
+  Dev Assist's `try_service` does the same on a proposal's text. In the terminal it is `Services/EditTui`: Try, the
+  settings, the parameters (nested ones too), the actions read only and the SECA rules (the service a new rule calls is
+  searched by name, as is the one a new button of the screen builder's twin calls), its edits staged in the user's edit
+  buffer until Save (below). **ECA Rules** lists the active rules of each kind with their files; a rules file opens in
+  the ECA view, where Try the condition runs a rule's condition against a context (a SECA's service's last Try, a
+  record, or for a gitECA rule a push from the push log); Run the trigger in sim runs the rule's service call or entity
+  operation with it and marks the rule's actions; a context is saved as a named fixture (`test/fixtures/<name>.json`),
+  and Save as spec writes a feature that runs the rule's trigger with it (a gitECA rule's condition only: a spec replays
+  no push).
 - **Browser** (Artifacts › Browser) is an artifact in the center with what uses it and what it uses, by kind: a
   pan-and-zoom canvas in the browser, and in the terminal Miller columns (`BrowseTui.xml`, the `artifact-browser`
   component) where Enter re-centers on a row, Backspace and `]` walk the trail, `k`, `h` and `x` filter, and the
@@ -100,7 +110,7 @@ Its Rust crate is linked into the Maximal package (the default) and Debug, and i
 (the `devtools` feature). In another package the screens load and the services say they are not built in.
 
 - **Tests** ([the two suites](../../../../docs/Build-Test.md#the-two-suites)): the regression suite is `./moq test
-  dev-aide` (the screens, the Workspace's terminal form on a scratch root, the docs, the terminal's guided editors against a throw-away root), `cargo test -p dev-aide` (confinement, the git parsers, the Browser's sections, the edit buffers),
+  dev-aide` (the screens, the Workspace's terminal form on a scratch root, the docs, the terminal's guided editors against a throw-away root, the three-way data load, a hosted root on a scratch repository), `cargo test -p dev-aide` (confinement, the git parsers, the Browser's sections, the edit buffers),
   `moqui test-client runtime/components/dev/dev-aide --offline` (the client), `cargo test -p moqui-host --test it devaide` (saves, the lock and tiers, git and Publish on scratch
   repositories, an entity save's relink, a docs export; `devaide_group`: the instance as its own group server, Connect
   through the app sign-in, merge requests, push to review, check out, review threads, statuses, the agreement and

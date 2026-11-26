@@ -27,6 +27,7 @@ use crate::context::Error;
 pub(super) struct EmailRule {
     condition: String,
     actions: String,
+    actions_source: Option<moqui_lib::error::SourceLocation>,
 }
 
 pub(super) fn email_rule_from(node: &MNode) -> EmailRule {
@@ -36,6 +37,7 @@ pub(super) fn email_rule_from(node: &MNode) -> EmailRule {
             .first_named("actions")
             .map(|child| child.write_string())
             .unwrap_or_default(),
+        actions_source: super::rule_actions::actions_source(node),
     }
 }
 
@@ -63,7 +65,7 @@ pub fn run_email_rule(index: usize, fields: &BTreeMap<String, Value>) -> Result<
 fn run_rule(rule: &EmailRule, fields: &BTreeMap<String, Value>) -> Result<(), Error> {
     let _frame = super::rule_actions::publish_names(fields)?;
     if super::rule_actions::condition_allows(&rule.condition)? {
-        super::rule_actions::run_stored_actions(&rule.actions)?;
+        super::rule_actions::run_stored_actions(&rule.actions, rule.actions_source.as_ref())?;
     }
     Ok(())
 }

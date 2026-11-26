@@ -53,6 +53,31 @@ const GLOBALS_JS: &str = concat!(
     for (const name of ["compare", "numberToWords", "numberToWordsWithDecimal", "__compareOrder", "__inDateRange"]) {
         global[name] = hidden[name];
     }
+    // the trace calls of a traced XML actions script (`script::trace`): a long list goes as its first items and a plain
+    // object of many keys as its first ones, so a value is not converted whole to show a little of it
+    // nested arrays and plain objects too, three levels down as the host reads them (`trace::MAX_DEPTH`); a host object
+    // (an entity value or list) goes as it is, which the host bounds itself
+    const traceBound = (value, depth = 0) => {
+        const plain = value !== null && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype;
+        if (!Array.isArray(value) && !plain) return value;
+        if (depth >= 3) return "…";
+        if (Array.isArray(value)) {
+            const out = value.slice(0, 10).map((item) => traceBound(item, depth + 1));
+            if (value.length > 10) out.push("… " + (value.length - 10) + " more");
+            return out;
+        }
+        const keys = Object.keys(value);
+        const out = {};
+        for (const key of keys.slice(0, 30)) {
+            // a host object read with its field's name stays whole, for the host to hide an encrypted field
+            out[key] = key === "__traceEntity" ? value[key] : traceBound(value[key], depth + 1);
+        }
+        if (keys.length > 30) out["…"] = (keys.length - 30) + " more";
+        return out;
+    };
+    global.__moquiTrace = function __moquiTrace(op, path, names, values) {
+        hidden.__moquiTrace(op, path, names, values === undefined ? undefined : values.map(traceBound));
+    };
     global.System = { getProperty: hidden.getProperty, isPropertySet: hidden.isPropertySet,
         propertyMatches: hidden.propertyMatches, secretCodeHash: hidden.secretCodeHash };
     const web = helpers.WebUtilities, string = helpers.StringUtilities, collection = helpers.CollectionUtilities;
@@ -186,6 +211,14 @@ pub(crate) static SHIM: Shim = Shim {
             number_to_words_with_decimal
         ),
         method!("global", "__compareOrder", [Value, Value], None, leaf, compare_order),
+        method!(
+            "global",
+            "__moquiTrace",
+            [Int, Text, OptValue, OptValue],
+            None,
+            leaf,
+            trace_record
+        ),
         method!(
             "global",
             "__inDateRange",
@@ -616,6 +649,14 @@ fn compare_order(call: &mut Call<'_>) -> Result<Ret, HostError> {
         Ordering::Greater => 1,
     }
     .into())
+}
+
+/// `__moquiTrace(op, path, names, values)`: a trace call of a traced XML actions script (`script::trace::record`).
+fn trace_record(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let op = call.int(0).unwrap_or(0);
+    let path = call.text(1).unwrap_or_default().to_string();
+    crate::script::trace::record(op, &path, call.value(2), call.value(3));
+    Ok(Ret::Undefined)
 }
 
 /// `__inDateRange(from, thru, valid)`: whether `valid` (now when empty) is in `[from, thru)`.

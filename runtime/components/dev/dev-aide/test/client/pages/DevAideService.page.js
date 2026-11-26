@@ -162,3 +162,49 @@ test("a gitECA rule asks for the pushes its patterns take, and a change of the p
     assert.equal(ops.updateLabel(update), "2026-11-25 10:20 · jane · main, v1 (refused) · done");
     assert.equal(ops.updateLabel({ source: "fetch", refList: [] }), "fetch · no refs");
 });
+
+// a Try's trace on the composer's blocks (9.2): the actions at line 12 of service/a/Things.xml, paths under them
+const traced = () => el("actions", [0, 1], [], [
+    el("set", [0, 1, 0], [["field", "total"], ["from", "1"]]),
+    el("if", [0, 1, 1], [["condition", "total > 1"]], [
+        el("then", [0, 1, 1, 0], [], [el("message", [0, 1, 1, 0, 0], [], [], "big")]),
+        el("else", [0, 1, 1, 1], [], [el("set", [0, 1, 1, 1, 0], [["field", "size"], ["value", "small"]])])]),
+    el("service-call", [0, 1, 2], [["name", "a#B"]], [el("field-map", [0, 1, 2, 0], [["field-name", "x"]])]),
+    el("set", [0, 1, 3], [["field", "after"], ["value", "never"]])]);
+const trace = { blocks: [
+    { rootId: "other", path: "service/a/Things.xml", line: 12, elements: {} },
+    { rootId: "app", path: "service/a/Things.xml", line: 12, elements: {
+        "0": { count: 1, values: { total: "1" } }, "1": { count: 1, values: {} }, "1.1.0": { count: 1, values: { size: "small" } },
+        "2": { count: 1, values: {}, failed: "no service a#B" } } }],
+failed: { rootId: "app", path: "service/a/Things.xml", line: 12, element: "2", message: "no service a#B" } };
+
+test("a Try's trace marks the composer's blocks run, not run or failed, with the counts and values on hover", () => {
+    const block = ops.traceBlock(trace, "app", "service/a/Things.xml", 12);
+    assert.equal(block, trace.blocks[1]);
+    assert.equal(ops.traceBlock(trace, "app", "service/a/Things.xml", 30), null);
+    const marks = ops.traceMarks(traced(), block);
+    const states = Object.fromEntries([...marks].map(([path, mark]) => [path, mark.state]));
+    assert.equal(JSON.stringify(states), JSON.stringify({ "0": "run", "1.0.0": "not-run", "1.0": "not-run", "1.1.0": "run", "1.1": "run", "1": "run",
+        "2.0": "run", "2": "failed", "3": "not-run" }));
+    assert.equal(ops.traceTitle(marks.get("0")), "Ran 1 time\ntotal = 1");
+    assert.equal(ops.traceTitle(marks.get("2")), "Ran 1 time\nFailed: no service a#B");
+    assert.equal(ops.traceTitle(marks.get("3")), "Not run in the last Try");
+    const run = ops.markLabel(ops.sentence(traced().children[0]), marks.get("0"));
+    assert.equal([run.headClass, run.badge, run.badgeClass].join(" "), "m-dev-trace-run ×1 m-dev-trace-run");
+    const failed = ops.markLabel(ops.sentence(traced().children[2]), marks.get("2"));
+    assert.equal([failed.headClass, failed.badge].join(" "), "m-dev-trace-failed failed");
+    const notRun = ops.markLabel(ops.sentence(traced().children[3]), marks.get("3"));
+    assert.equal([notRun.headClass, notRun.badge || ""].join(" "), "m-dev-trace-not-run ");
+    // no trace, no marks
+    assert.equal(ops.traceMarks(traced(), null).size, 0);
+});
+
+test("a Try runs over the unsaved service and script buffers, and a rule's spec names its trigger", () => {
+    const files = ops.tryFiles([{ rootId: "app", path: "service/a/Things.xml", text: "s" }, { rootId: "app", path: "service/a/Things.secas.xml", text: "r" },
+        { rootId: "app", path: "script/run.js", text: "j" }, { rootId: "app", path: "screen/A.xml", text: "x" }, { rootId: "app", path: "entity/E.xml", text: "e" }]);
+    assert.deepEqual(files.map((file) => file.path), ["service/a/Things.xml", "script/run.js"]);
+    assert.deepEqual(ops.ruleSpecQuery(el("seca", [0], [["service", "a.B.make#C"], ["when", "post-service"]]), ""),
+        { kind: "seca", target: "a.B.make#C", operation: "", condition: "" });
+    assert.deepEqual(ops.ruleSpecQuery(el("eeca", [1], [["entity", "up.Widget"], ["on-update", "true"], ["on-delete", "true"]]), "x > 1"),
+        { kind: "eeca", target: "up.Widget", operation: "update", condition: "x > 1" });
+});
