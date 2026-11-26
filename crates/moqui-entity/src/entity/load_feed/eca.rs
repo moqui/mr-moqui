@@ -241,7 +241,20 @@ impl EcaIndex {
 /// Read the facade's EECA rules again from the entity directories and swap them in (plans/design-dev-aide.md 6.1, F4);
 /// a write in flight keeps the rules it has. Answers how many rules there are now.
 pub fn reload_eca_rules(facade: &EntityFacade) -> usize {
-    let index = Arc::new(EcaIndex::load(facade, &facade.model_paths()));
+    reload_eca_rules_with(facade, &[])
+}
+
+/// [`reload_eca_rules`] reading `component_dirs` too, those the model is not read from yet: a site's first rules file
+/// makes its component's `entity` directory, which the model reads only at its next relink (a component's first
+/// entity file).
+pub fn reload_eca_rules_with(facade: &EntityFacade, component_dirs: &[PathBuf]) -> usize {
+    let mut paths = facade.model_paths();
+    for dir in component_dirs {
+        if !paths.contains(dir) {
+            paths.push(dir.clone());
+        }
+    }
+    let index = Arc::new(EcaIndex::load(facade, &paths));
     let count = index.rules.len();
     *write(&facade.inner.eca_rules) = Some(index);
     count
