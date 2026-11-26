@@ -76,6 +76,11 @@ fn add_error(text: impl Into<String>) {
     ExecutionContext::with_current(|ctx| ctx.message().add_error(text));
 }
 
+fn add_message(text: impl Into<String>) {
+    let text = text.into();
+    ExecutionContext::with_current(|ctx| ctx.message().add_message(text));
+}
+
 /// The errors joined by newlines, as `getErrorsString`, then cleared with the messages, as `clearErrors`.
 fn take_errors() -> String {
     ExecutionContext::with_current(|ctx| {

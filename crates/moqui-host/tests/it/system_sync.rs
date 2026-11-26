@@ -399,11 +399,12 @@ fn an_entity_sync_push_and_a_pull_complete_with_a_history_row(gate: &crate::comm
         assert_eq!(text(row, "recordsStored"), "3", "{sync_id}: {row}");
         assert!(!text(row, "inclusiveThruTime").is_empty(), "{sync_id}: {row}");
 
-        renders(
+        let detail = renders(
             address,
             &format!("/System/EntitySync/EntitySyncDetail.text?entitySyncId={sync_id}"),
             &john,
         );
+        assert!(detail.contains("A password is set"), "{sync_id}: {detail}");
         renders(
             address,
             &format!("/System/EntitySync/EntitySyncHistory.text?entitySyncId={sync_id}"),

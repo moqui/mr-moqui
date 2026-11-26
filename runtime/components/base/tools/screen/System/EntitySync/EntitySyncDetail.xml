@@ -18,10 +18,11 @@ along with this software (see the LICENSE.md file). If not, see
     <parameter name="entitySyncId" required="true"/>
 
     <!-- an empty password keeps the stored one; a new target address or username clears it unless one is entered in the
-        same save (Security.eecas.xml EntitySyncSecretMoves, SEC-TLS-116) -->
+        same save (Security.eecas.xml EntitySyncSecretMoves, SEC-TLS-116). Inside actions a service-call takes the
+        request's fields only by its in-map (plans/ui-review-system-ai-integrations.md AI-UI-005). -->
     <transition name="updateEntitySync"><actions>
             <script>if (!targetPassword) context.remove('targetPassword')</script>
-            <service-call name="update#moqui.entity.sync.EntitySync"/></actions>
+            <service-call name="update#moqui.entity.sync.EntitySync" in-map="context"/></actions>
         <default-response url="."/></transition>
     <transition name="resetNotStarted">
         <service-call name="update#moqui.entity.sync.EntitySync" in-map="{entitySyncId:entitySyncId, statusId:'EsNotStarted'}"/>
