@@ -493,11 +493,39 @@ impl ClientRule {
     }
 }
 
+/// The in-parameters of `def` as a call takes them: merged by name in the order written, with its `auto-parameters`
+/// expanded by the entity facade of the context entered (kept on the definition); where they cannot be expanded (no
+/// facade), the declared ones merged by name. A name is there once: with `implements`, the definition's own list may
+/// hold a name twice, a parameter written after an `auto-parameters` kept for the expansion to merge.
+#[must_use]
+pub fn merged_in_params(def: &ServiceDef) -> Arc<[ParamDef]> {
+    let facade = super::validate::current_facade();
+    super::validate::declared_in(def, facade.as_ref()).unwrap_or_else(|_| merged_declared(&def.in_params).into())
+}
+
+/// [`merged_in_params`] of the out-parameters.
+#[must_use]
+pub fn merged_out_params(def: &ServiceDef) -> Vec<ParamDef> {
+    let facade = super::validate::current_facade();
+    super::validate::expand_params(def, &def.out_params, facade.as_ref())
+        .unwrap_or_else(|_| merged_declared(&def.out_params))
+}
+
+/// `params` merged by name ([`merge_param`]), the `auto-parameters` left out.
+fn merged_declared(params: &[ParamDef]) -> Vec<ParamDef> {
+    let mut out = Vec::new();
+    for param in params.iter().filter(|param| !param.name.is_empty()) {
+        merge_param(&mut out, param.clone());
+    }
+    out
+}
+
 /// `FormInstance.getFieldValidationJsRules` for a service parameter: each rule the browser checks with its message,
 /// not localized yet. None when the service or parameter is not there.
 pub fn input_rules(service: &str, parameter: &str) -> Option<Vec<(ClientRule, String)>> {
     let def = find(service)?;
-    let param = def.in_params.iter().find(|param| param.name == parameter)?;
+    let params = merged_in_params(&def);
+    let param = params.iter().find(|param| param.name == parameter)?;
     let mut rules: Vec<(ClientRule, String)> = Vec::new();
     let mut push = |rule: ClientRule, message: &str| rules.push((rule, message.to_string()));
     let pattern = |text: &str| ClientRule::Pattern(text.to_string());
@@ -580,7 +608,8 @@ pub struct ParamHints {
 /// The validation hints of input parameter `parameter` of `service`, as `getFieldValidationClasses` reads them.
 pub fn input_hints(service: &str, parameter: &str) -> Option<ParamHints> {
     let def = find(service)?;
-    let param = def.in_params.iter().find(|param| param.name == parameter)?;
+    let params = merged_in_params(&def);
+    let param = params.iter().find(|param| param.name == parameter)?;
     let mut classes = Vec::new();
     if param.required == Required::True {
         classes.push("required");
@@ -1944,8 +1973,8 @@ fn resolve_one(
             let (mut in_params, mut out_params) = (Vec::new(), Vec::new());
             for (target, required) in &targets {
                 def.no_remember_parameters |= target.no_remember_parameters;
-                implemented(&mut in_params, &target.in_params, *required);
-                implemented(&mut out_params, &target.out_params, *required);
+                implemented(&mut in_params, &target.in_params, *required, &target.noun);
+                implemented(&mut out_params, &target.out_params, *required, &target.noun);
             }
             merge_own(&mut in_params, std::mem::take(&mut def.in_params));
             merge_own(&mut out_params, std::mem::take(&mut def.out_params));
@@ -1975,16 +2004,29 @@ fn merge_own(dest: &mut Vec<ParamDef>, own: Vec<ParamDef>) {
 
 /// The parameters of an implemented service, added before the service's own, with `required` set on each when the
 /// `implements` element has it. A `required="disabled"` parameter is left out: it behaves as if it did not exist. When
-/// two implemented services have a parameter of the same name the first one's is kept.
-fn implemented(dest: &mut Vec<ParamDef>, extra: &[ParamDef], required: Option<bool>) {
+/// two implemented services have a parameter of the same name the first one's is kept; one service's own list keeps a
+/// name twice in its order (a parameter after an `auto-parameters`, [`merge_own`]) for the expansion to merge, as Java
+/// copies the implemented service's merged parameters. An `auto-parameters` with no `entity-name` reads the implemented
+/// service's noun, as Java expands it on that service before copying.
+fn implemented(dest: &mut Vec<ParamDef>, extra: &[ParamDef], required: Option<bool>, noun: &str) {
+    let earlier: std::collections::HashSet<String> = dest
+        .iter()
+        .filter(|have| !have.name.is_empty())
+        .map(|have| have.name.clone())
+        .collect();
     for param in extra {
         if param.required == Required::Disabled {
             continue;
         }
-        if !param.name.is_empty() && dest.iter().any(|have| have.name == param.name) {
+        if !param.name.is_empty() && earlier.contains(&param.name) {
             continue;
         }
         let mut param = param.clone();
+        if let Some(auto) = param.auto.as_mut() {
+            if auto.entity_name.as_deref().is_none_or(str::is_empty) && !noun.is_empty() {
+                auto.entity_name = Some(noun.to_string());
+            }
+        }
         if let Some(flag) = required {
             let flag = if flag { Required::True } else { Required::False };
             param.required = flag;
