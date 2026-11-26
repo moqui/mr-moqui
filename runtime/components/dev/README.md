@@ -42,9 +42,12 @@ New component), each with a `README.md` that lists its files:
 | `skills` | `kinds/skills/` | A skill (`skill/@package@.md`), a suggested prompt (`AgentSuggestedPrompt` seed) and the retrieval cases; no code. |
 | `dev-tool` | `kinds/dev-tool/` | Mock services and a test data screen, `purpose="dev"`, made in `runtime/components/dev` always. |
 
-`--git-remote URL` (Home: Git remote) starts the repository with that remote as `origin`: an `https` URL with no user
-part (or `http` to 127.0.0.1), `ssh://`, `git://` or `user@host:path`; a URL with a credential in it, a local path,
-`file:` or git's `<transport>::` is refused before anything is made. `moq` and the Dev AIDE (`dev-aide/src/template.rs`,
+`--git-remote URL` (Home: Git remote) starts the repository with that remote as `origin`: `https://host/path` with no
+user part (`http` only to 127.0.0.1 or [::1]), `ssh://` or `git://` with an optional user, or `user@host:path`, a host
+being a dotted name or an IPv4 address and nothing starting with `-`; a URL with a credential in it, a local path,
+`file:`, git's `<transport>::`, `%`, `?` or `#` is refused before anything is made. So is a name whose package (`@package@`)
+another component's services or entities are in (`org`, `moqui`, `mantle`), and a theme named as a webroot path
+(`css`, `libs`, `apps`, `rest`, ...), since it is served at `/<name>/`. `moq` and the Dev AIDE (`dev-aide/src/template.rs`,
 the remote check in `dev-aide/src/vcs.rs`) follow these same rules, and a dev-aide test checks that they make the same
 files for each kind and part and refuse the same remotes.
 

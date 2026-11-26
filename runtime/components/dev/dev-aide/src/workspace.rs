@@ -1462,6 +1462,12 @@ fn create_component(
     if target.exists() {
         return Err(LibError::new(format!("{} is there already", target.display())));
     }
+    // its package another component's, or a theme on a webroot path: moq's template_name_refusal refuses the same
+    if let Some(components) = target.parent().and_then(Path::parent) {
+        if let Some(why) = template::name_refusal(components, &name, kind) {
+            return Err(LibError::new(why));
+        }
+    }
     let source = moqui_core::context::layout::set_dir(runtime, moqui_core::context::layout::Set::Dev).join("template");
     if !source.join("component.xml").is_file() {
         return Err(LibError::new(format!(

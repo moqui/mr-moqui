@@ -281,66 +281,55 @@ pub(crate) fn checked_url(text: &str) -> Result<url::Url, LibError> {
     Ok(parsed)
 }
 
-/// A remote URL a new repository may start with as `origin` (create#Component's `gitRemote`), parsed by the `url` crate:
-/// `https` (or `http` to a loopback IP literal, as [`web_url`] takes it) with no user part, which would be a credential
-/// kept in `.git/config`; `ssh` or `git` with a host and no password (an SSH user is the account, not a secret); or the
-/// scp-like `[user@]host:path` of SSH. Never an option (`-...`), a local path or `file:`, git's `<transport>::<address>`
-/// (`ext::` runs a command), whitespace, a control character or `\`.
+/// The forms of a remote URL [`checked_remote`] takes, as regular expressions over the whole text, and the same ones
+/// moq's `template_remote` (scripts/moq/components.sh) matches with `[[ =~ ]]`: a user is letters, digits, `.`, `_` and
+/// `-`, not first a `-` or a `.`; a host a dotted name or an IPv4 address (not first a `-`; `[::1]` for a scheme
+/// form); a path letters, digits and `._~/:@+-`, first a letter, a digit or one of `._~+` (or `/` in the scp-like
+/// form). No `%`, `?`, `#`,
+/// whitespace or `\` anywhere, so what git is given is what was checked.
+pub(crate) const REMOTE_FORMS: [&str; 4] = [
+    // https, no user part: a user part would be a credential kept in .git/config
+    r"^https://([A-Za-z0-9][A-Za-z0-9-]*(\.[A-Za-z0-9-]+)+|\[::1\])(:[0-9]+)?/[A-Za-z0-9._~+][A-Za-z0-9._~/:@+-]*$",
+    // http only to the loopback IP literals, as web_url
+    r"^http://(127\.0\.0\.1|\[::1\])(:[0-9]+)?/[A-Za-z0-9._~+][A-Za-z0-9._~/:@+-]*$",
+    // ssh and git, with an optional SSH user (the account, not a secret) and no password
+    r"^(ssh|git)://([A-Za-z0-9_][A-Za-z0-9._-]*@)?([A-Za-z0-9][A-Za-z0-9-]*(\.[A-Za-z0-9-]+)+|\[::1\])(:[0-9]+)?/[A-Za-z0-9._~+][A-Za-z0-9._~/:@+-]*$",
+    // scp-like [user@]host:path
+    r"^([A-Za-z0-9_][A-Za-z0-9._-]*@)?[A-Za-z0-9][A-Za-z0-9-]*(\.[A-Za-z0-9-]+)+:[A-Za-z0-9._~/+][A-Za-z0-9._~/:@+-]*$",
+];
+
+/// A remote URL a new repository may start with as `origin` (create#Component's `gitRemote`), trimmed: one of
+/// [`REMOTE_FORMS`], with no `::` outside `[::1]` (git's `<transport>::<address>`, where `ext::` runs a command), and,
+/// for a scheme form, a URL the `url` crate parses to the same scheme with no password (and for https and http one
+/// [`web_url`] takes, with no user part). Never an option, a local path, `file:` or a credential.
 pub(crate) fn checked_remote(text: &str) -> Result<String, LibError> {
     let text = text.trim();
-    let refuse = || LibError::new(format!("{text} is not a remote URL a new repository takes"));
-    if text.is_empty()
-        || text.starts_with('-')
-        || text.contains("::")
-        || text.contains('\\')
-        || text.chars().any(|ch| ch.is_whitespace() || ch.is_control())
+    let refuse = || {
+        LibError::new(format!("{text} is not a remote URL a new repository takes: https://host/path with no user part, ssh://, git:// or user@host:path"))
+    };
+    static FORMS: std::sync::OnceLock<Vec<regex::Regex>> = std::sync::OnceLock::new();
+    let forms = FORMS.get_or_init(|| {
+        REMOTE_FORMS
+            .iter()
+            .filter_map(|form| regex::Regex::new(form).ok())
+            .collect()
+    });
+    if forms.len() != REMOTE_FORMS.len()
+        || text.replace("[::1]", "").contains("::")
+        || !forms.iter().any(|form| form.is_match(text))
     {
         return Err(refuse());
     }
-    if text.contains("://") {
+    if let Some((scheme, _)) = text.split_once("://") {
         let parsed = url::Url::parse(text).map_err(|_| refuse())?;
-        if parsed.password().is_some() || parsed.host_str().is_none_or(str::is_empty) {
+        if parsed.scheme() != scheme || parsed.password().is_some() || parsed.host_str().is_none_or(str::is_empty) {
             return Err(refuse());
         }
-        return match parsed.scheme() {
-            "https" | "http" => {
-                let web = web_url(text).ok_or_else(refuse)?;
-                if web.username().is_empty() {
-                    Ok(text.to_string())
-                } else {
-                    Err(LibError::new(format!(
-                        "{text} carries a user part: give the URL without it, and the credential to git"
-                    )))
-                }
-            }
-            "ssh" | "git" => Ok(text.to_string()),
-            _ => Err(refuse()),
-        };
-    }
-    // scp-like: [user@]host:path, the host a name or an IPv4 address (not one letter, which is a Windows drive), no slash
-    // before the colon
-    let (authority, path) = text.split_once(':').ok_or_else(refuse)?;
-    let host = authority.rsplit_once('@').map_or(authority, |(user, host)| {
-        if user.is_empty()
-            || !user
-                .chars()
-                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-'))
-        {
-            ""
-        } else {
-            host
+        if matches!(scheme, "https" | "http") && web_url(text).is_none_or(|web| !web.username().is_empty()) {
+            return Err(refuse());
         }
-    });
-    let host_ok = host.len() > 1
-        && host.chars().next().is_some_and(|ch| ch.is_ascii_alphanumeric())
-        && host
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-'));
-    if host_ok && !path.is_empty() && !path.starts_with('-') {
-        Ok(text.to_string())
-    } else {
-        Err(refuse())
     }
+    Ok(text.to_string())
 }
 
 /// A remote URL without its user part (`https://ann:secret@h/a.git` is `https://h/a.git`), to send to a server.

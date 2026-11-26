@@ -12,11 +12,12 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Who may call the services of @Title@ (service/@package@/@Class@Services.xml): all of them, by the package's name
-    pattern, for the ADMIN group. -->
+<!-- Who may call the services of @Title@: those of service/@package@/@Class@Services.xml, by their names
+    (@package@.@Class@Services.*), for the ADMIN group, which a deny elsewhere still overrides. A pattern of the package
+    alone would grant every service in it. -->
 <entity-facade-xml type="seed">
     <artifactGroups artifactGroupId="@ID@_SERVICES" description="@Title@ services">
-        <artifacts artifactName="@package@\..*" nameIsPattern="Y" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
-        <authz artifactAuthzId="@ID@_SERVICES_ADMIN" userGroupId="ADMIN" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
+        <artifacts artifactName="@package@\.@Class@Services\..*" nameIsPattern="Y" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
+        <authz artifactAuthzId="@ID@_SERVICES_ADMIN" userGroupId="ADMIN" authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
     </artifactGroups>
 </entity-facade-xml>

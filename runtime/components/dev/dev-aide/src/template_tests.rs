@@ -239,42 +239,137 @@ fn a_part_leaves_out_the_other() {
     assert!(screens.join("screen/MyUi.xml").is_file());
 }
 
+/// Remote URLs a new repository takes, both ways.
+const GOOD_REMOTES: &[&str] = &[
+    "https://github.com/me/my-shop.git",
+    " https://git.example.com:8443/a/b.git ",
+    "http://127.0.0.1:3000/me/x.git",
+    "http://[::1]:3000/x.git",
+    "https://[::1]/x",
+    "https://github.com/x@y",
+    "https://xn--nxasmq6b.com/x",
+    "ssh://git@github.com/me/x.git",
+    "ssh://[::1]/x",
+    "git://git.example.com/x.git",
+    "git@github.com:me/my-shop.git",
+    "host.example.com:repos/x.git",
+    "a.b:c",
+    "1.2.3.4:x",
+];
+
+/// Remote URLs refused both ways: a credential, a local path or file:, a transport (`::`), an option or an option-like
+/// host or user, an encoded or a query or fragment part, a host with no dot (a one-letter one is a Windows drive).
+const BAD_REMOTES: &[&str] = &[
+    "",
+    "https://ann@github.com/me/x.git",
+    "https://ann:token@github.com/me/x.git",
+    "http://git.example.com/x.git",
+    "http://127.0.0.2/x.git",
+    "http://localhost/x.git",
+    "http://127.0.0.1.evil.com/x",
+    "HTTPS://github.com/me/x.git",
+    "https://github.com?@evil/x",
+    "https://github.com#@evil/x",
+    "https://ex%41mple.com/x",
+    "https://%2d/x",
+    "https://github.com/a%0ab",
+    "https:///x",
+    "https://:443/x",
+    "https://host/a b",
+    "ssh://ann:secret@host.example.com/x.git",
+    "ssh://user:@host.example.com/x",
+    "ssh://-oProxyCommand=touch%20x/y",
+    "ssh://-oProxyCommand=x@host.example.com/y",
+    "ssh://host.example.com/-x",
+    "ssh://@host.example.com/x",
+    "ssh:///x",
+    "ssh://ann@host/x",
+    "git://-x.example.com/y",
+    "file:///srv/x.git",
+    "file:foo",
+    "ext:foo",
+    "/srv/repos/x.git",
+    "../x.git",
+    "C:/repos/x.git",
+    "ab:/c",
+    "ab:c@d",
+    "ab@:c",
+    "user@ho_st.example.com:x",
+    "-a:b",
+    "-user@host.example.com:x",
+    ".user@host.example.com:x",
+    "host.example.com:-x",
+    "ext::sh -c touch% /tmp/pwned",
+    "fd::17",
+    "host.example.com:a::b",
+    "--upload-pack=touch /tmp/x",
+    "-oProxyCommand=x:y",
+    "@host.example.com:x",
+    "git@host.example.com:",
+    "https://github.com/me/x.git\nfoo",
+    r"https://github.com/me/x.git\nfoo",
+    "https://github.com\\me",
+    "a b:c",
+];
+
 #[test]
 fn a_remote_is_a_network_url_with_no_credential() {
     use crate::vcs::checked_remote;
-    for good in [
-        "https://github.com/me/my-shop.git",
-        " https://git.example.com:8443/a/b.git ",
-        "http://127.0.0.1:3000/me/x.git",
-        "ssh://git@github.com/me/x.git",
-        "git://git.example.com/x.git",
-        "git@github.com:me/my-shop.git",
-        "host.example.com:repos/x.git",
-    ] {
+    for good in GOOD_REMOTES {
         assert!(checked_remote(good).is_ok(), "{good}");
     }
-    for bad in [
-        "",
-        "https://ann@github.com/me/x.git",
-        "https://ann:token@github.com/me/x.git",
-        "http://git.example.com/x.git",
-        "ssh://ann:secret@host/x.git",
-        "file:///srv/x.git",
-        "/srv/repos/x.git",
-        "../x.git",
-        "C:/repos/x.git",
-        "ext::sh -c touch% /tmp/pwned",
-        "fd::17",
-        "--upload-pack=touch /tmp/x",
-        "-oProxyCommand=x:y",
-        "host:-x",
-        "@host:x",
-        "git@host:",
-        "https://github.com/me/x.git\nfoo",
-        "https://github.com\\me",
-        "a b:c",
-    ] {
+    for bad in BAD_REMOTES {
         assert!(checked_remote(bad).is_err(), "{bad}");
+    }
+}
+
+/// moq's `template_remote` has the Dev AIDE's forms, word for word, and gives each URL of both tables the same verdict.
+#[cfg(unix)]
+#[test]
+fn moq_checks_a_remote_as_the_dev_aide_does() {
+    let components = std::fs::read_to_string(repo().join("scripts/moq/components.sh")).unwrap();
+    let start = components.find("TEMPLATE_REMOTE_FORMS=(\n").unwrap() + "TEMPLATE_REMOTE_FORMS=(\n".len();
+    let forms: Vec<&str> = components[start..]
+        .lines()
+        .take_while(|line| line.trim() != ")")
+        .map(|line| line.trim().trim_matches('\''))
+        .collect();
+    assert_eq!(forms, crate::vcs::REMOTE_FORMS);
+    if std::process::Command::new("bash").arg("--version").output().is_err() {
+        eprintln!("skipped: no bash");
+        return;
+    }
+    // one bash run: each URL a line of 0 (taken) or 1, from a file of NUL-separated URLs
+    let scratch = Scratch::new("remotes");
+    let urls: Vec<&str> = GOOD_REMOTES.iter().chain(BAD_REMOTES).copied().collect();
+    let input = scratch.0.join("urls");
+    std::fs::write(&input, urls.join("\0") + "\0").unwrap();
+    let script = format!(
+        "source {}; while IFS= read -r -d '' url; do template_remote \"$url\"; echo $?; done < {}",
+        repo().join("scripts/moq/components.sh").display(),
+        input.display()
+    );
+    let output = std::process::Command::new("bash")
+        .args(["-c", &script])
+        .output()
+        .unwrap();
+    let verdicts: Vec<String> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::to_string)
+        .collect();
+    assert_eq!(
+        verdicts.len(),
+        urls.len(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    for (url, verdict) in urls.iter().zip(&verdicts) {
+        let rust = if crate::vcs::checked_remote(url).is_ok() {
+            "0"
+        } else {
+            "1"
+        };
+        assert_eq!(verdict, rust, "moq and the Dev AIDE differ on {url:?}");
     }
 }
 
@@ -346,5 +441,118 @@ fn moq_makes_the_same_component() {
         let output = moq(&["bad-remote", "--git-remote", bad]);
         assert!(!output.status.success(), "{bad}");
         assert!(!runtime.join("components/addon/bad-remote").exists(), "{bad}");
+    }
+    // a good one starts the repository with it as origin (git isolated from the desktop: no config, no prompt)
+    if std::process::Command::new("git").arg("--version").output().is_err() {
+        eprintln!("skipped the remote: no git");
+        return;
+    }
+    let git_env = [
+        ("HOME", scratch.0.display().to_string()),
+        ("GIT_CONFIG_GLOBAL", "/dev/null".to_string()),
+        ("GIT_CONFIG_NOSYSTEM", "1".to_string()),
+        ("GIT_TERMINAL_PROMPT", "0".to_string()),
+        ("GIT_ASKPASS", "false".to_string()),
+        ("SSH_ASKPASS", "false".to_string()),
+    ];
+    let remote = "git@git.example.com:me/with-remote.git";
+    let output = std::process::Command::new("bash")
+        .arg(repo().join("moq"))
+        .args([
+            "component-create",
+            "with-remote",
+            "--kind",
+            "data",
+            "--git-remote",
+            remote,
+        ])
+        .env("MOQUI_RUNTIME", &runtime)
+        .env_remove("XDG_CONFIG_HOME")
+        .envs(git_env.clone())
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let origin = std::process::Command::new("git")
+        .arg("-C")
+        .arg(runtime.join("components/addon/with-remote"))
+        .args(["config", "remote.origin.url"])
+        .env_remove("XDG_CONFIG_HOME")
+        .envs(git_env)
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&origin.stdout).trim(), remote);
+}
+
+/// A name whose package another component's services or entities are in, or a theme's name on a webroot path, is
+/// refused, the same by the Dev AIDE and by moq; any other name is taken.
+#[cfg(unix)]
+#[test]
+fn a_name_another_component_has_is_refused_both_ways() {
+    let scratch = Scratch::new("names");
+    let runtime = scratch.0.join("runtime");
+    let components = runtime.join("components");
+    let write = |path: &str, text: &str| {
+        let path = components.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    };
+    write("base/framework/component.xml", r#"<component name="moqui-framework"/>"#);
+    write("base/framework/service/org/moqui/X.xml", "<services/>");
+    write("base/webroot/component.xml", r#"<component name="webroot"/>"#);
+    write(
+        "base/webroot/screen/webroot.xml",
+        r#"<screen><subscreens><subscreens-item name="rest"/></subscreens></screen>"#,
+    );
+    write("base/webroot/screen/webroot/css/a.css", "");
+    write("base/webroot/screen/webroot/Login.xml", "<screen/>");
+    write("addon/shop/component.xml", r#"<component name="shop"/>"#);
+    write(
+        "addon/shop/entity/ShopEntities.xml",
+        r#"<entities><entity entity-name="A" package="mantle.shop"/></entities>"#,
+    );
+    write(
+        "dev/tool/MoquiConf.xml",
+        r#"<moqui-conf><screen-facade><screen location="component://webroot/screen/webroot.xml"><subscreens-item name="devstatic"/></screen></screen-facade></moqui-conf>"#,
+    );
+    write("dev/tool/component.xml", r#"<component name="tool"/>"#);
+    std::os::unix::fs::symlink(component_template(), components.join("dev/template")).unwrap();
+    assert!(taken_packages(&components).contains("org") && taken_packages(&components).contains("mantle"));
+    let bash = std::process::Command::new("bash").arg("--version").output().is_ok();
+    for (name, kind, refused) in [
+        ("org", Kind::Data, true),
+        ("Mantle", Kind::App(Part::All), true),
+        ("css", Kind::Theme, true),
+        ("login", Kind::Theme, true),
+        ("rest", Kind::Theme, true),
+        ("devstatic", Kind::Theme, true),
+        ("css", Kind::Data, false),
+        ("my-look", Kind::Theme, false),
+        ("my-shop", Kind::App(Part::All), false),
+    ] {
+        assert_eq!(
+            name_refusal(&components, name, kind).is_some(),
+            refused,
+            "{name} {kind:?}"
+        );
+        if !bash {
+            continue;
+        }
+        let output = std::process::Command::new("bash")
+            .arg(repo().join("moq"))
+            .args(["component-create", name, "--no-git"])
+            .args(match kind {
+                Kind::App(_) => vec![],
+                other => vec!["--kind", other.name()],
+            })
+            .env("MOQUI_RUNTIME", &runtime)
+            .output()
+            .unwrap();
+        assert_eq!(
+            !output.status.success(),
+            refused,
+            "moq: {name} {kind:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let _ = std::fs::remove_dir_all(components.join("addon").join(name));
     }
 }

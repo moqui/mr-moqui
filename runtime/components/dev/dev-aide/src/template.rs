@@ -75,6 +75,104 @@ pub(crate) fn valid_name(name: &str) -> bool {
             .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
 }
 
+/// The component directories under `components` (`runtime/components`): each set's directories with a `component.xml`,
+/// the component template left out.
+fn component_dirs(components: &Path) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    let Ok(sets) = std::fs::read_dir(components) else {
+        return dirs;
+    };
+    for set in sets.flatten() {
+        let Ok(entries) = std::fs::read_dir(set.path()) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let dir = entry.path();
+            if entry.file_name() != "template" && dir.join("component.xml").is_file() {
+                dirs.push(dir);
+            }
+        }
+    }
+    dirs.sort();
+    dirs
+}
+
+/// The first segments of the service and entity packages of the components under `components`, lower case: each
+/// `service/<segment>/` directory and each `package="<segment>...` of a top-level `entity/*.xml`. A new component
+/// whose `@package@` is one of them would put its services or entities in another's package (`org`, `moqui`,
+/// `mantle`), and its artifact group would grant theirs.
+pub(crate) fn taken_packages(components: &Path) -> std::collections::BTreeSet<String> {
+    static PACKAGE: std::sync::OnceLock<Option<regex::Regex>> = std::sync::OnceLock::new();
+    let package = PACKAGE.get_or_init(|| regex::Regex::new(r#"package="([^".]*)"#).ok());
+    let mut taken = std::collections::BTreeSet::new();
+    for dir in component_dirs(components) {
+        for entry in std::fs::read_dir(dir.join("service")).into_iter().flatten().flatten() {
+            if entry.path().is_dir() {
+                taken.insert(entry.file_name().to_string_lossy().to_ascii_lowercase());
+            }
+        }
+        for entry in std::fs::read_dir(dir.join("entity")).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path.extension().is_some_and(|ext| ext == "xml") {
+                let text = std::fs::read_to_string(&path).unwrap_or_default();
+                for found in package.iter().flat_map(|package| package.captures_iter(&text)) {
+                    taken.insert(found[1].to_ascii_lowercase());
+                }
+            }
+        }
+    }
+    taken.remove("");
+    taken
+}
+
+/// The first names of the webroot's paths, lower case: the files and directories of `webroot/screen/webroot/` (a
+/// file's name up to its first `.`), and each `subscreens-item` name of `webroot.xml` and of a component's
+/// `MoquiConf.xml` that mounts under it. A theme is served at `/<its name>/`, so it may not take one.
+pub(crate) fn webroot_names(components: &Path) -> std::collections::BTreeSet<String> {
+    static ITEM: std::sync::OnceLock<Option<regex::Regex>> = std::sync::OnceLock::new();
+    let item = ITEM.get_or_init(|| regex::Regex::new(r#"subscreens-item name="([^"]*)""#).ok());
+    let mut names = std::collections::BTreeSet::new();
+    let screen = components.join("base/webroot/screen");
+    for entry in std::fs::read_dir(screen.join("webroot"))
+        .into_iter()
+        .flatten()
+        .flatten()
+    {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        names.insert(name.split('.').next().unwrap_or_default().to_ascii_lowercase());
+    }
+    let mut texts = vec![std::fs::read_to_string(screen.join("webroot.xml")).unwrap_or_default()];
+    for dir in component_dirs(components) {
+        let text = std::fs::read_to_string(dir.join("MoquiConf.xml")).unwrap_or_default();
+        if text.contains("component://webroot/screen/webroot.xml\"") {
+            texts.push(text);
+        }
+    }
+    for text in &texts {
+        for found in item.iter().flat_map(|item| item.captures_iter(text)) {
+            names.insert(found[1].to_ascii_lowercase());
+        }
+    }
+    names.remove("");
+    names
+}
+
+/// Why `name` may not be a new component of `kind` beside the components under `components`, if it may not: its
+/// package is another's ([`taken_packages`]), or a theme's name is a webroot path ([`webroot_names`]).
+/// `./moq component-create` refuses the same (`template_name_refusal`).
+pub(crate) fn name_refusal(components: &Path, name: &str, kind: Kind) -> Option<String> {
+    let package = Names::of(name).package;
+    if taken_packages(components).contains(&package) {
+        return Some(format!(
+            "{name} would put its services and entities in the package {package}, which another component's are in"
+        ));
+    }
+    if kind == Kind::Theme && webroot_names(components).contains(&name.to_ascii_lowercase()) {
+        return Some(format!("a theme is served at /{name}/, a path the webroot has already"));
+    }
+    None
+}
+
 /// What an App component from the component template has: all of it, its screens only, or its REST API only.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Part {
