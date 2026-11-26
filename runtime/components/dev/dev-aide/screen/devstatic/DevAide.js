@@ -207,8 +207,11 @@
         script: "/devstatic/DevAideService.js", ready: () => !!devAide.serviceViewRegistered });
     devAide.registerView({ name: "eca", label: "Rules", roots: ["secas", "eecas", "emecas", "gitecas"], component: "m-dev-eca-view",
         script: "/devstatic/DevAideService.js", ready: () => !!devAide.serviceViewRegistered });
-    // a .qvue screen's Design view (11.4): by the file's extension, as it has no XML root
-    devAide.registerView({ name: "qvue", label: "Design", extensions: ["qvue"], component: "m-dev-qvue-view",
+    // a .qvue screen's Design view (11.4): by the file's extension, as it has no XML root; its sibling XML is a
+    // companion buffer of the same tab, in Text .xml, so the tab is Design, Text .qvue and Text .xml
+    devAide.registerView({ name: "qvue", label: "Design", textLabel: "Text .qvue", extensions: ["qvue"], component: "m-dev-qvue-view",
+        script: "/devstatic/DevAideQvue.js", ready: () => !!devAide.qvueViewRegistered });
+    devAide.registerView({ name: "qvue-xml", label: "Text .xml", extensions: ["qvue"], component: "m-dev-qvue-xml",
         script: "/devstatic/DevAideQvue.js", ready: () => !!devAide.qvueViewRegistered });
     // A screen in the screen builder (11.2): the entity view's "Show it on a form" and the like, by the reference's
     // other side (an index row with its root and path).
@@ -217,11 +220,16 @@
         if (!other.rootId || !other.relativePath) return;
         root.location.href = "/qapps/dev/Screens/Design?rootId=" + encodeURIComponent(other.rootId) + "&path=" + encodeURIComponent(other.relativePath);
     };
-    // The views offered for a file: Text first, then each spec whose roots take the file's root element.
+    // The views offered for a file: Text first (named by a view of its extension that says how), then each spec whose
+    // roots take the file's root element.
     pure.viewsFor = (specs, path, element) => {
         const offered = [{ name: "text", label: "Text" }];
         const extension = (/\.([A-Za-z0-9]+)$/.exec(String(path || "")) || [])[1] || "";
-        for (const spec of specs || []) if ((spec.extensions || []).indexOf(extension.toLowerCase()) >= 0) offered.push({ name: spec.name, label: spec.label });
+        for (const spec of specs || []) {
+            if ((spec.extensions || []).indexOf(extension.toLowerCase()) < 0) continue;
+            offered.push({ name: spec.name, label: spec.label });
+            if (spec.textLabel) offered[0].label = spec.textLabel;
+        }
         if (extension.toLowerCase() !== "xml" || !element) return offered;
         for (const spec of specs || []) if ((spec.roots || []).indexOf(element) >= 0) offered.push({ name: spec.name, label: spec.label });
         return offered;
@@ -813,7 +821,11 @@
             companion(tab, rootId, path, initialText) {
                 const found = tab.companions.find((item) => item.rootId === rootId && item.path === path);
                 if (found) return Promise.resolve(found);
-                return this.get("file", { rootId, path, missingOk: true }).then((file) => {
+                // one read of each, when two views of the tab ask for it at once (a .qvue's Design and Text .xml)
+                const reading = (this.companionReads || (this.companionReads = new Map()));
+                const key = tab.path + "|" + rootId + "|" + path;
+                if (reading.has(key)) return reading.get(key);
+                const read = this.get("file", { rootId, path, missingOk: true }).then((file) => {
                     const missing = !!file.missing;
                     const text = missing ? (initialText || "") : (file.text || "");
                     tab.companions.push({ rootId, path, text, saved: missing ? "" : text, base: missing ? "" : file.hash, missing,
@@ -824,6 +836,10 @@
                     return this.post("outline", { text: buffer.text }).then((answer) => { buffer.outline = answer.outline || null; return buffer; },
                         () => buffer);
                 });
+                reading.set(key, read);
+                const done = () => reading.delete(key);
+                read.then(done, done);
+                return read;
             },
             loadSchema(tab) {
                 if (!/\.xml$/i.test(tab.path)) return;

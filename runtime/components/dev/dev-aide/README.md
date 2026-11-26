@@ -20,7 +20,8 @@ The assisted IDE of mr-moqui (`plans/design-dev-aide.md`), at `/qapps/dev` on a 
   its real render in a frame from the unsaved buffers with each widget stamped with its source, an upstream screen in
   extension mode (every edit into the site's `screen-extend`), Add column and Add field (placed by `after=` in the layout
   or the columns), inserts at a named anchor or the nearest one, the Extension points, the Outline on the block tree and
-  Properties from the schema digest. "Open in screen builder" on any app page opens it on that page.
+  Properties from the schema digest. "Open in screen builder" on any app page opens it on that page. A `.qvue` screen
+  is one tab with its XML: Design (rendered from both unsaved buffers), Text .qvue and Text .xml, saved together.
 - **Libraries** in Screens and Services lists the active edit component's exports. Use on this screen stages the
   qvt declaration in the same buffer as other edits. For a server library, copy the module call into an action.
   A full-tier editor of the component can search npm, choose a release and target, review the lock, notices and
