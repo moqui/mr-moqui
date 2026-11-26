@@ -11,8 +11,8 @@
  * along with this software (see the LICENSE.md file). If not, see
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
-// The theme of @Title@ (data/@Class@ThemeData.xml): built on the Default theme, its own style sheet last, and its color
-// scheme its default. Run: ./moq test @component@
+// The theme of @Title@ (data/@Class@ThemeData.xml): built on the Default theme, its own style sheet last and served at
+// the path its row names (MoquiConf.xml), and its color scheme. Run: ./moq test @component@
 
 feature("the theme builds on the Default theme and ends with its own style sheet", {
     expect() {
@@ -22,6 +22,14 @@ feature("the theme builds on the Default theme and ends with its own style sheet
             .orderBy("sequenceNum").list()
         theme.parentScreenThemeId == "DEFAULT_QUASAR"
         sheets[sheets.length - 1].resourceValue == "/@component@/@Class@.css"
-        find("moqui.screen.ScreenColorScheme").list().some((scheme) => scheme.colorSchemeId == "@ID@")
+        Array.from(find("moqui.screen.ScreenColorScheme").list()).some((scheme) => scheme.colorSchemeId == "@ID@")
+    },
+})
+
+feature("the theme's style sheet is served where its row names it", {
+    expect() {
+        const str = ec.screen.makeTest().rootScreen("component://webroot/screen/webroot.xml").render("@component@/@Class@.css", {}, null)
+        str.errorMessages.length == 0
+        str.output.includes("body.m-theme-@component@")
     },
 })

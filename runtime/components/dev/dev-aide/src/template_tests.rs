@@ -191,7 +191,8 @@ fn a_component_from_the_template_has_every_placeholder_filled_in() {
 fn each_kind_has_its_own_files() {
     let scratch = Scratch::new("kinds");
     let data = made(&scratch, "my-data", Kind::Data);
-    assert!(data.contains_key("data/MyDataSeedData.xml"));
+    assert!(data.contains_key("data/10-seed/MyDataSeedData.xml"));
+    assert!(data.contains_key("data/30-demo/MyDataDemoData.xml"));
     assert!(!data
         .keys()
         .any(|path| path.starts_with("screen") || path.starts_with("service")));

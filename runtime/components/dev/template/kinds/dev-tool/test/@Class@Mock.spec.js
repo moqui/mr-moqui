@@ -11,7 +11,8 @@
  * along with this software (see the LICENSE.md file). If not, see
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
-// The services of @Title@ (service/@package@/@Class@MockServices.xml): the mock's fixed answer, and the test data load.
+// The services of @Title@ (service/@package@/@Class@MockServices.xml): the mock's fixed answer and the test data load;
+// and its screen, rendered once.
 // Run: ./moq test @component@
 
 spec({
@@ -33,5 +34,16 @@ feature("load#TestData loads the test records", {
         const out = ec.service.sync().name("@package@.@Class@MockServices.load#TestData").call()
         out.recordsLoaded >= 3
         ec.entity.find("moqui.basic.Enumeration").condition("enumTypeId", "@Class@Test").count() == 2
+    },
+})
+
+feature("the tool's screen lists the test records and tries the mock", {
+    expect() {
+        const str = ec.screen.makeTest().rootScreen("component://@component@/screen/@Class@.xml").renderMode("tui")
+            .render("", {}, null)
+        str.status == 200
+        str.errorMessages.length == 0
+        str.output.includes("First test record")
+        str.output.includes("Try")
     },
 })

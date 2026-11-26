@@ -9,6 +9,7 @@ definitions that name its functions.
 | `Cargo.toml` | The crate, on `moqui-core` and `moqui-lib` by path. It is not a member of the mr-moqui workspace. |
 | `src/lib.rs` | `submit_component!` and `echo`, a function bound at the location `@package@::echo`. |
 | `service/@package@/@Class@Services.xml` | `echo#Message`, a `type="rust"` service at that location. |
+| `data/@Class@SecurityData.xml` | Seed: the component's services, by their package, for the ADMIN group. |
 | `test/@Class@Native.spec.js` | The regression suite: the service answers. |
 
 ## Build, run and test
