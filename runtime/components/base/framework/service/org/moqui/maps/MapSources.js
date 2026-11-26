@@ -82,8 +82,9 @@ const bytesText = value => {
     }
     return (unit === 0 ? String(bytes) : amount.toFixed(amount >= 10 ? 0 : 1)) + " " + units[unit]
 }
-const canConfigure = () => !!ec.artifactExecution.isPermitted(CONFIGURATION_SCREEN, "AT_XML_SCREEN", "AUTHZA_VIEW")
-const canChangeConfiguration = () => !!ec.artifactExecution.isPermitted(CONFIGURATION_SCREEN, "AT_XML_SCREEN", "AUTHZA_UPDATE")
+// the caller's own grants of Configuration, never one inherited from an app root a map is mounted under
+const canConfigure = () => !!ec.artifactExecution.isPermittedOwn(CONFIGURATION_SCREEN, "AT_XML_SCREEN", "AUTHZA_VIEW")
+const canChangeConfiguration = () => !!ec.artifactExecution.isPermittedOwn(CONFIGURATION_SCREEN, "AT_XML_SCREEN", "AUTHZA_UPDATE")
 // A write of configuration no group is granted to write, after the caller was checked: authorization off, the caller kept
 // for the audit log
 function asCaller(write) {

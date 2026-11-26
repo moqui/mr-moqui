@@ -90,15 +90,16 @@ const one = (entity, conditions) => find(entity, conditions).one()
 const rows = (entity, conditions) => Array.from(find(entity, conditions).list())
 const offline = () => text(ec.factory.getConfValue("maps@external-requests")) === "false"
 // Per call (a service loads this module once a call): whether the caller may open Configuration, and each provider's test
-// state, read once.
+// state, read once. The caller's own grants (isPermittedOwn): an app root's inheritable grant over the screen a map is shown
+// under (an app's LocalMap mount) never makes its user a Maps configurer.
 let mayConfigure = null
 const canConfigure = () => {
     if (mayConfigure === null)
-        mayConfigure = !!ec.artifactExecution.isPermitted(CONFIGURATION_SCREEN, "AT_XML_SCREEN", "AUTHZA_VIEW")
+        mayConfigure = !!ec.artifactExecution.isPermittedOwn(CONFIGURATION_SCREEN, "AT_XML_SCREEN", "AUTHZA_VIEW")
     return mayConfigure
 }
 // Whether the caller may change Configuration (store#ProfileSettings): its update, not only its view
-const canChangeConfiguration = () => !!ec.artifactExecution.isPermitted(CONFIGURATION_SCREEN, "AT_XML_SCREEN", "AUTHZA_UPDATE")
+const canChangeConfiguration = () => !!ec.artifactExecution.isPermittedOwn(CONFIGURATION_SCREEN, "AT_XML_SCREEN", "AUTHZA_UPDATE")
 let providerKind = null
 const testedProviders = new Map()
 function providerTested(provider) {
