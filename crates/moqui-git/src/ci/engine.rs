@@ -22,6 +22,7 @@ use std::sync::{Arc, Mutex};
 
 use moqui_lib::object::Value;
 
+use moqui_core::context::framework_thread;
 use moqui_core::context::{Error, ExecutionContext};
 use moqui_core::entity::{Condition, EntityFacade, EntityValue};
 
@@ -84,7 +85,7 @@ fn submit_start(factory: &Arc<moqui_core::context::ExecutionContextFactory>) {
     let weak = Arc::downgrade(factory);
     let spawned = std::thread::Builder::new()
         .name("git-ci-start".into())
-        .spawn(move || loop {
+        .spawn(framework_thread(move || loop {
             while START_AGAIN.swap(false, Ordering::SeqCst) {
                 let Some(factory) = weak.upgrade() else { break };
                 let passed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -105,7 +106,7 @@ fn submit_start(factory: &Arc<moqui_core::context::ExecutionContextFactory>) {
             if !START_AGAIN.load(Ordering::SeqCst) || STARTING.swap(true, Ordering::SeqCst) {
                 return;
             }
-        });
+        }));
     if let Err(err) = spawned {
         STARTING.store(false, Ordering::SeqCst);
         tracing::debug!("queued job runs left for the start job: {err}");

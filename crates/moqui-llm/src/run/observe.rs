@@ -33,6 +33,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value as Json;
 
+use moqui_core::context::framework_thread;
 use moqui_core::context::ExecutionContextFactory;
 
 /// The event types an adapter acts on.
@@ -73,7 +74,7 @@ impl Observers {
             let weak: Weak<ExecutionContextFactory> = Arc::downgrade(factory);
             let spawned = std::thread::Builder::new()
                 .name("agent-observers".to_string())
-                .spawn(move || loop {
+                .spawn(framework_thread(move || loop {
                     let next = receiver.recv_timeout(TICK);
                     let Some(factory) = weak.upgrade() else {
                         return;
@@ -86,7 +87,7 @@ impl Observers {
                         Err(RecvTimeoutError::Timeout) => tick(&factory),
                         Err(RecvTimeoutError::Disconnected) => return,
                     }
-                });
+                }));
             match spawned {
                 Ok(_) => *queue = Some(sender),
                 Err(error) => {
