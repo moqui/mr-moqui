@@ -20,7 +20,7 @@
                     ec.message.addError(ec.l10n.localize('Policy ID already exists. Close this dialog and choose Edit on that row.'))
             ]]></script>
             <check-errors/>
-            <service-call name="org.moqui.monitor.MonitorServices.store#RecoveryPolicy"/>
+            <service-call name="org.moqui.monitor.MonitorServices.store#RecoveryPolicy" in-map="context"/>
         </actions>
         <error-response url="." parameter-map="{editPolicyId:editPolicyId || '',editAdapterId:editAdapterId || '',_openDialog:'PolicyDialog'}"/>
         <default-response url="." parameter-map="{editPolicyId:'',editAdapterId:'',_openDialog:''}"/>
@@ -34,7 +34,7 @@
                     ec.message.addError(ec.l10n.localize('Adapter ID already exists. Close this dialog and choose Edit on that row.'))
             ]]></script>
             <check-errors/>
-            <service-call name="org.moqui.monitor.MonitorServices.store#RecoveryAdapter"/>
+            <service-call name="org.moqui.monitor.MonitorServices.store#RecoveryAdapter" in-map="context"/>
         </actions>
         <error-response url="." parameter-map="{editPolicyId:editPolicyId || '',editAdapterId:editAdapterId || '',_openDialog:'AdapterDialog'}"/>
         <default-response url="." parameter-map="{editPolicyId:'',editAdapterId:'',_openDialog:''}"/>
