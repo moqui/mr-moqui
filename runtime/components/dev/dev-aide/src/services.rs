@@ -48,7 +48,8 @@ pub(crate) fn register(registry: &mut NativeRegistry) -> Result<(), Error> {
     registry.service_function(moqui_core::service_location!(run_spec), run_spec)?;
     registry.service_function(moqui_core::service_location!(get_generated_js), get_generated_js)?;
     registry.service_function(moqui_core::service_location!(list_eca_rules), list_eca_rules)?;
-    registry.service_function(moqui_core::service_location!(eval_condition), eval_condition)
+    registry.service_function(moqui_core::service_location!(eval_condition), eval_condition)?;
+    registry.service_function(moqui_core::service_location!(get_push_contexts), get_push_contexts)
 }
 
 /// The actions that try a rule's condition: the context set, then whether the condition holds as a message. An
@@ -114,6 +115,136 @@ fn eval_condition(
     let mut out = Parameters::new();
     out.insert("holds".into(), Value::Bool(holds));
     out.insert("result".into(), json_value(&answer));
+    Ok(out)
+}
+
+const GIT_SERVICES: &str = "org.moqui.git.GitServices.";
+
+/// A git hosting service as the user (so the repository's rights apply): its out-parameters, or its errors as the
+/// refusal.
+fn git_hosting(name: &str, parameters: &[(&str, Value)]) -> Result<Parameters, LibError> {
+    let parameters: BTreeMap<String, Value> = parameters
+        .iter()
+        .map(|(key, value)| ((*key).to_string(), value.clone()))
+        .collect();
+    let out = moqui_core::service::sync(&format!("{GIT_SERVICES}{name}"), &parameters);
+    let errors = ExecutionContext::with_current(|ec| ec.message().errors().to_vec()).unwrap_or_default();
+    if !errors.is_empty() {
+        ExecutionContext::with_current(|ec| ec.message().clear_errors());
+        return Err(LibError::new(errors.join("; ")));
+    }
+    out.map_err(|err| LibError::new(format!("the git hosting ({name}): {err}")))
+}
+
+/// `get#PushContexts`: what a gitECA rule's condition is tried against (10's "later": a rule against a push from the
+/// push log): the hosted repositories the user may see whose id the rule's `repository-pattern` takes, the latest
+/// changes of the one chosen (`find#GitUpdates`, 20 a page), and with `updateId` the contexts the rule's `event` had
+/// from that change (`get#GitUpdateEventContexts`, built as the events build them), each marked whether the rule's
+/// `ref-pattern` takes its ref. Run as the user, so a repository's rights apply (the contexts are for who may push
+/// there). The extend tier, as `eval#Condition`.
+fn get_push_contexts(
+    ec: &ExecutionContext,
+    _service: &ServiceInfo<'_>,
+    parameters: &Parameters,
+) -> Result<Parameters, LibError> {
+    Context::of(ec, Tier::Extend)?;
+    let compile = |name: &str| -> Result<Option<moqui_lib::object::CompiledRegex>, LibError> {
+        let pattern = text(parameters, name);
+        if pattern.trim().is_empty() {
+            return Ok(None);
+        }
+        moqui_lib::object::CompiledRegex::new(pattern.trim())
+            .map(Some)
+            .map_err(|err| LibError::new(format!("{name} {pattern}: {}", err.message())))
+    };
+    let repository_pattern = compile("repositoryPattern")?;
+    let ref_pattern = compile("refPattern")?;
+    let listed = git_hosting("find#GitRepositories", &[("pageNoLimit", Value::Bool(true))])?;
+    let repositories: Vec<String> = match listed.get("repositoryList") {
+        Some(Value::List(rows)) => rows
+            .iter()
+            .filter_map(|row| match row {
+                Value::Map(row) => row.get("repositoryId").map(moqui_lib::object::to_plain_string),
+                _ => None,
+            })
+            .filter(|id| {
+                repository_pattern
+                    .as_ref()
+                    .is_none_or(|pattern| pattern.is_full_match(id))
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+    let mut out = Parameters::new();
+    out.insert("repositories".into(), json_value(&repositories));
+    let asked = text(parameters, "repositoryId");
+    let Some(repository_id) = (if asked.is_empty() {
+        repositories.first().cloned()
+    } else {
+        Some(asked)
+    }) else {
+        return Ok(out);
+    };
+    out.insert("repositoryId".into(), Value::string(&repository_id));
+    let page = text(parameters, "pageIndex");
+    let updates = git_hosting(
+        "find#GitUpdates",
+        &[
+            ("repositoryId", Value::string(&repository_id)),
+            (
+                "pageIndex",
+                Value::string(if page.is_empty() { "0" } else { page.as_str() }),
+            ),
+            ("pageSize", Value::I64(20)),
+        ],
+    )?;
+    out.insert(
+        "updates".into(),
+        updates.get("updateList").cloned().unwrap_or(Value::List(Vec::new())),
+    );
+    let update_id = text(parameters, "updateId");
+    if update_id.is_empty() {
+        return Ok(out);
+    }
+    let event = text(parameters, "event");
+    let answer = git_hosting(
+        "get#GitUpdateEventContexts",
+        &[
+            ("repositoryId", Value::string(&repository_id)),
+            ("updateId", Value::string(&update_id)),
+            (
+                "event",
+                Value::string(if event.is_empty() {
+                    "post-receive"
+                } else {
+                    event.as_str()
+                }),
+            ),
+        ],
+    )?;
+    let contexts: Vec<Value> = match answer.get("contextList") {
+        Some(Value::List(rows)) => rows
+            .iter()
+            .map(|row| {
+                let mut row = match row {
+                    Value::Map(row) => row.clone(),
+                    _ => Default::default(),
+                };
+                let ref_name = match row.get("context") {
+                    Some(Value::Map(context)) => context.get("refName").map(moqui_lib::object::to_plain_string),
+                    _ => None,
+                };
+                // as a rule matches: a ref-pattern takes only an event of a ref, by its whole name
+                let matches = ref_pattern
+                    .as_ref()
+                    .is_none_or(|pattern| ref_name.as_deref().is_some_and(|name| pattern.is_full_match(name)));
+                row.insert("matches".into(), Value::Bool(matches));
+                Value::Map(row)
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+    out.insert("contexts".into(), Value::List(contexts));
     Ok(out)
 }
 

@@ -136,3 +136,13 @@ test("the parameter rows: the buffer's, nested by path, then the definition's im
     assert.deepEqual(ops.parameterRows(null, "in-parameters", defined).map((row) => row.path + (row.editable ? "" : " (auto)")),
         ["order", "order.items", "partyId (auto)", "partyId.inner (auto)"]);
 });
+
+test("a gitECA rule asks for the pushes its patterns take, and a change of the push log reads in a line", () => {
+    const rule = el("giteca", [0], [["event", "commit"], ["repository-pattern", "app.*"], ["ref-pattern", "refs/heads/.*"]]);
+    assert.deepEqual(ops.pushQuery(rule), { repositoryPattern: "app.*", refPattern: "refs/heads/.*", event: "commit" });
+    assert.deepEqual(ops.pushQuery(el("giteca", [0])), { repositoryPattern: "", refPattern: "", event: "post-receive" });
+    const update = { updateId: "U1", updateDate: "2026-11-25T10:20:30", username: "jane", ecaStatus: "done",
+        refList: [{ shortName: "main", result: "ok" }, { shortName: "v1", result: "refused" }] };
+    assert.equal(ops.updateLabel(update), "2026-11-25 10:20 · jane · main, v1 (refused) · done");
+    assert.equal(ops.updateLabel({ source: "fetch", refList: [] }), "fetch · no refs");
+});

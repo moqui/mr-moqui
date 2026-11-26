@@ -114,4 +114,24 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="result" type="Map"/>
         </out-parameters>
     </service>
+    <service verb="get" noun="PushContexts" type="rust" location="dev_aide::services::get_push_contexts" allow-remote="false" read-only="true">
+        <description>A gitECA rule's condition against a push of the push log (10): the hosted repositories the user
+            sees that the rule's repository-pattern takes, the latest changes of the one chosen, and with an update the
+            contexts the rule's event had from it (org.moqui.git.GitServices.get#GitUpdateEventContexts, for who may push
+            there), each marked whether the rule's ref-pattern takes its ref. Run as the user.</description>
+        <in-parameters>
+            <parameter name="repositoryPattern"/>
+            <parameter name="refPattern"/>
+            <parameter name="repositoryId"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="updateId"/>
+            <parameter name="event"><description>The rule's event; post-receive when empty.</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="repositories" type="List"/>
+            <parameter name="repositoryId"/>
+            <parameter name="updates" type="List"><description>find#GitUpdates' updateList</description></parameter>
+            <parameter name="contexts" type="List"><description>{label, context, matches}</description></parameter>
+        </out-parameters>
+    </service>
 </services>

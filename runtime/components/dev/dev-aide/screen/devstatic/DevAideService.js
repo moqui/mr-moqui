@@ -12,7 +12,8 @@
  * attribute, the palette by the XSD's groups with snippets, the names known before each block marking an unknown one in
  * an expression, a service-call's in-parameters to add, a script's popup editor, and the generated JavaScript.
  * m-dev-eca-view is the view of an ECA file: its rules, a rule's attributes, its condition and its actions in the
- * composer, and Add, Remove and Move. Every edit is an operation of the lossless XML layer on a buffer.
+ * composer, Add, Remove and Move, and Try the condition against a context (for a gitECA rule, a push of the push log).
+ * Every edit is an operation of the lossless XML layer on a buffer.
  *
  * The pure parts are moqui.devAide.serviceOps, which test/client/pages/DevAideService.page.js runs.
  */
@@ -308,6 +309,16 @@
     };
     ops.SECAS_TEXT = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<secas xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" " +
         "xsi:noNamespaceSchemaLocation=\"http://moqui.org/xsd/mr-service-eca.xsd\">\n</secas>\n";
+    // What get#PushContexts takes of a gitECA rule: its patterns and event.
+    ops.pushQuery = (rule) => ({ repositoryPattern: attrOf(rule, "repository-pattern") || "", refPattern: attrOf(rule, "ref-pattern") || "",
+        event: attrOf(rule, "event") || "post-receive" });
+    // A change of the push log (find#GitUpdates' row) in a line: when, who, its refs and how its rules ran.
+    ops.updateLabel = (update) => {
+        const refs = (update.refList || []).map((ref) => ref.shortName + (ref.result && ref.result !== "ok" ? " (" + ref.result + ")" : ""));
+        const date = update.updateDate;
+        const when = typeof date === "number" ? new Date(date).toLocaleString() : String(date || "").replace("T", " ").slice(0, 16);
+        return [when, update.username || update.userId || update.source, refs.join(", ") || "no refs", update.ecaStatus].filter((part) => part).join(" · ");
+    };
 
     // ---- the composer ----
 
@@ -712,14 +723,22 @@
     const ecaView = {
         name: "mDevEcaView",
         props: { ctx: { type: Object, required: true }, tab: { type: Object, required: true }, outline: Object },
-        data() { return { selected: null, schema: null, tryContext: "", conditionResult: null }; },
+        data() {
+            return { selected: null, schema: null, tryContext: "", conditionResult: null,
+                push: { repositories: [], repositoryId: "", updates: [], updateId: "", contexts: [], loading: false, loaded: false } };
+        },
         computed: {
             rules() { return children(this.outline, RULES); },
+            gitRule() { return !!this.rule && this.rule.name === "giteca"; },
             rule() { return this.selected ? pure.outlineAt(this.outline, this.selected) : this.rules[0] || null; },
             actions() { return this.rule ? children(this.rule, ["actions"])[0] || null : null; },
             conditionNode() { const condition = this.rule ? children(this.rule, ["condition"])[0] : null; return condition ? children(condition)[0] || null : null; },
             spec() { return this.rule && this.schema ? (this.schema.elements || []).find((element) => element.name === this.rule.name) || null : null; },
             canEdit() { return this.ctx.canWrite; }
+        },
+        watch: {
+            // another rule: its own pushes, by its patterns and event
+            selected() { this.push = { repositories: [], repositoryId: "", updates: [], updateId: "", contexts: [], loading: false, loaded: false }; }
         },
         mounted() {
             this.ctx.schema(this.outline ? this.outline.name : "secas").then((digest) => { this.schema = digest; });
@@ -755,8 +774,8 @@
                         : this.outline.name === "gitecas" ? "<giteca event=\"push\"><actions></actions></giteca>" : ops.secaXml("", "post-service");
                 this.apply(ops.addRule(this.outline, kind));
             },
-            // the condition against a context: a SECA's service's last Try (its parameters and out), or any JSON object (a
-            // record of an EECA's entity)
+            // the condition against a context: a SECA's service's last Try (its parameters and out), for a gitECA rule a
+            // push of the push log (loadPushes), or any JSON object (a record of an EECA's entity)
             defaultContext() {
                 const service = this.rule ? attrOf(this.rule, "service") : "";
                 const last = devAide.store.get("moqui.devAide.tryResult." + service);
@@ -772,6 +791,25 @@
                     this.conditionResult = { holds: answer.holds, result: answer.result || {} };
                 }, (error) => { this.conditionResult = null; this.ctx.fail(error); });
             },
+            t(text) { return moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text; },
+            updateLabel(update) { return ops.updateLabel(update); },
+            // a gitECA rule against a push of the push log (10): the repositories its pattern takes, a change, then the
+            // contexts the rule's event had from it, one of which becomes the Try's context
+            loadPushes(repositoryId, updateId) {
+                const push = this.push;
+                push.loading = true;
+                const query = Object.assign(ops.pushQuery(this.rule), { repositoryId: repositoryId || "", updateId: updateId || "" });
+                return this.ctx.get("pushContexts", query).then((answer) => {
+                    push.loading = false; push.loaded = true;
+                    push.repositories = answer.repositories || [];
+                    push.repositoryId = answer.repositoryId || "";
+                    push.updates = answer.updates || [];
+                    push.updateId = updateId || "";
+                    push.contexts = answer.contexts || [];
+                    if (push.contexts.length) this.useContext(push.contexts.find((context) => context.matches) || push.contexts[0]);
+                }, (error) => { push.loading = false; this.ctx.fail(error); });
+            },
+            useContext(context) { if (context) this.tryContext = JSON.stringify(context.context || {}, null, 1); },
             removeRule() { if (this.rule) { const path = this.rule.path; this.selected = null; this.apply([{ op: "remove", at: path }]); } },
             moveRule(delta) {
                 const rule = this.rule;
@@ -806,7 +844,25 @@
     <q-input dense outlined class="m-dev-mono q-mb-sm" label="Condition (an expression; empty is always)" :readonly="!canEdit"
         :model-value="conditionNode && conditionNode.name === 'expression' ? (conditionNode.text || '') : ''" debounce="800" @update:model-value="setCondition" for="DevEcaCondition"></q-input>
     <q-expansion-item dense dense-toggle label="Try the condition" header-class="text-caption" class="q-mb-sm" @show="tryContext = tryContext || defaultContext()" id="DevTryCondition">
-      <q-input dense outlined type="textarea" autogrow v-model="tryContext" label="Against (JSON: the service's last Try, or a record)" class="m-dev-mono"></q-input>
+      <div v-if="gitRule" class="q-mb-xs" id="DevTryPush">
+        <div class="row items-center q-gutter-x-sm no-wrap">
+          <q-btn v-if="!push.loaded" dense flat no-caps icon="sym_o_history" :label="t('Against a push')" :loading="push.loading" @click="loadPushes()" id="DevTryPushLoad"></q-btn>
+          <template v-else>
+            <q-select dense outlined options-dense style="min-width: 12rem" :model-value="push.repositoryId" :options="push.repositories" label="Repository"
+                @update:model-value="id => loadPushes(id)" id="DevTryPushRepository"></q-select>
+            <q-select dense outlined options-dense class="col" :model-value="push.updateId || null" :options="push.updates.map(u => ({ label: updateLabel(u), value: u.updateId }))"
+                emit-value map-options label="A change of the push log" @update:model-value="id => loadPushes(push.repositoryId, id)" id="DevTryPushUpdate"></q-select>
+            <q-spinner v-if="push.loading" size="1em"></q-spinner>
+          </template>
+        </div>
+        <div v-if="push.loaded && !push.repositories.length" class="text-caption m-muted">{{ t('No hosted repository you may see matches the rule.') }}</div>
+        <div v-if="push.contexts.length" class="row q-gutter-xs q-mt-xs" id="DevTryPushContexts">
+          <q-chip v-for="(context, i) in push.contexts" :key="i" dense square clickable @click="useContext(context)" :outline="!context.matches"
+              :title="context.matches ? '' : t('The rule\\'s ref-pattern does not take this ref')">{{context.label}}</q-chip>
+        </div>
+        <div v-else-if="push.updateId && !push.loading" class="text-caption m-muted">{{ t('That change has no context for this rule\\'s event.') }}</div>
+      </div>
+      <q-input dense outlined type="textarea" autogrow v-model="tryContext" :label="gitRule ? t('Against (JSON: a push, or any context)') : t('Against (JSON: the service\\'s last Try, or a record)')" class="m-dev-mono"></q-input>
       <q-btn dense flat no-caps icon="sym_o_science" label="Try in sim" @click="tryCondition" id="DevTryConditionRun"></q-btn>
       <span v-if="conditionResult && !conditionResult.running" :class="conditionResult.holds ? 'text-positive' : 'text-warning'" id="DevConditionResult">
         {{conditionResult.holds ? 'It holds: the rule runs' : 'It does not hold: the rule does not run'}}{{conditionResult.result.failed ? ' (' + conditionResult.result.failed + ')' : ''}}</span>
