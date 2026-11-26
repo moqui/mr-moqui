@@ -56,7 +56,8 @@ browser.runInPage({
 // The code editor's helpers and the vendored CodeMirror bundle, in the page. Was js/WebrootCode.test.js.
 
 browser.runInPage({
-    scripts: ["/js/MoquiLib.js", "/libs/codemirror/codemirror.min.js", "/js/WebrootCode.js"],
+    scripts: ["/js/MoquiLib.js", "/libs/codemirror/codemirror.min.js", "/libs/codemirror/legacy-modes.min.js",
+        "/libs/codemirror/vim.min.js", "/libs/yjs/yjs.min.js", "/libs/codemirror/y-codemirror.min.js", "/js/WebrootCode.js"],
     test: "/files/component/webroot/test/client/pages/WebrootCode.page.js",
 })
 
@@ -302,10 +303,11 @@ browser.runInPage({
 })
 
 // From WebrootVue.qvt.coedit.spec.js, merged here to share a spec run.
-// m-coedit's provider on the vendored Tiptap bundle, in the page. Was js/WebrootVue.qvt.coedit.test.js.
+// m-coedit's provider on the vendored Tiptap bundle (with Yjs, its own library, loaded first), in the page. Was
+// js/WebrootVue.qvt.coedit.test.js.
 
 browser.runInPage({
-    scripts: ["/libs/tiptap/tiptap.min.js", "/js/MoquiLib.js", "/js/WebrootVue.qvt.js"],
+    scripts: ["/libs/yjs/yjs.min.js", "/libs/tiptap/tiptap.min.js", "/js/MoquiLib.js", "/js/WebrootVue.qvt.js"],
     test: "/files/component/webroot/test/client/pages/WebrootVue.qvt.coedit.page.js",
 })
 

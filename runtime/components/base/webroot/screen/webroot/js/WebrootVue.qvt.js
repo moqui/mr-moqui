@@ -4356,9 +4356,11 @@
     // makes the document a shared Yjs one: no content of its own, no model, no plain-text toggle, and a failure emits
     // failed (for m-coedit's host to show its own field) instead of the html editor.
     let richTextCount = 0;
-    // one load of the library for the page; a failure clears it so the next try starts again
+    // one load of the library for the page; a failure clears it so the next try starts again. Yjs (libs/yjs, the global Yjs)
+    // first: the Tiptap bundle reads Y and the awareness protocol from it, so a page has one copy of Yjs
     let tiptapLoad = null;
-    const loadTiptap = () => tiptapLoad || (tiptapLoad = moqui.loadScript("/libs/tiptap/tiptap.min.js", null, () => !!root.Tiptap)
+    const loadTiptap = () => tiptapLoad || (tiptapLoad = (root.Yjs ? Promise.resolve() : moqui.loadScript("/libs/yjs/yjs.min.js", null, () => !!root.Yjs))
+        .then(() => (root.Tiptap ? null : moqui.loadScript("/libs/tiptap/tiptap.min.js", null, () => !!root.Tiptap)))
         .catch((error) => { tiptapLoad = null; throw error; }));
     // editors whose load or start failed, so a later success (or Try the editor again) can start them
     const failedRichTexts = [];
@@ -4912,7 +4914,8 @@
     };
 
     // One editor's side of a shared document. options: client (a moqui.NotificationClient: send, registerListener, onState,
-    // isOpen), docKey, doc (a Y.Doc), awareness (an Awareness of it), lib (the Tiptap global: Y and the awareness functions),
+    // isOpen), docKey, doc (a Y.Doc), awareness (an Awareness of it), lib (the Yjs global, or Tiptap's, which re-exports it:
+    // Y and the awareness functions),
     // onStatus({state, peers, pending}), onAccess(canEdit), onSaved(message), onFallback({reason, code, message}), batchMs
     // (50: local updates in that time go as one message), joinTimeoutMs (20 s: a join no one answers on an open socket is a
     // fallback). A remote update is applied with the provider as its origin, so it is not sent back. Each open of the socket

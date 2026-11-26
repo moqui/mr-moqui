@@ -136,7 +136,7 @@
                     const lib = Promise.all([...defaultLibraries, ...(this.libraries || [])].map(async path =>
                         (await fetchJson(path)).libraryItems));
                     const loads = [lib, moqui.loadScript(base + "editor.js", null, () => !!root.MoquiBoardEditor)];
-                    if (this.wikiPageId) loads.push(moqui.loadScript("/libs/tiptap/tiptap.min.js", null, () => !!root.Tiptap));
+                    if (this.wikiPageId) loads.push(moqui.loadScript("/libs/yjs/yjs.min.js", null, () => !!root.Yjs));
                     const [groups] = await Promise.all(loads);
                     if (this.closed) return;
                     this.libItems = groups.flat();
@@ -151,7 +151,7 @@
             connect() {
                 const client = this.socketClient || (this.$root && this.$root.notificationClient);
                 if (!client) throw Error(this.t("The collaboration connection is unavailable"));
-                const T = root.Tiptap;
+                const T = root.Yjs;
                 this.doc = root.Vue.markRaw(new T.Y.Doc());
                 this.awareness = root.Vue.markRaw(new T.Awareness(this.doc));
                 const name = this.userName || this.$root.userFullName || this.$root.username || this.$root.userId || this.t("Guest");

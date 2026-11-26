@@ -8,8 +8,8 @@ feature("a mounted board merges local and remote edits and reconciles compacted 
             <body><div id="app"><m-whiteboard ref="board" wiki-page-id="BOARD" :socket-client="client"></m-whiteboard></div>
             <script src="/libs/vue/vue.global.prod.js"></script><script src="/libs/quasar/quasar.umd.prod.js"></script>
             <script src="/js/MoquiLib.js"></script><script src="/js/WebrootVue.qvt.js"></script>
-            <script src="/libs/tiptap/tiptap.min.js"></script><script>
-            const Y = Tiptap.Y, server = new Y.Doc();
+            <script src="/libs/yjs/yjs.min.js"></script><script>
+            const Y = Yjs.Y, server = new Y.Doc();
             const c = moqui.coedit;
             let deliver;
             const client = Vue.markRaw({
@@ -113,7 +113,7 @@ feature("a file board saves a readable scene and hands a declared element link b
         page.getByRole("button", {name:"hemp:story/1", exact:true}).click()
         assert.equal(page.evaluate(() => vm.link), "hemp:story/1")
         assert.equal(page.evaluate(() => JSON.parse(saved.scene).elements[0].link), "hemp:story/1")
-        assert.equal(page.evaluate(() => saved.preview.includes("<svg") && !window.Tiptap), true)
+        assert.equal(page.evaluate(() => saved.preview.includes("<svg") && !window.Yjs), true)
         assert.equal(page.evaluate(() => performance.getEntriesByType("resource").every(r =>
             !/^https?:/.test(r.name) || new URL(r.name).origin === location.origin)), true)
     }
