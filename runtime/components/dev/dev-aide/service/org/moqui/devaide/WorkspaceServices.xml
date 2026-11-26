@@ -309,6 +309,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="canEdit" type="Boolean"/>
             <parameter name="reason"><description>Why not, when the user may not</description></parameter>
             <parameter name="text"/>
+            <parameter name="hash"><description>The hash of the file's bytes, with the text</description></parameter>
             <parameter name="maxBytes" type="Long"/>
             <parameter name="maxRooms" type="Long"/>
             <parameter name="maxTotalBytes" type="Long"/>

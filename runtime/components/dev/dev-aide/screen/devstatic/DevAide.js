@@ -1061,6 +1061,7 @@
                             user: { id: userId, name, color: moqui.coedit.userColor(userId || name) },
                             watch: (tab, fn) => this.$watch(() => tab.text, fn),
                             onDropped: (tab) => this.note(tab.path.split("/").pop() + ": the shared text of the others replaced your unsaved changes", "warning"),
+                            onOtherBase: (tab) => this.note(tab.path.split("/").pop() + ": the shared text started from another version of the file than the one you opened; Save compares with the disk", "warning"),
                             onEnded: (tab, info) => this.note(tab.path.split("/").pop() + ": co-editing ended" + (info.message ? ": " + info.message : ""), "warning") });
                     }
                     this.coeditSessions.sync(this.rootId, this.tabs, !!(this.root && this.root.kind === "hosted"));

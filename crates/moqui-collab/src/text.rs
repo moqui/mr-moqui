@@ -98,6 +98,8 @@ pub struct TextAccess {
     pub reason: String,
     /// The file's text, when it was asked for.
     pub text: Option<String>,
+    /// The hash of the file's bytes the text was read from (as the dev-aide's `get#File` gives it), with the text.
+    pub hash: Option<String>,
     pub max_bytes: usize,
     pub max_rooms: usize,
     /// The most bytes of every text room's state on the server together.
@@ -122,6 +124,7 @@ fn access(root_id: &str, path: &str, user_id: &str, with_text: bool) -> Result<T
         return match answers.get(user_id) {
             Some(Ok(answer)) => Ok(TextAccess {
                 text: answer.text.clone().filter(|_| with_text),
+                hash: answer.hash.clone().filter(|_| with_text),
                 ..answer.clone()
             }),
             Some(Err(code)) => Err(Refusal::new(*code, "the access check failed")),
@@ -152,6 +155,7 @@ fn access(root_id: &str, path: &str, user_id: &str, with_text: bool) -> Result<T
             .get("text")
             .filter(|_| with_text)
             .map(moqui_lib::object::to_plain_string),
+        hash: Some(field(&out, "hash")).filter(|hash| with_text && !hash.is_empty()),
         max_bytes: number("maxBytes", 2 * 1024 * 1024),
         max_rooms: number("maxRooms", DEFAULT_MAX_ROOMS),
         max_total_bytes: number("maxTotalBytes", DEFAULT_MAX_TOTAL_BYTES),
@@ -177,8 +181,26 @@ struct TextRoom {
     state_bytes: usize,
     max_bytes: usize,
     max_total_bytes: usize,
+    /// This seeding's id, and the hash of the file it was seeded from ([`Joined::seed`], [`Joined::base_hash`]).
+    seed_id: String,
+    seed_hash: Option<String>,
     /// Taken out of the rooms: a join that found it before then seeds it again.
     closed: bool,
+}
+
+/// A new id for a room's seeding: the process's start and a count, so one seeded again has another.
+fn seed_id() -> String {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    static START: OnceLock<u128> = OnceLock::new();
+    let start = START.get_or_init(|| {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| since.as_nanos())
+    });
+    format!(
+        "{start:x}-{:x}",
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    )
 }
 
 fn rooms() -> &'static Mutex<HashMap<String, Arc<Mutex<TextRoom>>>> {
@@ -230,14 +252,14 @@ fn room_seeded(
     key: &str,
     root_id: &str,
     path: &str,
-    seed: Option<&str>,
+    seed: Option<(&str, Option<&str>)>,
     bounds: (usize, usize),
 ) -> Result<Option<Arc<Mutex<TextRoom>>>, Refusal> {
     let (max_bytes, max_total_bytes) = bounds;
     if let Some(room) = room_of(key) {
         return Ok(Some(room));
     }
-    let Some(seed) = seed else { return Ok(None) };
+    let Some((seed, seed_hash)) = seed else { return Ok(None) };
     if seed.len() > max_bytes {
         return Err(Refusal::new(413, format!("the file is larger than {max_bytes} bytes")));
     }
@@ -257,6 +279,8 @@ fn room_seeded(
         state_bytes,
         max_bytes,
         max_total_bytes,
+        seed_id: seed_id(),
+        seed_hash: seed_hash.map(str::to_string),
         closed: false,
     }));
     let mut all = lock(rooms());
@@ -304,14 +328,15 @@ pub(crate) fn join(key: &str, user_id: &str, client_state_vector: &[u8]) -> Resu
     };
     // the room, or a new one seeded from the file's text; a room the last leave closed between the lookup and the join,
     // or one gone before a text was read, is seeded again from the file's text read now, never from no text
-    let mut seed = answer.text.take();
+    let mut seed = answer.text.take().map(|text| (text, answer.hash.take()));
     let mut tries = 0;
     let room = loop {
+        let given = seed.take();
         let found = room_seeded(
             key,
             root_id,
             path,
-            seed.take().as_deref(),
+            given.as_ref().map(|(text, hash)| (text.as_str(), hash.as_deref())),
             (answer.max_bytes, answer.max_total_bytes),
         )?;
         if let Some(room) = found {
@@ -359,14 +384,18 @@ pub(crate) fn join(key: &str, user_id: &str, client_state_vector: &[u8]) -> Resu
         }
         let mut fresh = access(root_id, path, user_id, true)?;
         if !fresh.can_edit {
-            return Err(Refusal::new(403, "you may not change this file"));
+            let reason = if fresh.reason.is_empty() {
+                "you may not change this file".to_string()
+            } else {
+                fresh.reason.clone()
+            };
+            return Err(Refusal::new(403, reason));
         }
-        seed = Some(
-            fresh
-                .text
-                .take()
-                .ok_or_else(|| Refusal::new(500, "the dev-aide answered no text of the file"))?,
-        );
+        let text = fresh
+            .text
+            .take()
+            .ok_or_else(|| Refusal::new(500, "the dev-aide answered no text of the file"))?;
+        seed = Some((text, fresh.hash.take()));
         answer = fresh;
     };
     let room = lock(&room);
@@ -374,12 +403,16 @@ pub(crate) fn join(key: &str, user_id: &str, client_state_vector: &[u8]) -> Resu
     let update = txn.encode_state_as_update_v1(&vector);
     let state_vector = txn.state_vector().encode_v1();
     drop(txn);
+    let seed = Some(room.seed_id.clone());
+    let base_hash = room.seed_hash.clone();
     drop(room);
     Ok(Joined {
         can_edit: true,
         update,
         state_vector,
         user_name: user_name(user_id),
+        seed,
+        base_hash,
     })
 }
 

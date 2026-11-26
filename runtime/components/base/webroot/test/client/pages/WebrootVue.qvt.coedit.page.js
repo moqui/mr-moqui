@@ -352,20 +352,6 @@ test("an error answering the join, or no answer, is a fallback; a 409 after it j
     } finally {
         ed.done();
     }
-    // rejoin false (a document its server seeds again, a Dev AIDE file): the first error past the join is a fallback,
-    // told it came after the join, and no join goes again with this doc
-    const once = fakeClient();
-    const fresh = editor(once, { rejoin: false });
-    try {
-        fakeServer().attach(once, "EX_ANN", "Ann");
-        once.open = true;
-        fresh.provider.start();
-        once.deliver({ topic: "collab:WikiPage:100023", type: "error", client: fresh.provider.clientId, code: 409, message: "conflict" });
-        assert.equal(once.ofKind("join").length, 1);
-        assert.deepEqual(fresh.seen.fallback, [{ reason: "server", code: 409, message: "conflict", joined: true }]);
-    } finally {
-        fresh.done();
-    }
 });
 
 test("offline edits merge when the socket reopens: the join sends the state vector and the diff goes", async () => {
@@ -440,5 +426,83 @@ test("two editors through the server converge on concurrent edits, and leave tel
     } finally {
         a.done();
         b.done();
+    }
+});
+
+test("an awareness user is a new object of its known fields: a JSON __proto__ sets nothing, a color only a color", () => {
+    const given = JSON.parse('{"__proto__":{"colorLight":"red;background-image:url(//evil.example/x)"},"color":"#123456","name":"Mallory","avatarUrl":"https://evil.example/a.png"}');
+    const out = coedit.cleanUser(given, { name: "Ann Example", userId: "EX_ANN" }, 5);
+    assert.equal(Object.getPrototypeOf(out), Object.prototype);
+    assert.deepEqual(Object.keys(out).sort(), ["color", "name"]);
+    assert.equal(out.colorLight, undefined, "nothing inherited");
+    assert.equal(out.name, "Ann Example");
+    assert.equal(out.color, "#123456");
+    const bad = coedit.cleanUser({ color: "red;x", colorLight: "#12345633" }, null, 9);
+    assert.equal(bad.name, "");
+    assert.ok(coedit.COLOR.test(bad.color) && bad.color !== "red;x");
+    assert.equal(bad.colorLight, "#12345633");
+});
+
+test("a peer's awareness frame changes its own state only, not another's caret", async () => {
+    const client = fakeClient();
+    const ed = editor(client);
+    try {
+        fakeServer().attach(client, "EX_ANN", "Ann");
+        client.open = true;
+        ed.provider.start();
+        // two others: mal (awareness 77) and vic (awareness 88), as their peer frames say
+        const topic = "collab:WikiPage:100023";
+        client.deliver({ topic, type: "peer", client: "mal", userId: "EX_MAL", name: "Mal", awareness: 77, joined: true });
+        client.deliver({ topic, type: "peer", client: "vic", userId: "EX_VIC", name: "Vic", awareness: 88, joined: true });
+        const statesOf = (clientID, user) => {
+            const doc = new Y.Doc();
+            doc.clientID = clientID;
+            const awareness = new T.Awareness(doc);
+            awareness.setLocalState({ user });
+            return { doc, awareness };
+        };
+        const vic = statesOf(88, { name: "Vic", color: "#43a047" });
+        client.deliver({ topic, type: "awareness", client: "vic", update: b64(T.encodeAwarenessUpdate(vic.awareness, [88])) });
+        assert.equal(ed.awareness.getStates().get(88).user.name, "Vic");
+        // mal's frame carries its own state and one it made for vic: only its own applies
+        const mal = statesOf(77, { name: "Mal", color: "#e53935" });
+        T.applyAwarenessUpdate(mal.awareness, T.encodeAwarenessUpdate(statesOf(88, { name: "Vic (forged)", color: "#000000" }).awareness, [88]), "forge");
+        client.deliver({ topic, type: "awareness", client: "mal", update: b64(T.encodeAwarenessUpdate(mal.awareness, [77, 88])) });
+        assert.equal(ed.awareness.getStates().get(77).user.name, "Mal");
+        assert.equal(ed.awareness.getStates().get(88).user.name, "Vic");
+        assert.equal(ed.awareness.getStates().get(88).user.color, "#43a047");
+        // nor may it remove vic's: a frame of vic's entry alone from mal is nothing
+        T.removeAwarenessStates(mal.awareness, [88], "forge");
+        client.deliver({ topic, type: "awareness", client: "mal", update: b64(T.encodeAwarenessUpdate(mal.awareness, [88])) });
+        assert.ok(ed.awareness.getStates().has(88));
+        // a frame from a client no peer frame named is nothing too
+        client.deliver({ topic, type: "awareness", client: "nobody", update: b64(T.encodeAwarenessUpdate(vic.awareness, [88])) });
+        assert.equal(coedit.ownAwareness(new Uint8Array([5, 1]), 1), null, "not an update");
+    } finally {
+        ed.done();
+    }
+});
+
+test("rejoin false joins again with the same doc while the room's seed is the same, and falls back when it was seeded again", () => {
+    const client = fakeClient();
+    const ed = editor(client, { rejoin: false });
+    const topic = "collab:WikiPage:100023";
+    try {
+        client.open = true;
+        ed.provider.start();
+        const me = ed.provider.clientId;
+        client.deliver({ topic, type: "joined", client: me, canEdit: true, update: "", sv: "", peers: [], seed: "s1", hash: "h1" });
+        assert.deepEqual(ed.provider.joinedInfo, { seed: "s1", hash: "h1" });
+        // a 429 keeps the member: joined again with the same doc, the same seed answered
+        client.deliver({ topic, type: "error", client: me, code: 429, message: "too many updates; slow down" });
+        assert.equal(client.ofKind("join").length, 2);
+        client.deliver({ topic, type: "joined", client: me, canEdit: true, update: "", sv: "", peers: [], seed: "s1" });
+        assert.equal(ed.seen.fallback.length, 0);
+        // the room closed and was seeded again: another seed is a fallback, past the join, before anything merges
+        client.deliver({ topic, type: "error", client: me, code: 409, message: "join the document first" });
+        client.deliver({ topic, type: "joined", client: me, canEdit: true, update: "", sv: "", peers: [], seed: "s2" });
+        assert.deepEqual(ed.seen.fallback, [{ reason: "server", code: 410, message: "the room was seeded again", joined: true }]);
+    } finally {
+        ed.done();
     }
 });

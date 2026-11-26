@@ -314,8 +314,15 @@ fn join(
         let Some(peers) = admit(&factory, &slot, &doc, member) else {
             return;
         };
-        let answer = json!({"topic": topic(&doc), "type": "joined", "client": client, "canEdit": joined.can_edit,
+        let mut answer = json!({"topic": topic(&doc), "type": "joined", "client": client, "canEdit": joined.can_edit,
             "update": b64().encode(&joined.update), "sv": b64().encode(&joined.state_vector), "peers": peers});
+        // a co-edited file's room: its seed (new each time it is seeded) and the hash of the file it was seeded from
+        if let Some(seed) = &joined.seed {
+            answer["seed"] = json!(seed);
+        }
+        if let Some(hash) = &joined.base_hash {
+            answer["hash"] = json!(hash);
+        }
         send(&slot, &if guest { for_guest(&answer) } else { answer });
         peer["topic"] = json!(topic(&doc));
         peer["type"] = json!("peer");

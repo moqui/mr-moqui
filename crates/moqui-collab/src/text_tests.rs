@@ -37,6 +37,7 @@ fn writer(text: &str) -> Result<TextAccess, u16> {
         can_edit: true,
         reason: String::new(),
         text: Some(text.to_string()),
+        hash: Some("the-file-hash".into()),
         max_bytes: 64,
         max_rooms: 2,
         max_total_bytes: 1 << 20,
@@ -48,6 +49,7 @@ fn not_a_writer() -> Result<TextAccess, u16> {
         can_edit: false,
         reason: "runtime/component/x is upstream: extend it in site".into(),
         text: None,
+        hash: None,
         max_bytes: 64,
         max_rooms: 2,
         max_total_bytes: 1 << 20,
@@ -116,9 +118,18 @@ fn a_writer_joins_the_file_seeded_from_its_text_and_two_editors_converge() {
     // the first writer seeds the room from the file; the second gets the room's text, not the file's
     let ann_join = crate::join(&key, "ann", &[]).unwrap();
     assert!(ann_join.can_edit);
+    // the joined frame names the room's seeding and the hash of the file it was seeded from
+    let first_seed = ann_join.seed.clone().expect("a seed id");
+    assert_eq!(ann_join.base_hash.as_deref(), Some("the-file-hash"));
     let ann = client(&ann_join);
     assert_eq!(text_of(&ann), "<services/>\n");
-    let bob = client(&crate::join(&key, "bob", &[]).unwrap());
+    let bob_join = crate::join(&key, "bob", &[]).unwrap();
+    assert_eq!(
+        bob_join.seed.as_deref(),
+        Some(first_seed.as_str()),
+        "one seeding, one id"
+    );
+    let bob = client(&bob_join);
     assert_eq!(text_of(&bob), "<services/>\n");
     assert!(crate::open_documents().contains(&key));
 
@@ -142,7 +153,10 @@ fn a_writer_joins_the_file_seeded_from_its_text_and_two_editors_converge() {
     crate::leave_as(&key, Some("bob"));
     assert!(super::room_of(&key).is_none());
     assert!(!crate::open_documents().contains(&key));
-    let again = client(&crate::join(&key, "ann", &[]).unwrap());
+    let again_join = crate::join(&key, "ann", &[]).unwrap();
+    // seeded again: another seed id, by which a client that joins again with an old document starts a new one
+    assert_ne!(again_join.seed.as_deref(), Some(first_seed.as_str()));
+    let again = client(&again_join);
     assert_eq!(text_of(&again), "<services/>\n");
     crate::leave_as(&key, Some("ann"));
     *lock(&ACCESS_FOR_TEST) = None;

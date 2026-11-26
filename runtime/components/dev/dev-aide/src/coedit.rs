@@ -87,11 +87,12 @@ fn answer(ec: &ExecutionContext, root_id: &str, path: &str, with_text: bool) -> 
         Value::I64(number("coedit-max-total-bytes", DEFAULT_MAX_TOTAL_BYTES)),
     );
     match readable(ec, root_id, path) {
-        Ok((max_bytes, file_text)) => {
+        Ok((max_bytes, file_text, hash)) => {
             out.insert("maxBytes".into(), Value::I64(max_bytes));
             out.insert("canEdit".into(), Value::Bool(true));
             if with_text {
                 out.insert("text".into(), Value::string(file_text));
+                out.insert("hash".into(), Value::string(hash));
             }
         }
         Err(reason) => {
@@ -102,8 +103,9 @@ fn answer(ec: &ExecutionContext, root_id: &str, path: &str, with_text: bool) -> 
     out
 }
 
-/// The most bytes of the file's text and the text, when the current user may co-edit it; why not otherwise.
-fn readable(ec: &ExecutionContext, root_id: &str, path: &str) -> Result<(i64, String), LibError> {
+/// The most bytes of the file's text, the text and the hash of its bytes (as `get#File` gives it), when the current
+/// user may co-edit it; why not otherwise.
+fn readable(ec: &ExecutionContext, root_id: &str, path: &str) -> Result<(i64, String, String), LibError> {
     let context = Context::of(ec, Tier::Extend)?;
     if !context.settings.shared {
         return Err(LibError::new(
@@ -131,5 +133,9 @@ fn readable(ec: &ExecutionContext, root_id: &str, path: &str) -> Result<(i64, St
     let (file_text, _) = decode(&bytes).ok_or_else(|| LibError::new(format!("{path} is a binary file")))?;
     // the editor's lines end in LF, as CodeMirror keeps them; Save writes the file's own endings back
     let file_text = file_text.replace("\r\n", "\n").replace('\r', "\n");
-    Ok((i64::try_from(max).unwrap_or(i64::MAX), file_text))
+    Ok((
+        i64::try_from(max).unwrap_or(i64::MAX),
+        file_text,
+        crate::workspace::sha256(&bytes),
+    ))
 }

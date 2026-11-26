@@ -4905,16 +4905,60 @@
             for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
             return bytes;
         },
-        // Another editor's awareness user as an editor may show it: the name of its peer frame (the server's, not its
-        // own claim; "" until the peer is known), and its color and colorLight when they are #rrggbb or #rrggbbaa, else the
-        // color of its user id. Other fields stay as they are.
+        // Another editor's awareness user as an editor may show it, a new object of these fields only (nothing of the
+        // peer's object is copied, not its prototype from a JSON __proto__ key): the name of its peer frame (the server's,
+        // not its own claim; "" until the peer is known), and its color and colorLight when they are its own #rrggbb or
+        // #rrggbbaa, else the color of its user id (and no colorLight).
         cleanUser(user, peer, id) {
-            const given = user && typeof user === "object" ? user : {};
-            const out = Object.assign({}, given, { name: peer ? String(peer.name || peer.userId || "") : "",
-                color: moqui.coedit.COLOR.test(given.color) ? given.color : moqui.coedit.userColor(peer ? peer.userId || peer.name : id) });
-            if (moqui.coedit.COLOR.test(given.colorLight)) out.colorLight = given.colorLight;
-            else delete out.colorLight;
+            const own = (name) => (user && typeof user === "object" && Object.prototype.hasOwnProperty.call(user, name) ? user[name] : undefined);
+            const valid = (value) => typeof value === "string" && moqui.coedit.COLOR.test(value);
+            const out = { name: peer ? String(peer.name || peer.userId || "") : "",
+                color: valid(own("color")) ? own("color") : moqui.coedit.userColor(peer ? peer.userId || peer.name : id) };
+            if (valid(own("colorLight"))) out.colorLight = own("colorLight");
             return out;
+        },
+        // An awareness update (y-protocols: a count, then per client its id, clock and state JSON, as lib0 varUints and
+        // varStrings) with only the entries of client `allowed`: a peer's frame changes its own state, never another's.
+        // null when it holds none of them, or does not read as an update.
+        ownAwareness(bytes, allowed) {
+            let at = 0;
+            const uint = () => {
+                let value = 0, shift = 0;
+                for (;;) {
+                    if (at >= bytes.length || shift > 49) throw new Error("not an awareness update");
+                    const byte = bytes[at++];
+                    value += (byte & 0x7f) * Math.pow(2, shift);
+                    shift += 7;
+                    if (byte < 0x80) return value;
+                }
+            };
+            const put = (out, value) => {
+                while (value >= 0x80) { out.push((value % 0x80) | 0x80); value = Math.floor(value / 0x80); }
+                out.push(value);
+            };
+            try {
+                const count = uint();
+                const kept = [];
+                for (let i = 0; i < count; i++) {
+                    const id = uint(), clock = uint(), length = uint();
+                    if (at + length > bytes.length) throw new Error("not an awareness update");
+                    const state = bytes.subarray(at, at + length);
+                    at += length;
+                    if (allowed !== null && allowed !== undefined && id === allowed) kept.push([id, clock, state]);
+                }
+                if (!kept.length) return null;
+                const out = [];
+                put(out, kept.length);
+                for (const [id, clock, state] of kept) {
+                    put(out, id);
+                    put(out, clock);
+                    put(out, state.length);
+                    for (const byte of state) out.push(byte);
+                }
+                return new Uint8Array(out);
+            } catch (err) {
+                return null;
+            }
         },
         COLOR: /^#[0-9a-f]{6}([0-9a-f]{2})?$/i,
         // a color for a user id (or a name), the same each time; #rrggbb, the only form the caret extension takes
@@ -4929,9 +4973,10 @@
     // isOpen), docKey, doc (a Y.Doc), awareness (an Awareness of it), lib (the Yjs global, or Tiptap's, which re-exports it:
     // Y and the awareness functions),
     // onStatus({state, peers, pending}), onAccess(canEdit, message), onSaved(message), onFallback({reason, code, message,
-    // joined}), rejoin (true: after an error past the join it joins again with the same doc; false, for a document the
-    // server seeds again when its room closes, such as a Dev AIDE file, it falls back instead, for the owner to start a
-    // new doc), batchMs
+    // joined}), rejoin (false, for a document the server seeds again when its room closes, such as a Dev AIDE file: a
+    // join answered with another room seed than the first, `seed` of the joined frame, falls back (410) instead of
+    // merging this doc into it, for the owner to start a new doc; an error that keeps the room joins again as always),
+    // batchMs. joinedInfo is the last join's {seed, hash} (a file's room: the hash of the file it was seeded from).
     // (50: local updates in that time go as one message), joinTimeoutMs (20 s: a join no one answers on an open socket is a
     // fallback). A remote update is applied with the provider as its origin, so it is not sent back. Each open of the socket
     // joins again with the state vector, so what was edited offline merges; an update sent and not acknowledged before a
@@ -5068,8 +5113,12 @@
                 this.tell();
             } else if (message.type === "awareness") {
                 if (own || !message.update) return;
+                // only the sender's own entry: the awareness id its peer frame names (none before it is known)
+                const sender = this.peers.find((peer) => peer.client === message.client);
+                const update = moqui.coedit.ownAwareness(moqui.coedit.fromBase64(message.update), sender ? sender.awareness : null);
+                if (!update) return;
                 try {
-                    this.lib.applyAwarenessUpdate(this.awareness, moqui.coedit.fromBase64(message.update), this);
+                    this.lib.applyAwarenessUpdate(this.awareness, update, this);
                 } catch (err) {
                     console.error("m-coedit: an awareness update of " + this.docKey + " did not apply: " + err);
                 }
@@ -5080,6 +5129,17 @@
         // the server's diff against our state vector, then ours against its, when it holds anything (an empty update is 2 bytes)
         onJoined(message) {
             clearTimeout(this.joinTimer);
+            // rejoin false: a room seeded again (another seed than the first join's) is never merged with this doc, which
+            // holds the old one's text; the owner starts a new doc
+            if (this.options.rejoin === false && message.seed) {
+                if (this.seed && message.seed !== this.seed) {
+                    this.joinedOnce = true;
+                    this.fail("server", 410, "the room was seeded again");
+                    return;
+                }
+                this.seed = message.seed;
+            }
+            this.joinedInfo = { seed: message.seed || null, hash: message.hash || null };
             this.joined = true;
             this.joinedOnce = true;
             this.canEdit = message.canEdit !== false;
@@ -5097,7 +5157,14 @@
         onPeer(message) {
             const peer = peerOf(message);
             this.peers = this.peers.filter((other) => other.client !== peer.client);
-            if (message.joined !== false) { this.peers.push(peer); if (peer.awareness !== null) this.cleanStates([peer.awareness]); }
+            if (message.joined !== false) {
+                this.peers.push(peer);
+                // a state that came before its peer frame takes the peer's name now, and the editors draw it again
+                if (peer.awareness !== null && this.awareness.getStates().has(peer.awareness)) {
+                    this.cleanStates([peer.awareness]);
+                    this.awareness.emit("change", [{ added: [], updated: [peer.awareness], removed: [] }, this]);
+                }
+            }
             else if (peer.awareness !== null) this.lib.removeAwarenessStates(this.awareness, [peer.awareness], this);
             this.tell();
         }
@@ -5114,8 +5181,6 @@
                 this.tell();
                 return;
             }
-            // a document seeded again with its room is never joined again with this doc, which would merge an old copy
-            if (this.options.rejoin === false) { this.fail("server", code, message.message); return; }
             this.retries += 1;
             if (this.retries > 3) { this.fail("server", code, message.message); return; }
             console.info("m-coedit: the server answered " + code + " for " + this.docKey + ", joining again: " + (message.message || ""));

@@ -1402,8 +1402,8 @@ answered, and read-only when `canEdit` is false or after a 403; it stays editabl
 
 `moqui.coedit.Provider` speaks the protocol on the shell's notification socket, `{client, docKey, doc, awareness, lib}` (`lib` is
 the `Yjs` global of `libs/yjs`, or `Tiptap`, which re-exports it; the others' awareness states are cleaned as they arrive,
-before an editor reads them: the name is the one of the peer frame for that awareness id, and a color or colorLight that is
-not `#rrggbb` or `#rrggbbaa` is replaced (`moqui.coedit.cleanUser`): Yjs is its own library, loaded before Tiptap's bundle, which
+before an editor reads them: each `user` is a new object of `name` (the peer frame's for that awareness id), `color` and, when
+it is the peer's own `#rrggbb` or `#rrggbbaa`, `colorLight` (`moqui.coedit.cleanUser`; nothing of the peer's object is copied): Yjs is its own library, loaded before Tiptap's bundle, which
 reads `Y` and the awareness protocol from it, so a page has one copy of Yjs). The same provider carries a Dev AIDE file
 (`DevFile:<rootId>:<path>`, a `Y.Text` bound to `m-code-editor` with y-codemirror.next; `runtime/components/dev/dev-aide`
 `DevAideCoedit.js`). The client id `C` is random per editor; `D` is the doc key; updates are base64 of Yjs's binary update
@@ -1420,13 +1420,13 @@ Server to client, `topic: "collab:" + D`; `ack`, `error` and `joined` for anothe
 
 | `type` | Effect |
 |---|---|
-| `joined` `{client, canEdit, update, sv, peers}` | apply `update`, send our diff against `sv`, then our awareness; `canEdit: false` is read-only |
+| `joined` `{client, canEdit, update, sv, peers}`, and for a Dev AIDE file `seed` (the room's seeding, new each time it is seeded) and `hash` (of the file it was seeded from) | apply `update`, send our diff against `sv`, then our awareness; `canEdit: false` is read-only; with `rejoin: false`, a `seed` other than the first join's is a fallback (410, `joined: true`) before anything is applied |
 | `update` `{client, update}` | applied with the provider as the origin (not sent back), unless it is our own |
 | `ack` `{client, id}` | `pending` (sent and not acknowledged) goes down; `synced` at 0 |
-| `awareness` `{client, update}` | `applyAwarenessUpdate`, unless our own |
+| `awareness` `{client, update}` | `applyAwarenessUpdate`, unless our own; only the entry of the sender's own awareness id (its peer frame's) is applied, so a peer changes or removes no one else's state, and nothing before its peer frame |
 | `peer` `{client, userId, name, awareness, joined}` | the peers list; `joined: false` removes that caret (`removeAwarenessStates`) |
 | `saved` `{versionName, userId, name}` | the `saved` event (the host says a version was saved) |
-| `error` `{client, code, message}` | before the join is answered: fallback; after it, 403 is read-only, another code joins again (three times without an ack between, then fallback), or with the option `rejoin: false` falls back at once (`joined: true` in the fallback), for a document the server seeds again when its room closes (a Dev AIDE file), whose owner starts a new doc |
+| `error` `{client, code, message}` | before the join is answered: fallback; after it, 403 is read-only, another code joins again (three times without an ack between, then fallback); with `rejoin: false` the join again is answered with the room's seed, which says whether the doc may merge |
 
 `status` is `{state, peers: [{client, userId, name}], pending}`, `state` one of `loading`, `connecting`, `synced`, `saving`, `offline`,
 `readonly`, `failed`. `fallback` is `{reason, code, message}`: `library` (Tiptap did not load or start), `socket` (no notification

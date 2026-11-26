@@ -114,6 +114,11 @@ pub struct Joined {
     pub state_vector: Vec<u8>,
     /// The user's name, for the others' presence.
     pub user_name: String,
+    /// A co-edited file's room ([`text`]): its seed's id, new each time the room is seeded, by which a client that
+    /// joins again knows a room seeded again since (and starts a new document rather than merge an old copy).
+    pub seed: Option<String>,
+    /// A co-edited file's room: the hash of the file it was seeded from, which a joining tab compares with its own.
+    pub base_hash: Option<String>,
 }
 
 /// Something the host tells the editors of a document.
@@ -848,6 +853,8 @@ pub fn join_scoped(
         update,
         state_vector,
         user_name: name,
+        seed: None,
+        base_hash: None,
     })
 }
 

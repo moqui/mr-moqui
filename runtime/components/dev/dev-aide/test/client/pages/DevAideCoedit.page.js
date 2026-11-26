@@ -37,6 +37,7 @@ function fakeRoom() {
     const topic = "collab:" + KEY;
     const members = new Map();
     let doc = null;
+    let seeds = 0, seedId = null;
     const toAll = (message, except) => members.forEach((member, id) => { if (id !== except) member.fake.deliver(Object.assign({ topic }, message)); });
     return {
         members,
@@ -53,10 +54,10 @@ function fakeRoom() {
             fake.onSend = (message) => {
                 const from = message.client;
                 if (message.collab === "join") {
-                    if (!doc) { doc = new Y.Doc(); doc.getText("codemirror").insert(0, SEED); }
+                    if (!doc) { doc = new Y.Doc(); doc.getText("codemirror").insert(0, SEED); seedId = "seed-" + (++seeds); }
                     const peers = Array.from(members.entries()).map(([client, member]) => ({ client, userId: member.userId, name: member.name, awareness: member.awareness }));
                     members.set(from, { fake, userId, name, awareness: message.awareness });
-                    fake.deliver({ topic, type: "joined", client: from, canEdit: true,
+                    fake.deliver({ topic, type: "joined", client: from, canEdit: true, seed: seedId, hash: "file-hash",
                         update: b64(Y.encodeStateAsUpdate(doc, unb64(message.sv))), sv: b64(Y.encodeStateVector(doc)), peers });
                     toAll({ type: "peer", client: from, userId, name, awareness: message.awareness, joined: true }, from);
                 } else if (message.collab === "update") {
@@ -229,4 +230,23 @@ test("a session the server ends past its join starts again with a new document, 
     } finally {
         sessions.destroy();
     }
+});
+
+test("a tab that read another version of the file than the room was seeded from is told", async () => {
+    const told = [];
+    for (const base of ["an-older-hash", "file-hash"]) {
+        const room = fakeRoom();
+        const client = fakeClient();
+        room.attach(client, "ann", "Ann");
+        const tab = { path: "service/Things.xml", text: SEED, saved: SEED, base, collab: null, coedit: null };
+        const sessions = new coedit.Sessions({ client, user: { id: "ann", name: "Ann" }, batchMs: 1, onOtherBase: () => told.push(base) });
+        try {
+            await sessions.sync("site", [tab], false);
+            await sleep(20);
+            assert.ok(tab.collab, base);
+        } finally {
+            sessions.destroy();
+        }
+    }
+    assert.deepEqual(told, ["an-older-hash"]);
 });

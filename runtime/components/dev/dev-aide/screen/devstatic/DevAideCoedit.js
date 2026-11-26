@@ -129,6 +129,10 @@
             this.ytext.observe(this.onText);
             this.onText();
             if (plan.dropped && this.options.onDropped) this.options.onDropped(this.tab);
+            // the room was seeded from another version of the file than the one this tab read: said, as the tab's text is
+            // the room's now and a Save is by the hash the tab read
+            const seeded = this.provider.joinedInfo && this.provider.joinedInfo.hash;
+            if (seeded && this.tab.base && seeded !== this.tab.base && this.options.onOtherBase) this.options.onOtherBase(this.tab);
             const markRaw = this.options.markRaw || ((value) => value);
             this.tab.collab = markRaw({ ytext: this.ytext, awareness: this.awareness, undoManager: this.undoManager, key: this.key });
         }
@@ -163,7 +167,8 @@
 
     // One per Workspace: sync(rootId, tabs, hosted) starts a session for each eligible tab and ends the others; the
     // sessions end with the socket and start again when it opens; a refused tab waits for the next open. options:
-    // client, user, markRaw, watch(tab, fn) (Vue's $watch of the tab's text, answering its stop), onDropped, onEnded(tab,
+    // client, user, markRaw, watch(tab, fn) (Vue's $watch of the tab's text, answering its stop), onDropped, onOtherBase(tab)
+    // (the room was seeded from another version of the file than the tab read), onEnded(tab,
     // {code, message}) (the server ended a joined session for good: the right was taken away), batchMs.
     class Sessions {
         constructor(options) {
@@ -207,7 +212,7 @@
                 if (this.sessions.has(key)) continue;
                 const session = new Session({ client: this.options.client, rootId, tab, user: this.options.user, lib: this.lib,
                     markRaw: this.options.markRaw, batchMs: this.options.batchMs,
-                    onDropped: this.options.onDropped,
+                    onDropped: this.options.onDropped, onOtherBase: this.options.onOtherBase,
                     onRefused: (refusedTab, info) => {
                         const entry = this.sessions.get(key);
                         if (entry && entry.session.tab === refusedTab) { if (entry.stop) entry.stop(); this.sessions.delete(key); }

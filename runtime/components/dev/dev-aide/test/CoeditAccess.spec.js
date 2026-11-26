@@ -53,6 +53,9 @@ feature("a writer co-edits a file only on a shared server, with its text in LF a
         shared.out.maxBytes == 2097152
         shared.out.maxRooms == 20
         shared.out.maxTotalBytes == 67108864
+        // the hash of the file's bytes it was read from, as get#File gives it
+        shared.out.hash.length == 64
+        noText.out.hash == null
         noText.out.canEdit == true
         noText.out.text == null
     }
