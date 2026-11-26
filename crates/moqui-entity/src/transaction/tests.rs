@@ -41,6 +41,9 @@ struct Shared {
     stalled: AtomicUsize,
     release: AtomicBool,
     read_timeouts: Mutex<Vec<Option<Duration>>>,
+    /// Connects wait while set, as on a database slow to accept one; `connecting` counts those waiting.
+    hold_connects: AtomicBool,
+    connecting: AtomicUsize,
 }
 
 struct FakeDriver {
@@ -74,6 +77,8 @@ impl FakeDriver {
                 stalled: AtomicUsize::new(0),
                 release: AtomicBool::new(false),
                 read_timeouts: Mutex::new(Vec::new()),
+                hold_connects: AtomicBool::new(false),
+                connecting: AtomicUsize::new(0),
             }),
         })
     }
@@ -257,6 +262,13 @@ impl DbDriver for FakeDriver {
     fn connect(&self) -> Result<Box<dyn DbConnection>, Error> {
         if self.shared.fail_connect.load(Ordering::SeqCst) {
             return Err(Error::new("connection refused"));
+        }
+        if self.shared.hold_connects.load(Ordering::SeqCst) {
+            self.shared.connecting.fetch_add(1, Ordering::SeqCst);
+            while self.shared.hold_connects.load(Ordering::SeqCst) {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            self.shared.connecting.fetch_sub(1, Ordering::SeqCst);
         }
         let id = self.shared.next_id.fetch_add(1, Ordering::Relaxed);
         self.shared.connects.fetch_add(1, Ordering::SeqCst);
@@ -494,6 +506,36 @@ fn ordinary_checkout_fails_when_only_reserve_is_idle() {
     assert!(err.to_string().contains("reserve"), "{err}");
     assert_eq!(mgr.stats().reserve_idle, 1);
     assert_eq!(driver.connects(), 2);
+}
+
+/// A checkout that finds its class's every connection still being opened by other checkouts waits for one to come
+/// back, as it waits for one checked out, rather than failing as if the pool had none to give: a burst of checkouts on
+/// a pool with no idle connections (a member starting, or after the idle ones closed) would otherwise fail all but
+/// the first few.
+#[test]
+fn a_checkout_waits_for_a_connection_another_checkout_is_opening() {
+    let (mgr, driver) = harness(PoolConfig {
+        min: 0,
+        max: 2,
+        reserve: 1,
+        acquire_timeout: Duration::from_secs(5),
+        ..Default::default()
+    });
+    driver.shared.hold_connects.store(true, Ordering::SeqCst);
+    let checkout = |mgr: &TransactionManager| {
+        let mgr = mgr.clone();
+        std::thread::spawn(move || mgr.with_reserve(|conn| conn.query_once("work", &[]).map(|_| ())))
+    };
+    let opener = checkout(&mgr);
+    assert!(eventually(|| driver.shared.connecting.load(Ordering::SeqCst) == 1));
+    let second = checkout(&mgr);
+    let waiting = eventually(|| mgr.stats().waiting == 1);
+    driver.shared.hold_connects.store(false, Ordering::SeqCst);
+    let (opened, second) = (opener.join().unwrap(), second.join().unwrap());
+    opened.expect("the first checkout");
+    second.expect("the second checkout gets the first's connection");
+    assert!(waiting, "the second checkout waited");
+    assert_eq!(driver.connects(), 1);
 }
 
 #[test]

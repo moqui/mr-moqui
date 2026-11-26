@@ -14,9 +14,10 @@
 
 //! One pool. Another database is another instance.
 //!
-//! Ordinary checkout never takes a reserve connection. It waits only when a checked-out ordinary
-//! connection might be returned. If the only idle connections are reserve and no ordinary
-//! connection can be opened or returned, it fails without using [`PoolConfig::acquire_timeout`].
+//! Ordinary checkout never takes a reserve connection. It waits only when an ordinary connection
+//! might be returned: one checked out, or one another checkout is opening or testing. If the only
+//! idle connections are reserve and no ordinary connection can be opened or returned, it fails
+//! without using [`PoolConfig::acquire_timeout`].
 //! A parked client counts against `max`.
 
 use std::sync::{Arc, Condvar, Mutex};
@@ -960,12 +961,13 @@ fn can_create(state: &State, class: Class, config: &PoolConfig) -> bool {
     }
 }
 
-/// A checked-out client of this class can come back to the idle list. A parked client does not:
-/// the thread that parked it cannot return it while blocked in checkout.
+/// A client of this class can come back to the idle list: one checked out, or one another checkout is opening or
+/// testing (it is handed out and returned, or its failure wakes the waiters). A parked client does not: the thread
+/// that parked it cannot return it while blocked in checkout.
 fn might_return(state: &State, class: Class) -> bool {
     match class {
-        Class::Ordinary => state.ordinary_out > 0,
-        Class::Reserve => state.reserve_out > 0,
+        Class::Ordinary => state.ordinary_out + state.creating_ordinary + state.testing_ordinary > 0,
+        Class::Reserve => state.reserve_out + state.creating_reserve + state.testing_reserve > 0,
     }
 }
 
