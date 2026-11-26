@@ -20,9 +20,11 @@
 //! composer can mark its blocks as run, not run or failed. When nothing traces, nothing of this runs and the generated
 //! scripts are the ones they always were.
 //!
-//! The values are bounded (each at most [`MAX_VALUE`] characters, a list at its first items) and masked as the logs
-//! mask them: a name that names a secret shows `(hidden)`, so does such a key of a map, and credential assignments in
-//! text are redacted (`telemetry::redact_text`).
+//! The values are bounded (each at most [`MAX_VALUE`] characters, a map at its first keys, a list at its first items,
+//! a few levels deep) and masked as the logs and a sim's rows mask them: a name that names a secret shows `(hidden)`,
+//! so does such a key of a map and an entity value's encrypted field, and credential assignments in text are redacted
+//! (`telemetry::redact_text`). A trace shows what a service builds inside, its finds with authorization off too, so the
+//! Dev AIDE offers it at the extend tier only.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
@@ -38,6 +40,10 @@ const MAX_ELEMENTS: usize = 4000;
 const MAX_BLOCKS: usize = 200;
 /// The most names an element's values keep.
 const MAX_NAMES: usize = 8;
+/// The most keys of a map, items of a list and levels of either a value shows.
+const MAX_KEYS: usize = 30;
+const MAX_ITEMS: usize = 10;
+const MAX_DEPTH: usize = 3;
 
 /// An actions block's source position: its file, line and column, or for one with none the hash of its text.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -189,22 +195,87 @@ fn bounded(text: &str) -> String {
     }
 }
 
-/// A JSON value with each key that names a secret hidden, at any depth.
-fn masked(value: Json) -> Json {
-    match value {
-        Json::Object(map) => Json::Object(
-            map.into_iter()
-                .map(|(key, value)| {
-                    if crate::context::secret_parameter(&key) {
-                        (key, json!("(hidden)"))
-                    } else {
-                        (key, masked(value))
-                    }
+/// The fields of `entity` whose values a trace never shows: those the entity encrypts, as a sim's rows hide them
+/// (`approval::preview`), and those whose names name a secret.
+fn hidden_fields(entity: &str) -> Vec<String> {
+    let facade = crate::context::ExecutionContext::with_current(|ec| ec.factory().entity()).flatten();
+    facade
+        .and_then(|facade| {
+            facade
+                .with_entity(entity, |definition, _, _| {
+                    Ok(definition
+                        .fields
+                        .iter()
+                        .filter(|field| field.encrypt)
+                        .map(|field| field.name.clone())
+                        .collect())
                 })
-                .collect(),
-        ),
-        Json::Array(items) => Json::Array(items.into_iter().map(masked).collect()),
-        other => other,
+                .ok()
+        })
+        .unwrap_or_default()
+}
+
+/// A value as a trace shows it, before it becomes text: a map at its first [`MAX_KEYS`] keys and a list (an entity
+/// list too) at its first [`MAX_ITEMS`] items, each with how many more, [`MAX_DEPTH`] levels down; a key that names a
+/// secret, and an entity value's encrypted field, `(hidden)`. Only what is shown is converted.
+fn plain(value: &Value, depth: usize) -> Json {
+    let more = |count: usize| json!(format!("… {count} more"));
+    if depth >= MAX_DEPTH && matches!(value, Value::Map(_) | Value::List(_) | Value::Object(_)) {
+        return json!("…");
+    }
+    let field = |key: &str, value: &Value, hidden: &[String]| {
+        if crate::context::secret_parameter(key) || hidden.iter().any(|name| name == key) {
+            json!("(hidden)")
+        } else {
+            plain(value, depth + 1)
+        }
+    };
+    match value {
+        Value::Map(map) => {
+            let mut out: serde_json::Map<String, Json> = map
+                .iter()
+                .take(MAX_KEYS)
+                .map(|(key, value)| (key.clone(), field(key, value, &[])))
+                .collect();
+            if map.len() > MAX_KEYS {
+                out.insert("…".into(), more(map.len() - MAX_KEYS));
+            }
+            Json::Object(out)
+        }
+        Value::List(items) => {
+            let mut out: Vec<Json> = items
+                .iter()
+                .take(MAX_ITEMS)
+                .map(|item| plain(item, depth + 1))
+                .collect();
+            if items.len() > MAX_ITEMS {
+                out.push(more(items.len() - MAX_ITEMS));
+            }
+            Json::Array(out)
+        }
+        Value::Bytes(bytes) => json!(format!("({} bytes)", bytes.len())),
+        Value::Object(_) => match super::runtime::host_parts(value, MAX_ITEMS) {
+            Some(super::runtime::HostParts::Entity(entity, fields)) => {
+                let hidden = hidden_fields(&entity);
+                let mut out: serde_json::Map<String, Json> = fields
+                    .iter()
+                    .filter(|(_, value)| !value.is_null())
+                    .take(MAX_KEYS)
+                    .map(|(key, value)| (key.clone(), field(key, value, &hidden)))
+                    .collect();
+                out.insert("_entity".into(), json!(entity));
+                Json::Object(out)
+            }
+            Some(super::runtime::HostParts::List(len, rows)) => {
+                let mut out: Vec<Json> = rows.iter().map(|row| plain(row, depth + 1)).collect();
+                if len > rows.len() {
+                    out.push(more(len - rows.len()));
+                }
+                Json::Array(out)
+            }
+            None => json!("(object)"),
+        },
+        other => moqui_lib::json::to_json(other),
     }
 }
 
@@ -213,11 +284,31 @@ fn shown(name: &str, value: &Value) -> String {
     if crate::context::secret_parameter(name) {
         return "(hidden)".to_string();
     }
-    let text = match masked(moqui_lib::json::to_json(value)) {
+    let text = match plain(value, 0) {
         Json::String(text) => text,
         other => other.to_string(),
     };
     bounded(&crate::telemetry::redact_text(&text))
+}
+
+/// [`shown`] of what a trace call read of `name`: a field of a host object comes as `{__traceEntity, __traceKey}`
+/// (`TemplateSupport.js`), shown `(hidden)` when its entity encrypts it.
+fn shown_set(name: &str, value: &Value) -> String {
+    if let Value::Map(read) = value {
+        if let (Some(object), Some(key)) = (read.get("__traceEntity"), read.get("__traceKey")) {
+            let key = moqui_lib::object::to_plain_string(key);
+            let hidden = match super::runtime::host_parts(object, 0) {
+                Some(super::runtime::HostParts::Entity(entity, _)) => hidden_fields(&entity).contains(&key),
+                _ => false,
+            };
+            if hidden || crate::context::secret_parameter(&key) {
+                return "(hidden)".to_string();
+            }
+            let field = super::runtime::value_field(object, &key).unwrap_or(Value::Null);
+            return shown(name, &field);
+        }
+    }
+    shown(name, value)
 }
 
 /// One running block, entered for a traced run of an actions text and left by [`Self::finish`], or on a panic by its
@@ -323,6 +414,17 @@ impl Drop for Block {
     }
 }
 
+/// How many elements are open on this thread's trace, for tests.
+#[cfg(test)]
+pub(crate) fn open_depth() -> usize {
+    STATE.with(|state| state.borrow().as_ref().map_or(0, |state| state.open.len()))
+}
+
+/// Whether the element at `path` is inside the one at `outer` (`1.0.2` is inside `1` and `1.0`).
+fn is_inside(path: &str, outer: &str) -> bool {
+    path.strip_prefix(outer).is_some_and(|rest| rest.starts_with('.'))
+}
+
 /// A trace call of a traced script (`__moquiTrace(op, path, names, values)`): `op` 0 when the element at `path` starts,
 /// 1 when it ends, with the names it set and their values. Nothing when no trace holds the thread.
 pub(crate) fn record(op: i32, path: &str, names: Option<&Value>, values: Option<&Value>) {
@@ -335,6 +437,16 @@ pub(crate) fn record(op: i32, path: &str, names: Option<&Value>, values: Option<
             return;
         };
         if op == 0 {
+            // an element starts after its earlier siblings ended, inside its open ancestors: what of its block is open
+            // and is not one of them was left by a break, a continue or a return, so the stack stays as deep as the
+            // actions however many times a loop goes round
+            while state
+                .open
+                .last()
+                .is_some_and(|open| open.block == block && !is_inside(path, &open.path))
+            {
+                state.open.pop();
+            }
             let known = state.blocks[block].elements.contains_key(path);
             if !known && state.elements >= MAX_ELEMENTS {
                 return;
@@ -370,7 +482,7 @@ pub(crate) fn record(op: i32, path: &str, names: Option<&Value>, values: Option<
         {
             for (name, value) in names.iter().zip(values.iter()).take(MAX_NAMES) {
                 let name = moqui_lib::object::to_plain_string(name);
-                element.values.insert(name.clone(), shown(&name, value));
+                element.values.insert(name.clone(), shown_set(&name, value));
             }
         }
         if let (Some(why), true) = (added, unmarked) {

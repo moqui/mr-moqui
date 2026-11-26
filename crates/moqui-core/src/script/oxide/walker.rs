@@ -37,8 +37,8 @@ use crate::script::bounded::BoundedMap;
 use crate::script::run::{self, ScriptLimit, DEADLINE};
 
 /// `walker::walk` in JavaScript, over the tree's JSON text: the node objects (`name`, `text`, `attrs`, `src`, `path`,
-/// `inert`, `parent`, `children`) first, then the macros in post-order, each node's `source` set as its macro returns. The
-/// result is `{source}`, or how the walk ended: `{missing}` for an element with no macro when there is no fallback,
+/// `inert`, `parent`, `children`) first, then the macros in post-order, each node's `source` set as its macro returns.
+/// The result is `{source}`, or how the walk ended: `{missing}` for an element with no macro when there is no fallback,
 /// `{converting}` for a macro entry that is not a function or a macro that did not return a string (the `value`, the
 /// type it is `to` be, and whether it is a `proxy`, for the rquickjs conversion error Rust words), `{thrown}` for a
 /// macro that threw (its stack without the walker's frames, as on QuickJS where the walker is Rust). `logged` is the
@@ -144,7 +144,7 @@ const WALK_FILE: &str = "moqui-walker";
 const MACROS_FILE: &str = "eval_script";
 
 /// Sets a support object's `options.debug`, `options.mode` and `options.trace` (an XML actions text traced for a Try,
-/// `script::trace`), as `walker::load_chain_for` does.
+/// `script::trace`), before the modules of a chain are loaded ([`chain`]).
 const OPTIONS_JS: &str = "(function (support, debug, mode, trace) { support.options.debug = debug; \
      support.options.mode = mode; support.options.trace = trace; })";
 
@@ -332,7 +332,7 @@ fn evaluate(generator: &Generator, source: &str) -> Result<Value, Error> {
     context.execute(&compiled).map_err(|err| failed(context, err))
 }
 
-/// The macro chain `walker::load_chain_for` loads: the first source evaluates to the support object, each later one to
+/// A macro chain: the first source evaluates to the support object, each later one to
 /// a function of the results before it. With `cache_key`, the chain is kept on the thread under it, as the QuickJS
 /// engine keeps the XML actions macros (`engine_object`); without, it is loaded anew, as a screen mode is on QuickJS,
 /// since a mode's macros keep counters across one walk that must start from nothing at the next.

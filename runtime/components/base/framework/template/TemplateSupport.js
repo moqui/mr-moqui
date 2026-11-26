@@ -189,7 +189,18 @@
             const value = attr(node, name);
             if (PLAIN.test(value) && value !== "context" && value !== "ec" && names.indexOf(value) < 0) names.push(value);
         }
-        const reads = names.map((name) => `(() => { try { return ${name}; } catch (e) { return undefined; } })()`);
+        // a field of a host object (an entity value) goes as the object and the field's name, so the trace can hide an
+        // encrypted one; any other dotted name as its value
+        const read = (name) => {
+            const at = name.lastIndexOf(".");
+            if (at < 0) return `(() => { try { return ${name}; } catch (e) { return undefined; } })()`;
+            const parent = name.slice(0, at);
+            const key = JSON.stringify(name.slice(at + 1));
+            return `(() => { try { const p = ${parent}; return p !== null && typeof p === "object" && !Array.isArray(p) && ` +
+                `Object.getPrototypeOf(p) !== Object.prototype ? { __traceEntity: p, __traceKey: ${key} } : p[${key}]; } ` +
+                `catch (e) { return undefined; } })()`;
+        };
+        const reads = names.map(read);
         const after = names.length ? `, ${JSON.stringify(names)}, [${reads.join(", ")}]` : "";
         return `__moquiTrace(0, ${id});\n${out}__moquiTrace(1, ${id}${after});\n`;
     };

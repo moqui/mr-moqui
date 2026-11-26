@@ -53,9 +53,22 @@ const GLOBALS_JS: &str = concat!(
     for (const name of ["compare", "numberToWords", "numberToWordsWithDecimal", "__compareOrder", "__inDateRange"]) {
         global[name] = hidden[name];
     }
-    // the trace calls of a traced XML actions script (`script::trace`): a long list goes as its first items
-    const traceBound = (value) => Array.isArray(value) && value.length > 10
-        ? value.slice(0, 10).concat(["... " + (value.length - 10) + " more"]) : value;
+    // the trace calls of a traced XML actions script (`script::trace`): a long list goes as its first items and a plain
+    // object of many keys as its first ones, so a value is not converted whole to show a little of it
+    const traceBound = (value) => {
+        if (Array.isArray(value)) {
+            return value.length > 10 ? value.slice(0, 10).concat(["… " + (value.length - 10) + " more"]) : value;
+        }
+        if (value !== null && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype) {
+            const keys = Object.keys(value);
+            if (keys.length <= 30) return value;
+            const out = {};
+            for (const key of keys.slice(0, 30)) out[key] = value[key];
+            out["…"] = (keys.length - 30) + " more";
+            return out;
+        }
+        return value;
+    };
     global.__moquiTrace = function __moquiTrace(op, path, names, values) {
         hidden.__moquiTrace(op, path, names, values === undefined ? undefined : values.map(traceBound));
     };

@@ -150,3 +150,48 @@ fn an_error_added_marks_its_element_and_a_break_or_return_closes_what_it_left() 
     context.message().clear();
     clear_context_stack();
 }
+
+/// A trace shows what an element set bounded and masked: an entity value's encrypted field `(hidden)`, as a field of
+/// the value or within it, a map at its first keys; and a loop whose body continues keeps no element open per round.
+#[test]
+fn a_traced_value_is_bounded_and_an_encrypted_field_hidden_and_a_continue_leaves_nothing_open() {
+    clear_context_stack();
+    let context = ExecutionContextFactory::test_context();
+    context.factory().set_entity(crate::testing::open());
+    let _entered = context.enter();
+    let _authz = context.disable_authz();
+    let actions = r#"<actions>
+        <entity-make-value entity-name="moqui.chat.ChatBridge" value-field="bridge"/>
+        <set field="bridge.configJson" value="very secret"/>
+        <set field="bridge.name" value="shown"/>
+        <set field="copy" from="bridge"/>
+        <set field="big" from="Object.fromEntries(Array.from({ length: 100 }, (_, i) => ['k' + i, i]))"/>
+        <set field="seen" from="0"/>
+        <iterate list="Array.from({ length: 500 }, (_, i) => i)" entry="n">
+            <if condition="n % 2 == 0"><continue/></if>
+            <set field="seen" from="seen + 1"/>
+        </iterate>
+    </actions>"#;
+    let ((ran, depth), trace) = traced(|| (run_actions(actions), super::open_depth()));
+    ran.unwrap();
+    assert_eq!(
+        element(&trace, "1")["values"]["bridge.configJson"],
+        "(hidden)",
+        "{trace}"
+    );
+    assert_eq!(element(&trace, "2")["values"]["bridge.name"], "shown", "{trace}");
+    let copy = element(&trace, "3")["values"]["copy"].as_str().unwrap();
+    assert!(
+        copy.contains("moqui.chat.ChatBridge") && copy.contains("(hidden)") && !copy.contains("very secret"),
+        "{copy}"
+    );
+    let big = element(&trace, "4")["values"]["big"].as_str().unwrap();
+    assert!(
+        big.contains("\"k29\"") && !big.contains("\"k30\"") && !big.contains("\"k99\""),
+        "{big}"
+    );
+    assert_eq!(element(&trace, "6.0.0")["count"], 250, "{trace}");
+    assert_eq!(element(&trace, "6.1")["values"]["seen"], "250", "{trace}");
+    assert!(depth <= 3, "the continues left {depth} elements open");
+    clear_context_stack();
+}
