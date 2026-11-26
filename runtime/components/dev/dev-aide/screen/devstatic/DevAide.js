@@ -315,7 +315,9 @@
                 advanced: !!store.get("advanced"), progress: null, hunks: null, conflictPath: null, gitLoaded: false,
                 // the checks of the commits shown (21.5), the commit whose checks are open, and the agreement (21.7)
                 logStates: {}, checksCommit: null, agreement: null,
-                logPage: 0, logMore: false, logPath: "", tree: null
+                logPage: 0, logMore: false, logPath: "", tree: null,
+                // a hosted root (4.10): whether the user may commit to its branch, and why not
+                hostedInfo: null
             };
         },
         computed: {
@@ -459,6 +461,9 @@
                     this.active = kept.active || null;
                 }
                 this.refreshStatus();
+                this.hostedInfo = null;
+                const picked = this.roots.find((item) => item.id === id);
+                if (picked && picked.kind === "hosted") this.get("hostedRoot", { rootId: id }).then((answer) => { if (this.rootId === id) this.hostedInfo = answer; }, () => {});
             },
             remember() {
                 if (!this.rootId) return;
@@ -1386,7 +1391,9 @@
       <span class="text-caption" id="DevChangeCount">{{changeCount}} changed</span>
     </template>
     <span v-else-if="isGit" class="text-caption m-muted" role="status">Loading repository status…</span>
+    <q-chip v-else-if="root && root.kind === 'hosted'" dense square icon="sym_o_cloud" id="DevHostedChip">{{root.hostedBranch.repositoryId}} · {{root.hostedBranch.branch}} · no working tree</q-chip>
     <q-chip v-else-if="root" dense square icon="sym_o_folder_off" id="DevNotGit">{{root.label}} · {{root.kind === 'git' ? 'Git is unavailable' : 'Not a git repository'}}</q-chip>
+    <q-chip v-if="hostedInfo && !hostedInfo.canCommit" dense square icon="sym_o_lock" color="orange-3" id="DevHostedRefusal">Saves refused<q-tooltip max-width="24rem">{{hostedInfo.refusal}}</q-tooltip></q-chip>
     <q-space></q-space>
     <q-btn dense flat no-caps label="Fetch" :disable="!isGit || !canWrite" :loading="busy === 'fetch'" @click="network('fetch')"><q-tooltip v-if="!isGit">Not a git repository</q-tooltip></q-btn>
     <q-btn dense flat no-caps label="Pull" :disable="!isGit || !canWrite" :loading="busy === 'pull'" @click="network('pull')"></q-btn>
@@ -1398,6 +1405,8 @@
   </div>
   <q-banner v-if="root && root.worktreeOf" dense class="bg-blue-1 text-black" id="DevWorktreeBanner">A worktree of {{(roots.find((item) => item.id === root.worktreeOf) || {}).label || root.worktreeOf}}
     for an Assist session: not loaded, so the server keeps running the main tree. Check and commit here; a session that needs to run what it changes works in the main tree.</q-banner>
+  <q-banner v-if="root && root.kind === 'hosted'" dense class="bg-blue-1 text-black" id="DevHostedBanner">{{root.hostedBranch.repositoryId}} at {{root.hostedBranch.branch}}, hosted on this server:
+    not loaded or run. Each Save is a commit to {{root.hostedBranch.branch}} as you{{hostedInfo && hostedInfo.refusal ? '; ' + hostedInfo.refusal : ''}}.</q-banner>
   <q-banner v-if="restartNeeded" dense class="bg-amber-2 text-black" id="DevRestartBanner">{{ t('A change needs a restart to apply') }}.
     <template v-slot:action><q-btn dense flat no-caps label="Restart" @click="restart"></q-btn><q-btn dense flat no-caps label="Later" @click="restartNeeded = false"></q-btn></template>
   </q-banner>

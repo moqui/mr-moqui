@@ -16,7 +16,9 @@ along with this software (see the LICENSE.md file). If not, see
     by root; one that fails is reported and the others go on; a pull reloads what it changed and says when it broke a
     site extension); Get a component through ./moq component-get, Clone a URL into the component directory, and a site
     component from Home. A change to the set of components needs a restart. A list, so the terminal reaches it. Terminal
-    opens a shell on the server in the root's directory (the browser terminal's host session, for a user who may). -->
+    opens a shell on the server in the root's directory (the browser terminal's host session, for a user who may). Add
+    hosted root makes a root of a repository of this server's git hosting at a branch (4.10), one the user may update:
+    edited in the Workspace with each Save a commit, never loaded or run. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Repositories" default-menu-index="3" menu-image="sym_o_folder_data" menu-image-type="icon">
 
@@ -43,6 +45,15 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><message type="${(loaded.report?.problems || []).length ? 'warning' : 'success'}">${loadName}: ${loaded.report?.status || 'not loaded'}${(loaded.report?.problems || []).length ? '; ' + loaded.report.problems.join('; ') : ''}</message></actions>
         <default-response url="."/></transition>
     <transition name="workspace"><default-response url="../Workspace"/></transition>
+    <!-- the drop-down's key is the repository and the branch as a JSON list -->
+    <transition name="addHostedRoot"><actions>
+            <set field="picked" from="hostedBranch ? JSON.parse(hostedBranch) : []"/>
+            <service-call name="org.moqui.devaide.HostedRootServices.store#HostedRoot" out-map="added"
+                    in-map="{repositoryId: picked[0], branch: picked[1] || '', label: hostedLabel || ''}"/>
+            <message type="success">Hosted root ${picked[0]} at ${picked[1] || 'its default branch'}: open it in the Workspace</message></actions>
+        <default-response url="."/></transition>
+    <transition name="removeHostedRoot"><service-call name="org.moqui.devaide.HostedRootServices.delete#HostedRoot" in-map="{rootId: rootId}"/>
+        <default-response url="."/></transition>
 
     <parameter name="loadName"/>
     <actions>
@@ -51,6 +62,14 @@ along with this software (see the LICENSE.md file). If not, see
         <service-call name="org.moqui.devaide.VcsServices.get#Addons" out-map="addonsOut"/>
         <set field="addonOptions" from="(addonsOut.addons || []).filter((addon) => !addon.here).map((addon) => ({key: addon.name, text: addon.name}))"/>
         <set field="full" from="ec.user.hasPermission('DEV_AIDE')" type="Boolean"/>
+        <set field="extend" from="full || ec.user.hasPermission('DEV_AIDE_EXTEND')" type="Boolean"/>
+        <!-- the hosting's repositories this user may update, each branch an option (none without the git services) -->
+        <set field="hostedOptions" from="[]"/>
+        <script>if (extend) {
+            const listed = ec.service.sync().name('org.moqui.devaide.HostedRootServices.get#HostedRepositories').call() || {}
+            for (const repository of listed.repositories || []) for (const branch of (repository.branches.length ? repository.branches : [repository.defaultBranch]))
+                hostedOptions.push({key: JSON.stringify([repository.repositoryId, branch]), text: repository.repositoryId + ' · ' + branch + (repository.description ? ' (' + repository.description + ')' : '')})
+        }</script>
     </actions>
     <widgets>
         <container-row><row-col md="8">
@@ -63,7 +82,7 @@ along with this software (see the LICENSE.md file). If not, see
             <!-- the row's own path (an absolute directory) is not Workspace's path (a file in the root): the empty value leaves it out -->
             <field name="label"><default-field title="Root">
                 <link url="workspace" text="${label}${upstream ? '' : ' (site)'}" parameter-map="{rootId: rootId, path: ''}" link-type="anchor"/></default-field></field>
-            <field name="kind"><default-field title="Kind"><display text="${kind == 'git' ? 'git' : 'plain'}"/></default-field></field>
+            <field name="kind"><default-field title="Kind"><display text="${kind == 'git' ? 'git' : kind == 'hosted' ? 'hosted' : 'plain'}"/></default-field></field>
             <field name="components"><default-field title="Components"><display/></default-field></field>
             <field name="branch"><default-field title="Branch"><display text="${branch || ''}${upstream ? ' → ' + upstream : ''}"/></default-field></field>
             <field name="ahead"><default-field title="↑ ↓"><display text="${kind == 'git' &amp;&amp; upstream ? ahead + ' / ' + behind : ''}"/></default-field></field>
@@ -71,7 +90,10 @@ along with this software (see the LICENSE.md file). If not, see
             <field name="lastFetch"><default-field title="Last fetch"><display text="${lastFetch ? new Date(lastFetch * 1000).toISOString().slice(0, 16).replace('T', ' ') : ''}"/></default-field></field>
             <field name="path"><default-field title="Path"><display/></default-field></field>
             <!-- a shell on the server in the root's directory (plans/Terminal-Fancy.md §7.1, P9), for a user who may open one -->
-            <field name="terminal"><default-field title="">
+            <field name="terminal"><conditional-field condition="kind == 'hosted'" title="">
+                <link url="removeHostedRoot" text="Remove" link-type="hidden-form" btn-type="danger" parameter-map="{rootId: rootId}"
+                        confirmation="Take ${label} out of the Workspace? The repository stays as it is."/></conditional-field>
+                <default-field title="">
                 <link url="/qapps/Terminal" url-type="plain" text="Terminal" link-type="anchor" icon="sym_o_terminal"
                         parameter-map="{openHost: 'shell', directory: path}" tooltip="Open a terminal here"/></default-field></field>
         </form-list>
@@ -80,6 +102,17 @@ along with this software (see the LICENSE.md file). If not, see
             <container-box id="DevLoadComponentBox"><box-header title="Load ${loadName} now"/><box-body>
                 <label type="p" text="It needs no restart: its entities, services, screens and conf load on this server, with its seed, seed-initial and install data."/>
                 <link url="loadComponent" text="Load" link-type="hidden-form" btn-type="primary" parameter-map="{loadName: loadName}"/>
+            </box-body></container-box>
+        </widgets></section>
+        <section name="HostedSection" condition="extend &amp;&amp; hostedOptions.length"><widgets>
+            <container-box id="DevAddHostedRootBox"><box-header title="Add hosted root"/><box-body>
+                <label type="p" text="A repository of this server's git hosting at a branch, edited in the Workspace: each Save is a commit to the branch as you, which the repository's rights and branch rules allow or refuse. It is not loaded or run."/>
+                <form-single name="AddHostedRootForm" transition="addHostedRoot">
+                    <field name="hostedBranch"><default-field title="Repository and branch"><drop-down allow-empty="false">
+                        <list-options list="hostedOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                    <field name="hostedLabel"><default-field title="Label (the repository and branch when empty)"><text-line size="30"/></default-field></field>
+                    <field name="submitButton"><default-field title="Add hosted root"><submit/></default-field></field>
+                </form-single>
             </box-body></container-box>
         </widgets></section>
         <section name="AddSection" condition="full"><widgets>

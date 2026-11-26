@@ -10,7 +10,9 @@ The assisted IDE of mr-moqui (`plans/design-dev-aide.md`), at `/qapps/dev` on a 
   Changes (stage, unstage, discard, commit with the task trailer), Commits, Fetch, Pull, Push and Publish. In the
   terminal (`moqui tui`) it is a simpler form, `WorkspaceTui.xml`: the tree, Go to file and Search, one file in the
   `code` editor with Save and its problems (and References and Browse for the artifacts it defines), Changes with the commit form, Commits with Cherry-pick and Revert, and a Git
-  menu; branches, tags, stashes, merge requests, review and blame open in the browser.
+  menu; branches, tags, stashes, merge requests, review and blame open in the browser. A hosted root (Repositories ›
+  Add hosted root) is a repository of this server's git hosting at a branch, with no working tree: each Save is a
+  commit there as you, which its rights and branch rules allow or refuse, and nothing of it is loaded or run.
 - **Entities** is the entity modeler: an entity as the server merged it, with each field's origin, its edits going to the
   site's `extend-entity` when it is upstream; Add field by kind (Picklist and Status write their seed records too), the
   relationships, the incoming ones, indexes, a view entity's members and aliases, the table against the fields, and for
@@ -90,7 +92,7 @@ Its Rust crate is linked into the Dev and Debug packages (the `devtools` feature
 and the services say they are not built in.
 
 - **Tests** ([the two suites](../../../../docs/Build-Test.md#the-two-suites)): the regression suite is `./moq test
-  dev-aide` (the screens, the Workspace's terminal form on a scratch root, the docs, the terminal's guided editors against a throw-away root, the three-way data load), `cargo test -p dev-aide` (confinement, the git parsers, the Browser's sections, the edit buffers),
+  dev-aide` (the screens, the Workspace's terminal form on a scratch root, the docs, the terminal's guided editors against a throw-away root, the three-way data load, a hosted root on a scratch repository), `cargo test -p dev-aide` (confinement, the git parsers, the Browser's sections, the edit buffers),
   `moqui test-client runtime/components/dev/dev-aide --offline` (the client), `cargo test -p moqui-host --test it devaide` (saves, the lock and tiers, git and Publish on scratch
   repositories, an entity save's relink, a docs export; `devaide_group`: the instance as its own group server, Connect
   through the app sign-in, merge requests, push to review, check out, review threads, statuses, the agreement and

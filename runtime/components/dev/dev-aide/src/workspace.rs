@@ -106,6 +106,13 @@ impl Context {
 
     /// `relative` of `root`, confined ([`confine::resolve`]); the runtime's conf files only at the full tier.
     pub(crate) fn resolve(&self, root: &Root, relative: &str) -> Result<confine::Resolved, LibError> {
+        if root.hosted_branch.is_some() {
+            // a hosted root has no directory: its files are the hosting's (crate::hosted)
+            return Err(LibError::new(format!(
+                "{} is a hosted repository: it has no working tree",
+                root.label
+            )));
+        }
         let resolved = confine::resolve(&root.path, self.factory.runtime_dir(), relative)?;
         if self.tier != Tier::Full && confine::hidden_below_full(&resolved.path, self.factory.runtime_dir()) {
             return Err(LibError::new(format!(
@@ -147,7 +154,8 @@ impl Context {
                 root.label
             )));
         }
-        if self.upstream_edits() {
+        // a hosted root's commits are the hosting's to allow (its rights and branch rules), and it is never loaded
+        if self.upstream_edits() || root.hosted_branch.is_some() {
             return Ok(());
         }
         // where the path leads: a symlink in a site component to an upstream one is the upstream one
@@ -378,6 +386,9 @@ fn list_directory(
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::View)?;
     let root = context.root(&text(parameters, "rootId"))?;
+    if let Some(hosted) = &root.hosted_branch {
+        return crate::hosted::list_directory(hosted, &text(parameters, "path"));
+    }
     let resolved = context.resolve(root, &text(parameters, "path"))?;
     let entries = directory_entries(&context.git(), root, &resolved.relative, &resolved.path)?;
     let mut out = Parameters::new();
@@ -456,6 +467,9 @@ fn get_file(
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::View)?;
     let root = context.root(&text(parameters, "rootId"))?;
+    if let Some(hosted) = &root.hosted_branch {
+        return crate::hosted::get_file(&context, root, hosted, parameters);
+    }
     let resolved = context.resolve(root, &text(parameters, "path"))?;
     let mut out = Parameters::new();
     if !resolved.path.exists() && text(parameters, "missingOk") == "true" {
@@ -604,8 +618,12 @@ fn save_file(
     parameters: &Parameters,
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::Extend)?;
-    let _authz = ec.disable_authz();
     let root = context.root(&text(parameters, "rootId"))?;
+    if let Some(hosted) = &root.hosted_branch {
+        // a commit as the user, with the hosting's checks on (crate::hosted)
+        return crate::hosted::save_file(&context, root, hosted, parameters);
+    }
+    let _authz = ec.disable_authz();
     let resolved = context.resolve(root, &text(parameters, "path"))?;
     save_text(
         &context,
@@ -957,6 +975,9 @@ fn find_files(
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::View)?;
     let root = context.root(&text(parameters, "rootId"))?;
+    if let Some(hosted) = &root.hosted_branch {
+        return Ok(crate::hosted::find_files(hosted));
+    }
     let files = root_files(&context, root, 50_000);
     let mut out = Parameters::new();
     out.insert("files".into(), json_value(&files));
@@ -981,7 +1002,14 @@ fn search_files(
     let filter = text(parameters, "pathFilter");
     const LIMIT: usize = 500;
     let mut results = Vec::new();
-    if root.kind == RootKind::Git {
+    if let Some(hosted) = &root.hosted_branch {
+        let pattern = if regex { query.clone() } else { regex::escape(&query) };
+        let matcher = regex::RegexBuilder::new(&pattern)
+            .case_insensitive(!case)
+            .build()
+            .map_err(|err| LibError::new(format!("the regular expression: {err}")))?;
+        results = crate::hosted::search_files(&context, hosted, &matcher, &filter, LIMIT);
+    } else if root.kind == RootKind::Git {
         let mut args = vec!["grep", "-n", "-I", "--no-color", "-z", "--untracked"];
         args.push(if regex { "-E" } else { "-F" });
         if !case {
@@ -1052,6 +1080,9 @@ fn check_file(
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::View)?;
     let root = context.root(&text(parameters, "rootId"))?;
+    if root.hosted_branch.is_some() {
+        return crate::hosted::check_file(&context, parameters);
+    }
     let resolved = context.resolve(root, &text(parameters, "path"))?;
     let content = text(parameters, "text");
     let problems = if resolved.relative.ends_with(".xml") {
@@ -1568,6 +1599,7 @@ mod tests {
             worktree_of: None,
             conversation_id: None,
             worktree_user_id: None,
+            hosted_branch: None,
         };
         let git = Git {
             command: "git".into(),

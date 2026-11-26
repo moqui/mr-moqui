@@ -31,6 +31,7 @@ mod data_load;
 mod docs;
 mod entities;
 pub mod git;
+mod hosted;
 mod hosting;
 mod libraries;
 mod local_run;
@@ -72,6 +73,7 @@ fn register(registry: &mut NativeRegistry) -> Result<(), Error> {
     vcs::register(registry)?;
     repo::register(registry)?;
     repos::register(registry)?;
+    hosted::register(registry)?;
     hosting::register(registry)?;
     worktree::register(registry)?;
     local_run::register(registry)?;

@@ -71,18 +71,24 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
     <service verb="save" noun="File" type="rust" location="dev_aide::workspace::save_file" allow-remote="false">
-        <description>Write a file read at baseHash (its line endings, byte order mark and mode kept); conflict with the disk's text when it changed since. Answers the reload report, the problems and the git status.</description>
+        <description>Write a file read at baseHash (its line endings, byte order mark and mode kept); conflict with the disk's text when it changed since. Answers the reload report, the problems and the git status.
+            On a hosted root (plans/design-dev-aide.md 4.10) the write is a commit to the root's branch by the user through
+            commit#GitFiles, with message (Edit [path] when empty) and the root's task trailer; baseHash is the blob the
+            file had when opened, and the conflict's diskText is the branch's when the branch moved past it. Nothing is
+            reloaded.</description>
         <in-parameters>
             <parameter name="rootId" required="true"/>
             <parameter name="path" required="true"/>
             <parameter name="text" allow-html="any"/>
             <parameter name="baseHash"/>
+            <parameter name="message" allow-html="any"><description>A hosted root's commit message</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="conflict" type="Boolean"/>
             <parameter name="diskText"/>
             <parameter name="diskHash"/>
             <parameter name="hash"/>
+            <parameter name="commitId"><description>A hosted root's commit</description></parameter>
             <parameter name="status"/>
             <parameter name="restart" type="Boolean"/>
             <parameter name="rebuild" type="Boolean"/>

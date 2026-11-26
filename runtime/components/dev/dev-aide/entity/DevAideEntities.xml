@@ -56,6 +56,11 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="conversationId" type="id"><description>The Assist conversation whose tools are rooted in the
             worktree</description></field>
         <field name="worktreeUserId" type="id"><description>Who made the worktree</description></field>
+        <field name="rootKind" type="text-short"><description>hosted: a repository of this server's git hosting at a
+            branch (plans/design-dev-aide.md 4.10), with no directory; empty for a directory</description></field>
+        <field name="gitRepositoryId" type="text-medium"><description>A hosted root's GitRepository</description></field>
+        <field name="gitBranch" type="text-medium"><description>A hosted root's branch: each Save is a commit to it</description></field>
+        <field name="hostedByUserId" type="id"><description>Who added the hosted root</description></field>
         <index name="DEV_AIDE_ROOT_LOC" unique="true"><index-field name="location"/></index>
     </entity>
     <entity entity-name="DevDataLoadBaseline" package="moqui.dev" use="configuration" cache="never">
