@@ -207,22 +207,25 @@ fn canonical(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
+/// The version of the extraction rules, in each file's hash ([`hash_of`]) so persisted files are read again when they
+/// change, and in the key of a test snapshot, which holds an index (moqui-host's `test_cmd::fixture`). 2 added
+/// parameter artifacts, 3 the transition anchors of a screen-extend, 4 relationships, indexes, view members, form
+/// fields, subscreens items, ext items, widget templates, data records, service includes, a screen-extend's own
+/// transitions and forms, and ECA keys by rule name or target, 5 the references' operations and origins, the bindings
+/// and the primary key mark of a field, 6 screen paths (links, responses, forms' transitions, default items), directory
+/// subscreens, a subscreens item's no-sub-path mark, the services a transition passes the request to, and the bindings
+/// of a form's fields, 7 the marks of what a service, form or transition declares to be filled in (auto-parameters,
+/// implements, auto-fields, extends, a transition's calls and field-maps), and the references of auto-parameters and
+/// extends. 8 a screen's allow-extra-path mark, and a form's bindings by the path it posts to, its own screen's
+/// transition too. 9 a view entity's members, alias-alls and aliases, the parameters written before an auto-parameters,
+/// and a REST method's service. 10 a view's member-relationships. 11 a script reference's column.
+pub const EXTRACT_VERSION: u32 = 11;
+
 /// A short hash of a file's text: whether it changed since it was read.
 #[must_use]
 pub fn hash_of(text: &str) -> String {
     use sha2::{Digest, Sha256};
-    // Version the extraction rules so persisted files are read again when they change: 2 added parameter artifacts,
-    // 3 the transition anchors of a screen-extend, 4 relationships, indexes, view members, form fields, subscreens items,
-    // ext items, widget templates, data records, service includes, a screen-extend's own transitions and forms, and ECA
-    // keys by rule name or target, 5 the references' operations and origins, the bindings and the primary key mark of a
-    // field, 6 screen paths (links, responses, forms' transitions, default items), directory subscreens, a subscreens
-    // item's no-sub-path mark, the services a transition passes the request to, and the bindings of a form's fields,
-    // 7 the marks of what a service, form or transition declares to be filled in (auto-parameters, implements,
-    // auto-fields, extends, a transition's calls and field-maps), and the references of auto-parameters and extends.
-    // 8 a screen's allow-extra-path mark, and a form's bindings by the path it posts to, its own screen's transition too.
-    // 9 a view entity's members, alias-alls and aliases, the parameters written before an auto-parameters, and a REST
-    // method's service. 10 a view's member-relationships. 11 a script reference's column.
-    let digest = Sha256::digest(format!("11\n{text}").as_bytes());
+    let digest = Sha256::digest(format!("{EXTRACT_VERSION}\n{text}").as_bytes());
     digest.iter().take(12).map(|byte| format!("{byte:02x}")).collect()
 }
 
