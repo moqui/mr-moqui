@@ -158,5 +158,6 @@ fn row(line: u64, text: &str, cells: &[&str], columns: &BTreeMap<String, usize>)
         point,
         accuracy: None,
         precision,
+        land_area: None,
     })
 }

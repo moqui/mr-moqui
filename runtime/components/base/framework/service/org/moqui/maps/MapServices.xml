@@ -235,7 +235,10 @@ along with this software (see the LICENSE.md file). If not, see
             allowedOrigins are those origins, each tile subdomain by itself. No provider's key, service, entity or resource
             name reaches the browser: a provider with a key is not offered at all (PROVIDER_KEYED). With adapterKey the
             registered adapter's get#RecordMapContext gives the record's place (points, or features for another geometry)
-            and record (label, precision, source, version, permitted actions, links) after its own access check; a refusal,
+            and record (label, precision, source, version, permitted actions, links, and resolvedLinks: {label, route, url}
+            of each link a registered MapRoute of the host app, routeApp, else of no app, resolves to a screen the user's own
+            grants open, MapRoutes.js) after its own
+            access check; a refusal,
             an adapter the user may not call and a failure are a layer error (RECORD_UNAVAILABLE for the first two, which
             are not told apart, ADAPTER_FAILED), never a failed configuration, and the adapter's own text is neither answered
             nor logged here. A record layer is listed in recordLayers; a shown one's features (find#LayerFeatures, for the
@@ -247,6 +250,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="adapterKey"/>
             <parameter name="recordKey" type="Object"><description>The record's key fields, a map or its JSON</description></parameter>
             <parameter name="addressPurpose"/>
+            <parameter name="routeApp"><description>The app showing the map (its mount of LocalMap passes it): a record's links
+                resolve to its MapRoute rows first, then to those of no app, never to another app's</description></parameter>
             <parameter name="featuresExtent" type="Object"><description>The view a shown record layer's features are read for
                 (west, south, east, north in degrees, a list or a comma text): Browse's search reads the view on screen;
                 empty for the initial view</description></parameter>
@@ -542,13 +547,6 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapOverlays.js').execute('overlayContent', context))</script></actions>
     </service>
-    <service verb="find" noun="OverlayFiles">
-        <description>The GeoJSON, GPX and KML files the signed-in user could add as an overlay: those of their personal drive's
-            top folder, Maps and Maps/overlays, and their recent files of any drive they still read, at most 50, each
-            {driveId, path, name, driveName}. Changes nothing.</description>
-        <out-parameters><parameter name="fileList" type="List"/></out-parameters>
-        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapOverlays.js').execute('findOverlayFiles', context))</script></actions>
-    </service>
     <service verb="store" noun="Place">
         <description>Save a named point to the signed-in user's places: Maps/places.geojson of their personal drive (written
             through FileServices save#Text, so the drive's versions keep each change), listed as their overlay "My places".
@@ -596,7 +594,8 @@ along with this software (see the LICENSE.md file). If not, see
             more than 200 characters (QUERY_INVALID), a country the geocoder does not cover (COUNTRY_NOT_COVERED, the Census
             geocoder outside the US), a provider whose allowedOperations name neither geocode nor search
             (OPERATION_NOT_ALLOWED), the provider's rate passed (RATE_LIMITED: requestsPerSecond, 1 for Nominatim and Photon
-            when empty, claimed atomically on each server by itself; requestsPerDay is not enforced). One GET with no
+            when empty, claimed atomically on each server by itself) and its requests a day not used up (DAILY_LIMIT:
+            requestsPerDay, a calendar day in UTC, claimed on its MapProviderDayCount row for the whole cluster). One GET with no
             credentials, following no redirect, ten seconds, the body read to at most 1 MiB whatever its Content-Length, to
             no internal address unless the provider is allowed the private network; a failure is PROVIDER_FAILED, naming the
             provider, and no other outside service is asked. This server keeps an answer only for cachePolicy shared

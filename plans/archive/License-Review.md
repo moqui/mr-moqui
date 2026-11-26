@@ -38,6 +38,15 @@ The one copyleft artifact in the default distribution is `bin/psql` inside the t
 
 Compared with Moqui Java, the in-process copyleft goes away. H2 2.4.240 is MPL-2.0 OR EPL-1.0 and is not carried. The Jakarta APIs on the Java classpath are EPL and are not carried. `getMySqlJdbc` in the Java `build.gradle` downloads MySQL Connector/J into `runtime/lib`. Connector/J is GPL-2.0 with the Universal FOSS Exception. The Rust client is the `mysql` crate, MIT OR Apache-2.0, and it does not link `libmysqlclient` (GPL-2.0 with a FOSS exception) or MariaDB Connector/C (LGPL-2.1). A proprietary component deployed in-process is the case that exception was always awkward for. The Rust static link is stricter in the other direction: one GPL crate would cover the customer's Rust, which the Java classpath would also have done, and which `cargo-deny` is there to prevent.
 
+## Data compiled into the binary
+
+| File | License | How it is delivered | Verdict |
+|---|---|---|---|
+| `crates/moqui-lib/src/geo/admin1_iso.tsv` (added 2026-11-25; GeoNames first-level codes to ISO 3166-2, plans/Maps.md §6.3) | CC-BY-4.0 (`SPDX-License-Identifier` in its header): derived from GeoNames' `admin1CodesASCII.txt` (geonames.org, CC BY 4.0), joined with Wikidata's ISO 3166-2 codes (CC0) | Compiled into the binary by `include_str!` (`moqui_lib::geo::admin1`), read by the Geo data importer. Excluded from the repository's CC0 dedication: its header says so and names GeoNames | OK. CC BY 4.0 asks for attribution: the file header carries it ("GeoNames (geonames.org), CC BY 4.0"), and the `THIRD-PARTY-NOTICES` file the binary is to ship with (§Result) lists it. Not a copyleft. |
+
+GeoNames data downloaded at run time (the `GEONAMES_*` data sets of Maps › Configuration › Geo data) is not distributed: an
+administrator imports it after acknowledging its CC BY 4.0 license, and its attribution is kept with the data.
+
 ## Custom Rust, scripts, and templates
 
 A Rust component that calls Moqui is a static link. The licenses in the default graph allow it. The notices above still ship with the combined binary. The customer's own license can be proprietary or CC0. Moqui's patent grant covers Moqui's code. Apache dependencies carry their own patent grants, which end if the licensee brings patent litigation over that dependency. That is a termination clause, not a copyleft clause.

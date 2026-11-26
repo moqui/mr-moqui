@@ -51,8 +51,11 @@
  * pressed, and the position is neither kept nor sent.
  *
  * Events: pick ({lon, lat}, also the DOM event m-map-pick with that detail, which bubbles), select (a place or a feature:
- * {id, lon, lat, label}, with layerId for a record layer's feature) and view-change ({center, zoom, extent}). Each place
- * listed has Copy, which puts its latitude, longitude on the clipboard.
+ * {id, lon, lat, label}, with layerId for a record layer's feature; an overlay layer's feature is kind "overlay" with its
+ * layerId, layerLabel and description, label and description plain text (map.plainText), shown as text, never as markup)
+ * and view-change ({center, zoom, extent}). A feature is selected by a click, or from the keyboard by Enter on the map,
+ * which selects the feature at its center (map.nearestFeature, 12 pixels; a map that asks for a choice takes the center
+ * instead); the selection is announced. Each place listed has Copy, which puts its latitude, longitude on the clipboard.
  */
 (function (root) {
     "use strict";
@@ -361,6 +364,56 @@
     // A source's attribution HTML as plain text (a style document's own, which may hold markup), for attributionHtml.
     map.attributionText = (html) => String(html || "").replace(/<[^>]*>/g, " ").replace(/&copy;/g, "©").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
 
+    // A feature's text as plain text, at most max characters: comments, a script's or a style's content and anything shaped
+    // as a tag (a profile layer's KML or GPX description may hold HTML; a user's overlay is already plain text from the
+    // server) removed, the named entities of HTML's basics and every numeric one read, control characters dropped, line
+    // breaks kept. What the entities make is text too: it is shown as text, never as markup.
+    const entity = (match, name) => {
+        const named = { lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", amp: "&" }[name];
+        if (named !== undefined) return named;
+        const code = /^#x/i.test(name) ? parseInt(name.slice(2), 16) : /^#/.test(name) ? parseInt(name.slice(1), 10) : NaN;
+        return Number.isInteger(code) && code > 0 && code <= 0x10ffff && !(code >= 0xd800 && code <= 0xdfff) ? String.fromCodePoint(code) : match;
+    };
+    map.plainText = (value, max) => {
+        if (value === null || value === undefined || typeof value === "object") return "";
+        const limit = max || 2000;
+        const out = String(value).replace(/<!--[\s\S]*?(-->|$)/g, " ").replace(/<(script|style)\b[\s\S]*?<\/\1\s*>/gi, " ").replace(/<\/?[A-Za-z][^<>]*>/g, " ")
+            .replace(/&(lt|gt|quot|apos|nbsp|amp|#[0-9]{1,7}|#[xX][0-9A-Fa-f]{1,6});/g, entity)
+            .replace(/\r\n?/g, "\n").replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, " ").replace(/[ \t]+/g, " ").replace(/ *\n */g, "\n").trim();
+        return out.length > limit ? out.slice(0, limit - 1) + "…" : out;
+    };
+    // What a feature of an overlay or a record layer says of itself (its properties, as OpenLayers' getProperties gives
+    // them): its label (label, name or title) and description (description or desc), as plain text.
+    map.featureDetails = (properties) => {
+        const given = properties && typeof properties === "object" ? properties : {};
+        const pick = (...names) => { for (const name of names) { const value = map.plainText(given[name], name === "description" || name === "desc" ? 2000 : 200); if (value) return value; } return ""; };
+        return { label: pick("label", "name", "title"), description: pick("description", "desc") };
+    };
+    // The feature nearest a coordinate of the map (its projection's units) among candidates [{source, layer}] of vector
+    // sources, within tolerance (the same units: a resolution times the pixels): {feature, layer, distance}, or null. A
+    // point or a line by its distance; a polygon that holds the coordinate counts as at the tolerance, so a point inside it
+    // and near wins. The keyboard's selection of the feature at the map's center (Enter), with no pixel read.
+    map.nearestFeature = (candidates, coordinate, tolerance) => {
+        let best = null;
+        const consider = (feature, layer, distance) => {
+            if (distance <= tolerance && (!best || distance < best.distance)) best = { feature, layer, distance };
+        };
+        (candidates || []).forEach(({ source, layer }) => {
+            if (!source || !source.getClosestFeatureToCoordinate) return;
+            const closest = source.getClosestFeatureToCoordinate(coordinate);
+            const geometry = closest && closest.getGeometry();
+            if (geometry) {
+                const at = geometry.getClosestPoint(coordinate);
+                consider(closest, layer, Math.hypot(at[0] - coordinate[0], at[1] - coordinate[1]));
+            }
+            (source.getFeaturesAtCoordinate ? source.getFeaturesAtCoordinate(coordinate) : []).forEach((feature) => {
+                const type = feature.getGeometry() && feature.getGeometry().getType();
+                if (type === "Polygon" || type === "MultiPolygon") consider(feature, layer, tolerance);
+            });
+        });
+        return best;
+    };
+
     // A choice put in the latitude and longitude fields of the page's form named pickForm (the shell's registered m-forms, by
     // their name or id), six decimals; false when there is no such form.
     map.fillPickForm = (pickForm, point) => {
@@ -390,7 +443,7 @@
         emits: ["pick", "select", "view-change"],
         data() {
             return { effective: null, loadError: "", fallback: "", drawn: false, layerStatus: [], readout: "", picked: null, pickText: "", pickError: "",
-                locating: false, located: "", basemapId: "", selectedId: "", announced: "" };
+                locating: false, located: "", basemapId: "", selectedId: "", announced: "", focused: false };
         },
         computed: {
             local() {
@@ -493,9 +546,11 @@
                     this.readout = map.formatCoordinates(at.lon, at.lat);
                 });
                 olMap.on("singleclick", (event) => {
-                    const feature = olMap.forEachFeatureAtPixel(event.pixel, (found) => (found.get("place") || found.get("recordFeature") ? found : null));
-                    if (feature && feature.get("place")) this.select(feature.get("place"));
-                    else if (feature) this.selectFeature(feature, this.toLonLat(event.coordinate));
+                    // a place, a record's or a record layer's feature, or a feature of an overlay layer (not the basemap's)
+                    const hit = olMap.forEachFeatureAtPixel(event.pixel, (found, layer) => (found.get("place") || found.get("recordFeature") ||
+                        (layer && layer.get("overlayLayerId")) ? { feature: found, layer } : null), { hitTolerance: 4 });
+                    if (hit && hit.feature.get("place")) this.select(hit.feature.get("place"));
+                    else if (hit) this.selectFeature(hit.feature, hit.layer, this.toLonLat(event.coordinate));
                     else if (this.shown.pick) this.choose(this.toLonLat(event.coordinate));
                 });
                 olMap.on("moveend", () => {
@@ -707,7 +762,11 @@
                             layer.kind === "topojson" ? new O.TopoJSON() : new O.GeoJSON();
                         const source = new O.VectorSource({ url: layer.url, format, attributions });
                         this.watchSource(source, layer, "vector");
-                        group.getLayers().push(new O.VectorLayer({ source, style: (feature) => this.featureStyle(O, feature) }));
+                        // its features are selected (a click, or Enter at the center): the layer says whose they are
+                        const vector = new O.VectorLayer({ source, style: (feature) => this.featureStyle(O, feature) });
+                        vector.set("overlayLayerId", layer.id);
+                        vector.set("overlayLabel", layer.label);
+                        group.getLayers().push(vector);
                     } else throw new Error(L("Not a kind of layer this map draws") + ": " + (layer.kind || "(none)"));
                 } catch (err) { fail(err); }
             },
@@ -727,12 +786,21 @@
             },
             // ---- places ----
             featureStyle(O, feature) {
-                const label = text(feature.get("label") || feature.get("name"));
+                const label = map.plainText(feature.get("label") || feature.get("name"), 200);
+                // the selected feature in the selected place's color
+                const [solid, light] = feature === this.highlighted ? ["rgba(239,108,0,0.95)", "rgba(239,108,0,0.2)"] : ["rgba(25,118,210,0.85)", "rgba(25,118,210,0.15)"];
                 return new O.Style({
-                    image: new O.CircleStyle({ radius: 5, fill: new O.Fill({ color: "rgba(25,118,210,0.85)" }), stroke: new O.Stroke({ color: "#fff", width: 1.5 }) }),
-                    stroke: new O.Stroke({ color: "rgba(25,118,210,0.9)", width: 2 }), fill: new O.Fill({ color: "rgba(25,118,210,0.15)" }),
+                    image: new O.CircleStyle({ radius: feature === this.highlighted ? 7 : 5, fill: new O.Fill({ color: solid }), stroke: new O.Stroke({ color: "#fff", width: 1.5 }) }),
+                    stroke: new O.Stroke({ color: solid, width: 2 }), fill: new O.Fill({ color: light }),
                     text: label ? this.labelText(O, label) : undefined
                 });
+            },
+            // the feature drawn as selected (none: a place's marker is the selection), each changed so it is drawn again
+            highlight(feature) {
+                const before = this.highlighted;
+                this.highlighted = feature || null;
+                if (before && before !== feature) before.changed();
+                if (feature) feature.changed();
             },
             labelText(O, label) {
                 // drawn on the canvas, so no markup in a label is read; long labels are cut
@@ -761,6 +829,7 @@
                         const features = new O.GeoJSON().readFeatures(config.features, { dataProjection: "EPSG:4326", featureProjection: config.projection });
                         features.forEach((feature) => feature.set("recordFeature", true));
                         const layer = new O.VectorLayer({ source: new O.VectorSource({ features }), style: (feature) => this.featureStyle(O, feature) });
+                        layer.set("recordFeatures", true);
                         this.overlayGroup.getLayers().push(layer);
                     } catch (err) { this.status("features", L("Features"), "failed", err && err.message || String(err)); }
                 }
@@ -791,15 +860,46 @@
             },
             select(place) {
                 this.selectedId = place.id;
+                this.highlight(null);
                 if (this.markerSource) this.markerSource.changed();
                 this.$emit("select", { id: place.id, lon: place.lon, lat: place.lat, label: place.label });
             },
-            // a record layer's feature (config.features): its id, label and layer, at the point clicked
-            selectFeature(feature, at) {
+            // A feature chosen on the map: a record's or a record layer's (config.features: its id, label and layer), or an
+            // overlay layer's (kind overlay: its label and description as plain text, and the layer's id and label). A point
+            // is at its own coordinates, a line or an area at the point clicked (or the map's center, from the keyboard).
+            selectFeature(feature, layer, at) {
+                const overlayId = layer && layer.get ? text(layer.get("overlayLayerId")) : "";
+                const geometry = feature.getGeometry && feature.getGeometry();
+                const point = geometry && geometry.getType() === "Point" ? this.toLonLat(geometry.getCoordinates()) : at;
+                const details = map.featureDetails(feature.getProperties ? feature.getProperties() : {});
                 this.selectedId = "";
+                this.highlight(feature);
                 if (this.markerSource) this.markerSource.changed();
-                this.$emit("select", { id: String(feature.getId() === undefined ? "" : feature.getId()), lon: at.lon, lat: at.lat,
-                    label: text(feature.get("label") || feature.get("name")), layerId: text(feature.get("layerId")) });
+                this.announced = L("Selected") + ": " + (details.label || L("Feature")) + ", " + map.formatCoordinates(point.lon, point.lat);
+                const selected = { id: String(feature.getId() === undefined ? "" : feature.getId()), lon: point.lon, lat: point.lat, label: details.label };
+                if (overlayId) Object.assign(selected, { kind: "overlay", layerId: overlayId, layerLabel: text(layer.get("overlayLabel")), description: details.description });
+                else selected.layerId = text(feature.get("layerId"));
+                this.$emit("select", selected);
+            },
+            // the vector sources a keyboard selection reads: the shown overlay layers' and the record's features
+            selectable() {
+                const out = [];
+                const visit = (layer, shown) => {
+                    const visible = shown && layer.getVisible();
+                    if (layer.getLayers) { layer.getLayers().getArray().forEach((child) => visit(child, visible)); return; }
+                    if (visible && (layer.get("overlayLayerId") || layer.get("recordFeatures")) && layer.getSource()) out.push({ source: layer.getSource(), layer });
+                };
+                if (this.overlayGroup) visit(this.overlayGroup, true);
+                return out;
+            },
+            // Enter on the map (with no choice to make): the feature at its center, within 12 pixels, is selected
+            selectAtCenter() {
+                const view = this.olMap && this.olMap.getView();
+                const center = view && view.getCenter();
+                if (!center) return;
+                const hit = map.nearestFeature(this.selectable(), center, (view.getResolution() || 1) * 12);
+                if (hit) this.selectFeature(hit.feature, hit.layer, this.toLonLat(center));
+                else this.announced = L("No feature at the map's center");
             },
             copyPlace(place) {
                 const coordinates = map.formatCoordinates(place.lon, place.lat);
@@ -853,10 +953,18 @@
                 }, { enableHighAccuracy: false, timeout: 15000, maximumAge: 60000 });
             },
             onCanvasKey(event) {
-                // only on the map itself: Enter on one of OpenLayers' controls inside it is that control's
-                if (event.key === "Enter" && this.shown.pick && event.target === event.currentTarget) { event.preventDefault(); this.chooseCenter(); }
+                // only on the map itself: Enter on one of OpenLayers' controls inside it is that control's. Enter chooses the
+                // center on a map that asks for a choice, and selects the feature there on any other
+                if (event.key !== "Enter" || event.target !== event.currentTarget) return;
+                event.preventDefault();
+                if (this.shown.pick) this.chooseCenter();
+                else this.selectAtCenter();
             },
-            onCanvasFocus() {
+            onCanvasFocus(event) {
+                // the crosshair shows for a keyboard's focus, not for a click's
+                let visible = true;
+                try { visible = !event || !event.target || !event.target.matches || event.target.matches(":focus-visible"); } catch (err) { visible = true; }
+                this.focused = visible;
                 const center = this.olMap && this.olMap.getView().getCenter();
                 if (center) { const at = this.toLonLat(center); this.readout = map.formatCoordinates(at.lon, at.lat); }
             },
@@ -899,15 +1007,16 @@
             const noticeSlot = this.$slots.notice ? this.$slots.notice() : null;
             const notice = noticeSlot || (this.notice ? [this.notice.text, this.notice.href ?
                 [" ", h("a", { href: this.notice.href, class: "m-map-notice-link" }, this.notice.linkText || L("Configuration"))] : null] : null);
-            const canvasLabel = L("Map") + ": " + L("arrow keys move it, + and - zoom") + (shown.pick ? ", " + L("Enter chooses the center") : "");
+            const canvasLabel = L("Map") + ": " + L("arrow keys move it, + and - zoom") + ", " + (shown.pick ? L("Enter chooses the center") : L("Enter selects the feature at the center"));
             return h("div", { class: "m-map", id: this.id }, [
                 notice ? h("div", { class: "m-map-notice", role: "note" }, notice) : null,
                 this.loadError ? h("div", { class: "m-map-status m-map-status-failed", role: "status" }, this.loadError) : null,
                 this.fallback ? h("div", { class: "m-map-fallback", role: "status" }, [this.fallback, ". ", L("The places are listed below.")]) :
                     h("div", { class: "m-map-frame", style: { height: this.height || "360px" } }, [
                         h("div", { ref: "canvas", class: "m-map-canvas", tabindex: 0, role: "application", "aria-label": canvasLabel,
-                            onKeydown: this.onCanvasKey, onFocus: this.onCanvasFocus }),
-                        shown.pick ? h("div", { class: "m-map-crosshair", "aria-hidden": "true" }) : null,
+                            onKeydown: this.onCanvasKey, onFocus: this.onCanvasFocus, onBlur: () => { this.focused = false; } }),
+                        // the center a choice or a keyboard selection takes
+                        shown.pick || this.focused ? h("div", { class: "m-map-crosshair", "aria-hidden": "true" }) : null,
                         this.toolbar(),
                         this.readout ? h("div", { class: "m-map-readout", "aria-hidden": "true" }, this.readout) : null,
                         h("div", { class: "m-map-announce", "aria-live": "polite" }, this.announced)

@@ -30,12 +30,12 @@ feature("desktop: the map draws; Layers, Search, a record's details and Save vie
         page.waitFor(() => (document.querySelector(".m-maps-panel") || {}).textContent.includes("Walk records"))
         page.text().includes("Only some of the records are shown")
         // Search: the saved place
-        page.getByLabel("Search saved places, records and postal codes").fill("harbor")
+        page.getByLabel("Search places, records and postal codes").fill("harbor")
         page.click("#MapsSearchButton")
         page.waitFor(() => !!document.querySelector('[data-maps-result="view:MAPS_WALK_HARBOR"]'))
         page.locator('[data-maps-result="view:MAPS_WALK_HARBOR"]').click()
         // a postal code of the user's country: the code and its two places as choices, approximate, the country shown
-        page.getByLabel("Search saved places, records and postal codes").fill("60601")
+        page.getByLabel("Search places, records and postal codes").fill("60601")
         page.click("#MapsSearchButton")
         page.waitFor(() => !!document.querySelector('[data-maps-result="postal:USA_Z_60601"]'))
         page.evaluate(() => document.querySelectorAll('[data-maps-result^="postal:USA_Z_60601:"]').length) == 2
@@ -45,7 +45,7 @@ feature("desktop: the map draws; Layers, Search, a record's details and Save vie
         )
         page.text().includes("60601 — Chicago, Loop")
         // and a record of the layer, whose details show where it is
-        page.getByLabel("Search saved places, records and postal codes").fill("Feature 1")
+        page.getByLabel("Search places, records and postal codes").fill("Feature 1")
         page.click("#MapsSearchButton")
         page.waitFor(() => !!document.querySelector('[data-maps-result^="record:"]'))
         page.locator('[data-maps-result^="record:"]').first().click()

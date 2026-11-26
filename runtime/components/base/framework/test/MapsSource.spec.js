@@ -1,7 +1,8 @@
 // Map archives (plans/Maps.md §5; org.moqui.maps.MapSourceServices, MapSources.js, tools screen/Maps/LocalMap.xml source):
 // registering a PMTiles archive records its revision (a DbResource archive in a drive, by its content blob; a file on disk,
 // by its SHA-256 and time), and refuses an archive a map cannot draw, a raster layer over vector tiles, a git archive that
-// is not a Git LFS object (NOT_LFS) and a caller who may not change Configuration; the map-source transition answers a
+// is not a Git LFS object (NOT_LFS) and a caller who may not change Configuration, and registers several layers of one
+// archive in one action (the light and dark styles of an extract); the map-source transition answers a
 // holder of the drive's share a range (206) with the registered strong ETag and private caching, writing no ResourceRecent,
 // and refuses a non-holder, a revoked share and a stale revision (409); the effective configuration hands the same-origin
 // URL only to a user the transition lets read. The archive is a tiny valid PMTiles version 3 file made here.
@@ -174,11 +175,26 @@ feature("registering records the revision of a drive's archive and a file's, and
             broken: register(layers.raster, BAD_LOCATION),
             mismatch: register(layers.raster, DRIVE_LOCATION),
             git: register(layers.git, GIT_LOCATION),
+            // the light and dark styles of one archive: one action registers both; a layer of another format refuses it
+            together: as(null, () =>
+                invoke(S + "register#ArchiveLayer", {
+                    layerId: layers.file,
+                    resourceLocation: FILE_LOCATION,
+                    alsoLayerIds: [layers.fileUri]
+                })
+            ),
+            mixed: as(null, () =>
+                invoke(S + "register#ArchiveLayer", {
+                    layerId: layers.file,
+                    resourceLocation: FILE_LOCATION,
+                    alsoLayerIds: [layers.raster]
+                })
+            ),
             refused: as(HOLDER, () => invoke(S + "register#ArchiveLayer", {layerId: layers.file})),
             readiness: as(null, () => invoke(S + "check#ArchiveReadiness", {providerKey: "maps.archives"}))
         }
     },
-    then({drive, file, fileUri, outside, driveRow, fileRow, broken, mismatch, git, refused, readiness}) {
+    then({drive, file, fileUri, outside, driveRow, fileRow, broken, mismatch, git, together, mixed, refused, readiness}) {
         drive.applied && file.applied && fileUri.applied
         layerRow(layers.fileUri).sourceRevision == fileRow.sourceRevision && layerRow(layers.fileUri).sourceAddressKind == "file"
         // outside every drive: registering says every user who may see the layer reads it
@@ -193,6 +209,9 @@ feature("registering records the revision of a drive's archive and a file's, and
         !broken.applied && broken.reasonCode == "ARCHIVE_INVALID" && /version 2/.test(broken.reason)
         !mismatch.applied && mismatch.reasonCode == "TILE_TYPE_MISMATCH"
         !git.applied && git.reasonCode == "NOT_LFS" && /Git LFS/.test(git.reason)
+        together.applied && together.layerIds.join() == [layers.file, layers.fileUri].join()
+        layerRow(layers.fileUri).resourceLocation == FILE_LOCATION && layerRow(layers.fileUri).disabled == "N"
+        !mixed.applied && mixed.reasonCode == "FORMAT_MISMATCH"
         layerRow(layers.raster).disabled == "Y" && !layerRow(layers.git).sourceRevision
         refused.applied !== true && (refused.reasonCode == "PERMISSION_DENIED" || /authoriz/i.test(refused.error))
         Array.from(readiness.checks || []).find(check => check.checkKey == "maps.archive." + layers.drive)?.state == "ready"

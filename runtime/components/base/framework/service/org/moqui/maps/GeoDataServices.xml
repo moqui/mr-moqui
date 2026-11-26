@@ -53,8 +53,12 @@ along with this software (see the LICENSE.md file). If not, see
             (dbresource://moqui/maps/geo-import/(userId)/(geoDataImportId)/errors.csv, as an ETL run's: the first
             10,000, and how many more), the first 100 in errors; a failed run's errorLocation names the step.
             geoDataImportId runs a pending run (GdiPending, made by the screen or job that starts it), whose own data set
-            and country are used. A ServiceJob with no user signed in names the user to run as in runAsUserId, a
-            ServiceJobUser of the job who added themselves.</description>
+            and country are used; when the run is one of a queue (queueId, start#GeoDataImport's every country), it then
+            starts the queue's next pending run as a run of the GeoDataImport ServiceJob, whatever its own end (one whose
+            job does not start is marked failed and the next is tried); a refusal every run of the queue would meet (the
+            set disabled or unreadable, its license, outside requests off, the size limit, the job's user refused or not
+            authorized) instead cancels the queue's waiting runs with that reason. A ServiceJob with no user signed in names the user
+            to run as in runAsUserId, a ServiceJobUser of the job who added themselves.</description>
         <in-parameters>
             <parameter name="dataSetId"/>
             <parameter name="countryGeoId"/>
@@ -85,9 +89,18 @@ along with this software (see the LICENSE.md file). If not, see
             transaction="ignore">
         <description>Ask a run to stop: a pending run is cancelled at once; a running one reads the request between its
             steps and batches and ends GdiCancelled with nothing retired, the rows of the batches it loaded kept and the
-            edition in use unchanged. Refused for a run that has ended.</description>
-        <in-parameters><parameter name="geoDataImportId" required="true"/></in-parameters>
-        <out-parameters><parameter name="statusId"/></out-parameters>
+            edition in use unchanged. A running one whose row has not changed for an hour is taken as abandoned and ended
+            at once (and its queue goes on with its next). Refused for a run that has ended. With queueId instead, the
+            whole queue of an import of every country: its pending runs cancelled at once (so none starts) and its running
+            one asked to stop (ended at once when abandoned); refused when none is in progress. cancelledCount is the queue's runs cancelled or asked to stop.</description>
+        <in-parameters>
+            <parameter name="geoDataImportId"/>
+            <parameter name="queueId"><description>A queue's runs (start#GeoDataImport with everyCountry)</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="statusId"/>
+            <parameter name="cancelledCount" type="Long"/>
+        </out-parameters>
     </service>
 
     <service verb="remove" noun="GeoData" type="rust" location="moqui_tools::geo::service::remove_geo_data"
@@ -171,7 +184,13 @@ along with this software (see the LICENSE.md file). If not, see
             country at a time or an operator's file (or one its countryCodes do not list), no file for an operator's file, and a run of the same source key and
             country in progress, each before an upload is written. An operator's file is an upload (file, at most maps@import-max-bytes, kept under
             dbresource://moqui/maps/import/(userId)/) or a location the importer allows. A refused job start leaves the run
-            failed. Every GeoNames country at once is not offered: one country a run.</description>
+            failed. everyCountry (a set read a country at a time) imports every country of its countryCodes that has a country
+            Geo as a queue (for now only those estimated under 50,000 file rows: a run as a ServiceJob grows about 20 KB of
+            memory a row, plans/Maps.md §6.3): a pending run a country sharing a queueId (the first run's ID), refused while
+            a run of the source key is in progress (one with no word for an hour not counted; the data set's row is locked
+            so two starts do not both pass); only the first starts here, and each run starts the next when it ends
+            (import#GeoData), one at a time, each its own run and edition; cancel#GeoDataImport with the queueId cancels the
+            rest. everyCountryEstimate gives the confirmation's estimate.</description>
         <in-parameters>
             <parameter name="dataSetId" required="true"/>
             <parameter name="countryGeoId"><description>A Geo ID or an alpha-2 or alpha-3 code</description></parameter>
@@ -180,10 +199,14 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="force" type="Boolean" default-value="false"/>
             <parameter name="again" type="Boolean" default-value="false"><description>A Refresh: an operator's file given no
                 file or location is the file its scope's last run read</description></parameter>
+            <parameter name="everyCountry" type="Boolean" default-value="false"><description>Every country of a set read a
+                country at a time, as a queue of runs</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="geoDataImportId"/>
             <parameter name="jobRunId"/>
+            <parameter name="queueId"/>
+            <parameter name="countryCount" type="Integer"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/GeoData.js').execute('startImport', context))</script></actions>
     </service>

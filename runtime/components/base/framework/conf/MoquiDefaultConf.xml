@@ -432,6 +432,13 @@
             digest of the request, never its text; and each provider's claimed request slots, for its rate (each server's) -->
         <cache name="maps.geocoder.answer" type="local" expire-time-live="86400" max-elements="5000" value-type="String"/>
         <cache name="maps.geocoder.last" type="local" expire-time-live="60" max-elements="2000" value-type="Long"/>
+        <!-- a proxied map provider's style and TileJSON documents as rewritten for its proxy (MapProviders.js providerAsset),
+            kept only when its cachePolicy is shared, by the provider's revision and the path, never its key -->
+        <cache name="maps.provider.document" type="local" expire-time-live="86400" max-elements="200" value-type="String"/>
+        <!-- whether a user may reach a proxied provider now, by user, provider revision and test (a map asks many tiles at
+            once), and the proxy's claimed request slots of each second, for a provider's requestsPerSecond (each server's) -->
+        <cache name="maps.provider.proxy" type="local" expire-time-live="30" max-elements="5000" value-type="String"/>
+        <cache name="maps.provider.slots" type="local" expire-time-live="5" max-elements="20000" value-type="String"/>
     </cache-list>
     <!-- sample-ratio: the share of traces whose spans below the request or job root are kept, decided from the trace id.
         At 0 every root span is kept, and the whole trace of an error or a slow root (the tail rule); 1 keeps every span. -->

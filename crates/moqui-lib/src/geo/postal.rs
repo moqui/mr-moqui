@@ -66,6 +66,9 @@ pub struct PostalRecord {
     pub point: Option<Point>,
     pub accuracy: Option<i32>,
     pub precision: Precision,
+    /// The land area of the code's area in square meters, where the source has it (a Census ZCTA's `ALAND`), for the
+    /// lookup's extent.
+    pub land_area: Option<u64>,
 }
 
 /// ISO alpha-2 of the countries with rules of their own, from alpha-2 or alpha-3.

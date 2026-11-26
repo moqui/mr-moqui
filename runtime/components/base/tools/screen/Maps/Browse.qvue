@@ -18,7 +18,9 @@ along with this software (see the LICENSE.md file). If not, see
     geocoder's candidates with their source, precision and ambiguity when one is enabled), Layers (the basemap, the
     overlays and record layers, the user's own and shared overlays with Add overlay and Remove, each layer that is not
     shown named with Retry, and a cut feature list said), Saved views (Save view saves where the map is) and the selected
-    feature's details (Save place, Remove place). Below 600 px the panel is a bottom sheet over the map. Full screen is the browser's, on request. The last view
+    feature's details (a place's or a record's, or an overlay's feature with its label and plain-text description and its
+    overlay; the record's links a registered route resolves; Save place, Remove place). Add overlay takes an upload or a file
+    chosen with the drive picker (pickerData, pickerFolder, pickerSearch: GeoJSON, GPX and KML files only). Below 600 px the panel is a bottom sheet over the map. Full screen is the browser's, on request. The last view
     is posted (rememberView) only when the user turned Restore my last view on. Brand color names and Quasar classes
     only. -->
 <template><div ref="frame" class="m-maps-browse column no-wrap" :class="fullscreen ? ($q.dark.isActive ? 'bg-dark' : 'bg-white') : ''">
@@ -157,9 +159,13 @@ along with this software (see the LICENSE.md file). If not, see
             <template v-if="panel === 'details' && selected">
                 <div class="text-body1 text-weight-medium">{{selected.label || t('Place')}}</div>
                 <div class="text-caption m-muted" v-if="selectedLayerLabel">{{selectedLayerLabel}}</div>
+                <div v-if="selected.description" class="text-body2 q-mt-xs m-maps-description" style="white-space:pre-line;overflow-wrap:anywhere">{{selected.description}}</div>
                 <div class="q-mt-xs" style="font-family:var(--m-font-mono)">{{coordinates(selected)}}</div>
                 <div class="text-caption m-muted" v-if="selected.precision">{{selected.precision}}</div>
                 <div class="text-caption m-muted" v-if="selected.source">{{selected.source}}</div>
+                <div v-if="selectedLinks.length" class="column items-start q-mt-xs m-maps-record-links">
+                    <a v-for="link in selectedLinks" :key="link.url" :href="link.url" class="text-primary">{{link.label}}</a>
+                </div>
                 <q-btn dense flat no-caps icon="sym_o_content_copy" :label="t('Copy coordinates')" class="q-mt-sm" @click="copy(selected)"></q-btn>
                 <q-btn v-if="!selected.placeId" dense flat no-caps icon="sym_o_star" :label="t('Save place')" class="q-mt-sm" id="MapsSavePlace" @click="openSavePlace"></q-btn>
                 <q-btn v-if="selected.placeId && selected.isOwn" dense flat no-caps icon="sym_o_delete" :label="t('Remove place')" class="q-mt-sm" @click="removePlace(selected)"></q-btn>
@@ -191,16 +197,34 @@ along with this software (see the LICENSE.md file). If not, see
         <div>
             <div class="text-caption m-muted">{{t('A GeoJSON, GPX or KML file of at most 10 MB. It is kept in Maps/overlays of your files, checked, and drawn only by this server: links, icons and scripts in it are not followed.')}}</div>
             <q-file v-model="addFile" dense outlined clearable accept=".geojson,.json,.gpx,.kml" :label="t('Upload a file')" class="q-mt-sm" id="MapsOverlayFile"></q-file>
-            <div v-if="overlayFiles.length" class="q-mt-sm">
-                <div class="text-caption m-muted">{{t('Or one of your files')}}</div>
-                <q-list dense bordered separator style="max-height:180px" class="scroll">
-                    <q-item v-for="file in overlayFiles" :key="file.driveId + '/' + file.path" clickable @click="addPick = file"
-                            :active="addPick === file" active-class="m-tonal text-primary">
+            <div v-if="picker.drives.length" class="q-mt-sm" id="MapsOverlayPicker">
+                <div class="text-caption m-muted">{{t('Or a GeoJSON, GPX or KML file of a drive you may open')}}</div>
+                <div class="row items-center q-gutter-xs">
+                    <q-chip v-for="drive in picker.drives" :key="drive.driveId" dense square clickable
+                            :class="picker.driveId === drive.driveId && !picker.searching ? 'm-tonal text-primary' : ''"
+                            :aria-pressed="picker.driveId === drive.driveId && !picker.searching ? 'true' : 'false'"
+                            @click="pickerOpen(drive.driveId, '')">{{drive.driveName}}</q-chip>
+                </div>
+                <div class="q-mt-xs" @keydown.enter.prevent="pickerSearch"><m-text-line v-model="picker.text" name="pickerText" id="MapsOverlayPickerText" :label="t('Search files')"></m-text-line></div>
+                <div v-if="!picker.searching" class="row items-center no-wrap q-mt-xs" style="overflow:hidden">
+                    <template v-for="(crumb, index) in picker.crumbs" :key="index">
+                        <q-icon v-if="index" name="chevron_right" size="xs" class="m-muted"></q-icon>
+                        <q-btn flat dense no-caps size="sm" @click="pickerOpen(picker.driveId, crumb.path)">{{crumb.name}}</q-btn>
+                    </template>
+                </div>
+                <div v-else class="text-caption m-muted q-mt-xs">{{picker.text ? t('Found') : t('Recent files')}}</div>
+                <q-list dense bordered separator style="max-height:200px" class="scroll">
+                    <q-item v-if="picker.loading"><q-item-section class="text-center"><q-spinner></q-spinner></q-item-section></q-item>
+                    <q-item v-for="row in picker.rows" :key="pickerKey(row)" clickable @click="pickerClick(row)"
+                            :active="!row.isDirectory && addPick && pickerKey(addPick) === pickerKey(row)" active-class="m-tonal text-primary"
+                            :data-maps-pick="row.path">
+                        <q-item-section avatar><q-icon :name="row.icon || (row.isDirectory ? 'sym_o_folder' : 'sym_o_draft')"></q-icon></q-item-section>
                         <q-item-section>
-                            <q-item-label>{{file.name}}</q-item-label>
-                            <q-item-label caption>{{file.driveName}} · {{file.path}}</q-item-label>
+                            <q-item-label class="ellipsis">{{row.name}}</q-item-label>
+                            <q-item-label caption class="ellipsis" v-if="pickerCaption(row)">{{pickerCaption(row)}}</q-item-label>
                         </q-item-section>
                     </q-item>
+                    <q-item v-if="!picker.loading && !picker.rows.length"><q-item-section class="text-caption m-muted">{{t('No GeoJSON, GPX or KML file here')}}</q-item-section></q-item>
                 </q-list>
             </div>
             <m-text-line v-model="addLabel" name="label" id="MapsOverlayLabel" :label="t('Name (the file name when empty)')" class="q-mt-sm"></m-text-line>
@@ -235,7 +259,8 @@ module.exports = {
         return { effective: null, error: '', panel: '', query: '', results: [], postalCountries: [], postalCountry: null, postalNote: '', searching: false, savedViews: [], hidden: {}, basemapId: '',
             view: null, lastView: null, marker: null, selected: null, mapPx: 480, phone: false, fullscreen: false, saveShown: false,
             saveName: '', saveShared: 'N', saving: false, restoreLastView: false, geocoder: null, addShown: false, addFile: null, addPick: null,
-            addLabel: '', adding: false, overlayFiles: [], placeShown: false, placeName: '' };
+            addLabel: '', adding: false, placeShown: false, placeName: '',
+            picker: { drives: [], driveId: null, crumbs: [], rows: [], loading: false, text: '', searching: false } };
     },
     computed: {
         screenPath() { return this.mScreen ? this.mScreen.path : this.$root.basePath + '/' + this.$root.currentPathList.join('/'); },
@@ -253,6 +278,10 @@ module.exports = {
             return { search: t('Search results'), layers: t('Layers'), views: t('Saved views'), details: t('Selected') }[this.panel] || '';
         },
         sheetStyle() { return { position: 'fixed', left: '0', right: '0', bottom: '0', maxHeight: '55vh', zIndex: 2000 }; },
+        // the record's links a registered route resolved to a screen the user may open (get#EffectiveConfig), on its place
+        selectedLinks() {
+            return this.selected && this.selected.isRecord === true && this.effective && this.effective.record ? this.effective.record.resolvedLinks || [] : [];
+        },
         selectedLayerLabel() {
             if (!this.selected || !this.selected.layerId) return '';
             const layer = this.recordLayers.concat(this.overlays).find((one) => one.id === this.selected.layerId);
@@ -309,7 +338,7 @@ module.exports = {
         configParameters(extraLayerId) {
             const p = this.parameters;
             const out = {};
-            ['profileId', 'adapterKey', 'recordKey', 'addressPurpose'].forEach((key) => { if (p[key]) out[key] = p[key]; });
+            ['profileId', 'adapterKey', 'recordKey', 'addressPurpose', 'routeApp'].forEach((key) => { if (p[key]) out[key] = p[key]; });
             if (extraLayerId) {
                 // a user's overlay is not the profile's layer: getConfig lists it itself
                 const shown = this.profileOverlays.concat(this.recordLayers).filter((layer) => this.layerShown(layer)).map((layer) => layer.id);
@@ -413,8 +442,22 @@ module.exports = {
                     .some((feature) => feature.properties && feature.properties.layerId === layer.id))) this.load(layer.id);
         },
         onSelect(place) {
+            // an overlay's feature: its label and description (plain text, shown as text), its overlay and where it is; a
+            // place of the user's own places file can be removed
+            if (place.kind === 'overlay') {
+                const layer = this.overlays.find((one) => one.id === place.layerId) || {};
+                this.selected = { id: place.id, label: place.label, lon: place.lon, lat: place.lat, layerId: place.layerId, description: place.description || '',
+                    source: layer.overlayId ? (layer.isOwn ? (layer.isPlaces ? t('Your saved place') : t('Your overlay')) : t('Shared by') + ' ' + (layer.ownerName || '')) : '',
+                    precision: layer.isPlaces ? t('User-confirmed point') : '', placeId: layer.isPlaces && layer.isOwn && place.id ? place.id : null,
+                    isOwn: !!layer.isOwn };
+                this.panel = 'details';
+                return;
+            }
             const point = (this.mapConfig.points || []).find((one) => one.id === place.id) || {};
-            this.selected = Object.assign({}, place, { precision: this.precisionText(point.precisionEnumId) || point.precision || '', source: point.source || point.sourceText || '' });
+            // the record's own place: the configuration's point or area record, not an overlay's or a layer's feature of that id
+            const recordArea = ((this.effective && this.effective.features && this.effective.features.features) || []).some((feature) => feature && feature.id === 'record');
+            this.selected = Object.assign({}, place, { precision: this.precisionText(point.precisionEnumId) || point.precision || '', source: point.source || point.sourceText || '',
+                isRecord: !place.kind && !place.layerId && place.id === 'record' && (point.id === 'record' || recordArea) });
             this.panel = 'details';
         },
         onViewChange(change) {
@@ -444,9 +487,43 @@ module.exports = {
                 } else moqui.notifyMessages(null, [json.reason || t('The view was not saved')]);
             }, (err) => moqui.notifyMessages(null, [String(err && err.message || err)])).then(() => { this.saving = false; });
         },
+        // Add overlay: an upload, or a file chosen with the drive picker (pickerData, pickerFolder, pickerSearch: the drives the
+        // user may open, their folders and files by name, only GeoJSON, GPX and KML files listed)
         openAddOverlay() {
             this.addFile = null; this.addPick = null; this.addLabel = ''; this.addShown = true;
-            this.request('overlayFiles').then((json) => { this.overlayFiles = json.fileList || []; }, () => { this.overlayFiles = []; });
+            this.picker = { drives: [], driveId: null, crumbs: [], rows: [], loading: true, text: '', searching: true };
+            this.request('pickerData').then((json) => {
+                this.picker.drives = json.driveList || [];
+                this.picker.rows = json.recentList || [];
+                this.picker.loading = false;
+                if (json.personalDriveId && !this.picker.rows.length) this.pickerOpen(json.personalDriveId, '');
+            }, () => { this.picker.loading = false; this.picker.drives = []; });
+        },
+        pickerOpen(driveId, path) {
+            Object.assign(this.picker, { driveId, searching: false, loading: true });
+            this.request('pickerFolder', { params: { driveId, path: path || '' } }).then((json) => {
+                this.picker.rows = (json.fileList || []).map((row) => Object.assign({ driveId }, row));
+                this.picker.crumbs = json.breadcrumbList || [];
+                this.picker.loading = false;
+            }, () => { this.picker.loading = false; this.picker.rows = []; });
+        },
+        pickerSearch() {
+            const text = String(this.picker.text || '').trim();
+            if (!text) return;
+            Object.assign(this.picker, { searching: true, loading: true });
+            this.request('pickerSearch', { params: { text } }).then((json) => {
+                this.picker.rows = json.fileList || [];
+                this.picker.loading = false;
+            }, () => { this.picker.loading = false; this.picker.rows = []; });
+        },
+        pickerKey(row) { return (row.driveId || this.picker.driveId) + '\n' + row.path; },
+        pickerCaption(row) {
+            if (row.isDirectory) return '';
+            return this.picker.searching && row.driveName ? row.driveName + (row.folderPath ? ' / ' + row.folderPath : '') : '';
+        },
+        pickerClick(row) {
+            if (row.isDirectory) this.pickerOpen(row.driveId || this.picker.driveId, row.path);
+            else { this.addPick = Object.assign({ driveId: this.picker.driveId }, row); this.addFile = null; }
         },
         // the file is read on the server first: one that cannot be drawn is refused with its reason, nothing kept
         addOverlay() {

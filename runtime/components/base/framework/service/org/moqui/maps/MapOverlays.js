@@ -34,7 +34,6 @@ const DEFAULT_FEATURES = 5000
 const MAX_OVERLAYS = 100
 const MAX_SHARED = 100
 const MAX_PLACES = 1000
-const EXTENSIONS = /\.(geojson|json|gpx|kml)$/i
 
 const L = value => ec.l10n.localize(value)
 const say = (value, values) => ec.resource.expand(L(value), "", values || {})
@@ -420,47 +419,6 @@ function overlayContent(p, memo) {
     return {ok: true, status: 200, geojson}
 }
 
-// ===== find#OverlayFiles: files the user could add =====
-// The geographic files of the user's personal drive (its top folder, Maps and Maps/overlays) and their recent files in
-// any drive they still read, at most 50
-function findOverlayFiles() {
-    if (!text(ec.user.userId)) throw new Error(L("Sign in to choose a file"))
-    const memo = new Map()
-    const out = []
-    const seen = new Set()
-    const add = (driveId, path, driveName) => {
-        const key = driveId + "/" + path
-        if (seen.has(key) || out.length >= 50 || !EXTENSIONS.test(path)) return
-        seen.add(key)
-        out.push({driveId, path, name: fileNameOf(path), driveName: driveName || ""})
-    }
-    const own = personalDrive()
-    const root = own ? driveRoot(own) : null
-    if (root)
-        for (const folder of ["", "Maps", OVERLAY_FOLDER]) {
-            let entries = []
-            try {
-                entries = Array.from(quietly(() => ec.resource.getChildChanges(folder ? root + "/" + folder : root)) || [])
-            } catch (err) {
-                entries = []
-            }
-            for (const entry of entries)
-                if (entry.isFile) add(own, folder ? folder + "/" + entry.name : String(entry.name), L("My files"))
-        }
-    const recent = Array.from(
-        find("moqui.resource.ResourceRecent", {userId: ec.user.userId}).orderBy("-lastModifiedDate").limit(200).list()
-    )
-    for (const row of recent) {
-        if (out.length >= 50) break
-        const path = cleanPath(row.path)
-        if (!EXTENSIONS.test(path) || seen.has(row.driveId + "/" + path)) continue
-        if (levelAt(row.driveId, path, memo) < 1) continue
-        const drive = find(DRIVE, {driveId: row.driveId}).useCache(true).one()
-        add(String(row.driveId), path, drive ? text(drive.driveName) : "")
-    }
-    return {fileList: out}
-}
-
 // ===== saved places: Maps/places.geojson of the personal drive =====
 // The places file as a FeatureCollection; null when it is not one, or is larger than an overlay may be (never read whole
 // then): it is refused rather than overwritten
@@ -588,10 +546,12 @@ function deletePlace(p) {
     return {applied: true, reasonCode: null, reason: null, placeId}
 }
 
-// Browse's search: the saved places of the user and those shared with them whose name has the text, at most limit
+// Browse's search: the saved places of the user and those shared with them whose name has the text, at most limit; with
+// all, every one of them (the terminal's list)
 function searchPlaces(p) {
     const term = text(p.q).toLowerCase()
-    if (!term || !text(ec.user.userId)) return {results: []}
+    const all = yes(p.all)
+    if ((!term && !all) || !text(ec.user.userId)) return {results: []}
     const limit = Math.min(50, Number(p.limit) || 20)
     const results = []
     const memo = new Map()
@@ -608,7 +568,7 @@ function searchPlaces(p) {
         for (const feature of features) {
             if (results.length >= limit) break
             const label = text(feature?.properties?.label)
-            if (!label.toLowerCase().includes(term) || feature.geometry?.type !== "Point") continue
+            if ((!all && !label.toLowerCase().includes(term)) || feature.geometry?.type !== "Point") continue
             const [lon, lat] = feature.geometry.coordinates
             results.push({
                 kind: "place",
@@ -639,7 +599,6 @@ const operations = {
     deleteOverlay,
     findOverlays,
     overlayContent,
-    findOverlayFiles,
     storePlace,
     deletePlace,
     searchPlaces

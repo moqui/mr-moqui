@@ -44,7 +44,9 @@ along with this software (see the LICENSE.md file). If not, see
             <set field="sourceText" value="Spec data set"/>
             <set field="recordVersion" value="1"/>
             <set field="permittedActions" from="ec.user.hasPermission('MAPS_SPEC_STORE') ? ['view', 'chooseLocation'] : ['view']"/>
-            <set field="links" from="[{label: 'Spec record', route: 'specRecord', parameters: {recordId}}]"/>
+            <!-- a link to itself, which a map of this record leaves out, and one to another record -->
+            <set field="links" from="[{label: 'Spec record', route: 'specRecord', parameters: {recordId}},
+                {label: 'Spec related', route: 'specRecord', parameters: {recordId: 'RELATED'}}]"/>
         </actions>
     </service>
     <service verb="find" noun="LayerFeatures">

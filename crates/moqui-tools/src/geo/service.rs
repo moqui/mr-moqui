@@ -274,19 +274,12 @@ fn running_refusal(facade: &EntityFacade, set: &DataSet, country: Option<&str>, 
         Ok(runs) => runs,
         Err(err) => return Some(err.to_string()),
     };
-    let stale_before = jiff::Timestamp::now()
-        .checked_sub(jiff::SignedDuration::try_from(STALE_AFTER).unwrap_or_default())
-        .unwrap_or_else(|_| jiff::Timestamp::now());
     for run in &runs {
         let run_id = text_of(run, "geoDataImportId");
         if run_id == own || !in_progress(&text_of(run, "statusId")) {
             continue;
         }
-        let touched = match run.get("lastUpdatedStamp") {
-            Some(Value::Timestamp(stamp)) => Some(*stamp),
-            _ => None,
-        };
-        if touched.is_some_and(|stamp| stamp < stale_before) {
+        if is_stale(run) {
             tracing::warn!(run = %run_id, "Marking an abandoned Geo data import failed");
             write_run(
                 facade,
@@ -305,6 +298,94 @@ fn running_refusal(facade: &EntityFacade, set: &DataSet, country: Option<&str>, 
         ));
     }
     None
+}
+
+/// Whether run row `run`, in progress, has not changed for [`STALE_AFTER`]: a live run touches its row at least every
+/// [`HEARTBEAT`], so it is taken as abandoned (a server stopped under it).
+fn is_stale(run: &EntityValue) -> bool {
+    let stale_before = jiff::Timestamp::now()
+        .checked_sub(jiff::SignedDuration::try_from(STALE_AFTER).unwrap_or_default())
+        .unwrap_or_else(|_| jiff::Timestamp::now());
+    matches!(run.get("lastUpdatedStamp"), Some(Value::Timestamp(stamp)) if *stamp < stale_before)
+}
+
+/// A pending run `run_id` refused before its preflight (its job's user refused, or not authorized): marked failed, and
+/// its queue's other pending runs, which would be refused alike, cancelled ([`end_queue`]). Nothing for no run.
+fn refuse_pending(facade: &EntityFacade, run_id: &str, message: &str) {
+    if run_id.is_empty() {
+        return;
+    }
+    let pending = matches!(read_run(facade, run_id), Ok(Some(run)) if text_of(&run, "statusId") == PENDING);
+    if !pending {
+        return;
+    }
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    write_run(
+        facade,
+        run_id,
+        vec![
+            ("statusId", Value::string(FAILED)),
+            ("failureText", Value::string(message)),
+            ("errorLocation", Value::string("preflight")),
+            ("thruDate", now()),
+        ],
+    );
+    end_queue(facade, run_id, message);
+}
+
+/// After run `run_id` was refused for a reason every run of its queue would meet (the data set's own, or its user's):
+/// the queue's other pending runs are cancelled with that reason, so no job starts for them and one notification (the
+/// refused run's job's) says why. Nothing for a run of no queue.
+fn end_queue(facade: &EntityFacade, run_id: &str, message: &str) {
+    if run_id.is_empty() {
+        return;
+    }
+    let queue = match read_run(facade, run_id) {
+        Ok(Some(run)) => text_of(&run, "queueId"),
+        _ => return,
+    };
+    if queue.is_empty() {
+        return;
+    }
+    let runs = match queue_runs(facade, &queue) {
+        Ok(runs) => runs,
+        Err(err) => {
+            tracing::error!(error = %err, queue = %queue, "Could not read a Geo data import queue to end it");
+            return;
+        }
+    };
+    let mut ended = 0;
+    for run in runs.iter().filter(|run| text_of(run, "statusId") == PENDING) {
+        write_run(
+            facade,
+            &text_of(run, "geoDataImportId"),
+            vec![
+                ("statusId", Value::string(CANCELLED)),
+                ("cancelRequested", Value::string("Y")),
+                ("failureText", Value::string(format!("Not run: {message}"))),
+                ("thruDate", now()),
+            ],
+        );
+        ended += 1;
+    }
+    if ended > 0 {
+        tracing::warn!(queue = %queue, cancelled = ended, reason = %message, "A Geo data import queue ended: its data set refused its runs");
+    }
+}
+
+/// End run `run` whose cancel was asked while it was taken as abandoned ([`is_stale`]): no live run will read the flag,
+/// so it is marked cancelled here.
+fn end_stale(facade: &EntityFacade, run: &EntityValue) {
+    write_run(
+        facade,
+        &text_of(run, "geoDataImportId"),
+        vec![
+            ("cancelRequested", Value::string("Y")),
+            ("statusId", Value::string(CANCELLED)),
+            ("failureText", Value::string("Cancelled after it stopped with no word")),
+            ("thruDate", now()),
+        ],
+    );
 }
 
 /// Delete the operator's uploads (under [`fetch::IMPORT_ROOT`]) that the runs of `set`'s scope read, but `keep`: after a
@@ -467,24 +548,35 @@ pub(crate) fn import_geo_data(
             Err(err) => {
                 tracing::error!(job = %job_name, error = %err, "Refused a Geo data import with no user signed in");
                 add_error(err.to_string());
+                refuse_pending(facade, &text(parameters, "geoDataImportId"), &err.to_string());
                 return Ok(Out::new());
             }
         }
     }
     if !authorized(super::IMPORT_SERVICE, "Importing Geo data") {
+        refuse_pending(
+            facade,
+            &text(parameters, "geoDataImportId"),
+            "Importing Geo data needs the Maps configuration authorization (MAPS_ADMIN)",
+        );
         return Ok(Out::new());
     }
     // the reference rows are the framework's to write
     let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let pending_id = text(parameters, "geoDataImportId");
     let plan = match preflight(parameters, facade) {
         Ok(plan) => plan,
-        Err((pending, message)) => {
+        Err(Refused {
+            pending,
+            message,
+            whole_set,
+        }) => {
             add_error(message.clone());
             let mut out = Out::new();
-            if let Some(run_id) = pending {
+            if let Some(run_id) = &pending {
                 write_run(
                     facade,
-                    &run_id,
+                    run_id,
                     vec![
                         ("statusId", Value::string(FAILED)),
                         ("failureText", Value::string(&message)),
@@ -494,6 +586,13 @@ pub(crate) fn import_geo_data(
                 );
                 out.insert("geoDataImportId".to_string(), Value::string(run_id));
                 out.insert("statusId".to_string(), Value::string(FAILED));
+            }
+            // a queued run refused (or cancelled) before it started: the queue goes on with its next, unless the refusal
+            // is the data set's own (disabled, its license, outside requests off), which every run of it would meet
+            if whole_set {
+                end_queue(facade, &pending_id, &message);
+            } else {
+                continue_queue(facade, &pending_id);
             }
             return Ok(out);
         }
@@ -506,23 +605,115 @@ pub(crate) fn import_geo_data(
     if let Ok(path) = &tmp {
         let _ = std::fs::remove_file(path);
     }
-    Ok(finish(facade, &plan, ended))
+    let out = finish(facade, &plan, ended);
+    continue_queue(facade, &plan.run_id);
+    Ok(out)
+}
+
+/// After run `run_id` ended, or was refused before it started: when it is one of a queue (`queueId`: an import of every
+/// country of a set read a country at a time, start#GeoDataImport's), start the queue's next pending run as a run of
+/// the GeoDataImport ServiceJob, so the countries run one after another, each its own run and edition. A cancelled
+/// queue has no pending run left (cancel#GeoDataImport with its queueId). A run whose job does not start is marked
+/// failed and the next is tried. Nothing happens for a run of no queue.
+fn continue_queue(facade: &EntityFacade, run_id: &str) {
+    if run_id.is_empty() {
+        return;
+    }
+    let queue = match read_run(facade, run_id) {
+        Ok(Some(run)) => text_of(&run, "queueId"),
+        _ => return,
+    };
+    if queue.is_empty() {
+        return;
+    }
+    let pending = match queue_runs(facade, &queue) {
+        Ok(runs) => runs.into_iter().filter(|run| text_of(run, "statusId") == PENDING),
+        Err(err) => {
+            tracing::error!(error = %err, queue = %queue, "Could not read a Geo data import queue; it stops here");
+            return;
+        }
+    };
+    for next in pending {
+        let next_id = text_of(&next, "geoDataImportId");
+        let mut job_parameters = BTreeMap::new();
+        job_parameters.insert("geoDataImportId".to_string(), Value::string(&next_id));
+        job_parameters.insert("force".to_string(), Value::Bool(text_of(&next, "forced") == "Y"));
+        match moqui_core::service::run_job_now(super::IMPORT_JOB, &job_parameters) {
+            Ok(job_run_id) => {
+                write_run(facade, &next_id, vec![("jobRunId", Value::string(job_run_id))]);
+                return;
+            }
+            Err(err) => {
+                tracing::error!(error = %err, run = %next_id, queue = %queue, "A queued Geo data import did not start");
+                write_run(
+                    facade,
+                    &next_id,
+                    vec![
+                        ("statusId", Value::string(FAILED)),
+                        (
+                            "failureText",
+                            Value::string(format!("The import job did not start: {err}")),
+                        ),
+                        ("errorLocation", Value::string("queue")),
+                        ("thruDate", now()),
+                    ],
+                );
+            }
+        }
+    }
+}
+
+/// The runs of queue `queue_id`, in the order they were made (their sequenced IDs as numbers).
+fn queue_runs(facade: &EntityFacade, queue_id: &str) -> Result<Vec<EntityValue>, LibError> {
+    let mut runs: Vec<EntityValue> = facade
+        .find(IMPORT)?
+        .eq("queueId", Value::string(queue_id))
+        .list()?
+        .into_values();
+    runs.sort_by_key(|run| {
+        let id = text_of(run, "geoDataImportId");
+        (id.len(), id)
+    });
+    Ok(runs)
 }
 
 /// The preflight: the plan of a run that may start (its row made or taken), or the refusal with the pending run it
 /// was for.
-fn preflight(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Result<Plan, (Option<String>, String)> {
+/// Why a run may not start: the pending run it was for, the message, and whether the refusal is the data set's own (it
+/// disabled or unreadable, its license not acknowledged, outside requests off, the size limit unreadable), which every
+/// other run of it would meet too.
+struct Refused {
+    pending: Option<String>,
+    message: String,
+    whole_set: bool,
+}
+
+fn preflight(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Result<Plan, Refused> {
     let pending_id = text(parameters, "geoDataImportId");
     let pending = Some(pending_id.clone()).filter(|id| !id.is_empty());
-    let refuse = |message: String| (pending.clone(), message);
+    let refuse = |message: String| Refused {
+        pending: pending.clone(),
+        message,
+        whole_set: false,
+    };
+    let refuse_set = |message: String| Refused {
+        pending: pending.clone(),
+        message,
+        whole_set: true,
+    };
+    let refuse_unpending = |message: String| Refused {
+        pending: None,
+        message,
+        whole_set: false,
+    };
     let (data_set_id, asked_country) = match &pending {
         Some(run_id) => {
             let run = read_run(facade, run_id).map_err(|err| refuse(err.to_string()))?;
             let Some(run) = run else {
-                return Err((None, format!("There is no Geo data import {run_id}")));
+                return Err(refuse_unpending(format!("There is no Geo data import {run_id}")));
             };
             if text_of(&run, "statusId") != PENDING {
-                return Err((None, format!("Geo data import {run_id} is not pending")));
+                return Err(refuse_unpending(format!("Geo data import {run_id} is not pending")));
             }
             if text_of(&run, "cancelRequested") == "Y" {
                 write_run(
@@ -530,10 +721,9 @@ fn preflight(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Res
                     run_id,
                     vec![("statusId", Value::string(CANCELLED)), ("thruDate", now())],
                 );
-                return Err((
-                    None,
-                    format!("Geo data import {run_id} was cancelled before it started"),
-                ));
+                return Err(refuse_unpending(format!(
+                    "Geo data import {run_id} was cancelled before it started"
+                )));
             }
             (text_of(&run, "dataSetId"), text_of(&run, "countryGeoId"))
         }
@@ -542,7 +732,7 @@ fn preflight(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Res
     if data_set_id.is_empty() {
         return Err(refuse("Importing Geo data needs a dataSetId".to_string()));
     }
-    let (row, set) = data_set(facade, &data_set_id).map_err(refuse)?;
+    let (row, set) = data_set(facade, &data_set_id).map_err(refuse_set)?;
     let country = run_country(facade, &row, set.format, &asked_country).map_err(refuse)?;
     let country_id = country.as_ref().map(|country| country.geo_id.clone());
     let url = text_of(&row, "urlTemplate");
@@ -564,19 +754,19 @@ fn preflight(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Res
             )));
         }
         if !external_requests() {
-            return Err(refuse(format!(
+            return Err(refuse_set(format!(
                 "Geo data set {data_set_id} is downloaded, and maps@external-requests is false: outside requests for \
                  maps are off"
             )));
         }
     }
     if text_of(&row, "licenseAckUserId").is_empty() {
-        return Err(refuse(format!(
+        return Err(refuse_set(format!(
             "The license of Geo data set {data_set_id} ({}) has not been acknowledged by an administrator",
             text_of(&row, "licenseName")
         )));
     }
-    let max_bytes = max_bytes().map_err(refuse)?;
+    let max_bytes = max_bytes().map_err(refuse_set)?;
     if let Some(refusal) = running_refusal(facade, &set, country_id.as_deref(), &pending_id) {
         return Err(refuse(refusal));
     }
@@ -748,15 +938,17 @@ fn run(facade: &EntityFacade, plan: &Plan, path: &std::path::Path) -> Ended {
         max_bytes: plan.max_bytes,
         ..geo::text::Limits::default()
     };
-    let read = match load::read_file(
+    let mut prepared = match load::read_file(
+        facade,
+        &plan.set,
+        plan.country.as_ref(),
         path,
         member.as_deref(),
         &limits,
-        plan.set.format,
         &mut heartbeat(facade, run_id, VALIDATING),
     ) {
-        Ok(read) => read,
-        Err(err) => {
+        Ok(prepared) => prepared,
+        Err(load::ReadFailure::File(err)) => {
             return Ended::failed(
                 "validate",
                 counts,
@@ -764,10 +956,9 @@ fn run(facade: &EntityFacade, plan: &Plan, path: &std::path::Path) -> Ended {
                 format!("The file does not read: {err}"),
             )
         }
-    };
-    let mut prepared = match load::prepare(facade, &plan.set, plan.country.as_ref(), read) {
-        Ok(prepared) => prepared,
-        Err(err) => return Ended::failed("validate", counts, Rejections::default(), err.to_string()),
+        Err(load::ReadFailure::Database(err)) => {
+            return Ended::failed("validate", counts, Rejections::default(), err.to_string())
+        }
     };
     counts.read = prepared.rows;
     counts.rejected = prepared.rejected.total;
@@ -830,6 +1021,8 @@ fn run(facade: &EntityFacade, plan: &Plan, path: &std::path::Path) -> Ended {
             return Ended::stopped(counts, rejected);
         }
     }
+    // the items loaded are not needed to retire: what the edition has is in prepared.seen
+    drop(std::mem::take(&mut prepared.items));
     // finish, only after a whole load (and not for a run taken as abandoned meanwhile)
     if matches!(read_run(facade, run_id), Ok(Some(row)) if !in_progress(&text_of(&row, "statusId"))) {
         return Ended::stopped(counts, rejected);
@@ -1010,7 +1203,9 @@ fn finish(facade: &EntityFacade, plan: &Plan, mut ended: Ended) -> BTreeMap<Stri
 }
 
 /// `cancel#GeoDataImport`: ask run `geoDataImportId` to stop. A pending run is cancelled at once; a running one reads
-/// the request between its steps and batches and ends `GdiCancelled`, with nothing retired. Out: `statusId`.
+/// the request between its steps and batches and ends `GdiCancelled`, with nothing retired. With `queueId`, the whole
+/// queue: its pending runs cancelled and its running one asked to stop ([`cancel_queue`]). Out: `statusId`,
+/// `cancelledCount` (a queue's runs cancelled or asked to stop).
 pub(crate) fn cancel_geo_data_import(
     parameters: &BTreeMap<String, Value>,
     facade: &EntityFacade,
@@ -1019,6 +1214,10 @@ pub(crate) fn cancel_geo_data_import(
         return Ok(Out::new());
     }
     let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let queue_id = text(parameters, "queueId");
+    if !queue_id.is_empty() {
+        return cancel_queue(facade, &queue_id);
+    }
     let run_id = text(parameters, "geoDataImportId");
     let Some(run) = read_run(facade, &run_id)? else {
         add_error(format!("There is no Geo data import {run_id}"));
@@ -1037,12 +1236,64 @@ pub(crate) fn cancel_geo_data_import(
             ],
         );
         out.insert("statusId".to_string(), Value::string(CANCELLED));
+    } else if in_progress(&status) && is_stale(&run) {
+        // abandoned: ended here, and its queue goes on with its next
+        end_stale(facade, &run);
+        out.insert("statusId".to_string(), Value::string(CANCELLED));
+        continue_queue(facade, &run_id);
     } else if in_progress(&status) {
         write_run(facade, &run_id, vec![("cancelRequested", Value::string("Y"))]);
         out.insert("statusId".to_string(), Value::string(status));
     } else {
         add_error(format!("Geo data import {run_id} is not running ({status})"));
     }
+    Ok(out)
+}
+
+/// Cancel queue `queue_id` as a group: each pending run cancelled at once (so no run starts the next) and each running
+/// one asked to stop at its next step. Refused when the queue has no run in progress.
+fn cancel_queue(facade: &EntityFacade, queue_id: &str) -> Result<BTreeMap<String, Value>, LibError> {
+    let runs = queue_runs(facade, queue_id)?;
+    if runs.is_empty() {
+        add_error(format!("There is no Geo data import queue {queue_id}"));
+        return Ok(Out::new());
+    }
+    let mut cancelled = 0_i64;
+    // the pending first: a running run that ends meanwhile then finds none to start
+    for run in runs.iter().filter(|run| text_of(run, "statusId") == PENDING) {
+        write_run(
+            facade,
+            &text_of(run, "geoDataImportId"),
+            vec![
+                ("cancelRequested", Value::string("Y")),
+                ("statusId", Value::string(CANCELLED)),
+                ("thruDate", now()),
+            ],
+        );
+        cancelled += 1;
+    }
+    for run in runs.iter().filter(|run| {
+        let status = text_of(run, "statusId");
+        in_progress(&status) && status != PENDING
+    }) {
+        if is_stale(run) {
+            end_stale(facade, run);
+        } else {
+            write_run(
+                facade,
+                &text_of(run, "geoDataImportId"),
+                vec![("cancelRequested", Value::string("Y"))],
+            );
+        }
+        cancelled += 1;
+    }
+    if cancelled == 0 {
+        add_error(format!("Geo data import queue {queue_id} has no run in progress"));
+        return Ok(Out::new());
+    }
+    let mut out = Out::new();
+    out.insert("statusId".to_string(), Value::string(CANCELLED));
+    out.insert("cancelledCount".to_string(), Value::I64(cancelled));
     Ok(out)
 }
 

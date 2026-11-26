@@ -11,9 +11,10 @@
 // an explanation; an installation with no OUTLINE row or no maps.profile preference still draws the outline, and an
 // administrator is told so, with the link to Configuration only for a user who may open it.
 //
-// What reaches a browser: no provider's key (a provider with one is not offered to a browser at all: its key would be
-// in the tile and style URLs, and no provider kind of P1 has a key meant to be public; a proxied provider, which keeps the
-// key on the server, is a later option), no service, entity or resource name, only paths of this server and outside URLs
+// What reaches a browser: no provider's key (a provider with one is offered only through this server's proxy, its
+// proxyRequests Y: its key would be in the tile and style URLs, and no provider kind has a key meant to be public; a
+// proxied provider's layers are handed the proxy's same-origin paths, LocalMap.xml providerProxy, only to a caller the
+// proxy lets reach it, MapProviders.js proxyOffered), no service, entity or resource name, only paths of this server and outside URLs
 // of an enabled provider that passed its test as it is configured now, on that provider's own origin (a layer with no
 // provider, or a URL of another origin than its provider's, is a layer error), and with outside requests off only this
 // server's. allowedOrigins are those origins, each tile subdomain ({s}, {a-c}) by itself. A profile or layer the caller
@@ -220,8 +221,9 @@ function providerRefusal(provider, providerId) {
     if (!provider) return refusal("PROVIDER_MISSING", say("its provider ${providerId} is not registered", {providerId}))
     const name = text(provider.providerName) || provider.providerId
     if (provider.disabled === "Y") return refusal("PROVIDER_DISABLED", say("its provider ${name} is not enabled", {name}))
-    // a key is never sent to a browser, and no provider kind has one meant to be public
-    if (text(provider.apiKey))
+    // a key is never sent to a browser, and no provider kind has one meant to be public: one with a key is drawn only
+    // through this server's proxy, which adds it
+    if (text(provider.apiKey) && provider.proxyRequests !== "Y")
         return refusal("PROVIDER_KEYED", say("its provider ${name} needs a key, which is never sent to a browser", {name}))
     return null
 }
@@ -241,14 +243,16 @@ function layerUrls(layer, provider, kind) {
     }
     if (!url && text(layer.resourceLocation)) {
         if (kind !== "pmtiles")
-            return refusal("SOURCE_NOT_SERVED", L("its file is a registered resource, which this server does not hand to a map here"))
+            return refusal(
+                "SOURCE_NOT_SERVED",
+                L("its file is a registered resource, which this server does not hand to a map here")
+            )
         // a registered archive: the map-source transition's same-origin URL with its revision, for a caller it lets read the
         // archive now (MapSources.js); one it does not is, to a caller who may not configure, one that is not there
         sources = sources || ec.resource.script("component://framework/service/org/moqui/maps/MapSources.js")
         const served = sources.servedUrl(layer)
         if (!served.ok)
-            return served.reasonCode === "SOURCE_MISSING" ||
-                (served.reasonCode === "SOURCE_NOT_PERMITTED" && !canConfigure())
+            return served.reasonCode === "SOURCE_MISSING" || (served.reasonCode === "SOURCE_NOT_PERMITTED" && !canConfigure())
                 ? refusal("LAYER_MISSING", say("the layer ${layerId} is not registered", {layerId: layer.layerId}))
                 : refusal(served.reasonCode, served.reason)
         url = served.url
@@ -282,6 +286,27 @@ function layerUrls(layer, provider, kind) {
                     name: text(provider.providerName) || provider.providerId
                 })
             )
+    }
+    // a proxied provider: the browser asks this server's proxy, at the same paths of the provider's origin, the key added
+    // there; only a caller the proxy lets reach the provider is handed them
+    if (provider?.proxyRequests === "Y" && isWeb(url)) {
+        providerKind = providerKind || ec.resource.script("component://framework/service/org/moqui/maps/MapProviders.js")
+        if (!providerKind.proxyOffered(provider))
+            return refusal("LAYER_MISSING", say("the layer ${layerId} is not registered", {layerId: layer.layerId}))
+        const proxiedUrl = providerKind.proxyUrl(provider, url)
+        if (!proxiedUrl) return refusal("URL_NOT_PROVIDERS", L("its address is not on its provider's host"))
+        // the proxy forwards only what the provider's last test reached: a layer added since needs a new test
+        if (!providerKind.proxyRecorded(provider, url))
+            return refusal(
+                "PROVIDER_UNTESTED",
+                say(
+                    "its address is not one a test of its provider ${name} reached through this server: test the provider again",
+                    {
+                        name: text(provider.providerName) || provider.providerId
+                    }
+                )
+            )
+        return {url: proxiedUrl, styleUrl}
     }
     return {url, styleUrl}
 }
@@ -680,6 +705,20 @@ function effectiveConfig(p) {
                             .slice(0, 20)
                             .map(link => ({label: text(link.label), route: text(link.route), parameters: link.parameters || {}})),
                         located: !!geometry
+                    }
+                    // the links a registered route (moqui.maps.MapRoute) of the host app (routeApp), else of no app, resolves
+                    // to a screen the user's own grants open (MapRoutes.js); record.links stay as the adapter named them
+                    try {
+                        record.resolvedLinks = record.links.length
+                            ? ec.resource
+                                  .script("component://framework/service/org/moqui/maps/MapRoutes.js")
+                                  .resolveLinks(record.links, text(p.routeApp) || null, recordKey)
+                            : []
+                    } catch (err) {
+                        ec.logger.warn(
+                            "Map adapter " + adapterKey + ": the record's links were not resolved: " + (err?.message ?? err)
+                        )
+                        record.resolvedLinks = []
                     }
                     if (geometry && geometry.type === "Point") {
                         const [lon, lat] = geometry.coordinates.map(num)

@@ -42,17 +42,25 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="requestsPerSecond" type="number-integer"><description>The provider's request rate limit for this
             installation, enforced for a geocoder on each server by itself (a cluster of n servers may send n times it);
             empty when it publishes none, which for Nominatim and Photon is taken as 1</description></field>
-        <field name="requestsPerDay" type="number-integer"><description>Recorded for the provider's terms; not
-            enforced</description></field>
+        <field name="requestsPerDay" type="number-integer"><description>The most requests this installation sends a
+            geocoder in a calendar day (UTC), enforced across the cluster by MapProviderDayCount; empty for no
+            limit</description></field>
         <field name="cachePolicy" type="text-short"><description>What may keep its answers: none (or empty), private (the
             user's browser only: this server keeps nothing) or shared (this server, for every user)</description></field>
         <field name="cacheSeconds" type="number-integer"><description>How long a shared answer may be kept; empty for the
             provider's own Cache-Control max-age (nothing kept when it gives none, or no-store)</description></field>
-        <field name="proxyRequests" type="text-indicator"><description>Y: browsers reach the provider through this server,
-            which then sees nothing of the user's address but the server's; not a claim of complete location privacy
+        <field name="proxyRequests" type="text-indicator"><description>Y: browsers reach the provider's style, TileJSON,
+            tiles and sprites through this server (LocalMap.xml providerProxy), which adds its key; the provider then sees
+            this server's address, not the user's, but still the area viewed: not a claim of complete location privacy
             (§4.2)</description></field>
         <field name="apiKey" type="text-medium" encrypt="true"><description>The provider's key, write-only: never returned,
             exported, logged or sent to a browser (a proxied provider's key stays on the server)</description></field>
+        <field name="apiKeyParameter" type="text-short"><description>How a proxied request carries apiKey: a query
+            parameter's name (key when empty; api_key, access_token), or header:Name for a request header</description></field>
+        <field name="proxyPaths" type="text-long"><description>A proxied provider's rules, one a line, as its last passing
+            test found them in its style, TileJSON and layers (MapProviders.js): "doc path[?query]" an exact path, "sprite
+            path" with .json, .png, @2x.json or @2x.png after it, "tile template[?query]" its {z}, {x}, {y} whole numbers;
+            the only paths the proxy forwards, each with its own query. Written by the test</description></field>
         <field name="disabled" type="text-indicator" enable-audit-log="update"><description>Y: no layer of it is drawn and
             nothing is sent to it but the test of test#Connection. Set by an administrator, or by store#Connection when the
             endpoint changed, until a test passes</description></field>
@@ -77,6 +85,16 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.Enumeration description="Geocoder: Photon (self-hosted)" enumId="MPK_GEOCODER_PHOTON"
                     enumTypeId="MapProviderKind" parentEnumId="MPK_GEOCODER" sequenceNum="7"/>
         </seed-data>
+    </entity>
+
+    <!-- How many requests a geocoder was sent on a calendar day (UTC), for its requestsPerDay (MapGeocoders.js): a search
+        claims one by locking the row in a transaction of its own before anything is sent, so the limit holds for every
+        server of a cluster together. -->
+    <entity entity-name="MapProviderDayCount" package="moqui.maps" use="nontransactional" cache="never">
+        <field name="providerId" type="id" is-pk="true"/>
+        <field name="countDate" type="date" is-pk="true"/>
+        <field name="requestCount" type="number-integer"/>
+        <relationship type="one" related="moqui.maps.MapProvider" short-alias="provider"/>
     </entity>
 
     <!-- A layer a profile draws (§4.2): a provider's style or tiles, a registered resource (a PMTiles archive, a GeoJSON,
@@ -255,6 +273,31 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="disabled" type="text-indicator"/>
     </entity>
 
+    <!-- A screen a record's link goes to (§3.2): an adapter's answer names its record's links by route key (partyDetail,
+        facilityDetail, assetDetail, with their parameters), never a URL, and a component registers where a key goes in its
+        app as a seed row, as MapAdapter rows register adapters. MapRoutes.js resolves an answer's links for the framework's
+        LocalMap and Browse (get#EffectiveConfig's record.resolvedLinks) in the host app's context (their routeApp
+        parameter, which an app's mount of the dialog passes): for each key the enabled rows of that app by priority (lower
+        first), then the rows of no app, never another app's (a HOME dialog does not link into BOSS for a user of both); the
+        first whose urlTemplate every placeholder of is in the link's parameters and whose screenLocation the user's own
+        grants open (isPermittedOwn, view). A key no row resolves is left out silently. The row adds no right: the screen
+        opened checks the user again. -->
+    <entity entity-name="MapRoute" package="moqui.maps" use="configuration" cache="true">
+        <field name="mapRouteId" type="id" is-pk="true"/>
+        <field name="routeKey" type="id"/>
+        <field name="routeApp" type="id"><description>The app whose maps the row is for, as its mount of LocalMap passes it
+            (routeApp: boss, home); empty for a row of every app's, used after the host app's own</description></field>
+        <field name="urlTemplate" type="text-medium"><description>A path of this site, /apps/... or /qapps/..., with {name}
+            placeholders of the link's parameters, each URL-encoded: /apps/myapp/Party/PartyDetail?partyId={partyId}</description></field>
+        <field name="screenLocation" type="text-medium"><description>The screen whose grant opens the URL (the app's root or
+            the screen itself), checked with the user's own grants: component://myapp/screen/MyApp.xml</description></field>
+        <field name="priority" type="number-integer"><description>Lower first, among the rows of a key</description></field>
+        <field name="componentName" type="text-short"><description>The component that registers the row</description></field>
+        <field name="description" type="text-medium"/>
+        <field name="disabled" type="text-indicator"/>
+        <index name="MAPS_ROUTE_KEY"><index-field name="routeKey"/></index>
+    </entity>
+
     <!-- A registered source of Geo data (§6.4): seed data for the sources supported first, and an administrator's row for a
         mirror or a later year. A download goes only to the host of a registered row. urlTemplate takes {country} (a
         country's code as the source has it) and {year} (sourceYear); archiveMember names the zip member read, with the
@@ -347,6 +390,9 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="forced" type="text-indicator"><description>Y: an administrator accepted a file with far fewer rows than
             the edition in use</description></field>
         <field name="cancelRequested" type="text-indicator"/>
+        <field name="queueId" type="id"><description>The queue of an import of every country of a data set read a country
+            at a time: its runs share it (the first run's ID), and each run, when it ends, starts the queue's next pending
+            run</description></field>
         <field name="jobRunId" type="id"/>
         <field name="userId" type="id"/>
         <field name="fromDate" type="date-time"/>
@@ -358,6 +404,7 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="one-nofk" related="moqui.service.job.ServiceJobRun" short-alias="jobRun"/>
         <relationship type="one" related="moqui.security.UserAccount"/>
         <index name="MAPS_IMPORT_SET"><index-field name="dataSetId"/><index-field name="countryGeoId"/></index>
+        <index name="MAPS_IMPORT_QUEUE"><index-field name="queueId"/></index>
         <seed-data>
             <moqui.basic.StatusType description="Geo Data Import" statusTypeId="GeoDataImport"/>
             <moqui.basic.StatusItem description="Pending" sequenceNum="1" statusId="GdiPending" statusTypeId="GeoDataImport"/>

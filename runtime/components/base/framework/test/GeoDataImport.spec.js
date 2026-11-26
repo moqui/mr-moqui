@@ -1,6 +1,6 @@
 // The Geo data importer (plans/Maps.md §6.4): org.moqui.maps.GeoDataServices import#GeoData, cancel#GeoDataImport and
 // remove#GeoData, with HttpFixtures answering for the Census ZCTA zip and the GeoNames US zip (built here with
-// writeZip). A load writes the four rows a code with its leading zeros kept, a bad row goes to the error file while the
+// writeZip). A load writes the four rows a code with its leading zeros kept (the ZCTA's land area on its point), a bad row goes to the error file while the
 // rest load; a re-import changes nothing and sends the edition's validators, a 304 ends the run as current; retiring
 // happens only after a whole load (an incomplete download, a file far smaller than the edition in use and a cancelled
 // run retire nothing), and never retires a code whose row was passed over for another fault; GeoNames adds its point
@@ -8,8 +8,9 @@
 // and revives a code its owner retired; an import never changes a user-confirmed point or a code made by hand, and a
 // Remove end-dates a code something refers to; refusals with maps@external-requests false, for a non-administrator
 // (also with authorization off, by the importer's own MAPS_ADMIN check), for a license not acknowledged and for an
-// operator's file with no country or outside the allowed locations; and a ServiceJob run with no user runs as its
-// runAsUserId only when that user added themselves to the job.
+// operator's file with no country or outside the allowed locations; a ServiceJob run with no user runs as its
+// runAsUserId only when that user added themselves to the job; and a queue of every country starts its next run when one
+// ends and is cancelled as a group; and a GeoNames first-level code finds its division by its ISO code (the crosswalk).
 // Run: ./moq test framework --spec GeoDataImport
 const S = "org.moqui.maps.GeoDataServices."
 const IMPORT = "moqui.maps.GeoDataImport"
@@ -21,6 +22,12 @@ const ROOT = "dbresource://moqui/maps/spec-geo"
 const USER = "GEO_SPEC_USER"
 const CODES = ["00601", "02134", "02135", "02138", "02139", "02140", "00599"]
 const JOBS = ["SPEC_GEO_RUNAS_OTHER", "SPEC_GEO_RUNAS_SELF"]
+const QUEUE_SET = "SPEC_GEO_QUEUE"
+const DIVISION_SETS = ["GEONAMES_ADMIN1", "GEONAMES_ADMIN2"]
+// the divisions the crosswalk feature makes, and the Mantle-style province it may make when Mantle's data is not loaded
+const DIVISIONS = ["DEU_A1_01", "DEU_A1_02", "CAN_A2_01_4806", "CAN_A1_01"]
+let madeAlberta = false
+let queueJobRunId = null
 const http = ec.factory.getTool("HttpFixtures")
 // the data sets' license acknowledgements before the spec, put back after
 const acks = {}
@@ -97,8 +104,17 @@ function sweep() {
         }
         ec.entity
             .find(IMPORT)
-            .condition("dataSetId", "in", SETS.concat(["OPERATOR_CSV"]))
+            .condition("dataSetId", "in", SETS.concat(["OPERATOR_CSV", QUEUE_SET], DIVISION_SETS))
             .deleteAll()
+        ec.entity.find("moqui.basic.GeoAssoc").condition("toGeoId", "in", DIVISIONS).deleteAll()
+        ec.entity.find("moqui.basic.Geo").condition("geoId", "in", DIVISIONS).deleteAll()
+        if (madeAlberta) {
+            ec.entity.find("moqui.basic.GeoAssoc").condition({geoId: "CAN", toGeoId: "CAN_AB"}).deleteAll()
+            ec.entity.find("moqui.basic.Geo").condition("geoId", "CAN_AB").deleteAll()
+            madeAlberta = false
+        }
+        if (queueJobRunId) ec.entity.find("moqui.service.job.ServiceJobRun").condition("jobRunId", queueJobRunId).deleteAll()
+        ec.entity.find("moqui.maps.GeoDataSet").condition("dataSetId", QUEUE_SET).deleteAll()
         for (const entity of ["ServiceJobUser", "ServiceJobParameter", "ServiceJobRun", "ServiceJobRunLock", "ServiceJob"])
             ec.entity
                 .find("moqui.service.job." + entity)
@@ -113,7 +129,7 @@ spec({
         http.enable()
         sweep()
         sys(() => {
-            for (const dataSetId of ["CENSUS_ZCTA", "GEONAMES_POSTAL", "OPERATOR_CSV"]) {
+            for (const dataSetId of ["CENSUS_ZCTA", "GEONAMES_POSTAL", "OPERATOR_CSV"].concat(DIVISION_SETS)) {
                 const set = ec.entity.find("moqui.maps.GeoDataSet").condition({dataSetId}).one()
                 acks[dataSetId] = {licenseAckUserId: set.licenseAckUserId, licenseAckDate: set.licenseAckDate}
                 set.setAll({licenseAckUserId: ec.user.userId, licenseAckDate: ec.user.nowTimestamp}).update()
@@ -186,6 +202,8 @@ feature("a Census ZCTA load writes four rows a code with leading zeros kept, and
         assoc.pointRoleEnumId == "GPR_REPRESENTATIVE"
         assoc.priority == 10
         assoc.edition == "2026"
+        // the ZCTA's land area, for the lookup's extent
+        assoc.landArea == 166836392
         run.statusId == "GdiCompleted"
         run.sourceUrl == ZCTA_URL
         run.sourceEtag == '"zcta-1"'
@@ -515,5 +533,108 @@ feature("a ServiceJob run with no user runs as its runAsUserId only when that us
         imported[0].statusId == "GdiCompleted"
         imported[0].userId == me
         imported[0].jobRunId == self.jobRunId
+    }
+})
+
+feature("every country is a queue: a run that ends starts the queue's next pending run, and a cancel of the queue stops the rest", {
+    when() {
+        const run = (geoDataImportId, fields) =>
+            ec.entity
+                .makeValue(IMPORT)
+                .setAll(Object.assign({geoDataImportId, fromDate: ec.user.nowTimestamp, userId: ec.user.userId}, fields))
+                .create()
+        sys(() => {
+            // a disabled set: the chained run is refused at its preflight, downloading nothing
+            ec.entity
+                .makeValue("moqui.maps.GeoDataSet")
+                .setAll({dataSetId: QUEUE_SET, sourceKey: "SPEC_GQ", parserEnumId: "GDP_GEONAMES", yieldsEnumId: "GDY_POSTAL_POINTS",
+                    perCountry: "Y", disabled: "Y", urlTemplate: "https://download.geonames.org/export/zip/{country}.zip"})
+                .create()
+            const queued = {dataSetId: QUEUE_SET, statusId: "GdiPending", queueId: "SPEC_GQ_1"}
+            run("SPEC_GQ_1", Object.assign({countryGeoId: "USA", cancelRequested: "Y"}, queued))
+            run("SPEC_GQ_2", Object.assign({countryGeoId: "CAN"}, queued))
+            // a queue with one running and one waiting
+            const other = {dataSetId: QUEUE_SET, queueId: "SPEC_GQ_3"}
+            run("SPEC_GQ_3", Object.assign({countryGeoId: "MEX", statusId: "GdiLoading"}, other))
+            run("SPEC_GQ_4", Object.assign({countryGeoId: "DEU", statusId: "GdiPending"}, other))
+        })
+        // the first was cancelled before it started: it ends, and starts the next
+        const first = invoke(S + "import#GeoData", {geoDataImportId: "SPEC_GQ_1"})
+        ec.factory.waitWorkerPoolEmpty(50)
+        const cancel = invoke(S + "cancel#GeoDataImport", {queueId: "SPEC_GQ_3"})
+        const again = invoke(S + "cancel#GeoDataImport", {queueId: "SPEC_GQ_1"})
+        const row = geoDataImportId => one(IMPORT, {geoDataImportId})
+        const q2 = row("SPEC_GQ_2")
+        queueJobRunId = q2?.jobRunId || null
+        return {first, cancel, again, q1: row("SPEC_GQ_1"), q2, q3: row("SPEC_GQ_3"), q4: row("SPEC_GQ_4")}
+    },
+    then({first, cancel, again, q1, q2, q3, q4}) {
+        first.error.includes("cancelled before it started")
+        q1.statusId == "GdiCancelled"
+        // the next ran as a run of the GeoDataImport job, and was refused there: the set is disabled
+        q2.jobRunId != null
+        q2.statusId == "GdiFailed"
+        q2.failureText.includes("disabled")
+        // the queue cancelled as a group: the waiting run at once, the running one asked to stop
+        cancel.error == ""
+        cancel.cancelledCount == 2
+        q4.statusId == "GdiCancelled"
+        q3.cancelRequested == "Y"
+        q3.statusId == "GdiLoading"
+        again.error.includes("no run in progress")
+    }
+})
+
+feature("a GeoNames first-level code finds its division by its ISO 3166-2 code through the crosswalk", {
+    when() {
+        sys(() => {
+            // Mantle's Alberta, as its install data has it, unless it is loaded already
+            if (!ec.entity.find("moqui.basic.Geo").condition("geoId", "CAN_AB").one()) {
+                madeAlberta = true
+                ec.entity
+                    .makeValue("moqui.basic.Geo")
+                    .setAll({geoId: "CAN_AB", geoTypeEnumId: "GEOT_PROVINCE", geoName: "Alberta", geoCodeAlpha2: "AB"})
+                    .create()
+            }
+            ec.entity
+                .makeValue("moqui.basic.GeoAssoc")
+                .setAll({geoId: "CAN", toGeoId: "CAN_AB", geoAssocTypeEnumId: "GAT_REGIONS"})
+                .createOrUpdate()
+            // a division an earlier import made, with no ISO code then
+            ec.entity.makeValue("moqui.basic.Geo").setAll({geoId: "DEU_A1_01", geoTypeEnumId: "GEOT_STATE", geoName: "Baden-Wuerttemberg"}).create()
+            ec.entity
+                .makeValue("moqui.basic.GeoAssoc")
+                .setAll({geoId: "DEU", toGeoId: "DEU_A1_01", geoAssocTypeEnumId: "GAT_REGIONS"})
+                .create()
+        })
+        const text = {contentType: "text/plain"}
+        answer(
+            "https://download.geonames.org/export/dump/admin1CodesASCII.txt",
+            "CA.01\tAlberta\tAlberta\t5883102\nDE.01\tBaden-Württemberg\tBaden-Wurttemberg\t2953481\nDE.02\tBavaria\tBavaria\t2951839\n",
+            text
+        )
+        answer("https://download.geonames.org/export/dump/admin2Codes.txt", "CA.01.4806\tDivision No. 6\tDivision No. 6\t5964347\n", text)
+        const admin1 = invoke(S + "import#GeoData", {dataSetId: "GEONAMES_ADMIN1"})
+        const admin2 = invoke(S + "import#GeoData", {dataSetId: "GEONAMES_ADMIN2"})
+        return {
+            admin1,
+            admin2,
+            alberta: one("moqui.basic.GeoAssoc", {geoId: "CAN_AB", toGeoId: "CAN_A2_01_4806"}),
+            fipsMade: one("moqui.basic.Geo", {geoId: "CAN_A1_01"}),
+            bavaria: one("moqui.basic.Geo", {geoId: "DEU_A1_02"}),
+            backfilled: one("moqui.basic.Geo", {geoId: "DEU_A1_01"})
+        }
+    },
+    then({admin1, admin2, alberta, fipsMade, bavaria, backfilled}) {
+        admin1.statusId == "GdiCompleted"
+        admin2.statusId == "GdiCompleted"
+        // CA.01 is ISO CA-AB: Mantle's Alberta, not a second one
+        alberta != null
+        fipsMade == null
+        // a division made gets its ISO code, never the FIPS code
+        bavaria.geoCodeAlpha2 == "BY"
+        bavaria.geoName == "Bavaria"
+        // one made before gets it now
+        backfilled.geoCodeAlpha2 == "BW"
     }
 })

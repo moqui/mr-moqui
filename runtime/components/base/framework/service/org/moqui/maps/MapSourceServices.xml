@@ -14,22 +14,24 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- Map archives (plans/Maps.md §4.1, §5; docs/tools/Maps.md "Archives"): a PMTiles archive registered as a layer's revision,
     the access check of the map-source transition (tools screen/Maps/LocalMap.xml source), the archives Configuration lists
-    and their readiness; and a user's geographic file read as an overlay (convert#Overlay, P3). The logic is
-    MapSources.js; the header is read in Rust (moqui-tools maps_archive.rs, over moqui-lib pmtiles.rs), and an overlay
+    and their readiness; a user's geographic file read as an overlay (convert#Overlay, P3); and a proxied map provider's
+    assets for the LocalMap providerProxy transition (get#ProviderAsset, MapProviders.js). The logic is MapSources.js; the header is read in Rust (moqui-tools maps_archive.rs, over moqui-lib pmtiles.rs), and an overlay
     (moqui-tools maps_overlay.rs, over moqui-lib geo/overlay.rs). Grants (tools data/MapsSecurityData.xml): get#SourceAccess
-    is MAPS_DIALOG's (every signed-in user: it checks the layer and the drive itself), check#ArchiveReadiness
-    MAPS_READINESS's (it checks ADMIN_OVERVIEW_VIEW itself), convert#Overlay no group's (MapOverlays.js calls it after its
-    own check), the rest MAPS_ADMIN's. No Java counterpart. -->
+    and get#ProviderAsset are MAPS_DIALOG's (every signed-in user: each checks the layer or provider and the access itself),
+    check#ArchiveReadiness MAPS_READINESS's (it checks ADMIN_OVERVIEW_VIEW itself), convert#Overlay no group's (MapOverlays.js
+    calls it after its own check), the rest MAPS_ADMIN's; read#ArchiveHeader and convert#Overlay are not remote, since each
+    reads whatever location it is given. No Java counterpart. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
-    <service verb="read" noun="ArchiveHeader" type="rust" location="moqui_tools::maps_archive::read_archive_header">
+    <service verb="read" noun="ArchiveHeader" type="rust" location="moqui_tools::maps_archive::read_archive_header" allow-remote="false">
         <description>The header and metadata of the PMTiles archive at a resource location (location#versionName for a
             version), read by range (the 127-byte header, then the metadata where it says) and checked: version 3, the zoom
             range, the bounds, every section within the file and the root directory within its first 16 KiB, tiles of
             vector (mvt) or image type, directories gzipped or not compressed, metadata that is a JSON object (naming its
             vector layers for vector tiles). found false when nothing is there; each reason a map cannot draw it in
             problems, and valid true only when there is none. Writes nothing. It reads whatever location it is given, so it
-            is MAPS_ADMIN's; register#ArchiveLayer and the readiness checks call it.</description>
+            is MAPS_ADMIN's and not remote: register#ArchiveLayer and the readiness checks call it, after their own check
+            of the caller (Configuration's update by the caller's own grant, ADMIN_OVERVIEW_VIEW).</description>
         <in-parameters><parameter name="location" required="true"/></in-parameters>
         <out-parameters>
             <parameter name="found" type="Boolean"/>
@@ -95,10 +97,16 @@ along with this software (see the LICENSE.md file). If not, see
             access a viewer needs too, the archive's zoom range and bounds, its attribution and version when the layer has
             none, and enables the layer. notes: what the archive's size meets (the upload limit, an LFS object's, its
             drive's quota). A new revision is replaced (replaced true): a map drawing the old one is refused it (409) and
-            loads its configuration again.</description>
+            loads its configuration again. One action registers every layer drawn from the archive: layerId, those of
+            alsoLayerIds and every other PMTiles layer of its format that already names the location, the header read once
+            (one that is not of the archive's format refuses the whole action, nothing changed). layerId and alsoLayerIds are
+            enabled; a layer that only named the location keeps its enabled or disabled state.</description>
         <in-parameters>
             <parameter name="layerId" required="true"/>
             <parameter name="resourceLocation"/>
+            <parameter name="alsoLayerIds" type="List"><description>Other PMTiles layers of the same format to point at the
+                same archive and register with it (the light and dark styles of one Protomaps extract); every other layer
+                that already names the location is registered with it too</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="applied" type="Boolean"/>
@@ -106,6 +114,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="reason"/>
             <parameter name="problems" type="List"/>
             <parameter name="layerId"/>
+            <parameter name="layerIds" type="List"><description>Every layer registered: layerId first, then the others
+                pointed at the same archive</description></parameter>
             <parameter name="revision"/>
             <parameter name="replaced" type="Boolean"/>
             <parameter name="size" type="Long"/>
@@ -116,6 +126,39 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="notes" type="List"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapSources.js').execute('register', context))</script></actions>
+    </service>
+
+    <service verb="get" noun="ProviderAsset">
+        <description>One asset of a proxied map provider (proxyRequests Y; plans/Maps.md §4.2) for the LocalMap
+            providerProxy transition: its style, a TileJSON, a tile or a sprite at a path a rule its last passing test recorded
+            matches (proxyPaths: an exact document path, a sprite with its suffixes, a tile template), asked of the
+            provider's origin with that rule's query (never the browser's) and its key added here, never returned; within
+            its requestsPerSecond and requestsPerDay (RATE_LIMITED, DAILY_LIMIT: 429). For a caller who may be
+            offered one of its layers (enabled, its viewPermission held, the basemap or a layer of an enabled profile whose
+            viewPermission they hold), while outside requests are on (EXTERNAL_REQUESTS_OFF, 403) and the provider enabled,
+            proxied and tested as it is (PROVIDER_MISSING, PROVIDER_UNTESTED, 404); another path is PATH_NOT_ALLOWED (404).
+            One GET, no redirect, ten seconds, at most 4 MiB, no internal address unless the provider is allowed the
+            private network, of a style, TileJSON, sprite or tile type only (PROVIDER_FAILED, TYPE_REFUSED: 502). A style
+            or TileJSON comes back rewritten (text) with each URL the proxy's and the key out of it (URL_NOT_PROVIDERS, 502,
+            for a URL of another origin); anything else as its bytes. cacheControl is always private: no-store for a
+            cachePolicy of none, else its cacheSeconds or the answer's own max-age, at most a day. Every signed-in user may
+            call it (MAPS_DIALOG): it checks the caller itself.</description>
+        <in-parameters>
+            <parameter name="providerId" required="true"/>
+            <parameter name="pathSegments" type="List"><description>The path on the provider's origin, its segments
+                decoded</description></parameter>
+            <parameter name="queryString"><description>The query the browser sent (the style's own, never the key)</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="ok" type="Boolean"/>
+            <parameter name="status" type="Integer"/>
+            <parameter name="reasonCode"/>
+            <parameter name="contentType"/>
+            <parameter name="text"/>
+            <parameter name="bytes" type="byte[]"/>
+            <parameter name="cacheControl"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapProviders.js').execute('providerAsset', context))</script></actions>
     </service>
 
     <service verb="get" noun="SourceAccess">

@@ -19,7 +19,8 @@ along with this software (see the LICENSE.md file). If not, see
     an upload for an operator's file, in ImportDialog, loaded when Import is opened); Refresh all and its schedule (the GeoDataRefresh ServiceJob); and the run history with
     each run's error file. Over org.moqui.maps.GeoDataServices (find#GeoDataSets, acknowledge#GeoDataLicense,
     start#GeoDataImport, cancel#GeoDataImport, remove#GeoData, request#GeoDataRefresh, schedule#GeoDataRefresh), MAPS_ADMIN's
-    like the screen. Importing every GeoNames country at once is not offered: one country a run. -->
+    like the screen. Every country of a set read a country at a time is a queue of runs (Import's Every country), shown with
+    its progress and Cancel the rest while it runs. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Geo data" default-menu-index="2" menu-image="sym_o_public" menu-image-type="icon">
 
@@ -46,6 +47,14 @@ along with this software (see the LICENSE.md file). If not, see
         <service-call name="org.moqui.maps.GeoDataServices.cancel#GeoDataImport" in-map="{geoDataImportId: geoDataImportId}"/>
         <actions>
             <if condition="!ec.message.hasError()"><script>ec.message.addMessage(ec.l10n.localize('Cancel requested: the run stops at its next step, retiring nothing.'), 'success')</script></if>
+        </actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="cancelQueue">
+        <service-call name="org.moqui.maps.GeoDataServices.cancel#GeoDataImport" in-map="{queueId: queueId}"/>
+        <actions>
+            <if condition="!ec.message.hasError()"><script>ec.message.addMessage(ec.l10n.localize('Cancel requested: the countries waiting will not run, and the one running stops at its next step.'), 'success')</script></if>
         </actions>
         <default-response url="."/>
         <error-response url="."/>
@@ -108,6 +117,7 @@ along with this software (see the LICENSE.md file). If not, see
                 operatorFile: set.operatorFile, statusText: scope.lastRun.statusText, statusColor: colorOf(scope.lastRun.statusId),
                 lastRunText: scope.lastRun.thruText || scope.lastRun.fromText, geoDataImportId: scope.lastRun.geoDataImportId}))
             runRows = Array.from(found?.runList || []).map(run => Object.assign({}, run, {statusColor: colorOf(run.statusId)}))
+            queueRows = Array.from(found?.queueList || [])
             schedule = found?.schedule || {}
             scheduleText = schedule.scheduleText + (schedule.runAsName ? ' (' + ec.l10n.localize('runs as') + ' ' + schedule.runAsName + ')' : '')
             externalOff = found?.externalRequests === false
@@ -190,6 +200,19 @@ along with this software (see the LICENSE.md file). If not, see
                     <box-body>
                         <label type="p" style="text-caption m-muted" text="Refresh schedule: ${scheduleText}."/>
                         <label type="p" style="m-muted" condition="!scopeRows.length" text="Nothing is imported yet. Acknowledge a data set's license, then Import it."/>
+                        <section name="QueueSection" condition="queueRows.length"><widgets>
+                        <form-list name="QueueList" list="queueRows" skip-form="true" paginate="false">
+                            <field name="dataSetId"><default-field title="Every country of"><display/></default-field></field>
+                            <field name="progressText"><default-field title="Progress"><display/></default-field></field>
+                            <field name="actions">
+                                <default-field title="">
+                                    <link url="cancelQueue" text="Cancel the rest" icon="sym_o_cancel" link-type="hidden-form-link"
+                                            confirmation="Stop the import of every country? The countries done stay; the one running stops at its next step, retiring nothing, and the countries waiting do not run."
+                                            parameter-map="{queueId: queueId}"/>
+                                </default-field>
+                            </field>
+                        </form-list>
+                        </widgets></section>
                         <form-list name="ScopeList" list="scopeRows" skip-form="true" paginate="false">
                             <field name="setTitle"><default-field title="Data set"><display/></default-field></field>
                             <field name="countryName"><default-field title="Country"><display/></default-field></field>

@@ -22,6 +22,7 @@
 //! be read as a whole (no such member, a missing header column, a decompression limit passed) is an
 //! [`Error`](crate::error::Error).
 
+pub mod admin1;
 pub mod census;
 pub mod geonames;
 pub mod ids;
@@ -220,7 +221,7 @@ pub fn truncated(text: &str, max: usize) -> &str {
 /// The files the parsers read, by the registry's parser and yields (`GeoDataParser`, `GeoDataYields`, MapEntities.xml).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Format {
-    /// Census Gazetteer ZCTAs: GEOID, INTPTLAT, INTPTLONG.
+    /// Census Gazetteer ZCTAs: GEOID, INTPTLAT, INTPTLONG, and ALAND where it is there.
     CensusZcta,
     /// Census Gazetteer Counties: USPS, GEOID, NAME, INTPTLAT, INTPTLONG.
     CensusCounties,

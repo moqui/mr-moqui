@@ -1,7 +1,7 @@
 // The local postal lookup (plans/Maps.md §6.1, §6.3): org.moqui.maps.MapServices.get#PostalLocation over a few postal codes
 // written here as an import writes them (Geo, GeoPostalCode, GeoPoint, GeoPointAssoc, GeoPostalCodePlace). A US ZIP keeps its
 // leading zero and is found by the country's alpha-2, alpha-3 or Geo ID, and as a ZIP+4; the Census point is the active one
-// before GeoNames', approximate, with its source and a broad extent; a Canadian code is found by its spaced or unspaced form,
+// before GeoNames', approximate, with its source and an extent sized from the ZCTA's land area; a Canadian code is found by its spaced or unspaced form,
 // and a full code with no row falls back to its declared prefix at a lower precision, while a US code is never cut; a code
 // with several places is ambiguous; Browse's search reads a country named in the text and lists a code's places as choices;
 // an unknown code or country finds nothing; a user-confirmed point or a record's own
@@ -34,7 +34,7 @@ const lookup = (countryGeoId, postalCode) => {
     ec.message.clearErrors()
     return Object.assign({}, out, {error})
 }
-// A postal code as an import writes it: its points (each {key, lat, lon, set, priority, precision, type}) and places
+// A postal code as an import writes it: its points (each {key, lat, lon, set, priority, precision, type, landArea}) and places
 function code(geoId, countryGeoId, normalizedCode, displayCode, granularityEnumId, points, places) {
     make("moqui.basic.Geo", {geoId, geoTypeEnumId: "GEOT_POSTAL_CODE", geoName: displayCode})
     make("moqui.basic.GeoPostalCode", {
@@ -61,6 +61,7 @@ function code(geoId, countryGeoId, normalizedCode, displayCode, granularityEnumI
             dataSetId: point.set,
             edition: "2026",
             priority: point.priority,
+            landArea: point.landArea || null,
             fromDate: ec.user.nowTimestamp
         })
     }
@@ -106,7 +107,8 @@ spec({
         CSV = `dbresource://moqui/maps/import/${ec.user.userId}/spec-postal/US.csv`
         sweep()
         sys(() => {
-            const census = [{key: "CENSUS_ZCTA", lat: 40.81, lon: -73.04, set: "CENSUS_ZCTA", priority: 10}]
+            // a ZCTA of 1,000 km² of land: its extent is a square of that area
+            const census = [{key: "CENSUS_ZCTA", lat: 40.81, lon: -73.04, set: "CENSUS_ZCTA", priority: 10, landArea: 1000000000}]
             code(
                 "USA_Z_00501",
                 "USA",
@@ -232,6 +234,8 @@ feature(
             alpha2.matches[0].extent[2] > -73.0
             alpha2.matches[0].extent[1] < 40.75
             alpha2.matches[0].extent[3] > 40.85
+            // sized from the land area (a square of 31.6 km), not the fixed box of 0.16°
+            Math.abs(alpha2.matches[0].extent[3] - alpha2.matches[0].extent[1] - 0.284) < 0.002
             alpha2.ambiguous == false
             alpha3.matches[0].geoId == "USA_Z_00501"
             geoId.matches[0].geoId == "USA_Z_00501"

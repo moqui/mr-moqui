@@ -1,7 +1,8 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
 // m-map's pure helpers in the page (moqui.map of /js/WebrootMap.js), and its list of places when the map cannot be drawn. The
-// OpenLayers bundle is not loaded: drawing the map is a browser walk, not a regression test. The page is https://moqui.test.
+// OpenLayers bundle is loaded for its formats and vector sources only: drawing the map is a browser walk, not a regression
+// test. The page is https://moqui.test.
 "use strict";
 
 const map = moqui.map;
@@ -252,6 +253,36 @@ test("what the server did not resolve is named under the map, a cut feature list
     } finally {
         moqui.screenForms = before;
     }
+});
+
+test("an overlay's feature is selected by its text, never markup; Enter takes the feature nearest the map's center", () => {
+    // a profile layer's KML description may hold HTML: shown as plain text, scripts and tags gone, a lone "<" kept
+    assert.equal(map.plainText('<p>Trail <b>head</b></p><script>alert(1)</script><img src=x onerror="alert(2)">&lt;b&gt; a<b'), "Trail head <b> a<b");
+    assert.equal(map.plainText("Line one\r\nLine two\u0007"), "Line one\nLine two");
+    assert.equal(map.plainText({ html: "<b>x</b>" }), "", "an object is no text");
+    // comments go; numeric entities are read, and what they make is still text (a tag made so is not removed, nor markup)
+    assert.equal(map.plainText("Spring<!-- <b>hidden</b> --> water<!-- unclosed"), "Spring water");
+    assert.equal(map.plainText("Caf&#233; &#x2014; &#60;b&#62;bold&#60;/b&#62; &#7;&#0;"), "Café — <b>bold</b> &#0;");
+    assert.equal(map.plainText("&#xD800; &#1114112; &bogus;"), "&#xD800; &#1114112; &bogus;", "not a character: left as it was");
+    assert.equal(map.plainText("x".repeat(30), 10), "xxxxxxxxx…");
+    assert.deepEqual(map.featureDetails({ name: "<i>Spring</i>", desc: "Fresh <a href='javascript:alert(1)'>water</a>", geometry: {} }),
+        { label: "Spring", description: "Fresh water" });
+    assert.deepEqual(map.featureDetails({ label: "Camp", name: "ignored", description: "" }), { label: "Camp", description: "" });
+    assert.deepEqual(map.featureDetails(null), { label: "", description: "" });
+    // the sources of a map's shown overlays, in degrees here (the map's projection in m-map)
+    const features = new MoquiOl.GeoJSON().readFeatures({ type: "FeatureCollection", features: [
+        { type: "Feature", id: "spring", geometry: { type: "Point", coordinates: [10, 10] }, properties: { label: "Spring" } },
+        { type: "Feature", id: "trail", geometry: { type: "LineString", coordinates: [[0, 20], [20, 20]] }, properties: { label: "Trail" } },
+        { type: "Feature", id: "park", geometry: { type: "Polygon", coordinates: [[[-5, -5], [30, -5], [30, 30], [-5, 30], [-5, -5]]] }, properties: { label: "Park" } }] });
+    const overlay = { get: (name) => ({ overlayLayerId: "overlay:7", overlayLabel: "Hikes" })[name] };
+    const candidates = [{ source: new MoquiOl.VectorSource({ features }), layer: overlay }];
+    const near = (lon, lat) => { const hit = map.nearestFeature(candidates, [lon, lat], 1); return hit ? hit.feature.getId() : null; };
+    assert.equal(near(10.5, 10.5), "spring", "a point within the tolerance, inside the park, wins");
+    assert.equal(near(5, 20.4), "trail");
+    assert.equal(near(25, 0), "park", "inside an area with nothing nearer");
+    assert.equal(near(60, 60), null, "nothing within the tolerance");
+    assert.equal(map.nearestFeature(candidates, [10, 10], 1).layer, overlay, "the layer says whose feature it is");
+    assert.equal(map.nearestFeature([], [0, 0], 1), null);
 });
 
 test("a registered archive's 409 says its revision changed; another failure does not, and both still fail the read", async () => {

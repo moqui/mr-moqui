@@ -270,7 +270,9 @@ source grants, attribution, Geo data availability and optional geocoder; they re
 rows, and a data refresh as a `RefreshOperation`. Administration can disable outgoing
 map/search requests while retaining local maps and postal lookup. Public basemap requests may be direct to the
 provider when configured; explain that its server sees the requested area and client connection. A proxy is an
-explicit provider option, not a claim of complete location privacy.
+explicit provider option, not a claim of complete location privacy (built, November 25, 2026: a provider's
+`proxyRequests`, the `LocalMap.xml` `providerProxy` transition and `MapSourceServices.get#ProviderAsset`, which also make a
+keyed provider drawable; [Maps](../docs/tools/Maps.md#configuration)).
 
 The outbound switch acts on the server: it stops the server's own requests (a geocoder, a data download) and
 stops it handing a browser a profile with outside URLs. What a browser may then contact is the page's
@@ -491,7 +493,14 @@ Keep reference geography in `moqui.basic`, usable with only the framework instal
   `ITA_AG` a province) and GeoNames' first-level codes are FIPS for most countries, so the importer looks among the
   country's `GAT_REGIONS` children by `geoCodeAlpha2` or `geoCodeNumeric` (a GeoNames code through a crosswalk to ISO
   3166-2) and makes `{country}_A1_{code}` or `{country}_A2_{admin1}_{admin2}` only when nothing matches. A state the
-  importer meets is then the row Mantle's install data already has, not a second one.
+  importer meets is then the row Mantle's install data already has, not a second one. Built in F1: the crosswalk is
+  `moqui_lib::geo::admin1` (`admin1_iso.tsv`), GeoNames' `admin1CodesASCII.txt` (CC BY 4.0) joined on each division's
+  geonameid with the ISO 3166-2 code (P300) of the Wikidata item carrying that GeoNames ID (P1566; Wikidata is CC0):
+  3,263 divisions of the FIPS countries, three of them chosen by hand; every Canadian, Indian, Japanese and Portuguese
+  division matches Mantle's row by code. China's (Mantle keeps GB/T 2260 numbers) and most of Vietnam's 2025 provinces have
+  no match by code: matched by name where the source gives one, else made. A ZCTA's land area (`ALAND`) is kept on its
+  point's `GeoPointAssoc.landArea`, and the postal lookup's extent is a square of that area (half its side between about
+  0.5 and 55 km), else the fixed box.
 - A code's place names are `GeoPostalCodePlace` rows (code, source, name, its order in the file, admin names, the
   source's accuracy and an optional point of its own): GeoNames has a row a code and place, and no name wins. The
   code's one representative point from a source is its row with the highest accuracy (GeoNames 6, then 4, then 1),
@@ -520,14 +529,47 @@ load included). The figures here are the test server's resident size read with `
 beside the run, so a shorter peak can be missed: about 445 MB before the first import, at most about 520 MB during it,
 and about 745 MB at the end of the forced GeoNames refresh.
 
+**The forced refresh's memory, found and fixed (F1, November 25, 2026).** Geo, GeoAssoc and GeoPoint are cached entities,
+and a run reads every row of its scope before it writes, 500 IDs to a query: the entity list caches kept each query and
+its rows. A first import writes those rows, which clears the lists; a refresh that changes nothing writes none, so every
+Geo and point of the US stayed cached, about 225 MB. The importer's finds now bypass the entity cache, and the file is
+checked as it is read, its records grouped as they come rather than held as a list and then grouped (the items loaded are
+dropped before the retiring). Measured again the same way (the ZCTA's land area now kept too), with `/usr/bin/time -l`
+for the test process's peak (its data load included) beside the sampler (every half second): the binary before the fix
+peaked at 868 MB, about 449 MB before the first import, 545 MB during it and 739 MB at the end of the forced refresh; after
+it 625 MB, about 500, 540 and 565 MB, back to 444 MB once the refresh ended. The times were the same: the first import 55 s
+(Counties 1.2 s, ZCTAs 23.2 s, the relationship file 18.5 s, GeoNames 12.4 s), the forced refresh 3.1 s, the lookup 0.52 ms
+cold and 0.11 ms cached.
+
 **Every country.** One run reads one country, so the time, the rows and the memory of a run grow with that country's
-codes, not with the number of countries: at the US rate (about 3,000 GeoNames rows a second), the 124 GeoNames countries (about 1.3 million rows, judged by `allCountries.zip`'s 19 MB against `US.zip`'s 619 KB
-and 41,490 rows; with the US's about 7.7 database rows a code, about 10 million database rows) would load in roughly 8 minutes of runs. Importing
-each country by itself stays as it is (Geo data's Import, one country a run). Every country at once may open as a queued
-sequence of per-country runs, each its own run and edition, with the confirmation of §6.4 giving that estimate, once the
-memory growth of a forced refresh (about 225 MB above the first import's peak for 41,000 codes) is explained: a run that
-holds a country's records in memory would need GBs for the largest files (`GB_full` has well over a million codes),
-which stay a separate, deliberate import. Until then the screen offers one country a run.
+rows, not with the number of countries. `allCountries.zip` counted 1,836,751 rows in the 124 countries (November 25,
+2026; the first part only of the Canadian, Dutch and British codes, as their country files); the largest country files
+are Portugal (206,942), the United Arab Emirates (178,171), India (155,570), Japan (146,883), Mexico (144,655) and
+Singapore (121,154), the US 41,490. The acceptance test `GeoDataEveryCountry` ran five countries as a queue (each its own
+run of the GeoDataImport ServiceJob, one after another): 119,956 rows and 49,561 codes in 42 s, Brazil 3.3 s (5,525 rows),
+Canada 1.0 s (1,657), Germany 8.2 s (23,296), Spain 12.3 s (37,867) and France 16.9 s (51,611, 26 rejected), about 2,900
+rows a second and about 3 database rows a file row (a code's four, a place name, a place's own point); removing the five
+took 31 s. At that rate the 124 countries are about 5.5 million database rows in roughly 11 minutes of runs.
+
+So Import offers **every country** of a set read a country at a time as a queue (§6.4), after a confirmation with that
+estimate (a country's last completed run's rows where it has one, else GeoNames' average), cancelled as a group. A run
+holds one country's records while it loads, so a queue's peak is that of its largest country, not the sum. One growth is
+left open: in a ServiceJob run the server's resident size grew about 20 KB a file row (about 490 MB before the queue,
+about 680 MB after Spain and 1,130 MB at the end of France; the test process peaked at 1.19 GB), against about 6 KB in the
+same import called synchronously (a 20,000-code operator file: about 250 MB synchronously, about 1.5 GB as a job; the same
+with telemetry off or every span sampled). It is the job's context, not the importer's records, and it is partly returned
+when a run ends; at that rate Portugal's run would reach about 4 GB, so it is to be found in the job runner before the
+largest countries are imported on a small server. **Temporary, until the job runner is fixed:** a queue runs only the
+countries estimated under 50,000 file rows (a country's last completed run, else its counted size); the ten larger
+(Portugal, the United Arab Emirates, India, Japan, Mexico, Singapore, Peru, Indonesia, Poland and France) are listed in the
+Import dialog to import one at a time, with that memory note. The test now queues four of its five countries and checks
+France is left out; the numbers above were measured with France in the queue, before this limit. The full Canadian, Dutch and British files (`CA_full`, `NL_full` and
+`GB_full`, the last about 1.8 million rows) stay sets of their own, a deliberate import, and were not measured.
+
+Cancel between batches, measured by the acceptance test `GeoDataImportCancel`: a job run of a 20,000-code operator file
+asked to stop once its first batch committed ended `GdiCancelled` after its second (4,000 codes kept, whole batches only,
+nothing retired, the lookup cache cleared); run again it completed in 10.5 s, the 4,000 unchanged, 16,000 created, and
+only then the three codes the new edition lacked retired.
 
 A framework postal lookup accepts country and postal code only; it does not need a street address or party ID.
 
@@ -597,7 +639,11 @@ runs lack, is new here.
 **Settings.** Maps › Configuration › Geo data, for `MAPS_ADMIN`: each data set with its license and attribution;
 the countries imported, each with its edition, counts and last run; and Import, Refresh, Cancel, Schedule and
 Remove (rows nothing refers to are deleted, the rest end-dated). Importing every GeoNames country at once asks
-for confirmation with an estimate of the rows, and is not offered until the P2 measurement. Built: Import and a scope's
+for confirmation with an estimate of the rows (built in F1: a queue of per-country runs, §6.3 "Every country"; for now only
+the countries under 50,000 file rows, the larger imported one at a time until the job runner's memory per row is fixed).
+A refusal every run of a queue would meet (the set disabled, its license, outside requests off, the user not authorized)
+cancels the queue's waiting runs with that reason, so one job and one notification say why; a queue run that stopped with
+no word for an hour is taken as abandoned, and a cancel ends it and lets the queue go on. Built: Import and a scope's
 Refresh start a run of the `GeoDataImport` ServiceJob; Refresh all and the schedule are one `GeoDataRefresh` ServiceJob
 that imports every scope again (an unchanged source costs a conditional request), scheduled weekly or monthly and run
 as the administrator who scheduled it, rather than a job a data set (docs/tools/Maps.md "Geo data").
@@ -667,6 +713,19 @@ prepared downloads. This keeps a HOME installation practical without a large geo
 | Optional O2 — Overture regional addresses | After O1, evaluate and index regional address points; exercise ambiguous, missing and approximate matches plus refresh reconciliation. Retain postal/manual fallback and the existing record-save authority. |
 | Later research | Routing, Google/other external maps, device integrations and “find my XYZ”, explicitly shared person-location feeds and offline mobile packages. Reuse the interface without treating approximate postal positions as navigation or tracking evidence. |
 
+Follow-ups to P0–P3, built November 26, 2026: the FIPS to ISO 3166-2 first-level crosswalk for GeoNames (`moqui-lib`
+`geo/admin1_iso.tsv`, CC BY 4.0 from GeoNames joined with Wikidata); the importer's memory fixes and a queued
+every-country import (temporarily only countries under 50,000 rows, until the ServiceJob memory growth of §6.3 is
+fixed in the job runner); Census land area sizing a postal area's extent; cancel between batches (acceptance
+`GeoDataImportCancel`); overlay features selectable with plain-text details; the terminal Browse's places, overlays
+and postal search; the drive picker for overlays; the framework route registry `moqui.maps.MapRoute` (host app's rows
+first, `routeApp`, `routeLinks`) and LocalMap's `profileId`; Configuration and the Geo data services needing the
+caller's own `MAPS_ADMIN` grant; geocoder `requestsPerDay`; the server proxy for keyed providers (exact recorded
+paths and patterns, the key added on the server, https only); one archive registered for its light and dark layers
+(acceptance `MapsProtomapsExtract` with a real Protomaps extract); and in Mantle and BOSS the read-only
+`transactionAddress` adapter for a document's readers, Sales' and HR's location rules, and View map on the 360s,
+documents, equipment, stores and organizations.
+
 The checks below go in two suites, by [the testing rules](../docs/Build-Test.md#the-two-suites). A stage is done
 when the regression tests of the rules it added pass within the component's budget and `moqui lint --screens` is
 clean; its scenarios are acceptance tests to write, named here, and running them is not part of done.
@@ -684,7 +743,8 @@ clean; its scenarios are acceptance tests to write, named here, and running them
   lookup with external requests disabled, and no outside request from opening a locally resolvable address),
   `MapsBrowseWalk` and `MapsDialogWalk` in a browser at desktop and phone width, the terminal walk,
   `MapsFrameworkOnly` (an installation without Mantle), `GeoDataUsaImport` (the real Census and GeoNames US
-  downloads, recording time and memory). P3's HOME-only and dual-suite visibility walks, `MapsHomeOnlyWalk` and
+  downloads, recording time and memory), `MapsProtomapsExtract` (a real Protomaps extract read by ranges from a daily
+  build, registered for both local layers in one action and drawn through the map-source transition). P3's HOME-only and dual-suite visibility walks, `MapsHomeOnlyWalk` and
   `MapsDualSuiteWalk`, are mr-home's H1c
   ([its §7](../runtime/components/addon/mr-home/plan/initial-design.md#7-delivery-proposal)).
 

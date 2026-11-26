@@ -340,6 +340,29 @@ function register(p) {
                 root: DISK_ROOT
             })
         )
+    // the other layers drawn from the same archive (the light and dark styles of one extract): those asked for, which must
+    // be PMTiles layers of the same format, and every other one of that format that already names the location
+    const format = text(layer.formatEnumId)
+    const asked = Array.from(p.alsoLayerIds || [])
+        .map(text)
+        .filter(id => id && id !== layerId)
+    const others = []
+    for (const id of asked) {
+        const row = ec.entity.find(LAYER).condition({layerId: id}).disableAuthz().one()
+        if (!row) return refused("RECORD_UNAVAILABLE", say("The map layer ${layerId} is not registered", {layerId: id}))
+        if (text(row.formatEnumId) !== format)
+            return refused(
+                "FORMAT_MISMATCH",
+                say("The layer ${layerId} is not a PMTiles layer of the same format, so it cannot draw the same archive", {
+                    layerId: id
+                })
+            )
+        if (!others.some(other => other.layerId === row.layerId)) others.push(row)
+    }
+    for (const row of Array.from(
+        ec.entity.find(LAYER).condition({resourceLocation: location, formatEnumId: format}).disableAuthz().limit(50).list()
+    ))
+        if (row.layerId !== layerId && !others.some(other => other.layerId === row.layerId)) others.push(row)
     const change = quietly(() => ec.resource.getLastChange(location))
     if (!change) return refused("SOURCE_GONE", say("There is no file at ${location}", {location}))
     if (!change.isFile) return refused("LOCATION_INVALID", say("${location} is a folder, not a file", {location}))
@@ -396,7 +419,6 @@ function register(p) {
     const drive = driveOf(location)
     const metadata = header.metadata || {}
     const fields = {
-        layerId,
         resourceLocation: location,
         sourceRevision: text(address.id),
         sourceTag: text(address.tag),
@@ -414,13 +436,21 @@ function register(p) {
         maxLatitude: Number(head.maxLatitude),
         disabled: "N"
     }
-    if (!text(layer.attribution) && text(metadata.attribution)) fields.attribution = plainAttribution(metadata.attribution)
-    if (!text(layer.sourceEdition) && text(metadata.version)) fields.sourceEdition = text(metadata.version).slice(0, 60)
+    // each layer's own: the archive's attribution and version where the layer has none
+    // the layer chosen and those asked for are enabled; one that only names the location keeps its state
+    const fieldsOf = row => {
+        const own = Object.assign({layerId: row.layerId}, fields)
+        if (row.layerId !== layerId && !asked.includes(String(row.layerId))) delete own.disabled
+        if (!text(row.attribution) && text(metadata.attribution)) own.attribution = plainAttribution(metadata.attribution)
+        if (!text(row.sourceEdition) && text(metadata.version)) own.sourceEdition = text(metadata.version).slice(0, 60)
+        return own
+    }
+    const layerIds = [layerId].concat(others.map(row => String(row.layerId)))
     const previous = text(layer.sourceRevision)
     asCaller(() => {
-        ec.entity.makeValue(LAYER).setAll(fields).update()
+        for (const row of [layer].concat(others)) ec.entity.makeValue(LAYER).setAll(fieldsOf(row)).update()
         // a profile drawn from it that still starts at the seed's whole-world view starts at the archive's center
-        const centered = Array.from(ec.entity.find(PROFILE).condition({basemapLayerId: layerId}).disableAuthz().list())
+        const centered = Array.from(ec.entity.find(PROFILE).condition("basemapLayerId", "in", layerIds).disableAuthz().list())
         for (const profile of centered) {
             const seedView = num(profile.centerLongitude) === 0 && num(profile.centerLatitude) === 20 && num(profile.zoom) === 2
             if (!seedView || profile.minLongitude != null) continue
@@ -442,10 +472,14 @@ function register(p) {
                 "It is outside every drive, so nothing but the layer guards it: every user who may see the layer reads the archive."
             )
         )
-    const name = text(layer.layerName) ? L(layer.layerName) : layerId
+    const name = [layer]
+        .concat(others)
+        .map(row => (text(row.layerName) ? L(row.layerName) : row.layerId))
+        .join(", ")
     return {
         applied: true,
         layerId,
+        layerIds,
         revision: fields.sourceRevision,
         replaced: !!previous && previous !== fields.sourceRevision,
         size: fields.sourceSize,
@@ -457,12 +491,17 @@ function register(p) {
         reason:
             previous && previous !== fields.sourceRevision
                 ? say("${name}: the new revision is registered; a map that was drawing the old one loads again", {name})
-                : say("${name}: its archive is registered (${size}, zoom ${min} to ${max})", {
-                      name,
-                      size: bytesText(fields.sourceSize),
-                      min: fields.minZoom,
-                      max: fields.maxZoom
-                  })
+                : say(
+                      others.length
+                          ? "${name}: their archive is registered (${size}, zoom ${min} to ${max})"
+                          : "${name}: its archive is registered (${size}, zoom ${min} to ${max})",
+                      {
+                          name,
+                          size: bytesText(fields.sourceSize),
+                          min: fields.minZoom,
+                          max: fields.maxZoom
+                      }
+                  )
     }
 }
 
