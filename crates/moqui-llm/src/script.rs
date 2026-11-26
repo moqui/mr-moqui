@@ -18,6 +18,7 @@
 //! ec.llm.complete({prompt, system, messages, model, feature, tier, schema, schemaName, reasoning, maxOutput,
 //!         timeoutSeconds, allowInTransaction})
 //!     -> {text, json, modelId, finish, inputTokens, cachedInputTokens, outputTokens, cost, callIds}
+//! ec.llm.embed(texts, {model, feature, allowInTransaction}) -> {vectors, dimension, modelId, modelName}
 //! ec.llm.isEnabled() -> boolean
 //! ec.llm.summarize(text, {maxWords, allowInTransaction}) -> string
 //! ec.llm.classify(text, labels, {allowInTransaction}) -> label
@@ -30,7 +31,7 @@
 //!
 //! A model call is refused while a transaction is open (plans/archive/High-Level-Review.md HL-041, [`crate::provider::call`]):
 //! call these from code with none open, or pass `allowInTransaction: true` in the options of `complete`, `summarize`,
-//! `classify` or `extract`, which suspends the transaction for the call and cuts the call to the time it has left.
+//! `classify`, `extract` or `embed`, which suspends the transaction for the call and cuts the call to the time it has left.
 //!
 //! `messages` are earlier turns, each `{role: "user" | "assistant", text}`; `schema` is a JSON schema (a map or its
 //! text), and with it `json` is the reply parsed and checked. The model is `model`, else the binding of `feature`, else
@@ -51,6 +52,7 @@ static LLM: HostClass = HostClass {
     name: "host:Llm",
     methods: &[
         host_method!("ec.llm", "complete", [Value], None, complete),
+        host_method!("ec.llm", "embed", [Value, OptValue], None, embed),
         host_method!("ec.llm", "isEnabled", [], is_enabled),
         host_method!("ec.llm", "summarize", [Text, OptValue], None, summarize),
         host_method!("ec.llm", "classify", [Text, Value, OptValue], None, classify),
@@ -70,6 +72,80 @@ fn factory() -> Result<std::sync::Arc<moqui_core::context::ExecutionContextFacto
 /// The entity facade of the entered context; the error the facades throw when there is none.
 fn entity() -> Result<moqui_core::entity::EntityFacade, HostError> {
     with_ec(|ec| ec.factory().entity())?.ok_or_else(|| HostError::message("no entity facade is installed"))
+}
+
+/// `ec.llm.embed(texts, {feature|model, allowInTransaction})`. One vector per text, from the model's `/v1/embeddings`
+/// ([`crate::embed`]). An open transaction is refused unless `allowInTransaction` is set, and then it is suspended for
+/// the call. An empty list returns no vectors and does not call the model.
+fn embed(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let texts: Vec<String> = match call.value_or_null(0) {
+        Value::List(items) => items
+            .iter()
+            .map(moqui_lib::object::to_plain_string)
+            .map(|text| text.trim().to_string())
+            .filter(|text| !text.is_empty())
+            .collect(),
+        Value::String(text) if !text.trim().is_empty() => vec![text.trim().to_string()],
+        _ => return Err(HostError::message("ec.llm.embed takes a list of texts")),
+    };
+    let options = call.value(1);
+    let (model, feature, allow) = match options {
+        Some(Value::Map(map)) => (
+            text_option(map, "model"),
+            text_option(map, "feature"),
+            allows_transaction(options),
+        ),
+        _ => (None, None, false),
+    };
+    if model.is_none() && feature.is_none() {
+        return Err(HostError::message("ec.llm.embed needs a feature or a model"));
+    }
+    let (factory, facade) = (factory()?, entity()?);
+    let llm = crate::facade(&factory);
+    let target = llm
+        .resolve(
+            &facade,
+            &crate::registry::Want {
+                model: model.as_deref(),
+                feature: feature.as_deref(),
+                ..crate::registry::Want::default()
+            },
+        )
+        .map_err(HostError::Lib)?;
+    let in_transaction = moqui_core::transaction::thread_in_transaction();
+    if in_transaction && !allow {
+        return Err(HostError::message(crate::provider::IN_TRANSACTION));
+    }
+    let parked = if in_transaction {
+        let transactions = facade
+            .transactions_for(crate::usage::LLM_CALL)
+            .map_err(HostError::Lib)?;
+        transactions.suspend().map_err(HostError::Lib)?;
+        Some(transactions)
+    } else {
+        None
+    };
+    let embedded = llm.embed(&facade, &target, &texts);
+    if let Some(transactions) = &parked {
+        transactions.resume().map_err(HostError::Lib)?;
+    }
+    let vectors = embedded.map_err(HostError::Lib)?;
+    let dimension = vectors.first().map_or(0, Vec::len);
+    let mut rows = Vec::with_capacity(vectors.len());
+    for vector in vectors {
+        rows.push(Value::List(
+            vector.into_iter().map(|value| Value::F64(f64::from(value))).collect(),
+        ));
+    }
+    let mut out = indexmap::IndexMap::default();
+    out.insert("vectors".to_string(), Value::List(rows));
+    out.insert(
+        "dimension".to_string(),
+        Value::I64(i64::try_from(dimension).unwrap_or(0)),
+    );
+    out.insert("modelId".to_string(), Value::String(target.model.id.clone()));
+    out.insert("modelName".to_string(), Value::String(target.model.name.clone()));
+    Ok(Ret::Value(Value::Map(out)))
 }
 
 fn is_enabled(_: &mut Call<'_>) -> Result<Ret, HostError> {
@@ -317,5 +393,33 @@ mod tests {
             assert!(in_transaction(expression).unwrap(), "{expression}");
         }
         assert_eq!(crate::provider::fake::requests("task-tx-fake").len(), 3);
+    }
+
+    /// `ec.llm.embed` needs a feature or a model, refuses an open transaction, and reaches the embeddings API only
+    /// after `allowInTransaction` (the fake protocol has none, so nothing is posted).
+    #[test]
+    fn ec_llm_embed_asks_for_a_model_and_stays_out_of_a_transaction() {
+        clear_context_stack();
+        let context = ExecutionContextFactory::test_context_with_conf(CONF);
+        let facade = moqui_core::testing::open();
+        context.factory().set_entity(facade.clone());
+        let _entered = context.enter();
+        let missing = run_script(r#"ec.llm.embed(["hello"])"#).unwrap_err().to_string();
+        assert!(missing.contains("feature or a model"), "{missing}");
+        let transactions = facade.transactions_for("moqui.basic.Enumeration").unwrap();
+        let in_transaction = |expression: &str| {
+            transactions.run(moqui_core::transaction::TransactionAttribute::UseOrBegin, None, || {
+                Ok(eval_condition(expression)?)
+            })
+        };
+        let refused = in_transaction(r#"ec.llm.embed(["hi"], {feature: "classify"}) !== null"#)
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains(crate::provider::IN_TRANSACTION), "{refused}");
+        let no_api =
+            in_transaction(r#"ec.llm.embed(["hi"], {feature: "classify", allowInTransaction: true}) !== null"#)
+                .unwrap_err()
+                .to_string();
+        assert!(no_api.contains("no embeddings API"), "{no_api}");
     }
 }
