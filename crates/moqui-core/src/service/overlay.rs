@@ -105,7 +105,10 @@ impl ServiceOverlay {
                     continue;
                 }
                 let registered = super::define::find(name);
-                if registered.is_none_or(|have| have.kind != def.kind || have.location != def.location) {
+                // the type too: a native service's conf runner is chosen by it, at the same location
+                if registered.is_none_or(|have| {
+                    have.kind != def.kind || have.location != def.location || have.service_type != def.service_type
+                }) {
                     return Err(Error::new(format!(
                         "service {name} is a Rust service its text defines anew or changes: save it to run it, \
                          unsaved text runs only XML Actions and scripts"

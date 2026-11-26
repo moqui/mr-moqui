@@ -55,19 +55,25 @@ const GLOBALS_JS: &str = concat!(
     }
     // the trace calls of a traced XML actions script (`script::trace`): a long list goes as its first items and a plain
     // object of many keys as its first ones, so a value is not converted whole to show a little of it
-    const traceBound = (value) => {
+    // nested arrays and plain objects too, three levels down as the host reads them (`trace::MAX_DEPTH`); a host object
+    // (an entity value or list) goes as it is, which the host bounds itself
+    const traceBound = (value, depth = 0) => {
+        const plain = value !== null && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype;
+        if (!Array.isArray(value) && !plain) return value;
+        if (depth >= 3) return "…";
         if (Array.isArray(value)) {
-            return value.length > 10 ? value.slice(0, 10).concat(["… " + (value.length - 10) + " more"]) : value;
-        }
-        if (value !== null && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype) {
-            const keys = Object.keys(value);
-            if (keys.length <= 30) return value;
-            const out = {};
-            for (const key of keys.slice(0, 30)) out[key] = value[key];
-            out["…"] = (keys.length - 30) + " more";
+            const out = value.slice(0, 10).map((item) => traceBound(item, depth + 1));
+            if (value.length > 10) out.push("… " + (value.length - 10) + " more");
             return out;
         }
-        return value;
+        const keys = Object.keys(value);
+        const out = {};
+        for (const key of keys.slice(0, 30)) {
+            // a host object read with its field's name stays whole, for the host to hide an encrypted field
+            out[key] = key === "__traceEntity" ? value[key] : traceBound(value[key], depth + 1);
+        }
+        if (keys.length > 30) out["…"] = (keys.length - 30) + " more";
+        return out;
     };
     global.__moquiTrace = function __moquiTrace(op, path, names, values) {
         hidden.__moquiTrace(op, path, names, values === undefined ? undefined : values.map(traceBound));

@@ -274,3 +274,20 @@ feature("a real run over unsaved text is refused", {
         refusal.includes("runs in the sim only")
     },
 })
+
+feature("a SECA rule's trigger is not one of Dev AIDE's own writes", {
+    when() {
+        try {
+            const answer = svc("try#Rule", { kind: "seca", target: "org.moqui.devaide.WorkspaceServices.save#File", context: "{}" })
+            return { result: answer?.result, refusal: String(ec.message.getErrorsString() || "") }
+        } catch (error) {
+            return { refusal: String(error) }
+        } finally {
+            ec.message.clearAll()
+        }
+    },
+    then({ result, refusal }) {
+        result == null
+        refusal.includes("the sim cannot hold that")
+    },
+})

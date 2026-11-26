@@ -40,7 +40,8 @@ const MAX_ELEMENTS: usize = 4000;
 const MAX_BLOCKS: usize = 200;
 /// The most names an element's values keep.
 const MAX_NAMES: usize = 8;
-/// The most keys of a map, items of a list and levels of either a value shows.
+/// The most keys of a map, items of a list and levels of either a value shows; `host/globals.rs`'s `traceBound` bounds
+/// a script's value to the same before it converts.
 const MAX_KEYS: usize = 30;
 const MAX_ITEMS: usize = 10;
 const MAX_DEPTH: usize = 3;

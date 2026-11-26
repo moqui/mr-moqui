@@ -296,6 +296,12 @@ fn rule_trial(context: &Context, caller: &str, asked: &RuleAsked<'_>, trace: boo
             if target.trim().is_empty() {
                 return Err(LibError::new("name the rule's service or entity"));
             }
+            // a SECA's service runs as an agent's try_service would: not the Dev AIDE's own writes, nor the Terminal's
+            if kind == "seca" {
+                if let Some(why) = crate::agent::try_service::sim_refusal(target) {
+                    return Err(LibError::new(why));
+                }
+            }
             let in_sim_js = trigger_js(kind, target, asked.operation, false)?;
             let in_spec_js = trigger_js(kind, target, asked.operation, true)?;
             let body = format!("const fixture = {};\n{in_sim_js}", Json::Object(fixture.clone()));
@@ -363,7 +369,8 @@ fn rule_trial(context: &Context, caller: &str, asked: &RuleAsked<'_>, trace: boo
     }
 }
 
-/// `try#Rule`: a rule's trigger run in the sim with a context (`context`), traced, nothing written: what the run came
+/// `try#Rule`: a rule's trigger run in the sim with a context (`context`), traced, nothing written to the database (its
+/// writes are the sim's): what the run came
 /// to, its messages and rows, and the trace the ECA view marks the rule's actions with (a gitECA rule's condition
 /// alone). The extend tier, as Save as spec.
 fn try_rule(ec: &ExecutionContext, service: &ServiceInfo<'_>, parameters: &Parameters) -> Result<Parameters, LibError> {
@@ -396,8 +403,8 @@ fn try_rule(ec: &ExecutionContext, service: &ServiceInfo<'_>, parameters: &Param
 /// `save#RuleSpec`: Save as spec on a rule (10) of the rules file (`rootId`, `path`, saved: the trigger runs the rules
 /// the server holds): `kind` seca, eeca or giteca; `target` its service or entity; `operation` an EECA's (create,
 /// update or delete); `condition` a gitECA rule's (an expression or a condition element); `fixture` the name its
-/// `context` is saved under. The trigger runs in the sim first, and a failure there writes nothing; then the fixture
-/// and the feature are written. Answers the spec file and name, the fixture, the sim run, and `note` for a gitECA
+/// `context` is saved under. The trigger runs in the sim first, which writes nothing to the database, and a failure
+/// there writes no file; then the fixture and the feature are written. Answers the spec file and name, the fixture, the sim run, and `note` for a gitECA
 /// rule's feature. The extend tier.
 fn save_rule_spec(
     ec: &ExecutionContext,

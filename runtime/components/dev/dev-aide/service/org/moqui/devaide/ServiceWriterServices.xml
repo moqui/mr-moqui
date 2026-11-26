@@ -144,7 +144,8 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Save as spec on a rule (10): its fixture written, and a feature appended to the rules file's spec
             that runs the rule's trigger with it (a SECA's service call, an EECA's entity operation) and checks what the
             trigger did in a run in the sim now; for a gitECA rule, whose push a spec does not replay, its condition
-            against the fixture. A trigger that fails in the sim writes nothing. The extend tier.</description>
+            against the fixture. The trial in the sim writes nothing to the database, and a trigger that fails there writes
+            no file. The extend tier.</description>
         <in-parameters>
             <parameter name="rootId" required="true"/>
             <parameter name="path" required="true"><description>The rules file, saved.</description></parameter>
@@ -166,7 +167,7 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
     <service verb="try" noun="Rule" type="rust" location="dev_aide::eca_specs::try_rule" allow-remote="false">
-        <description>A rule's trigger run in the sim with a context, traced, nothing written (a SECA's service call, an
+        <description>A rule's trigger run in the sim with a context, traced, nothing written to the database (a SECA's service call, an
             EECA's entity operation; a gitECA rule's condition alone): the run's messages, rows and trace, which marks the
             rule's actions in the composer. The extend tier.</description>
         <in-parameters>
