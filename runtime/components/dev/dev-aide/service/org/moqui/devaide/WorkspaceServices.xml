@@ -140,10 +140,11 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
     <service verb="search" noun="Files" type="rust" location="dev_aide::workspace::search_files" allow-remote="false" read-only="true">
-        <description>Lines matching a text or a regular expression (git grep in a repository, a walk of a plain root), at most 500.</description>
+        <description>Lines matching a text (git grep in a repository) or a regular expression (Rust's over the whole text of
+            each file, as replace#Files reads it, answered by line), at most 500; a plain root is walked.</description>
         <in-parameters>
             <parameter name="rootId" required="true"/>
-            <parameter name="query" required="true"/>
+            <parameter name="query" required="true" allow-html="any"><description>Text, not shown as HTML: a search for a tag is a search</description></parameter>
             <parameter name="regex" type="Boolean"/>
             <parameter name="caseSensitive" type="Boolean"/>
             <parameter name="pathFilter"/>
@@ -151,6 +152,72 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters>
             <parameter name="results" type="List"/>
             <parameter name="truncated" type="Boolean"/>
+        </out-parameters>
+    </service>
+    <service verb="replace" noun="Files" type="rust" location="dev_aide::replace::replace_files" allow-remote="false">
+        <description>Replace across a root's files (4.3). With no files, the preview: each file a search finds (git grep
+            in a repository, a walk of a plain root), its matches with their lines before and after, its hash, and why
+            the user may not write it (refused: an upstream file while the lock is on, a read-only root), at most 200
+            files and 2000 matches. With files, the matches chosen in each replaced through the save pipeline (audited,
+            reloaded), each file on its own: one changed since its preview (its hash) or that may not be written is
+            refused and named, and the others are written.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="query" required="true" allow-html="any"/>
+            <parameter name="replacement" allow-html="any"><description>For a regular expression, $1 and ${name} are its groups.</description></parameter>
+            <parameter name="regex" type="Boolean"/>
+            <parameter name="caseSensitive" type="Boolean"/>
+            <parameter name="pathFilter"/>
+            <parameter name="files" type="Object"><description>[{path, hash, matches}]: each file's hash as the preview
+                read it and the indexes of the matches to replace; empty for the preview.</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="files" type="List"><description>The preview: {path, hash, matches [{index, line, column,
+                text, after}], more, refused}.</description></parameter>
+            <parameter name="matchCount" type="Integer"/>
+            <parameter name="truncated" type="Boolean"/>
+            <parameter name="replaced" type="List"><description>{path, count, hash, problems}</description></parameter>
+            <parameter name="refused" type="List"><description>{path, reason}</description></parameter>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="EditorSettings" type="rust" location="dev_aide::editor::get_editor_settings" allow-remote="false" read-only="true">
+        <description>The user's editor settings (the DEV_AIDE_EDITOR preference, 5.1): font size, tab size, wrap, white
+            space shown, the keymap, and each command's keys with its default.</description>
+        <out-parameters>
+            <parameter name="settings" type="Map"/>
+            <parameter name="commands" type="List"><description>{command, label, scope (workspace or editor), defaultKeys, keys}</description></parameter>
+            <parameter name="keymaps" type="List"/>
+        </out-parameters>
+    </service>
+    <!-- a user's own preference: the view tier sets it too, so the action is view -->
+    <service verb="store" noun="EditorSettings" authz-action="view" type="rust" location="dev_aide::editor::store_editor_settings" allow-remote="false">
+        <description>The user's font size (8 to 32), tab size (1 to 8), wrap, white space shown and keymap; the keys
+            are kept. Refused out of range or for an unknown keymap.</description>
+        <in-parameters>
+            <parameter name="fontSize"/>
+            <parameter name="tabSize"/>
+            <parameter name="wrap"/>
+            <parameter name="whitespace"/>
+            <parameter name="keymap"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="settings" type="Map"/>
+            <parameter name="commands" type="List"/>
+            <parameter name="keymaps" type="List"/>
+        </out-parameters>
+    </service>
+    <service verb="store" noun="EditorKey" authz-action="view" type="rust" location="dev_aide::editor::store_editor_key" allow-remote="false">
+        <description>A command's keys in CodeMirror's form (Mod-Shift-f), over the default keymap; empty for its
+            default. Refused for an unknown command, keys not in that form, or keys another command runs on.</description>
+        <in-parameters>
+            <parameter name="command" required="true"/>
+            <parameter name="keys"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="command"/>
+            <parameter name="settings" type="Map"/>
+            <parameter name="commands" type="List"/>
+            <parameter name="keymaps" type="List"/>
         </out-parameters>
     </service>
     <service verb="find" noun="Files" type="rust" location="dev_aide::workspace::find_files" allow-remote="false" read-only="true">
@@ -187,23 +254,29 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters>
             <parameter name="componentName" required="true"/>
             <parameter name="dependsOn"/>
+            <parameter name="gitRemote"><description>The remote URL the repository starts with as origin (https with no user part, ssh, git, or user@host:path)</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="location"/>
             <parameter name="restart" type="Boolean"/>
+            <parameter name="remoteAdded" type="Boolean"/>
         </out-parameters>
     </service>
     <service verb="create" noun="Component" type="rust" location="dev_aide::workspace::create_component" allow-remote="false">
-        <description>A component from the component template (runtime/components/dev/template), in runtime/components/addon, runtime/components/dev with dev, or runtime/components/test with test, with a git repository; its screens and REST API, or one of them. ./moq component-create makes the same. It loads after a restart.</description>
+        <description>A component from the component template (runtime/components/dev/template), in runtime/components/addon, runtime/components/dev with dev (a dev tool always), or runtime/components/test with test, with a git repository and an optional origin; an App with its screens and REST API, or one of them, or another kind. ./moq component-create makes the same. It loads after a restart, a native one after a rebuild too.</description>
         <in-parameters>
             <parameter name="componentName" required="true"/>
-            <parameter name="part" default-value="all"><description>all, screens (no REST API) or rest (no screens)</description></parameter>
+            <parameter name="kind"><description>app (the default, with part), data, native, theme, skills or dev-tool; or all, screens or rest for an App of that part</description></parameter>
+            <parameter name="part"><description>An App's: all (the default), screens (no REST API) or rest (no screens)</description></parameter>
+            <parameter name="gitRemote"><description>The remote URL the repository starts with as origin (https with no user part, ssh, git, or user@host:path)</description></parameter>
             <parameter name="dev" type="Boolean"><description>In runtime/components/dev, loaded only on a dev instance</description></parameter>
             <parameter name="test" type="Boolean"><description>In runtime/components/test, loaded on a dev or test instance only</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="location"/>
             <parameter name="restart" type="Boolean"/>
+            <parameter name="rebuild" type="Boolean"><description>A native component: ./moq build before the restart</description></parameter>
+            <parameter name="remoteAdded" type="Boolean"/>
         </out-parameters>
     </service>
     <service verb="set" noun="Presence" type="rust" location="dev_aide::workspace::set_presence" allow-remote="false">

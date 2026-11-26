@@ -643,6 +643,22 @@ function parameterNode(service, which, name) {
         node = node ? children(node, ["parameter"]).find(child => attrOf(child, "name") === part) || null : null
     return node
 }
+// Why an Add or an Edit of a parameter is refused, or null: an Add of a name its parent (or the top) has already, an
+// Edit that makes a parameter holding others a type that holds none (remove them first). The browser view's too.
+const HOLDER_TYPES = ["Map", "List", "Set", "Collection", "Node"]
+function parameterRefusal(service, which, change) {
+    const path = [change.parent, change.name].filter(part => part).join(".")
+    if (change.mode === "add") {
+        return parameterNode(service, which, path)
+            ? "There is a parameter " + change.name + (change.parent ? " in " + change.parent : "") + " already"
+            : null
+    }
+    const node = parameterNode(service, which, change.path || path)
+    const holds = HOLDER_TYPES.indexOf(String(change.type || "String").split(".").pop()) >= 0
+    return node && !holds && children(node, ["parameter", "auto-parameters"]).length
+        ? (change.path || path) + " holds parameters: remove them first, or keep a type that holds them"
+        : null
+}
 function removeParameter(service, which, name) {
     const node = parameterNode(service, which, name)
     return node ? [{op: "remove", at: node.path}] : []
@@ -1239,6 +1255,7 @@ function outlineRows(outline, openUrl) {
         parameterNode,
         removeParameter,
         editParameter,
+        parameterRefusal,
         secaXml,
         addRule,
         tryParameters,

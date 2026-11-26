@@ -586,6 +586,29 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="updateListCount" type="Integer"/>
         </out-parameters>
     </service>
+    <service verb="get" noun="GitUpdateEventContexts" type="rust" location="moqui_git::service::hosting::get_update_contexts">
+        <description>The contexts the gitECA rules of an event had, or would have had, from an update of the push log,
+            built as the events build them: one for pre-receive and post-receive, one a ref for pre-ref-update and
+            ref-update, one a tag created, one a new commit; at most 50 contexts and 200 commits in all. The post events
+            are of the refs the update made, the pre events of every ref it asked for, a ref it did not make (a refused
+            push's) with no commits. Only the commits the user reads by id are listed, from tips the user reads, as
+            get#GitCommit reads them (not a hidden merge request's, nor another fork's of a shared store); what is left
+            out marks the list short (newCommitsTruncated, truncated). For trying a rule's condition against a recorded
+            push (the Dev AIDE's ECA view). For a user with the update right of the repository, as the whole push log
+            is.</description>
+        <in-parameters>
+            <parameter name="repositoryId" required="true"/>
+            <parameter name="updateId" required="true"/>
+            <parameter name="event" default-value="post-receive"><description>pre-receive, pre-ref-update, ref-update,
+                commit, tag or post-receive</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="contextList" type="List"><description>Maps: label (the ref or commit it is of), context
+                (the fields a rule's condition and actions read)</description></parameter>
+            <parameter name="truncated" type="Boolean"><description>Contexts or commits were left out: past the
+                limits, or not the user's to read</description></parameter>
+        </out-parameters>
+    </service>
     <service verb="get" noun="GitTree" type="rust" location="moqui_git::service::hosting::get_tree">
         <description>The directory at a path in a revision: directories first, then files, each with its last commit
             on the revision's first-parent line (from the path index of the branch, or of the commit). Nothing out when
@@ -918,7 +941,9 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="add" noun="GitHostingOffer" type="interface">
         <description>The service git-server offer-service names: given what the framework offers (get#HostingOffer's
             offer) and the current user, the offer as the application has it, which replaces it: its REST
-            (application: name, restBase), its task source (tasks: kind, path), whether forks are made and where
+            (application: name, restBase), its task source (tasks: kind; path, the user's tasks; issuePath, a work item
+            by {id}; issuesPath, a repository's open issues, and a new one by POST, by {repositoryId}; app, the app a
+            work item opens in: name, title, taskPath and projectPath with {taskId} and {projectId}), whether forks are made and where
             (forks), its agreement check (agreement: path), and anything else a client may read. Called with
             authorization off, also for a caller with no credentials, so it gives no one's data.</description>
         <in-parameters>

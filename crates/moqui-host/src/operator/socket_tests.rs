@@ -15,7 +15,7 @@
 use std::os::fd::IntoRawFd as _;
 use std::path::PathBuf;
 
-use super::{bind_own, granted_group, inherited};
+use super::{bind_own, granted_group, inherited, on_signal, OnSignal};
 
 fn scratch(label: &str) -> PathBuf {
     let dir = PathBuf::from(format!("/tmp/msk-unit-{label}-{}", std::process::id()));
@@ -71,4 +71,27 @@ fn a_socket_handed_over_is_taken_once_and_closed_on_exec() {
     std::env::remove_var("MOQUI_OPERATOR_PID");
     drop(listener);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// What a SIGTERM or SIGINT does (the operator socket's handler): sealed, the gate gives up; booting, the process ends;
+/// once the listener has served, the first signal is the shutdown's and the process ends after it, and a second one
+/// ends it at once. A restart's or a seal's shutdown is the listener having served with no signal yet: a signal then
+/// is left to the shutdown and marks the stop, which the server reads before it runs again or waits sealed.
+#[test]
+fn a_signal_after_the_listener_stopped_is_the_shutdowns_and_a_second_ends_it() {
+    assert_eq!(on_signal(false, false, false), OnSignal::Abandon, "sealed");
+    assert_eq!(
+        on_signal(false, true, false),
+        OnSignal::Abandon,
+        "sealed by a seal's stop"
+    );
+    assert_eq!(
+        on_signal(true, false, false),
+        OnSignal::Exit,
+        "booting, before the listener opened"
+    );
+    // the listener stopped on this signal, or a restart's or seal's shutdown runs: the shutdown goes on
+    assert_eq!(on_signal(true, true, false), OnSignal::Leave);
+    // a second Ctrl-C or SIGTERM cuts a slow shutdown short
+    assert_eq!(on_signal(true, true, true), OnSignal::ExitSecond);
 }

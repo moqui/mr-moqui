@@ -62,6 +62,14 @@ pub(crate) fn on_server(server: &Server, url: &str) -> Result<String, LibError> 
 }
 
 /// `value` encoded for a URL's query.
+/// A path segment of a server's URL, or `None` for one that is empty or all dots (`.`, `..`), which a URL would take
+/// as a step up or none: a repository's or an issue's id from a server never walks its path.
+#[must_use]
+pub fn path_segment(value: &str) -> Option<String> {
+    let value = value.trim();
+    (!value.is_empty() && !value.bytes().all(|byte| byte == b'.')).then(|| query_text(value))
+}
+
 pub(crate) fn query_text(value: &str) -> String {
     value
         .bytes()

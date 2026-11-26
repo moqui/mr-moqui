@@ -33,15 +33,19 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="start" noun="Connect" type="rust" location="dev_aide::hosting::connect::start_connect" allow-remote="false">
         <description>Ask the server at baseUrl what it offers, keep the connection, and start the sign-in there as an
             installed app does: the URL to open (its /sso/appLogin with a PKCE challenge, a state and this instance's
-            /qapps/dev/Settings/serverSignedIn as the loopback redirect), good for 15 minutes. With no authFlowId the
-            server's own login.</description>
+            /qapps/dev/Settings/serverSignedIn as the loopback redirect), good for 15 minutes, through the identity
+            provider authFlowId (one of those the server lists at its signIn.appProviders) or, with ownLogin, the
+            server's own login. A server with providers and neither given answers providers (authFlowId, description)
+            and no authorizeUrl, for the user to choose.</description>
         <in-parameters>
             <parameter name="baseUrl" required="true"/>
             <parameter name="label"/>
             <parameter name="authFlowId"/>
+            <parameter name="ownLogin" type="Boolean"/>
         </in-parameters>
         <out-parameters>
             <parameter name="serverId"/>
+            <parameter name="providers" type="List"/>
             <parameter name="authorizeUrl"/>
             <parameter name="redirectUri"/>
             <parameter name="loopback" type="Boolean"/>
@@ -136,7 +140,9 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
     <service verb="get" noun="Issue" type="rust" location="dev_aide::hosting::review::get_issue" allow-remote="false" read-only="true">
         <description>An issue (a work item) on the hosted repository's server by its id: issueId, title, status, type,
-            description, url. The offer's tasks.issuePath with {id}, else Mantle's workEfforts/{id}.</description>
+            description, url, and number where it has one. The offer's tasks.issuePath with {repositoryId} and {id} (Mantle's
+            gitRepositories/{repositoryId}/issues/{id}; a key #12 is asked by its number, byNumber), else Mantle's
+            workEfforts/{id}.</description>
         <in-parameters>
             <parameter name="rootId" required="true"/>
             <parameter name="issueId" required="true"/>
@@ -154,6 +160,9 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="title"/>
             <parameter name="description"/>
             <parameter name="sourceRepositoryId"><description>A fork of the repository that has the source branch</description></parameter>
+            <parameter name="sourceRemote"><description>The remote the source branch is on, when not its own config's
+                (branch.[name].pushRemote, then .remote): a remote other than the hosted repository's is resolved on
+                the same server as the fork the merge request comes from</description></parameter>
         </in-parameters>
         <out-parameters><parameter name="mergeRequest" type="Map"/></out-parameters>
     </service>
@@ -410,6 +419,24 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="commitId"/>
             <parameter name="line"/>
             <parameter name="signed" type="Boolean"/>
+        </out-parameters>
+    </service>
+
+    <!-- ========== issues (21.6) ========== -->
+
+    <service verb="create" noun="RootIssue" type="rust" location="dev_aide::hosting::issues::create_root_issue" allow-remote="false">
+        <description>Quick create on a working tree's hosted repository: an issue filed in its tracker (the offer's
+            tasks.issuesPath, Mantle's gitRepositories/{repositoryId}/issues) on the server as the user, a task of the
+            project projectId or of the first the repository is linked to. Out: issue (taskId, number, key: #12 where
+            issues have numbers, else the id) and taskId. From a session only.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="title" required="true"/>
+            <parameter name="projectId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="issue" type="Map"/>
+            <parameter name="taskId"/>
         </out-parameters>
     </service>
 </services>

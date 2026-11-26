@@ -3,11 +3,17 @@
 The assisted IDE of mr-moqui (`plans/design-dev-aide.md`), at `/qapps/dev` on a dev instance:
 
 - **Home** has the site's unpublished changes with Publish, each repository and directory with its branch and changes,
-  the reload log, the restart a change needs, "No site component yet. Create one", and New component, which makes an
-  app from the component template (`runtime/components/dev/template`) as `./moq component-create` does.
+  the reload log, the restart a change needs (with Rebuild for a Rust change where the runtime has `moq`: `./moq build`
+  in a host session of the Terminal, the banner offering Restart once it ends with 0), "No site component yet. Create
+  one", and New component, which makes an app, data only, native, theme, skill pack or dev tool component from the
+  component template (`runtime/components/dev/template`) as `./moq component-create` does, with an optional git remote.
+- **Customizations** (Artifacts › Customizations) is every extension the site components make with its state, and the
+  DbForms that change a screen form, each with Convert: the review of the site's `screen-extend` it writes and the rows
+  that go, and Accept, which writes the file and deletes the DbForm in one step (one way only).
 - **Workspace** is the IDE: the roots (the repositories and directories of the loaded components), the file tree with
   git status, files in the CodeMirror editor with schema completion and checks, Save that reloads what the file defines,
-  Changes (stage, unstage, discard, commit with the task trailer), Commits, Fetch, Pull, Push and Publish. In the
+  Search in files with Replace (a preview of each file's matches to choose from, written as Save writes), Changes
+  (stage, unstage, discard, commit with the task trailer), Commits, Fetch, Pull, Push and Publish. In the
   terminal (`moqui tui`) it is a simpler form, `WorkspaceTui.xml`: the tree, Go to file and Search, one file in the
   `code` editor with Save and its problems (and References and Browse for the artifacts it defines), Changes with the commit form, Commits with Cherry-pick and Revert, and a Git
   menu; branches, tags, stashes, merge requests, review and blame open in the browser.
@@ -20,18 +26,21 @@ The assisted IDE of mr-moqui (`plans/design-dev-aide.md`), at `/qapps/dev` on a 
   its real render in a frame from the unsaved buffers with each widget stamped with its source, an upstream screen in
   extension mode (every edit into the site's `screen-extend`), Add column and Add field (placed by `after=` in the layout
   or the columns), inserts at a named anchor or the nearest one, the Extension points, the Outline on the block tree and
-  Properties from the schema digest. "Open in screen builder" on any app page opens it on that page.
+  Properties from the schema digest. "Open in screen builder" on any app page opens it on that page. A `.qvue` screen
+  is one tab with its XML: Design (rendered from both unsaved buffers), Text .qvue and Text .xml, saved together.
 - **Libraries** in Screens and Services lists the active edit component's exports. Use on this screen stages the
   qvt declaration in the same buffer as other edits. For a server library, copy the module call into an action.
   A full-tier editor of the component can search npm, choose a release and target, review the lock, notices and
   bundle sizes, and apply them. The dev instance needs the [build prerequisites](../../../../docs/Build-Test.md#add-a-component-library).
-- **Services** is the service writer: a service's settings and parameters, its actions in the logic composer (blocks as
-  sentences, chips that edit an attribute, the palette, the generated JavaScript), its SECA rules, and Try in sim with the
-  rows it would write, Save as spec and Run spec (in the sim). In the terminal it is `Services/EditTui`: Try, the
-  settings, the parameters (nested ones too, which the browser's view does not edit yet: Add child in a Map or a List,
-  Edit and Remove on each), the actions read only and the SECA rules (the service a new rule calls is searched by name,
-  as is the one a new button of the screen builder's twin calls), its edits staged in the user's edit buffer until
-  Save (below). **ECA Rules** lists the active rules of each kind with their files; a rules file opens in the ECA view.
+- **Services** is the service writer: a service's settings and parameters (nested ones too: Add child in a Map or a
+  List, Edit and Remove on each, as the terminal twin's), its actions in the logic composer (blocks as sentences, chips
+  that edit an attribute, the palette, the generated JavaScript), its SECA rules, and Try in sim with the rows it would
+  write, Save as spec and Run spec (in the sim). In the terminal it is `Services/EditTui`: Try, the settings, the
+  parameters (nested ones too), the actions read only and the SECA rules (the service a new rule calls is searched by
+  name, as is the one a new button of the screen builder's twin calls), its edits staged in the user's edit buffer
+  until Save (below). **ECA Rules** lists the active rules of each kind with their files; a rules file opens in the ECA
+  view, where Try the condition runs a rule's condition against a context (a SECA's service's last Try, a record, or
+  for a gitECA rule a push from the push log).
 - **Browser** (Artifacts › Browser) is an artifact in the center with what uses it and what it uses, by kind: a
   pan-and-zoom canvas in the browser, and in the terminal Miller columns (`BrowseTui.xml`, the `artifact-browser`
   component) where Enter re-centers on a row, Backspace and `]` walk the trail, `k`, `h` and `x` filter, and the
@@ -51,8 +60,10 @@ The assisted IDE of mr-moqui (`plans/design-dev-aide.md`), at `/qapps/dev` on a 
   has it now, with Mermaid diagrams (a click opens one in a zoom dialog) and a button that copies it; the entity modeler and service writer have a Doc tab,
   the screen builder a Doc panel. **Export docs** writes a tree of them into a repository (`autodoc/` by default), as
   `moqui autodoc` does ([docs/dev/Autodoc.md](../../../../docs/dev/Autodoc.md)).
-- **Settings** has the site components, "Allow editing upstream components", the roots' labels, read-only flags and
-  publish branches, more directories, network git on a shared dev server, and the **group servers**
+- **Settings** has the editor (font size, tab size, wrap, white space, the keymap, and a key for each of the code
+  editor's commands, the `DEV_AIDE_EDITOR` preference; the Workspace's Go to file, Go to artifact, Search in files and
+  Save are shell key map actions, rebound by the `KEYMAP` preference), the site components, "Allow editing upstream components", the roots' labels,
+  read-only flags and publish branches, more directories, network git on a shared dev server, and the **group servers**
   ([plans/design-dev-aide.md](../../../../plans/design-dev-aide.md) §21): Connect signs in at a team's server (or
   moqui.org) as an installed app does, with this instance's own address as the redirect, or takes a pasted token, and
   then sets what you confirm: the `myaddons.xml` repository, the task source, the LLM gateway's `.env` lines (with a
@@ -85,8 +96,8 @@ Who may use it (`data/DevAideSecurityData.xml`):
 | `DEV_AIDE_EXTEND` | `DEV_AIDE_EXTENDERS` | Write site components and publish them. |
 | `DEV_AIDE` | `ADMIN`, `DEV_AIDE_USERS` | Everything: upstream edits with the toggle on, and every git command. |
 
-Its Rust crate is linked into the Dev and Debug packages (the `devtools` feature). In another package the screens load
-and the services say they are not built in.
+Its Rust crate is linked into the Maximal package (the default) and Debug, and into Lite built with `--features devtools`
+(the `devtools` feature). In another package the screens load and the services say they are not built in.
 
 - **Tests** ([the two suites](../../../../docs/Build-Test.md#the-two-suites)): the regression suite is `./moq test
   dev-aide` (the screens, the Workspace's terminal form on a scratch root, the docs, the terminal's guided editors against a throw-away root), `cargo test -p dev-aide` (confinement, the git parsers, the Browser's sections, the edit buffers),

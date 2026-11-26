@@ -261,6 +261,54 @@ fn a_service_prefix_and_an_extended_location_are_the_path_after_their_directory(
     assert_eq!(extended_location("component://site/screen/Home.xml"), "");
 }
 
+/// What a view entity, an `auto-parameters` and a REST method declare to be filled in from elsewhere is in their marks:
+/// a view's members and `alias-all`s and each alias's member, field and type; the parameters written before an
+/// `auto-parameters`; the service a REST method runs.
+#[test]
+fn view_entities_auto_parameters_and_rest_methods_mark_what_they_expand() {
+    let marks = |index: &FileIndex, id: &str| {
+        index
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.id == id)
+            .map(|artifact| artifact.marks.clone())
+            .unwrap_or_default()
+    };
+    let view = read(
+        ArtifactKind::Entity,
+        "component://c/entity/Views.xml",
+        r#"<entities><view-entity entity-name="AandB" package="c">
+        <member-entity entity-alias="A" entity-name="c.A"/><member-entity entity-alias="B" entity-name="${x}"/>
+        <member-relationship entity-alias="R" join-from-alias="A" relationship="Rel"/>
+        <alias-all entity-alias="A" prefix="a"><exclude field="one"/><exclude field="two"/></alias-all>
+        <alias entity-alias="A" name="aName" field="name" type="text-long"/><alias entity-alias="A" name="kind"/>
+    </view-entity></entities>"#,
+    );
+    assert_eq!(
+        marks(&view, "entity:c.AandB"),
+        "member A c.A; member-rel R A Rel; alias-all A a one,two"
+    );
+    assert_eq!(marks(&view, "field:c.AandB.aName"), "alias A name text-long");
+    assert_eq!(marks(&view, "field:c.AandB.kind"), "alias A - -");
+    let services = read(
+        ArtifactKind::Service,
+        "component://c/service/c/S.xml",
+        r#"<services><service verb="update" noun="A"><in-parameters><parameter name="x"/>
+        <auto-parameters entity-name="c.A"/><parameter name="y"/><auto-parameters entity-name="c.B" include="pk"/>
+    </in-parameters></service></services>"#,
+    );
+    assert_eq!(
+        marks(&services, "service:c.S.update#A"),
+        "auto-parameters in c.A all false - x; auto-parameters in c.B pk false - x,y"
+    );
+    let rest = read(
+        ArtifactKind::Rest,
+        "component://c/service/c.rest.xml",
+        r#"<resource name="as"><method type="post"><service name="c.S.update#A"/></method></resource>"#,
+    );
+    assert_eq!(marks(&rest, "rest:/as:post"), "service-call c.S.update#A");
+}
+
 #[test]
 fn resolving_names_fields_entity_auto_and_anchors() {
     let entities = read(

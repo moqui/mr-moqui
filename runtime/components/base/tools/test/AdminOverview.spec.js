@@ -128,6 +128,27 @@ feature("recovery editors load configuration, keep rejected blanks and separate 
             assert.equal(unchanged.description, kind === "Policy" ? policy.description : adapter.description)
             if (kind === "Adapter") assert.equal(unchanged.instructions, adapter.instructions)
         }
+        // An edit reaches the store service with the form's fields: its service-call inside actions passes them by its
+        // in-map, without which the adapter store refused a missing adapterId and the policy store made a blank policy
+        // (plans/ui-review-system-ai-integrations.md AI-UI-005).
+        const policyCount = () => sys(() => ec.entity.find("moqui.monitor.RecoveryPolicy").count())
+        const policiesBefore = policyCount()
+        ec.message.clearErrors()
+        for (const [kind, submitted, entityName, idName, id] of [
+            ["Policy", {policyId: policy.policyId, recoveryPolicyMode: "edit", description: "Edited recovery policy",
+                ladderJson: policy.ladderJson, mode: "approval"}, "moqui.monitor.RecoveryPolicy", "policyId", policy.policyId],
+            ["Adapter", {adapterId: adapter.adapterId, recoveryAdapterMode: "edit", adapterType: "manual",
+                description: "Edited manual adapter", instructions: "Edited instructions."}, "moqui.monitor.RecoveryAdapter", "adapterId",
+                adapter.adapterId]]) {
+            const stored = test.render("Monitor/Recovery/store" + kind, {moquiFormName: "Store" + kind, ...submitted}, "post")
+            assert.equal(stored.errorMessages.join(" | "), "", kind + " edit")
+            ec.message.clearErrors()
+            const row = sys(() => ec.entity.find(entityName).condition(idName, id).one())
+            assert.equal(row.description, submitted.description)
+            if (kind === "Policy") assert.equal(row.mode, "approval")
+            else assert.equal(row.instructions, "Edited instructions.")
+        }
+        assert.equal(policyCount(), policiesBefore, "the edit made no other policy")
     },
     cleanup() {
         sys(() => {

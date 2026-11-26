@@ -14,15 +14,17 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- Maps › Browse (Browse.xml; plans/Maps.md §3.1): m-map filling the space below the shell's header, over the effective
     configuration this component asks getConfig for and hands to m-map as an object (so a layer shown or hidden, a basemap
     chosen, a saved view or a result gone to draws again where the map was). Beside it, one panel at a time: Search (saved
-    places, permitted records and postal codes, a postal area shown by its broad extent), Layers (the basemap, the overlays and record layers, each layer that is not shown named
-    with Retry, and a cut feature list said), Saved views (Save view saves where the map is) and the selected feature's
-    details. Below 600 px the panel is a bottom sheet over the map. Full screen is the browser's, on request. The last view
+    views and places, permitted records and postal codes, a postal area shown by its broad extent, and the configured
+    geocoder's candidates with their source, precision and ambiguity when one is enabled), Layers (the basemap, the
+    overlays and record layers, the user's own and shared overlays with Add overlay and Remove, each layer that is not
+    shown named with Retry, and a cut feature list said), Saved views (Save view saves where the map is) and the selected
+    feature's details (Save place, Remove place). Below 600 px the panel is a bottom sheet over the map. Full screen is the browser's, on request. The last view
     is posted (rememberView) only when the user turned Restore my last view on. Brand color names and Quasar classes
     only. -->
 <template><div ref="frame" class="m-maps-browse column no-wrap" :class="fullscreen ? ($q.dark.isActive ? 'bg-dark' : 'bg-white') : ''">
     <div class="row items-center no-wrap q-gutter-x-xs q-px-sm q-py-xs">
         <div class="col" style="max-width:420px">
-            <m-text-line v-model="query" name="mapsSearch" id="MapsSearch" :label="t('Search saved places, records and postal codes')" @keyup.enter="runSearch"></m-text-line>
+            <m-text-line v-model="query" name="mapsSearch" id="MapsSearch" :label="t('Search places, records and postal codes')" @keyup.enter="runSearch"></m-text-line>
         </div>
         <q-select v-if="postalCountries.length" v-model="postalCountry" :options="postalCountries" option-value="geoId" option-label="name" emit-value map-options
                 dense outlined clearable style="min-width:120px" :label="t('Postal country')" id="MapsPostalCountry"></q-select>
@@ -56,16 +58,19 @@ along with this software (see the LICENSE.md file). If not, see
                 <div v-if="searching" class="m-muted">{{t('Searching…')}}</div>
                 <div v-else-if="!results.length" class="m-muted">{{t('No saved place, record or postal code matches.')}}</div>
                 <div v-if="!searching && postalNote" class="text-caption text-warning q-mb-xs" id="MapsPostalNote">{{postalNote}}</div>
+                <div v-if="!searching && geocoder && geocoder.reason" class="text-caption text-warning q-mb-xs" id="MapsGeocoderNote">{{geocoder.reason}}</div>
+                <div v-if="!searching && geocoder && geocoder.ambiguous" class="text-caption m-muted q-mb-xs">{{t('More than one address or place matches: choose one.')}}</div>
                 <q-list dense separator>
                     <q-item v-for="result in results" :key="result.id" clickable @click="goToResult(result)" :data-maps-result="result.id">
-                        <q-item-section avatar><q-icon :name="result.kind === 'savedView' ? 'sym_o_bookmark' : result.kind === 'postal' || result.kind === 'postalPlace' ? 'sym_o_markunread_mailbox' : 'sym_o_location_on'"></q-icon></q-item-section>
+                        <q-item-section avatar><q-icon :name="resultIcon(result)"></q-icon></q-item-section>
                         <q-item-section>
                             <q-item-label>{{result.label}}</q-item-label>
                             <q-item-label caption>{{[result.sourceText, result.precisionText || precisionText(result.precisionEnumId)].filter(Boolean).join(' · ')}}</q-item-label>
                         </q-item-section>
                     </q-item>
                 </q-list>
-                <div class="text-caption m-muted q-mt-sm">{{t('Saved places, the records of the layers shown in the view on screen and the postal codes of the imported Geo data are searched. Going to a result changes nothing in its record.')}}</div>
+                <div class="text-caption m-muted q-mt-sm">{{t('Saved views and places, the records of the layers shown in the view on screen and the postal codes of the imported Geo data are searched. Going to a result changes nothing in its record.')}}</div>
+                <div v-if="geocoder" class="text-caption m-muted q-mt-xs" id="MapsGeocoderSource">{{t('Addresses and places were also asked of')}} {{geocoder.providerName}}{{geocoder.attribution ? ' (' + attributionText(geocoder.attribution) + ')' : ''}}.</div>
             </template>
 
             <template v-if="panel === 'layers'">
@@ -79,10 +84,10 @@ along with this software (see the LICENSE.md file). If not, see
                     </q-list>
                 </template>
                 <div v-else class="text-caption m-muted q-mt-xs">{{t('Basemap')}}: {{(basemaps[0] || {}).label || t('Country outlines')}}</div>
-                <template v-if="overlays.length || recordLayers.length">
+                <template v-if="profileOverlays.length || recordLayers.length">
                     <div class="text-caption m-muted q-mt-sm">{{t('Layers')}}</div>
                     <q-list dense>
-                        <q-item v-for="layer in overlays.concat(recordLayers)" :key="layer.id" clickable @click="toggleLayer(layer)"
+                        <q-item v-for="layer in profileOverlays.concat(recordLayers)" :key="layer.id" clickable @click="toggleLayer(layer)"
                                 :aria-pressed="layerShown(layer) ? 'true' : 'false'" :data-maps-layer="layer.id">
                             <q-item-section avatar><q-icon :name="layerShown(layer) ? 'check_box' : 'check_box_outline_blank'"></q-icon></q-item-section>
                             <q-item-section>
@@ -93,6 +98,28 @@ along with this software (see the LICENSE.md file). If not, see
                     </q-list>
                 </template>
                 <div v-else class="text-caption m-muted q-mt-sm">{{t('This map profile has no layers over its basemap.')}}</div>
+                <div class="row items-center no-wrap q-mt-sm">
+                    <div class="text-caption m-muted col">{{t('Your overlays and places')}}</div>
+                    <q-btn dense flat no-caps size="sm" icon="sym_o_add" :label="t('Add overlay')" id="MapsAddOverlay" @click="openAddOverlay"></q-btn>
+                </div>
+                <q-list dense v-if="personalOverlays.length">
+                    <q-item v-for="layer in personalOverlays" :key="layer.id" :data-maps-overlay="layer.overlayId">
+                        <q-item-section avatar class="cursor-pointer" @click="toggleLayer(layer)" :aria-pressed="layerShown(layer) ? 'true' : 'false'" role="button">
+                            <q-icon :name="layerShown(layer) ? 'check_box' : 'check_box_outline_blank'"></q-icon>
+                        </q-item-section>
+                        <q-item-section>
+                            <q-item-label>{{layer.label}}</q-item-label>
+                            <q-item-label caption>{{overlayCaption(layer)}}</q-item-label>
+                            <q-item-label v-if="layer.rejectedCount" caption class="text-warning">{{layer.rejectedCount}} {{t('features left out: their geometry is not valid')}}</q-item-label>
+                        </q-item-section>
+                        <q-item-section side v-if="layer.isOwn">
+                            <q-btn dense flat round size="sm" icon="sym_o_delete" :aria-label="t('Remove from the map')" @click="removeOverlay(layer)">
+                                <q-tooltip>{{t('Remove from the map (the file stays in your files)')}}</q-tooltip>
+                            </q-btn>
+                        </q-item-section>
+                    </q-item>
+                </q-list>
+                <div v-else class="text-caption m-muted">{{t('Add a GeoJSON, GPX or KML file. Share its file in Files to show it to others.')}}</div>
                 <div v-if="layerErrors.length" class="q-mt-sm m-maps-layer-errors">
                     <div class="text-caption m-muted">{{t('Not shown')}}</div>
                     <div v-for="layerError in layerErrors" :key="layerError.id" class="row items-start no-wrap q-py-xs" :data-maps-layer-error="layerError.id">
@@ -134,6 +161,8 @@ along with this software (see the LICENSE.md file). If not, see
                 <div class="text-caption m-muted" v-if="selected.precision">{{selected.precision}}</div>
                 <div class="text-caption m-muted" v-if="selected.source">{{selected.source}}</div>
                 <q-btn dense flat no-caps icon="sym_o_content_copy" :label="t('Copy coordinates')" class="q-mt-sm" @click="copy(selected)"></q-btn>
+                <q-btn v-if="!selected.placeId" dense flat no-caps icon="sym_o_star" :label="t('Save place')" class="q-mt-sm" id="MapsSavePlace" @click="openSavePlace"></q-btn>
+                <q-btn v-if="selected.placeId && selected.isOwn" dense flat no-caps icon="sym_o_delete" :label="t('Remove place')" class="q-mt-sm" @click="removePlace(selected)"></q-btn>
             </template>
         </component>
 
@@ -157,6 +186,41 @@ along with this software (see the LICENSE.md file). If not, see
             </div>
         </div>
     </m-dialog>
+
+    <m-dialog v-model="addShown" :title="t('Add overlay')" width="480">
+        <div>
+            <div class="text-caption m-muted">{{t('A GeoJSON, GPX or KML file of at most 10 MB. It is kept in Maps/overlays of your files, checked, and drawn only by this server: links, icons and scripts in it are not followed.')}}</div>
+            <q-file v-model="addFile" dense outlined clearable accept=".geojson,.json,.gpx,.kml" :label="t('Upload a file')" class="q-mt-sm" id="MapsOverlayFile"></q-file>
+            <div v-if="overlayFiles.length" class="q-mt-sm">
+                <div class="text-caption m-muted">{{t('Or one of your files')}}</div>
+                <q-list dense bordered separator style="max-height:180px" class="scroll">
+                    <q-item v-for="file in overlayFiles" :key="file.driveId + '/' + file.path" clickable @click="addPick = file"
+                            :active="addPick === file" active-class="m-tonal text-primary">
+                        <q-item-section>
+                            <q-item-label>{{file.name}}</q-item-label>
+                            <q-item-label caption>{{file.driveName}} · {{file.path}}</q-item-label>
+                        </q-item-section>
+                    </q-item>
+                </q-list>
+            </div>
+            <m-text-line v-model="addLabel" name="label" id="MapsOverlayLabel" :label="t('Name (the file name when empty)')" class="q-mt-sm"></m-text-line>
+            <div class="row justify-end q-mt-md q-gutter-sm">
+                <q-btn flat dense no-caps :label="t('Cancel')" @click="addShown = false"></q-btn>
+                <q-btn dense unelevated no-caps color="primary" :label="t('Add overlay')" :loading="adding" :disable="!addFile && !addPick" @click="addOverlay"></q-btn>
+            </div>
+        </div>
+    </m-dialog>
+
+    <m-dialog v-model="placeShown" :title="t('Save place')" width="440">
+        <div>
+            <m-text-line v-model="placeName" name="placeName" id="MapsPlaceName" :label="t('Name')"></m-text-line>
+            <div class="text-caption m-muted q-mt-xs">{{t('Your places are a file of your files, Maps/places.geojson: private until you share it there.')}}</div>
+            <div class="row justify-end q-mt-md q-gutter-sm">
+                <q-btn flat dense no-caps :label="t('Cancel')" @click="placeShown = false"></q-btn>
+                <q-btn dense unelevated no-caps color="primary" :label="t('Save place')" :loading="saving" :disable="!placeName.trim()" @click="savePlace"></q-btn>
+            </div>
+        </div>
+    </m-dialog>
 </div></template>
 
 <script>
@@ -170,7 +234,8 @@ module.exports = {
     data() {
         return { effective: null, error: '', panel: '', query: '', results: [], postalCountries: [], postalCountry: null, postalNote: '', searching: false, savedViews: [], hidden: {}, basemapId: '',
             view: null, lastView: null, marker: null, selected: null, mapPx: 480, phone: false, fullscreen: false, saveShown: false,
-            saveName: '', saveShared: 'N', saving: false, restoreLastView: false };
+            saveName: '', saveShared: 'N', saving: false, restoreLastView: false, geocoder: null, addShown: false, addFile: null, addPick: null,
+            addLabel: '', adding: false, overlayFiles: [], placeShown: false, placeName: '' };
     },
     computed: {
         screenPath() { return this.mScreen ? this.mScreen.path : this.$root.basePath + '/' + this.$root.currentPathList.join('/'); },
@@ -179,6 +244,9 @@ module.exports = {
         basemaps() { return this.effective && this.effective.profile ? this.effective.profile.basemaps || [] : []; },
         overlays() { return this.effective ? (this.effective.layers || []).filter((layer) => layer && typeof layer === 'object') : []; },
         recordLayers() { return this.effective ? this.effective.recordLayers || [] : []; },
+        // the user's own and shared overlays (find#Overlays, after the profile's layers), apart from the profile's
+        personalOverlays() { return this.overlays.filter((layer) => layer.overlayId); },
+        profileOverlays() { return this.overlays.filter((layer) => !layer.overlayId); },
         layerErrors() { return this.effective ? this.effective.layerErrors || [] : []; },
         problemCount() { return this.layerErrors.length + (this.effective && this.effective.featuresTruncated ? 1 : 0); },
         panelTitle() {
@@ -225,6 +293,15 @@ module.exports = {
             });
         },
         precisionText(id) { return PRECISION[id] ? t(PRECISION[id]) : ''; },
+        resultIcon(result) {
+            return { savedView: 'sym_o_bookmark', postal: 'sym_o_markunread_mailbox', postalPlace: 'sym_o_markunread_mailbox', place: 'sym_o_star',
+                geocoder: 'sym_o_travel_explore' }[result.kind] || 'sym_o_location_on';
+        },
+        attributionText(value) { return String(value || '').split(/\s*\n\s*/).filter(Boolean).join(', '); },
+        overlayCaption(layer) {
+            const owner = layer.isOwn ? (layer.isPlaces ? t('Your places') : t('Yours')) : t('Shared by') + ' ' + (layer.ownerName || '');
+            return [owner, layer.featureCount + ' ' + t('features')].join(' · ');
+        },
         coordinates(place) { return Number(place.lat).toFixed(5) + ', ' + Number(place.lon).toFixed(5); },
         layerShown(layer) { return this.hidden[layer.id] !== undefined ? !this.hidden[layer.id] : layer.visible !== false; },
         // the parameters a configuration is asked with: the page's record, and the layers to show (a hidden record layer's
@@ -234,7 +311,8 @@ module.exports = {
             const out = {};
             ['profileId', 'adapterKey', 'recordKey', 'addressPurpose'].forEach((key) => { if (p[key]) out[key] = p[key]; });
             if (extraLayerId) {
-                const shown = this.overlays.concat(this.recordLayers).filter((layer) => this.layerShown(layer)).map((layer) => layer.id);
+                // a user's overlay is not the profile's layer: getConfig lists it itself
+                const shown = this.profileOverlays.concat(this.recordLayers).filter((layer) => this.layerShown(layer)).map((layer) => layer.id);
                 out.layerIds = shown.concat([extraLayerId]).join(',');
             }
             return out;
@@ -281,7 +359,7 @@ module.exports = {
             // the layers shown and the view on screen bound the records searched
             const params = { q: query };
             if (this.parameters.profileId) params.profileId = this.parameters.profileId;
-            const shown = this.shownLayerIds();
+            const shown = this.shownLayerIds().filter((id) => !id.startsWith('overlay:'));
             if (shown.length) params.layerIds = shown.join(',');
             if (this.lastView && Array.isArray(this.lastView.extent)) params.extent = this.lastView.extent.join(',');
             if (this.postalCountry) params.country = this.postalCountry;
@@ -291,6 +369,7 @@ module.exports = {
                 // the country searched, shown in the selector unless the code was found in more than one
                 if (!this.postalCountry && json.countryGeoId && !json.ambiguous && this.postalCountries.some((one) => one.geoId === json.countryGeoId)) this.postalCountry = json.countryGeoId;
                 this.postalNote = json.reason || '';
+                this.geocoder = json.geocoder || null;
             }, (err) => {
                 this.results = [];
                 this.error = t('The search did not run') + ': ' + (err && err.message || err);
@@ -303,7 +382,8 @@ module.exports = {
             // an approximate place (a postal area) shows its broad extent, never a close zoom on a point it does not know
             this.view = Array.isArray(result.extent) ? { extent: result.extent } : { center: [Number(result.lon), Number(result.lat)], zoom: 14 };
             this.selected = { label: result.label, lon: Number(result.lon), lat: Number(result.lat), layerId: result.layerId,
-                precision: result.precisionText || this.precisionText(result.precisionEnumId), source: result.sourceText };
+                precision: result.precisionText || this.precisionText(result.precisionEnumId), source: result.sourceText,
+                placeId: result.placeId || null, isOwn: !!result.isOwn };
             this.panel = 'details';
         },
         applyView(row) {
@@ -363,6 +443,58 @@ module.exports = {
                     this.loadViews();
                 } else moqui.notifyMessages(null, [json.reason || t('The view was not saved')]);
             }, (err) => moqui.notifyMessages(null, [String(err && err.message || err)])).then(() => { this.saving = false; });
+        },
+        openAddOverlay() {
+            this.addFile = null; this.addPick = null; this.addLabel = ''; this.addShown = true;
+            this.request('overlayFiles').then((json) => { this.overlayFiles = json.fileList || []; }, () => { this.overlayFiles = []; });
+        },
+        // the file is read on the server first: one that cannot be drawn is refused with its reason, nothing kept
+        addOverlay() {
+            if (this.adding) return;
+            this.adding = true;
+            const body = new FormData();
+            if (this.addFile) body.append('overlayFile', this.addFile, this.addFile.name);
+            else if (this.addPick) { body.append('driveId', this.addPick.driveId); body.append('path', this.addPick.path); }
+            if (this.addLabel.trim()) body.append('label', this.addLabel.trim());
+            this.request('addOverlay', { method: 'POST', params: body }).then((json) => {
+                if (json.applied) {
+                    this.addShown = false;
+                    const left = json.rejectedCount ? ' ' + json.rejectedCount + ' ' + t('features left out: their geometry is not valid') : '';
+                    moqui.notifyMessages([{ type: left ? 'warning' : 'success', message: t('Overlay added') + ': ' + json.featureCount + ' ' + t('features') + '.' + left }], null);
+                    this.keepView();
+                    this.load();
+                } else moqui.notifyMessages(null, [json.reason || t('The overlay was not added')]);
+            }, (err) => moqui.notifyMessages(null, [String(err && err.message || err)])).then(() => { this.adding = false; });
+        },
+        removeOverlay(layer) {
+            this.request('removeOverlay', { method: 'POST', params: { overlayId: layer.overlayId } }).then((json) => {
+                if (!json.applied) { moqui.notifyMessages(null, [json.reason || t('The overlay was not removed')]); return; }
+                this.keepView();
+                this.load();
+            }, (err) => moqui.notifyMessages(null, [String(err && err.message || err)]));
+        },
+        openSavePlace() { this.placeName = this.selected && this.selected.label || ''; this.placeShown = true; },
+        savePlace() {
+            if (!this.selected || this.saving) return;
+            this.saving = true;
+            const params = { label: this.placeName.trim(), longitude: String(this.selected.lon), latitude: String(this.selected.lat) };
+            this.request('savePlace', { method: 'POST', params }).then((json) => {
+                if (json.applied) {
+                    this.placeShown = false;
+                    moqui.notifyMessages([{ type: 'success', message: t('Place saved') }], null);
+                    this.selected = Object.assign({}, this.selected, { placeId: json.placeId, isOwn: true, label: params.label });
+                    this.keepView();
+                    this.load();
+                } else moqui.notifyMessages(null, [json.reason || t('The place was not saved')]);
+            }, (err) => moqui.notifyMessages(null, [String(err && err.message || err)])).then(() => { this.saving = false; });
+        },
+        removePlace(place) {
+            this.request('removePlace', { method: 'POST', params: { placeId: place.placeId } }).then((json) => {
+                if (!json.applied) { moqui.notifyMessages(null, [json.reason || t('The place was not removed')]); return; }
+                this.selected = Object.assign({}, this.selected, { placeId: null, isOwn: false });
+                this.keepView();
+                this.load();
+            }, (err) => moqui.notifyMessages(null, [String(err && err.message || err)]));
         },
         copy(place) {
             const text = this.coordinates(place);
