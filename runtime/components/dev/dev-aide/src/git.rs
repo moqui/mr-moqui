@@ -152,6 +152,32 @@ impl Git {
         stdin: Option<&str>,
         progress: Option<Progress>,
     ) -> Result<Output, Error> {
+        self.run_inner(repo, mode, args, env, stdin, progress, None)
+            .map(|(output, _)| output)
+    }
+
+    /// A read whose output is kept to its first `max_stdout` bytes, the rest not read: git stops when its pipe
+    /// closes. Whether the output was cut (then the exit code is the broken pipe's, and the last line may be part of
+    /// one).
+    ///
+    /// # Errors
+    ///
+    /// As [`Git::run`].
+    pub fn read_capped(&self, repo: &Path, args: &[&str], max_stdout: usize) -> Result<(Output, bool), Error> {
+        self.run_inner(repo, Mode::Read, args, &[], None, None, Some(max_stdout))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn run_inner(
+        &self,
+        repo: &Path,
+        mode: Mode,
+        args: &[&str],
+        env: &[(&str, String)],
+        stdin: Option<&str>,
+        progress: Option<Progress>,
+        max_stdout: Option<usize>,
+    ) -> Result<(Output, bool), Error> {
         // a command that changes a repository, or reaches a remote, is never run under a fence or in a sim (an agent's
         // read tool, a preview): it would be real, and nothing undoes it
         if mode != Mode::Read {
@@ -194,16 +220,35 @@ impl Git {
                 let _ = pipe.write_all(text.as_bytes());
             });
         }
-        let reader = |pipe: Option<Box<dyn Read + Send>>| {
+        // the output, at most `max` bytes of it (and whether there was more); the pipe closes as the thread ends
+        let reader = |pipe: Option<Box<dyn Read + Send>>, max: Option<usize>| {
             std::thread::spawn(move || {
                 let mut bytes = Vec::new();
-                if let Some(mut pipe) = pipe {
-                    let _ = pipe.read_to_end(&mut bytes);
+                let mut capped = false;
+                if let Some(pipe) = pipe {
+                    match max {
+                        Some(max) => {
+                            let _ = pipe
+                                .take(u64::try_from(max).unwrap_or(u64::MAX).saturating_add(1))
+                                .read_to_end(&mut bytes);
+                            if bytes.len() > max {
+                                bytes.truncate(max);
+                                capped = true;
+                            }
+                        }
+                        None => {
+                            let mut pipe = pipe;
+                            let _ = pipe.read_to_end(&mut bytes);
+                        }
+                    }
                 }
-                String::from_utf8_lossy(&bytes).into_owned()
+                (String::from_utf8_lossy(&bytes).into_owned(), capped)
             })
         };
-        let stdout = reader(child.stdout.take().map(|pipe| Box::new(pipe) as Box<dyn Read + Send>));
+        let stdout = reader(
+            child.stdout.take().map(|pipe| Box::new(pipe) as Box<dyn Read + Send>),
+            max_stdout,
+        );
         let cancelled = Arc::new(AtomicBool::new(false));
         let (stderr, id) = match progress {
             Some(progress) => {
@@ -215,10 +260,14 @@ impl Git {
                     Some(id),
                 )
             }
-            None => (
-                reader(child.stderr.take().map(|pipe| Box::new(pipe) as Box<dyn Read + Send>)),
-                None,
-            ),
+            None => {
+                let pipe = child.stderr.take().map(|pipe| Box::new(pipe) as Box<dyn Read + Send>);
+                let errors = reader(pipe, None);
+                (
+                    std::thread::spawn(move || errors.join().map(|(text, _)| text).unwrap_or_default()),
+                    None,
+                )
+            }
         };
         let _registered = Registered(id);
         let timeout = match mode {
@@ -250,11 +299,15 @@ impl Git {
             }
             std::thread::sleep(Duration::from_millis(10));
         };
-        Ok(Output {
-            code: status.code(),
-            stdout: stdout.join().unwrap_or_default(),
-            stderr: stderr.join().unwrap_or_default(),
-        })
+        let (stdout, capped) = stdout.join().unwrap_or_default();
+        Ok((
+            Output {
+                code: status.code(),
+                stdout,
+                stderr: stderr.join().unwrap_or_default(),
+            },
+            capped,
+        ))
     }
 
     /// A read whose failure is an error.

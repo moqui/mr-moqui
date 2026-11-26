@@ -101,6 +101,9 @@
 
     // A storage key of a root's state in the browser.
     pure.storageKey = (rootId, what) => "moqui.devAide." + what + "." + rootId;
+    // The key of a buffer's draft: a tab's by its path; a view's companion buffer by its path in its tab's (`owner`), so
+    // a companion and a tab of the same file keep drafts of their own.
+    pure.draftKey = (rootId, buffer) => pure.storageKey(rootId, "draft:" + buffer.path + (buffer.owner ? "|in:" + buffer.owner : ""));
     // The name under the cursor for go to definition: the attribute value around `column` (0-based) of a line, else
     // the word of name characters there (letters, digits, . _ # : / -).
     pure.valueAt = (text, column) => {
@@ -218,8 +221,11 @@
         script: "/devstatic/DevAideService.js", ready: () => !!devAide.serviceViewRegistered });
     devAide.registerView({ name: "eca", label: "Rules", roots: ["secas", "eecas", "emecas", "gitecas"], component: "m-dev-eca-view",
         script: "/devstatic/DevAideService.js", ready: () => !!devAide.serviceViewRegistered });
-    // a .qvue screen's Design view (11.4): by the file's extension, as it has no XML root
-    devAide.registerView({ name: "qvue", label: "Design", extensions: ["qvue"], component: "m-dev-qvue-view",
+    // a .qvue screen's Design view (11.4): by the file's extension, as it has no XML root; its sibling XML is a
+    // companion buffer of the same tab, in Text .xml, so the tab is Design, Text .qvue and Text .xml
+    devAide.registerView({ name: "qvue", label: "Design", textLabel: "Text .qvue", extensions: ["qvue"], component: "m-dev-qvue-view",
+        script: "/devstatic/DevAideQvue.js", ready: () => !!devAide.qvueViewRegistered });
+    devAide.registerView({ name: "qvue-xml", label: "Text .xml", extensions: ["qvue"], component: "m-dev-qvue-xml",
         script: "/devstatic/DevAideQvue.js", ready: () => !!devAide.qvueViewRegistered });
     // A screen in the screen builder (11.2): the entity view's "Show it on a form" and the like, by the reference's
     // other side (an index row with its root and path).
@@ -228,19 +234,26 @@
         if (!other.rootId || !other.relativePath) return;
         root.location.href = "/qapps/dev/Screens/Design?rootId=" + encodeURIComponent(other.rootId) + "&path=" + encodeURIComponent(other.relativePath);
     };
-    // The views offered for a file: Text first, then each spec whose roots take the file's root element.
+    // The views offered for a file: Text first (named by a view of its extension that says how), then each spec whose
+    // roots take the file's root element.
     pure.viewsFor = (specs, path, element) => {
         const offered = [{ name: "text", label: "Text" }];
         const extension = (/\.([A-Za-z0-9]+)$/.exec(String(path || "")) || [])[1] || "";
-        for (const spec of specs || []) if ((spec.extensions || []).indexOf(extension.toLowerCase()) >= 0) offered.push({ name: spec.name, label: spec.label });
+        for (const spec of specs || []) {
+            if ((spec.extensions || []).indexOf(extension.toLowerCase()) < 0) continue;
+            offered.push({ name: spec.name, label: spec.label });
+            if (spec.textLabel) offered[0].label = spec.textLabel;
+        }
         if (extension.toLowerCase() !== "xml" || !element) return offered;
         for (const spec of specs || []) if ((spec.roots || []).indexOf(element) >= 0) offered.push({ name: spec.name, label: spec.label });
         return offered;
     };
-    // The order Save all writes files in (5.7, 6.2): entities, then services, then ECA rules, then screens, then data and
-    // the rest, so a screen never loads before its field.
+    // The order Save all writes files in (5.7, 6.2): entities, then services, then ECA rules, then screens (a .qvue after
+    // the XML screens, so its reload is checked against its XML as saved), then data and the rest, so a screen never
+    // loads before its field.
     pure.kindRank = (path) => {
         const text = String(path || "");
+        if (/\.qvue$/i.test(text)) return 3.5;
         if (/(^|\/)entity\//.test(text) && !/\.eecas\.xml$/.test(text)) return 0;
         if (/\.secas\.xml$|\.eecas\.xml$|\.emecas\.xml$|\.gitecas\.xml$/.test(text)) return 2;
         if (/(^|\/)service\//.test(text)) return 1;
@@ -325,6 +338,63 @@
         const trailer = String(task || "").trim() ? pure.trailerOf(task) : null;
         if (last && last === trailer) lines.pop();
         return lines.join("\n").replace(/\n+$/, "");
+    };
+    // The editor settings (get#EditorSettings, the DEV_AIDE_EDITOR preference, 5.1) as m-code-editor takes them
+    // (moqui.codeEditor.setSettings): the keys of the commands a user rebound, over CodeMirror's.
+    pure.editorSettingsOf = (answer) => {
+        const settings = Object.assign({}, (answer && answer.settings) || {});
+        const keys = {};
+        for (const row of (answer && answer.commands) || []) if (row.keys && row.keys !== row.defaultKeys) keys[row.command] = row.keys;
+        settings.keys = keys;
+        return settings;
+    };
+    // The Workspace's own commands as shell key map actions (moqui.keymap, scope "dev-aide"): the shell's KEYMAP
+    // preference rebinds them by their action ({"dev-aide": {"devGotoFile": "Mod+E"}}) and its ? overlay lists them.
+    // Save is set there alone: the text editor takes devSave's keys (codeMirrorKeys), so Mod-S, or what KEYMAP makes it,
+    // saves in Text as in a visual view.
+    // A shell key map's keys ("Mod+Shift+S", the chord "g s") as CodeMirror writes them ("Mod-Shift-s", "g s").
+    pure.codeMirrorKeys = (keys) => String(keys || "").trim().split(/\s+/).filter((step) => step).map((step) => {
+        const plus = step.length > 1 && step.endsWith("++");
+        const parts = plus ? step.slice(0, -2).split("+").concat(["+"]) : step.split("+");
+        const key = parts.pop();
+        const name = key.length === 1 ? key.toLowerCase() : /^esc(ape)?$/i.test(key) ? "Escape" : key;
+        return parts.concat([name]).join("-");
+    }).join(" ");
+    pure.WORKSPACE_KEYS = Object.freeze([
+        { action: "devGotoFile", keys: "Mod+P", label: "Go to file", run: "openGoto" },
+        { action: "devGotoArtifact", keys: "Mod+Shift+O", label: "Go to artifact", run: "openArtifactGoto" },
+        { action: "devSearchFiles", keys: "Mod+Shift+F", label: "Search in files", run: "showSearch" },
+        { action: "devSave", keys: "Mod+S", label: "Save", run: "saveCurrent" }
+    ]);
+    // The open buffers of the Workspace by root: each tab of `rootId`, and each companion buffer of a tab's view, in
+    // whatever root it is.
+    pure.openBuffers = (tabs, rootId) => {
+        const out = [];
+        for (const tab of tabs || []) {
+            out.push({ rootId, path: tab.path, buffer: tab });
+            for (const buffer of tab.companions || []) out.push({ rootId: buffer.rootId || rootId, path: buffer.path, buffer });
+        }
+        return out;
+    };
+    // What Replace sends of a preview (replace#Files, 4.3) of `rootId`: each file's chosen matches with the hash its
+    // preview read. A file the user may not write is left out, and one open with unsaved changes, in a tab or as a view's
+    // companion buffer, is refused here (the buffer would lose its edit or the replace): save or close it, then preview
+    // again.
+    pure.replaceRequest = (preview, tabs, rootId) => {
+        const dirty = new Set(pure.openBuffers(tabs, rootId).filter((open) => open.rootId === rootId && pure.isDirty(open.buffer))
+            .map((open) => open.path));
+        const files = [];
+        const refused = [];
+        for (const file of (preview && preview.files) || []) {
+            const chosen = (file.matches || []).filter((hit) => hit.chosen !== false).map((hit) => hit.index);
+            if (!chosen.length || file.refused) continue;
+            if (dirty.has(file.path)) {
+                refused.push({ path: file.path, reason: "it has unsaved changes in its tab: save or close it, then preview again" });
+                continue;
+            }
+            files.push({ path: file.path, hash: file.hash, matches: chosen });
+        }
+        return { files, refused, count: files.reduce((sum, file) => sum + file.matches.length, 0) };
     };
 
     // The unsaved drafts (a whole file each, by root and path) in IndexedDB, where a few large files do not fill the
@@ -425,6 +495,8 @@
                 // a Rust change's rebuild (6.5): ./moq build in a host session of the Terminal, followed until it ends
                 rebuild: { needed: false, available: false, sessionId: "", state: "", exitStatus: null },
                 search: { query: "", regex: false, caseSensitive: false, pathFilter: "", results: [], running: false, truncated: false },
+                // Replace across files (4.3): the replacement, the preview with what is chosen, and the last result
+                replace: { open: false, text: "", preview: null, running: false, result: null },
                 diff: null, commitForm: { summary: "", body: "", amend: false, signOff: false, skipHooks: false, task: "" },
                 log: [], commitDetail: null, goto: { open: false, filter: "", files: [], loading: false, error: "" }, busy: "", schemas: {},
                 refs: { title: "", items: [], loading: false }, artifactGoto: { open: false, text: "", results: [], loading: false, error: "" },
@@ -499,6 +571,8 @@
             this.presenceTimer = setInterval(() => this.tellPresence(true), 60000);
             this.onResize = () => { this.narrow = root.innerWidth < 1024; };
             root.addEventListener("resize", this.onResize);
+            this.keysOff = this.registerKeys();
+            this.loadEditorSettings();
             this.loadRoots();
             const assist = moqui.assist;
             if (assist) {
@@ -542,6 +616,13 @@
             if (this.shared && this.rootId) this.post("presence", { rootId: this.rootId, paths: [] }).catch(() => {});
             root.removeEventListener("resize", this.onResize);
             if (this.restoreDrawer) this.restoreDrawer();
+            this.unmounted = true;
+            if (this.keysOff) this.keysOff();
+            // the editor settings are the Workspaces': the next page's editors have CodeMirror's once the last one goes
+            if (this.holdsSettings) {
+                devAide.settingsHolders = Math.max(0, (devAide.settingsHolders || 1) - 1);
+                if (!devAide.settingsHolders) this.setEditorSettings(null);
+            }
             const assist = moqui.assist;
             if (assist) {
                 if (assist.editorState) assist.editorState = null;
@@ -604,7 +685,7 @@
                 const written = this.draftsWritten || new Map();
                 const pending = this.draftsPending || (this.draftsPending = new Map());
                 const keep = (rootId, buffer) => {
-                    const key = pure.storageKey(rootId, "draft:" + buffer.path);
+                    const key = pure.draftKey(rootId, buffer);
                     if (this.draftsOffered && this.draftsOffered.has(key)) return;
                     const text = buffer.text !== buffer.saved ? buffer.text : null;
                     if ((written.has(key) && written.get(key) === text) || (pending.has(key) && pending.get(key) === text)) return;
@@ -626,7 +707,7 @@
             rememberLocally() {
                 if (!this.rootId) return;
                 const keep = (rootId, buffer) => {
-                    const key = pure.storageKey(rootId, "draft:" + buffer.path);
+                    const key = pure.draftKey(rootId, buffer);
                     // a draft offered back waits for the user's answer, as remember leaves it
                     if (this.draftsOffered && this.draftsOffered.has(key)) return;
                     if (buffer.text !== buffer.saved) drafts.setNow(key, { base: buffer.base, text: buffer.text });
@@ -639,7 +720,7 @@
             },
             // The unsaved text an earlier visit left of `buffer`, offered back.
             offerDraft(buffer, rootId) {
-                const key = pure.storageKey(rootId, "draft:" + buffer.path);
+                const key = pure.draftKey(rootId, buffer);
                 this.draftsOffered.add(key);
                 return drafts.get(key).then((draft) => {
                     if (!draft || typeof draft.text !== "string" || draft.text === buffer.text || buffer.readOnly) { this.draftsOffered.delete(key); return; }
@@ -827,10 +908,14 @@
             companion(tab, rootId, path, initialText) {
                 const found = tab.companions.find((item) => item.rootId === rootId && item.path === path);
                 if (found) return Promise.resolve(found);
-                return this.get("file", { rootId, path, missingOk: true }).then((file) => {
+                // one read of each, when two views of the tab ask for it at once (a .qvue's Design and Text .xml)
+                const reading = (this.companionReads || (this.companionReads = new Map()));
+                const key = tab.path + "|" + rootId + "|" + path;
+                if (reading.has(key)) return reading.get(key);
+                const read = this.get("file", { rootId, path, missingOk: true }).then((file) => {
                     const missing = !!file.missing;
                     const text = missing ? (initialText || "") : (file.text || "");
-                    tab.companions.push({ rootId, path, text, saved: missing ? "" : text, base: missing ? "" : file.hash, missing,
+                    tab.companions.push({ rootId, path, owner: tab.path, text, saved: missing ? "" : text, base: missing ? "" : file.hash, missing,
                         readOnly: !!file.readOnly, readOnlyReason: file.readOnlyReason || "", outline: null, undo: [], redo: [] });
                     const buffer = tab.companions[tab.companions.length - 1];
                     this.offerDraft(buffer, rootId);
@@ -838,6 +923,10 @@
                     return this.post("outline", { text: buffer.text }).then((answer) => { buffer.outline = answer.outline || null; return buffer; },
                         () => buffer);
                 });
+                reading.set(key, read);
+                const done = () => reading.delete(key);
+                read.then(done, done);
+                return read;
             },
             loadSchema(tab) {
                 if (!/\.xml$/i.test(tab.path)) return;
@@ -1022,12 +1111,65 @@
             copyPath(target) { if (target && root.navigator && root.navigator.clipboard) root.navigator.clipboard.writeText(target.path); },
             // ---- search and go to file ----
             runSearch() {
-                if (!this.search.query) return;
+                // one search at a time: a second Enter waits for the first
+                if (!this.search.query || this.search.running) return;
                 this.search.running = true;
                 this.get("search", { rootId: this.rootId, query: this.search.query, regex: this.search.regex, caseSensitive: this.search.caseSensitive,
                     pathFilter: this.search.pathFilter }).then((answer) => {
                     this.search.running = false; this.search.results = answer.results || []; this.search.truncated = !!answer.truncated;
                 }, (error) => { this.search.running = false; this.fail(error); });
+            },
+            // ---- replace across files (4.3): a preview, the matches chosen, then Replace through the save pipeline ----
+            replaceQuery() {
+                return { rootId: this.rootId, query: this.search.query, replacement: this.replace.text, regex: this.search.regex,
+                    caseSensitive: this.search.caseSensitive, pathFilter: this.search.pathFilter };
+            },
+            previewReplace() {
+                if (!this.search.query || this.replace.running) return;
+                const replace = this.replace;
+                replace.running = true; replace.result = null;
+                // Replace sends what this preview showed, whatever is typed since
+                const query = this.replaceQuery();
+                this.post("replaceFiles", query).then((answer) => {
+                    replace.running = false;
+                    const files = (answer.files || []).map((file) => Object.assign(file, {
+                        matches: (file.matches || []).map((hit) => Object.assign(hit, { chosen: !file.refused })) }));
+                    replace.preview = { query, files, truncated: !!answer.truncated, matchCount: answer.matchCount || 0 };
+                }, (error) => { replace.running = false; this.fail(error); });
+            },
+            chooseFile(file, chosen) { for (const hit of file.matches) hit.chosen = chosen; },
+            // A view's companion buffer read again from its file, when it has no unsaved text.
+            reloadCompanion(buffer) {
+                return this.get("file", { rootId: buffer.rootId, path: buffer.path, missingOk: true }).then((file) => {
+                    if (pure.isDirty(buffer) || file.missing) return;
+                    buffer.text = file.text || ""; buffer.saved = buffer.text; buffer.base = file.hash;
+                    return this.post("outline", { text: buffer.text }).then((answer) => { buffer.outline = answer.outline || null; }, () => {});
+                }, () => {});
+            },
+            applyReplace() {
+                const replace = this.replace;
+                const request = pure.replaceRequest(replace.preview, this.tabs, this.rootId);
+                if (!request.files.length) {
+                    replace.result = { replaced: [], refused: request.refused };
+                    this.note(moqui.l10n.localize("Nothing chosen to replace"), "warning");
+                    return;
+                }
+                this.$q.dialog({ title: "Replace " + request.count + " matches in " + request.files.length + " files?", cancel: true,
+                    message: moqui.l10n.localize("Each file is saved, reloaded and checked as Save does."), ok: { label: "Replace", color: "primary" } }).onOk(() => {
+                    replace.running = true;
+                    this.post("replaceFiles", Object.assign({}, replace.preview.query, { files: JSON.stringify(request.files) })).then((answer) => {
+                        replace.running = false; replace.preview = null;
+                        replace.result = { replaced: answer.replaced || [], refused: request.refused.concat(answer.refused || []) };
+                        // a replaced file's open buffers have no unsaved text (those were refused): each reads the file again
+                        const replaced = new Set(replace.result.replaced.map((done) => done.path));
+                        for (const open of pure.openBuffers(this.tabs, this.rootId)) {
+                            if (open.rootId !== this.rootId || !replaced.has(open.path) || pure.isDirty(open.buffer)) continue;
+                            if (this.tabs.indexOf(open.buffer) >= 0) this.reloadTab(open.buffer);
+                            else this.reloadCompanion(open.buffer);
+                        }
+                        this.treeKey++; this.refreshStatus();
+                    }, (error) => { replace.running = false; this.fail(error); });
+                });
             },
             openGoto() {
                 this.goto = { open: true, filter: "", files: [], loading: true, error: "" };
@@ -1554,30 +1696,54 @@
             },
             isDirtyAll(tab) { return pure.isDirtyAll(tab); },
             trailerOf(key) { return pure.trailerOf(key); },
-            // Mod+Z, Mod+Shift+Z and Mod+S in a visual view: the buffer's undo and redo, and Save
+            // The user's editor settings (DEV_AIDE_EDITOR) to the editors of this page, as long as it is here: an app page
+            // opened after it in the same window has CodeMirror's (setSettings(null) as the Workspace goes).
+            loadEditorSettings() {
+                const apply = (settings) => {
+                    if (this.unmounted) return;
+                    if (!this.holdsSettings) { this.holdsSettings = true; devAide.settingsHolders = (devAide.settingsHolders || 0) + 1; }
+                    // Save's keys are the shell action's (devSave), in the text editor too
+                    const save = this.saveKeys();
+                    if (save) settings.keys = Object.assign({}, settings.keys, { save });
+                    this.setEditorSettings(settings);
+                };
+                return this.get("editorSettings").then((answer) => apply(pure.editorSettingsOf(answer)), () => apply({ keys: {} }));
+            },
+            setEditorSettings(settings) {
+                const codeEditor = moqui.codeEditor || (moqui.codeEditor = {});
+                if (codeEditor.setSettings) codeEditor.setSettings(settings);
+                else codeEditor.settings = settings;
+            },
+            // The Workspace's own commands as key map actions, while it is on the page.
+            registerKeys() {
+                const keymap = moqui.keymap;
+                if (!keymap || !keymap.registerScope) return null;
+                this.keyBindings = pure.WORKSPACE_KEYS.map((command) => ({ keys: command.keys, action: command.action,
+                    label: moqui.l10n.localize(command.label), run: () => { this[command.run](); return true; } }));
+                return keymap.registerScope("dev-aide", this.keyBindings);
+            },
+            // devSave's keys as the KEYMAP preference makes them, in CodeMirror's form; null with no shell key map
+            saveKeys() {
+                const keymap = moqui.keymap;
+                const binding = (this.keyBindings || []).find((item) => item.action === "devSave");
+                return keymap && keymap.keysOf && binding ? pure.codeMirrorKeys(keymap.keysOf("dev-aide", binding)) || null : null;
+            },
+            showSearch() { this.tab = "code"; this.rail = "search"; },
+            saveCurrent() { if (this.current) this.save(this.current); },
+            // Mod+Z and Mod+Shift+Z in a visual view: the buffer's undo and redo (Save is the key map's devSave)
             onViewKey(event, tab) {
                 const mod = event.ctrlKey || event.metaKey;
                 if (!mod) return;
                 const target = event.target;
                 // a field of the view keeps its own undo
-                if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
-                    if (event.key.toLowerCase() === "s") { event.preventDefault(); this.save(tab); }
-                    return;
-                }
+                if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return;
                 const key = event.key.toLowerCase();
                 if (key === "z") { event.preventDefault(); if (event.shiftKey) this.redo(tab); else this.undo(tab); }
                 else if (key === "y") { event.preventDefault(); this.redo(tab); }
-                else if (key === "s") { event.preventDefault(); this.save(tab); }
-            },
-            onKey(event) {
-                const mod = event.ctrlKey || event.metaKey;
-                if (mod && event.shiftKey && event.key.toLowerCase() === "o") { event.preventDefault(); this.openArtifactGoto(); }
-                else if (mod && event.key.toLowerCase() === "p") { event.preventDefault(); this.openGoto(); }
-                else if (mod && event.shiftKey && event.key.toLowerCase() === "f") { event.preventDefault(); this.tab = "code"; this.rail = "search"; }
             }
         },
         template: `
-<div class="m-dev-workspace column no-wrap" :class="{ 'm-dev-guided': guided }" id="DevWorkspace" tabindex="-1" @keydown="onKey">
+<div class="m-dev-workspace column no-wrap" :class="{ 'm-dev-guided': guided }" id="DevWorkspace" tabindex="-1">
   <div v-if="guided" class="row items-center no-wrap q-gutter-x-sm q-px-sm q-py-xs" id="DevGuidedBar">
     <q-icon :name="root && root.upstream ? 'sym_o_lock' : 'sym_o_folder'" size="18px"><q-tooltip v-if="root && root.upstream" max-width="24rem">{{upstreamHint}}</q-tooltip></q-icon>
     <span class="text-subtitle2 ellipsis">{{current ? current.path.split('/').pop() : ''}}</span>
@@ -1684,9 +1850,38 @@
           <q-checkbox dense size="xs" v-model="search.regex" label=".*"></q-checkbox>
           <q-checkbox dense size="xs" v-model="search.caseSensitive" label="Aa" class="q-ml-sm"></q-checkbox>
           <q-input dense borderless v-model="search.pathFilter" placeholder="in path" class="q-ml-sm col"></q-input>
+          <q-btn v-if="canWrite" dense flat round size="sm" icon="sym_o_find_replace" :color="replace.open ? 'primary' : undefined" :aria-label="t('Replace')"
+              @click="replace.open = !replace.open; replace.preview = null" id="DevReplaceToggle"><q-tooltip>{{ t('Replace across files') }}</q-tooltip></q-btn>
+        </div>
+        <div v-if="replace.open && canWrite" class="row items-center no-wrap q-gutter-x-xs" id="DevReplace">
+          <q-input dense outlined class="col" v-model="replace.text" :placeholder="t('Replace with')" @keyup.enter="previewReplace" id="DevReplaceText"></q-input>
+          <q-btn dense flat no-caps size="sm" :label="t('Preview')" :disable="!search.query" :loading="replace.running && !replace.preview" @click="previewReplace" id="DevReplacePreview"></q-btn>
+          <q-btn dense unelevated no-caps size="sm" color="primary" :label="t('Replace')" :disable="!replace.preview" :loading="replace.running && !!replace.preview"
+              @click="applyReplace" id="DevReplaceApply"></q-btn>
+        </div>
+        <div v-if="replace.result" class="text-caption q-pa-xs" id="DevReplaceResult">
+          <div>{{ replace.result.replaced.reduce((sum, done) => sum + done.count, 0) }} replaced in {{ replace.result.replaced.length }} files</div>
+          <div v-for="item in replace.result.refused" :key="item.path" class="text-warning">{{item.path}}: {{item.reason}}</div>
         </div>
         <q-linear-progress v-if="search.running" indeterminate></q-linear-progress>
-        <q-list dense class="col scroll" id="DevSearchResults">
+        <q-list v-if="replace.open && replace.preview" dense class="col scroll" id="DevReplaceFiles">
+          <q-item-label v-if="!replace.preview.files.length" caption class="q-pa-sm">{{ t('No matches') }}</q-item-label>
+          <template v-for="file in replace.preview.files" :key="file.path">
+            <q-item dense :data-path="file.path">
+              <q-item-section side><q-checkbox dense size="xs" :disable="!!file.refused" :model-value="file.matches.every(hit => hit.chosen)"
+                  @update:model-value="v => chooseFile(file, v)"></q-checkbox></q-item-section>
+              <q-item-section><q-item-label caption class="ellipsis">{{file.path}} · {{file.matches.length}}{{file.more ? '+' : ''}}</q-item-label>
+                <q-item-label v-if="file.refused" caption class="text-warning">{{file.refused}}</q-item-label></q-item-section>
+            </q-item>
+            <q-item v-for="hit in file.matches" :key="file.path + ':' + hit.index" dense clickable class="q-pl-lg" @click="openFile(file.path, hit.line)">
+              <q-item-section side><q-checkbox dense size="xs" :disable="!!file.refused" v-model="hit.chosen" @click.stop></q-checkbox></q-item-section>
+              <q-item-section><q-item-label caption class="ellipsis m-dev-mono">{{hit.line}}: {{hit.text}}</q-item-label>
+                <q-item-label class="ellipsis m-dev-mono">{{hit.after}}</q-item-label></q-item-section>
+            </q-item>
+          </template>
+          <q-item v-if="replace.preview.truncated"><q-item-section class="text-caption">{{ t('The first files and matches only') }}</q-item-section></q-item>
+        </q-list>
+        <q-list v-else dense class="col scroll" id="DevSearchResults">
           <q-item v-for="(hit, index) in search.results" :key="index" clickable @click="openFile(hit.path, hit.line)">
             <q-item-section><q-item-label caption>{{hit.path}}:{{hit.line}}</q-item-label><q-item-label class="ellipsis m-dev-mono">{{hit.text}}</q-item-label></q-item-section>
           </q-item>

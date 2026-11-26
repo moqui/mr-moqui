@@ -207,7 +207,7 @@ pub(crate) fn sha256(bytes: &[u8]) -> String {
 const BOM: &[u8] = b"\xEF\xBB\xBF";
 
 /// A file's bytes as an editor's text: the byte order mark taken off, `None` for bytes that are not UTF-8 text.
-fn decode(bytes: &[u8]) -> Option<(String, bool)> {
+pub(crate) fn decode(bytes: &[u8]) -> Option<(String, bool)> {
     if confine::is_binary(bytes) {
         return None;
     }
@@ -633,6 +633,32 @@ pub(crate) fn save_text(
     base_hash: &str,
     detail: Option<serde_json::Value>,
 ) -> Result<Parameters, LibError> {
+    save_text_with(context, root, resolved, content, base_hash, detail, Endings::File)
+}
+
+/// The line endings a save writes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Endings {
+    /// The file's: CRLF when most of its line breaks are, else LF (an editor's text has LF).
+    File,
+    /// The text's, as given: a replace in the file's own text, whose mixed endings stay mixed.
+    AsGiven,
+}
+
+/// [`save_text`], with the line endings of `endings`.
+///
+/// # Errors
+///
+/// As [`save_text`].
+pub(crate) fn save_text_with(
+    context: &Context,
+    root: &Root,
+    resolved: &confine::Resolved,
+    content: &str,
+    base_hash: &str,
+    detail: Option<serde_json::Value>,
+    endings: Endings,
+) -> Result<Parameters, LibError> {
     context.may_write(root, &resolved.relative)?;
     if content.len() as u64 > context.settings.max_edit_bytes {
         return Err(LibError::new(format!(
@@ -659,11 +685,16 @@ pub(crate) fn save_text(
         }
         None => (false, false),
     };
-    let normalized = content.replace("\r\n", "\n");
-    let body = if crlf_file {
-        normalized.replace('\n', "\r\n")
-    } else {
-        normalized
+    let body = match endings {
+        Endings::AsGiven => content.to_string(),
+        Endings::File => {
+            let normalized = content.replace("\r\n", "\n");
+            if crlf_file {
+                normalized.replace('\n', "\r\n")
+            } else {
+                normalized
+            }
+        }
     };
     let mut bytes = Vec::with_capacity(body.len() + 3);
     if bom {
@@ -897,18 +928,32 @@ fn delete_path(
 
 /// The files of a root a search or Go to file reads: what git tracks and the untracked files it does not ignore, or a
 /// walk of a plain root that leaves out hidden directories and build output.
-fn root_files(context: &Context, root: &Root, limit: usize) -> Vec<String> {
+pub(crate) fn root_files(context: &Context, root: &Root, limit: usize) -> Vec<String> {
+    root_files_where(context, root, limit, &|_| true).0
+}
+
+/// [`root_files`] that `keep` takes (a search's path filter, before the cap), at most `limit`, and whether there were
+/// more.
+pub(crate) fn root_files_where(
+    context: &Context,
+    root: &Root,
+    limit: usize,
+    keep: &dyn Fn(&str) -> bool,
+) -> (Vec<String>, bool) {
     if root.kind == RootKind::Git {
         if let Ok(out) = context.git().read(
             &root.path,
             &["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
         ) {
-            return out
+            let mut files: Vec<String> = out
                 .split('\0')
-                .filter(|path| !path.is_empty())
-                .take(limit)
+                .filter(|path| !path.is_empty() && keep(path))
+                .take(limit.saturating_add(1))
                 .map(str::to_string)
                 .collect();
+            let more = files.len() > limit;
+            files.truncate(limit);
+            return (files, more);
         }
     }
     let mut files = Vec::new();
@@ -937,16 +982,16 @@ fn root_files(context: &Context, root: &Root, limit: usize) -> Vec<String> {
                 if context.resolve(root, &path).is_ok() {
                     stack.push((entry.path(), path));
                 }
-            } else {
-                files.push(path);
+            } else if keep(&path) {
                 if files.len() >= limit {
-                    return files;
+                    return (files, true);
                 }
+                files.push(path);
             }
         }
     }
     files.sort();
-    files
+    (files, false)
 }
 
 /// `find#Files`: every file of a root, for Go to file (the client filters).
@@ -963,8 +1008,13 @@ fn find_files(
     Ok(out)
 }
 
-/// `search#Files`: lines matching `query` (text, or a regular expression with `regex`), at most 500, with `git grep`
-/// in a repository (its .gitignore respected) and a walk of the files in a plain root.
+/// The most bytes of `git grep`'s output a search reads.
+const GREP_MAX_BYTES: usize = 1 << 20;
+
+/// `search#Files`: lines matching `query` (text, or a regular expression with `regex`), at most 500: a text with `git
+/// grep` in a repository (its .gitignore respected); a regular expression, and any query in a plain root, by Rust's
+/// regex over the root's files (what git tracks and the untracked ones it does not ignore), as Replace across files
+/// reads it, each file up to `max-edit-bytes`.
 fn search_files(
     ec: &ExecutionContext,
     _service: &ServiceInfo<'_>,
@@ -976,14 +1026,21 @@ fn search_files(
     if query.is_empty() {
         return Err(LibError::new("nothing to search for"));
     }
+    if query.len() > crate::replace::MAX_QUERY_BYTES {
+        return Err(LibError::new(format!(
+            "the text to find is over {} bytes",
+            crate::replace::MAX_QUERY_BYTES
+        )));
+    }
     let regex = flag(parameters, "regex");
     let case = flag(parameters, "caseSensitive");
     let filter = text(parameters, "pathFilter");
     const LIMIT: usize = 500;
     let mut results = Vec::new();
-    if root.kind == RootKind::Git {
-        let mut args = vec!["grep", "-n", "-I", "--no-color", "-z", "--untracked"];
-        args.push(if regex { "-E" } else { "-F" });
+    // text through git grep; a regular expression by Rust's, as Replace across files reads it, so the two agree
+    let truncated;
+    if root.kind == RootKind::Git && !regex {
+        let mut args = vec!["grep", "-n", "-I", "--no-color", "-z", "--untracked", "-F"];
         if !case {
             args.push("-i");
         }
@@ -991,12 +1048,19 @@ fn search_files(
         if !filter.is_empty() {
             args.push(&filter);
         }
-        let output = context.git().run(&root.path, git::Mode::Read, &args, &[], None)?;
-        // exit 1 is "no match"
-        if output.code != Some(0) && output.code != Some(1) {
+        // the first lines only: git stops at its closed pipe, not reading the rest of the root
+        let (output, capped) = context.git().read_capped(&root.path, &args, GREP_MAX_BYTES)?;
+        // exit 1 is "no match"; a cut output ends at the broken pipe
+        if !capped && output.code != Some(0) && output.code != Some(1) {
             return Err(LibError::new(format!("git grep: {}", output.stderr.trim())));
         }
-        for line in output.stdout.lines().take(LIMIT) {
+        truncated = capped;
+        let mut lines: Vec<&str> = output.stdout.lines().collect();
+        if capped {
+            // the last line may be part of one
+            lines.pop();
+        }
+        for line in lines.into_iter().take(LIMIT) {
             let mut parts = line.splitn(3, '\0');
             if let (Some(path), Some(number), Some(text)) = (parts.next(), parts.next(), parts.next()) {
                 // what an open would refuse is not shown: the runtime's denied files, its conf below the full tier
@@ -1009,37 +1073,17 @@ fn search_files(
             }
         }
     } else {
-        let pattern = if regex { query.clone() } else { regex::escape(&query) };
-        let matcher = regex::RegexBuilder::new(&pattern)
-            .case_insensitive(!case)
-            .build()
-            .map_err(|err| LibError::new(format!("the regular expression: {err}")))?;
-        'files: for path in root_files(&context, root, 20_000) {
-            if !filter.is_empty() && !path.contains(filter.trim_matches('*')) {
-                continue;
+        // over the whole text, as Replace across files matches (`\n` across lines), answered by line
+        let matcher = crate::replace::compile(&query, regex, case).map_err(LibError::new)?;
+        truncated = crate::replace::scan_files(&context, root, &filter, &mut |file| {
+            for (line, text) in crate::replace::matched_lines(&matcher, file.body, LIMIT - results.len()) {
+                results.push(serde_json::json!({ "path": file.relative, "line": line, "text": text }));
             }
-            // confined as an open is: a symlink leading out, .git and the runtime's denied directories are passed over
-            let Ok(resolved) = context.resolve(root, &path) else {
-                continue;
-            };
-            let Ok(bytes) = std::fs::read(&resolved.path) else {
-                continue;
-            };
-            let Some((body, _)) = decode(&bytes) else {
-                continue;
-            };
-            for (index, line) in body.lines().enumerate() {
-                if matcher.is_match(line) {
-                    results.push(serde_json::json!({ "path": path, "line": index + 1, "text": line }));
-                    if results.len() >= LIMIT {
-                        break 'files;
-                    }
-                }
-            }
-        }
+            results.len() < LIMIT
+        });
     }
     let mut out = Parameters::new();
-    out.insert("truncated".into(), Value::Bool(results.len() >= LIMIT));
+    out.insert("truncated".into(), Value::Bool(truncated || results.len() >= LIMIT));
     out.insert("results".into(), json_value(&results));
     Ok(out)
 }

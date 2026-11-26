@@ -14,8 +14,9 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- Dev AIDE Settings (plans/design-dev-aide.md 16): the site components (whose files the extend tier writes; the rest is
     upstream), "Allow editing upstream components" for a full-tier user (D17), the roots with their labels, read only
-    flags and publish branches (question 15), roots of other directories, git init of a plain root, network git on a
-    shared dev server (an admin's), and the group servers (21.2): Connect signs in at the server as an installed app
+    flags and publish branches (question 15), the editor's settings and keys (5.1, DEV_AIDE_EDITOR), roots of other
+    directories, git init of a plain root, network git on a shared dev server (an admin's), and the group servers
+    (21.2): Connect signs in at the server as an installed app
     (its page comes back to serverSignedIn here), through the identity provider the user picks of those the server
     offers or its own login, or takes a pasted token, then sets what the user confirms. The services
     check the tier; the page shows what the user may change. -->
@@ -53,6 +54,14 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><message type="success">Removed the connection${removed.removed &amp;&amp; removed.removed.length ? ' and ' + removed.removed.join(', ') : ''}</message></actions>
         <default-response url="."/></transition>
 
+    <!-- the editor (5.1): the user's DEV_AIDE_EDITOR preference, its keys a row each -->
+    <transition name="setEditorSettings"><service-call name="org.moqui.devaide.WorkspaceServices.store#EditorSettings"/>
+        <actions><message type="success">Editor settings saved: the Workspace's next page load takes them</message></actions>
+        <default-response url="."/><error-response url="."/></transition>
+    <transition name="setEditorKey"><service-call name="org.moqui.devaide.WorkspaceServices.store#EditorKey"/>
+        <actions><message type="success">Keys saved</message></actions>
+        <default-response url="."/><error-response url="."/></transition>
+
     <transition name="setSiteComponents"><service-call name="org.moqui.devaide.WorkspaceServices.set#Setting"
             in-map="{settingName: 'siteComponents', settingValue: siteComponents}"/>
         <actions><message type="success">Site components saved</message></actions>
@@ -84,6 +93,11 @@ along with this software (see the LICENSE.md file). If not, see
         <set field="siteComponents" from="(info.siteComponents || []).join(', ')"/>
         <set field="upstreamEdits" from="info.upstreamEdits ? 'true' : 'false'"/>
         <set field="admin" from="ec.user.isInGroup('ADMIN')" type="Boolean"/>
+        <service-call name="org.moqui.devaide.WorkspaceServices.get#EditorSettings" out-map="editor"/>
+        <set field="editorSettings" from="Object.assign({}, editor.settings || {}, {wrap: editor.settings &amp;&amp; editor.settings.wrap ? 'true' : 'false',
+            whitespace: editor.settings &amp;&amp; editor.settings.whitespace ? 'true' : 'false'})"/>
+        <set field="editorCommands" from="editor.commands || []"/>
+        <set field="keymapOptions" from="(editor.keymaps || ['default']).map((name) => ({key: name, text: name == 'default' ? 'Default (CodeMirror)' : name}))"/>
         <service-call name="org.moqui.devaide.HostingServices.get#Servers" out-map="hosting"/>
         <set field="servers" from="(hosting.servers || []).map((server) => Object.assign({}, server, {
             offered: [server.offer &amp;&amp; server.offer.git ? 'git' : null, server.offer &amp;&amp; server.offer.gateway &amp;&amp; server.offer.gateway.enabled ? 'LLM gateway' : null,
@@ -165,6 +179,33 @@ along with this software (see the LICENSE.md file). If not, see
                 </form-single>
             </box-body></container-box>
         </widgets></section>
+
+        <container-box id="DevAideEditorBox"><box-header title="Editor"/><box-body>
+            <label type="p" text="How the code editor shows your files in the Workspace and the guided tools, for you only."/>
+            <form-single name="EditorSettingsForm" transition="setEditorSettings" map="editorSettings">
+                <!-- the services' ranges: a font size of 8 to 32, a tab size of 1 to 8 -->
+                <field name="fontSize"><default-field title="Font size (px)"><drop-down>
+                    <option key="8"/><option key="9"/><option key="10"/><option key="11"/><option key="12"/><option key="13"/><option key="14"/><option key="15"/><option key="16"/><option key="17"/><option key="18"/><option key="19"/><option key="20"/><option key="22"/><option key="24"/><option key="28"/><option key="32"/>
+                </drop-down></default-field></field>
+                <field name="tabSize"><default-field title="Tab size (and indent)"><drop-down>
+                    <option key="" text="CodeMirror's (a tab of 4, an indent of 2)"/><option key="1"/><option key="2"/><option key="3"/><option key="4"/><option key="5"/><option key="6"/><option key="7"/><option key="8"/>
+                </drop-down></default-field></field>
+                <field name="wrap"><default-field title="Wrap long lines"><radio><option key="false" text="No"/><option key="true" text="Yes"/></radio></default-field></field>
+                <field name="whitespace"><default-field title="Show white space"><radio><option key="false" text="No"/><option key="true" text="Yes"/></radio></default-field></field>
+                <field name="keymap"><default-field title="Keymap"><drop-down><list-options list="keymapOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
+            </form-single>
+            <label type="p" text="The code editor's keys, over the keymap: modifiers (Mod is Ctrl, or Cmd on a Mac; Ctrl, Alt, Shift) and a key joined by -, such as Mod-Shift-f. Empty sets the default back. The Workspace's own keys (Go to file, Go to artifact, Search in files, Save) are the shell's: its ? lists them, and the KEYMAP preference rebinds them by their action ({&quot;dev-aide&quot;: {&quot;devGotoFile&quot;: &quot;Mod+E&quot;}})."/>
+        </box-body></container-box>
+        <container-box id="DevAideEditorKeysBox"><box-header title="Editor keys"/><box-body-nopad>
+            <form-list name="EditorKeys" list="editorCommands" transition="setEditorKey" paginate="false">
+                <field name="command"><default-field><hidden/></default-field></field>
+                <field name="label"><default-field title="Command"><display/></default-field></field>
+                <field name="defaultKeys"><default-field title="Default"><display/></default-field></field>
+                <field name="keys"><default-field title="Keys"><text-line size="18"/></default-field></field>
+                <field name="submitButton"><default-field title=""><submit text="Set"/></default-field></field>
+            </form-list>
+        </box-body-nopad></container-box>
 
         <container-box id="DevAideSiteBox"><box-header title="Site components"/><box-body>
             <label type="p" text="The components this site owns, comma separated, the first the default target of an extension. Every other component is upstream: read only, and extended from the site component instead of edited."/>

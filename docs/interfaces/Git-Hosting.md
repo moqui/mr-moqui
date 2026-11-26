@@ -408,6 +408,7 @@ Mantle-free: Mantle links merge requests to work items and comments to lines.
 |---|---|
 | `find#GitRepositories` | the repositories the user may view, paged, by id list, text and kind; archived ones only with `includeArchived` or `archivedOnly`; each with its open merge requests |
 | `find#GitUpdates` | a repository's push log, newest first: every push (refused ones too), mirror fetch, import and write, its refs and the state of its gitECA rules |
+| `get#GitUpdateEventContexts` | the contexts the gitECA rules of an event had, or would have had, from a change of the push log, built as the events build them (one for pre-receive and post-receive, one a ref, a tag created or a new commit; at most 50 contexts and 200 commits): for trying a rule's condition against a recorded push (the Dev AIDE's ECA view); only the commits the caller reads by id are listed, from tips the caller reads, and a ref the change did not make (a refused push's) lists none, what is left out marking the list short (`newCommitsTruncated`, `truncated`) |
 | `get#GitTree` | a directory at a revision, directories first, each entry with its size (a file in LFS: its content's) and last commit, from the path index of the branch the revision names (or of the commit) |
 | `get#GitRefs`, `get#GitLog`, `get#GitCommit`, `get#GitCommitDiff`, `get#GitBlob` | as before ([Revision-Management](../data/Revision-Management.md)); `get#GitBlob` reads a file of at most `git-server` `blob-max-bytes` (16 MiB, an LFS file's content counted) and answers a larger one's `size` and `tooLarge` only (a `git://` location streams it, as a screen's raw download does); a commit's diff diffs its first `commit-max-diff-files` (300) files and lists the rest with `tooLarge`; a `get#GitLog` page with a `path` compares at most `log-max-commits` (10,000) commits at it and ends there, with `hasMore` when it found any |
 | `get#GitBlame` | for each line of a file at a revision, the commit that last changed it ([below](#blame-and-archive)) |
@@ -529,7 +530,8 @@ node, or the first merge request hidden there, counts at once.
   to `refs/for/` whose head is not read (a hidden merge request's), no `ecaError`, and of each ref's `result` only
   `ok`, `pending` or `refused` (the text of a refusal names objects and says what a rule checks). Its
   `updateListCount` is then the rows given up to this page, one more while rows may follow, not the size of the
-  log.
+  log. `get#GitUpdateEventContexts` is for a user with the update right only, as the whole log is: a context holds
+  the user, the push options and object ids. It lists only the commits that user reads by id (`get#GitCommit`'s rule: not a hidden merge request's, nor another fork's of a shared store), so it says no more about the store than those reads do.
 - **Hidden.** `GitReviewServices.set#MergeRequestHidden(mergeRequestId, hidden)` (with authorization disabled, else
   the delete right) sets `GitMergeRequest.hiddenDate` while an application holds a merge request's text: its head is
   then fetched by nobody, by name or by id, its commits are not read by id, and `get#MergeRequest`,
