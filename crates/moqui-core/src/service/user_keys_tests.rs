@@ -514,3 +514,52 @@ fn credentials_need_a_recent_sign_in_and_an_access_token_is_for_git_alone() {
     crate::user::login_user_key_for(&token, crate::user::ACCESS_TOKEN_SCOPE).unwrap();
     crate::user::logout().unwrap();
 }
+
+/// A scoped key's login runs its request as the key's user while the web session keeps its own identity (none here):
+/// the session moves to no new id, the request declines it, the HTTP log names the user, and the session bound again
+/// later has nobody in it.
+#[test]
+fn a_scoped_keys_login_is_held_for_its_request_and_never_the_sessions() {
+    let (facade, context) = entered();
+    let _entered = context.enter();
+    crate::service::load_definitions().unwrap();
+    {
+        let _authz = context.disable_authz();
+        let mut row = facade.make_value("moqui.security.UserAccount").unwrap();
+        row.set("userId", Value::string("keys.eve"));
+        row.set("username", Value::string("keys.eve"));
+        row.create(&facade).unwrap();
+    }
+    let (made, errors) = call_as("keys.eve", "create#UserScopedKey", &[("scope", Value::string("tasks"))]);
+    assert!(errors.is_empty(), "{errors}");
+    let key = to_plain_string(&made["loginKey"]);
+    // an anonymous session the client already holds
+    let held = {
+        let guard = crate::user::bind(context.factory(), None, None, false).unwrap();
+        crate::user::session::set_visit("visit-eve", "visitor-eve");
+        guard.session_id()
+    };
+    {
+        let _request = crate::user::session::RequestSessionScope::begin();
+        let guard = crate::user::session::bind_id(context.factory(), Some(&held), false).unwrap();
+        assert!(crate::user::apply_header_keys_scoped(Some(&key), None, &["tasks"]).unwrap());
+        assert_eq!(crate::user::current_username().unwrap().as_deref(), Some("keys.eve"));
+        assert_eq!(
+            crate::user::session::stored_user_id(),
+            None,
+            "the session never holds it"
+        );
+        assert!(crate::user::session::session_declined());
+        assert_eq!(guard.session_id(), held, "no new id");
+        assert_eq!(
+            crate::user::session::http_log_identity().username.as_deref(),
+            Some("keys.eve")
+        );
+    }
+    let _guard = crate::user::session::bind_id(context.factory(), Some(&held), false).unwrap();
+    assert_eq!(
+        crate::user::current_user_id().unwrap(),
+        None,
+        "the held session has nobody in it"
+    );
+}

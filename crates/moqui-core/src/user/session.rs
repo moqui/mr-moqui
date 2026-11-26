@@ -305,13 +305,24 @@ pub(crate) struct Memory {
     scoped_key: Option<String>,
 }
 
-/// The identity of the bound web session under a device's request, and what the device may open.
+/// The identity of the bound web session under a request that runs as someone the session never holds: a shared
+/// device's (with what the device may open, `scope`), or a key's made for one service alone ([`hold_for_scoped_key`],
+/// no scope), which keeps the session's token, locale and time zone too (`kept`).
 #[derive(Clone)]
 struct DeviceHold {
-    scope: Arc<super::device::DeviceScope>,
+    scope: Option<Arc<super::device::DeviceScope>>,
     user_id: Option<String>,
     username: Option<String>,
     anonymous: bool,
+    kept: Option<KeptView>,
+}
+
+/// What of the web session a key's login made for one service alone would change, held as the session had it.
+#[derive(Clone)]
+struct KeptView {
+    csrf_token: Option<String>,
+    locale: Option<String>,
+    time_zone: Option<String>,
 }
 
 impl Memory {
@@ -1653,12 +1664,16 @@ pub(crate) fn enter_device(user_id: &str, username: &str, scope: Arc<super::devi
     with_session(|session| {
         let hold = match session.device.take() {
             // entered twice in one request: the session's own identity is the one first held
-            Some(hold) => DeviceHold { scope, ..hold },
+            Some(hold) => DeviceHold {
+                scope: Some(scope),
+                ..hold
+            },
             None => DeviceHold {
-                scope,
+                scope: Some(scope),
                 user_id: session.user_id.clone(),
                 username: session.username.clone(),
                 anonymous: session.anonymous,
+                kept: None,
             },
         };
         session.device = Some(hold);
@@ -1683,7 +1698,50 @@ pub(crate) fn leave_device() {
 
 /// What the device whose request this is may open, when the request is a shared device's.
 pub(crate) fn device_scope() -> Option<Arc<super::device::DeviceScope>> {
-    with_session(|session| session.device.as_ref().map(|hold| Arc::clone(&hold.scope)))
+    with_session(|session| session.device.as_ref().and_then(|hold| hold.scope.clone()))
+}
+
+/// Hold the web session's identity for this web request, before a key made for one service alone signs its user in
+/// (`check_login_key`): the request runs as the key's user, and the session keeps its own user (none), token, locale
+/// and time zone, as under a shared device's request ([`thread_view`] stores what is held). The login moves the session
+/// to no new id and links it to no Visit (`identity_held`). The hold ends with the request ([`RequestSessionScope`]).
+/// False, and nothing held, outside a web request or under a device's.
+pub(crate) fn hold_for_scoped_key() -> bool {
+    let in_request = REQUEST_SESSION.with(|slot| slot.borrow().is_some());
+    if !in_request {
+        return false;
+    }
+    with_session(|session| {
+        if session.device.is_some() {
+            return false;
+        }
+        session.device = Some(DeviceHold {
+            scope: None,
+            user_id: session.user_id.clone(),
+            username: session.username.clone(),
+            anonymous: session.anonymous,
+            kept: Some(KeptView {
+                csrf_token: session.csrf_token.clone(),
+                locale: session.locale.clone(),
+                time_zone: session.time_zone.clone(),
+            }),
+        });
+        true
+    })
+}
+
+/// Whether this request runs as a key's user the web session does not hold ([`hold_for_scoped_key`]).
+pub(crate) fn identity_held() -> bool {
+    with_session(|session| session.device.as_ref().is_some_and(|hold| hold.kept.is_some()))
+}
+
+/// The user the web session itself holds: under a device's or a scoped key's request, the one held, else the
+/// context's.
+pub fn stored_user_id() -> Option<String> {
+    with_session(|session| match &session.device {
+        Some(hold) => hold.user_id.clone(),
+        None => session.user_id.clone(),
+    })
 }
 
 /// Who is logged in on this context, with what a login changes beside the user, for [`restore_identity`].
@@ -2268,6 +2326,12 @@ impl RequestSessionScope {
 
 impl Drop for RequestSessionScope {
     fn drop(&mut self) {
+        // a scoped key's hold is this request's alone
+        with_session(|session| {
+            if session.device.as_ref().is_some_and(|hold| hold.kept.is_some()) {
+                session.device = None;
+            }
+        });
         let previous = self.previous.take();
         REQUEST_SESSION.with(|slot| *slot.borrow_mut() = previous);
     }
@@ -2288,10 +2352,10 @@ pub fn decline_session() {
 }
 
 /// A key made for one service alone (`UserLoginKey.scope`: a git access token, a git, tasks or gateway key) signed this
-/// web request in, with no session user before it: the request declines its session ([`decline_session`]), so its
-/// response carries no session cookie or token, and the login is taken off the session before the request ends
-/// ([`scoped_login_noted`]), so a cookie the client already held never becomes the account's session. Each request
-/// carries the key. Nothing outside a web request.
+/// web request in, with no session user before it, under [`hold_for_scoped_key`]: the request declines its session
+/// ([`decline_session`]), so its response carries no session cookie or token, and the session, which never took the
+/// login, is as the request found it (one made for the request, with nobody in it, is not kept). Each request carries
+/// the key. Nothing outside a web request.
 pub fn note_scoped_login() {
     REQUEST_SESSION.with(|slot| {
         if let Some(request) = slot.borrow_mut().as_mut() {
@@ -2986,6 +3050,21 @@ fn thread_view(session: &mut Memory) -> ThreadView {
         Some(hold) => (hold.user_id.clone(), hold.username.clone(), hold.anonymous),
         None => (session.user_id.clone(), session.username.clone(), session.anonymous),
     };
+    // under a scoped key's request the session keeps its own token, locale and time zone too
+    let kept = session.device.as_ref().and_then(|hold| hold.kept.clone());
+    // and the mark of a header login, which is that request's alone
+    let mut dirty_json = session.dirty_json.clone();
+    if kept.is_some() {
+        dirty_json.remove(super::login::HEADER_LOGIN);
+    }
+    let (csrf_token, locale, time_zone) = match kept {
+        Some(kept) => (kept.csrf_token, kept.locale, kept.time_zone),
+        None => (
+            session.csrf_token.clone(),
+            session.locale.clone(),
+            session.time_zone.clone(),
+        ),
+    };
     ThreadView {
         bound_id: session.bound_id.clone(),
         factory: session.factory.clone(),
@@ -2993,13 +3072,13 @@ fn thread_view(session: &mut Memory) -> ThreadView {
         username,
         visit_id: session.visit_id.clone(),
         visitor_id: session.visitor_id.clone(),
-        locale: session.locale.clone(),
-        time_zone: session.time_zone.clone(),
-        csrf_token: session.csrf_token.clone(),
+        locale,
+        time_zone,
+        csrf_token,
         anonymous,
         attributes: session.attributes.clone(),
         dirty_columns: session.dirty_columns.clone(),
-        dirty_json: session.dirty_json.clone(),
+        dirty_json,
     }
 }
 

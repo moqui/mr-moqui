@@ -497,7 +497,11 @@ fn save_history(user_id: &str, successful: bool) {
             Value::string(if successful { "Y" } else { "N" }),
         ),
     ]);
-    let visit_id = session::visit_id().ok().flatten().filter(|id| !id.is_empty());
+    // a scoped key's login is its request's alone, of no Visit, which a declined request may take back
+    let visit_id = Some(())
+        .filter(|()| !session::identity_held())
+        .and_then(|()| session::visit_id().ok().flatten())
+        .filter(|id| !id.is_empty());
     if let Some(visit_id) = &visit_id {
         fields.insert("visitId".to_string(), Value::string(visit_id));
     }
@@ -820,7 +824,8 @@ fn internal_login(username: &str, queued: bool, person: bool) -> (Option<String>
             // code of a second factor, a forced password change, a key, an identity provider), so an id planted
             // before the sign-in does not carry it (SEC-WEB-05). A queued worker has no session of its own, and a
             // session the server made for this request was never anyone else's.
-            if queued || before == user_id || session::session_made_for_request() {
+            // a scoped key's login is held for its request, never the session's ([`session::hold_for_scoped_key`])
+            if queued || before == user_id || session::session_made_for_request() || session::identity_held() {
                 return Ok(());
             }
             session::rotate_on_password_login()
@@ -1047,6 +1052,11 @@ fn check_login_key(key: &str, session_user: Option<&str>, scopes: &[&str]) -> Re
     if !key_scope.is_empty() && !scopes.contains(&key_scope.as_str()) {
         return Err(refused_credential());
     }
+    // a key for one service alone signs in its own request alone: the web session keeps its own identity, and gets no
+    // cookie or token from it, so a later request by cookie is not the account's
+    if !key_scope.is_empty() && session_user.is_none() && session::hold_for_scoped_key() {
+        session::note_scoped_login();
+    }
     if let Some(thru) = field_millis(&row, "thruDate") {
         if key_ended(thru, now_millis()) {
             save_history(&user_id, false);
@@ -1065,11 +1075,6 @@ fn check_login_key(key: &str, session_user: Option<&str>, scopes: &[&str]) -> Re
     }
     if !key_scope.is_empty() {
         session::set_scoped_key(Some(hashed.clone()));
-        // a key for one service alone signs in its own request alone: a web session gets neither its login nor a cookie
-        // or token from it, so a later request by cookie is not the account's
-        if session_user.is_none() {
-            session::note_scoped_login();
-        }
     }
     // a device's key shows when it was last used, in the user's device list (plans/Mobile-Desktop.md, MD3)
     if !text_field(&row, "deviceName").is_empty() {
@@ -2119,6 +2124,10 @@ fn finish_login(
         let zone = nonempty(text_field(account, "timeZone"));
         session::set_locale(locale.as_deref());
         session::set_time_zone(zone.as_deref());
+        // a scoped key's request holds no Visit of the session's for its user
+        if session::identity_held() {
+            return Ok(());
+        }
         link_visit(facade, &user_id)
     })?;
     // As Java's `UserFacadeImpl`, a web login runs the webapp's after-login actions.

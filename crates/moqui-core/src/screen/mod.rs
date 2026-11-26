@@ -433,13 +433,6 @@ fn handle(
         scripts.fire("requestDestroyed", Value::Null);
     }
     scripts.run_actions_logged("after-request", parameters);
-    // a key for one service alone signed this request in: its login was the request's, and leaves the session as the
-    // request found it (it declined the session, so nothing of it was sent)
-    if user::session::scoped_login_noted() {
-        if let Err(err) = user::logout_local() {
-            tracing::error!("The login of a key for one service was not taken off the session: {err}");
-        }
-    }
     let committed = web::stream::committed();
     let choice = match decided.get() {
         Some(choice) => choice,
@@ -656,7 +649,8 @@ fn stamp_http_log(response: &mut WebResponse) {
         visit_id: user::visit_id().ok().flatten(),
         session,
         visitor_id,
-        remote_user,
+        // a scoped key's request whose session was not kept is still its user's
+        remote_user: remote_user.or_else(|| user::current_username().ok().flatten()),
     };
 }
 
@@ -1040,7 +1034,12 @@ struct SessionChoice {
 /// The choice for a request whose response is `public` ([`is_public`]), as the request stands now.
 fn session_choice(new_session: bool, public: bool) -> Result<SessionChoice, Error> {
     let declined = user::session::session_declined();
-    let anonymous = user::session::current_user_id()?.is_none();
+    // a scoped key's request runs as its user, whom the session never holds: what the session itself has decides
+    let anonymous = if user::session::scoped_login_noted() {
+        user::session::stored_user_id().is_none()
+    } else {
+        user::session::current_user_id()?.is_none()
+    };
     Ok(SessionChoice {
         declined,
         discard: anonymous && new_session && (declined || public),
