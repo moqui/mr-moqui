@@ -23,9 +23,9 @@ use crate::model::EntityModel;
 use super::{
     add_column, count, count_view, count_with, create_fk_index, create_foreign_key, create_index, create_table, delete,
     drop_fts_index, foreign_key_index_name, foreign_key_name, fts_index_name, fts_index_sql, fts_old_index_name,
-    insert, insert_if_missing, insert_or_update, render_condition, select, select_view, select_view_with, select_with,
-    supports_insert_if_missing, supports_upsert, update, CompareOp, Condition, FieldRef, LimitOffset, Lock, Nulls,
-    OrderBy, PlainValues, SelectOptions, Statement,
+    insert, insert_if_missing, insert_or_update, insert_rows, render_condition, select, select_view, select_view_with,
+    select_with, supports_insert_if_missing, supports_insert_rows, supports_upsert, update, CompareOp, Condition,
+    FieldRef, LimitOffset, Lock, Nulls, OrderBy, PlainValues, SelectOptions, Statement,
 };
 
 fn workspace_root() -> std::path::PathBuf {
@@ -75,6 +75,25 @@ fn checked(statement: Statement) -> Statement {
         statement.params
     );
     statement
+}
+
+/// Several rows to an insert: the one-row statement with a values list for each further row; Oracle takes one.
+#[test]
+fn insert_rows_repeats_the_values_list() {
+    let (model, dialects) = framework();
+    let enumeration = model.entity("moqui.basic.Enumeration").unwrap();
+    let columns = ["enumId", "description"];
+    for name in ["postgres", "mysql", "sqlite"] {
+        let dialect = dialects.get(name).unwrap();
+        assert!(supports_insert_rows(dialect), "{name}");
+        let one = insert(enumeration, dialect, &columns).unwrap();
+        assert_eq!(insert_rows(enumeration, dialect, &columns, 1).unwrap(), one);
+        assert_eq!(
+            insert_rows(enumeration, dialect, &columns, 3).unwrap(),
+            format!("{one}, (?, ?), (?, ?)")
+        );
+    }
+    assert!(!supports_insert_rows(dialects.get("oracle").unwrap()));
 }
 
 #[test]

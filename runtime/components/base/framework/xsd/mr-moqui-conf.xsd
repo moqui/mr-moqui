@@ -3445,6 +3445,12 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="local-run-copy-mb" type="xs:string" default="1024"><xs:annotation><xs:documentation>A run
                 in a job's image works on a copy of the working tree's files: a tree whose files come to more than this many
                 MB is refused.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="coedit-max-rooms" type="xs:string" default="20"><xs:annotation><xs:documentation>In
+                shared mode, the most files one user co-edits at once (plans/design-dev-aide.md F15); a join past it is
+                refused.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="coedit-max-total-bytes" type="xs:string" default="67108864"><xs:annotation><xs:documentation>In
+                shared mode, the most bytes of every co-edited file's room on the server together (their state with its
+                edits); a join or an update past it is refused.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
 

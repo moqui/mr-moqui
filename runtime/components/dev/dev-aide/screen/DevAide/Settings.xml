@@ -104,9 +104,10 @@ along with this software (see the LICENSE.md file). If not, see
         <set field="admin" from="ec.user.isInGroup('ADMIN')" type="Boolean"/>
         <service-call name="org.moqui.devaide.WorkspaceServices.get#EditorSettings" out-map="editor"/>
         <set field="editorSettings" from="Object.assign({}, editor.settings || {}, {wrap: editor.settings &amp;&amp; editor.settings.wrap ? 'true' : 'false',
-            whitespace: editor.settings &amp;&amp; editor.settings.whitespace ? 'true' : 'false'})"/>
+            whitespace: editor.settings &amp;&amp; editor.settings.whitespace ? 'true' : 'false',
+            typeCheck: editor.settings &amp;&amp; editor.settings.typeCheck ? 'true' : 'false'})"/>
         <set field="editorCommands" from="editor.commands || []"/>
-        <set field="keymapOptions" from="(editor.keymaps || ['default']).map((name) => ({key: name, text: name == 'default' ? 'Default (CodeMirror)' : name}))"/>
+        <set field="keymapOptions" from="(editor.keymaps || ['default']).map((name) => ({key: name, text: ({default: 'Default (CodeMirror)', vscode: 'VS Code', vim: 'Vim'})[name] || name}))"/>
         <service-call name="org.moqui.devaide.HostingServices.get#Servers" out-map="hosting"/>
         <set field="servers" from="(hosting.servers || []).map((server) => Object.assign({}, server, {
             offered: [server.offer &amp;&amp; server.offer.git ? 'git' : null, server.offer &amp;&amp; server.offer.gateway &amp;&amp; server.offer.gateway.enabled ? 'LLM gateway' : null,
@@ -226,6 +227,8 @@ along with this software (see the LICENSE.md file). If not, see
                 <field name="wrap"><default-field title="Wrap long lines"><radio><option key="false" text="No"/><option key="true" text="Yes"/></radio></default-field></field>
                 <field name="whitespace"><default-field title="Show white space"><radio><option key="false" text="No"/><option key="true" text="Yes"/></radio></default-field></field>
                 <field name="keymap"><default-field title="Keymap"><drop-down><list-options list="keymapOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                <!-- the TypeScript checker (5.4): a worker of the browser loads the compiler (3.6 MB) on the first script tab -->
+                <field name="typeCheck"><default-field title="Check script types (TypeScript, in the browser)"><radio><option key="false" text="No"/><option key="true" text="Yes"/></radio></default-field></field>
                 <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
             </form-single>
             <label type="p" text="The code editor's keys, over the keymap: modifiers (Mod is Ctrl, or Cmd on a Mac; Ctrl, Alt, Shift) and a key joined by -, such as Mod-Shift-f. Empty sets the default back. The Workspace's own keys (Go to file, Go to artifact, Search in files, Save) are the shell's: its ? lists them, and the KEYMAP preference rebinds them by their action ({&quot;dev-aide&quot;: {&quot;devGotoFile&quot;: &quot;Mod+E&quot;}})."/>

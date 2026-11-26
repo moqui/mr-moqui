@@ -72,8 +72,12 @@
     const same = (actual, expected, seen) => {
         if (Object.is(actual, expected)) return true;
         if (typeof actual !== "object" || typeof expected !== "object" || actual === null || expected === null) return false;
-        if (seen.has(actual)) return seen.get(actual) === expected;
-        seen.set(actual, expected);
+        // `seen` holds the pairs already being compared, so a cycle ends there; the same object twice (no cycle) is
+        // compared again against each object it meets
+        let against = seen.get(actual);
+        if (against && against.has(expected)) return true;
+        if (!against) seen.set(actual, (against = new Set()));
+        against.add(expected);
         if (actual instanceof Date || expected instanceof Date) {
             return actual instanceof Date && expected instanceof Date && Object.is(actual.getTime(), expected.getTime());
         }
