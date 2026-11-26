@@ -30,11 +30,19 @@ impl Drop for Scratch {
     }
 }
 
-/// The environment that keeps git from the desktop's config, credentials and prompts, with a fixed identity.
-fn isolated(home: &Path) -> Vec<(&'static str, String)> {
+/// The environment that keeps git from the desktop's config, credentials and prompts, with a fixed identity; and from
+/// the repository a git hook runs this test in (GIT_DIR, GIT_INDEX_FILE and the rest set to the scratch tree's own,
+/// since `Git::run` adds variables and removes none).
+fn isolated(home: &Path, root: &Path) -> Vec<(&'static str, String)> {
     let null = if cfg!(windows) { "NUL" } else { "/dev/null" };
     let home = home.display().to_string();
+    let git_dir = root.join(".git");
     vec![
+        ("GIT_DIR", git_dir.display().to_string()),
+        ("GIT_WORK_TREE", root.display().to_string()),
+        ("GIT_INDEX_FILE", git_dir.join("index").display().to_string()),
+        ("GIT_COMMON_DIR", git_dir.display().to_string()),
+        ("GIT_OBJECT_DIRECTORY", git_dir.join("objects").display().to_string()),
         ("HOME", home.clone()),
         ("USERPROFILE", home.clone()),
         ("XDG_CONFIG_HOME", home),
@@ -59,6 +67,11 @@ fn git_runs_in_a_canonical_root_and_its_output_parses() {
         write_timeout: Duration::from_secs(30),
     };
     if !git.available() {
+        // CI's runners have git: there its absence is a failure, not a pass
+        let ci = ["CI", "GITHUB_ACTIONS"]
+            .iter()
+            .any(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()));
+        assert!(!ci, "no git on the PATH of a CI run");
         eprintln!("git_runs_in_a_canonical_root_and_its_output_parses: no git on the PATH, not run");
         return;
     }
@@ -72,7 +85,13 @@ fn git_runs_in_a_canonical_root_and_its_output_parses() {
     std::fs::create_dir_all(&runtime).unwrap();
     // as a root is: canonical (on Windows the verbatim form)
     let root = base.join("site").canonicalize().unwrap();
-    let env = isolated(&home);
+    #[cfg(windows)]
+    assert!(
+        root.to_string_lossy().starts_with(r"\\?\"),
+        "a canonical root on Windows is verbatim: {}",
+        root.display()
+    );
+    let env = isolated(&home, &root);
     let run = |mode: Mode, args: &[&str]| {
         git.run(&root, mode, args, &env, None)
             .unwrap()
