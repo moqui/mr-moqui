@@ -1694,6 +1694,8 @@ fn apply(
                         Change::Removed(path) => path.clone(),
                     };
                     tracing::error!("Artifact index: the rows of {path} were not written: {err}");
+                    #[cfg(test)]
+                    lock(&UNWRITTEN).push(path);
                 }
             }
         }
@@ -1851,6 +1853,16 @@ fn expand_in(
 /// ([`write_expanded`]) fails, each once, by the factory whose index writes it, so tests in parallel keep their own.
 #[cfg(test)]
 pub(crate) static FAIL_EXPANSION_WRITE: Mutex<Vec<(usize, String)>> = Mutex::new(Vec::new());
+
+/// A test's failure point in the index writer: the files whose rows fail to write while they are listed, each batch
+/// that has one of them and each attempt of the file alone ([`write_changes`]), by path, which a test's own directory
+/// keeps apart from another's.
+#[cfg(test)]
+pub(crate) static FAIL_FILE_WRITE: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// Under test, each file whose rows were logged as not written, by path.
+#[cfg(test)]
+pub(crate) static UNWRITTEN: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 /// The key of `factory` in [`FAIL_EXPANSION_WRITE`].
 #[cfg(test)]
@@ -2137,7 +2149,20 @@ fn write_changes(
             })
         }),
     )?;
-    facade.create_values(FILE, files)
+    facade.create_values(FILE, files)?;
+    // under test, a batch with a failing file fails after its rows are sent, as a duplicate key would fail it
+    #[cfg(test)]
+    for change in changes {
+        if let Change::Read { file, .. } = change {
+            let path = file.path.display().to_string();
+            if lock(&FAIL_FILE_WRITE).contains(&path) {
+                return Err(Error::new(format!(
+                    "duplicate key value violates unique constraint (the failure point of {path})"
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Delete the rows of `entity` whose `field` is one of `values`, five hundred values to a find.

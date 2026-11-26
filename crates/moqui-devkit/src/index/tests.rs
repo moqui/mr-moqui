@@ -500,3 +500,42 @@ fn a_build_reads_the_ids_again_only_after_the_rows_changed() {
     build_files(bed.factory(), bed.files(), false).unwrap();
     assert_eq!(loads(), after + 2, "the build before wrote its rows");
 }
+
+/// A batch with a file whose rows fail (a duplicate key) is written again file by file: the other files' rows are
+/// written, the failing file is logged alone and has no rows, and the next build reads it again.
+#[test]
+fn a_batch_that_fails_is_written_again_file_by_file() {
+    let bed = RowsBed::new("retry-files");
+    let entity = |name: &str| {
+        format!(
+            r#"<entities><entity entity-name="{name}" package="rows"><field name="id" type="id" is-pk="true"/></entity></entities>"#
+        )
+    };
+    bed.write("entity/AEntities.xml", &entity("Apple"));
+    let bad = bed.write("entity/BEntities.xml", &entity("Banana"));
+    bed.write("entity/CEntities.xml", &entity("Cherry"));
+    let bad_path = bad.display().to_string();
+    let _enter = bed.ctx.enter();
+    let _authz = bed.ctx.disable_authz();
+    lock(&FAIL_FILE_WRITE).push(bad_path.clone());
+    let report = build_files(bed.factory(), bed.files(), false).unwrap();
+    lock(&FAIL_FILE_WRITE).retain(|path| *path != bad_path);
+    let logged: Vec<String> = lock(&UNWRITTEN)
+        .iter()
+        .filter(|path| path.starts_with(&bed.dir.display().to_string()))
+        .cloned()
+        .collect();
+    assert_eq!(logged, std::slice::from_ref(&bad_path), "the failing file is logged alone");
+    assert_eq!(report.read, 2, "{report:?}");
+    assert!(bed.has_artifact("entity:rows.Apple"));
+    assert!(bed.has_artifact("entity:rows.Cherry"));
+    assert!(
+        !bed.has_artifact("entity:rows.Banana"),
+        "its batch's rows were rolled back"
+    );
+    assert!(bed.ids(FILE, "filePath", &bad_path, "filePath").is_empty());
+
+    let report = build_files(bed.factory(), bed.files(), false).unwrap();
+    assert_eq!((report.read, report.unchanged), (1, 2), "{report:?}");
+    assert!(bed.has_artifact("entity:rows.Banana"));
+}
