@@ -464,6 +464,11 @@ The `dev-aide` conf element (the component's `MoquiConf.xml`; Settings stores so
 | `local-run-timeout-minutes` | 60 | After which a run in the image is stopped |
 | `local-run-limit` | 2 | Runs in the image a user may have going |
 | `local-run-copy-mb` | 1024 | The most the copy of a working tree may hold |
+| `hosted-max-deleted` | 2000 | The most files a delete of a hosted root's folder removes in its one commit; a folder with more is refused |
+
+The framework's `dev-reload` element (`MoquiDefaultConf.xml`) has the dev tools' own: `index-writers` (3), the
+connections the artifact index writes a build's rows on at once, a hundred files to a transaction, at most one more
+than the pool's connections the request and service workers leave.
 
 Its `task-app` elements name the task apps' project and task paths; Settings › Task apps adds more (`DevAideTaskApp`
 rows). The preferences: `DEV_AIDE_EDITOR`,

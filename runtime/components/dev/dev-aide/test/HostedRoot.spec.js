@@ -3,8 +3,8 @@
 // does not relabel it), is a root of kind hosted with no working tree. Its tree, a file, Go to file and search read the
 // branch; a Save is a commit by the user with its message (Edit <path> by default) and the task trailer; a Save over a
 // file the branch moved past since it was opened is a conflict with the branch's text, which a Save at that blob then
-// commits over; a new file, a new folder, a move and a delete are commits too (a folder of more than 2,000 files is
-// not deleted), and the first Save of an empty repository makes its default branch; a branch whose rules refuse a direct commit refuses the Save and the root says why; the
+// commits over; a new file, a new folder, a move and a delete are commits too (a folder of more files than
+// dev-aide@hosted-max-deleted is not deleted), and the first Save of an empty repository makes its default branch; a branch whose rules refuse a direct commit refuses the Save and the root says why; the
 // git commands of a working tree and Replace across files are refused. Repositories' Add hosted root is checked
 // through its transition and get#HostedRepositories (WorkspaceTui renders the screen).
 // Run: ./moq test dev-aide --spec HostedRoot
@@ -326,17 +326,19 @@ feature("a new file, a new folder, a move and a delete are commits; the git comm
     }
 })
 
-feature("a folder of more than 2,000 files is not deleted", {
+feature("a folder of more files than dev-aide@hosted-max-deleted is not deleted", {
     when() {
+        // the limit made small, so the folder over it is small too
+        setConf("dev-aide@hosted-max-deleted", "20")
         const many = {}
-        for (let at = 0; at <= 2000; at++) many["many/f" + at + ".txt"] = String(at)
+        for (let at = 0; at <= 20; at++) many["many/f" + at + ".txt"] = String(at)
         asSystem(() => call(GIT + "commit#GitFiles", {repositoryId: REPO, message: "Many", fileMap: many}))
         const refused = call(WS + "delete#Path", {rootId, path: "many"})
         return {refused, still: (call(WS + "list#Directory", {rootId, path: "many"}).out.entries || []).length}
     },
     then({refused, still}) {
-        refused.errors.includes("more than 2000 files")
-        still == 2001
+        refused.errors.includes("more than 20 files")
+        still == 21
     }
 })
 

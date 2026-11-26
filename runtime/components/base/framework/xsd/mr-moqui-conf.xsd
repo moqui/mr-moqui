@@ -3387,6 +3387,10 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="debounce-ms" type="xs:string" default="300"><xs:annotation><xs:documentation>
                 How long after the last change in a burst the reload runs, so an editor's write and rename is one
                 change.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="index-writers" type="xs:string" default="3"><xs:annotation><xs:documentation>The
+                connections the artifact index writes its rows on at once, each batch of files in a transaction of its
+                own (a build's write is bound by the database); at most one more than the connections of the pool the
+                request and service workers leave, at least one.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
 
@@ -3451,6 +3455,9 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="coedit-max-total-bytes" type="xs:string" default="67108864"><xs:annotation><xs:documentation>In
                 shared mode, the most bytes of every co-edited file's room on the server together (their state with its
                 edits); a join or an update past it is refused.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="hosted-max-deleted" type="xs:string" default="2000"><xs:annotation><xs:documentation>The
+                most files a delete of a folder of a hosted root removes in its one commit; a folder with more is
+                refused, never deleted in part.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
 
