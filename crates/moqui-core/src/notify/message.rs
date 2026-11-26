@@ -303,9 +303,9 @@ impl NotificationMessage {
     ///
     /// # Errors
     ///
-    /// Returns an error when the topic name or type is invalid, expansion fails, the rows cannot be written, or, with no
-    /// transaction in place, the message cannot be published (after its emails and pushes are tried). After a commit
-    /// those failures are logged.
+    /// Returns an error when the topic name or type is invalid, expansion fails, or the rows cannot be written. A failed
+    /// publish is logged, not returned, as its rows are stored and its emails and pushes tried by then: a caller that
+    /// retries on an error sends nothing twice. After a commit every failure is logged.
     pub fn send(&mut self) -> Result<(), Error> {
         if self.topic.is_empty() {
             return Err(Error::new("notification topic is required"));
@@ -435,9 +435,15 @@ impl NotificationMessage {
                 HashMap::new()
             }
             None => match delivery.deliver(&facade) {
+                // the rows are stored and the emails and pushes went out: a publish failure is logged, not returned,
+                // so a caller that retries on an error sends nothing twice
                 Ok(delivered) => {
                     if let Some(err) = delivered.publish_error {
-                        return Err(err);
+                        tracing::error!(
+                            topic = %self.topic,
+                            error = %err,
+                            "A notification was stored and its emails and pushes tried, but it was not published"
+                        );
                     }
                     delivered.email_message_ids
                 }
