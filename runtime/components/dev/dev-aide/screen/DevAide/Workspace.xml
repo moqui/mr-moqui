@@ -66,6 +66,8 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/></transition>
     <transition name="check"><service-call name="org.moqui.devaide.WorkspaceServices.check#File" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
+    <transition name="typeDeclarations" read-only="true"><service-call name="org.moqui.devaide.WorkspaceServices.get#TypeDeclarations" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
     <transition name="presence"><service-call name="org.moqui.devaide.WorkspaceServices.set#Presence" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
     <transition name="setUpstreamEdits"><service-call name="org.moqui.devaide.WorkspaceServices.set#UpstreamEdits" in-map="true" web-send-json-response="true"/>
@@ -143,7 +145,13 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/></transition>
     <transition name="startLocalRun"><service-call name="org.moqui.devaide.LocalRunServices.start#LocalRun" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
+    <transition name="localRun" read-only="true"><service-call name="org.moqui.devaide.LocalRunServices.get#LocalRun" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="stopLocalRun"><service-call name="org.moqui.devaide.LocalRunServices.stop#LocalRun" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
     <!-- worktrees for agents' sessions (21.8, P13) -->
+    <transition name="hostedRoot" read-only="true"><service-call name="org.moqui.devaide.HostedRootServices.get#HostedRoot" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
     <transition name="worktrees" read-only="true"><service-call name="org.moqui.devaide.WorktreeServices.get#Worktrees" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
     <transition name="createWorktree"><service-call name="org.moqui.devaide.WorktreeServices.create#Worktree" in-map="true" web-send-json-response="true"/>
@@ -253,6 +261,8 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/></transition>
     <transition name="exportRecords" read-only="true"><service-call name="org.moqui.devaide.EntityServices.export#Records" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
+    <transition name="planDataLoad" read-only="true"><service-call name="org.moqui.devaide.EntityServices.plan#DataLoad" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
     <transition name="loadChanged"><service-call name="org.moqui.devaide.EntityServices.load#ChangedRecords" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
     <transition name="viewSql" read-only="true"><service-call name="org.moqui.devaide.EntityServices.get#ViewSql" in-map="true" web-send-json-response="true"/>
@@ -286,6 +296,14 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="pushContexts" read-only="true"><service-call name="org.moqui.devaide.ServiceWriterServices.get#PushContexts" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
     <transition name="evalCondition"><service-call name="org.moqui.devaide.ServiceWriterServices.eval#Condition" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="ruleFixtures" read-only="true"><service-call name="org.moqui.devaide.ServiceWriterServices.list#RuleFixtures" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="ruleFixture"><service-call name="org.moqui.devaide.ServiceWriterServices.save#RuleFixture" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="tryRule"><service-call name="org.moqui.devaide.ServiceWriterServices.try#Rule" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="ruleSpec"><service-call name="org.moqui.devaide.ServiceWriterServices.save#RuleSpec" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
     <transition name="ecaRules" read-only="true"><service-call name="org.moqui.devaide.ServiceWriterServices.list#EcaRules" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>

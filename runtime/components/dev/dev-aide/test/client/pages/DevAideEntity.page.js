@@ -33,8 +33,7 @@ test("the view's builders make the operations of the vectors", async () => {
             const answer = ops[call.builder].apply(null, call.args.map(resolve));
             list = list.concat(call.take ? answer[call.take] : answer);
         }
-        // as JSON: a builder may share a path between two operations, which the comparison would read as a cycle
-        assert.deepEqual(JSON.parse(JSON.stringify(list)), vector.ops, vector.name);
+        assert.deepEqual(list, vector.ops, vector.name);
     }
 });
 

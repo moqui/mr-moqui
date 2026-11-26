@@ -1675,7 +1675,7 @@ pub fn evaluate_rules(
         for _ in 1..workers {
             if let Err(error) = std::thread::Builder::new()
                 .name("alert-evaluator".into())
-                .spawn_scoped(scope, work)
+                .spawn_scoped(scope, moqui_core::context::framework_thread(work))
             {
                 tracing::error!(%error,"alert evaluator worker could not start; the others take its rules");
             }

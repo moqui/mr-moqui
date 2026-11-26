@@ -37,6 +37,7 @@ pub mod status;
 
 pub use anonymous::{AnonymousAccess, AnonymousLogin};
 pub use artifact::{Authz, AuthzGuard, AuthzScope, Tarpit};
+pub use background::framework_thread;
 pub use cache::CacheFacade;
 pub use component::{
     component_entity_dirs, component_entity_dirs_of, discover_again, discover_components, read_component, ComponentInfo,

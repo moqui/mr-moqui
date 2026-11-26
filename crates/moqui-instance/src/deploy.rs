@@ -51,6 +51,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use moqui_core::context::framework_thread;
 use moqui_core::context::ExecutionContextFactory;
 use moqui_core::entity::{EntityFacade, EntityValue};
 use moqui_lib::error::Error as LibError;
@@ -1605,7 +1606,7 @@ pub fn request(
     let user = moqui_core::user::current_user_id().ok().flatten();
     let name = format!("instance-deploy-{first}");
     let start = move || -> std::io::Result<()> {
-        std::thread::Builder::new().name(name).spawn(move || {
+        std::thread::Builder::new().name(name).spawn(framework_thread(move || {
             let context = factory.new_context();
             let _entered = context.enter();
             let Some(facade) = factory.entity() else {
@@ -1647,7 +1648,7 @@ pub fn request(
             if let Err(err) = actions::finish(&facade, &waiting, status, &report) {
                 tracing::error!("Instances: the waiting deploy {waiting} was not updated: {err}");
             }
-        })?;
+        }))?;
         Ok(())
     };
     // it waits on the action and lease rows this request makes: it starts once they are committed

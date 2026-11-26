@@ -915,7 +915,7 @@ interface MoquiUserFacade {
     setEffectiveTime(time: TimestampInput | null): void;
     readonly passwordRules: { minLength: number; minDigits: number; minOthers: number };
     getPreference(key: string): string | null;
-    /** The kind of login key this request's user signed in with (the `api_key` or `login_key` header, or `loginUserKey`): `device` (a device's key), `token` (an access token, which only git over HTTP and the git REST take), `session` (a `getLoginKey` key) or `scoped` (a key for one service, which only that service's login takes); null for any other login. */
+    /** The kind of login key this request's user signed in with (the `api_key` or `login_key` header, or `loginUserKey`): `device` (a device's key), `token` (an access token or a key for git alone, which only git over HTTP and the REST resources that declare `key-scope` git take), `session` (a `getLoginKey` key) or `scoped` (a key for one service, tasks or the gateway, which only that service's login and the REST resources that declare its `key-scope` take); null for any other login. A key made for one service signs in its request alone, never the web session. */
     readonly loginKeyKind: "device" | "token" | "session" | "scoped" | null;
     getLoginKeyKind(): "device" | "token" | "session" | "scoped" | null;
     /** The `moqui.server.Visit` id of this session, null outside one. */

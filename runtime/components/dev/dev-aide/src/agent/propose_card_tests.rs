@@ -46,6 +46,7 @@ fn root(components: &Json) -> Root {
         worktree_of: None,
         conversation_id: None,
         worktree_user_id: None,
+        hosted_branch: None,
     }
 }
 

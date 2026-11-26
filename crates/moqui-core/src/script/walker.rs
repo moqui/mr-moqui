@@ -36,6 +36,18 @@ pub(crate) type Resolve<'a> = &'a dyn Fn(&MNode) -> Result<Option<MNode>, Error>
 ///
 /// Returns the error of `resolve`.
 pub(crate) fn tree_json(node: &MNode, opaque: &HashSet<String>, resolve: Option<Resolve<'_>>) -> Result<String, Error> {
+    tree_json_at(node, opaque, resolve, false)
+}
+
+/// [`tree_json`] with each element's `path` too when `paths`: its index among its parent's child elements, from the
+/// root's (the root's path is empty, its children `0`, `1`, ..., theirs `1.0`), as the Dev AIDE's outline numbers them.
+/// A traced XML actions text names its elements by it (`super::trace`).
+pub(crate) fn tree_json_at(
+    node: &MNode,
+    opaque: &HashSet<String>,
+    resolve: Option<Resolve<'_>>,
+    paths: bool,
+) -> Result<String, Error> {
     fn text(out: &mut String, value: &str) {
         out.push_str(&serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_string()));
     }
@@ -45,6 +57,7 @@ pub(crate) fn tree_json(node: &MNode, opaque: &HashSet<String>, resolve: Option<
         opaque: &HashSet<String>,
         resolve: Option<Resolve<'_>>,
         inert: bool,
+        path: Option<&str>,
     ) -> Result<(), Error> {
         let replaced = match resolve {
             Some(resolve) if !inert => resolve(node)?,
@@ -75,19 +88,30 @@ pub(crate) fn tree_json(node: &MNode, opaque: &HashSet<String>, resolve: Option<
             text(out, &stamp);
         }
         out.push_str(if inert { ",\"inert\":true" } else { ",\"inert\":false" });
+        if let Some(path) = path {
+            out.push_str(",\"path\":");
+            text(out, path);
+        }
         out.push_str(",\"children\":[");
         let inert_children = inert || opaque.contains(name.as_str());
         for (index, child) in node.children().iter().enumerate() {
             if index > 0 {
                 out.push(',');
             }
-            element(out, child, opaque, resolve, inert_children)?;
+            let child_path = path.map(|path| {
+                if path.is_empty() {
+                    index.to_string()
+                } else {
+                    format!("{path}.{index}")
+                }
+            });
+            element(out, child, opaque, resolve, inert_children, child_path.as_deref())?;
         }
         out.push_str("]}");
         Ok(())
     }
     let mut out = String::new();
-    element(&mut out, node, opaque, resolve, false)?;
+    element(&mut out, node, opaque, resolve, false, paths.then_some(""))?;
     Ok(out)
 }
 

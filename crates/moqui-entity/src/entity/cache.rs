@@ -1528,6 +1528,31 @@ pub(crate) fn on_delete_keys(facade: &EntityFacade, entity_name: &str, keys: &[A
     (crate::hooks::get().cluster_note_writes)(facade, entity_name, &meta.pk_fields, keys).map_err(Error::from)
 }
 
+/// [`on_write_shared`] for the rows one call created (`EntityFacade::create_values`): with no cache of the entity's
+/// finds or counts the first row's eviction (its views cleared, the find fence moved) stands for them all, and the
+/// frame clears the entity whole at its end, as for each of the rows; with one, each row is evicted and kept for the
+/// frame's end. One cluster invalidation carries every key.
+pub(crate) fn on_create_rows(facade: &EntityFacade, entity_name: &str, rows: &[Arc<FieldMap>]) -> Result<(), Error> {
+    let Some(first) = rows.first() else {
+        return Ok(());
+    };
+    let meta = read_meta(facade, entity_name)?;
+    if evict(facade, &meta, "create", first)? {
+        for (at, row) in rows.iter().enumerate() {
+            let cached = at == 0 || evict(facade, &meta, "create", row)?;
+            note_frame_write(facade, entity_name, &meta.full_name, || {
+                cached.then(|| FrameWrite {
+                    operation: "create",
+                    values: Arc::clone(row),
+                })
+            })?;
+        }
+    } else {
+        note_frame_write(facade, entity_name, &meta.full_name, || None)?;
+    }
+    (crate::hooks::get().cluster_note_writes)(facade, entity_name, &meta.pk_fields, rows).map_err(Error::from)
+}
+
 fn write_hooks(
     facade: &EntityFacade,
     entity_name: &str,

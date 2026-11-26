@@ -28,8 +28,8 @@ use std::time::Duration;
 
 use serde_json::json;
 
-pub use moqui_lib::docker::DockerHost;
-use moqui_lib::docker::{Created, Engine, HostAddress, CALL_TIMEOUT, NETWORK_KEYWORDS};
+pub use moqui_lib::docker::{ContainerInfo, DockerHost, Engine};
+use moqui_lib::docker::{Created, HostAddress, CALL_TIMEOUT, NETWORK_KEYWORDS};
 use moqui_lib::error::Error as LibError;
 use moqui_lib::http::Method;
 use moqui_lib::object::{to_plain_string, Value};
@@ -597,6 +597,97 @@ pub fn service_body(
         body["User"] = json!(user);
     }
     body
+}
+
+/// A developer's own run of a job in its image, on their machine (the Dev AIDE's Run locally, plans/design-dev-aide.md
+/// 21.5, question 20). Its container is a job's ([`create_body`]: no privilege, no capabilities, no new privileges, an
+/// init, a read-only root with a sized tmpfs at `/tmp`, a user that is not root, an image `VOLUME` on a tmpfs), with one
+/// thing no pool's run has: a tree of the host mounted at the working directory, read and written as `user` (the Dev
+/// AIDE's copy of the developer's working tree, which nothing on the host reads). Never made for a pool.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct LocalRun {
+    pub name: String,
+    pub image: String,
+    pub command: Vec<String>,
+    pub labels: Vec<(String, String)>,
+    /// The tree on the host mounted at the working directory: the Dev AIDE's copy of a working tree, never the tree.
+    pub tree: std::path::PathBuf,
+    /// The container's user, `uid:gid` (the tree's owner); the conf's when `None` or root.
+    pub user: Option<String>,
+    pub memory_mb: i64,
+    pub pids_limit: i64,
+    /// `bridge`, or `none` ([`egress_mode`] holds it to a mode a pool may have).
+    pub network_mode: String,
+}
+
+/// The body of `POST /containers/create` for a [`LocalRun`] on `engine`: a job's container's ([`create_body`]) with the
+/// tree bound over the working directory in place of its tmpfs, `HOME` at `/tmp`, on its network (bridge, or none), and
+/// on Podman the host's user kept as the container's (`keep-id`), so a rootless Podman writes the tree as its owner.
+pub fn local_body(run: &LocalRun, hardening: &Hardening, engine: Engine) -> serde_json::Value {
+    let mut hardening = hardening.clone();
+    if let Some(user) = run.user.as_deref().filter(|user| !is_root_user(user)) {
+        hardening.user = Some(user.to_string());
+    }
+    if hardening.user.is_none() {
+        // the image's user may be root: a local run is held to a uid as a pool's with a conf user is
+        hardening.user = Hardening::default().user;
+    }
+    let labels: moqui_lib::object::ValueMap = run
+        .labels
+        .iter()
+        .map(|(name, value)| (name.clone(), Value::string(value)))
+        .collect();
+    let parameters: Parameters = [
+        ("image".to_string(), Value::string(&run.image)),
+        (
+            "command".to_string(),
+            Value::List(run.command.iter().map(Value::string).collect()),
+        ),
+        ("labels".to_string(), Value::Map(labels)),
+        // HOME on the root, which is read only, would fail a tool's cache; in the tree it would leave the cache there
+        (
+            "envMap".to_string(),
+            Value::Map([("HOME".to_string(), Value::string("/tmp"))].into_iter().collect()),
+        ),
+        ("memoryMb".to_string(), Value::I64(run.memory_mb)),
+        ("pidsLimit".to_string(), Value::I64(run.pids_limit)),
+        ("networkMode".to_string(), Value::string(&run.network_mode)),
+    ]
+    .into_iter()
+    .collect();
+    let mut body = create_body(&parameters, &hardening, None);
+    if let Some(tmpfs) = body["HostConfig"]["Tmpfs"].as_object_mut() {
+        tmpfs.remove(&hardening.workdir);
+    }
+    body["HostConfig"]["Mounts"] = json!([{
+        "Type": "bind",
+        "Source": run.tree.display().to_string(),
+        "Target": hardening.workdir,
+        "ReadOnly": false,
+    }]);
+    if engine == Engine::Podman {
+        body["HostConfig"]["UsernsMode"] = json!("keep-id");
+    }
+    body
+}
+
+/// Make and start a [`LocalRun`]'s container on `host`, pulling its image when the host does not have it: its id. A
+/// container made that does not start is removed.
+///
+/// # Errors
+///
+/// When the host refuses a call, the image cannot be pulled, or its `VOLUME` cannot be covered.
+pub fn start_local(host: &DockerHost, run: &LocalRun, hardening: &Hardening) -> Result<String, Error> {
+    let body = local_body(run, hardening, host.engine()?);
+    let id = create(host, &run.name, body, true, hardening)?;
+    let started = check_made(host, &id, &run.name, false).and_then(|()| Ok(host.start(&id)?));
+    if let Err(err) = started {
+        if let Err(removed) = host.remove(&id) {
+            tracing::warn!("a local run's container that did not start was not removed: {removed}");
+        }
+        return Err(err);
+    }
+    Ok(id)
 }
 
 fn add_error(message: impl Into<String>) {

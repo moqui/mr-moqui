@@ -8,6 +8,9 @@
  * Commits. It talks to the transitions of DevAide/Workspace.xml. A save that finds the file changed on disk opens
  * Compare; a reload report (the DevReload notification) refreshes the tree and the status and the clean tabs, and marks
  * a tab with edits "Changed on disk". Unsaved text is kept in the browser (IndexedDB) by root and path until saved.
+ * On a shared dev server each tab of a file the user may write is co-edited with the others who have it open
+ * (DevAideCoedit.js, F15: their carets and selections by name; Save stays each user's, by hash); with the editor
+ * setting typeCheck a server script's tab is checked by TypeScript in a worker (DevAideTypes.js, 5.4).
  *
  * The pure parts are moqui.devAide.pure, which test/client/pages/DevAide.page.js runs in the page.
  */
@@ -44,6 +47,8 @@
         return { tabs: rest, active: next };
     };
     pure.isDirty = (tab) => !!tab && tab.text !== tab.saved;
+    // A server script, which the TypeScript check takes (DevAideTypes.js isScript): a JavaScript file under script/.
+    pure.isScript = (path) => /(^|\/)script\/(.+\/)?[^/]+\.(js|qjs|mjs|cjs)$/i.test(String(path || ""));
     // A tab or any of its view's companion buffers has unsaved text.
     pure.isDirtyAll = (tab) => pure.isDirty(tab) || !!(tab && (tab.companions || []).some((buffer) => buffer.text !== buffer.saved));
     // The restart banner's word on a rebuild (6.5): where it stands, and whether Rebuild is offered (moq is there and no
@@ -304,6 +309,37 @@
         return (at >= 0 ? text.slice(0, at + 4) : text.replace(/\/[^/]*$/, "")) + "/Workspace";
     };
 
+    // "Open on the server" (21.3): a page of the hosted repository from the server's templates (hosted.pages: file,
+    // commit and branch, {repositoryPath} and {repositoryId} filled in and checked by the server to be its own pages),
+    // each value encoded as path parts, a line only as a number (with no line, the line's fragment or query parameter
+    // goes); null when the server offers no such page, a value is missing or does not fit, or the result is not under
+    // the template's own address.
+    pure.serverPage = (pages, kind, values) => {
+        const template = pages && typeof pages[kind] === "string" ? pages[kind] : "";
+        const prefix = template.split("{")[0];
+        if (!/^https?:\/\/[^/?#]+\//i.test(prefix)) return null;
+        const given = values || {};
+        const path = (text) => String(text).split("/").map(encodeURIComponent).join("/");
+        let url = template;
+        const line = Math.floor(Number(given.line) || 0);
+        url = line > 0 ? url.split("{line}").join(String(line))
+            : url.replace(/#[^#]*\{line\}[^#]*$/, "").replace(/([?&])[A-Za-z]+=\{line\}(&|$)/, (all, before, after) => after ? before : "");
+        const fill = { ref: given.ref, file: given.file, branch: given.branch, commitId: given.commitId };
+        if (fill.commitId != null && !/^[0-9a-f]{4,64}$/i.test(String(fill.commitId))) return null;
+        for (const [key, value] of Object.entries(fill)) {
+            const mark = "{" + key + "}";
+            if (!url.includes(mark)) continue;
+            if (value == null || value === "") return null;
+            url = url.split(mark).join(path(value));
+        }
+        return /\{[A-Za-z]+\}/.test(url) || !url.startsWith(prefix) ? null : url;
+    };
+    // The branch of the hosted remote that `upstream` names (origin/x for the remote origin: x), else "".
+    pure.serverBranch = (upstream, remote) => {
+        const text = String(upstream || "");
+        return remote && text.startsWith(remote + "/") ? text.slice(remote.length + 1) : "";
+    };
+
     // ---- the browser ----
 
     const store = {
@@ -505,6 +541,8 @@
                 narrow: !!(root.innerWidth && root.innerWidth < 1024), offReload: null, reloadTimer: null,
                 // shared mode (D19): the other users with files of this root open
                 editors: [],
+                // the editor setting typeCheck: a server script's tab checked by TypeScript (5.4)
+                typeCheck: false,
                 // the task panel (14): the user's open tasks from their source, and the open issues of the root's
                 // hosted repository (21.6)
                 taskList: { tasks: [], loading: false, error: "", sourceLabel: "", issues: [], issueProjects: [], numbered: false,
@@ -514,7 +552,9 @@
                 advanced: !!store.get("advanced"), progress: null, hunks: null, conflictPath: null, gitLoaded: false,
                 // the checks of the commits shown (21.5), the commit whose checks are open, and the agreement (21.7)
                 logStates: {}, checksCommit: null, agreement: null,
-                logPage: 0, logMore: false, logPath: "", tree: null
+                logPage: 0, logMore: false, logPath: "", tree: null,
+                // a hosted root (4.10): whether the user may commit to its branch, and why not
+                hostedInfo: null
             };
         },
         computed: {
@@ -522,6 +562,14 @@
             // the repository a connected group server hosts for this root's remote (21.3), and whether the user may push there
             hosted() { return (this.root && this.root.hosted && this.root.hosted.repository) || null; },
             mayPush() { const access = this.hosted && this.hosted.access; return !access || !!(access.canCreate || access.canUpdate); },
+            // "Open on the server" (21.3): the current file at its line on the branch the server has, and the open commit
+            fileOnServer() {
+                const hosted = this.hosted, tab = this.current;
+                if (!hosted || !tab) return null;
+                const ref = pure.serverBranch(this.status && this.status.upstream, this.root.hosted.remote) || hosted.defaultBranch;
+                return pure.serverPage(hosted.pages, "file", { ref, file: tab.path, line: this.cursor && this.cursor.line });
+            },
+            commitOnServer() { return this.hosted && this.commitDetail ? pure.serverPage(this.hosted.pages, "commit", { commitId: this.commitDetail.id }) : null; },
             isGit() { return !!(this.root && this.root.kind === "git" && this.gitAvailable); },
             current() { return this.tabs.find((tab) => tab.path === this.active) || null; },
             groups() { return pure.groupChanges(this.status && this.status.entries); },
@@ -608,6 +656,8 @@
             if (this.offPresence) this.offPresence();
             if (this.offSaved) this.offSaved();
             if (this.offProgress) this.offProgress();
+            if (this.coeditSessions) this.coeditSessions.destroy();
+            if (this.typeChecker) this.typeChecker.stop();
             clearInterval(this.presenceTimer);
             clearInterval(this.rebuildTimer);
             Object.values(this.outlineTimers || {}).forEach(clearTimeout);
@@ -652,6 +702,7 @@
                     this.gitAvailable = !!answer.gitAvailable;
                     this.upstreamEdits = !!answer.upstreamEdits;
                     this.shared = !!answer.shared;
+                    if (this.shared) this.syncCoedit();
                     const asked = this.query && this.query.rootId;
                     const site = this.roots.find((item) => !item.upstream);
                     this.selectRoot((asked && this.roots.find((item) => item.id === asked) ? asked : null) || (site || this.roots[0] || {}).id);
@@ -669,6 +720,7 @@
                     this.note("Unsaved changes in " + ((this.roots.find((item) => item.id === this.rootId) || {}).label || this.rootId) + " are kept in this browser until you open them again", "info");
                 }
                 this.rootId = id;
+                if (this.coeditSessions) this.coeditSessions.endAll();
                 this.tabs = []; this.active = null; this.status = null; this.diff = null; this.log = []; this.commitDetail = null;
                 this.treeKey++;
                 if (this.rail === "tasks") this.loadTasks();
@@ -678,6 +730,9 @@
                     this.active = kept.active || null;
                 }
                 this.refreshStatus();
+                this.hostedInfo = null;
+                const picked = this.roots.find((item) => item.id === id);
+                if (picked && picked.kind === "hosted") this.get("hostedRoot", { rootId: id }).then((answer) => { if (this.rootId === id) this.hostedInfo = answer; }, () => {});
             },
             remember() {
                 if (!this.rootId) return;
@@ -750,7 +805,8 @@
                 if (!path) return;
                 how = how || {};
                 const opened = pure.openTab(this.tabs, { path, text: "", saved: "", base: "", loading: true, problems: [], line: line || 0,
-                    view: "text", artifact: how.artifact || "", page: how.page || "", outline: null, outlineError: "", companions: [] });
+                    view: "text", artifact: how.artifact || "", page: how.page || "", outline: null, outlineError: "", companions: [],
+                    collab: null, coedit: null, roomSavedHash: "" });
                 this.tabs = opened.tabs;
                 if (!quiet) this.active = opened.active;
                 this.tab = "code";
@@ -771,6 +827,7 @@
                         binary: !!file.binary, lineEnding: file.lineEnding || "LF", component: file.component
                     });
                     this.offerDraft(tab, this.rootId);
+                    this.syncCoedit();
                     this.loadSchema(tab);
                     this.loadThreads(tab);
                     this.takeDraft(tab, this.rootId);
@@ -854,6 +911,9 @@
                     apply: (ops, buffer) => vm.applyOps(tab, ops, buffer),
                     undo: () => vm.undo(tab), redo: () => vm.redo(tab),
                     outlineOf: (text) => vm.post("outline", { text }).then((answer) => answer.outline || null),
+                    // the unsaved buffers (the tabs and their views' companions): what a Try in sim runs over (F14)
+                    dirtyBuffers: () => pure.openBuffers(vm.tabs, vm.rootId).filter((open) => pure.isDirty(open.buffer) || open.buffer.missing)
+                        .map((open) => ({ rootId: open.rootId, path: open.path, text: open.buffer.text })),
                     companion: (rootId, path, initialText) => vm.companion(tab, rootId, path, initialText),
                     save: () => vm.save(tab), onSaved: (hook) => {
                         vm.saveHooks.set(tab, hook);
@@ -897,10 +957,13 @@
                 });
             },
             undo(tab) {
+                // a co-edited tab's history is Yjs': this user's own edits, the editor shown or not
+                if (tab && tab.collab && tab.collab.undoManager) { tab.collab.undoManager.undo(); return; }
                 const CM = root.CodeMirror;
                 if (this.current === tab && this.liveEditorView() && CM && CM.undo) CM.undo(this.liveEditorView());
             },
             redo(tab) {
+                if (tab && tab.collab && tab.collab.undoManager) { tab.collab.undoManager.redo(); return; }
                 const CM = root.CodeMirror;
                 if (this.current === tab && this.liveEditorView() && CM && CM.redo) CM.redo(this.liveEditorView());
             },
@@ -946,6 +1009,7 @@
                 const tab = this.tabs.find((item) => item.path === path);
                 const close = () => {
                     const next = pure.closeTab(this.tabs, path, this.active); this.tabs = next.tabs; this.active = next.active;
+                    this.syncCoedit();
                     if (moqui.codeEditor && moqui.codeEditor.dropState) moqui.codeEditor.dropState(this.rootId + ":" + path);
                     clearTimeout(this.outlineTimers[path]); delete this.outlineTimers[path];
                     this.saveHooks.delete(tab);
@@ -955,11 +1019,60 @@
                 } else close();
             },
             lintOf(tab) {
+                if (this.typeCheck && pure.isScript(tab.path)) return (text) => this.typeProblems(tab, text);
                 if (!/\.xml$/i.test(tab.path)) return null;
                 return (text) => this.post("check", { rootId: this.rootId, path: tab.path, text }).then((answer) => {
                     if (tab.text === text) tab.problems = answer.problems || [];
                     return answer.problems || [];
                 });
+            },
+            // The TypeScript checker's problems of a script's buffer (DevAideTypes.js, loaded with the first one), in
+            // Problems too; none when the checker could not run (said once).
+            typeProblems(tab, text) {
+                const ready = devAide.types && devAide.types.loaded ? Promise.resolve()
+                    : moqui.loadScript("/devstatic/DevAideTypes.js", null, () => !!(devAide.types && devAide.types.loaded));
+                return ready.then(() => {
+                    if (!this.typeChecker) {
+                        this.typeChecker = new devAide.types.Checker({ worker: "/devstatic/DevAideTsWorker.js",
+                            compiler: "/libs/typescript/typescript.min.js", libs: "/libs/typescript/lib-es2023.js",
+                            declarations: (knownHash) => this.get("typeDeclarations", knownHash ? { knownHash } : {}) });
+                    }
+                    return this.typeChecker.check(text);
+                }).then((problems) => {
+                    if (tab.text === text) tab.problems = problems;
+                    return problems;
+                }, (error) => {
+                    if (!this.typeCheckFailed) { this.typeCheckFailed = true; this.note("The type check could not run: " + pure.errorText(error), "warning"); }
+                    return [];
+                });
+            },
+            // ---- co-editing (F15): each tab of a file the user may write, on its room, in shared mode ----
+            syncCoedit() {
+                if (!this.shared || this.guided) return;
+                const client = this.$root && this.$root.notificationClient;
+                if (!client || typeof client.send !== "function" || !moqui.coedit || !moqui.coedit.Provider) return;
+                const loaded = devAide.coedit && devAide.coedit.loaded ? Promise.resolve()
+                    : moqui.loadScript("/devstatic/DevAideCoedit.js", null, () => !!(devAide.coedit && devAide.coedit.loaded));
+                loaded.then(() => {
+                    if (this.unmounted) return;
+                    if (!this.coeditSessions) {
+                        const rootVm = this.$root || {};
+                        const userId = rootVm.userId || "";
+                        const name = rootVm.userFullName || rootVm.username || userId;
+                        this.coeditSessions = new devAide.coedit.Sessions({ client, markRaw: root.Vue && root.Vue.markRaw,
+                            user: { id: userId, name, color: moqui.coedit.userColor(userId || name) },
+                            watch: (tab, fn) => this.$watch(() => tab.text, fn),
+                            onDropped: (tab) => this.note(tab.path.split("/").pop() + ": the shared text of the others replaced your unsaved changes", "warning"),
+                            onOtherBase: (tab) => this.note(tab.path.split("/").pop() + ": the shared text started from another version of the file than the one you opened; Save compares with the disk", "warning"),
+                            onEnded: (tab, info) => this.note(tab.path.split("/").pop() + ": co-editing ended" + (info.message ? ": " + info.message : ""), "warning") });
+                    }
+                    this.coeditSessions.sync(this.rootId, this.tabs, !!(this.root && this.root.kind === "hosted"));
+                }, (error) => console.error("Co-editing could not load; the files are edited alone", error));
+            },
+            coeditNote(tab) {
+                if (!tab || !tab.coedit) return "";
+                const peers = tab.coedit.peers || [];
+                return peers.length ? "co-editing with " + peers.join(", ") : "co-editing";
             },
             save(tab) {
                 tab = tab || this.current;
@@ -989,11 +1102,18 @@
                     return answer;
                 });
             },
-            saveTab(tab, inAll) {
+            saveTab(tab, inAll, message) {
                 if (!tab || tab.readOnly || (tab.saving && !inAll)) return Promise.resolve();
                 if (tab.text === tab.saved) return Promise.resolve();
+                // a hosted root (4.10): each Save is a commit, its message asked first ("Edit <path>" as given)
+                if (this.root && this.root.kind === "hosted" && message === undefined) {
+                    return new Promise((resolve) => this.$q.dialog({ title: "Commit to " + this.root.hostedBranch.branch,
+                        prompt: { model: "Edit " + tab.path, type: "text" }, cancel: true, persistent: true })
+                        .onOk((given) => resolve(this.saveTab(tab, inAll, String(given || "").trim())))
+                        .onCancel(() => (inAll ? resolve(Promise.reject({ errors: "The commit was cancelled" })) : resolve())));
+                }
                 tab.saving = true;
-                return this.post("save", { rootId: this.rootId, path: tab.path, text: tab.text, baseHash: tab.base }).then((answer) => {
+                return this.post("save", { rootId: this.rootId, path: tab.path, text: tab.text, baseHash: tab.base, message: message || "" }).then((answer) => {
                     tab.saving = inAll;
                     if (answer.conflict) {
                         tab.conflict = { diskText: answer.diskText || "", diskHash: answer.diskHash };
@@ -1020,6 +1140,12 @@
             reloadTab(tab) {
                 return this.get("file", { rootId: this.rootId, path: tab.path }).then((file) => {
                     if (file.hash === tab.base) { tab.changedOnDisk = false; return; }
+                    // co-edited: a save in the room (DevSaved names its hash), or the disk at the shared text, is the tab's
+                    // new base; the shared text stays as it is
+                    if (tab.collab && (file.hash === tab.roomSavedHash || devAide.coedit.lf(file.text) === devAide.coedit.lf(tab.text))) {
+                        tab.saved = devAide.coedit.lf(file.text); tab.base = file.hash; tab.status = file.status || ""; tab.changedOnDisk = false; tab.conflict = null;
+                        return;
+                    }
                     if (pure.isDirty(tab)) { tab.changedOnDisk = true; tab.disk = { text: file.text || "", hash: file.hash }; return; }
                     tab.text = file.text || ""; tab.saved = tab.text; tab.base = file.hash; tab.status = file.status || ""; tab.changedOnDisk = false;
                 }, () => { tab.changedOnDisk = true; });
@@ -1047,6 +1173,8 @@
             onSaved(message) {
                 const saved = pure.messageJson(message);
                 if (!saved || saved.rootId !== this.rootId || !this.tabs.some((tab) => tab.path === saved.path)) return;
+                const tab = this.tabs.find((item) => item.path === saved.path);
+                if (tab.collab && saved.hash) { tab.roomSavedHash = saved.hash; if (!tab.saving) this.reloadTab(tab); }
                 this.note(saved.path.split("/").pop() + " was saved by " + (saved.username || "another user"), "info");
             },
             editorsOf(path) { return pure.editorsOf(this.editors, path); },
@@ -1707,7 +1835,11 @@
                     if (save) settings.keys = Object.assign({}, settings.keys, { save });
                     this.setEditorSettings(settings);
                 };
-                return this.get("editorSettings").then((answer) => apply(pure.editorSettingsOf(answer)), () => apply({ keys: {} }));
+                return this.get("editorSettings").then((answer) => {
+                    // the TypeScript check of a script (5.4) is the Workspace's: the editor takes its problems as lint
+                    this.typeCheck = !!(answer && answer.settings && answer.settings.typeCheck);
+                    apply(pure.editorSettingsOf(answer));
+                }, () => apply({ keys: {} }));
             },
             setEditorSettings(settings) {
                 const codeEditor = moqui.codeEditor || (moqui.codeEditor = {});
@@ -1773,7 +1905,9 @@
       <span class="text-caption" id="DevChangeCount">{{changeCount}} changed</span>
     </template>
     <span v-else-if="isGit" class="text-caption m-muted" role="status">Loading repository status…</span>
+    <q-chip v-else-if="root && root.kind === 'hosted'" dense square icon="sym_o_cloud" id="DevHostedChip">{{root.hostedBranch.repositoryId}} · {{root.hostedBranch.branch}} · no working tree</q-chip>
     <q-chip v-else-if="root" dense square icon="sym_o_folder_off" id="DevNotGit">{{root.label}} · {{root.kind === 'git' ? 'Git is unavailable' : 'Not a git repository'}}</q-chip>
+    <q-chip v-if="hostedInfo && !hostedInfo.canCommit" dense square icon="sym_o_lock" color="orange-3" id="DevHostedRefusal">Saves refused<q-tooltip max-width="24rem">{{hostedInfo.refusal}}</q-tooltip></q-chip>
     <q-space></q-space>
     <q-btn dense flat no-caps label="Fetch" :disable="!isGit || !canWrite" :loading="busy === 'fetch'" @click="network('fetch')"><q-tooltip v-if="!isGit">Not a git repository</q-tooltip></q-btn>
     <q-btn dense flat no-caps label="Pull" :disable="!isGit || !canWrite" :loading="busy === 'pull'" @click="network('pull')"></q-btn>
@@ -1785,6 +1919,8 @@
   </div>
   <q-banner v-if="root && root.worktreeOf" dense class="bg-blue-1 text-black" id="DevWorktreeBanner">A worktree of {{(roots.find((item) => item.id === root.worktreeOf) || {}).label || root.worktreeOf}}
     for an Assist session: not loaded, so the server keeps running the main tree. Check and commit here; a session that needs to run what it changes works in the main tree.</q-banner>
+  <q-banner v-if="root && root.kind === 'hosted'" dense class="bg-blue-1 text-black" id="DevHostedBanner">{{root.hostedBranch.repositoryId}} at {{root.hostedBranch.branch}}, hosted on this server:
+    not loaded or run. Each Save is a commit to {{root.hostedBranch.branch}} as you{{hostedInfo && hostedInfo.refusal ? '; ' + hostedInfo.refusal : ''}}.</q-banner>
   <q-banner v-if="restartNeeded" dense class="bg-amber-2 text-black" id="DevRestartBanner">{{ t('A change needs a restart to apply') }}.
     <span v-if="rebuildNote()"> {{ rebuildNote() }}</span>
     <template v-slot:action><q-btn v-if="rebuildOffered()" dense flat no-caps label="Rebuild" @click="rebuildNow" id="DevRebuild"></q-btn><q-btn v-if="rebuild.state !== 'running'" dense flat no-caps label="Restart" @click="restart"></q-btn><q-btn dense flat no-caps label="Later" @click="restartNeeded = false"></q-btn></template>
@@ -1850,7 +1986,7 @@
           <q-checkbox dense size="xs" v-model="search.regex" label=".*"></q-checkbox>
           <q-checkbox dense size="xs" v-model="search.caseSensitive" label="Aa" class="q-ml-sm"></q-checkbox>
           <q-input dense borderless v-model="search.pathFilter" placeholder="in path" class="q-ml-sm col"></q-input>
-          <q-btn v-if="canWrite" dense flat round size="sm" icon="sym_o_find_replace" :color="replace.open ? 'primary' : undefined" :aria-label="t('Replace')"
+          <q-btn v-if="canWrite && !(root && root.kind === 'hosted')" dense flat round size="sm" icon="sym_o_find_replace" :color="replace.open ? 'primary' : undefined" :aria-label="t('Replace')"
               @click="replace.open = !replace.open; replace.preview = null" id="DevReplaceToggle"><q-tooltip>{{ t('Replace across files') }}</q-tooltip></q-btn>
         </div>
         <div v-if="replace.open && canWrite" class="row items-center no-wrap q-gutter-x-xs" id="DevReplace">
@@ -1899,7 +2035,7 @@
               <q-item-label caption>{{issue.key}}{{issue.number ? ' · ' + issue.taskId : ''}} · {{issue.statusId}}{{issue.projectName ? ' · ' + issue.projectName : ''}}
                 <q-icon v-if="status && status.currentTask === issue.key" name="sym_o_star" size="xs"></q-icon></q-item-label></q-item-section>
             <q-item-section side><q-btn dense flat round size="xs" icon="more_vert" :aria-label="'Actions for ' + issue.key"><q-menu><q-list dense style="min-width: 10rem">
-              <q-item v-if="issue.url" clickable v-close-popup :href="issue.url" target="_blank" tag="a"><q-item-section>Open</q-item-section></q-item>
+              <q-item v-if="issue.url" clickable v-close-popup :href="issue.url" target="_blank" rel="noopener noreferrer" tag="a"><q-item-section>Open</q-item-section></q-item>
               <q-item clickable v-close-popup @click="copyText(issue.key)"><q-item-section>Copy key</q-item-section></q-item>
               <q-item clickable v-close-popup :disable="!isGit" @click="useTask(issue)"><q-item-section>Use in commit ({{trailerOf(issue.key)}})</q-item-section></q-item>
               <q-item clickable v-close-popup :disable="!isGit" @click="useTask(issue, true)"><q-item-section>{{ t('Set current') }}</q-item-section></q-item>
@@ -1920,7 +2056,7 @@
               <q-item-label caption>{{task.key}} · {{task.statusId}}{{task.projectName ? ' · ' + task.projectName : ''}}
                 <q-icon v-if="status && status.currentTask === task.key" name="sym_o_star" size="xs"></q-icon></q-item-label></q-item-section>
             <q-item-section side><q-btn dense flat round size="xs" icon="more_vert" :aria-label="'Actions for ' + task.key"><q-menu><q-list dense style="min-width: 10rem">
-              <q-item v-if="task.url" clickable v-close-popup :href="task.url" target="_blank" tag="a"><q-item-section>Open</q-item-section></q-item>
+              <q-item v-if="task.url" clickable v-close-popup :href="task.url" target="_blank" rel="noopener noreferrer" tag="a"><q-item-section>Open</q-item-section></q-item>
               <q-item clickable v-close-popup @click="copyText(task.key)"><q-item-section>Copy key</q-item-section></q-item>
               <q-item clickable v-close-popup :disable="!isGit" @click="useTask(task)"><q-item-section>Use in commit</q-item-section></q-item>
               <q-item clickable v-close-popup :disable="!isGit" @click="useTask(task, true)"><q-item-section>{{ t('Set current') }}</q-item-section></q-item>
@@ -1946,7 +2082,9 @@
           <span v-if="current.status" class="m-file-status q-ml-sm" :class="'m-file-status-' + current.status">{{current.status}}</span>
           <span v-else-if="!isGit" class="q-ml-sm m-muted">Not versioned</span>
           <q-chip v-if="current.readOnly" dense square icon="sym_o_lock" class="q-ml-sm" id="DevReadOnly">{{current.readOnlyReason || 'read only'}}</q-chip>
-          <q-chip v-if="editorsOf(current.path).length" dense square icon="sym_o_group" class="q-ml-sm" color="amber-3" text-color="black" id="DevEditedBy">being edited by {{editorsOf(current.path).join(', ')}}</q-chip>
+          <q-chip v-if="current.coedit" dense square icon="sym_o_group_work" class="q-ml-sm" color="teal-2" text-color="black" id="DevCoediting"
+              :title="'Shared: ' + current.coedit.state">{{coeditNote(current)}}</q-chip>
+          <q-chip v-else-if="editorsOf(current.path).length" dense square icon="sym_o_group" class="q-ml-sm" color="amber-3" text-color="black" id="DevEditedBy">being edited by {{editorsOf(current.path).join(', ')}}</q-chip>
           <q-space></q-space>
           <q-btn-toggle v-if="currentViews.length > 1" dense flat no-caps size="sm" :model-value="current.view" @update:model-value="setView(current, $event)"
               :options="currentViews.map(v => ({ label: v.label, value: v.name }))" id="DevViewToggle"></q-btn-toggle>
@@ -1954,6 +2092,8 @@
             <q-item clickable v-close-popup @click="diffCurrent"><q-item-section>Diff</q-item-section></q-item>
             <q-item clickable v-close-popup @click="history(current.path)"><q-item-section>History</q-item-section></q-item>
             <q-item clickable v-close-popup @click="toggleBlame"><q-item-section>{{current.blame ? 'Hide blame' : 'Blame'}}</q-item-section></q-item>
+            <q-item v-if="fileOnServer" clickable v-close-popup tag="a" :href="fileOnServer" target="_blank" rel="noopener noreferrer" id="DevFileOnServer">
+              <q-item-section>Open on the server</q-item-section></q-item>
             <q-item clickable v-close-popup :disable="!canWrite" @click="stageCurrent"><q-item-section>Stage</q-item-section></q-item>
             <q-item clickable v-close-popup :disable="!canWrite" @click="discardCurrent"><q-item-section>Discard</q-item-section></q-item>
             <q-item clickable v-close-popup :disable="!canWrite" @click="tab = 'changes'"><q-item-section>Commit…</q-item-section></q-item>
@@ -1989,7 +2129,7 @@
           <m-code-editor v-show="!currentSpec" class="col" :key="rootId + ':' + current.path" v-model="current.text" :file-name="current.path"
               :state-key="rootId + ':' + current.path" :read-only="current.readOnly" :blame="current.blame || threadMarks(current)" :schema="current.schema" :lint="lintOf(current)" height="100%"
               :highlight-lines="current.line ? [current.line] : []" @save="save(current)" @cursor="cursor = $event"
-              :extensions="editorExtensions()" @ready="editorView = $event"></m-code-editor>
+              :extensions="editorExtensions()" :collab="current.collab" @ready="editorView = $event"></m-code-editor>
         </template>
         <div class="m-dev-problems" v-if="refs.title" id="DevReferences">
           <div class="row items-center no-wrap q-px-sm q-pt-xs"><span class="text-caption text-weight-medium">{{refs.title}} {{refs.loading ? '…' : refs.items.length}}</span>
@@ -2108,6 +2248,8 @@
         <span class="text-caption m-dev-mono">{{String(commitDetail.id).slice(0, 12)}}</span><q-space></q-space>
         <q-btn dense flat no-caps size="sm" label="Copy id" @click="copyId"></q-btn>
         <q-btn dense flat no-caps size="sm" label="Browse files" @click="browseTree('')"></q-btn>
+        <q-btn v-if="commitOnServer" dense flat no-caps size="sm" label="Open on the server" type="a" :href="commitOnServer" target="_blank"
+            rel="noopener noreferrer" id="DevCommitOnServer"></q-btn>
         <q-btn dense flat no-caps size="sm" label="Branch here" :disable="!canWrite" @click="newBranch(commitDetail.id)"></q-btn>
         <q-btn v-if="advanced" dense flat no-caps size="sm" label="Tag here" :disable="tier !== 'full'" @click="tagHere"></q-btn>
         <q-btn dense flat no-caps size="sm" :label="t('Cherry-pick')" :disable="tier !== 'full'" @click="replay('cherry-pick')"></q-btn>
@@ -2130,8 +2272,10 @@
       <m-diff-view v-if="diff && !tree" class="col" :original="diff.original" :modified="diff.modified" :file-name="diff.path"></m-diff-view>
     </div>
   </div>
-  <q-dialog :model-value="!!checksCommit" @update:model-value="(open) => { if (!open) checksCommit = null; }">
-    <q-card style="width: 52rem; max-width: 95vw"><m-dev-git-checks v-if="checksCommit && gitLoaded" :ws="this" :commit-id="checksCommit" @close="checksCommit = null"></m-dev-git-checks></q-card>
+  <!-- made once DevAideGit.js has loaded: a stable slot resolves its components once, so one made before would keep
+      m-dev-git-checks an unknown element -->
+  <q-dialog v-if="gitLoaded" :model-value="!!checksCommit" @update:model-value="(open) => { if (!open) checksCommit = null; }">
+    <q-card style="width: 52rem; max-width: 95vw"><m-dev-git-checks v-if="checksCommit" :ws="this" :commit-id="checksCommit" @close="checksCommit = null"></m-dev-git-checks></q-card>
   </q-dialog>
   <q-dialog v-model="artifactGoto.open" aria-labelledby="DevGotoArtifactTitle">
     <q-card style="width: 44rem; max-width: 95vw">

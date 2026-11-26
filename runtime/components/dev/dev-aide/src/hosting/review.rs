@@ -196,6 +196,53 @@ pub(crate) fn page_url(server: &Server, value: &Json) -> Json {
     checked.map_or(Json::Null, Json::String)
 }
 
+/// The kinds of a repository's pages a server offers as templates (21.3, "Open on the server").
+pub const PAGE_KINDS: [&str; 3] = ["file", "commit", "branch"];
+
+/// The pages of a hosted repository for a person, as templates the page fills ("Open on the server", 21.3): the
+/// offer's (`application.pages` for a repository the application keeps, else `pages`), each with `{repositoryPath}`
+/// (each part encoded) and `{repositoryId}` (encoded as one part, for pages that take the id, such as IronStone
+/// Projects' Code) filled in, and kept, as an absolute URL, only when its text before the first other placeholder is a
+/// page of the server's own address ([`page_url`]), so what the page fills in cannot take it elsewhere. Null when none
+/// is.
+pub(crate) fn repository_pages(server: &Server, repository: &Json) -> Json {
+    let templates = match via(server, repository) {
+        Via::Application(_) => &server.offer["application"]["pages"],
+        Via::Framework => &server.offer["pages"],
+    };
+    let path = repository["repositoryPath"].as_str().unwrap_or("");
+    if path.is_empty() {
+        return Json::Null;
+    }
+    let path: Vec<String> = path.split('/').map(query_text).collect();
+    let path = path.join("/");
+    let id = repository["repositoryId"].as_str().and_then(client::path_segment);
+    let mut pages = serde_json::Map::new();
+    for kind in PAGE_KINDS {
+        let Some(template) = templates[kind].as_str() else {
+            continue;
+        };
+        let filled = template.replace("{repositoryPath}", &path);
+        let filled = match &id {
+            Some(id) => filled.replace("{repositoryId}", id),
+            // a page by the id, of a repository with none given, is no page
+            None if filled.contains("{repositoryId}") => continue,
+            None => filled,
+        };
+        let prefix = filled.split('{').next().unwrap_or_default();
+        // a path on the server, or its address with a path: a template that puts a value into the host is no page
+        let with_path = prefix.starts_with('/') || prefix.split_once("://").is_some_and(|(_, rest)| rest.contains('/'));
+        if let (true, Some(checked)) = (with_path, page_url(server, &json!(prefix)).as_str()) {
+            pages.insert(kind.to_string(), json!(format!("{checked}{}", &filled[prefix.len()..])));
+        }
+    }
+    if pages.is_empty() {
+        Json::Null
+    } else {
+        Json::Object(pages)
+    }
+}
+
 /// A merge request as the list shows it, from the framework's shape or an application's; its link only when it is a
 /// page of `server` ([`page_url`]).
 pub(crate) fn merge_request_item(item: &Json, server: &Server) -> Json {
@@ -313,6 +360,7 @@ pub(crate) fn resolve(context: &Context, root: &Root) -> Result<Option<Json>, Li
                 Ok(answer) if answer["found"].as_bool() == Some(true) => {
                     let mut repository = answer["repository"].clone();
                     repository["serverBase"] = json!(server.base);
+                    repository["pages"] = repository_pages(server, &repository);
                     store(context, root, Some((&server.id, &remote, &repository)))?;
                     moqui_core::user::set_preference(
                         &format!("{HOSTED_ACCESS}.{}", root.id),
@@ -589,9 +637,11 @@ fn get_issue(
     let id = text(parameters, "issueId");
     let (path, by_number) = issue_path(&hosted.server.offered("tasks.issuePath"), &hosted.id(), &id)
         .ok_or_else(|| LibError::new(format!("{id} is not an issue's id")))?;
+    // a read of the task panel's, with the key for tasks alone (question 18)
+    let kept = matches!(hosted.via(), Via::Application(_));
     let answer = hosted
         .server
-        .get(&path, &[("byNumber", if by_number { "true" } else { "" })])?;
+        .tasks_get(&path, &[("byNumber", if by_number { "true" } else { "" })], kept)?;
     // Mantle's get#RepositoryIssue answers it as issue; a work effort's REST, as itself
     let item = client::result_of(&answer);
     let item = if item["issue"].is_object() {

@@ -1,7 +1,7 @@
 // Build and verify the browser assets from both npm lockfiles: the webroot component's script of
 // build/js-build.json. The steps every component's build shares are in ../js-kit.mjs.
 import { checkManifest, componentName, esbuildBinary, installProject, mode, outputDir, outputLabel, publish, run, sha256, status, summary, toLf, withWork } from '../js-kit.mjs';
-import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -30,8 +30,7 @@ const TIPTAP_PACKAGES = [
   '@tiptap/extension-strike', '@tiptap/extension-table', '@tiptap/extension-table-cell', '@tiptap/extension-table-header',
   '@tiptap/extension-table-row', '@tiptap/extension-text', '@tiptap/extension-underline', '@tiptap/extensions',
   '@tiptap/pm', '@tiptap/starter-kit', '@tiptap/suggestion', '@tiptap/y-tiptap',
-  'yjs', 'y-protocols', 'lib0', 'isomorphic.js',
-  '@floating-ui/core', '@floating-ui/dom', '@floating-ui/utils', 'linkifyjs',
+  'lib0', '@floating-ui/core', '@floating-ui/dom', '@floating-ui/utils', 'linkifyjs',
   'orderedmap', 'prosemirror-changeset', 'prosemirror-commands', 'prosemirror-dropcursor',
   'prosemirror-gapcursor', 'prosemirror-history', 'prosemirror-inputrules', 'prosemirror-keymap',
   'prosemirror-model', 'prosemirror-schema-list', 'prosemirror-state', 'prosemirror-tables',
@@ -48,6 +47,21 @@ const CODEMIRROR_PACKAGES = [
   '@lezer/xml', '@lezer/yaml', '@marijn/find-cluster-break', '@replit/codemirror-indentation-markers',
   'crelt', 'style-mod', 'w3c-keyname',
 ];
+// The packages of the libraries beside CodeMirror's bundle, each loaded only when an editor needs it: Yjs with its
+// awareness protocol (co-editing, and Tiptap's collaboration), y-codemirror.next (a co-edited code editor), the Vim
+// keymap and the legacy language modes.
+const YJS_PACKAGES = ['yjs', 'y-protocols', 'lib0'];
+const Y_CODEMIRROR_PACKAGES = ['y-codemirror.next', 'lib0'];
+const CODEMIRROR_VIM_PACKAGES = ['@replit/codemirror-vim', '@replit/codemirror-vim-core'];
+// The second bundle of CodeMirror's languages (plans/design-dev-aide.md 5.1): the legacy modes of @codemirror/legacy-modes
+// that lang-* has no package for, each a stream parser's spec that js/WebrootCode.js gives StreamLanguage.define. SQL and
+// YAML are lang-sql's and lang-yaml's, in the main bundle.
+const LEGACY_MODES = [['shell', 'shell'], ['groovy', 'groovy'], ['properties', 'properties'], ['toml', 'toml'],
+  ['dockerfile', 'dockerFile'], ['nginx', 'nginx']];
+const LEGACY_ENTRY = LEGACY_MODES.map(([file, name]) => `export { ${name} } from '@codemirror/legacy-modes/mode/${file}';`).join('\n') + '\n';
+// The TypeScript compiler's declarations of the language the server's scripts are checked against (ES2023, no DOM), as
+// one script that sets self.MoquiTsLibs for the checker's worker: lib.es5 to lib.es2023 and the decorators.
+const TS_LIB = /^lib\.(es5|es20(1[5-9]|2[0-3])(\.[a-z.]+)?|decorators(\.legacy)?)\.d\.ts$/;
 // What the CodeMirror bundle exports as the global CodeMirror: the state and view, the commands, search, completion, lint
 // and merge view, the languages, the highlight tags for a theme, and the indentation markers
 // (js/WebrootCode.js builds m-code-editor, m-diff-view and the dev-aide's editor from these).
@@ -56,14 +70,19 @@ const CODEMIRROR_ENTRY = `export { EditorState, EditorSelection, Compartment, St
 export { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection, dropCursor,
   rectangularSelection, crosshairCursor, highlightSpecialChars, Decoration, ViewPlugin, WidgetType, gutter, GutterMarker,
   placeholder, showPanel, hoverTooltip, tooltips } from '@codemirror/view';
-export { defaultKeymap, history, historyKeymap, indentWithTab, undo, redo, undoDepth, redoDepth, toggleComment }
+export { defaultKeymap, history, historyKeymap, indentWithTab, undo, redo, undoDepth, redoDepth, toggleComment,
+  deleteLine, selectLine, insertBlankLine, moveLineUp, moveLineDown, copyLineUp, copyLineDown, indentMore, indentLess,
+  toggleBlockComment, lineComment, lineUncomment, cursorMatchingBracket, undoSelection, selectParentSyntax }
   from '@codemirror/commands';
-export { search, searchKeymap, highlightSelectionMatches, openSearchPanel } from '@codemirror/search';
+export { search, searchKeymap, highlightSelectionMatches, openSearchPanel, selectNextOccurrence, selectSelectionMatches,
+  gotoLine, findNext, findPrevious } from '@codemirror/search';
 export { autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap, startCompletion, snippetCompletion }
   from '@codemirror/autocomplete';
-export { linter, lintGutter, lintKeymap, setDiagnostics, forceLinting } from '@codemirror/lint';
+export { linter, lintGutter, lintKeymap, setDiagnostics, forceLinting, nextDiagnostic, previousDiagnostic, openLintPanel }
+  from '@codemirror/lint';
 export { syntaxHighlighting, defaultHighlightStyle, HighlightStyle, indentOnInput, bracketMatching, foldGutter, foldKeymap,
-  indentUnit, syntaxTree, ensureSyntaxTree, LanguageSupport, StreamLanguage, foldAll, unfoldAll } from '@codemirror/language';
+  indentUnit, syntaxTree, ensureSyntaxTree, LanguageSupport, StreamLanguage, foldAll, unfoldAll, foldCode, unfoldCode }
+  from '@codemirror/language';
 export { MergeView, unifiedMergeView, getChunks, goToNextChunk, goToPreviousChunk, acceptChunk, rejectChunk }
   from '@codemirror/merge';
 export { xml, xmlLanguage } from '@codemirror/lang-xml';
@@ -78,10 +97,42 @@ export { yaml } from '@codemirror/lang-yaml';
 export { rust } from '@codemirror/lang-rust';
 export { tags } from '@lezer/highlight';
 export { indentationMarkers } from '@replit/codemirror-indentation-markers';
+// the whole modules, for the bundles built against this one (the Vim keymap, y-codemirror.next): each reads them here, so
+// an editor has one copy of the state and the view (CM_SHIM)
+import * as cmState from '@codemirror/state';
+import * as cmView from '@codemirror/view';
+import * as cmLanguage from '@codemirror/language';
+import * as cmCommands from '@codemirror/commands';
+import * as cmSearch from '@codemirror/search';
+export const modules = { '@codemirror/state': cmState, '@codemirror/view': cmView, '@codemirror/language': cmLanguage,
+  '@codemirror/commands': cmCommands, '@codemirror/search': cmSearch };
+`;
+
+// A bundle built against CodeMirror's or Yjs' takes those packages from its global (esbuild --alias to these shims), so a
+// page has one copy of each: two of @codemirror/state break its instanceof checks, two of yjs its constructor checks.
+const CM_SHIM = (name) => `if (!globalThis.CodeMirror || !globalThis.CodeMirror.modules) throw new Error('load /libs/codemirror/codemirror.min.js first');
+module.exports = globalThis.CodeMirror.modules['${name}'];
+`;
+const YJS_SHIM = (member) => `if (!globalThis.Yjs) throw new Error('load /libs/yjs/yjs.min.js first');
+module.exports = ${member};
+`;
+// What the Yjs library exports as the global Yjs: the yjs namespace (Y) and the awareness protocol, for m-coedit,
+// Tiptap's collaboration (its bundle reads them here), the whiteboard and a co-edited code editor.
+const YJS_ENTRY = `export * as Y from 'yjs';
+export { Awareness, encodeAwarenessUpdate, applyAwarenessUpdate, removeAwarenessStates } from 'y-protocols/awareness';
+`;
+// What the y-codemirror.next bundle exports as the global YCodeMirror (against the globals CodeMirror and Yjs).
+const Y_CODEMIRROR_ENTRY = `export { yCollab, ySync, ySyncFacet, ySyncAnnotation, yRemoteSelections, yRemoteSelectionsTheme, yUndoManagerKeymap,
+  YRange } from 'y-codemirror.next';
+`;
+// What the Vim bundle exports as the global CodeMirrorVim (against the global CodeMirror): the extension, Vim for its ex
+// commands and mappings, and its CodeMirror adapter, whose commands undo and redo a shared text's editor takes over.
+const CODEMIRROR_VIM_ENTRY = `export { vim, Vim, getCM, CodeMirror } from '@replit/codemirror-vim';
 `;
 
 // What the Tiptap bundle exports as the global Tiptap: the editor and the extensions m-rich-text uses, and for m-coedit the
-// Yjs namespace (Y), the collaboration extensions and the awareness protocol.
+// Yjs namespace (Y), the collaboration extensions and the awareness protocol. Y and the awareness are the Yjs library's
+// (the global Yjs, loaded first), not a copy in this bundle.
 const TIPTAP_ENTRY = `export { Editor, Extension, Node, Mark, mergeAttributes } from '@tiptap/core';
 export { default as StarterKit } from '@tiptap/starter-kit';
 export { default as Link } from '@tiptap/extension-link';
@@ -596,16 +647,17 @@ licenses/Unicode-3.0.txt, from ${UNICODE_URL}.
     licenseNote: 'Bundles @tiptap/core, starter-kit (and the extensions it includes), extension-link, extension-image, ' +
       'extension-mention, extension-placeholder, extension-table, extension-table-row, extension-table-cell, ' +
       'extension-table-header, extension-collaboration, extension-collaboration-caret, extensions, suggestion and pm 3.31.4, ' +
-      'the prosemirror-* packages, @tiptap/y-tiptap, yjs, y-protocols, lib0, isomorphic.js, @floating-ui/*, linkifyjs, ' +
-      'orderedmap, rope-sequence and w3c-keyname: all MIT. Each license text is below once, ' +
-      'with the packages it is the license of.',
+      'the prosemirror-* packages, @tiptap/y-tiptap, lib0, @floating-ui/*, linkifyjs, ' +
+      'orderedmap, rope-sequence and w3c-keyname: all MIT. yjs and y-protocols are the Yjs library\'s (libs/yjs), which ' +
+      'the bundle reads from the global Yjs. Each license text is below once, with the packages it is the license of.',
     copy: [],
     noticePackages: TIPTAP_PACKAGES,
     noticeDedupe: true,
     build: 'esbuild --bundle --minify --format=iife --global-name=Tiptap --platform=browser --target=es2020 ' +
       '--legal-comments=none of an entry that exports Editor, Extension, Node, Mark, mergeAttributes, StarterKit, Link, ' +
       'Image, Mention, Placeholder, Table, TableRow, TableCell, TableHeader, PluginKey, Collaboration, CollaborationCaret, Y ' +
-      '(the yjs namespace), Awareness, encodeAwarenessUpdate, applyAwarenessUpdate and removeAwarenessStates. Exposes the global Tiptap.',
+      '(the yjs namespace), Awareness, encodeAwarenessUpdate, applyAwarenessUpdate and removeAwarenessStates, with yjs and ' +
+      'y-protocols aliased to shims that read the global Yjs (libs/yjs/yjs.min.js, loaded first). Exposes the global Tiptap.',
     produce: (ctx) => [['tiptap/tiptap.min.js', ctx.esbuildTiptap()]],
   },
   {
@@ -625,6 +677,77 @@ licenses/Unicode-3.0.txt, from ${UNICODE_URL}.
       'lint, language and merge APIs, the language packages, the highlight tags and indentationMarkers. ' +
       'Exposes the global CodeMirror.',
     produce: (ctx) => [['codemirror/codemirror.min.js', ctx.esbuildCodeMirror()]],
+  },
+  {
+    // Yjs and its awareness protocol, the shared types of co-editing (m-coedit, Tiptap's collaboration, the whiteboard, a
+    // co-edited code editor: plans/design-dev-aide.md F15), loaded before any of them. One library, so a page has one
+    // copy of Yjs: two break its constructor checks.
+    id: 'yjs', name: 'Yjs with y-protocols (bundled)', npm: 'yjs', license: 'MIT',
+    licenseNote: 'Bundles yjs, y-protocols (its awareness protocol) and the lib0 modules they use: all MIT. Each license ' +
+      'text is below once, with the packages it is the license of.',
+    copy: [],
+    noticePackages: YJS_PACKAGES,
+    noticeDedupe: true,
+    build: 'esbuild --bundle --minify --format=iife --global-name=Yjs --platform=browser --target=es2020 ' +
+      '--legal-comments=none of an entry (YJS_ENTRY) that exports Y (the yjs namespace), Awareness, encodeAwarenessUpdate, ' +
+      'applyAwarenessUpdate and removeAwarenessStates. Exposes the global Yjs.',
+    produce: (ctx) => [['yjs/yjs.min.js', ctx.esbuildYjs()]],
+  },
+  {
+    // The binding of a CodeMirror editor to a Y.Text (a co-edited file of the dev-aide, F15): its sync, the others' carets
+    // and selections with their names, and Yjs' undo. Built against the CodeMirror and Yjs globals, loaded after them.
+    id: 'y-codemirror', name: 'y-codemirror.next (bundled)', npm: 'y-codemirror.next', license: 'MIT',
+    licenseNote: 'Bundles y-codemirror.next and the lib0 modules it uses: both MIT. @codemirror/state and view are read ' +
+      'from the global CodeMirror, yjs from the global Yjs.',
+    copy: [],
+    noticePackages: Y_CODEMIRROR_PACKAGES,
+    noticeDedupe: true,
+    build: 'esbuild --bundle --minify --format=iife --global-name=YCodeMirror --platform=browser --target=es2020 ' +
+      '--legal-comments=none of an entry (Y_CODEMIRROR_ENTRY) that exports yCollab, ySync, ySyncFacet, ySyncAnnotation, ' +
+      'yRemoteSelections, yRemoteSelectionsTheme, yUndoManagerKeymap and YRange, with @codemirror/* and yjs aliased to shims ' +
+      'that read the globals CodeMirror and Yjs. Exposes the global YCodeMirror.',
+    produce: (ctx) => [['codemirror/y-codemirror.min.js', ctx.esbuildYCodeMirror()]],
+  },
+  {
+    // The Vim keymap of the code editor (the editor settings' keymap "vim", plans/design-dev-aide.md 5.1), loaded only for
+    // a user who picks it. Built against the CodeMirror global.
+    id: 'codemirror-vim', name: 'Vim keybindings for CodeMirror 6 (bundled)', npm: '@replit/codemirror-vim', license: 'MIT',
+    licenseNote: 'Bundles @replit/codemirror-vim and @replit/codemirror-vim-core: both MIT. @codemirror/* are read from ' +
+      'the global CodeMirror.',
+    copy: [],
+    noticePackages: CODEMIRROR_VIM_PACKAGES,
+    noticeDedupe: true,
+    build: 'esbuild --bundle --minify --format=iife --global-name=CodeMirrorVim --platform=browser --target=es2020 ' +
+      '--legal-comments=none of an entry (CODEMIRROR_VIM_ENTRY) that exports vim, Vim, getCM and CodeMirror, with @codemirror/* aliased ' +
+      'to shims that read the global CodeMirror. Exposes the global CodeMirrorVim.',
+    produce: (ctx) => [['codemirror/vim.min.js', ctx.esbuildCodeMirrorVim()]],
+  },
+  {
+    // The second bundle of the code editor's languages (plans/design-dev-aide.md 5.1): legacy stream modes, loaded only
+    // when a file needs one (js/WebrootCode.js LEGACY_EXTENSIONS).
+    id: 'codemirror-legacy', name: 'CodeMirror legacy modes (bundled)', npm: '@codemirror/legacy-modes', license: 'MIT',
+    licenseNote: 'The shell, groovy, properties, toml, dockerfile and nginx modes of @codemirror/legacy-modes (MIT), with ' +
+      'its simple-mode helper.',
+    copy: [],
+    licenseFiles: ['LICENSE'],
+    build: 'esbuild --bundle --minify --format=iife --global-name=CodeMirrorLegacy --platform=browser --target=es2020 ' +
+      '--legal-comments=none of an entry (LEGACY_ENTRY) that exports the modes LEGACY_MODES names. ' +
+      'Exposes the global CodeMirrorLegacy.',
+    produce: (ctx) => [['codemirror/legacy-modes.min.js', ctx.esbuildLegacyModes()]],
+  },
+  {
+    // The TypeScript compiler of the dev-aide's type checker (plans/design-dev-aide.md 5.4, question 10): a browser worker
+    // runs it over the project's `moqui types` declarations, loaded only on the first JS tab with checking turned on. It
+    // is large (lib/typescript.js is 8.8 MB, about 3.4 MB minified) and never loads with a page.
+    id: 'typescript', name: 'TypeScript', npm: 'typescript', license: 'Apache-2.0',
+    licenseNote: 'lib/typescript.js minified (its license header kept), and the ES5 to ES2023 and decorators ' +
+      'declarations of lib/ as one script. ThirdPartyNoticeText.txt is the package\'s notice of what its declarations ' +
+      'derive from.',
+    copy: [],
+    licenseFiles: ['LICENSE.txt', 'ThirdPartyNoticeText.txt'],
+    build: 'esbuild --minify --legal-comments=inline on lib/typescript.js (a transform, no bundling), and lib-es2023.js: ' +
+      'self.MoquiTsLibs set to the text of each lib/ file TS_LIB matches, by name.',
+    produce: (ctx) => ctx.typescriptFiles(),
   },
   {
     // The map of m-map (js/WebrootMap.js, plans/Maps.md §3.2), loaded with moqui.loadScript when the first map mounts.
@@ -856,7 +979,56 @@ export const atob = typeof globalThis.atob === 'function' ? globalThis.atob.bind
     esbuildTiptap() {
       writeFileSync(join(build, 'tt-entry.js'), TIPTAP_ENTRY);
       return esbuild(['tt-entry.js', '--bundle', '--minify', '--format=iife', '--global-name=Tiptap', '--platform=browser',
+        '--target=es2020', '--legal-comments=none', ...ctx.yjsShims()]);
+    },
+    // esbuild --alias arguments that take yjs and y-protocols' awareness from the global Yjs
+    yjsShims() {
+      mkdirSync(join(build, 'shims/y-protocols'), { recursive: true });
+      writeFileSync(join(build, 'shims/yjs.js'), YJS_SHIM('globalThis.Yjs.Y'));
+      writeFileSync(join(build, 'shims/y-protocols/awareness.js'), YJS_SHIM('globalThis.Yjs'));
+      return ['--alias:yjs=./shims/yjs.js', '--alias:y-protocols=./shims/y-protocols'];
+    },
+    // esbuild --alias arguments that take @codemirror/* from the global CodeMirror (its modules)
+    codemirrorShims() {
+      const args = [];
+      mkdirSync(join(build, 'shims/codemirror'), { recursive: true });
+      for (const name of ['state', 'view', 'language', 'commands', 'search']) {
+        writeFileSync(join(build, `shims/codemirror/${name}.js`), CM_SHIM('@codemirror/' + name));
+        args.push(`--alias:@codemirror/${name}=./shims/codemirror/${name}.js`);
+      }
+      return args;
+    },
+    esbuildYjs() {
+      writeFileSync(join(build, 'yjs-entry.js'), YJS_ENTRY);
+      return esbuild(['yjs-entry.js', '--bundle', '--minify', '--format=iife', '--global-name=Yjs', '--platform=browser',
         '--target=es2020', '--legal-comments=none']);
+    },
+    esbuildYCodeMirror() {
+      writeFileSync(join(build, 'ycm-entry.js'), Y_CODEMIRROR_ENTRY);
+      return esbuild(['ycm-entry.js', '--bundle', '--minify', '--format=iife', '--global-name=YCodeMirror',
+        '--platform=browser', '--target=es2020', '--legal-comments=none', ...ctx.codemirrorShims(), '--alias:yjs=./shims/yjs.js']);
+    },
+    esbuildCodeMirrorVim() {
+      writeFileSync(join(build, 'cmvim-entry.js'), CODEMIRROR_VIM_ENTRY);
+      return esbuild(['cmvim-entry.js', '--bundle', '--minify', '--format=iife', '--global-name=CodeMirrorVim',
+        '--platform=browser', '--target=es2020', '--legal-comments=none', ...ctx.codemirrorShims()]);
+    },
+    esbuildLegacyModes() {
+      writeFileSync(join(build, 'cmlegacy-entry.js'), LEGACY_ENTRY);
+      return esbuild(['cmlegacy-entry.js', '--bundle', '--minify', '--format=iife', '--global-name=CodeMirrorLegacy',
+        '--platform=browser', '--target=es2020', '--legal-comments=none']);
+    },
+    typescriptFiles() {
+      const root = packages.typescript.root;
+      const compiler = esbuild([join(root, 'lib', 'typescript.js'), '--minify', '--legal-comments=inline']);
+      const libs = {};
+      for (const name of readdirSync(join(root, 'lib')).sort()) {
+        if (TS_LIB.test(name)) libs[name] = toLf(readFileSync(join(root, 'lib', name))).toString('utf8');
+      }
+      if (!libs['lib.es2023.d.ts'] || !libs['lib.es5.d.ts']) throw new Error('typescript has no lib.es5.d.ts or lib.es2023.d.ts');
+      const script = '/* The ES5 to ES2023 declarations of TypeScript ' + pins.typescript + ' (Apache-2.0), by file name. */\n' +
+        'self.MoquiTsLibs = ' + JSON.stringify(libs) + ';\n';
+      return [['typescript/typescript.min.js', compiler], ['typescript/lib-es2023.js', Buffer.from(script, 'utf8')]];
     },
     esbuildCodeMirror() {
       writeFileSync(join(build, 'cm-entry.js'), CODEMIRROR_ENTRY);

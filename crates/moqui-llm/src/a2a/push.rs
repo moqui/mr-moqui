@@ -50,6 +50,7 @@ use super::types::{self, A2aError, PushIn};
 use super::{Failure, Origin};
 use crate::run::{self, in_tx, now_millis, quietly, stamp};
 use crate::{int_of, millis_of, text_of};
+use moqui_core::context::framework_thread;
 use moqui_core::context::ExecutionContextFactory;
 use moqui_core::entity::{EntityFacade, EntityValue};
 
@@ -416,7 +417,7 @@ pub fn start(factory: &Arc<ExecutionContextFactory>) {
     let weak = Arc::downgrade(factory);
     let spawned = std::thread::Builder::new()
         .name("moqui-a2a-push".to_string())
-        .spawn(move || loop {
+        .spawn(framework_thread(move || loop {
             std::thread::sleep(Duration::from_secs(1));
             let Some(factory) = weak.upgrade() else {
                 return;
@@ -427,7 +428,7 @@ pub fn start(factory: &Arc<ExecutionContextFactory>) {
             if let Err(error) = tick(&factory) {
                 tracing::error!("the A2A push round failed: {error}");
             }
-        });
+        }));
     if let Err(error) = spawned {
         tracing::error!("the A2A push thread did not start: {error}");
     }
@@ -838,7 +839,7 @@ fn deliver(factory: &Arc<ExecutionContextFactory>, facade: &EntityFacade, deadli
     let delivered = AtomicUsize::new(0);
     std::thread::scope(|scope| {
         for _ in 0..WORKERS {
-            scope.spawn(|| {
+            scope.spawn(framework_thread(|| {
                 let context = factory.new_context();
                 let _entered = context.enter();
                 let _authz = context.disable_authz();
@@ -894,7 +895,7 @@ fn deliver(factory: &Arc<ExecutionContextFactory>, facade: &EntityFacade, deadli
                         *count = count.saturating_sub(1);
                     }
                 }
-            });
+            }));
         }
     });
     Ok(delivered.load(Ordering::SeqCst))

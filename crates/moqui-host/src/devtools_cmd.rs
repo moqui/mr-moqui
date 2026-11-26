@@ -416,9 +416,13 @@ fn changed_files() -> Result<Vec<PathBuf>, Error> {
     Ok(paths)
 }
 
-/// Run `git` with `args` for its output, as the dev tools run it: argv, no prompt, no optional locks.
+/// Run `git` with `args` for its output, as the dev tools run it: argv, no prompt, no optional locks, a read that runs
+/// nothing the repository's config names (`moqui_lib::git_read::harden`; a hook's `GIT_INDEX_FILE` is kept, as `moqui
+/// check` runs as a pre-commit hook).
 fn git(args: &[&str]) -> Result<String, Error> {
-    let output = std::process::Command::new("git")
+    let mut command = std::process::Command::new("git");
+    moqui_lib::git_read::harden(&mut command);
+    let output = command
         .args(["-c", "core.quotepath=off", "-c", "color.ui=false"])
         .args(args)
         .env("LC_ALL", "C")

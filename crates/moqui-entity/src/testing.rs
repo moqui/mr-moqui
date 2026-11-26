@@ -631,7 +631,36 @@ impl MemConn {
             Stmt::Insert {
                 table,
                 columns,
+                conflict: None,
+                rows,
+            } if rows > 1 => {
+                let width = columns.len();
+                if params.len() < width * rows {
+                    return Err(Error::new("insert is missing a parameter"));
+                }
+                let added: Vec<BTreeMap<String, Value>> = params
+                    .chunks(width)
+                    .take(rows)
+                    .map(|values| columns.iter().cloned().zip(values.iter().cloned()).collect())
+                    .collect();
+                let mut stored = self.read_table(&table);
+                stored.extend(added.iter().cloned());
+                self.put_table(&table, stored);
+                for row in added {
+                    self.record(Change {
+                        table: table.clone(),
+                        old: None,
+                        new: Some(row),
+                        key: None,
+                    });
+                }
+                Ok((u64::try_from(rows).unwrap_or(u64::MAX), Vec::new()))
+            }
+            Stmt::Insert {
+                table,
+                columns,
                 conflict,
+                ..
             } => {
                 let mut row = BTreeMap::new();
                 for (index, column) in columns.iter().enumerate() {
@@ -1313,6 +1342,8 @@ enum Stmt {
         /// `ON CONFLICT (columns) DO NOTHING`, or `DO UPDATE SET column = EXCLUDED.column, ...`: a row equal on the
         /// conflict columns is not inserted again, and gets the update columns' new values.
         conflict: Option<(Vec<String>, Vec<String>)>,
+        /// The rows: a values list of `columns` each, bound one after another.
+        rows: usize,
     },
     Update {
         table: String,
@@ -1451,14 +1482,22 @@ fn parse_insert(cur: &mut Cur) -> Result<Stmt, Error> {
     }
     cur.expect_symbol(b')')?;
     cur.expect_keyword("VALUES")?;
-    cur.expect_symbol(b'(')?;
-    for index in 0..columns.len() {
-        if index > 0 {
-            cur.expect_symbol(b',')?;
+    // one values list a row, `(?, ?), (?, ?)` for several (moqui-db `insert_rows`)
+    let mut rows = 0;
+    loop {
+        cur.expect_symbol(b'(')?;
+        for index in 0..columns.len() {
+            if index > 0 {
+                cur.expect_symbol(b',')?;
+            }
+            cur.expect_symbol(b'?')?;
         }
-        cur.expect_symbol(b'?')?;
+        cur.expect_symbol(b')')?;
+        rows += 1;
+        if !cur.eat_symbol(b',') {
+            break;
+        }
     }
-    cur.expect_symbol(b')')?;
     let conflict = if cur.eat_keyword("ON") {
         cur.expect_keyword("CONFLICT")?;
         cur.expect_symbol(b'(')?;
@@ -1494,10 +1533,14 @@ fn parse_insert(cur: &mut Cur) -> Result<Stmt, Error> {
         None
     };
     cur.expect_end()?;
+    if rows > 1 && conflict.is_some() {
+        return Err(cur.fail("an upsert of several rows"));
+    }
     Ok(Stmt::Insert {
         table,
         columns,
         conflict,
+        rows,
     })
 }
 

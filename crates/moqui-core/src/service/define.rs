@@ -686,9 +686,14 @@ fn note_lookup(name: &str) {
     });
 }
 
-/// A service of the entered context's factory. `None` when it is not defined or no context is entered.
+/// A service of the entered context's factory, or of the service overlay held on this thread (`super::overlay`).
+/// `None` when it is not defined or no context is entered.
 pub fn find(name: &str) -> Option<Arc<ServiceDef>> {
     note_lookup(name);
+    // a service file's unsaved or proposed text held on this thread (F14)
+    if let Some(overlaid) = super::overlay::find(name) {
+        return overlaid;
+    }
     let shared = entered().ok()?;
     if let Some(def) = snapshot(&shared).services.get(name) {
         return Some(Arc::clone(def));
@@ -1098,42 +1103,13 @@ pub fn reload_parsed(changed: &[PathBuf], parsed: Vec<(PathBuf, MNode)>) -> Resu
     let shared = entered()?;
     let _loading = lock(&shared.load);
     let before = snapshot(&shared);
-    let changed: Vec<PathBuf> = changed.iter().map(|path| normalize(path)).collect();
-    let prefixes: BTreeSet<String> = changed.iter().map(|path| service_prefix(path)).collect();
-    // The registry as it was, less what the changed groups read: their files, failures, services and includes.
-    let mut registry = Registry::clone(&before);
-    let mut seeds = BTreeSet::new();
-    let mut paths = Vec::new();
-    let mut seen: HashSet<PathBuf> = HashSet::new();
-    for prefix in &prefixes {
-        let Some(group) = registry.loaded.groups.remove(prefix) else {
-            continue;
-        };
-        for file in &group.files {
-            registry.loaded.files.remove(file);
-            if seen.insert(file.clone()) && moqui_lib::vfs::is_file(file) {
-                paths.push(file.clone());
-            }
-        }
-        registry.loaded.failures.retain(|(file, _)| !group.files.contains(file));
-        for name in &group.names {
-            registry.loaded.defined.remove(name);
-            registry.loaded.ranks.remove(name);
-        }
-        registry.loaded.includes.retain(|include| &include.group != prefix);
-        seeds.extend(group.names);
-    }
-    for file in &changed {
-        if seen.insert(file.clone()) && moqui_lib::vfs::is_file(file) {
-            paths.push(file.clone());
-        }
-    }
-    let collected = started.elapsed();
-    let mut parsed: HashMap<PathBuf, MNode> = parsed
-        .into_iter()
-        .map(|(path, root)| (normalize(&path), root))
-        .collect();
-    let times = registry.merge_parsed(&paths, &mut parsed, seeds)?;
+    let Rebuilt {
+        registry,
+        times,
+        changed,
+        prefixes,
+        collected,
+    } = rebuilt(&before, changed, parsed, started)?;
     let names_of = |registry: &Registry| -> BTreeSet<String> {
         prefixes
             .iter()
@@ -1166,16 +1142,7 @@ pub fn reload_parsed(changed: &[PathBuf], parsed: Vec<(PathBuf, MNode)>) -> Resu
             .collect(),
         ..ServiceReload::default()
     };
-    let displays: Vec<String> = changed.iter().map(|path| path.display().to_string()).collect();
-    report.failures = registry
-        .failures
-        .iter()
-        .filter(|failure| {
-            displays.iter().any(|display| failure.contains(display.as_str()))
-                || now.iter().any(|name| failure.contains(&format!("service {name} ")))
-        })
-        .cloned()
-        .collect();
+    report.failures = failures_of(&registry, &changed, &now);
     report.phases = ReloadPhases {
         collect: collected,
         load: times.load,
@@ -1186,6 +1153,135 @@ pub fn reload_parsed(changed: &[PathBuf], parsed: Vec<(PathBuf, MNode)>) -> Resu
     report.resolved = times.resolved.into_iter().collect();
     replace(&shared, registry);
     Ok(report)
+}
+
+/// The registration failures of `registry` that name one of the `changed` files or a service of `names`.
+fn failures_of(registry: &Registry, changed: &[PathBuf], names: &BTreeSet<String>) -> Vec<String> {
+    let displays: Vec<String> = changed.iter().map(|path| path.display().to_string()).collect();
+    registry
+        .failures
+        .iter()
+        .filter(|failure| {
+            displays.iter().any(|display| failure.contains(display.as_str()))
+                || names.iter().any(|name| failure.contains(&format!("service {name} ")))
+        })
+        .cloned()
+        .collect()
+}
+
+/// What the service files of an overlay define (plans/design-dev-aide.md F14, for services): each service of the
+/// files' groups as a reload of them would resolve it, and each that implements or includes one of them, transitively;
+/// `None` for one the groups defined before and do not now. The registry is not changed.
+pub(crate) struct OverlaidDefinitions {
+    pub services: BTreeMap<String, Option<Arc<ServiceDef>>>,
+    /// The services the files define, by name.
+    pub defined: BTreeSet<String>,
+    /// The registration failures of the files and their services.
+    pub failures: Vec<String>,
+}
+
+/// [`OverlaidDefinitions`] of `parsed` (each service file's path and its text parsed), over the entered context's
+/// registry as it is now. A file need not be on the disk: a buffer's new file defines its services too.
+///
+/// # Errors
+///
+/// Returns an error when no context is entered.
+pub(crate) fn overlaid_definitions(parsed: Vec<(PathBuf, MNode)>) -> Result<OverlaidDefinitions, Error> {
+    let shared = entered()?;
+    let before = snapshot(&shared);
+    let changed: Vec<PathBuf> = parsed.iter().map(|(path, _)| path.clone()).collect();
+    let Rebuilt {
+        mut registry,
+        times,
+        changed,
+        prefixes,
+        ..
+    } = rebuilt(&before, &changed, parsed, std::time::Instant::now())?;
+    // a service of the files that implements one of a file not read yet: as a lookup by name reads it
+    registry.merge_implemented();
+    let defined: BTreeSet<String> = prefixes
+        .iter()
+        .filter_map(|prefix| registry.loaded.groups.get(prefix))
+        .flat_map(|group| group.names.iter())
+        .filter(|name| registry.loaded.defined.contains_key(*name) || registry.services.contains_key(*name))
+        .cloned()
+        .collect();
+    let services = times
+        .resolved
+        .iter()
+        .map(|name| (name.clone(), registry.services.get(name).cloned()))
+        .collect();
+    Ok(OverlaidDefinitions {
+        services,
+        failures: failures_of(&registry, &changed, &defined),
+        defined,
+    })
+}
+
+/// A registry with changed service files read again ([`reload_parsed`]), before it is swapped in.
+struct Rebuilt {
+    registry: Registry,
+    times: MergeTimes,
+    /// The changed files, normalized.
+    changed: Vec<PathBuf>,
+    /// The service prefixes of the changed files: their groups.
+    prefixes: BTreeSet<String>,
+    /// How long collecting the paths took.
+    collected: Duration,
+}
+
+/// `before` with the groups of `changed` read again: their files, failures, services and includes left out, then the
+/// files of each group and the changed files read (from `parsed` where it has them, so a changed file need not be on
+/// the disk), and the services they define or defined resolved again with what implements or includes them.
+fn rebuilt(
+    before: &Registry,
+    changed: &[PathBuf],
+    parsed: Vec<(PathBuf, MNode)>,
+    started: std::time::Instant,
+) -> Result<Rebuilt, Error> {
+    let changed: Vec<PathBuf> = changed.iter().map(|path| normalize(path)).collect();
+    let prefixes: BTreeSet<String> = changed.iter().map(|path| service_prefix(path)).collect();
+    let mut parsed: HashMap<PathBuf, MNode> = parsed
+        .into_iter()
+        .map(|(path, root)| (normalize(&path), root))
+        .collect();
+    // The registry as it was, less what the changed groups read: their files, failures, services and includes.
+    let mut registry = Registry::clone(before);
+    let mut seeds = BTreeSet::new();
+    let mut paths = Vec::new();
+    let mut seen: HashSet<PathBuf> = HashSet::new();
+    for prefix in &prefixes {
+        let Some(group) = registry.loaded.groups.remove(prefix) else {
+            continue;
+        };
+        for file in &group.files {
+            registry.loaded.files.remove(file);
+            if seen.insert(file.clone()) && (moqui_lib::vfs::is_file(file) || parsed.contains_key(file)) {
+                paths.push(file.clone());
+            }
+        }
+        registry.loaded.failures.retain(|(file, _)| !group.files.contains(file));
+        for name in &group.names {
+            registry.loaded.defined.remove(name);
+            registry.loaded.ranks.remove(name);
+        }
+        registry.loaded.includes.retain(|include| &include.group != prefix);
+        seeds.extend(group.names);
+    }
+    for file in &changed {
+        if seen.insert(file.clone()) && (moqui_lib::vfs::is_file(file) || parsed.contains_key(file)) {
+            paths.push(file.clone());
+        }
+    }
+    let collected = started.elapsed();
+    let times = registry.merge_parsed(&paths, &mut parsed, seeds)?;
+    Ok(Rebuilt {
+        registry,
+        times,
+        changed,
+        prefixes,
+        collected,
+    })
 }
 
 /// The prefix of a service name: before its last `.` ahead of the `#` (`a.b.C` of `a.b.C.verb#d.Noun`), empty for

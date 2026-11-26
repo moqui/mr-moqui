@@ -1875,8 +1875,8 @@
               ], 40, ["onDragover", "onDrop", "onPaste"]))
             }
         } },
-        "m-assist-history": { hash: "6633506c", make: function (Vue) {
-            const { resolveComponent: _resolveComponent, createVNode: _createVNode, withCtx: _withCtx, createElementVNode: _createElementVNode, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, renderList: _renderList, Fragment: _Fragment, createElementBlock: _createElementBlock } = Vue
+        "m-assist-history": { hash: "b319f0c6", make: function (Vue) {
+            const { resolveComponent: _resolveComponent, createVNode: _createVNode, withCtx: _withCtx, createElementVNode: _createElementVNode, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, renderList: _renderList, Fragment: _Fragment, createElementBlock: _createElementBlock, withModifiers: _withModifiers } = Vue
 
             return function render(_ctx, _cache) {
               const _component_q_icon = _resolveComponent("q-icon")
@@ -1885,6 +1885,8 @@
               const _component_q_item = _resolveComponent("q-item")
               const _component_q_item_label = _resolveComponent("q-item-label")
               const _component_q_spinner = _resolveComponent("q-spinner")
+              const _component_q_tooltip = _resolveComponent("q-tooltip")
+              const _component_q_btn = _resolveComponent("q-btn")
               const _component_q_list = _resolveComponent("q-list")
 
               return (_openBlock(), _createElementBlock("div", {
@@ -1946,7 +1948,7 @@
                               }, 1024),
                               _createVNode(_component_q_item_label, { caption: "" }, {
                                 default: _withCtx(() => [
-                                  _createTextVNode(_toDisplayString(_ctx.when(item.lastMessageDate || item.createdDate)), 1)
+                                  _createTextVNode(_toDisplayString(_ctx.when(item.lastMessageDate || item.createdDate)) + _toDisplayString(item.statusId === 'AgcArchived' ? ' · ' + _ctx.labels.archived : ''), 1)
                                 ]),
                                 _: 2
                               }, 1024)
@@ -1968,6 +1970,31 @@
                                       size: "14px"
                                     }))
                                   : _createCommentVNode("", true)
+                            ]),
+                            _: 2
+                          }, 1024),
+                          _createVNode(_component_q_item_section, { side: "" }, {
+                            default: _withCtx(() => [
+                              _createVNode(_component_q_btn, {
+                                dense: "",
+                                flat: "",
+                                round: "",
+                                size: "xs",
+                                icon: item.statusId === 'AgcArchived' ? 'sym_o_unarchive' : 'sym_o_archive',
+                                "aria-label": item.statusId === 'AgcArchived' ? _ctx.labels.restore : _ctx.labels.archive,
+                                "data-assist-archive": item.conversationId,
+                                onClick: _withModifiers($event => (_ctx.archive(item, item.statusId !== 'AgcArchived')), ["stop"])
+                              }, {
+                                default: _withCtx(() => [
+                                  _createVNode(_component_q_tooltip, null, {
+                                    default: _withCtx(() => [
+                                      _createTextVNode(_toDisplayString(item.statusId === 'AgcArchived' ? _ctx.labels.restore : _ctx.labels.archive), 1)
+                                    ]),
+                                    _: 2
+                                  }, 1024)
+                                ]),
+                                _: 2
+                              }, 1032, ["icon", "aria-label", "data-assist-archive", "onClick"])
                             ]),
                             _: 2
                           }, 1024)

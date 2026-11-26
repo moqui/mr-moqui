@@ -16,4 +16,5 @@ risk: reversible
    wrote (trimmed to the fields that matter).
 3. `propose_edit` it into `component://<component>/test/<Service>.spec.js` (append a feature when the file is there).
 4. Tell the user the service view's Try panel does the same by hand: Save as spec after a Try in sim, then Run spec runs
-   the file in the sim, so it writes nothing.
+   the file in the sim, so it writes nothing. For an ECA rule, the ECA view's Try the condition saves a context as a
+   fixture and Save as spec writes a feature that runs the rule's trigger with it.

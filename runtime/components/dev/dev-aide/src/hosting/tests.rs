@@ -25,7 +25,9 @@ use super::connect::{
     default_repository, env_restore, redirect_origin, repository_name, repository_url, with_repository,
     without_repository,
 };
-use super::review::{create_call, fork_call, list_call, merge_request_item, page_url, propose_args, via, Opening, Via};
+use super::review::{
+    create_call, fork_call, list_call, merge_request_item, page_url, propose_args, repository_pages, via, Opening, Via,
+};
 
 fn server(offer: serde_json::Value) -> Server {
     Server {
@@ -36,6 +38,8 @@ fn server(offer: serde_json::Value) -> Server {
         username: "ann".into(),
         offer,
         token: Some("k".into()),
+        tasks_token: None,
+        app_token: None,
     }
 }
 
@@ -584,6 +588,7 @@ fn an_issue_is_read_by_its_id_alone() {
             false
         ))
     );
+    // Mantle's issue of the hosted repository, its id encoded as a path part
     assert_eq!(
         issue_path("https://elsewhere/{id}", "my-site", "12"),
         Some(("/rest/s1/mantle/workEfforts/12".to_string(), false))
@@ -681,4 +686,101 @@ fn the_app_a_server_offers_for_its_tasks() {
     let elsewhere = server(json!({ "tasks": { "app": { "taskPath": "//elsewhere/{taskId}" } } }));
     assert!(crate::tasks::offered_app(&elsewhere).is_none());
     assert!(crate::tasks::offered_app(&server(json!({}))).is_none());
+}
+
+/// An app sign-in keeps a key for each service and ends the account's (question 18), unless an application takes only
+/// the installed app's key, which is then kept for it alone; a server that makes no such keys keeps the account's, as
+/// before.
+#[test]
+fn a_sign_in_keeps_a_key_for_each_service() {
+    use super::connect::{sign_in_keys, SignInKeys};
+    let made = || [Some("g".to_string()), Some("t".to_string()), Some("w".to_string())];
+    assert_eq!(
+        sign_in_keys("acct", made(), false),
+        SignInKeys {
+            token: "g".into(),
+            tasks: Some("t".into()),
+            gateway: Some("w".into()),
+            app: None,
+            end_account_key: true,
+            orphans: Vec::new(),
+        }
+    );
+    let smithy = sign_in_keys("acct", made(), true);
+    assert_eq!(smithy.app.as_deref(), Some("acct"));
+    assert!(!smithy.end_account_key);
+    assert_eq!(smithy.token, "g");
+    let older = sign_in_keys("acct", [None, None, Some("w".into())], false);
+    assert_eq!(older.token, "acct");
+    assert!(older.tasks.is_none() && older.app.is_none() && !older.end_account_key);
+    assert_eq!(older.gateway.as_deref(), Some("w"));
+    assert!(older.orphans.is_empty());
+    // one of the two made: it is ended, and the account's key stays the token
+    let half = sign_in_keys("acct", [Some("g".into()), None, None], false);
+    assert_eq!(
+        (half.token.as_str(), half.orphans.as_slice()),
+        ("acct", ["g".to_string()].as_slice())
+    );
+}
+
+/// "Open on the server" takes a repository's page templates from the offer (the application's for a repository it
+/// keeps), its path filled in, and only those of the server's own address.
+#[test]
+fn a_repositorys_pages_are_the_servers_own() {
+    let offer = json!({
+        "application": { "name": "smithy", "restBase": "/rest/s1/pass/v1/sites/S/smithy", "pages": {
+            "file": "https://team.example.com/code/{repositoryPath}/-/blob/{ref}/{file}#L{line}",
+            "commit": "/code/{repositoryPath}/-/commit/{commitId}",
+            "branch": "https://elsewhere.example.com/{repositoryPath}/-/tree/{branch}" } },
+        "pages": { "file": "https://{repositoryPath}.example.com/{file}", "commit": "https://team.example.com/c/{commitId}" }
+    });
+    let server = server(offer);
+    let kept = json!({ "repositoryPath": "team/site one", "keptBy": { "application": "smithy" } });
+    let pages = repository_pages(&server, &kept);
+    assert_eq!(
+        pages["file"],
+        "https://team.example.com/code/team/site%20one/-/blob/{ref}/{file}#L{line}"
+    );
+    assert_eq!(
+        pages["commit"],
+        "https://team.example.com/code/team/site%20one/-/commit/{commitId}"
+    );
+    assert!(pages["branch"].is_null(), "another site's page: {pages}");
+    // the framework's: a template that puts the path into the host is no page
+    let own = repository_pages(&server, &json!({ "repositoryPath": "site" }));
+    assert!(own["file"].is_null(), "{own}");
+    assert_eq!(own["commit"], "https://team.example.com/c/{commitId}");
+    assert!(repository_pages(&server, &json!({})).is_null());
+    // pages by the repository's id (IronStone Projects' Code): the id as one encoded part; with no id, none
+    let by_id = server_with_pages(json!({
+        "file": "https://team.example.com/qapps/Projects/Code/RepositoryDetail/Files?repositoryId={repositoryId}&ref={ref}&path={file}&line={line}",
+        "commit": "https://team.example.com/qapps/Projects/Code/CommitDetail?repositoryId={repositoryId}&commitId={commitId}" }));
+    let pages = repository_pages(
+        &by_id,
+        &json!({ "repositoryPath": "team/site", "repositoryId": "site a/b" }),
+    );
+    assert_eq!(
+        pages["file"],
+        "https://team.example.com/qapps/Projects/Code/RepositoryDetail/Files?repositoryId=site%20a%2Fb&ref={ref}&path={file}&line={line}"
+    );
+    assert_eq!(
+        pages["commit"],
+        "https://team.example.com/qapps/Projects/Code/CommitDetail?repositoryId=site%20a%2Fb&commitId={commitId}"
+    );
+    assert!(repository_pages(&by_id, &json!({ "repositoryPath": "team/site" })).is_null());
+}
+
+/// A server whose offer has the framework's `pages` alone.
+fn server_with_pages(pages: serde_json::Value) -> Server {
+    server(json!({ "pages": pages }))
+}
+
+/// A value put into a server's path as one part never names the part above it.
+#[test]
+fn a_path_part_of_dots_is_encoded() {
+    use super::client::query_text;
+    assert_eq!(query_text(".."), "%2E%2E");
+    assert_eq!(query_text("."), "%2E");
+    assert_eq!(query_text("a.b"), "a.b");
+    assert_eq!(query_text("a/b"), "a%2Fb");
 }

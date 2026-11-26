@@ -26,21 +26,28 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
     <service verb="get" noun="ServiceView" type="rust" location="dev_aide::services::get_service_view" allow-remote="false" read-only="true">
         <description>A service as its view shows it: its definition with the parameters nested (those auto-parameters
-            imply marked), its file and line, its script's file, its SECA rules, what uses it, the last spec run's calls.</description>
+            imply marked), its file and line, its script's file, its SECA rules, what uses it, the last spec run's calls.
+            With files, the definition is the unsaved buffers' (read only, nothing runs).</description>
         <in-parameters>
             <parameter name="artifactId"/>
             <parameter name="serviceName"/>
+            <parameter name="files" type="Object" allow-html="any"><description>A JSON list of {rootId, path, text}: unsaved service buffers.</description></parameter>
         </in-parameters>
         <out-parameters><parameter name="view" type="Map"/></out-parameters>
     </service>
     <service verb="try" noun="Service" type="rust" location="dev_aide::services::try_service" allow-remote="false">
         <description>Run a service in the sim, nothing kept: its out-parameters, messages and the rows it would write; or
-            with real and confirm, for real (the extend tier), audited.</description>
+            with real and confirm, for real (the extend tier), audited. In the sim it runs as unsaved or proposed text
+            defines it (F14): the service files and script files of files and preview stand at their locations for the
+            Try's own calls only. With trace, each XML actions element's count, the values it set and the one that failed.</description>
         <in-parameters>
             <parameter name="serviceName" required="true"/>
             <parameter name="parameters" type="Object" allow-html="any"/>
             <parameter name="real" type="Boolean"/>
             <parameter name="confirm" type="Boolean"/>
+            <parameter name="files" type="Object" allow-html="any"><description>A JSON list of {rootId, path, text}: unsaved buffers to run over, in the sim only.</description></parameter>
+            <parameter name="preview"><description>buffer:&lt;id&gt; (a canvas or guided editor's buffer) or approval:&lt;id&gt; (a change set of yours) to run over, in the sim only.</description></parameter>
+            <parameter name="trace" type="Boolean"/>
         </in-parameters>
         <out-parameters><parameter name="result" type="Map"/></out-parameters>
     </service>
@@ -112,6 +119,67 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters>
             <parameter name="holds" type="Boolean"/>
             <parameter name="result" type="Map"/>
+        </out-parameters>
+    </service>
+    <service verb="save" noun="RuleFixture" type="rust" location="dev_aide::eca_specs::save_rule_fixture" allow-remote="false">
+        <description>A context a rule's condition is tried against, saved as a named fixture of the rules file
+            (test/fixtures/&lt;name&gt;.json of its component, or the site's): one of the name is replaced. The extend tier.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="path" required="true"><description>The rules file.</description></parameter>
+            <parameter name="name" required="true"/>
+            <parameter name="context" type="Object" allow-html="any"><description>A JSON object.</description></parameter>
+        </in-parameters>
+        <out-parameters><parameter name="fixture" type="Map"/></out-parameters>
+    </service>
+    <service verb="list" noun="RuleFixtures" authz-action="view" type="rust" location="dev_aide::eca_specs::list_rule_fixtures" allow-remote="false" read-only="true">
+        <description>The fixtures of a rules file, each with its context.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="path" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="fixtures" type="List"/></out-parameters>
+    </service>
+    <service verb="save" noun="RuleSpec" type="rust" location="dev_aide::eca_specs::save_rule_spec" allow-remote="false">
+        <description>Save as spec on a rule (10): its fixture written, and a feature appended to the rules file's spec
+            that runs the rule's trigger with it (a SECA's service call, an EECA's entity operation) and checks what the
+            trigger did in a run in the sim now; for a gitECA rule, whose push a spec does not replay, its condition
+            against the fixture. The trial in the sim writes nothing to the database, and a trigger that fails there writes
+            no file. The extend tier.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="path" required="true"><description>The rules file, saved.</description></parameter>
+            <parameter name="kind" required="true"><description>seca, eeca or giteca</description></parameter>
+            <parameter name="target"><description>The rule's service (seca) or entity (eeca).</description></parameter>
+            <parameter name="operation"><description>An EECA rule's: create, update or delete.</description></parameter>
+            <parameter name="condition" allow-html="any"><description>A gitECA rule's: an expression or a condition element.</description></parameter>
+            <parameter name="fixture" required="true"><description>The fixture's name.</description></parameter>
+            <parameter name="context" type="Object" allow-html="any"><description>The fixture: a JSON object.</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="rootId"/>
+            <parameter name="path"/>
+            <parameter name="spec"/>
+            <parameter name="hash"/>
+            <parameter name="fixture" type="Map"/>
+            <parameter name="trial" type="Map"><description>The trigger's run in the sim.</description></parameter>
+            <parameter name="note"/>
+        </out-parameters>
+    </service>
+    <service verb="try" noun="Rule" type="rust" location="dev_aide::eca_specs::try_rule" allow-remote="false">
+        <description>A rule's trigger run in the sim with a context, traced, nothing written to the database (a SECA's service call, an
+            EECA's entity operation; a gitECA rule's condition alone): the run's messages, rows and trace, which marks the
+            rule's actions in the composer. The extend tier.</description>
+        <in-parameters>
+            <parameter name="kind" required="true"><description>seca, eeca or giteca</description></parameter>
+            <parameter name="target"><description>The rule's service (seca) or entity (eeca).</description></parameter>
+            <parameter name="operation"><description>An EECA rule's: create, update or delete.</description></parameter>
+            <parameter name="condition" allow-html="any"><description>A gitECA rule's: an expression or a condition element.</description></parameter>
+            <parameter name="context" type="Object" allow-html="any"><description>The trigger's context: a JSON object.</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="result" type="Map"/>
+            <parameter name="note"/>
         </out-parameters>
     </service>
     <service verb="get" noun="PushContexts" type="rust" location="dev_aide::services::get_push_contexts" allow-remote="false" read-only="true">

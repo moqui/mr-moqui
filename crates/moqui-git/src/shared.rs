@@ -30,6 +30,7 @@ use std::time::{Duration, Instant};
 
 use super::lease::{self, Lease};
 use super::{text, GitProvider, Inner, RepositoryKind, GIT_REPOSITORY};
+use moqui_core::context::framework_thread;
 use moqui_core::context::{Error, ExecutionContextFactory};
 
 /// How long a node's answer to "am I a cluster member" is kept.
@@ -282,7 +283,7 @@ impl GitProvider {
         let provider = self.clone();
         let spawned = std::thread::Builder::new()
             .name("git-shared-check".into())
-            .spawn(move || {
+            .spawn(framework_thread(move || {
                 for _ in 0..120 {
                     std::thread::sleep(Duration::from_secs(1));
                     let Some(factory) = weak.upgrade() else { return };
@@ -302,7 +303,7 @@ impl GitProvider {
                 if checked.is_err() {
                     tracing::error!("the git shared storage check at start panicked");
                 }
-            });
+            }));
         if let Err(err) = spawned {
             tracing::warn!("the git shared storage check at start did not run: {err}");
         }

@@ -202,7 +202,7 @@ last `message` that is added to the failure:
 |---|---|
 | `assert.ok(value, message)` | As `assert`, with Groovy truth |
 | `assert.equal(actual, expected, message)`, `assert.notEqual(...)` | The same value by `Object.is`, or not: strict, with none of a condition's Groovy comparison, so a decimal does not equal a number here. For decimals use `assert(a.compare(b) === 0)` |
-| `assert.deepEqual(actual, expected, message)` | Equal structure, strictly: arrays by item, objects by their own keys and the same prototype, dates by time, regular expressions by source and flags, everything else by `Object.is` |
+| `assert.deepEqual(actual, expected, message)` | Equal structure, strictly: arrays by item, objects by their own keys and the same prototype, dates by time, regular expressions by source and flags, everything else by `Object.is`; a cycle compares equal where it closes, and one object met twice (no cycle) is compared each time |
 | `assert.match(text, pattern, message)`, `assert.doesNotMatch(...)` | The text matches the regular expression, or does not. A value that is not a string, or a pattern that is not a `RegExp`, fails |
 | `assert.throws(fn, expected, message)` | `fn` throws. With `expected`: a regular expression the error's message matches, an error constructor the error is an instance of, or a function that returns true for the error |
 | `assert.rejects(fnOrPromise, expected, message)` | The promise, or the one the function returns, rejects, with `expected` as for `throws`. In a spec it runs the engine's jobs until the promise settles and returns true; a promise still pending when no job is left fails |
