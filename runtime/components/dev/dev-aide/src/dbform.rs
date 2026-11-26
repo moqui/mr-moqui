@@ -21,10 +21,12 @@
 //! option, entity option with its conditions and order, and dependency (`visible-when`, `require-when`) is in the merge
 //! as the render merged it. A DbForm's new field has no `after`, so it goes last, as the DbForm put it.
 //!
-//! Review and accept are one step each: `get#DbFormConversion` shows the file as it would be (its diff), the rows that
-//! go and what is not carried; `convert#DbForm` with that preview's digest deletes the rows and writes the file
-//! through the save pipeline (a conflict refuses the whole), in one transaction, so the DbForm is gone only when the
-//! extension is written.
+//! Review and accept are one step each: `get#DbFormConversion` (the extend tier's) shows the file as it would be (its
+//! diff), the rows that go and what is not carried; `convert#DbForm` (the full tier's, as it deletes rows) locks the
+//! DbForm's row, takes that preview's digest (every field of the rows, the notes and the file), deletes the rows with
+//! the user's entity authorization and writes the file through the save pipeline (a conflict refuses the whole), in one
+//! transaction, so the DbForm is gone only when the extension is written. A dated DbForm, whose fields a render may
+//! read as of another date, stays a DbForm.
 
 use moqui_core::context::{Error, ExecutionContext};
 use moqui_core::entity::EntityFacade;
@@ -209,6 +211,12 @@ fn conversion(context: &Context, form_id: &str) -> Result<Conversion, LibError> 
             "DbForm {form_id} modifies no screen form (modifyXmlScreenForm): a form that extends it stays a DbForm"
         ))
     })?;
+    if row_text(&form, "isDated") == "Y" {
+        return Err(LibError::new(format!(
+            "DbForm {form_id} is dated (isDated): its fields change by date and a render may read it as of another \
+             (db-form-as-of), which a screen-extend cannot do: it stays a DbForm"
+        )));
+    }
     for entity in RESPONSES {
         if !of_form(facade, entity, form_id)?.is_empty() {
             return Err(LibError::new(format!(
@@ -242,8 +250,24 @@ fn conversion(context: &Context, form_id: &str) -> Result<Conversion, LibError> 
     let outline = moqui_lib::xml_edit::outline(&current)?;
     let proposed = moqui_lib::xml_edit::apply(&current, &extension_ops(&outline, kind, form_name, &fields))?.text;
     let mut rows = Vec::new();
+    // every field of every row that goes, so a change of any between the review and the accept is seen
+    let mut content = String::new();
     for entity in ROWS {
-        rows.push((entity, of_form(facade, entity, form_id)?.len()));
+        let found = of_form(facade, entity, form_id)?;
+        let mut texts: Vec<String> = found
+            .iter()
+            .map(|row| {
+                row.fields()
+                    .iter()
+                    .filter(|(name, _)| &***name != "lastUpdatedStamp")
+                    .map(|(name, value)| format!("{name}={}", moqui_lib::object::to_plain_string(value)))
+                    .collect::<Vec<_>>()
+                    .join("\u{1f}")
+            })
+            .collect();
+        texts.sort();
+        content.push_str(&format!("{entity}\n{}\n", texts.join("\n")));
+        rows.push((entity, found.len()));
     }
     let groups: Vec<String> = of_form(facade, "moqui.screen.form.DbFormUserGroup", form_id)?
         .iter()
@@ -260,12 +284,11 @@ fn conversion(context: &Context, form_id: &str) -> Result<Conversion, LibError> 
             }
         ));
     }
-    if row_text(&form, "isDated") == "Y" {
-        notes.push(
-            "The DbForm is dated: the fields in effect now are converted; its drafts and its history go with its rows."
-                .to_string(),
-        );
-    }
+    notes.push(
+        "The DbForm merged into the form after every screen-extend of it; the extension merges in the order the \
+         screen-extends load, so where another extension changes the same field, the one loaded last decides."
+            .to_string(),
+    );
     let fields_rows = of_form(facade, "moqui.screen.form.DbFormField", form_id)?;
     if PRINT_FIELDS.iter().any(|field| !row_text(&form, field).is_empty())
         || fields_rows.iter().any(|row| {
@@ -276,16 +299,7 @@ fn conversion(context: &Context, form_id: &str) -> Result<Conversion, LibError> 
     {
         notes.push("The DbForm's print layout is not carried: a screen form has no place for it.".to_string());
     }
-    let digest = sha256(
-        format!(
-            "{form_id}\n{base_hash}\n{}\n{proposed}",
-            rows.iter()
-                .map(|(entity, count)| format!("{entity}={count}"))
-                .collect::<Vec<_>>()
-                .join(",")
-        )
-        .as_bytes(),
-    );
+    let digest = sha256(format!("{form_id}\n{base_hash}\n{content}\n{}\n{proposed}", notes.join("\n")).as_bytes());
     Ok(Conversion {
         form_id: form_id.to_string(),
         root_id: target.root_id,
@@ -347,9 +361,18 @@ fn convert_db_form(
     _service: &ServiceInfo<'_>,
     parameters: &Parameters,
 ) -> Result<Parameters, LibError> {
-    let context = Context::of(ec, Tier::Extend)?;
-    let _authz = ec.disable_authz();
+    // it deletes rows of the database, which the full tier's; the review is the extend tier's
+    let context = Context::of(ec, Tier::Full)?;
     let form_id = text(parameters, "formId");
+    // the DbForm's row locked for this transaction first: a field, option or group added to it from now waits for the
+    // accept (its key needs the row), so none is deleted without being in the file the review showed
+    context
+        .facade
+        .find("moqui.screen.form.DbForm")?
+        .eq("formId", Value::string(&form_id))
+        .for_update(true)
+        .one()?
+        .ok_or_else(|| LibError::new(format!("no DbForm {form_id}")))?;
     let found = conversion(&context, &form_id)?;
     if found.digest != text(parameters, "digest") {
         return Err(LibError::new(
@@ -358,15 +381,21 @@ fn convert_db_form(
     }
     let root = context.root(&found.root_id)?.clone();
     let resolved = context.resolve(&root, &found.path)?;
-    // the rows first, in this transaction: a write refused below rolls them back
+    // the rows first, in this transaction and with the user's entity authorization: a write refused below rolls them
+    // back. A row of another entity that refers to one of them keeps it, as a refusal that names it.
     let mut deleted = serde_json::Map::new();
     for entity in ROWS {
         let count = context
             .facade
             .find(entity)?
-            .disable_authz()
             .eq("formId", Value::string(&found.form_id))
-            .delete_all()?;
+            .delete_all()
+            .map_err(|err| {
+                LibError::new(format!(
+                    "DbForm {}'s {entity} rows are referred to by other rows, so it stays a DbForm: {err}",
+                    found.form_id
+                ))
+            })?;
         deleted.insert(entity.to_string(), json!(count));
     }
     let detail = json!({ "dbForm": found.form_id, "deleted": deleted });

@@ -1735,16 +1735,17 @@ fn a_stamped_render_names_each_widgets_file() {
 }
 
 /// Convert to site extension (plans/design-dev-aide.md 7.2, question 16): a DbForm that changes an upstream form (a
-/// required text field with a tooltip, a drop-down with options and a widget attribute, a dependency) becomes the form
-/// merge of the site's screen-extend, after the field the site's merge has already; a review's digest that no longer
-/// holds is refused and keeps the rows; the accepted one deletes them and writes the file, and the form renders as it
-/// did.
+/// required text field with a tooltip, a drop-down with options and a widget attribute, a dependency, a base field
+/// retitled and one made hidden) becomes the form merge of the site's screen-extend, after the field the site's merge has
+/// already; a dated DbForm is refused; a review's digest that no longer holds is refused and keeps the rows, and so does
+/// an accept whose file write fails after the rows were deleted (the transaction rolls them back); the accepted one
+/// deletes them and writes the file, and the form renders as it did.
 #[test]
 fn a_db_form_converts_to_a_site_extension() {
     if !crate::common::own_process() {
         return;
     }
-    let screen = "<screen require-authentication=\"false\">\n    <widgets>\n        <form-single name=\"Facts\"><field name=\"upId\"><default-field title=\"Up Id\"><display/></default-field></field></form-single>\n    </widgets>\n</screen>\n";
+    let screen = "<screen require-authentication=\"false\">\n    <widgets>\n        <form-single name=\"Facts\"><field name=\"upId\"><default-field title=\"Up Id\"><display/></default-field></field><field name=\"upNote\"><default-field title=\"Up Note\"><display/></default-field></field></form-single>\n    </widgets>\n</screen>\n";
     let extend = "<screen-extend>\n    <form-single name=\"Facts\"><field name=\"extraNote\" after=\"upId\"><default-field title=\"Extra Note\"><display/></default-field></field></form-single>\n</screen-extend>\n";
     let dev_aide = std::fs::canonicalize(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -1772,7 +1773,11 @@ fn a_db_form_converts_to_a_site_extension() {
     <moqui.screen.form.DbFormFieldOption formId="DBF_CONVERT" fieldName="dbKind" sequenceNum="1" keyValue="A" text="Alpha Kind"/>
     <moqui.screen.form.DbFormFieldOption formId="DBF_CONVERT" fieldName="dbKind" sequenceNum="2" keyValue="B" text="Beta Kind"/>
     <moqui.screen.form.DbFormFieldDependency formId="DBF_CONVERT" dependencySeqId="01" sourceFieldName="dbNote" operator="not-empty" targetFieldName="dbKind" effect="show"/>
+    <moqui.screen.form.DbFormField formId="DBF_CONVERT" fieldName="upId" title="Up Number" fieldTypeEnumId="DBFFT_display" layoutSequenceNum="3"/>
+    <moqui.screen.form.DbFormField formId="DBF_CONVERT" fieldName="upNote" fieldTypeEnumId="DBFFT_hidden" layoutSequenceNum="4"/>
     <moqui.screen.form.DbFormUserGroup formId="DBF_CONVERT" userGroupId="ADMIN"/>
+    <moqui.screen.form.DbForm formId="DBF_DATED" isDated="Y" modifyXmlScreenForm="component://upstream-app/screen/UpApp/Detail.xml#Facts"/>
+    <moqui.screen.form.DbFormField formId="DBF_DATED" fieldName="datedNote" title="Dated Note" fieldTypeEnumId="DBFFT_display"/>
 </entity-facade-xml>"#,
         )),
         &[("moqui_conf__instance__purpose", "dev"), ("moqui_conf__dev_aide__site_component", "my-site")],
@@ -1807,6 +1812,15 @@ fn a_db_form_converts_to_a_site_extension() {
     };
     let before = render();
     assert!(before.contains("Db Note") && before.contains("Beta Kind"), "{before}");
+    assert!(before.contains("Up Number") && !before.contains("Up Id"), "{before}");
+    let dated = call(
+        &factory,
+        "john.doe",
+        "org.moqui.devaide.ArtifactServices.get#DbFormConversion",
+        &[("formId", "DBF_DATED")],
+    )
+    .unwrap_err();
+    assert!(dated.contains("is dated"), "{dated}");
 
     let changes = call(
         &factory,
@@ -1844,6 +1858,15 @@ fn a_db_form_converts_to_a_site_extension() {
         "{proposed}"
     );
     assert!(!proposed.contains("layoutSequenceNum"), "{proposed}");
+    // the base's fields as the DbForm changed them: retitled, and hidden
+    assert!(
+        proposed.contains(r#"<field name="upId">"#) && proposed.contains(r#"title="Up Number""#),
+        "{proposed}"
+    );
+    assert!(
+        proposed.contains(r#"<field name="upNote">"#) && proposed.contains("<hidden/>"),
+        "{proposed}"
+    );
     // one merge, the site's field first and the DbForm's after it
     assert_eq!(
         proposed.matches("<form-single name=\"Facts\">").count(),
@@ -1853,6 +1876,10 @@ fn a_db_form_converts_to_a_site_extension() {
     assert!(proposed.find("extraNote").unwrap() < proposed.find("dbNote").unwrap());
     let notes = moqui_lib::json::to_json(&review["notes"]).to_string();
     assert!(notes.contains("ADMIN"), "the groups it applied to: {notes}");
+    assert!(
+        notes.contains("the one loaded last decides"),
+        "the merge order: {notes}"
+    );
     assert!(text(&review, "diff").contains("+"), "{}", text(&review, "diff"));
 
     // a review that no longer holds is refused and changes nothing
@@ -1868,6 +1895,27 @@ fn a_db_form_converts_to_a_site_extension() {
     assert!(stale.contains("review the conversion again"), "{stale}");
     assert_eq!(rows("moqui.screen.form.DbForm"), 1);
     assert_eq!(std::fs::read_to_string(site.join(extend_path)).unwrap(), extend);
+
+    // a write that fails after the rows were deleted rolls the deletes back: the directory made read only
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = site.join(extend_path).parent().unwrap().to_path_buf();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+        // a user the mode does not stop (root) cannot see this case
+        let probe = dir.join(".probe");
+        if std::fs::write(&probe, "").is_ok() {
+            let _ = std::fs::remove_file(&probe);
+            eprintln!("skipped the failed write: the directory's mode does not stop this user");
+        } else {
+            let failed = convert(&text(&review, "digest")).unwrap_err();
+            assert!(!failed.contains("review the conversion again"), "{failed}");
+            assert_eq!(rows("moqui.screen.form.DbForm"), 1, "{failed}");
+            assert_eq!(rows("moqui.screen.form.DbFormField"), 4, "{failed}");
+            assert_eq!(rows("moqui.screen.form.DbFormFieldOption"), 2, "{failed}");
+            assert_eq!(std::fs::read_to_string(site.join(extend_path)).unwrap(), extend);
+        }
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
 
     let converted = convert(&text(&review, "digest")).unwrap();
     assert_eq!(text(&converted, "path"), extend_path);
