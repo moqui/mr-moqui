@@ -1696,6 +1696,15 @@ fn git_process_with(
     config: &[(String, String)],
 ) -> Command {
     let mut command = Command::new("git");
+    // a read of the clone runs nothing its config names (moqui_lib::git_read); a fetch or a merge reaches on purpose
+    if args.first().is_some_and(|sub| {
+        matches!(
+            *sub,
+            "status" | "rev-parse" | "merge-base" | "diff" | "log" | "show" | "ls-files"
+        )
+    }) {
+        moqui_lib::git_read::isolate(&mut command);
+    }
     command.env("GIT_TERMINAL_PROMPT", "0");
     if let Some(dir) = dir {
         command.current_dir(dir);

@@ -169,5 +169,8 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="taskPath" type="text-medium"/>
         <field name="newTaskPath" type="text-medium"/>
         <field name="baseUrl" type="text-medium"/>
+        <field name="createdByUserId" type="id"><description>Who added it: they or the full tier change and remove it</description></field>
+        <relationship type="one-nofk" title="CreatedBy" related="moqui.security.UserAccount">
+            <key-map field-name="createdByUserId" related="userId"/></relationship>
     </entity>
 </entities>

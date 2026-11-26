@@ -37,6 +37,8 @@ pub(crate) fn register(registry: &mut NativeRegistry) -> Result<(), Error> {
     registry.service_function(moqui_core::service_location!(store_task_source), store_task_source)?;
     registry.service_function(moqui_core::service_location!(delete_task_source), delete_task_source)?;
     registry.service_function(moqui_core::service_location!(store_task_app), store_task_app)?;
+    registry.service_function(moqui_core::service_location!(get_task_apps), get_task_apps)?;
+    registry.service_function(moqui_core::service_location!(delete_task_app), delete_task_app)?;
     registry.service_function(moqui_core::service_location!(create_task), create_task)?;
     registry.service_function(moqui_core::service_location!(create_task_branch), create_task_branch)
 }
@@ -292,12 +294,13 @@ pub fn offered_app_name(server_id: &str) -> String {
     format!("server-{server_id}")
 }
 
-/// A path of an offered app: on the server, with `{taskId}` or `{projectId}` in it, never another origin.
+/// A path of an offered app: on the server, with `{taskId}` or `{projectId}` in it, never another origin (no
+/// backslash, white space or control character, which a browser reads as another host: `/\t/evil.example`).
 fn offered_path(app: &Json, key: &str) -> String {
     app[key]
         .as_str()
         .map(str::trim)
-        .filter(|path| path.starts_with('/') && !path.starts_with("//") && !path.contains('\\'))
+        .filter(|path| moqui_lib::string::local_path(path))
         .unwrap_or_default()
         .to_string()
 }
@@ -613,15 +616,82 @@ fn delete_task_source(
     Ok(Parameters::new())
 }
 
-/// `store#TaskApp`: an app tasks open in, as the conf's `task-app` (one of the same name replaced). The full tier's.
+/// Why `path` is no path template of a task app, or None: a path on the app's server (as an offered app's paths are,
+/// [`offered_path`]: from one `/`, with no backslash, white space or control character), with `placeholder`
+/// (`{taskId}`, `{projectId}`) in it. Empty is none given.
+#[must_use]
+pub fn app_path_problem(path: &str, placeholder: &str) -> Option<String> {
+    if path.is_empty() {
+        return None;
+    }
+    if !moqui_lib::string::local_path(path) {
+        return Some(format!(
+            "{} is not a path on the server: it starts with one /, with no backslash, space or control character",
+            path.escape_debug()
+        ));
+    }
+    if !path.contains(placeholder) {
+        return Some(format!("{path} has no {placeholder}"));
+    }
+    None
+}
+
+/// A task app's name from its title: its letters and digits, lower case, other runs as `-`.
+#[must_use]
+pub fn app_name_of(title: &str) -> String {
+    let mut name = String::new();
+    for ch in title.trim().chars() {
+        if ch.is_ascii_alphanumeric() {
+            name.push(ch.to_ascii_lowercase());
+        } else if !name.ends_with('-') && !name.is_empty() {
+            name.push('-');
+        }
+    }
+    name.trim_end_matches('-').chars().take(40).collect()
+}
+
+/// The names of the conf's `task-app` elements.
+/// The names and titles of the conf's `task-app` elements.
+fn conf_apps(context: &Context) -> Vec<(String, String)> {
+    let Ok(conf) = MNode::parse_shared("moqui-conf", &context.factory.conf_text()) else {
+        return Vec::new();
+    };
+    conf.named_iter("dev-aide")
+        .flat_map(|element| {
+            element
+                .named_iter("task-app")
+                .map(|app| {
+                    (
+                        app.attribute("name").unwrap_or_default(),
+                        app.attribute("title").unwrap_or_default(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// `store#TaskApp`: an app tasks open in, as the conf's `task-app`, added in Settings: its title, its project and task
+/// path templates (each a path on the server with `{projectId}` or `{taskId}`, [`app_path_problem`]), a new task's,
+/// and a base URL when it is another instance (the full tier's). Its name is the title's when not given. The extend
+/// tier adds one; one already there is changed by who added it or the full tier, and one replacing a conf `task-app`
+/// only by the full tier.
 fn store_task_app(
     ec: &ExecutionContext,
     _service: &ServiceInfo<'_>,
     parameters: &Parameters,
 ) -> Result<Parameters, LibError> {
-    let context = Context::of(ec, Tier::Full)?;
+    let context = Context::of(ec, Tier::Extend)?;
     let _authz = ec.disable_authz();
-    let name = text(parameters, "taskAppName");
+    let user = moqui_core::user::current_user_id().ok().flatten().unwrap_or_default();
+    let title = text(parameters, "title").trim().to_string();
+    if title.is_empty() || title.chars().count() > 100 {
+        return Err(LibError::new("a task app has a title of at most 100 characters"));
+    }
+    let mut name = text(parameters, "taskAppName").trim().to_string();
+    if name.is_empty() {
+        name = app_name_of(&title);
+    }
     if name.is_empty()
         || !name
             .chars()
@@ -629,12 +699,126 @@ fn store_task_app(
     {
         return Err(LibError::new("a task app's name is letters, digits, - and _"));
     }
-    let mut row = context.facade.make_value(APP)?;
-    row.set("taskAppName", Value::string(&name));
-    for key in ["title", "projectPath", "taskPath", "newTaskPath", "baseUrl"] {
-        row.set(key, Value::string(text(parameters, key).trim()));
+    let path = |key: &str| text(parameters, key).trim().to_string();
+    let (project, task, new_task) = (path("projectPath"), path("taskPath"), path("newTaskPath"));
+    if project.is_empty() && task.is_empty() {
+        return Err(LibError::new("a task app has a project path or a task path"));
     }
+    let problems: Vec<String> = [
+        app_path_problem(&project, "{projectId}"),
+        app_path_problem(&task, "{taskId}"),
+        app_path_problem(&new_task, ""),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    if !problems.is_empty() {
+        return Err(LibError::new(problems.join("; ")));
+    }
+    let base = path("baseUrl");
+    if !base.is_empty() && !(base.starts_with("https://") || base.starts_with("http://")) {
+        return Err(LibError::new("the base URL starts with https:// or http://"));
+    }
+    // every user's Open in offers it: an app at another address only by the full tier
+    if !base.is_empty() && context.tier != Tier::Full {
+        return Err(LibError::new(
+            "a task app at another instance (a base URL) is the full tier's",
+        ));
+    }
+    let existing = context
+        .facade
+        .find(APP)?
+        .eq("taskAppName", Value::string(&name))
+        .one()?;
+    if context.tier != Tier::Full {
+        if let Some(row) = &existing {
+            if field(row, "createdByUserId") != user {
+                return Err(LibError::new(format!(
+                    "the task app {name} was added by another: only they or the full tier change it"
+                )));
+            }
+        } else if conf_apps(&context).iter().any(|(conf_name, _)| *conf_name == name) {
+            return Err(LibError::new(format!(
+                "{name} is a task app of the conf: only the full tier replaces it"
+            )));
+        }
+    }
+    // another app under a conf app's title would pass for it in every user's Open in
+    let taken = conf_apps(&context)
+        .into_iter()
+        .any(|(conf_name, conf_title)| conf_name != name && conf_title.trim().eq_ignore_ascii_case(&title));
+    if taken {
+        return Err(LibError::new(format!("{title} is the title of a task app of the conf")));
+    }
+    let mut row = match existing {
+        Some(row) => row,
+        None => {
+            let mut row = context.facade.make_value(APP)?;
+            row.set("taskAppName", Value::string(&name));
+            row.set("createdByUserId", Value::string(&user));
+            row
+        }
+    };
+    row.set("title", Value::string(&title));
+    row.set("projectPath", Value::string(&project));
+    row.set("taskPath", Value::string(&task));
+    row.set("newTaskPath", Value::string(&new_task));
+    row.set("baseUrl", Value::string(&base));
     row.create_or_update(&context.facade)?;
+    let mut out = Parameters::new();
+    out.insert("taskAppName".into(), Value::string(name));
+    Ok(out)
+}
+
+/// `get#TaskApps`: the task apps added in Settings, each with who added it and whether the user may remove it.
+fn get_task_apps(
+    ec: &ExecutionContext,
+    _service: &ServiceInfo<'_>,
+    _parameters: &Parameters,
+) -> Result<Parameters, LibError> {
+    let context = Context::of(ec, Tier::View)?;
+    let _authz = ec.disable_authz();
+    let user = moqui_core::user::current_user_id().ok().flatten().unwrap_or_default();
+    let may_add = context.tier >= Tier::Extend;
+    let mut apps = Vec::new();
+    let rows = context.facade.find(APP)?.order_by("title", false).list()?;
+    for row in rows.iter() {
+        let by = field(row, "createdByUserId");
+        apps.push(json!({
+            "taskAppName": field(row, "taskAppName"), "title": field(row, "title"),
+            "projectPath": field(row, "projectPath"), "taskPath": field(row, "taskPath"),
+            "baseUrl": field(row, "baseUrl"), "createdByUserId": by,
+            "mayRemove": may_add && (context.tier == Tier::Full || by == user),
+        }));
+    }
+    let mut out = Parameters::new();
+    out.insert("apps".into(), json_value(&apps));
+    out.insert("mayAdd".into(), Value::Bool(may_add));
+    Ok(out)
+}
+
+/// `delete#TaskApp`: a task app added in Settings, by who added it or the full tier.
+fn delete_task_app(
+    ec: &ExecutionContext,
+    _service: &ServiceInfo<'_>,
+    parameters: &Parameters,
+) -> Result<Parameters, LibError> {
+    let context = Context::of(ec, Tier::Extend)?;
+    let _authz = ec.disable_authz();
+    let user = moqui_core::user::current_user_id().ok().flatten().unwrap_or_default();
+    let name = text(parameters, "taskAppName");
+    let row = context
+        .facade
+        .find(APP)?
+        .eq("taskAppName", Value::string(&name))
+        .one()?
+        .ok_or_else(|| LibError::new(format!("no task app {name}")))?;
+    if context.tier != Tier::Full && field(&row, "createdByUserId") != user {
+        return Err(LibError::new(format!(
+            "the task app {name} was added by another: only they or the full tier remove it"
+        )));
+    }
+    row.delete(&context.facade)?;
     Ok(Parameters::new())
 }
 
@@ -767,5 +951,42 @@ mod tests {
         );
         assert_eq!(super::branch_name("100234", ""), "100234");
         assert_eq!(super::branch_name("A B", "Fix: it"), "A-B-fix-it");
+    }
+
+    /// A task app's paths are paths on its server with their placeholder, as an offered app's are; its name is its
+    /// title's.
+    #[test]
+    fn a_task_apps_paths_are_on_the_server_with_their_placeholder() {
+        use super::app_path_problem as problem;
+        assert_eq!(
+            problem(
+                "/qapps/Projects/WorkItems/WorkItemDetail?workEffortId={taskId}",
+                "{taskId}"
+            ),
+            None
+        );
+        assert_eq!(problem("", "{taskId}"), None);
+        for off in [
+            "https://elsewhere.example.com/{taskId}",
+            "//elsewhere.example.com/{taskId}",
+            "/a\\b/{taskId}",
+            "x/{taskId}",
+            // a browser drops a tab, a newline or a carriage return in a URL: /<tab>/evil.example is that host
+            "/\t/evil.example/{taskId}",
+            "/\n/evil.example/{taskId}",
+            "/\r/evil.example/{taskId}",
+            "/a b/{taskId}",
+            "/a\u{7}b/{taskId}",
+        ] {
+            assert!(
+                problem(off, "{taskId}").unwrap().contains("not a path on the server"),
+                "{off}"
+            );
+        }
+        assert!(problem("/qapps/Projects/{projectId}", "{taskId}")
+            .unwrap()
+            .contains("has no {taskId}"));
+        assert_eq!(super::app_name_of(" Team Projects (EU) "), "team-projects-eu");
+        assert_eq!(super::app_name_of("!!"), "");
     }
 }

@@ -318,7 +318,8 @@ fn get_hosting_offer(_parameters: &Parameters, _facade: &EntityFacade) -> Out {
         ),
         ("forks", Value::Bool(false)),
         // a repository's pages for a person (a file at a line, a commit, a branch), as templates: the framework has
-        // none to offer; an application that shows repositories offers its own (application.pages)
+        // none to offer; an application that shows repositories offers its own (application.pages for those it keeps,
+        // pages for this hosting's, as IronStone Projects' Code does)
         ("pages", Value::Null),
     ]);
     let parameters = crate::ci::parameters([

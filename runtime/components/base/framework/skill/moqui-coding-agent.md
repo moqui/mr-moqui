@@ -129,7 +129,13 @@ or `statusId` is written in so many places that its rename practically always re
 offer the
 nearest known names
 for an unknown entity, service, field or in-parameter (`reference.entity`, `reference.service`, `reference.field`,
-`reference.parameter`). With `--server` rename is refused and the quick fixes find entities and services there.
+`reference.parameter`). An in-place edit of an upstream component while `dev-aide@allow-upstream-edits` is off (the
+open text against the file at git's `HEAD`) is reported as `upstream.edit`, and where it is mechanical (fields added to
+an upstream entity, a field added to an upstream form or a column to a list, each after another field) the quick fix
+Extend in <site> puts the upstream file back as committed and writes the fields as an `extend-entity` in the site
+component's entity file or as a form merge with `after=` in its `screen-extend` of the screen ([Extending](#extending)).
+With no `dev-aide@site-component` in the conf nothing is upstream. With `--server` rename is refused, Extend is not
+offered, and the quick fixes find entities and services there.
 
 Point an editor's generic LSP client at it for `*.xml` files in a Moqui runtime, for example in Neovim:
 

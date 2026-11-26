@@ -289,12 +289,9 @@ fn contact_text(contact: &ValueMap, name: &str, max: usize) -> Option<String> {
     (!text.is_empty()).then_some(text)
 }
 
-/// Whether a url is a path on this server: one leading `/`, and no backslash, whitespace or control character anywhere
-/// (a browser reads `/\host` and `/<tab>/host` as another host).
+/// Whether a url is a path on this server ([`moqui_lib::string::local_path`]).
 fn local_path(url: &str) -> bool {
-    url.starts_with('/')
-        && !url.starts_with("//")
-        && !url.chars().any(|c| c == '\\' || c.is_whitespace() || c.is_control())
+    moqui_lib::string::local_path(url)
 }
 
 /// The hook's contactList normalized: maps only, each `{contactRef, name, url, addressList}` with valid keys (at most

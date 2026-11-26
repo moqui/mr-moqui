@@ -51,17 +51,9 @@ pub(crate) fn site_component(context: &Context) -> Option<(&Root, &RootComponent
     })
 }
 
-/// `my-site` as `MySite`, as the Site template names its files.
+/// `my-site` as `MySite`, as the Site template names its files (`moqui lsp`'s Extend names them the same way).
 pub(crate) fn class_of(name: &str) -> String {
-    name.split(['-', '_'])
-        .filter(|part| !part.is_empty())
-        .map(|part| {
-            let mut chars = part.chars();
-            chars.next().map_or_else(String::new, |first| {
-                first.to_ascii_uppercase().to_string() + chars.as_str()
-            })
-        })
-        .collect()
+    moqui_lib::string::component_class_name(name)
 }
 
 /// The site's file in `dir` (relative to the component) to write into: the first whose text has `mentions`, else

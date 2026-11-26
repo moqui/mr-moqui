@@ -32,7 +32,7 @@ impl Drop for Scratch {
 
 /// The environment that keeps git from the desktop's config, credentials and prompts, with a fixed identity; and from
 /// the repository a git hook runs this test in (GIT_DIR, GIT_INDEX_FILE and the rest set to the scratch tree's own,
-/// since `Git::run` adds variables and removes none).
+/// since `Git::run`'s writes keep the inherited ones).
 fn isolated(home: &Path, root: &Path) -> Vec<(&'static str, String)> {
     let null = if cfg!(windows) { "NUL" } else { "/dev/null" };
     let home = home.display().to_string();
@@ -155,4 +155,52 @@ fn git_runs_in_a_canonical_root_and_its_output_parses() {
         (blame[0].from, blame[0].to, blame[0].author.as_str()),
         (1, 3, "Ann Dev")
     );
+}
+
+/// A read of a partial clone whose committed blob is missing, its promisor remote an `ext::` command that touches a
+/// marker: the dev-aide's reads (show, status, log, blame) fetch nothing and run nothing (moqui_lib::git_read).
+#[cfg(unix)]
+#[test]
+fn a_read_never_fetches_from_a_planted_promisor_remote() {
+    let git = Git {
+        command: "git".to_string(),
+        read_timeout: Duration::from_secs(15),
+        network_timeout: Duration::from_secs(60),
+        write_timeout: Duration::from_secs(30),
+    };
+    if !git.available() {
+        return;
+    }
+    let base = std::env::temp_dir().join(format!("dev-aide-git-promisor-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let _scratch = Scratch(base.clone());
+    let home = base.join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(base.join("site")).unwrap();
+    let root = base.join("site").canonicalize().unwrap();
+    let env = isolated(&home, &root);
+    let run = |mode: Mode, args: &[&str]| git.run(&root, mode, args, &env, None).unwrap();
+    assert!(run(Mode::Write, &["init", "-q", "-b", "main"]).success());
+    std::fs::write(root.join("f.xml"), "<a/>\n").unwrap();
+    assert!(run(Mode::Write, &["add", "f.xml"]).success());
+    assert!(run(Mode::Write, &["commit", "-q", "-m", "Start"]).success());
+    let blob = run(Mode::Read, &["rev-parse", "HEAD:f.xml"]).stdout;
+    let blob = blob.trim();
+    std::fs::remove_file(root.join(".git/objects").join(&blob[..2]).join(&blob[2..])).unwrap();
+    let marker = base.join("RAN");
+    let url = format!("ext::sh -c touch% {}% >&2", marker.display());
+    for (key, value) in [
+        ("core.repositoryformatversion", "1"),
+        ("extensions.partialClone", "origin"),
+        ("remote.origin.url", url.as_str()),
+        ("remote.origin.promisor", "true"),
+        ("remote.origin.partialclonefilter", "blob:none"),
+        ("protocol.ext.allow", "always"),
+    ] {
+        assert!(run(Mode::Write, &["config", key, value]).success(), "{key}");
+    }
+    assert!(!run(Mode::Read, &["show", "HEAD:f.xml"]).success());
+    let _ = run(Mode::Read, &["blame", "--porcelain", "HEAD", "--", "f.xml"]);
+    let _ = run(Mode::Read, &["diff", "HEAD", "--", "f.xml"]);
+    assert!(!marker.exists(), "a read ran the promisor's command");
 }
