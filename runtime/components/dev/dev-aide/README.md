@@ -54,12 +54,14 @@ The assisted IDE of mr-moqui (`plans/design-dev-aide.md`), at `/qapps/dev` on a 
 - **Settings** has the site components, "Allow editing upstream components", the roots' labels, read-only flags and
   publish branches, more directories, network git on a shared dev server, and the **group servers**
   ([plans/design-dev-aide.md](../../../../plans/design-dev-aide.md) §21): Connect signs in at a team's server (or
-  moqui.org) as an installed app does, with this instance's own address as the redirect, or takes a pasted token, and
-  then sets what you confirm: the `myaddons.xml` repository, the task source, the LLM gateway's `.env` lines (with a
-  key for the gateway alone) and git's credential; Remove takes back only what it set. The Workspace then knows each
+  moqui.org) as an installed app does, with this instance's own address as the redirect, and keeps a key for each of
+  git, tasks and the gateway in place of the account's; or it takes a pasted token. It then sets what you confirm: the
+  `myaddons.xml` repository, the task source, the LLM gateway's `.env` lines (with the gateway's key) and git's
+  credential; Remove takes back only what it set and ends the keys. The Workspace then knows each
   working tree's hosted repository: a Merge requests tab (Check out, New, Review with the server's threads: reply,
   resolve, a comment on a line, a review), open threads in the editor's gutter, check chips on Commits and Branches
-  (the runs, a job's log, failed tests as links, Re-run), the contributor agreement's warning and Sign, Propose (push
+  (the runs, a job's log, failed tests as links, Re-run), Open on the server for a file, a commit and a branch where
+  the server offers their pages, the contributor agreement's warning and Sign, Propose (push
   to review) for a repository you may only view, Fork where the server makes forks, and Push or Publish that opens a
   merge request. None of Dev AIDE's own writes (a file, a git command that changes a repository, a call of a group
   server) runs under an agent's fence or in a sim: `try_service` refuses its write services, and the writes refuse
@@ -67,9 +69,11 @@ The assisted IDE of mr-moqui (`plans/design-dev-aide.md`), at `/qapps/dev` on a 
   an issue) as untrusted data, opens a merge request or comments only by your approval, never approves, merges,
   re-runs, resolves or signs, and is refused the diff of a merge request whose authors have not signed. A commit's
   checks have **Run locally**: a job of the working tree's `ci.xml` in a host session of the Terminal, its steps and
-  variables but not its image or secrets. The **Sessions** tab makes a worktree of a root for an Assist session
+  variables but not its image or secrets, or, where Docker or Podman answers, in the job's image with the working tree
+  mounted, its log in the dialog. The **Sessions** tab makes a worktree of a root for an Assist session
   (`runtime/worktrees`, a branch of its own), where that session's file and git tools work; a worktree is not loaded,
-  so its changes are checked and committed there, not run live. The server's REST decides, as you there: the framework's
+  so its changes are checked and committed there, not run live; when its conversation ends, a clean one is removed and
+  one with changes is kept, with a notice. The server's REST decides, as you there: the framework's
   ([Git-Hosting](../../../../docs/interfaces/Git-Hosting.md#rest)), or the REST of the application that keeps the
   repository (Smithy). Steps: [Run-Deploy](../../../../docs/Run-Deploy.md#dev-instances-with-a-dev-group-server).
 

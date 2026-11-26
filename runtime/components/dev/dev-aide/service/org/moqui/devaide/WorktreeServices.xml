@@ -58,4 +58,17 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="message"/>
         </out-parameters>
     </service>
+    <service verb="end" noun="ConversationWorktrees" type="rust" location="dev_aide::worktree::end_conversation_worktrees"
+            authenticate="false" allow-remote="false">
+        <description>The worktrees of an Assist conversation that ended (archived, or deleted), called once the write that
+            ended it commits (entity/DevAide.eecas.xml): each clean one removed as remove#Worktree removes it (its branch
+            stays), each with uncommitted changes kept and its user told once (a DevAideWorktreeKept notification). A
+            conversation that is there and not archived ends nothing. Only a worktree under the runtime's worktrees
+            directory is removed.</description>
+        <in-parameters><parameter name="conversationId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="removedRootIds" type="List"/>
+            <parameter name="keptRootIds" type="List"/>
+        </out-parameters>
+    </service>
 </services>

@@ -17,9 +17,14 @@
 //! Terminal in the working tree. The job's script steps run in order as a runner runs them (`sh -c` each, ending at the
 //! first that fails unless it continues on error), with the pipeline's and the job's variables, a matrix job's one
 //! combination, and the variables every job has; a secret it asks for is unset, as for a run that is not given it. It is
-//! this machine and the session's OS user, not the job's image, which the page and the script both say (question 20,
-//! as proposed: a run in a local container waits for Dogfood F8's `docker` driver). The steps go to a script under the
-//! runtime's `tmp`, and the session is opened with `sh <script>` typed into its shell, so what runs is there to read.
+//! this machine and the session's OS user, not the job's image, which the page and the script both say (question 20).
+//! The steps go to a script under the runtime's `tmp`, and the session is opened with `sh <script>` typed into its
+//! shell, so what runs is there to read.
+//!
+//! Where Docker or Podman answers on this machine, a job also runs in its image: a container of the CI driver's
+//! (`moqui_git::ci::driver::docker::start_local`, kept in as a pool's job is), the working tree mounted at the working
+//! directory and written as its owner, the same steps and variables, its secrets unset, its log read by the checks
+//! dialog until it ends (`get#LocalRun`) and the container removed by Remove or the next run.
 
 use std::path::{Path, PathBuf};
 
@@ -29,6 +34,8 @@ use moqui_lib::error::Error as LibError;
 use moqui_lib::object::Value;
 use serde::Serialize;
 use serde_json::json;
+
+use moqui_git::ci::driver::docker::{ContainerInfo, DockerHost, Engine, Hardening, LocalRun};
 
 use crate::tier::Tier;
 use crate::vcs::git_root;
@@ -42,9 +49,32 @@ pub const NOT_THE_IMAGE: &str =
     "Run locally runs the job's steps on this machine, as the server's OS user, in a shell \
     of the Terminal: not in the job's image, with none of its secrets, caches, services or artifacts.";
 
+/// What the page says of a run in the job's image.
+pub const IN_THE_IMAGE: &str = "In the job's image runs its steps in a container of that image on this machine, the \
+    working tree mounted at the working directory and written as its owner: with none of the job's secrets, caches, \
+    services or artifacts.";
+
+/// The labels of a local run's container: whose it is (with the CI driver's server label, which says this server made
+/// it) and its working tree.
+pub const LABEL_USER: &str = "moqui.devaide.user";
+pub const LABEL_ROOT: &str = "moqui.devaide.root";
+/// A local run's container name starts so, then this server's name part and a random tag.
+pub const NAME_PREFIX: &str = "moqui-devaide-";
+
 pub(crate) fn register(registry: &mut NativeRegistry) -> Result<(), Error> {
     registry.service_function(moqui_core::service_location!(get_local_jobs), get_local_jobs)?;
-    registry.service_function(moqui_core::service_location!(start_local_run), start_local_run)
+    registry.service_function(moqui_core::service_location!(start_local_run), start_local_run)?;
+    registry.service_function(moqui_core::service_location!(get_local_run), get_local_run)?;
+    registry.service_function(moqui_core::service_location!(stop_local_run), stop_local_run)
+}
+
+/// Where a local run runs (question 20).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Place {
+    /// A host session of the Terminal: this machine and its shell's user.
+    Host,
+    /// A container of the job's image, the working tree mounted at the working directory.
+    Image,
 }
 
 /// A step of a job, as a runner runs it.
@@ -150,10 +180,17 @@ fn env_name(name: &str) -> bool {
         && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
 }
 
-/// The script of a local run of `job` in `dir`: its variables and CI's own exported, its secrets' variables unset, and
-/// each step run with `sh -c` in order, ending at the first that fails unless it continues on error.
+/// The script of a local run of `job` in `dir` on this machine ([`script_in`] of [`Place::Host`]).
 #[must_use]
 pub fn script(job: &LocalJob, dir: &Path) -> String {
+    script_in(job, dir, Place::Host)
+}
+
+/// The script of a local run of `job` in `dir`, at `place`: its variables and CI's own exported, its secrets' variables
+/// unset, and each step run with `sh -c` in order, ending at the first that fails unless it continues on error. On the
+/// host it is a file that removes itself when it ends; in the image it is the container's command.
+#[must_use]
+pub fn script_in(job: &LocalJob, dir: &Path, place: Place) -> String {
     let title = if job.matrix_key.is_empty() {
         format!("{}/{}", job.pipeline, job.job)
     } else {
@@ -165,12 +202,20 @@ pub fn script(job: &LocalJob, dir: &Path) -> String {
         "# Run locally by the Dev AIDE (plans/design-dev-aide.md 21.5): the job {} of {CI_FILE}.\n",
         one_line(&title)
     ));
-    out.push_str(&format!(
-        "# This machine and this shell's user, not the job's image ({}); its secrets are not set.\n",
-        one_line(&job.image)
-    ));
-    // the script is gone when it ends, however it ends
-    out.push_str("trap 'rm -f -- \"$0\"' EXIT\n");
+    match place {
+        Place::Host => {
+            out.push_str(&format!(
+                "# This machine and this shell's user, not the job's image ({}); its secrets are not set.\n",
+                one_line(&job.image)
+            ));
+            // the script is gone when it ends, however it ends
+            out.push_str("trap 'rm -f -- \"$0\"' EXIT\n");
+        }
+        Place::Image => out.push_str(&format!(
+            "# In the job's image ({}), the working tree mounted here; its secrets are not set.\n",
+            one_line(&job.image)
+        )),
+    }
     out.push_str(&format!("cd {} || exit 1\n", quoted(&dir.display().to_string())));
     let mut env: Vec<(String, String)> = vec![
         ("CI".into(), "true".into()),
@@ -187,10 +232,15 @@ pub fn script(job: &LocalJob, dir: &Path) -> String {
     for secret in job.secrets.iter().filter(|name| env_name(name)) {
         out.push_str(&format!("unset {secret}\n"));
     }
-    out.push_str(&format!(
-        "printf '%s\\n' {}\n",
-        quoted(&format!("== Run locally: {} (not the job's image)", one_line(&title)))
-    ));
+    let banner = match place {
+        Place::Host => format!("== Run locally: {} (not the job's image)", one_line(&title)),
+        Place::Image => format!(
+            "== Run locally: {} in the job's image {}",
+            one_line(&title),
+            one_line(&job.image)
+        ),
+    };
+    out.push_str(&format!("printf '%s\\n' {}\n", quoted(&banner)));
     out.push_str("moqui_status=0\n");
     for (index, step) in job.steps.iter().enumerate() {
         let name = step.name.as_deref().map_or_else(|| one_line(&step.run), one_line);
@@ -235,6 +285,19 @@ fn get_local_jobs(
     let root = git_root(&context, parameters)?;
     let mut out = Parameters::new();
     out.insert("note".into(), Value::string(NOT_THE_IMAGE));
+    let engine = local_engine();
+    out.insert(
+        "container".into(),
+        json_value(&match &engine {
+            Some(engine) => {
+                json!({ "available": true, "engine": engine.name(), "socket": engine.socket.display().to_string(),
+                "note": IN_THE_IMAGE })
+            }
+            None => json!({ "available": false }),
+        }),
+    );
+    let workdir = Hardening::from_conf().workdir;
+    let combination = |job: &LocalJob, dir: &Path| combination(job, dir, Path::new(&workdir));
     match read_jobs(&root.path) {
         Ok(jobs) => {
             // one entry a job, with its combinations
@@ -275,13 +338,16 @@ fn get_local_jobs(
     Ok(out)
 }
 
-/// A combination as the page shows it before it runs: the job, the script it runs whole, and that script's digest,
-/// which `start#LocalRun` holds the script to.
-fn combination(job: &LocalJob, dir: &Path) -> serde_json::Value {
+/// A combination as the page shows it before it runs: the job, the script it runs whole on this machine and in its
+/// image (in `workdir`), and each script's digest, which `start#LocalRun` holds the script to.
+fn combination(job: &LocalJob, dir: &Path, workdir: &Path) -> serde_json::Value {
     let text = script(job, dir);
+    let in_image = script_in(job, workdir, Place::Image);
     let mut value = serde_json::to_value(job).unwrap_or_default();
     value["digest"] = json!(digest(&text));
     value["script"] = json!(text);
+    value["imageDigest"] = json!(digest(&in_image));
+    value["imageScript"] = json!(in_image);
     value
 }
 
@@ -363,6 +429,9 @@ fn start_local_run(
             }
         ))
     })?;
+    if text(parameters, "where") == "image" {
+        return start_in_image(&context, root, job, &text(parameters, "digest"));
+    }
     let body = script(job, &root.path);
     if let Some(why) = digest_refusal(&body, &text(parameters, "digest")) {
         return Err(LibError::new(why));
@@ -406,6 +475,301 @@ fn start_local_run(
     }
     out.insert("script".into(), Value::string(path.display().to_string()));
     out.insert("note".into(), Value::string(NOT_THE_IMAGE));
+    Ok(out)
+}
+
+// ---- in the job's image ----
+
+/// A container engine on this machine, as Run locally reaches it.
+pub(crate) struct LocalEngine {
+    pub host: DockerHost,
+    pub socket: PathBuf,
+    pub engine: Engine,
+}
+
+impl LocalEngine {
+    fn name(&self) -> &'static str {
+        match self.engine {
+            Engine::Docker => "docker",
+            Engine::Podman => "podman",
+        }
+    }
+}
+
+/// The sockets of a container engine on this machine, in the order they are tried: `DOCKER_HOST` when it names a Unix
+/// socket, Docker's, then a rootless Podman's (in `XDG_RUNTIME_DIR`, else `/run/user/<uid>` of the tree's owner `uid`)
+/// and a rootful Podman's.
+#[must_use]
+pub fn engine_sockets(docker_host: Option<&str>, runtime_dir: Option<&str>, uid: Option<u32>) -> Vec<PathBuf> {
+    let mut sockets = Vec::new();
+    if let Some(socket) = docker_host.and_then(|host| host.trim().strip_prefix("unix://")) {
+        sockets.push(PathBuf::from(socket));
+    }
+    sockets.push(PathBuf::from("/var/run/docker.sock"));
+    if let Some(dir) = runtime_dir.map(str::trim).filter(|dir| dir.starts_with('/')) {
+        sockets.push(Path::new(dir).join("podman/podman.sock"));
+    }
+    if let Some(uid) = uid {
+        sockets.push(PathBuf::from(format!("/run/user/{uid}/podman/podman.sock")));
+    }
+    sockets.push(PathBuf::from("/run/podman/podman.sock"));
+    sockets.dedup();
+    sockets
+}
+
+/// The owner of a path, `uid:gid`, unless it is root: the user a run in the image writes the working tree as.
+fn owner_of(path: &Path) -> Option<(u32, u32)> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let meta = std::fs::metadata(path).ok()?;
+        (meta.uid() != 0).then(|| (meta.uid(), meta.gid()))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        None
+    }
+}
+
+/// The container engine that answers on this machine, if any: the first of [`engine_sockets`] that is there and
+/// answers its version.
+pub(crate) fn local_engine_for(tree: Option<&Path>) -> Option<LocalEngine> {
+    let docker_host = std::env::var("DOCKER_HOST").ok();
+    let runtime_dir = std::env::var("XDG_RUNTIME_DIR").ok();
+    let uid = tree.and_then(owner_of).map(|(uid, _)| uid);
+    for socket in engine_sockets(docker_host.as_deref(), runtime_dir.as_deref(), uid) {
+        if !socket.exists() {
+            continue;
+        }
+        let host = DockerHost::unix(&socket);
+        match host.engine() {
+            Ok(engine) => return Some(LocalEngine { host, socket, engine }),
+            Err(err) => tracing::debug!("Dev AIDE: no container engine at {}: {err}", socket.display()),
+        }
+    }
+    None
+}
+
+fn local_engine() -> Option<LocalEngine> {
+    local_engine_for(None)
+}
+
+/// A run in the image whose container is still being made (its image pulled), or that failed before it started, by
+/// its container's name. Once made, the engine says the rest.
+enum Start {
+    Starting,
+    Failed(String),
+}
+
+fn starts() -> &'static std::sync::Mutex<std::collections::BTreeMap<String, Start>> {
+    static STARTS: std::sync::OnceLock<std::sync::Mutex<std::collections::BTreeMap<String, Start>>> =
+        std::sync::OnceLock::new();
+    STARTS.get_or_init(Default::default)
+}
+
+/// A local run's container name: [`NAME_PREFIX`], then letters, digits and `-` alone (what [`start_in_image`] makes).
+#[must_use]
+pub fn valid_run_name(name: &str) -> bool {
+    name.strip_prefix(NAME_PREFIX).is_some_and(|rest| {
+        !rest.is_empty()
+            && name.len() <= 128
+            && rest
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_'))
+    })
+}
+
+/// The [`LocalRun`] of `job` in its image for `user`: its container's name, the script as its command, the labels
+/// that say whose it is, the working tree and its owner.
+#[must_use]
+pub fn image_run(job: &LocalJob, tree: &Path, user: &str, root_id: &str, name: &str, workdir: &Path) -> LocalRun {
+    LocalRun {
+        name: name.to_string(),
+        image: job.image.clone(),
+        command: vec!["sh".into(), "-c".into(), script_in(job, workdir, Place::Image)],
+        labels: vec![
+            (
+                moqui_git::ci::driver::LABEL_SERVER.to_string(),
+                moqui_git::ci::driver::server_id(),
+            ),
+            (LABEL_USER.to_string(), user.to_string()),
+            (LABEL_ROOT.to_string(), root_id.to_string()),
+        ],
+        tree: tree.to_path_buf(),
+        user: owner_of(tree).map(|(uid, gid)| format!("{uid}:{gid}")),
+        memory_mb: 4096,
+        pids_limit: 1024,
+    }
+}
+
+/// Start `job` in its image: refused unless the script is the one the page showed, an engine answers here and the job
+/// names an image. The container is made on a thread of its own (its image may be pulled first); the user's earlier
+/// ended runs are removed. Out: `runId`, the container's name, which `get#LocalRun` follows.
+fn start_in_image(
+    context: &Context,
+    root: &crate::roots::Root,
+    job: &LocalJob,
+    seen: &str,
+) -> Result<Parameters, LibError> {
+    let hardening = Hardening::from_conf();
+    let body = script_in(job, Path::new(&hardening.workdir), Place::Image);
+    if let Some(why) = digest_refusal(&body, seen) {
+        return Err(LibError::new(why));
+    }
+    if job.image.trim().is_empty() {
+        return Err(LibError::new(format!("{}/{} names no image", job.pipeline, job.job)));
+    }
+    let engine = local_engine_for(Some(&root.path))
+        .ok_or_else(|| LibError::new("Neither Docker nor Podman answers on this machine: run it in a terminal"))?;
+    let user = moqui_core::user::current_user_id().ok().flatten().unwrap_or_default();
+    clear_ended(&engine.host, &user);
+    let tag = moqui_core::user::random_string(12)?.to_ascii_lowercase();
+    let name = format!("{NAME_PREFIX}{}-{tag}", moqui_git::ci::driver::server_name_part());
+    let run = image_run(job, &root.path, &user, &root.id, &name, Path::new(&hardening.workdir));
+    moqui_lib::sync::lock(starts()).insert(name.clone(), Start::Starting);
+    let socket = engine.socket.clone();
+    let thread_name = name.clone();
+    std::thread::Builder::new()
+        .name("dev-aide-local-run".into())
+        .spawn(move || {
+            let host = DockerHost::unix(&socket);
+            let started = moqui_git::ci::driver::docker::start_local(&host, &run, &hardening);
+            let mut starts = moqui_lib::sync::lock(starts());
+            match started {
+                Ok(_) => {
+                    starts.remove(&thread_name);
+                }
+                Err(err) => {
+                    tracing::warn!("Dev AIDE: the local run {thread_name} did not start: {err}");
+                    starts.insert(thread_name, Start::Failed(err.message().to_string()));
+                }
+            }
+        })
+        .map_err(|err| LibError::new(format!("the local run could not start: {err}")))?;
+    crate::vcs::audit_git(
+        context,
+        root,
+        "run-locally",
+        json!({ "pipeline": job.pipeline, "job": job.job, "matrixKey": job.matrix_key, "image": job.image,
+            "container": name, "engine": engine.name() }),
+    );
+    let mut out = Parameters::new();
+    out.insert("runId".into(), Value::string(&name));
+    out.insert("engine".into(), Value::string(engine.name()));
+    out.insert("note".into(), Value::string(IN_THE_IMAGE));
+    Ok(out)
+}
+
+/// Remove `user`'s local runs that have ended (this server's, by its label): what Remove did not take. One that does
+/// not go is logged.
+fn clear_ended(host: &DockerHost, user: &str) {
+    let labels = [
+        format!(
+            "{}={}",
+            moqui_git::ci::driver::LABEL_SERVER,
+            moqui_git::ci::driver::server_id()
+        ),
+        format!("{LABEL_USER}={user}"),
+    ];
+    let Ok(listed) = host.list(&labels) else {
+        return;
+    };
+    for container in listed {
+        match host.inspect(&container.id) {
+            Ok(Some(info)) if !info.running && info.status != "created" => {
+                if let Err(err) = host.remove(&container.id) {
+                    tracing::warn!("Dev AIDE: an ended local run was not removed: {err}");
+                }
+            }
+            Ok(_) => {}
+            Err(err) => tracing::warn!("Dev AIDE: a local run was not inspected: {err}"),
+        }
+    }
+}
+
+/// The local run `runId` of the current user, as the engine has it: refused when it is not a local run's name, or the
+/// container is another user's or another server's.
+fn own_run(parameters: &Parameters) -> Result<(String, LocalEngine, Option<ContainerInfo>), LibError> {
+    let name = text(parameters, "runId");
+    if !valid_run_name(&name) {
+        return Err(LibError::new(format!("{name} is not a local run")));
+    }
+    let engine = local_engine().ok_or_else(|| LibError::new("Neither Docker nor Podman answers on this machine"))?;
+    let info = engine.host.inspect(&name)?;
+    if let Some(info) = &info {
+        let user = moqui_core::user::current_user_id().ok().flatten().unwrap_or_default();
+        let ours = info.labels.get(moqui_git::ci::driver::LABEL_SERVER) == Some(&moqui_git::ci::driver::server_id())
+            && info.labels.get(LABEL_USER) == Some(&user)
+            && !user.is_empty();
+        if !ours {
+            return Err(LibError::new(format!("{name} is not a local run of yours")));
+        }
+    }
+    Ok((name, engine, info))
+}
+
+/// `get#LocalRun`: a run in the image as it stands: `state` (starting, running, exited, failed or missing), `exitCode`
+/// and the last lines of its log.
+fn get_local_run(
+    ec: &ExecutionContext,
+    _service: &ServiceInfo<'_>,
+    parameters: &Parameters,
+) -> Result<Parameters, LibError> {
+    let _context = Context::of(ec, Tier::Extend)?;
+    let mut out = Parameters::new();
+    let name = text(parameters, "runId");
+    let pending = match moqui_lib::sync::lock(starts()).get(&name) {
+        Some(Start::Starting) => Some(("starting", None)),
+        Some(Start::Failed(why)) => Some(("failed", Some(why.clone()))),
+        None => None,
+    };
+    if let Some((state, error)) = pending {
+        // the name alone says nothing of whose it is: only the user's own run is answered
+        if !valid_run_name(&name) {
+            return Err(LibError::new(format!("{name} is not a local run")));
+        }
+        out.insert("state".into(), Value::string(state));
+        if let Some(error) = error {
+            out.insert("error".into(), Value::string(error));
+        }
+        return Ok(out);
+    }
+    let (name, engine, info) = own_run(parameters)?;
+    let Some(info) = info else {
+        out.insert("state".into(), Value::string("missing"));
+        return Ok(out);
+    };
+    out.insert(
+        "state".into(),
+        Value::string(if info.running || info.status == "created" {
+            "running"
+        } else {
+            "exited"
+        }),
+    );
+    if !info.running {
+        out.insert("exitCode".into(), info.exit_code.map_or(Value::Null, Value::I64));
+    }
+    out.insert("log".into(), Value::string(engine.host.logs(&name, 2000)?));
+    Ok(out)
+}
+
+/// `stop#LocalRun`: a run in the image removed, running or not.
+fn stop_local_run(
+    ec: &ExecutionContext,
+    _service: &ServiceInfo<'_>,
+    parameters: &Parameters,
+) -> Result<Parameters, LibError> {
+    let _context = Context::of(ec, Tier::Extend)?;
+    crate::workspace::unfenced(moqui_core::entity::fence::Effect::Process, "stop#LocalRun")?;
+    let (name, engine, info) = own_run(parameters)?;
+    moqui_lib::sync::lock(starts()).remove(&name);
+    if info.is_some() {
+        engine.host.remove(&name)?;
+    }
+    let mut out = Parameters::new();
+    out.insert("removed".into(), Value::Bool(info.is_some()));
     Ok(out)
 }
 

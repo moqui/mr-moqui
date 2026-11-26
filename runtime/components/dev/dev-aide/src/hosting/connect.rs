@@ -15,11 +15,16 @@
 //! Connect (plans/design-dev-aide.md 21.2, D20): a group server is a `DevAideServer` row. Connect asks the server what
 //! it offers, then signs in there as an installed app does (F17: the server's `/sso/appLogin` in the browser with a PKCE
 //! challenge and this instance's own address as the loopback redirect, the code taken at `/sso/appToken` for a login
-//! key), or takes a token pasted from the server's Git access page. What it then sets, each shown and confirmed: the
-//! `myaddons.xml` repository of the server's git URL, a `moqui-rest` task source, the `.env` lines of the LLM gateway
-//! (with a key for the gateway alone, never the account's), and git's credential for the server's host. Remove takes
-//! back what it set and nothing else: the `.env` lines go back to what they were where they are still Connect's, a
-//! `myaddons.xml` repository it did not write stays, and the keys it was given are ended on the server.
+//! key), or takes a token pasted from the server's Git access page. The app sign-in's key is the account's, so Connect
+//! keeps none of it (question 18): it makes a key for git alone (git and the framework's git and hosting REST), one for
+//! tasks alone (the task source, an issue) and one for the gateway alone, then ends the account's key, unless the offer
+//! names an application (Smithy), whose REST takes only an installed app's key for the Dev AIDE's operations (mr-pass
+//! design-smithy 5.5): that key is kept for the application's REST alone. A server that makes no such keys keeps the
+//! account's key, as a pasted token is kept. What it then sets, each shown and confirmed: the `myaddons.xml` repository
+//! of the server's git URL, a `moqui-rest` task source, the `.env` lines of the LLM gateway (with the key for the gateway
+//! alone, never the account's), and git's credential for the server's host. Remove takes back what it set and nothing
+//! else: the `.env` lines go back to what they were where they are still Connect's, a `myaddons.xml` repository it did
+//! not write stays, and the keys it was given are ended on the server, each by itself.
 
 use std::path::{Path, PathBuf};
 
@@ -383,8 +388,67 @@ fn note_token_source(
     Ok(())
 }
 
+/// The keys an app sign-in leaves on a connection (question 18): the git key as the token, the tasks key, the gateway
+/// key where the server offers a gateway, and the installed app's key where an application takes only that.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct SignInKeys {
+    pub token: String,
+    pub tasks: Option<String>,
+    pub gateway: Option<String>,
+    pub app: Option<String>,
+    /// The sign-in's own key ends on the server: nothing here takes it.
+    pub end_account_key: bool,
+}
+
+/// What a sign-in keeps of the account's key `account` and the scoped keys the server made with it (`made`: git,
+/// tasks, gateway, each `None` when the server did not make it). With the git and tasks keys made, the git key is the
+/// token and the account's key is ended, unless `application` (an application's REST, which takes only an installed
+/// app's key) keeps it for that REST alone; without them (a server that makes no such keys) the account's key stays
+/// the token, as before.
+#[must_use]
+pub fn sign_in_keys(account: &str, made: [Option<String>; 3], application: bool) -> SignInKeys {
+    let [git, tasks, gateway] = made;
+    match (git, tasks) {
+        (Some(git), Some(tasks)) => SignInKeys {
+            token: git,
+            tasks: Some(tasks),
+            gateway,
+            app: application.then(|| account.to_string()),
+            end_account_key: !application,
+        },
+        _ => SignInKeys {
+            token: account.to_string(),
+            gateway,
+            ..SignInKeys::default()
+        },
+    }
+}
+
+/// A key for `scope` alone (`create#UserScopedKey` at the offer's key path), made with the account's key `account`;
+/// `None` when the server makes none (an older server, or a gateway it does not run), which is logged.
+fn make_scoped_key(server: &Server, account: &str, scope: &str, device: &str) -> Option<String> {
+    let key_path = Some(server.offered("gateway.keyPath"))
+        .filter(|path| !path.is_empty())
+        .unwrap_or_else(|| "/rest/s1/moqui/hosting/gatewayKey".into());
+    match server
+        .with_token(account)
+        .post(&key_path, &json!({ "scope": scope, "deviceName": device }))
+    {
+        Ok(answer) => answer["loginKey"]
+            .as_str()
+            .filter(|key| !key.is_empty())
+            .map(str::to_string),
+        Err(err) => {
+            tracing::warn!("Dev AIDE: {} made no key for {scope} alone: {err}", server.base);
+            None
+        }
+    }
+}
+
 /// `finish#Connect`: the server's sign-in came back with `code` and `state` (or `error`): the code is taken for a login
-/// key with the PKCE verifier, kept as the user's token for the server, and the server asked again as the user.
+/// key with the PKCE verifier, the keys for git, tasks and the gateway alone are made with it and kept (the git key as
+/// the user's token for the server), the account's key ended where nothing takes it, and the server asked again as
+/// the user.
 fn finish_connect(
     ec: &ExecutionContext,
     _service: &ServiceInfo<'_>,
@@ -453,7 +517,42 @@ fn finish_connect(
     if key.is_empty() {
         return Err(LibError::new(format!("{} gave no login key", server.base)));
     }
-    store_token(&context, &server.id, &server.base, &key, "")?;
+    // the account's key opens everything there: the keys kept are for one service each (question 18), by what the
+    // server offers now (its gateway, an application)
+    let mut server = server;
+    if let Ok(answer) = server.with_token(&key).get(OFFER_PATH, &[]) {
+        server.offer = answer["offer"].clone();
+    }
+    let origin = own_origin().unwrap_or_default();
+    let gateway = server.offer["gateway"]["enabled"].as_bool().unwrap_or(false);
+    let made = [
+        make_scoped_key(&server, &key, "git", &format!("Dev AIDE git ({origin})")),
+        make_scoped_key(&server, &key, "tasks", &format!("Dev AIDE tasks ({origin})")),
+        gateway
+            .then(|| make_scoped_key(&server, &key, "gateway", &format!("Dev AIDE gateway ({origin})")))
+            .flatten(),
+    ];
+    let keys = sign_in_keys(&key, made, server.application().is_some());
+    // keys an earlier sign-in of this connection left are ended: these stand in for them (a pasted token may serve
+    // elsewhere, and stays)
+    let setup: Json = serde_json::from_str(&field(&row, "setupJson")).unwrap_or(Json::Null);
+    if let Some(earlier) = server.token.as_deref().filter(|_| setup["token"] == "app") {
+        revoke_on_server(&server, earlier, "the earlier sign-in's key");
+    }
+    store_token(&context, &server.id, &server.base, &keys.token, "")?;
+    for name in ["tasksKey", "gatewayKey", "appKey"] {
+        let earlier = field(&row, name);
+        if !earlier.is_empty() {
+            revoke_on_server(&server, &earlier, name);
+        }
+    }
+    row.set("tasksKey", keys.tasks.as_deref().map_or(Value::Null, Value::string));
+    row.set("gatewayKey", keys.gateway.as_deref().map_or(Value::Null, Value::string));
+    row.set("appKey", keys.app.as_deref().map_or(Value::Null, Value::string));
+    row.update(&context.facade)?;
+    if keys.end_account_key {
+        revoke_on_server(&server, &key, "the sign-in's account key");
+    }
     let server = refresh(&context, &mut row)?;
     name_token(&context, &server.id, &server.username)?;
     note_token_source(&context, &mut row, "app")?;
@@ -812,16 +911,17 @@ fn apply_server_setup(
         let alias = Some(text(parameters, "gatewayAlias"))
             .filter(|alias| !alias.trim().is_empty())
             .unwrap_or_else(|| "default".into());
-        // a key for the gateway alone: the account's key never goes where a model client reads it
-        let key_path = Some(server.offered("gateway.keyPath"))
-            .filter(|path| !path.is_empty())
-            .unwrap_or_else(|| "/rest/s1/moqui/hosting/gatewayKey".into());
-        let device = format!("Dev AIDE gateway ({})", own_origin().unwrap_or_default());
-        let answer = server.post(&key_path, &json!({ "scope": "gateway", "deviceName": device }))?;
-        let key = answer["loginKey"].as_str().unwrap_or("").to_string();
-        if key.is_empty() {
-            return Err(LibError::new(format!("{} gave no key for its gateway", server.base)));
-        }
+        // a key for the gateway alone: the account's key never goes where a model client reads it. The app sign-in
+        // made it; a pasted token makes it now
+        let key = match Some(field(&row, "gatewayKey")).filter(|key| !key.is_empty()) {
+            Some(key) => key,
+            None => {
+                let device = format!("Dev AIDE gateway ({})", own_origin().unwrap_or_default());
+                let token = server.token.clone().unwrap_or_default();
+                make_scoped_key(&server, &token, "gateway", &device)
+                    .ok_or_else(|| LibError::new(format!("{} gave no key for its gateway", server.base)))?
+            }
+        };
         let env_file = context.factory.runtime_dir().join(".env");
         let names = [ENV_URL, ENV_KEY, ENV_MODEL];
         // the developer's own lines, from the file itself, kept to put back at Remove; a connection that wrote them
@@ -891,12 +991,13 @@ fn apply_server_setup(
     Ok(out)
 }
 
-/// End `key` on the server (`hosting/keyRevoke`, as the user): whether it ended. A failure is logged; Remove goes on.
+/// End `key` on the server (`hosting/keyRevoke`), signed in by the key itself, which a key made for one service alone
+/// may ask for itself alone: whether it ended. A failure is logged; Remove goes on.
 fn revoke_on_server(server: &Server, key: &str, what: &str) -> bool {
     let path = Some(server.offered("signIn.keyRevoke"))
         .filter(|path| !path.is_empty())
         .unwrap_or_else(|| "/rest/s1/moqui/hosting/keyRevoke".into());
-    match server.post(&path, &json!({ "loginKey": key })) {
+    match server.with_token(key).post(&path, &json!({ "loginKey": key })) {
         Ok(answer) => answer["revoked"].as_bool() == Some(true),
         Err(err) => {
             tracing::warn!("Dev AIDE: {what} was not ended on {}: {err}", server.base);
@@ -939,7 +1040,8 @@ pub fn env_restore(
 
 /// `remove#Server`: the connection, its token and what Connect set (the task source, the `myaddons.xml` repository it
 /// wrote, the `.env` lines still as it wrote them, put back as they were, the roots' hosted repositories it resolved),
-/// and the keys it was given ended on the server: the gateway's, and an app sign-in's.
+/// and the keys it was given ended on the server, each by itself: the gateway's, and an app sign-in's (git, tasks and
+/// the installed app's).
 fn remove_server(
     ec: &ExecutionContext,
     _service: &ServiceInfo<'_>,
@@ -1044,6 +1146,14 @@ fn remove_server(
     part("the gateway's key on the server", {
         let key = field(&row, "gatewayKey");
         Ok(!key.is_empty() && revoke_on_server(&server, &key, "the gateway's key"))
+    });
+    part("the tasks key on the server", {
+        let key = field(&row, "tasksKey");
+        Ok(!key.is_empty() && revoke_on_server(&server, &key, "the tasks key"))
+    });
+    part("the installed app's key on the server", {
+        let key = field(&row, "appKey");
+        Ok(!key.is_empty() && revoke_on_server(&server, &key, "the installed app's key"))
     });
     part("the sign-in's key on the server", {
         // a key the app sign-in made is this connection's alone; a token the user pasted may serve elsewhere

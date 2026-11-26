@@ -65,4 +65,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <moqui.security.user.NotificationTopic topic="DevReload" description="Dev AIDE reload" typeString="info" showAlert="N"
             persistOnSend="N"/>
+    <!-- an Assist session ended while its worktree had uncommitted changes: the worktree is kept (21.8) -->
+    <moqui.security.user.NotificationTopic topic="DevAideWorktreeKept" description="Dev AIDE worktree kept"
+            typeString="warning" showAlert="Y" persistOnSend="Y"/>
 </entity-facade-xml>

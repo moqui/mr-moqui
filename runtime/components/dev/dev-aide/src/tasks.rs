@@ -185,7 +185,8 @@ fn rest_get(row: &moqui_core::entity::EntityValue, path: &str) -> Result<Json, L
             &server_id,
             &moqui_core::user::current_user_id().ok().flatten().unwrap_or_default(),
         )?;
-        return server.get(path, &[]);
+        // the task panel's read, with the key for tasks alone after an app sign-in (question 18)
+        return server.tasks_get(path, false);
     }
     let base = field(row, "baseUrl").trim_end_matches('/').to_string();
     if !(base.starts_with("https://") || base.starts_with("http://")) {

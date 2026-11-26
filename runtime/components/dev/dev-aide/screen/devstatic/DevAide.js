@@ -280,6 +280,35 @@
         return (at >= 0 ? text.slice(0, at + 4) : text.replace(/\/[^/]*$/, "")) + "/Workspace";
     };
 
+    // "Open on the server" (21.3): a page of the hosted repository from the server's templates (hosted.pages: file,
+    // commit and branch, {repositoryPath} filled in and checked by the server to be its own pages), each value encoded
+    // as path parts, a line only as a number (with no line, the line's fragment goes); null when the server offers no
+    // such page, a value is missing or does not fit, or the result is not under the template's own address.
+    pure.serverPage = (pages, kind, values) => {
+        const template = pages && typeof pages[kind] === "string" ? pages[kind] : "";
+        const prefix = template.split("{")[0];
+        if (!/^https?:\/\/[^/?#]+\//i.test(prefix)) return null;
+        const given = values || {};
+        const path = (text) => String(text).split("/").map(encodeURIComponent).join("/");
+        let url = template;
+        const line = Math.floor(Number(given.line) || 0);
+        url = line > 0 ? url.split("{line}").join(String(line)) : url.replace(/#[^#]*\{line\}[^#]*$/, "");
+        const fill = { ref: given.ref, file: given.file, branch: given.branch, commitId: given.commitId };
+        if (fill.commitId != null && !/^[0-9a-f]{4,64}$/i.test(String(fill.commitId))) return null;
+        for (const [key, value] of Object.entries(fill)) {
+            const mark = "{" + key + "}";
+            if (!url.includes(mark)) continue;
+            if (value == null || value === "") return null;
+            url = url.split(mark).join(path(value));
+        }
+        return /\{[A-Za-z]+\}/.test(url) || !url.startsWith(prefix) ? null : url;
+    };
+    // The branch of the hosted remote that `upstream` names (origin/x for the remote origin: x), else "".
+    pure.serverBranch = (upstream, remote) => {
+        const text = String(upstream || "");
+        return remote && text.startsWith(remote + "/") ? text.slice(remote.length + 1) : "";
+    };
+
     // ---- the browser ----
 
     const store = {
@@ -323,6 +352,14 @@
             // the repository a connected group server hosts for this root's remote (21.3), and whether the user may push there
             hosted() { return (this.root && this.root.hosted && this.root.hosted.repository) || null; },
             mayPush() { const access = this.hosted && this.hosted.access; return !access || !!(access.canCreate || access.canUpdate); },
+            // "Open on the server" (21.3): the current file at its line on the branch the server has, and the open commit
+            fileOnServer() {
+                const hosted = this.hosted, tab = this.current;
+                if (!hosted || !tab) return null;
+                const ref = pure.serverBranch(this.status && this.status.upstream, this.root.hosted.remote) || hosted.defaultBranch;
+                return pure.serverPage(hosted.pages, "file", { ref, file: tab.path, line: this.cursor && this.cursor.line });
+            },
+            commitOnServer() { return this.hosted && this.commitDetail ? pure.serverPage(this.hosted.pages, "commit", { commitId: this.commitDetail.id }) : null; },
             isGit() { return !!(this.root && this.root.kind === "git" && this.gitAvailable); },
             current() { return this.tabs.find((tab) => tab.path === this.active) || null; },
             groups() { return pure.groupChanges(this.status && this.status.entries); },
@@ -1516,6 +1553,8 @@
             <q-item clickable v-close-popup @click="diffCurrent"><q-item-section>Diff</q-item-section></q-item>
             <q-item clickable v-close-popup @click="history(current.path)"><q-item-section>History</q-item-section></q-item>
             <q-item clickable v-close-popup @click="toggleBlame"><q-item-section>{{current.blame ? 'Hide blame' : 'Blame'}}</q-item-section></q-item>
+            <q-item v-if="fileOnServer" clickable v-close-popup tag="a" :href="fileOnServer" target="_blank" rel="noopener noreferrer" id="DevFileOnServer">
+              <q-item-section>Open on the server</q-item-section></q-item>
             <q-item clickable v-close-popup :disable="!canWrite" @click="stageCurrent"><q-item-section>Stage</q-item-section></q-item>
             <q-item clickable v-close-popup :disable="!canWrite" @click="discardCurrent"><q-item-section>Discard</q-item-section></q-item>
             <q-item clickable v-close-popup :disable="!canWrite" @click="tab = 'changes'"><q-item-section>Commit…</q-item-section></q-item>
@@ -1670,6 +1709,8 @@
         <span class="text-caption m-dev-mono">{{String(commitDetail.id).slice(0, 12)}}</span><q-space></q-space>
         <q-btn dense flat no-caps size="sm" label="Copy id" @click="copyId"></q-btn>
         <q-btn dense flat no-caps size="sm" label="Browse files" @click="browseTree('')"></q-btn>
+        <q-btn v-if="commitOnServer" dense flat no-caps size="sm" label="Open on the server" type="a" :href="commitOnServer" target="_blank"
+            rel="noopener noreferrer" id="DevCommitOnServer"></q-btn>
         <q-btn dense flat no-caps size="sm" label="Branch here" :disable="!canWrite" @click="newBranch(commitDetail.id)"></q-btn>
         <q-btn v-if="advanced" dense flat no-caps size="sm" label="Tag here" :disable="tier !== 'full'" @click="tagHere"></q-btn>
         <q-btn dense flat no-caps size="sm" :label="t('Cherry-pick')" :disable="tier !== 'full'" @click="replay('cherry-pick')"></q-btn>
