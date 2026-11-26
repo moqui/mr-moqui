@@ -90,9 +90,10 @@ password widgets.
 - The sync-in (below) takes `path`, `parameters`, the dirty values and `dialogs`. The tail of the message (plan 7.1)
   takes `now` (the user's time zone), `page` (path, query and title), `record`, `selections`, `filters`, `formInfo`,
   `canvas` and `editor`. All of it is optional.
-- `editor` is a dev-aide page's file (plans/design-dev-aide.md 13.4): its root and path, language and view, whether it
-  has unsaved edits, the element at the cursor and its line, the selection (at most 2,000 characters), its problem count
-  and artifact. The Workspace sets `moqui.assist.editorState` while it is the page; the tail gives it one line.
+- `editor` is a dev-aide page's file ([Dev-AIDE](../tools/Dev-AIDE.md#the-guided-tools-and-the-workspace)): its root and
+  path, language and view, whether it has unsaved edits, the element at the cursor and its line, the selection (at most
+  2,000 characters), its problem count and artifact. The Workspace sets `moqui.assist.editorState` while it is the page;
+  the tail gives it one line.
 - `forms` holds no value of an `ai-opt-out` field, and no form in an `ai-opt-out` section or screen ("AI opt-out" below).
 
 ## AI opt-out
@@ -302,6 +303,14 @@ fixes its tier), `contextVersion` (the tab's page version), `state` (the page).
 
 `runId` (required). Stops a run of the user's (Stop in the drawer): a run waiting or not yet working ends Canceled at
 once; one working stops at its next check, and the text streamed so far is kept. `{"runId", "state", "statusId"}`.
+
+### `POST archive`
+
+`conversationId` (required), `archived` (true by default; false restores). The user's own conversation is archived
+(`AgcArchived`) or restored (`AgcActive`); History marks an archived one and offers Restore. Archiving is refused with
+409 while a run of the conversation is active; a `turn` in an archived conversation restores it first. What hears a
+conversation's end acts then: the Dev AIDE ends the
+session's worktree ([Dev-AIDE](../tools/Dev-AIDE.md#dev-assist)). `{"conversationId", "statusId"}`.
 
 ### `POST retry`
 
@@ -1162,14 +1171,14 @@ sandbox.rs` the route's headers.
 
 ## Development tools
 
-On a dev instance with the dev-aide component loaded (plans/design-dev-aide.md 13), a user with a Dev AIDE permission
-(`DEV_AIDE_VIEW`, `DEV_AIDE_EXTEND`, `DEV_AIDE`) gets the `dev.aide` capability in a run of an agent whose tool policy
-pins a dev tool (the seeded `dev` agent, Dev Assist), and the drawer the `screen-xml` dialect
+On a dev instance with the dev-aide component loaded ([Dev-AIDE](../tools/Dev-AIDE.md#dev-assist)), a user with a Dev
+AIDE permission (`DEV_AIDE_VIEW`, `DEV_AIDE_EXTEND`, `DEV_AIDE`) gets the `dev.aide` capability in a run of an agent
+whose tool policy pins a dev tool (the seeded `dev` agent, Dev Assist), and the drawer the `screen-xml` dialect
 (`ui.write:screen-xml`, `Dialect::dev_only`). The dev tools are the dev-aide crate's: `artifact`, `source` and `check`
-(READ, also listed over MCP), `propose_edit` (WRITE), `try_service` (the sim; a real run is an approval), `vcs`
-(lazy) and `hosting` (lazy; a connected group server's merge requests, threads, checks, job logs and issues, the
-server's text as untrusted data; a merge request, comment or reply is an EXTERNAL approval; never an approve, merge,
-re-run, resolve or signature; plans/design-dev-aide.md 21.8). A conversation with a worktree of a root (the Workspace's
+(READ, also listed over MCP), `propose_edit` (WRITE), `try_service` (the sim; a real run is an approval), `vcs` (lazy)
+and `hosting` (lazy; a connected group server's merge requests, threads, checks, job logs and issues, the server's text
+as untrusted data; a merge request, comment or reply is an EXTERNAL approval; never an approve, merge, re-run, resolve
+or signature; [Dev-AIDE](../tools/Dev-AIDE.md#group-servers)). A conversation with a worktree of a root (the Workspace's
 Sessions tab) has its file and git tools rooted in the worktree in place of that root.
 
 - **A change set** is an approval of target kind `file`: its arguments are the files with their base hashes and changes

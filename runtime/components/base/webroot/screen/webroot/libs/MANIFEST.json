@@ -2,7 +2,7 @@
   "generatedBy": "build/libs/refresh.mjs",
   "notices": {
     "path": "NOTICES.md",
-    "sha256": "538a7405a17d4141b9cbfe8d5b7cfd27830c4dc74b23d4ec51fa994b39d566a0"
+    "sha256": "48252107ae62507b927338f40f8073e91b7c22ee3849241a638cffc8bcb8215a"
   },
   "libraries": [
     {
@@ -633,17 +633,17 @@
       "name": "Tiptap (with ProseMirror, bundled)",
       "version": "3.31.4",
       "license": "MIT",
-      "note": "Bundles @tiptap/core, starter-kit (and the extensions it includes), extension-link, extension-image, extension-mention, extension-placeholder, extension-table, extension-table-row, extension-table-cell, extension-table-header, extension-collaboration, extension-collaboration-caret, extensions, suggestion and pm 3.31.4, the prosemirror-* packages, @tiptap/y-tiptap, yjs, y-protocols, lib0, isomorphic.js, @floating-ui/*, linkifyjs, orderedmap, rope-sequence and w3c-keyname: all MIT. Each license text is below once, with the packages it is the license of.",
+      "note": "Bundles @tiptap/core, starter-kit (and the extensions it includes), extension-link, extension-image, extension-mention, extension-placeholder, extension-table, extension-table-row, extension-table-cell, extension-table-header, extension-collaboration, extension-collaboration-caret, extensions, suggestion and pm 3.31.4, the prosemirror-* packages, @tiptap/y-tiptap, lib0, @floating-ui/*, linkifyjs, orderedmap, rope-sequence and w3c-keyname: all MIT. yjs and y-protocols are the Yjs library's (libs/yjs), which the bundle reads from the global Yjs. Each license text is below once, with the packages it is the license of.",
       "source": "https://registry.npmjs.org/@tiptap/core/-/core-3.31.4.tgz",
       "npm": "@tiptap/core@3.31.4",
       "tarballIntegrity": "sha512-cIVUQYBycighzsk6GbmCef8ZiEDVxoT5EuAe4xg2q9dNkDqCXVqI4YGr9aavCQEiAS4uHiRwqvcsPqJHipFDfg==",
-      "build": "esbuild --bundle --minify --format=iife --global-name=Tiptap --platform=browser --target=es2020 --legal-comments=none of an entry that exports Editor, Extension, Node, Mark, mergeAttributes, StarterKit, Link, Image, Mention, Placeholder, Table, TableRow, TableCell, TableHeader, PluginKey, Collaboration, CollaborationCaret, Y (the yjs namespace), Awareness, encodeAwarenessUpdate, applyAwarenessUpdate and removeAwarenessStates. Exposes the global Tiptap.",
+      "build": "esbuild --bundle --minify --format=iife --global-name=Tiptap --platform=browser --target=es2020 --legal-comments=none of an entry that exports Editor, Extension, Node, Mark, mergeAttributes, StarterKit, Link, Image, Mention, Placeholder, Table, TableRow, TableCell, TableHeader, PluginKey, Collaboration, CollaborationCaret, Y (the yjs namespace), Awareness, encodeAwarenessUpdate, applyAwarenessUpdate and removeAwarenessStates, with yjs and y-protocols aliased to shims that read the global Yjs (libs/yjs/yjs.min.js, loaded first). Exposes the global Tiptap.",
       "files": [
         {
           "path": "tiptap/tiptap.min.js",
           "from": "build",
-          "size": 601562,
-          "sha256": "6cbb699803b69b3e56aff7440420b1ce63f99f64108dbb3e9ccf60c029d98524"
+          "size": 519693,
+          "sha256": "3815d8fe76cf1860663f0867c0bceb84cb1e55071bf10a866c79df87d3f6e2ba"
         }
       ]
     },
@@ -661,8 +661,109 @@
         {
           "path": "codemirror/codemirror.min.js",
           "from": "build",
-          "size": 807538,
-          "sha256": "f64ca08c3a4b4c61de1d00dfb0b033da6289396e46638d300e1d4f3048c4e3b7"
+          "size": 821777,
+          "sha256": "d189471f7f8400658343bd204cf851af65e50f20bf553324cfc188f1e4466bac"
+        }
+      ]
+    },
+    {
+      "id": "yjs",
+      "name": "Yjs with y-protocols (bundled)",
+      "version": "13.6.33",
+      "license": "MIT",
+      "note": "Bundles yjs, y-protocols (its awareness protocol) and the lib0 modules they use: all MIT. Each license text is below once, with the packages it is the license of.",
+      "source": "https://registry.npmjs.org/yjs/-/yjs-13.6.33.tgz",
+      "npm": "yjs@13.6.33",
+      "tarballIntegrity": "sha512-q/UYvr1gOk4XII+Cu1CW2dINjYqJJFifTzogEaIARznrvX7uOlHsdTEXcnOBMuIsrCGEEKdNxi74kyMLZlKVfw==",
+      "build": "esbuild --bundle --minify --format=iife --global-name=Yjs --platform=browser --target=es2020 --legal-comments=none of an entry (YJS_ENTRY) that exports Y (the yjs namespace), Awareness, encodeAwarenessUpdate, applyAwarenessUpdate and removeAwarenessStates. Exposes the global Yjs.",
+      "files": [
+        {
+          "path": "yjs/yjs.min.js",
+          "from": "build",
+          "size": 96897,
+          "sha256": "3d8dc8477da9f61ce57ec60d4ae33a42f00023c87d1a1be1bc80328732bf6e75"
+        }
+      ]
+    },
+    {
+      "id": "y-codemirror",
+      "name": "y-codemirror.next (bundled)",
+      "version": "0.3.6",
+      "license": "MIT",
+      "note": "Bundles y-codemirror.next and the lib0 modules it uses: both MIT. @codemirror/state and view are read from the global CodeMirror, yjs from the global Yjs.",
+      "source": "https://registry.npmjs.org/y-codemirror.next/-/y-codemirror.next-0.3.6.tgz",
+      "npm": "y-codemirror.next@0.3.6",
+      "tarballIntegrity": "sha512-GnmVXhTe+UtoFbbaSdwhq6gdAQZdIY9az0Xj6HR2J4PO6Yw4w3xaaSssU+6T72WhXAI0wf9FbuY2s0Ms+WrexA==",
+      "build": "esbuild --bundle --minify --format=iife --global-name=YCodeMirror --platform=browser --target=es2020 --legal-comments=none of an entry (Y_CODEMIRROR_ENTRY) that exports yCollab, ySync, ySyncFacet, ySyncAnnotation, yRemoteSelections, yRemoteSelectionsTheme, yUndoManagerKeymap and YRange, with @codemirror/* and yjs aliased to shims that read the globals CodeMirror and Yjs. Exposes the global YCodeMirror.",
+      "files": [
+        {
+          "path": "codemirror/y-codemirror.min.js",
+          "from": "build",
+          "size": 20606,
+          "sha256": "5e23e4a0de666f259b196e5bb8d514b11e3c4b62f008af73cdbbeb939d5b41be"
+        }
+      ]
+    },
+    {
+      "id": "codemirror-vim",
+      "name": "Vim keybindings for CodeMirror 6 (bundled)",
+      "version": "6.4.0",
+      "license": "MIT",
+      "note": "Bundles @replit/codemirror-vim and @replit/codemirror-vim-core: both MIT. @codemirror/* are read from the global CodeMirror.",
+      "source": "https://registry.npmjs.org/@replit/codemirror-vim/-/codemirror-vim-6.4.0.tgz",
+      "npm": "@replit/codemirror-vim@6.4.0",
+      "tarballIntegrity": "sha512-t9UMDNhkmeAkl0uRbiJVotv97bGD6mf4GyJJoEbrjUqa/Pov0s9eL+4AaI0Xto3OGri17i9qwIpT0JbVlVXt8A==",
+      "build": "esbuild --bundle --minify --format=iife --global-name=CodeMirrorVim --platform=browser --target=es2020 --legal-comments=none of an entry (CODEMIRROR_VIM_ENTRY) that exports vim, Vim, getCM and CodeMirror, with @codemirror/* aliased to shims that read the global CodeMirror. Exposes the global CodeMirrorVim.",
+      "files": [
+        {
+          "path": "codemirror/vim.min.js",
+          "from": "build",
+          "size": 125064,
+          "sha256": "959a815bb8657f54b8cb283acbc649b81da1938a621fd59d42be25b56610d761"
+        }
+      ]
+    },
+    {
+      "id": "codemirror-legacy",
+      "name": "CodeMirror legacy modes (bundled)",
+      "version": "6.5.5",
+      "license": "MIT",
+      "note": "The shell, groovy, properties, toml, dockerfile and nginx modes of @codemirror/legacy-modes (MIT), with its simple-mode helper.",
+      "source": "https://registry.npmjs.org/@codemirror/legacy-modes/-/legacy-modes-6.5.5.tgz",
+      "npm": "@codemirror/legacy-modes@6.5.5",
+      "tarballIntegrity": "sha512-9ltT214oMb3Y1w5eAZMSigzrjzZnMI2Wa3Feq73rU/i4C56MkwrpfswfQYOr28C5pXr6dWwspNTMyeHXlzWMxg==",
+      "build": "esbuild --bundle --minify --format=iife --global-name=CodeMirrorLegacy --platform=browser --target=es2020 --legal-comments=none of an entry (LEGACY_ENTRY) that exports the modes LEGACY_MODES names. Exposes the global CodeMirrorLegacy.",
+      "files": [
+        {
+          "path": "codemirror/legacy-modes.min.js",
+          "from": "build",
+          "size": 20495,
+          "sha256": "8ed26058f0f81ba76f929bb45c8372baddb90a238f7fc7d0a66a9eb9eca93de5"
+        }
+      ]
+    },
+    {
+      "id": "typescript",
+      "name": "TypeScript",
+      "version": "6.0.3",
+      "license": "Apache-2.0",
+      "note": "lib/typescript.js minified (its license header kept), and the ES5 to ES2023 and decorators declarations of lib/ as one script. ThirdPartyNoticeText.txt is the package's notice of what its declarations derive from.",
+      "source": "https://registry.npmjs.org/typescript/-/typescript-6.0.3.tgz",
+      "npm": "typescript@6.0.3",
+      "tarballIntegrity": "sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw==",
+      "build": "esbuild --minify --legal-comments=inline on lib/typescript.js (a transform, no bundling), and lib-es2023.js: self.MoquiTsLibs set to the text of each lib/ file TS_LIB matches, by name.",
+      "files": [
+        {
+          "path": "typescript/typescript.min.js",
+          "from": "build",
+          "size": 3604579,
+          "sha256": "74a3c5a90b03e76676227b9452e41e9f61aaf5aabe8ef27220c7ff219aeaee57"
+        },
+        {
+          "path": "typescript/lib-es2023.js",
+          "from": "build",
+          "size": 537932,
+          "sha256": "9840ba32e1adfcd06d20e7eb302dd59c8d80815cf1be6b75489420593372a062"
         }
       ]
     },

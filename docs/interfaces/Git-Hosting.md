@@ -121,24 +121,33 @@ first branch pushed) its default branch.
   `max-sessions-per-source` where many users come from one address (an office, a CI provider); the git pool
   (`git-server` `max-concurrent`) still bounds the work done at once.
 
-- **An installed app** (a dev instance's Dev AIDE connecting to its group server, plans/design-dev-aide.md 21.2; the
-  desktop and mobile apps) gets a login key without a pasted token: it opens `/sso/appLogin` in the browser with a PKCE
-  challenge, a state and its redirect URI; the browser signs in (at an identity provider, or with no `authFlowId` at
-  this server's own login; a browser signed in already stays signed in and enters the account's password, and its
-  second factor, again on the confirmation, or, with no password here, signs out and in again from it); the user
-  confirms (the form answers only the sign-in it was shown for, not one another start put in its place), on a page that names the port the code goes to and
-  says the app's name is the app's own word; the code goes to the redirect URI and the app takes it at `/sso/appToken`
-  with its verifier for the key (`service/sso_app.rs`). The pages are never shown in a frame (`frame-ancestors
-  'none'`, `X-Frame-Options: DENY`). A redirect URI is one of `webapp-list/webapp[webroot]@app-redirect-uris` exactly, or any loopback one
-  by its IP literal (RFC 8252 §7.3, §8.3: `http://127.0.0.1:<port>/...` or `http://[::1]:<port>/...`, any port; not
-  `localhost`) unless `webapp-list/webapp[webroot]@app-loopback-redirect` is false. It is on by default: any program on the user's computer
-  may listen on a loopback port, which is why the confirmation names the port and the code is good only with the
-  app's PKCE verifier; a server whose users never connect an installed app may turn it off. A shared dev server that
-  is not on loopback is listed in `webapp-list/webapp[webroot]@app-redirect-uris`, or its users paste a token.
-- **A key for one service.** `create#UserScopedKey` makes a key of the current user that opens only the LLM gateway
-  (`UserLoginKey.scope` `gateway`): every other login (the web, REST, git, a socket) refuses it, and it is in the
-  user's device list. A client that is let go ends what it held with `revoke#UserHeldKey` (the key itself, the user's
-  own only). The REST has both as `hosting/gatewayKey` and `hosting/keyRevoke` (POST).
+- **An installed app** (a dev instance's Dev AIDE connecting to its group server,
+  [Dev-AIDE](../tools/Dev-AIDE.md#group-servers); the desktop and mobile apps) gets a login key without a pasted token:
+  it opens `/sso/appLogin` in the browser with a PKCE challenge, a state and its redirect URI; the browser signs in (at
+  an identity provider, or with no `authFlowId` at this server's own login; a browser signed in already stays signed in
+  and enters the account's password, and its second factor, again on the confirmation, or, with no password here, signs
+  out and in again from it); the user confirms (the form answers only the sign-in it was shown for, not one another
+  start put in its place), on a page that names the port the code goes to and says the app's name is the app's own word;
+  the code goes to the redirect URI and the app takes it at `/sso/appToken` with its verifier for the key
+  (`service/sso_app.rs`). The pages are never shown in a frame (`frame-ancestors 'none'`, `X-Frame-Options: DENY`). A
+  redirect URI is one of `webapp-list/webapp[webroot]@app-redirect-uris` exactly, or any loopback one by its IP literal
+  (RFC 8252 §7.3, §8.3: `http://127.0.0.1:<port>/...` or `http://[::1]:<port>/...`, any port; not `localhost`) unless
+  `webapp-list/webapp[webroot]@app-loopback-redirect` is false. It is on by default: any program on the user's computer
+  may listen on a loopback port, which is why the confirmation names the port and the code is good only with the app's
+  PKCE verifier; a server whose users never connect an installed app may turn it off. A shared dev server that is not on
+  loopback is listed in `webapp-list/webapp[webroot]@app-redirect-uris`, or its users paste a token.
+- **A key for one service.** `create#UserScopedKey` makes a key of the current user that opens one service alone
+  (`UserLoginKey.scope`): `gateway`, the LLM gateway; `git`, git over HTTP and the REST resources that declare
+  `key-scope="git"` (the `git` resource and the `hosting` reads: `offer`, `repository`, `mergeRequests`, `agreement`);
+  `tasks`, the REST resources that declare `key-scope="tasks"` (Mantle's `my/tasks` and a repository's `issues`: the
+  user's tasks read, a repository's issues read and filed, since a scope is a resource's, every method of it). Every
+  other login (the web, any other REST resource, a socket) refuses it, and it is in the user's device list. A REST
+  resource names the scopes it takes (`key-scope`, for it and the resources below it; `mr-rest-api.xsd`), so an
+  application declares its own routes. A client that is let go ends what it held with `revoke#UserHeldKey` (the key
+  itself, the user's own only); a request a scoped key signed in ends that key alone. The REST has both as
+  `hosting/gatewayKey` (made only with the account's key) and `hosting/keyRevoke` (POST; it takes every scope). The Dev
+  AIDE's Connect keeps a `git`, a `tasks` and a `gateway` key, never the account's but for a Smithy server's installed
+  app key ([Dev-AIDE](../tools/Dev-AIDE.md#group-servers); plans/design-dev-aide.md question 18).
 
 An account page adds and removes SSH keys and creates and revokes access tokens through
 `org.moqui.impl.UserServices` (My Account, Git Access of mr-marble; BOSS's Git Access): `create#UserSshKey`,
@@ -1126,7 +1135,7 @@ call `GitServices`, `GitReviewServices` and `GitCiServices`.
 | `hosting/repository` | GET `url` | `resolve#RepositoryUrl`: the repository a clone, SSH or page URL names, as `get#Repository` |
 | `hosting/mergeRequests` | GET | `find#MergeRequests` across the repositories the caller may view |
 | `hosting/agreement` | GET | `get#AuthorSigned` |
-| `hosting/gatewayKey`, `hosting/keyRevoke` | POST | `create#UserScopedKey` (a key for the LLM gateway alone), `revoke#UserHeldKey` |
+| `hosting/gatewayKey`, `hosting/keyRevoke` | POST | `create#UserScopedKey` (a key for the LLM gateway, git or tasks alone: `scope`), `revoke#UserHeldKey` |
 | `.../mergeRequests/{n}/threads` | GET, POST | `find#ReviewThreads` (`path`), `create#ReviewComment` (a new thread on a line, or a reply: `threadId`) |
 | `.../mergeRequests/{n}/threads/{threadId}/resolve` | POST | `resolve#ReviewThread` (`resolved`, true by default) |
 
@@ -1154,24 +1163,27 @@ with `${name}`, as a `myaddons.xml` location takes them, `sshHost`, `sshPort`, `
 `rest` (the paths above and the OpenAPI document); `signIn` (an installed app's sign-in: `appLogin`, `appToken`,
 `appProviders`, `loopbackRedirect`, `keyRevoke`; [Logging in](#logging-in)); `gateway` (`enabled`, `url`: the LLM
 gateway, `keyPath`: where a key for it alone is made, `requireClient`: whether the key needs an `LlmApiClient`,
-docs/ai/Gateway.md); `agreement` (`path`, `decided`); `forks`. `git-server` `offer-service` (interface
-`add#GitHostingOffer`, with the offer and the user, authorization off) returns the offer as the application has it:
-its REST (`application`: `name`, `restBase`), its task source (`tasks`: `kind`, `path`, and a task app's paths),
-whether it makes forks, and so on. It is asked for callers with no credentials too, so it gives no one's data.
+docs/ai/Gateway.md); `agreement` (`path`, `decided`); `forks`; `pages` (a repository's pages for a person: none
+here). `git-server` `offer-service` (interface `add#GitHostingOffer`, with the offer and the user, authorization off)
+returns the offer as the application has it: its REST (`application`: `name`, `restBase`, and `pages`, the templates of
+a repository's pages it keeps: `file` with `{repositoryPath}`, `{ref}`, `{file}` and `{line}`, `commit` with
+`{commitId}`, `branch` with `{branch}`, absolute URLs on the server's own address, which the Dev AIDE's "Open on the
+server" fills), its task source (`tasks`: `kind`, `path`, and a task app's paths), whether it makes forks, and so on.
+It is asked for callers with no credentials too, so it gives no one's data.
 
 **An application that keeps a repository.** A hosting application with rules of its own (Smithy's roles, confirmed
 addresses, gate and conversation) names `git-server` `rest-write-check-service` (interface `check#GitRestWrite`; none by
-default). It is asked, with authorization off, before each write on a repository through this REST, with
-`repositoryId`, `operation` (`ref.create`, `ref.delete`, `commitStatus.create`, `mergeRequest.create`,
-`mergeRequest.update`, `mergeRequest.close`, `mergeRequest.reopen`, `mergeRequest.reviewers`, `mergeRequest.review`,
-`mergeRequest.merge`, `pipeline.run`, `pipeline.rerun`, `pipeline.cancel`, `pipeline.approve`, `job.retry`), `userId` and
-`mergeRequestId`, and answers `allowed`, `message`, `application` and `restUrl` (its own REST for the repository). `allowed`
-false (or `N`) refuses the write with `GitKeptByApplication: <message> (use <restUrl>)`; a service that fails refuses
-too. It is also asked with `operation` `read` by `get#Repository` and `resolve#RepositoryUrl`, whose `keptBy` then
-names the application and its REST, so a client goes there for that repository (the Dev AIDE does,
-plans/design-dev-aide.md 21.4). An application answers allowed for the writes it lets through this REST (it may run
-its own checks first), and false for the rest. Reads are not asked: the repository's authorization service already
-decides who reads.
+default). It is asked, with authorization off, before each write on a repository through this REST, with `repositoryId`,
+`operation` (`ref.create`, `ref.delete`, `commitStatus.create`, `mergeRequest.create`, `mergeRequest.update`,
+`mergeRequest.close`, `mergeRequest.reopen`, `mergeRequest.reviewers`, `mergeRequest.review`, `mergeRequest.merge`,
+`pipeline.run`, `pipeline.rerun`, `pipeline.cancel`, `pipeline.approve`, `job.retry`), `userId` and `mergeRequestId`,
+and answers `allowed`, `message`, `application` and `restUrl` (its own REST for the repository). `allowed` false (or
+`N`) refuses the write with `GitKeptByApplication: <message> (use <restUrl>)`; a service that fails refuses too. It is
+also asked with `operation` `read` by `get#Repository` and `resolve#RepositoryUrl`, whose `keptBy` then names the
+application and its REST, so a client goes there for that repository (the Dev AIDE does,
+[Dev-AIDE](../tools/Dev-AIDE.md#group-servers)). An application answers allowed for the writes it lets through this REST
+(it may run its own checks first), and false for the rest. Reads are not asked: the repository's authorization service
+already decides who reads.
 
 **The contributor agreement.** `get#AuthorSigned` answers whether an author (`authorUserId` or `authorEmail`, the
 caller when both are empty) has signed a repository's agreement (docs/dev/Contributions.md), from `git-server`

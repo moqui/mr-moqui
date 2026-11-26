@@ -104,7 +104,7 @@ account, so `TERMINAL_HOST` goes only to people trusted with it.
   open a terminal in a root's directory.
 - **First input.** `open#TerminalSession` takes `input`, typed into the new program as you would type it: the Dev
   AIDE's Run locally opens a shell in the working tree with `sh <script>` typed into it, the script being a job's steps
-  of its `ci.xml` ([design-dev-aide](../../plans/design-dev-aide.md) 21.5).
+  of its `ci.xml` ([Dev-AIDE, group servers](../tools/Dev-AIDE.md#group-servers)).
 - **Environment.** The server's, less every variable that names a property of the Moqui conf, with `TERM`, `COLORTERM`,
   a UTF-8 locale, `TERM_PROGRAM=mr-moqui`, `MOQUI_TERMINAL_SESSION`, `MOQUI_RUNTIME` and `MOQUI_USER` set. No credential
   of the Moqui user is in it.

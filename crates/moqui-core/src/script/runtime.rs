@@ -51,7 +51,9 @@ pub(crate) use helpers::{java_type_of, now_timestamp, timestamp_of, HELPERS_JS};
 pub use localize::expand_localized;
 pub(crate) use localize::localized;
 pub use values::script_list_values;
-pub(crate) use values::{context_combined, pop_context_frame, put_context_all, value_entity_name, value_field};
+pub(crate) use values::{
+    context_combined, host_parts, pop_context_frame, put_context_all, value_entity_name, value_field, HostParts,
+};
 pub use values::{value_items, value_map};
 
 use crate::context::{Error, ErrorKind};

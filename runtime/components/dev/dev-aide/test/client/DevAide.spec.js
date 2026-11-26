@@ -23,3 +23,35 @@ browser.runInPage({
         "/files/component/dev-aide/screen/devstatic/DevAideGit.js"],
     test: "/files/component/dev-aide/test/client/pages/DevAideGit.page.js",
 })
+
+// Co-editing a file (DevAideCoedit.js, F15): the pure parts, and two tabs on one fake room bound to m-code-editor's
+// y-codemirror.next extensions, with moqui.coedit.Provider's protocol.
+
+browser.runInPage({
+    scripts: ["/js/MoquiLib.js", "/js/WebrootVue.qvt.js", "/libs/codemirror/codemirror.min.js", "/js/WebrootCode.js",
+        "/libs/yjs/yjs.min.js", "/libs/codemirror/y-codemirror.min.js", "/files/component/dev-aide/screen/devstatic/DevAideCoedit.js"],
+    test: "/files/component/dev-aide/test/client/pages/DevAideCoedit.page.js",
+})
+
+// The TypeScript checker (DevAideTypes.js, 5.4): its pure parts, and its worker on the vendored compiler.
+
+browser.runInPage({
+    scripts: ["/files/component/dev-aide/screen/devstatic/DevAide.js", "/files/component/dev-aide/screen/devstatic/DevAideTypes.js"],
+    test: "/files/component/dev-aide/test/client/pages/DevAideTypes.page.js",
+})
+
+// Every component template of the Dev AIDE's scripts compiles, its expressions too.
+
+browser.runInPage({
+    scripts: ["/files/component/dev-aide/test/client/pages/DevAideTemplates.setup.js",
+        "/libs/vue/vue.global.prod.js", "/libs/vue/compiler-dom.cjs.js",
+        "/files/component/dev-aide/screen/devstatic/DevAide.js",
+        "/files/component/dev-aide/screen/devstatic/DevAideBlocks.js",
+        "/files/component/dev-aide/screen/devstatic/DevAideGit.js",
+        "/files/component/dev-aide/screen/devstatic/DevAideBrowser.js",
+        "/files/component/dev-aide/screen/devstatic/DevAideService.js",
+        "/files/component/dev-aide/screen/devstatic/DevAideEntity.js",
+        "/files/component/dev-aide/screen/devstatic/DevAideScreen.js",
+        "/files/component/dev-aide/screen/devstatic/DevAideQvue.js"],
+    test: "/files/component/dev-aide/test/client/pages/DevAideTemplates.page.js",
+})

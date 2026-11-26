@@ -133,6 +133,40 @@ pub fn resolve_service(path: &str, method: &str) -> Result<Value, Error> {
     ])))
 }
 
+/// The `key-scope` of the resource at `names` (the path's names after `/rest/s1`, `..` already resolved): the scopes
+/// whose keys, each made for one service alone (`UserLoginKey.scope`, `user::get_scoped_key`), sign a request in there,
+/// declared on the resource or the nearest resource above it. Empty for a path no resource serves, and with no
+/// context entered: a scoped key is then refused, as on any other path.
+#[must_use]
+pub fn key_scopes(names: &[String]) -> Arc<[String]> {
+    let empty = || Arc::from(Vec::new());
+    let Ok(roots) = current_roots() else {
+        return empty();
+    };
+    let Some((root, below)) = names.split_first() else {
+        return empty();
+    };
+    let Some(mut node) = roots.resources.get(root.as_str()) else {
+        return empty();
+    };
+    for part in below {
+        if node.is_id && node.allow_extra_path {
+            break;
+        }
+        match node.resources.get(part.as_str()).or(node.id.as_deref()) {
+            Some(next) => node = next,
+            None => return empty(),
+        }
+    }
+    // as the dispatcher: a resource with no method of its own is served by its id that takes the extra path
+    if node.methods.is_empty() {
+        if let Some(id) = node.id.as_deref().filter(|id| id.allow_extra_path) {
+            node = id;
+        }
+    }
+    Arc::clone(&node.key_scopes)
+}
+
 fn resource_info(node: &Node, with_children: bool) -> Value {
     let text = |value: &Option<String>| value.as_deref().map_or(Value::Null, Value::string);
     let mut map = IndexMap::default();
@@ -263,7 +297,7 @@ fn insert_file(roots: &mut BTreeMap<String, Node>, path: &Path) -> Result<(), Er
             root.name()
         )));
     }
-    let node = node_from(&root, "true", "", false)?;
+    let node = node_from(&root, "true", &Arc::from(Vec::new()), "", false)?;
     if roots.contains_key(&node.name) {
         tracing::warn!(resource = %node.name, file = %path.display(), "REST root resource replaced by a later file");
     }
@@ -297,6 +331,9 @@ struct Node {
     full_path: String,
     /// `require-authentication` of the resource, else of its parent, else `true`.
     require_authentication: String,
+    /// `key-scope` of the resource, else of its parent: the scopes of the keys made for one service alone
+    /// (`UserLoginKey.scope`) that sign a request in here ([`key_scopes`]).
+    key_scopes: Arc<[String]>,
     methods: BTreeMap<String, Operation>,
     resources: BTreeMap<String, Node>,
     id: Option<Box<Node>>,
@@ -315,7 +352,13 @@ enum Operation {
     },
 }
 
-fn node_from(node: &MNode, parent_auth: &str, parent_path: &str, is_id: bool) -> Result<Node, Error> {
+fn node_from(
+    node: &MNode,
+    parent_auth: &str,
+    parent_scopes: &Arc<[String]>,
+    parent_path: &str,
+    is_id: bool,
+) -> Result<Node, Error> {
     let name = node.attribute("name").unwrap_or_default();
     if name.is_empty() {
         return Err(Error::new("REST resource is missing a name"));
@@ -325,6 +368,15 @@ fn node_from(node: &MNode, parent_auth: &str, parent_path: &str, is_id: bool) ->
         .attribute("require-authentication")
         .filter(|mode| !mode.is_empty())
         .unwrap_or_else(|| parent_auth.to_string());
+    // as require-authentication: a resource's own, else its parent's
+    let scopes: Arc<[String]> = match node.attribute("key-scope").filter(|scopes| !scopes.trim().is_empty()) {
+        Some(scopes) => scopes
+            .split([' ', ','])
+            .filter(|scope| !scope.is_empty())
+            .map(str::to_string)
+            .collect(),
+        None => Arc::clone(parent_scopes),
+    };
     let full_path = if is_id {
         format!("{parent_path}/{{{name}}}")
     } else {
@@ -355,10 +407,10 @@ fn node_from(node: &MNode, parent_auth: &str, parent_path: &str, is_id: bool) ->
                 }
             }
             "resource" => {
-                let child_node = node_from(&child, &auth, &full_path, false)?;
+                let child_node = node_from(&child, &auth, &scopes, &full_path, false)?;
                 resources.insert(child_node.name.clone(), child_node);
             }
-            "id" => id = Some(Box::new(node_from(&child, &auth, &full_path, true)?)),
+            "id" => id = Some(Box::new(node_from(&child, &auth, &scopes, &full_path, true)?)),
             _ => {}
         }
     }
@@ -370,6 +422,7 @@ fn node_from(node: &MNode, parent_auth: &str, parent_path: &str, is_id: bool) ->
         allow_extra_path: is_id && node.attribute_is("allow-extra-path", "true"),
         full_path,
         require_authentication: auth,
+        key_scopes: scopes,
         methods,
         resources,
         id,
