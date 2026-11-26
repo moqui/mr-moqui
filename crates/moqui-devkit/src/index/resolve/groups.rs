@@ -17,6 +17,8 @@
 //! artifact it matches. A pattern is matched whole by `moqui_lib`'s Java-compatible matcher, as authorization matches
 //! it (`moqui_core::user::authz`); one that does not compile matches nothing.
 
+use std::collections::HashMap;
+
 use moqui_lib::object::CompiledRegex;
 
 use super::Resolver;
@@ -58,6 +60,7 @@ impl Resolver {
         {
             return refs;
         }
+        let names = self.pattern_names();
         let mut out = Vec::with_capacity(refs.len());
         for row in refs {
             if row.to_scope != PATTERN_SCOPE || row.to_id.is_some() {
@@ -72,19 +75,25 @@ impl Resolver {
                     .map(|(_, _, compiled)| compiled.clone())
             });
             let pattern = known.or_else(|| CompiledRegex::new(&row.to_name).ok());
-            let mut matched: Vec<&String> = match &pattern {
-                Some(pattern) => self
-                    .ids
-                    .keys()
-                    .filter(|id| pattern_name(row.to_kind, id).is_some_and(|name| pattern.is_full_match(name)))
-                    .collect(),
-                None => Vec::new(),
+            let matched: Vec<&String> = match (&pattern, names.get(&row.to_kind)) {
+                (Some(pattern), Some(names)) => {
+                    // only the names that start with the pattern's literal text can match it
+                    let prefix = pattern.literal_prefix();
+                    let from = names.partition_point(|(name, _)| *name < prefix);
+                    names[from..]
+                        .iter()
+                        .take_while(|(name, _)| name.starts_with(prefix))
+                        .filter(|(name, _)| pattern.is_full_match(name))
+                        .map(|(_, id)| *id)
+                        .collect()
+                }
+                _ => Vec::new(),
             };
             if matched.is_empty() {
                 out.push(row);
                 continue;
             }
-            matched.sort();
+            // in the order of their ids: a kind's ids are its names after one prefix
             for id in matched {
                 let mut one = row.clone();
                 one.to_id = Some(id.clone());
@@ -93,6 +102,23 @@ impl Resolver {
             }
         }
         out
+    }
+
+    /// The artifacts a pattern can match, by kind: each one's name with its id, in the order of the names.
+    fn pattern_names(&self) -> HashMap<ToKind, Vec<(&str, &String)>> {
+        let mut names: HashMap<ToKind, Vec<(&str, &String)>> = HashMap::new();
+        for id in self.ids.keys() {
+            for kind in PATTERN_KINDS {
+                if let Some(name) = pattern_name(kind, id) {
+                    names.entry(kind).or_default().push((name, id));
+                    break;
+                }
+            }
+        }
+        for list in names.values_mut() {
+            list.sort_unstable();
+        }
+        names
     }
 
     /// Whether a pattern of an artifact group matches the artifact `id` ([`Self::expand_patterns`]).
@@ -104,6 +130,9 @@ impl Resolver {
             .any(|(kind, _, pattern)| pattern_name(*kind, id).is_some_and(|name| pattern.is_full_match(name)))
     }
 }
+
+/// The kinds of artifact an artifact group's pattern names ([`pattern_name`]).
+const PATTERN_KINDS: [ToKind; 4] = [ToKind::Screen, ToKind::Service, ToKind::Entity, ToKind::Rest];
 
 /// The name an artifact group's pattern of `kind` is matched against in the artifact `id`, when the id is of that kind:
 /// a screen's location, a service's or entity's name, a REST resource's path (not a method's).
