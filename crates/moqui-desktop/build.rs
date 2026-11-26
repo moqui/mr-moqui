@@ -135,12 +135,30 @@ fn directory_has_pak(dir: &Path) -> bool {
 }
 
 fn move_replacing(from: &Path, to: &Path) {
+    if let (Ok(from_meta), Ok(to_meta)) = (from.metadata(), to.metadata()) {
+        if from_meta.is_file() && to_meta.is_file() && from_meta.len() == to_meta.len() {
+            // Already beside the executable. A running app keeps that file open, so replacing it
+            // fails, and the copy under build/ is the same bytes.
+            std::fs::remove_file(from)
+                .unwrap_or_else(|error| panic!("removing the duplicate CEF file {}: {error}", from.display()));
+            return;
+        }
+    }
     if to.is_dir() {
-        std::fs::remove_dir_all(to)
-            .unwrap_or_else(|error| panic!("removing {} before moving the CEF runtime: {error}", to.display()));
+        if let Err(error) = std::fs::remove_dir_all(to) {
+            if error.kind() == std::io::ErrorKind::PermissionDenied && directory_has_pak(to) {
+                let _ = std::fs::remove_dir_all(from);
+                return;
+            }
+            panic!("removing {} before moving the CEF runtime: {error}", to.display());
+        }
     } else if to.exists() {
-        std::fs::remove_file(to)
-            .unwrap_or_else(|error| panic!("removing {} before moving the CEF runtime: {error}", to.display()));
+        std::fs::remove_file(to).unwrap_or_else(|error| {
+            panic!(
+                "removing {} before moving the CEF runtime: {error}. Close moqui-desktop.exe and rebuild.",
+                to.display()
+            )
+        });
     }
     std::fs::rename(from, to).unwrap_or_else(|error| panic!("moving {} to {}: {error}", from.display(), to.display()));
 }
