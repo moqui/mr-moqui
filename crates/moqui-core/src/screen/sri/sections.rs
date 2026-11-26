@@ -38,16 +38,28 @@ pub(in crate::screen) fn is_security(err: &Error) -> bool {
 
 /// Run a nested render. As in Java, an error other than a security one is logged and its message is
 /// written as text where the output would have been, so one section does not lose the page. In production the text
-/// names only an error id; the detail is in the log under it.
+/// names only an error id; the detail is in the log under it. When the screen that fails is one of the request's path,
+/// an html or text page answers that error's status ([`crate::screen::render::note_path_failure`]).
 ///
 /// A qvt page is a Vue template, which does not compile with the elements the failed render left open, so there what it
 /// wrote is dropped before the message, and a brace in the message is a character reference, not an interpolation.
 /// A JSON document drops the same bytes, then writes one `error` node so the array stays valid.
 pub(super) fn guarded(state: &RenderState, label: &str, body: impl FnOnce() -> Result<(), Error>) -> Result<(), Error> {
+    guarded_noting(state, label, body, |_| {})
+}
+
+/// [`guarded`], with `failed` told of an error written in place.
+fn guarded_noting(
+    state: &RenderState,
+    label: &str,
+    body: impl FnOnce() -> Result<(), Error>,
+    failed: impl FnOnce(&Error),
+) -> Result<(), Error> {
     let capture = matches!(state.output_kind, OutputKind::Vue | OutputKind::Json);
     let written = capture.then(|| web::output_body_len().unwrap_or(0));
     match body() {
         Err(err) if !is_security(&err) => {
+            failed(&err);
             let text = failure_text(label, &err);
             if let Some(len) = written {
                 web::truncate_output(len);
@@ -681,9 +693,13 @@ fn render_next_screen(state: &RenderState, runner: &dyn Runner) -> Result<(), Er
         Ok(())
     } else {
         let is_target = index + 2 >= defs.len();
-        guarded(state, &format!("screen [{}]", next.location), || {
-            render_def(state, runner, &next, is_target)
-        })
+        // a path screen's failure is written in place too, and is the page's status (note_path_failure)
+        guarded_noting(
+            state,
+            &format!("screen [{}]", next.location),
+            || render_def(state, runner, &next, is_target),
+            |err| crate::screen::render::note_path_failure(state, err),
+        )
     };
     state.screen_path_index.set(index);
     result
