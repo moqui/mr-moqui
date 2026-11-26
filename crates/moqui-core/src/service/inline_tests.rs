@@ -167,6 +167,74 @@ fn run_pending_waits_while_a_transaction_is_in_place() {
 }
 
 #[test]
+fn a_framework_thread_leaving_its_context_leaves_the_queue_to_the_thread_that_drains_it() {
+    let (facade, ctx) = inline_context();
+    let _entered = ctx.enter();
+    let _authz = ctx.disable_authz();
+    super::async_call("inline#Mark", &mark("FT", "none")).unwrap();
+    // a framework thread enters and leaves an outermost context of the same factory, as the shell counts sender and
+    // the agent observers do, while the test thread's own context is still entered
+    let factory = std::sync::Arc::clone(ctx.factory());
+    std::thread::Builder::new()
+        .name("framework-thread-test".to_string())
+        .spawn(crate::context::framework_thread(move || {
+            let own = factory.new_context();
+            let _entered = own.enter();
+        }))
+        .unwrap()
+        .join()
+        .unwrap();
+    assert_eq!(
+        ctx.factory().service_pools().pending(),
+        1,
+        "the framework thread ran the queued work"
+    );
+    assert_eq!(medium(&facade, "FT"), None);
+    assert_eq!(ctx.factory().run_pending(), 1);
+    assert_eq!(medium(&facade, "FT").as_deref(), Some("missing"));
+}
+
+#[test]
+fn an_after_commit_hook_of_a_force_new_runs_no_queued_work_before_the_outer_transaction_resumes() {
+    let (facade, ctx) = inline_context();
+    let tx = facade.transactions_for("moqui.test.TestEntity").unwrap();
+    assert!(tx.begin(None).unwrap());
+    {
+        let _entered = ctx.enter();
+        let _authz = ctx.disable_authz();
+        super::async_call("inline#Mark", &mark("FN", "none")).unwrap();
+    }
+    assert_eq!(
+        ctx.factory().service_pools().pending(),
+        1,
+        "the outer transaction is in place"
+    );
+    let factory = std::sync::Arc::clone(ctx.factory());
+    let in_hook = std::sync::Arc::new(std::sync::Mutex::new(None));
+    tx.run(crate::transaction::TransactionAttribute::ForceNew, None, || {
+        let (factory, in_hook) = (std::sync::Arc::clone(&factory), std::sync::Arc::clone(&in_hook));
+        // as the after-commit fallbacks do (notify deliver_after_commit, chat send_push), where no context is entered:
+        // the hook's context is the thread's outermost, and the outer frame is still suspended while it runs
+        tx.on_commit(move || {
+            let own = factory.new_context();
+            drop(own.enter());
+            *moqui_lib::sync::lock(&in_hook) = Some(factory.service_pools().pending());
+        })
+    })
+    .unwrap();
+    assert_eq!(
+        *moqui_lib::sync::lock(&in_hook),
+        Some(1),
+        "the hook ran queued work with the outer transaction suspended"
+    );
+    assert!(tx.in_transaction(), "the outer transaction resumed");
+    assert_eq!(ctx.factory().run_pending(), 0);
+    tx.commit().unwrap();
+    assert_eq!(ctx.factory().run_pending(), 1);
+    assert_eq!(medium(&facade, "FN").as_deref(), Some("missing"));
+}
+
+#[test]
 fn a_failed_queued_call_is_logged_and_the_rest_run() {
     let (facade, ctx) = inline_context();
     let _entered = ctx.enter();

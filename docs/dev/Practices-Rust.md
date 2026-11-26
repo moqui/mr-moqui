@@ -341,6 +341,12 @@ are shared on purpose:
 - **`format!`** to join three or more strings and to fill in a template, not `+` chains or `str::replace` on a literal.
 - **Locks** go through `moqui_lib::sync::{lock, read, write}`, and `Condvar` waits through `wait` and `wait_timeout`
   there, which recover a poisoned lock (§8). Do not write a local helper or a non-test `.lock().unwrap()`.
+- **Framework threads.** A thread the framework starts for its own work that may enter an execution context is started
+  with `moqui_core::context::framework_thread` (`.spawn(framework_thread(move || ...))`, scoped threads too), so that
+  leaving its outermost context never runs an inline factory's queued work. That work belongs to the thread that owns
+  the queue and drains it: a test's thread, the spec runner's (`spawn_script_thread`), the browser's worker; those are
+  never wrapped. moqui-host's server threads run only under the threaded executor, which never drains there, and are
+  left unmarked.
 - **`unsafe`.** Add none. Every existing `unsafe` block has a `// SAFETY:` comment and every `unsafe fn` a `# Safety`
   doc (`clippy::undocumented_unsafe_blocks`).
 - **`#[must_use]`** on a function when dropping its result is a bug, such as a guard or a computed "changed" flag. The

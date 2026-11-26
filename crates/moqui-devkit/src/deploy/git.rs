@@ -36,6 +36,7 @@ use std::process::Command;
 use std::sync::Arc;
 
 use moqui_core::context::conf_reload;
+use moqui_core::context::framework_thread;
 use moqui_core::context::{ComponentInfo, ExecutionContext, ExecutionContextFactory};
 use moqui_db::sql::Condition;
 use moqui_git::checkout::FetchCredentials;
@@ -1124,12 +1125,12 @@ pub fn install(factory: &Arc<ExecutionContextFactory>) {
         // the work reads a repository and reloads artifacts: not on the thread that received the message
         let spawned = std::thread::Builder::new()
             .name("component-deploy".into())
-            .spawn(move || {
+            .spawn(framework_thread(move || {
                 let applied = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| apply_remote(&factory, &body)));
                 if applied.is_err() {
                     tracing::error!("Applying another cluster member's component deploy failed: {body}");
                 }
-            });
+            }));
         if let Err(err) = spawned {
             tracing::error!("Could not start applying another cluster member's component deploy: {err}");
         }

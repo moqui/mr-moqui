@@ -43,6 +43,7 @@ use std::time::Duration;
 
 use moqui_lib::object::Value;
 
+use moqui_core::context::framework_thread;
 use moqui_core::context::{Error, ExecutionContext};
 use moqui_core::entity::{Condition, EntityFacade, EntityValue};
 
@@ -441,7 +442,7 @@ fn watch_lease(deployment_id: &str, lease_id: &str, limit: Duration) {
             let weak = Arc::downgrade(&factory);
             let spawned = std::thread::Builder::new()
                 .name("git-ci-deploy-lease".into())
-                .spawn(move || {
+                .spawn(framework_thread(move || {
                     let Some(factory) = weak.upgrade() else { return };
                     let passed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         let context = factory.new_context();
@@ -453,7 +454,7 @@ fn watch_lease(deployment_id: &str, lease_id: &str, limit: Duration) {
                     if passed.is_err() {
                         tracing::error!(deployment = %deployment_id, "a deployment's lease watch panicked");
                     }
-                });
+                }));
             if let Err(err) = spawned {
                 tracing::error!("a deployment's lease is not watched: {err}");
             }
@@ -876,21 +877,23 @@ fn kick(id: &str) {
 
 fn spawn_step(factory: &Arc<moqui_core::context::ExecutionContextFactory>, id: String) {
     let weak = Arc::downgrade(factory);
-    let spawned = std::thread::Builder::new().name("git-ci-deploy".into()).spawn(move || {
-        let Some(factory) = weak.upgrade() else { return };
-        let passed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let context = factory.new_context();
-            let _entered = context.enter();
-            if let Some(entity) = factory.entity() {
-                if let Err(err) = step(&entity, &id) {
-                    tracing::error!(deployment = %id, "a deploy step failed: {err}");
+    let spawned = std::thread::Builder::new()
+        .name("git-ci-deploy".into())
+        .spawn(framework_thread(move || {
+            let Some(factory) = weak.upgrade() else { return };
+            let passed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let context = factory.new_context();
+                let _entered = context.enter();
+                if let Some(entity) = factory.entity() {
+                    if let Err(err) = step(&entity, &id) {
+                        tracing::error!(deployment = %id, "a deploy step failed: {err}");
+                    }
                 }
+            }));
+            if passed.is_err() {
+                tracing::error!(deployment = %id, "a deploy step panicked");
             }
         }));
-        if passed.is_err() {
-            tracing::error!(deployment = %id, "a deploy step panicked");
-        }
-    });
     if let Err(err) = spawned {
         tracing::warn!("a deploy step was left for the overdue job: {err}");
     }

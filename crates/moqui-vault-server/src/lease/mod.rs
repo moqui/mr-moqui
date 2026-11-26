@@ -48,6 +48,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread::ThreadId;
 use std::time::{Duration, Instant};
 
+use moqui_core::context::framework_thread;
 use moqui_core::context::ExecutionContextFactory;
 use moqui_core::entity::{EntityFacade, EntityValue};
 use moqui_core::transaction::TransactionAttribute;
@@ -1146,7 +1147,7 @@ fn start_sweeper(factory: &ExecutionContextFactory, registry: &Arc<LeaseRegistry
     let address = std::ptr::from_ref(factory) as usize;
     let spawned = std::thread::Builder::new()
         .name("vault-lease-sweep".to_string())
-        .spawn(move || loop {
+        .spawn(framework_thread(move || loop {
             std::thread::sleep(SWEEP);
             let Some(registry) = weak.upgrade() else {
                 return;
@@ -1158,7 +1159,7 @@ fn start_sweeper(factory: &ExecutionContextFactory, registry: &Arc<LeaseRegistry
             if swept.is_err() {
                 tracing::error!("Vault: the lease sweep failed; it runs again");
             }
-        });
+        }));
     if let Err(err) = spawned {
         tracing::error!("Vault: the lease sweep did not start ({err}); leases end at their next use");
     }

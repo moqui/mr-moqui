@@ -30,6 +30,7 @@ use std::time::{Duration, Instant};
 
 use notify::{EventKind, RecursiveMode, Watcher as _};
 
+use moqui_core::context::framework_thread;
 use moqui_core::context::ExecutionContextFactory;
 use moqui_lib::sync::lock;
 
@@ -126,7 +127,7 @@ pub(crate) fn watch(factory: &Arc<ExecutionContextFactory>, debounce: Duration) 
     let weak = Arc::downgrade(factory);
     let spawned = std::thread::Builder::new()
         .name("dev-reload".into())
-        .spawn(move || run(&weak, &dev, &events, debounce));
+        .spawn(framework_thread(move || run(&weak, &dev, &events, debounce)));
     if let Err(err) = spawned {
         tracing::error!(error = %err, "Could not start the dev reload thread");
         return false;
