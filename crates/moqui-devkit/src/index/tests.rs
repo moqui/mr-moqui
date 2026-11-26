@@ -428,3 +428,36 @@ fn an_artifact_groups_patterns_resolve_to_the_artifacts_they_match() {
     let inherited = bed.ids(REF, "operation", "authz-inherit", "toArtifactId");
     assert_eq!(inherited, ["entity:rows.Thing"]);
 }
+
+/// An entity two files define, written in one batch: one row, the later file's, as when each file is written on its
+/// own; an update of the earlier file then takes it.
+#[test]
+fn an_id_two_files_of_a_batch_define_is_the_later_files() {
+    let bed = RowsBed::new("shared");
+    let first = bed.write("entity/AEntities.xml", ROWS_ENTITIES);
+    let second = bed.write("entity/BEntities.xml", ROWS_ENTITIES);
+    let _enter = bed.ctx.enter();
+    let _authz = bed.ctx.disable_authz();
+    let files = bed.files();
+    let later = files
+        .iter()
+        .rposition(|file| file.path == first || file.path == second)
+        .map(|at| files[at].path.display().to_string())
+        .unwrap();
+    let earlier = if later == first.display().to_string() {
+        &second
+    } else {
+        &first
+    };
+    build_files(bed.factory(), files, false).unwrap();
+    let entity = "entity:rows.Thing";
+    let paths = || bed.ids(ARTIFACT, "artifactId", entity, "filePath");
+    assert_eq!(paths(), [later]);
+    assert_eq!(
+        bed.ids(ARTIFACT, "artifactId", "field:rows.Thing.name", "filePath")
+            .len(),
+        1
+    );
+    update_files(bed.factory(), std::slice::from_ref(earlier)).unwrap();
+    assert_eq!(paths(), [earlier.display().to_string()]);
+}
