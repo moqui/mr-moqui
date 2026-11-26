@@ -997,6 +997,11 @@ struct IndexState {
     logged_at: AtomicI64,
     /// The services and forms whose expanded rows were not all written: written again at the next update.
     retry: Mutex<HashSet<String>>,
+    /// When a build last read the resolver's ids from the rows: the [`Self::generation`] then and each file row's
+    /// hash. A build that finds both as they were reads no ids again.
+    loaded: Mutex<Option<(u64, HashMap<String, String>)>>,
+    /// How many times a build read the resolver's ids from the rows.
+    loads: AtomicU64,
 }
 
 impl IndexState {
@@ -1218,7 +1223,14 @@ pub fn build_files(
     {
         hashes.insert(text(&row, "filePath"), text(&row, "fileHash"));
     }
-    {
+    // the ids are read again unless no row was written since they were read here and the files' rows are as they were
+    // then (another server on the database writes those with its artifacts)
+    let generation = state.generation.load(Ordering::SeqCst);
+    let current = lock(&state.loaded)
+        .as_ref()
+        .is_some_and(|(at, files)| *at == generation && *files == hashes);
+    if !current {
+        state.loads.fetch_add(1, Ordering::SeqCst);
         let mut resolver = Resolver::default();
         // a field's summary marks its primary key, and the derived artifacts are known by their origin and parent
         let list = facade
@@ -1237,6 +1249,7 @@ pub fn build_files(
             resolver.add(&artifact_of(&row));
         }
         *lock(&state.resolver) = resolver;
+        *lock(&state.loaded) = Some((generation, hashes.clone()));
     }
     let mut report = BuildReport {
         files: files.len(),

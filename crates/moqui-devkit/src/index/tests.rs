@@ -461,3 +461,42 @@ fn an_id_two_files_of_a_batch_define_is_the_later_files() {
     update_files(bed.factory(), std::slice::from_ref(earlier)).unwrap();
     assert_eq!(paths(), [earlier.display().to_string()]);
 }
+
+/// A build that finds the rows as the last one read them reads no ids again; one after a write, or a file row another
+/// server changed, does.
+#[test]
+fn a_build_reads_the_ids_again_only_after_the_rows_changed() {
+    let bed = RowsBed::new("loads");
+    let entities = bed.write("entity/ThingEntities.xml", ROWS_ENTITIES);
+    let _enter = bed.ctx.enter();
+    let _authz = bed.ctx.disable_authz();
+    let loads = || state(bed.factory()).loads.load(Ordering::SeqCst);
+    build_files(bed.factory(), bed.files(), false).unwrap();
+    // the first build wrote rows: the next reads the ids, and the one after it not
+    build_files(bed.factory(), bed.files(), false).unwrap();
+    let after = loads();
+    build_files(bed.factory(), bed.files(), false).unwrap();
+    assert_eq!(loads(), after, "nothing changed");
+    assert!(bed.has_artifact("entity:rows.Thing"));
+
+    // a file row changed outside this build: read again
+    {
+        let facade = bed.factory().entity().unwrap();
+        let _lifted = fence::lift();
+        let mut row = facade
+            .find(FILE)
+            .unwrap()
+            .disable_authz()
+            .eq("filePath", Value::string(entities.display().to_string()))
+            .one()
+            .unwrap()
+            .unwrap();
+        row.set("fileHash", Value::string("another server's"));
+        row.update(&facade).unwrap();
+    }
+    let report = build_files(bed.factory(), bed.files(), false).unwrap();
+    assert_eq!(loads(), after + 1);
+    assert_eq!(report.read, 1, "the file read again");
+    build_files(bed.factory(), bed.files(), false).unwrap();
+    assert_eq!(loads(), after + 2, "the build before wrote its rows");
+}
