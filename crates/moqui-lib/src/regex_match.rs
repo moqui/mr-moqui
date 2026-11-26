@@ -53,21 +53,44 @@ enum Re {
 
 /// A pattern parsed and compiled once, for a caller that matches it many times.
 #[derive(Clone, Debug)]
-pub struct CompiledRegex(Option<Program>);
+pub struct CompiledRegex {
+    program: Option<Program>,
+    /// The literal text every match starts with ([`Self::literal_prefix`]).
+    prefix: String,
+}
 
 impl CompiledRegex {
     /// Parse `pattern`. An unsupported or bad pattern is an error, as [`is_full_match`] reports it.
     pub fn new(pattern: &str) -> Result<Self, Error> {
         if pattern.is_empty() {
-            return Ok(Self(None));
+            return Ok(Self {
+                program: None,
+                prefix: String::new(),
+            });
         }
-        Program::compile(&parse_regex(pattern)?).map(|program| Self(Some(program)))
+        let re = parse_regex(pattern)?;
+        let mut prefix = String::new();
+        literal_prefix(&re, &mut prefix);
+        Program::compile(&re).map(|program| Self {
+            program: Some(program),
+            prefix,
+        })
+    }
+
+    /// The literal text that every text this pattern matches starts with: its leading literal characters
+    /// (`org\.moqui\..*` has `org.moqui.`), empty when it starts with anything else. A caller holding many names in
+    /// order matches only those that start with it.
+    #[must_use]
+    pub fn literal_prefix(&self) -> &str {
+        &self.prefix
     }
 
     /// Whether the whole of `text` matches, as Java's `String.matches`.
     pub fn is_full_match(&self, text: &str) -> bool {
-        match &self.0 {
+        match &self.program {
             None => text.is_empty(),
+            // a text without the literal start cannot match: no program step
+            Some(_) if !text.starts_with(self.prefix.as_str()) => false,
             Some(program) => SCRATCH.with(|scratch| match scratch.try_borrow_mut() {
                 Ok(mut scratch) => {
                     let hit = program.is_full_match_in(text, &mut scratch);
@@ -400,6 +423,22 @@ enum ClassItem {
     Set { negated: bool, ranges: Vec<(char, char)> },
 }
 
+/// Push onto `out` the literal characters every match of `re` starts with; whether all of `re` is literal (so what
+/// follows it in a sequence adds to the prefix). A `^` before any character matches at the start only, so it adds
+/// nothing and the prefix goes on.
+fn literal_prefix(re: &Re, out: &mut String) -> bool {
+    match re {
+        Re::Empty => true,
+        Re::Lit(ch) => {
+            out.push(*ch);
+            true
+        }
+        Re::Start => out.is_empty(),
+        Re::Seq(items) => items.iter().all(|item| literal_prefix(item, out)),
+        Re::Any | Re::Class { .. } | Re::Alt(_) | Re::Repeat { .. } | Re::End => false,
+    }
+}
+
 fn collapse(mut items: Vec<Re>) -> Re {
     if items.len() > 1 {
         Re::Seq(items)
@@ -680,7 +719,31 @@ fn emit(re: &Re, code: &mut Vec<Inst>) -> Result<(), Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::is_full_match;
+    use super::{is_full_match, CompiledRegex};
+
+    #[test]
+    fn a_literal_prefix_is_what_every_match_starts_with() {
+        let prefix = |pattern: &str| CompiledRegex::new(pattern).unwrap().literal_prefix().to_string();
+        assert_eq!(prefix(r"org\.moqui\.report\..*"), "org.moqui.report.");
+        assert_eq!(
+            prefix(r"org\.moqui\.dev\.Dev(find#A|get#A[A-Za-z]*)"),
+            "org.moqui.dev.Dev"
+        );
+        assert_eq!(prefix("^abc$"), "abc");
+        assert_eq!(prefix("(ab)(cd)x*"), "abcd");
+        // a quantified or alternated character is not of it
+        assert_eq!(prefix("abc*"), "ab");
+        assert_eq!(prefix("ab|cd"), "");
+        assert_eq!(prefix(".*"), "");
+        assert_eq!(prefix("[a]bc"), "");
+        assert_eq!(prefix(""), "");
+        // a text without it does not match, and one with it is matched by the program
+        let regex = CompiledRegex::new(r"org\.moqui\.[A-Z]\w*").unwrap();
+        assert!(regex.is_full_match("org.moqui.Example"));
+        assert!(!regex.is_full_match("org.moqui.example"));
+        assert!(!regex.is_full_match("com.moqui.Example"));
+        assert!(!regex.is_full_match("org.moq"));
+    }
 
     #[test]
     fn deeply_nested_groups_are_an_error_not_a_stack_overflow() {

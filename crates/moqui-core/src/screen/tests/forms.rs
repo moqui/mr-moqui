@@ -2161,6 +2161,56 @@ fn a_form_list_reads_a_context_list_with_its_value_types() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// F14 for services (plans/design-dev-aide.md): a form assembled while a service overlay holds the thread (a render in a
+/// Dev AIDE Try) is made from the overlay's definition and is not kept, and one kept before is not used then; a render
+/// after it has the registry's definition again.
+#[test]
+fn a_form_made_under_a_service_overlay_is_not_kept() {
+    let dir = std::env::temp_dir().join(format!("moqui-forms-service-overlay-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("service")).unwrap();
+    let services = dir.join("service/OverServices.xml");
+    let widget_service = |parameter: &str| {
+        format!(
+            r#"<services><service verb="save" noun="Widget" authenticate="false"><in-parameters><parameter name="{parameter}"/></in-parameters></service></services>"#
+        )
+    };
+    std::fs::write(&services, widget_service("onDisk")).unwrap();
+    let screen = dir.join("Uses.xml");
+    std::fs::write(
+        &screen,
+        r#"<screen require-authentication="false"><widgets><form-single name="Run"><auto-fields-service service-name="OverServices.save#Widget" field-type="edit"/></form-single></widgets></screen>"#,
+    )
+    .unwrap();
+    let screen = screen.to_string_lossy().into_owned();
+    let world = World::open("");
+    let ctx = world.factory.new_context();
+    let _entered = ctx.enter();
+    assert!(crate::service::lint(std::slice::from_ref(&services))
+        .unwrap()
+        .is_empty());
+    let facade = crate::screen::ScreenFacade::of(&world.factory);
+    let assembled = || {
+        let def = facade.screen_def(&world.factory, &screen).unwrap();
+        crate::screen::form::assemble(&facade, &world.factory, &def, "Run")
+            .unwrap()
+            .xml
+            .clone()
+    };
+    assert!(assembled().contains("onDisk"));
+    let overlay = crate::service::overlay::ServiceOverlay::build(&[crate::service::overlay::OverlayFile {
+        location: "component://test/service/OverServices.xml".into(),
+        path: services.clone(),
+        text: widget_service("inTheBuffer"),
+    }])
+    .unwrap();
+    let under = crate::service::overlay::with(std::sync::Arc::new(overlay), assembled);
+    assert!(under.contains("inTheBuffer") && !under.contains("onDisk"), "{under}");
+    let after = assembled();
+    assert!(after.contains("onDisk") && !after.contains("inTheBuffer"), "{after}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// plans/archive/High-Level-Review.md HL-015: a service reload drops only the screens whose forms looked up a service it
 /// resolved again. A screen with a form of the changed service is made again with its new parameters; one that uses
 /// no service is kept; one whose form took an implicit entity-auto name is made again when a service of that name is

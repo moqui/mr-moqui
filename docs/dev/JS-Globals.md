@@ -55,8 +55,9 @@ script on a thread, so a replaced global would stand for the scripts after it.
 - An assignment to `ec`, `sri`, `toDecimal` or `basicConvert` does nothing in sloppy code and throws in strict code.
 - The helper objects, their functions and `System` are frozen: `StringUtilities.cleanHtml = f` does nothing in
   sloppy code and throws in strict code.
-- Names that begin `__` (`__moquiWrap`, `__compareOrder`, `__inDateRange`, `__isEmpty`, `__isGroovyFalse`) are the
-  framework's own. Do not call them.
+- Names that begin `__` (`__moquiWrap`, `__compareOrder`, `__inDateRange`, `__isEmpty`, `__isGroovyFalse`, and
+  `__moquiTrace`, the trace calls of an XML actions script a Dev AIDE Try traces) are the framework's own. Do not call
+  them.
 
 ### JavaScript built-ins
 
