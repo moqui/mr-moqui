@@ -76,9 +76,12 @@ pub(super) fn run_sync(
     {
         return Ok(BTreeMap::new());
     }
-    // Make sure delayBufferMillis have passed since lastSuccessfulSyncTime.
+    // Make sure a whole split is older than delayBufferMillis since lastSuccessfulSyncTime: a run before then would
+    // read nothing and only write a History row.
     let delay = delay_millis(sync.get("delayBufferMillis"));
-    if millis_of(sync.get("lastSuccessfulSyncTime")).is_some_and(|last| last > now_millis() - delay) {
+    let split = split_millis(sync.get("syncSplitMillis"));
+    let previous = millis_of(sync.get("lastSuccessfulSyncTime"));
+    if previous.is_some_and(|last| !split_due(last, split, delay, now_millis())) {
         return Ok(BTreeMap::new());
     }
 
@@ -139,10 +142,14 @@ pub(super) fn run_sync(
         text_of(results.get("recordsStored"))
     );
 
-    // If not yet up to delayBufferMillis trigger another async run. Only after a success: a failed run leaves
-    // lastSuccessfulSyncTime where it was, so following it again would repeat the failure at once, without end, with a
-    // History row each time (plans/ui-review-system-ai-integrations.md AI-UI-002); the next scheduled run tries again.
-    if error_message.is_empty() && last_success.is_some_and(|last| last < now_millis() - delay) {
+    // If another whole split is older than delayBufferMillis trigger another async run. Only after a success that
+    // moved lastSuccessfulSyncTime: a failed run leaves it where it was, so following it again would repeat the failure
+    // at once, without end, with a History row each time (plans/ui-review-system-ai-integrations.md AI-UI-002); the next
+    // scheduled run tries again. Nor while the next split is still inside the buffer: that run would read nothing
+    // (AI-UI-004).
+    let moved = last_success.is_some_and(|last| previous.is_none_or(|before| last > before));
+    if error_message.is_empty() && moved && last_success.is_some_and(|last| split_due(last, split, delay, now_millis()))
+    {
         let again = pairs([("entitySyncId", Value::string(&sync_id))]);
         if let Err(err) = crate::service::async_call(RUN_SYNC, &again) {
             add_error(err.message());
@@ -261,11 +268,11 @@ pub(super) fn get_data(
         _ => Vec::new(),
     };
     let last_success = millis_of(parameters.get("lastSuccessfulSyncTime"));
-    // A split of zero would not move forward.
-    let split = integer_of(parameters.get("syncSplitMillis")).unwrap_or(1000).max(1);
+    let split = split_millis(parameters.get("syncSplitMillis"));
+    // A threshold under one would read no split and not move forward.
     let threshold = integer_of(parameters.get("recordThreshold"))
         .unwrap_or(1000)
-        .min(MAX_RECORD_THRESHOLD);
+        .clamp(1, MAX_RECORD_THRESHOLD);
     let delay = integer_of(parameters.get("delayBufferMillis")).unwrap_or(DEFAULT_DELAY_MILLIS);
 
     // Without a lastSuccessfulSyncTime this gets everything up to now less delayBufferMillis in one split, as the Java.
@@ -308,11 +315,14 @@ pub(super) fn get_data(
     }
     xml.push_str("</entity-facade-xml>");
 
+    // The end of the last split read, or the start when none was: the Java returned the split after it (`splitThru`),
+    // which the run stored as lastSuccessfulSyncTime, so the records of that next split were never read
+    // (plans/ui-review-system-ai-integrations.md AI-UI-004).
     Ok(BTreeMap::from([
         ("entityData".to_string(), Value::string(xml)),
         ("recordCount".to_string(), Value::I64(record_count)),
         ("exclusiveFromTime".to_string(), stamp(starting)),
-        ("inclusiveThruTime".to_string(), stamp(split_thru)),
+        ("inclusiveThruTime".to_string(), stamp(split_from)),
     ]))
 }
 
@@ -561,6 +571,17 @@ fn call_remote(
 /// A field of the EntitySync map, null when it is missing, so the remote service applies its default.
 fn field(sync: &moqui_lib::object::ValueMap, name: &str) -> Value {
     sync.get(name).cloned().unwrap_or(Value::Null)
+}
+
+/// `syncSplitMillis ?: 1000`; a split under one millisecond would not move forward.
+fn split_millis(value: Option<&Value>) -> i64 {
+    integer_of(value).unwrap_or(1000).max(1)
+}
+
+/// Whether the split after `last` is whole and older than `delay` at `now`, so a run would read it: what
+/// `get#EntitySyncData` reads, and so what a run and its follow-up wait for.
+pub(super) fn split_due(last: i64, split: i64, delay: i64, now: i64) -> bool {
+    last.saturating_add(split) <= now.saturating_sub(delay)
 }
 
 /// `delayBufferMillis ?: 300000`: null or zero is the default.
