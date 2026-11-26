@@ -40,7 +40,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) -> Result<(), Error> {
 }
 
 /// The approval `approval_id` when it is the current user's change set.
-fn owned(context: &Context, approval_id: &str) -> Result<approval::ApprovalView, LibError> {
+pub(crate) fn owned(context: &Context, approval_id: &str) -> Result<approval::ApprovalView, LibError> {
     let user_id = moqui_core::user::current_user_id()?.unwrap_or_default();
     let view = approval::load(&context.facade, approval_id)?
         .filter(|view| !user_id.is_empty() && view.user_id == user_id && view.target_kind == TargetKind::File)

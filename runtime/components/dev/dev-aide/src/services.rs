@@ -54,7 +54,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) -> Result<(), Error> {
 
 /// The actions that try a rule's condition: the context set, then whether the condition holds as a message. An
 /// expression goes in `if`'s attribute; a condition element (`compare`, `and`, ...) in its `condition`.
-fn condition_actions(condition: &str, context: &serde_json::Map<String, Json>) -> String {
+pub(crate) fn condition_actions(condition: &str, context: &serde_json::Map<String, Json>) -> String {
     let escape = crate::workspace::xml_attr;
     let mut out = String::from("<actions>");
     for (key, value) in context {
@@ -105,10 +105,16 @@ fn eval_condition(
     }
     let actions = condition_actions(&condition, &object_in(parameters, "against"));
     moqui_core::script::check_actions(&actions)?;
-    let answer = in_sim(&context, service.name, "Try a rule's condition", move || {
-        moqui_core::script::run_actions(&actions).map_err(|err| moqui_lib::error::Error::new(err.to_string()))?;
-        Ok(BTreeMap::new())
-    });
+    let answer = in_sim(
+        &context,
+        service.name,
+        "Try a rule's condition",
+        Over::default(),
+        move || {
+            moqui_core::script::run_actions(&actions).map_err(|err| moqui_lib::error::Error::new(err.to_string()))?;
+            Ok(BTreeMap::new())
+        },
+    );
     let holds = answer["messages"]
         .as_array()
         .is_some_and(|messages| messages.iter().any(|text| text == "the condition holds"));
@@ -321,7 +327,7 @@ fn json_of(value: &Value) -> Json {
 }
 
 /// A parameter given as a JSON object or its text.
-fn object_in(parameters: &Parameters, name: &str) -> serde_json::Map<String, Json> {
+pub(crate) fn object_in(parameters: &Parameters, name: &str) -> serde_json::Map<String, Json> {
     match parameters.get(name) {
         Some(Value::String(raw)) => serde_json::from_str(raw).ok(),
         Some(value) => match json_of(value) {
@@ -390,7 +396,9 @@ fn service_name_in(parameters: &Parameters) -> String {
 }
 
 /// `get#ServiceView`: a service as its view shows it: its definition (parameters nested, the implied ones marked), its
-/// file and line, its script's file, its SECA rules, how many artifacts use it, and the calls of the last spec run.
+/// file and line, its script's file, its SECA rules, how many artifacts use it, and the calls of the last spec run. With
+/// `files` (the unsaved service buffers, as `try#Service` takes them) the definition is the buffers' (F14), one they
+/// define anew too; nothing of them runs, they are only read.
 fn get_service_view(
     ec: &ExecutionContext,
     _service: &ServiceInfo<'_>,
@@ -398,8 +406,9 @@ fn get_service_view(
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::View)?;
     let name = service_name_in(parameters);
-    let detail =
-        moqui_core::service::info::service_detail(&name).ok_or_else(|| LibError::new(format!("no service {name}")))?;
+    let overlay = crate::try_overlay::overlay_of(&crate::try_overlay::files_of(&context, parameters)?)?;
+    let detail = crate::try_overlay::over(overlay, || moqui_core::service::info::service_detail(&name))
+        .ok_or_else(|| LibError::new(format!("no service {name}")))?;
     let detail = json_of(&Value::Map(detail));
     let id = format!("service:{name}");
     let artifact = index::describe(&context.factory, &id)?.map(|row| shown(&context, &row));
@@ -492,20 +501,56 @@ fn sim_within(tier: Tier, caller: &str) -> Option<&str> {
     (tier >= Tier::Extend).then_some(caller)
 }
 
-/// A run of `body` in the sim as the current user, within `caller`'s frame ([`sim_within`]): its out-parameters,
-/// messages and errors, the rows it would write and its time, or why it failed (its own error, not that the sim was
-/// rolled back).
-fn in_sim(
+/// What a sim run runs over: the service overlay of unsaved or proposed text (F14, `crate::try_overlay`), and whether
+/// its XML actions are traced (9.2's marks on the composer's blocks, `moqui_core::script::traced`).
+#[derive(Default)]
+pub(crate) struct Over {
+    pub overlay: Option<std::sync::Arc<moqui_core::service::overlay::ServiceOverlay>>,
+    pub trace: bool,
+}
+
+/// A trace as a Try answers it: each block's file also as the Workspace opens it (its root and path).
+fn located_trace(context: &Context, mut trace: Json) -> Json {
+    for block in trace["blocks"].as_array_mut().into_iter().flatten() {
+        if let Some(file) = block["file"].as_str().map(str::to_string) {
+            let open = site::located(context, &file);
+            block["rootId"] = open["rootId"].clone();
+            block["path"] = open["path"].clone();
+        }
+    }
+    if let Some(file) = trace["failed"]["file"].as_str().map(str::to_string) {
+        let open = site::located(context, &file);
+        trace["failed"]["rootId"] = open["rootId"].clone();
+        trace["failed"]["path"] = open["path"].clone();
+    }
+    trace
+}
+
+/// A run of `body` in the sim as the current user, within `caller`'s frame ([`sim_within`]), over `over`: its
+/// out-parameters, messages and errors, the rows it would write and its time, or why it failed (its own error, not that
+/// the sim was rolled back), and with `over.trace` the trace of its actions, which a failure answers too.
+pub(crate) fn in_sim(
     context: &Context,
     caller: &str,
     label: &str,
+    over: Over,
     body: impl FnOnce() -> Result<BTreeMap<String, Value>, moqui_lib::error::Error> + Send,
 ) -> Json {
     let username = moqui_core::user::current_username().ok().flatten().unwrap_or_default();
     let started = std::time::Instant::now();
     let within = sim_within(context.tier, caller);
+    let traced = Mutex::new(Json::Null);
     let ran = moqui_llm::approval::preview::run_in_sim_within(&context.factory, &username, label, within, || {
-        let (out, log, more) = moqui_core::devtools::log_capture::with(body);
+        let Over { overlay, trace } = over;
+        let ((out, log, more), trace) = crate::try_overlay::over(overlay, || {
+            let run = || moqui_core::devtools::log_capture::with(body);
+            if trace {
+                moqui_core::script::traced(run)
+            } else {
+                (run(), Json::Null)
+            }
+        });
+        *lock(&traced) = trace;
         let log = (log, more);
         let (messages, errors) = messages();
         match out {
@@ -517,18 +562,27 @@ fn in_sim(
         }
     });
     let millis = started.elapsed().as_millis();
-    match ran {
+    let mut answer = match ran {
         Ok(run) => {
             let (out, messages, errors, (log, more_log)) = run.value;
             json!({"sim": true, "out": out, "messages": messages, "errors": errors, "rows": run.rows,
                 "moreRows": run.more, "log": log, "moreLog": more_log, "millis": millis})
         }
         Err(error) => json!({"sim": true, "failed": error.to_string(), "millis": millis}),
+    };
+    let trace = std::mem::take(&mut *lock(&traced));
+    if !trace.is_null() {
+        answer["trace"] = located_trace(context, trace);
     }
+    answer
 }
 
 /// `try#Service`: run a service with `parameters` (a JSON object) in the sim, nothing kept (9.4), or with `real` for
-/// real: the extend tier, `confirm` set, audited.
+/// real: the extend tier, `confirm` set, audited. In the sim it runs over the unsaved or proposed text of `files` (a
+/// JSON list of `{rootId, path, text}`) and `preview` (`buffer:<id>`, `approval:<id>`), F14 for services: the service
+/// as those files define it (one they define anew too), and the services it calls that they define; text the caller
+/// gives runs at the extend tier only, as a snippet does. With `trace`, the trace of its XML actions (each element's
+/// count, the values it set and the one that failed).
 fn try_service(
     ec: &ExecutionContext,
     service: &ServiceInfo<'_>,
@@ -536,13 +590,25 @@ fn try_service(
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::View)?;
     let name = service_name_in(parameters);
-    if !moqui_core::service::is_service_defined(&name, Some(&context.facade)) {
+    let files = crate::try_overlay::files_of(&context, parameters)?;
+    let overlay = crate::try_overlay::overlay_of(&files)?;
+    // text the caller gives is code run in the server: the extend tier, as a snippet (SEC-DEV-02)
+    if overlay.is_some() {
+        Context::of(ec, Tier::Extend)?;
+    }
+    let defined_here = overlay.as_ref().is_some_and(|overlay| overlay.defines(&name));
+    if !defined_here && !moqui_core::service::is_service_defined(&name, Some(&context.facade)) {
         return Err(LibError::new(format!("no service {name}")));
     }
     let given = object_in(parameters, "parameters");
     let call = call_parameters(&given);
     let mut out = Parameters::new();
     if flag(parameters, "real") {
+        if overlay.is_some() {
+            return Err(LibError::new(
+                "unsaved or proposed text runs in the sim only: save it, then run it for real",
+            ));
+        }
         let context = Context::of(ec, Tier::Extend)?;
         if !flag(parameters, "confirm") {
             return Err(LibError::new("a real run needs its confirm"));
@@ -573,16 +639,28 @@ fn try_service(
         ));
     }
     let called = name.clone();
-    let answer = in_sim(&context, service.name, &format!("Try in sim of {name}"), move || {
-        moqui_core::service::sync(&called, &call).map_err(|err| moqui_lib::error::Error::new(err.to_string()))
-    });
+    let shown = overlay.as_deref().map(crate::try_overlay::overlay_json);
+    let over = Over {
+        overlay,
+        trace: flag(parameters, "trace"),
+    };
+    let mut answer = in_sim(
+        &context,
+        service.name,
+        &format!("Try in sim of {name}"),
+        over,
+        move || moqui_core::service::sync(&called, &call).map_err(|err| moqui_lib::error::Error::new(err.to_string())),
+    );
+    if let Some(shown) = shown {
+        answer["overlay"] = shown;
+    }
     out.insert("result".into(), json_value(&answer));
     Ok(out)
 }
 
 /// The actions of a snippet: XML Actions as they are (an `<actions>` element or its content), or JavaScript as a
 /// `script` action; each given parameter set first.
-fn snippet_actions(language: &str, body: &str, given: &serde_json::Map<String, Json>) -> String {
+pub(crate) fn snippet_actions(language: &str, body: &str, given: &serde_json::Map<String, Json>) -> String {
     let escape = crate::workspace::xml_attr;
     let mut out = String::from("<actions>");
     for (key, value) in given {
@@ -631,46 +709,30 @@ fn try_snippet(
         &object_in(parameters, "parameters"),
     );
     moqui_core::script::check_actions(&actions)?;
-    let answer = in_sim(&context, service.name, "Try in sim of a snippet", move || {
-        moqui_core::script::run_actions(&actions).map_err(|err| moqui_lib::error::Error::new(err.to_string()))?;
-        Ok(BTreeMap::new())
-    });
+    let answer = in_sim(
+        &context,
+        service.name,
+        "Try in sim of a snippet",
+        Over::default(),
+        move || {
+            moqui_core::script::run_actions(&actions).map_err(|err| moqui_lib::error::Error::new(err.to_string()))?;
+            Ok(BTreeMap::new())
+        },
+    );
     let mut out = Parameters::new();
     out.insert("result".into(), json_value(&answer));
     Ok(out)
 }
 
 /// A JavaScript literal of a JSON value.
-fn js(value: &Json) -> String {
+pub(crate) fn js(value: &Json) -> String {
     value.to_string()
 }
 
-/// The feature a Try makes (9.4): a call of the service with its parameters, a `then` comparing the out-parameters,
-/// and a `checkData` of the rows the sim wrote (created and updated, with their key and new values), for the developer
-/// to trim (generated ids and stamps differ in another run).
-pub(crate) fn spec_feature(
-    service: &str,
-    given: &serde_json::Map<String, Json>,
-    out: &serde_json::Map<String, Json>,
-    rows: &[Json],
-) -> String {
+/// The `checkData` condition of the rows a sim run wrote (created and updated, with their key and new values, hidden
+/// ones left out), none when it wrote none.
+pub(crate) fn check_data(rows: &[Json]) -> Option<String> {
     let escape = crate::workspace::xml_attr;
-    let mut text = format!(
-        "\nfeature({}, {{\n    when() {{\n",
-        js(&json!(format!("{service} as it ran in a Try")))
-    );
-    text.push_str(&format!(
-        "        return call({}, {})\n    }},\n",
-        js(&json!(service)),
-        js(&Json::Object(given.clone()))
-    ));
-    text.push_str("    then(out) {\n");
-    for (key, value) in out {
-        if value.is_object() || value.is_array() {
-            continue;
-        }
-        text.push_str(&format!("        out[{}] == {}\n", js(&json!(key)), js(value)));
-    }
     let records: Vec<String> = rows
         .iter()
         .filter(|row| matches!(row["action"].as_str(), Some("create" | "update")))
@@ -690,14 +752,100 @@ pub(crate) fn spec_feature(
             Some(format!("            <{entity} {}/>", attrs.join(" ")))
         })
         .collect();
-    if !records.is_empty() {
-        text.push_str(&format!(
+    (!records.is_empty()).then(|| {
+        format!(
             "        checkData(`<entity-facade-xml>\n{}\n        </entity-facade-xml>`).length == 0\n",
             records.join("\n").replace('`', "\\`").replace("${", "\\${")
-        ));
+        )
+    })
+}
+
+/// The feature a Try makes (9.4): a call of the service with its parameters, a `then` comparing the out-parameters,
+/// and a `checkData` of the rows the sim wrote (created and updated, with their key and new values), for the developer
+/// to trim (generated ids and stamps differ in another run).
+pub(crate) fn spec_feature(
+    service: &str,
+    given: &serde_json::Map<String, Json>,
+    out: &serde_json::Map<String, Json>,
+    rows: &[Json],
+) -> String {
+    let mut text = format!(
+        "\nfeature({}, {{\n    when() {{\n",
+        js(&json!(format!("{service} as it ran in a Try")))
+    );
+    text.push_str(&format!(
+        "        return call({}, {})\n    }},\n",
+        js(&json!(service)),
+        js(&Json::Object(given.clone()))
+    ));
+    text.push_str("    then(out) {\n");
+    for (key, value) in out {
+        if value.is_object() || value.is_array() {
+            continue;
+        }
+        text.push_str(&format!("        out[{}] == {}\n", js(&json!(key)), js(value)));
+    }
+    if let Some(check) = check_data(rows) {
+        text.push_str(&check);
     }
     text.push_str("    },\n})\n");
     text
+}
+
+/// The file at `relative` (`test/X.spec.js`) in the component of `artifact` (an artifact's file) when the user may
+/// write there, else in the site's (D17): its root and its path in the root.
+pub(crate) fn own_or_site(
+    context: &Context,
+    artifact: Option<&Path>,
+    relative: &str,
+    upstream: &str,
+) -> Result<(String, String), LibError> {
+    let own = artifact
+        .and_then(|path| crate::roots::locate(&context.roots, path).map(|(root, relative)| (root.clone(), relative)))
+        .and_then(|(root, in_root)| {
+            let component = root.component_of(&in_root)?.clone();
+            let file = if component.path.is_empty() {
+                relative.to_string()
+            } else {
+                format!("{}/{relative}", component.path)
+            };
+            context.may_write(&root, &file).ok().map(|()| (root.id.clone(), file))
+        });
+    match own {
+        Some(found) => Ok(found),
+        None => {
+            let site = site::site_path(context, relative).ok_or_else(|| LibError::new(upstream.to_string()))?;
+            Ok((site.root_id, site.path))
+        }
+    }
+}
+
+/// Append `feature` to the spec file `file` of `root_id`, made with `header` and `spec({})` when it is not there;
+/// saved through the save pipeline (audited with `detail`). Answers the save's out-parameters with the root and path.
+pub(crate) fn append_feature(
+    context: &Context,
+    root_id: &str,
+    file: &str,
+    header: &str,
+    feature: &str,
+    detail: Json,
+) -> Result<Parameters, LibError> {
+    let root = context.root(root_id)?;
+    let resolved = context.resolve(root, file)?;
+    let (before, base) = match std::fs::read(&resolved.path) {
+        Ok(bytes) => (
+            String::from_utf8_lossy(&bytes).into_owned(),
+            crate::workspace::sha256(&bytes),
+        ),
+        Err(_) => (format!("{header}spec({{}})\n"), String::new()),
+    };
+    let mut text_after = before.trim_end().to_string();
+    text_after.push('\n');
+    text_after.push_str(feature);
+    let mut answer = crate::workspace::save_text(context, root, &resolved, &text_after, &base, Some(detail))?;
+    answer.insert("rootId".into(), Value::string(root_id));
+    answer.insert("path".into(), Value::string(file));
+    Ok(answer)
 }
 
 /// The spec file of a service: `test/<Services file>.spec.js` (`ExampleServices` of
@@ -742,54 +890,18 @@ fn save_try_spec(
         return Err(LibError::new(format!("no spec name for {name}")));
     }
     // the service's own component when it may be written, else the site's
-    let own = index::describe(&context.factory, &format!("service:{name}"))?
-        .and_then(|row| {
-            crate::roots::locate(&context.roots, Path::new(&row.path)).map(|(root, relative)| (root.clone(), relative))
-        })
-        .and_then(|(root, relative)| {
-            let component = root.component_of(&relative)?.clone();
-            let file = if component.path.is_empty() {
-                format!("test/{spec}.spec.js")
-            } else {
-                format!("{}/test/{spec}.spec.js", component.path)
-            };
-            context.may_write(&root, &file).ok().map(|()| (root.id.clone(), file))
-        });
-    let (root_id, file) = match own {
-        Some(found) => found,
-        None => {
-            let site = site::site_path(&context, &format!("test/{spec}.spec.js")).ok_or_else(|| {
-                LibError::new("the service is upstream and there is no site component to write its spec in")
-            })?;
-            (site.root_id, site.path)
-        }
-    };
-    let root = context.root(&root_id)?;
-    let resolved = context.resolve(root, &file)?;
-    let (before, base) = match std::fs::read(&resolved.path) {
-        Ok(bytes) => (String::from_utf8_lossy(&bytes).into_owned(), crate::workspace::sha256(&bytes)),
-        Err(_) => (
-            format!(
-                "// Specs of {name} and its neighbours, from Tries in Dev AIDE (plans/design-dev-aide.md 9.4): trim what a\n// run makes anew (generated ids, stamps) before relying on them.\n// Run: ./moq test <component> --spec {spec}\nspec({{}})\n"
-            ),
-            String::new(),
-        ),
-    };
-    let feature = spec_feature(&name, &given, &out, &rows);
-    let mut text_after = before.trim_end().to_string();
-    text_after.push('\n');
-    text_after.push_str(&feature);
-    let saved = crate::workspace::save_text(
+    let own = index::describe(&context.factory, &format!("service:{name}"))?.map(|row| row.path);
+    let (root_id, file) = own_or_site(
         &context,
-        root,
-        &resolved,
-        &text_after,
-        &base,
-        Some(json!({ "trySpec": name })),
+        own.as_deref().map(Path::new),
+        &format!("test/{spec}.spec.js"),
+        "the service is upstream and there is no site component to write its spec in",
     )?;
-    let mut answer = saved;
-    answer.insert("rootId".into(), Value::string(root_id));
-    answer.insert("path".into(), Value::string(file));
+    let header = format!(
+        "// Specs of {name} and its neighbours, from Tries in Dev AIDE (plans/design-dev-aide.md 9.4): trim what a\n// run makes anew (generated ids, stamps) before relying on them.\n// Run: ./moq test <component> --spec {spec}\n"
+    );
+    let feature = spec_feature(&name, &given, &out, &rows);
+    let mut answer = append_feature(&context, &root_id, &file, &header, &feature, json!({ "trySpec": name }))?;
     answer.insert("spec".into(), Value::string(spec));
     Ok(answer)
 }

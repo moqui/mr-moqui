@@ -854,6 +854,9 @@
                     apply: (ops, buffer) => vm.applyOps(tab, ops, buffer),
                     undo: () => vm.undo(tab), redo: () => vm.redo(tab),
                     outlineOf: (text) => vm.post("outline", { text }).then((answer) => answer.outline || null),
+                    // the unsaved buffers (the tabs and their views' companions): what a Try in sim runs over (F14)
+                    dirtyBuffers: () => pure.openBuffers(vm.tabs, vm.rootId).filter((open) => pure.isDirty(open.buffer) || open.buffer.missing)
+                        .map((open) => ({ rootId: open.rootId, path: open.path, text: open.buffer.text })),
                     companion: (rootId, path, initialText) => vm.companion(tab, rootId, path, initialText),
                     save: () => vm.save(tab), onSaved: (hook) => {
                         vm.saveHooks.set(tab, hook);

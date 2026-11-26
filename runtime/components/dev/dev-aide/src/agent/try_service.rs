@@ -14,7 +14,10 @@
 
 //! `try_service` (plans/design-dev-aide.md 9.4 and 13.2): run a service in the sim overlay (the default) as the user,
 //! and answer its out-parameters, messages and errors and the rows it would write, which a spec's `checkData` can be
-//! written from; nothing is kept. A real run is a write the user approves, as any service call of an agent.
+//! written from; nothing is kept. A real run is a write the user approves, as any service call of an agent. In the sim
+//! it may run as a proposal defines it (F14 for services, 13.3's "a Try on proposed text"): a change set of the
+//! user's (`changeSet`, its approval id) or files as `propose_edit` takes them (`files`), their service and script
+//! files standing at their locations for the Try's own calls only (`crate::try_overlay`).
 
 use std::collections::BTreeMap;
 
@@ -25,6 +28,7 @@ use moqui_llm::run::context::TurnContext;
 use moqui_llm::tools::format::ToolError;
 use moqui_llm::tools::schema::{object, Property};
 use moqui_llm::tools::{caps, AgentTool, Classification, ToolInput, ToolOutcome, ToolSpec};
+use serde::Deserialize;
 use serde_json::{json, Value as Json};
 
 use super::{arg, context};
@@ -38,7 +42,7 @@ impl Default for TryServiceTool {
             "try_service",
             "Run a Moqui service in the sim (a copy of the database that is thrown away), as the user: its \
              out-parameters, messages and errors, and the rows it would create, update or delete. real=true runs it \
-             for real after the user approves.",
+             for real after the user approves. changeSet or files run it as proposed text defines it, in the sim.",
             object(&[
                 Property::required(
                     "service",
@@ -50,6 +54,17 @@ impl Default for TryServiceTool {
                     "real",
                     "boolean",
                     "Run it for real (the user approves); the sim when left out",
+                ),
+                Property::optional(
+                    "changeSet",
+                    "string",
+                    "The approval id of a change set you proposed: run it as the proposal defines it (sim only)",
+                ),
+                Property::optional(
+                    "files",
+                    "array",
+                    "Proposed files as propose_edit takes them ([{file, ops?, edits?, text?}]): run the service as they \
+                     define it, without proposing them (sim only)",
                 ),
             ]),
             Classification::Read,
@@ -138,17 +153,59 @@ fn messages() -> (Vec<String>, Vec<String>) {
     .unwrap_or_default()
 }
 
+/// The overlay of the proposed text a Try names: a change set of the user's (`changeSet`) and files as `propose_edit`
+/// takes them (`files`).
+fn proposed(
+    context: &crate::workspace::Context,
+    args: &Json,
+) -> Result<Option<std::sync::Arc<moqui_core::service::overlay::ServiceOverlay>>, ToolError> {
+    let mut files = Vec::new();
+    if let Some(id) = arg(args, "changeSet").filter(|id| !id.trim().is_empty()) {
+        files.extend(
+            crate::try_overlay::change_set_files(context, id.trim())
+                .map_err(|err| ToolError::new("no_change_set", err.to_string()))?,
+        );
+    }
+    if let Some(given) = args.get("files").filter(|files| !files.is_null()) {
+        let set = crate::agent::propose::ChangeSet::deserialize(&json!({ "files": given })).map_err(|err| {
+            ToolError::new("bad_arguments", format!("The files do not read: {err}"))
+                .hint("files is a list of {file, ops | edits | text}, as propose_edit takes it.")
+        })?;
+        files.extend(
+            crate::try_overlay::proposed_files(context, &set)
+                .map_err(|err| ToolError::new("does_not_apply", err.to_string()))?,
+        );
+    }
+    crate::try_overlay::overlay_of(&files).map_err(|err| ToolError::new("does_not_parse", err.to_string()))
+}
+
 fn run(ctx: &mut TurnContext<'_>, args: &Json) -> Result<ToolOutcome, ToolError> {
     let service = arg(args, "service")
         .ok_or_else(|| ToolError::new("no_service", "Name the service to run."))?
         .to_string();
     let context = context(Tier::View)?;
-    if !moqui_core::service::is_service_defined(&service, Some(&context.facade)) {
+    let overlay = proposed(&context, args)?;
+    // proposed text is code run in the server: the extend tier, as a snippet (SEC-DEV-02)
+    if overlay.is_some() && context.tier == Tier::View {
+        return Err(ToolError::new(
+            "not_allowed",
+            "Trying proposed text needs the extend tier of Dev AIDE.",
+        ));
+    }
+    let defined_here = overlay.as_ref().is_some_and(|overlay| overlay.defines(&service));
+    if !defined_here && !moqui_core::service::is_service_defined(&service, Some(&context.facade)) {
         return Err(ToolError::new("not_found", format!("No service is named {service}."))
             .hint("Find it with the artifact tool: action find, kinds service."));
     }
     let parameters = parameters_of(args);
     let real_run = args.get("real").and_then(Json::as_bool).unwrap_or(false);
+    if real_run && overlay.is_some() {
+        return Err(ToolError::new(
+            "not_in_sim",
+            "Proposed text runs in the sim only; a real run runs the files as they are.",
+        )
+        .hint("Leave real out to try the proposal, or leave changeSet and files out to run the saved files."));
+    }
     if !real_run {
         if let Some(why) = sim_refusal(&service) {
             return Err(ToolError::new("not_in_sim", why).hint("Run it with real=true, which the user approves."));
@@ -184,8 +241,9 @@ fn run(ctx: &mut TurnContext<'_>, args: &Json) -> Result<ToolOutcome, ToolError>
     }
     let started = std::time::Instant::now();
     let label = format!("Try in sim of {service}");
+    let shown = overlay.as_deref().map(crate::try_overlay::overlay_json);
     let ran = moqui_llm::approval::preview::run_in_sim(&context.factory, &ctx.user.username, &label, || {
-        let out = moqui_core::service::sync(&service, &parameters);
+        let out = crate::try_overlay::over(overlay, || moqui_core::service::sync(&service, &parameters));
         let (messages, errors) = messages();
         // a call that failed answers its own error, not that the sim was rolled back
         match out {
@@ -197,7 +255,7 @@ fn run(ctx: &mut TurnContext<'_>, args: &Json) -> Result<ToolOutcome, ToolError>
         }
     });
     let millis = started.elapsed().as_millis();
-    Ok(super::json(&match ran {
+    let mut answer = match ran {
         Ok(run) => {
             let (out, messages, errors) = run.value;
             let out = match out {
@@ -211,7 +269,11 @@ fn run(ctx: &mut TurnContext<'_>, args: &Json) -> Result<ToolOutcome, ToolError>
                 "rows": run.rows, "moreRows": run.more, "millis": millis})
         }
         Err(error) => json!({"service": service, "sim": true, "failed": error.to_string(), "millis": millis}),
-    }))
+    };
+    if let Some(shown) = shown {
+        answer["overlay"] = shown;
+    }
+    Ok(super::json(&answer))
 }
 
 /// The approved real run.

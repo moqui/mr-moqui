@@ -142,3 +142,109 @@ feature("a Try's log lines come back with it", {
         result.log.some((line) => line.includes("the snippet wrote this line"))
     },
 })
+
+// F14 for services: a Try over an unsaved buffer of ExampleServices.xml that changes greet#WithTool and adds a service
+// that calls it and creates a record
+const EXAMPLE_SERVICES = "component://example/service/example/ExampleServices.xml"
+const bufferedExample = () => {
+    const view = svc("get#ServiceView", { serviceName: "example.ExampleServices.greet#WithTool" }).view
+    const text = ec.resource.getLocationText(EXAMPLE_SERVICES)
+    const buffered = text
+        .replace("<set field=\"text\" from=\"tool.greet(name)\"/>", "<set field=\"text\" from=\"'from the buffer, ' + name\"/>")
+        .replace("</services>", `    <service verb="make" noun="BufferedExample">
+        <in-parameters><parameter name="name"/></in-parameters>
+        <out-parameters><parameter name="text"/><parameter name="exampleId"/></out-parameters>
+        <actions>
+            <service-call name="example.ExampleServices.greet#WithTool" in-map="({ name: name })" out-map="greeted"/>
+            <set field="text" from="greeted.text"/>
+            <service-call name="create#moqui.example.Example" in-map="({ exampleName: text, exampleTypeEnumId: 'EXT_MADE_UP' })" out-map="made"/>
+            <set field="exampleId" from="made.exampleId"/>
+        </actions>
+    </service>
+</services>`)
+    return { text, files: JSON.stringify([{ rootId: view.artifact.rootId, path: view.artifact.relativePath, text: buffered }]) }
+}
+const bufferedRows = () => {
+    ec.artifactExecution.disableAuthz()
+    try {
+        return ec.entity.find("moqui.example.Example").condition("exampleName", "from the buffer, Ann").count()
+    } finally {
+        ec.artifactExecution.enableAuthz()
+    }
+}
+const tryBuffered = (files, trace) => svc("try#Service", { serviceName: "example.ExampleServices.make#BufferedExample",
+    parameters: JSON.stringify({ name: "Ann" }), files, trace }).result
+
+feature("a Try runs a service as its unsaved buffer defines it, and nothing else sees the buffer", {
+    when() {
+        const { text, files } = bufferedExample()
+        const result = tryBuffered(files, true)
+        const view = svc("get#ServiceView", { serviceName: "example.ExampleServices.make#BufferedExample", files }).view
+        ec.artifactExecution.disableAuthz()
+        let normal
+        try {
+            normal = ec.service.sync().name("example.ExampleServices.greet#WithTool").parameters({ name: "Ann" }).call()
+        } finally {
+            ec.artifactExecution.enableAuthz()
+        }
+        return { result, view, normal, defined: ec.service.getServiceDefinition("example.ExampleServices.make#BufferedExample"),
+            kept: bufferedRows(), unchanged: ec.resource.getLocationText(EXAMPLE_SERVICES) == text }
+    },
+    then({ result, view, normal, defined, kept, unchanged }) {
+        !result.failed
+        // the service the buffer defines anew, and the one it changes, which the new one calls in the same file
+        result.out.text == "from the buffer, Ann"
+        result.overlay.services.includes("example.ExampleServices.make#BufferedExample")
+        result.rows.some((row) => row.entity == "moqui.example.Example" && row.action == "create")
+        view.service.inParameters.map((parameter) => parameter.name).join(",") == "name"
+        // a normal call has the file on the disk, the new service is not defined, and the sim kept nothing
+        normal.text != "from the buffer, Ann"
+        defined == null
+        kept == 0
+        unchanged
+    },
+})
+
+feature("a Try's trace answers each element's count and values, and the element that failed", {
+    when() {
+        const { files } = bufferedExample()
+        const failing = JSON.parse(files)
+        failing[0].text = failing[0].text.replace("<set field=\"exampleId\" from=\"made.exampleId\"/>",
+            "<set field=\"exampleId\" from=\"made.exampleId\"/><script>throw new Error('stopped in the buffer')</script>")
+        const ran = tryBuffered(files, true)
+        const failed = tryBuffered(JSON.stringify(failing), true)
+        const untraced = tryBuffered(files, false)
+        // the block of make#BufferedExample's actions: the one with a fourth element
+        const block = (result) => result.trace.blocks.find((block) => String(block.path).endsWith("ExampleServices.xml") && block.elements["3"])
+        return { ran: block(ran), failedBlock: block(failed), failedAt: failed.trace.failed, failure: failed.failed, untraced }
+    },
+    then({ ran, failedBlock, failedAt, failure, untraced }) {
+        ran.elements["0"].count == 1
+        ran.elements["1"].values.text == "from the buffer, Ann"
+        ran.elements["3"].count == 1
+        failedBlock.elements["4"].failed.includes("stopped in the buffer")
+        failedAt.element == "4"
+        failure.includes("stopped in the buffer")
+        untraced.trace == null
+    },
+})
+
+feature("a Try over unsaved text needs the extend tier", {
+    when() {
+        const { files } = bufferedExample()
+        ec.user.internalLoginUser("spec.dev.viewer")
+        try {
+            const answer = svc("try#Service", { serviceName: "example.ExampleServices.greet#WithTool", parameters: "{}", files })
+            return { result: answer?.result, refusal: String(ec.message.getErrorsString() || "") }
+        } catch (error) {
+            return { refusal: String(error) }
+        } finally {
+            ec.message.clearAll()
+            ec.user.internalLoginUser("john.doe")
+        }
+    },
+    then({ result, refusal }) {
+        result == null
+        refusal.includes("extend tier")
+    },
+})

@@ -2312,6 +2312,179 @@ fn a_site_seca_runs_after_its_save() {
     assert_eq!(rules[0]["site"], true, "{rules}");
 }
 
+/// ECA rules against recorded contexts (plans/design-dev-aide.md 10): a context saved as a named fixture of the site's
+/// rules file and listed; Save as spec on a SECA rule writes a feature that calls its service with the fixture and
+/// checks what the rule did, on an EECA rule one that makes its entity operation, on a gitECA rule one of its condition
+/// alone (a spec does not replay a push), saying so; the sim keeps nothing of the Tries, and Run spec runs each in the
+/// sim, and they pass. An EmECA rule has no spec.
+#[test]
+fn a_rules_fixture_becomes_a_spec_that_passes() {
+    if !crate::common::own_process() {
+        return;
+    }
+    let gate = writer_gate("dev-aide-rule-spec");
+    let factory = Arc::clone(gate.server.factory());
+    let site = gate.runtime.join("components/addon/my-site");
+    let save = |path: &str, text: &str| {
+        call(
+            &factory,
+            "john.doe",
+            &format!("{WS}save#File"),
+            &[("rootId", "my-site"), ("path", path), ("text", text), ("baseHash", "")],
+        )
+        .unwrap()
+    };
+    save(
+        "service/MySite.secas.xml",
+        "<secas>\n    <seca service=\"upapp.WidgetServices.make#Widget\" when=\"post-service\">\n        <actions><message>the site rule ran for ${widgetId}</message></actions>\n    </seca>\n</secas>\n",
+    );
+    let eecas = save(
+        "entity/MySite.eecas.xml",
+        "<eecas>\n    <eeca entity=\"upapp.Widget\" on-create=\"true\">\n        <actions><message>a widget was made: ${widgetName}</message></actions>\n    </eeca>\n</eecas>\n",
+    );
+    let rules = call(
+        &factory,
+        "john.doe",
+        &format!("{WRITER}list#EcaRules"),
+        &[("kind", "eeca"), ("target", "upapp.Widget")],
+    )
+    .unwrap();
+    assert_eq!(
+        moqui_lib::json::to_json(&rules["rules"]).as_array().map(Vec::len),
+        Some(1),
+        "{eecas:?} {rules:?}"
+    );
+
+    let fixture = call(
+        &factory,
+        "john.doe",
+        &format!("{WRITER}save#RuleFixture"),
+        &[
+            ("rootId", "my-site"),
+            ("path", "service/MySite.secas.xml"),
+            ("name", "widget-one"),
+            ("context", r#"{"widgetId": "W-F1", "widgetName": "From a fixture"}"#),
+        ],
+    )
+    .unwrap();
+    let fixture = moqui_lib::json::to_json(&fixture["fixture"]);
+    assert_eq!(fixture["path"], "test/fixtures/widget-one.json", "{fixture}");
+    assert_eq!(
+        fixture["location"], "component://my-site/test/fixtures/widget-one.json",
+        "{fixture}"
+    );
+    assert!(std::fs::read_to_string(site.join("test/fixtures/widget-one.json"))
+        .unwrap()
+        .contains("\"widgetId\": \"W-F1\""));
+    let listed = call(
+        &factory,
+        "john.doe",
+        &format!("{WRITER}list#RuleFixtures"),
+        &[("rootId", "my-site"), ("path", "service/MySite.secas.xml")],
+    )
+    .unwrap();
+    let listed = moqui_lib::json::to_json(&listed["fixtures"]);
+    assert_eq!(listed[0]["name"], "widget-one", "{listed}");
+    assert_eq!(listed[0]["context"]["widgetName"], "From a fixture", "{listed}");
+
+    let spec = |rules: &str, parameters: &[(&str, &str)]| {
+        let mut all = vec![("rootId", "my-site"), ("path", rules)];
+        all.extend_from_slice(parameters);
+        call(&factory, "john.doe", &format!("{WRITER}save#RuleSpec"), &all)
+    };
+    let run = |path: &str| {
+        let ran = call(
+            &factory,
+            "john.doe",
+            &format!("{WRITER}run#Spec"),
+            &[("rootId", "my-site"), ("path", path)],
+        )
+        .unwrap();
+        assert_eq!(
+            ran["passed"],
+            Value::Bool(true),
+            "{path}: {:?} {:?}",
+            moqui_lib::json::to_json(&ran["cases"]),
+            ran.get("setupFailure")
+        );
+    };
+    let widgets = || {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        factory.entity().unwrap().find("upapp.Widget").unwrap().count().unwrap()
+    };
+
+    let seca = spec(
+        "service/MySite.secas.xml",
+        &[
+            ("kind", "seca"),
+            ("target", "upapp.WidgetServices.make#Widget"),
+            ("fixture", "widget-one"),
+            ("context", r#"{"widgetId": "W-F1", "widgetName": "From a fixture"}"#),
+        ],
+    )
+    .unwrap();
+    assert_eq!(text(&seca, "path"), "test/MySiteSecas.spec.js");
+    let written = std::fs::read_to_string(site.join("test/MySiteSecas.spec.js")).unwrap();
+    for expected in [
+        "spec({})",
+        "ec.resource.getLocationText(\"component://my-site/test/fixtures/widget-one.json\")",
+        "const out = call(\"upapp.WidgetServices.make#Widget\", fixture)",
+        "messages.includes(\"the site rule ran for W-F1\")",
+        "<upapp.Widget widgetId=\"W-F1\" widgetName=\"From a fixture\"/>",
+    ] {
+        assert!(written.contains(expected), "{expected}: {written}");
+    }
+    assert_eq!(widgets(), 0, "the Try of the trigger kept nothing");
+    run("test/MySiteSecas.spec.js");
+
+    let eeca = spec(
+        "entity/MySite.eecas.xml",
+        &[
+            ("kind", "eeca"),
+            ("target", "upapp.Widget"),
+            ("operation", "create"),
+            ("fixture", "widget-two"),
+            ("context", r#"{"widgetId": "W-F2", "widgetName": "Made"}"#),
+        ],
+    )
+    .unwrap();
+    assert_eq!(text(&eeca, "path"), "test/MySiteEecas.spec.js");
+    let written = std::fs::read_to_string(site.join("test/MySiteEecas.spec.js")).unwrap();
+    assert!(
+        written.contains("ec.entity.makeValue(\"upapp.Widget\").setAll(fixture).create()")
+            && written.contains("messages.includes(\"a widget was made: Made\")"),
+        "{written}"
+    );
+    run("test/MySiteEecas.spec.js");
+
+    let giteca = spec(
+        "service/MySite.gitecas.xml",
+        &[
+            ("kind", "giteca"),
+            ("condition", "refName == 'refs/heads/main'"),
+            ("fixture", "push-main"),
+            ("context", r#"{"refName": "refs/heads/main", "source": "push"}"#),
+        ],
+    )
+    .unwrap();
+    assert!(text(&giteca, "note").contains("does not replay a push"), "{giteca:?}");
+    let written = std::fs::read_to_string(site.join("test/MySiteGitecas.spec.js")).unwrap();
+    assert!(
+        written.contains("ec.resource.condition(\"refName == 'refs/heads/main'\", null, fixture) == true"),
+        "{written}"
+    );
+    run("test/MySiteGitecas.spec.js");
+    assert_eq!(widgets(), 0, "the spec runs kept nothing");
+
+    let emeca = spec(
+        "service/MySite.emecas.xml",
+        &[("kind", "emeca"), ("fixture", "mail"), ("context", "{}")],
+    );
+    assert!(emeca.unwrap_err().contains("received message"));
+}
+
 /// New component (`create#Component`, plans/design-dev-aide.md 12): a component from the component template
 /// (`runtime/components/dev/template`) in runtime/components/addon, or with dev in runtime/components/dev, of the part or
 /// kind asked for (a dev tool in runtime/components/dev unasked), with a git repository of its own and the remote asked for
