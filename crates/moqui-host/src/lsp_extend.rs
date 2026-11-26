@@ -28,7 +28,7 @@
 //! first of the conf's `dev-aide@site-component` on the model-only boot, as the rename's upstream lock reads it; with
 //! none there, or `dev-aide@allow-upstream-edits` on, there is nothing upstream and nothing is offered.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 use moqui_core::context::ExecutionContextFactory;
@@ -57,16 +57,7 @@ pub(crate) struct Upstream {
 /// Where `path` is upstream under the lock, or None: the lock off, no site component in the conf (nothing can be told
 /// upstream), the file in a site component or in none, or the site component not loaded (nowhere to extend in).
 pub(crate) fn upstream_of(factory: &ExecutionContextFactory, path: &Path) -> Option<Upstream> {
-    if factory.conf_setting("dev-aide", "allow-upstream-edits") == "true" {
-        return None;
-    }
-    let sites: Vec<String> = factory
-        .conf_setting("dev-aide", "site-component")
-        .split(',')
-        .map(str::trim)
-        .filter(|name| !name.is_empty())
-        .map(str::to_string)
-        .collect();
+    let sites = locked_sites(factory)?;
     let site = sites.first()?.clone();
     let located = index::locate(factory, path)?;
     if sites.contains(&located.component) {
@@ -85,23 +76,61 @@ pub(crate) fn upstream_of(factory: &ExecutionContextFactory, path: &Path) -> Opt
     })
 }
 
-/// The text of `path` at git's `HEAD`, or None where it is in no repository or not committed.
-pub(crate) fn committed_text(path: &Path) -> Option<String> {
-    let dir = path.parent()?;
-    let name = path.file_name()?.to_str()?;
-    let output = std::process::Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(["-c", "core.quotepath=off", "show", &format!("HEAD:./{name}")])
+/// The site components of the conf's `dev-aide@site-component` while the upstream lock is on, the first the default
+/// target of an extension; None when `dev-aide@allow-upstream-edits` turns the lock off. The model-only boot reads the
+/// conf, not the database's Settings. The rename's upstream lock (`lsp_rename.rs`) reads it too.
+pub(crate) fn locked_sites(factory: &ExecutionContextFactory) -> Option<Vec<String>> {
+    if factory.conf_setting("dev-aide", "allow-upstream-edits") == "true" {
+        return None;
+    }
+    Some(
+        factory
+            .conf_setting("dev-aide", "site-component")
+            .split(',')
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_string)
+            .collect(),
+    )
+}
+
+/// `git` in `dir`, as a read that runs nothing the repository's config names (`moqui_lib::git_read::isolate`: no lazy
+/// fetch from a promisor remote, no fsmonitor, no hooks, no inherited `GIT_DIR`): its output's bytes on success.
+fn git_read(dir: &Path, args: &[&str]) -> Option<Vec<u8>> {
+    let mut command = std::process::Command::new("git");
+    moqui_lib::git_read::isolate(&mut command);
+    let output = command
+        .args(["-c", "core.quotepath=off"])
+        .args(args)
+        .current_dir(dir)
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_OPTIONAL_LOCKS", "0")
         .stdin(std::process::Stdio::null())
         .output()
         .ok()?;
-    if !output.status.success() {
-        return None;
+    output.status.success().then_some(output.stdout)
+}
+
+/// The text of `path` at git's `HEAD`, as its bytes are (its line endings kept), or None where it is in no repository,
+/// not committed, or not UTF-8. Kept by path and the blob's id at `HEAD`, so a change of the open file reads the blob
+/// id alone.
+pub(crate) fn committed_text(path: &Path) -> Option<String> {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<HashMap<PathBuf, (String, String)>>> =
+        std::sync::OnceLock::new();
+    let dir = path.parent()?;
+    let name = path.file_name()?.to_str()?;
+    let spec = format!("HEAD:./{name}");
+    let id = String::from_utf8(git_read(dir, &["rev-parse", "--verify", "--quiet", &spec])?).ok()?;
+    let id = id.trim().to_string();
+    let cache = CACHE.get_or_init(Default::default);
+    if let Some((cached_id, text)) = moqui_lib::sync::lock(cache).get(path) {
+        if *cached_id == id {
+            return Some(text.clone());
+        }
     }
-    String::from_utf8(output.stdout).ok()
+    let text = String::from_utf8(git_read(dir, &["cat-file", "blob", &id])?).ok()?;
+    moqui_lib::sync::lock(cache).insert(path.to_path_buf(), (id, text.clone()));
+    Some(text)
 }
 
 /// Whether two texts are the same but for line endings, trailing white space and blank lines.
@@ -299,17 +328,9 @@ fn entity_file(upstream: &Upstream, short: &str) -> PathBuf {
     dir.join(chosen)
 }
 
-/// `my-site` as `MySite`, as the Site template names its files.
+/// `my-site` as `MySite`, as the Site template and the dev-aide's `site::class_of` name its files.
 fn class_of(name: &str) -> String {
-    name.split(['-', '_'])
-        .filter(|part| !part.is_empty())
-        .map(|part| {
-            let mut chars = part.chars();
-            chars.next().map_or_else(String::new, |first| {
-                first.to_ascii_uppercase().to_string() + chars.as_str()
-            })
-        })
-        .collect()
+    moqui_lib::string::component_class_name(name)
 }
 
 const FORM_KINDS: [&str; 2] = ["form-single", "form-list"];
@@ -554,11 +575,14 @@ pub(crate) fn site_edits(diff: &Diff, text_of: &dyn Fn(&Path) -> Option<String>)
                 }
                 Container::Form { kind, name } => node.name == *kind && node.attr("name") == Some(name.as_str()),
             });
-            let mut ops = Vec::new();
             let at = match found {
                 Some(node) => node.path.clone(),
                 None => {
                     let wrapper = match container {
+                        // no package attribute for an entity with none
+                        Container::Entity { short, package } if package.is_empty() => {
+                            format!("<extend-entity entity-name=\"{}\"/>", attr_escaped(short))
+                        }
                         Container::Entity { short, package } => format!(
                             "<extend-entity entity-name=\"{}\" package=\"{}\"/>",
                             attr_escaped(short),
@@ -566,22 +590,44 @@ pub(crate) fn site_edits(diff: &Diff, text_of: &dyn Fn(&Path) -> Option<String>)
                         ),
                         Container::Form { kind, name } => format!("<{kind} name=\"{}\"/>", attr_escaped(name)),
                     };
-                    ops.push(Op::Insert {
+                    let op = Op::Insert {
                         at: Locator::Path(Vec::new()),
                         position: Position::Last,
                         xml: wrapper,
-                    });
+                    };
+                    text = xml_edit::apply(&text, &[op]).ok()?.text;
                     vec![root.children.len()]
                 }
             };
             for fragment in fragments {
-                ops.push(Op::Insert {
-                    at: Locator::Path(at.clone()),
-                    position: Position::Last,
-                    xml: fragment.clone(),
-                });
+                let op = match container {
+                    // among the extend-entity's fields: after the last, else before its first other child, else in
+                    // it (the entity modeler's insertAmong)
+                    Container::Entity { .. } => {
+                        let outline = xml_edit::outline(&text).ok()?;
+                        let element = node_at(&outline, &at)?;
+                        let (at, position) = match element.children.iter().rev().find(|child| child.name == "field") {
+                            Some(last) => (last.path.clone(), Position::After),
+                            None => match element.children.first() {
+                                Some(first) => (first.path.clone(), Position::Before),
+                                None => (at.clone(), Position::Last),
+                            },
+                        };
+                        Op::Insert {
+                            at: Locator::Path(at),
+                            position,
+                            xml: fragment.clone(),
+                        }
+                    }
+                    // a form merge's fields in order at its end (the screen builder's extendFormField)
+                    Container::Form { .. } => Op::Insert {
+                        at: Locator::Path(at.clone()),
+                        position: Position::Last,
+                        xml: fragment.clone(),
+                    },
+                };
+                text = xml_edit::apply(&text, &[op]).ok()?.text;
             }
-            text = xml_edit::apply(&text, &ops).ok()?.text;
         }
         edits.push(SiteEdit {
             path: path.clone(),
@@ -590,6 +636,11 @@ pub(crate) fn site_edits(diff: &Diff, text_of: &dyn Fn(&Path) -> Option<String>)
         });
     }
     Some(edits)
+}
+
+/// The element at `path` (child indexes from the root) of an outline.
+fn node_at<'a>(root: &'a OutlineNode, path: &[usize]) -> Option<&'a OutlineNode> {
+    path.iter().try_fold(root, |node, at| node.children.get(*at))
 }
 
 /// The `upstream.edit` problems of `text`, the file at `path`, against its committed text: one at each element a
@@ -661,9 +712,13 @@ pub(crate) fn changed_span(text: &str, new: &str) -> (std::ops::Range<usize>, St
     (prefix..text.len() - suffix, new[prefix..new.len() - suffix].to_string())
 }
 
-/// The committed text as the file writes its line ends.
+/// The committed text as the file is checked out: HEAD's bytes as they are, but for a working file whose every line
+/// ends in CRLF over a blob with none (git's `autocrlf` or `eol=crlf`), whose line ends it takes. A file of mixed line
+/// ends gets HEAD's bytes exactly.
 pub(crate) fn reverted(text: &str, head: &str) -> String {
-    if text.contains("\r\n") && !head.contains("\r\n") {
+    let lines = text.matches('\n').count();
+    let crlf = lines > 0 && text.matches("\r\n").count() == lines;
+    if crlf && !head.contains('\r') {
         head.replace('\n', "\r\n")
     } else {
         head.to_string()

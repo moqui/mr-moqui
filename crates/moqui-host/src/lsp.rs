@@ -454,6 +454,11 @@ fn names_kind(element: &str, attribute: &str) -> Option<&'static [&'static str]>
 pub struct Server {
     backend: Backend,
     documents: HashMap<String, String>,
+    /// Each open document's version, as the client numbers it.
+    versions: HashMap<String, i64>,
+    /// Whether the client applies a `WorkspaceEdit`'s `documentChanges` with a `create` operation (its `initialize`
+    /// capabilities), which Extend in my-site needs.
+    edits_create_files: bool,
 }
 
 /// A request's document and its 0-based line and UTF-16 character.
@@ -468,6 +473,24 @@ impl Server {
         Self {
             backend,
             documents: HashMap::new(),
+            versions: HashMap::new(),
+            edits_create_files: false,
+        }
+    }
+
+    /// Take the client's `initialize` parameters: what its `WorkspaceEdit`s may hold.
+    pub fn set_client(&mut self, initialize: &Json) {
+        let edit = &initialize["capabilities"]["workspace"]["workspaceEdit"];
+        self.edits_create_files = edit["documentChanges"].as_bool() == Some(true)
+            && edit["resourceOperations"]
+                .as_array()
+                .is_some_and(|operations| operations.iter().any(|operation| operation == "create"));
+    }
+
+    /// Keep the version a notification gives its document.
+    fn keep_version(&mut self, uri_text: &str, params: &Json) {
+        if let Some(version) = params["textDocument"]["version"].as_i64() {
+            self.versions.insert(uri_text.to_string(), version);
         }
     }
 
@@ -521,6 +544,7 @@ impl Server {
             "textDocument/didOpen" => {
                 let text = params["textDocument"]["text"].as_str().unwrap_or_default().to_string();
                 self.documents.insert(uri_text.clone(), text);
+                self.keep_version(&uri_text, params);
                 self.publish(&uri_text).into_iter().collect()
             }
             "textDocument/didChange" => {
@@ -531,6 +555,7 @@ impl Server {
                 {
                     self.documents.insert(uri_text.clone(), text.to_string());
                 }
+                self.keep_version(&uri_text, params);
                 self.publish(&uri_text).into_iter().collect()
             }
             "textDocument/didSave" => {
@@ -541,6 +566,7 @@ impl Server {
             }
             "textDocument/didClose" => {
                 self.documents.remove(&uri_text);
+                self.versions.remove(&uri_text);
                 vec![Notification::new(
                     "textDocument/publishDiagnostics".into(),
                     lsp::PublishDiagnosticsParams {
@@ -708,8 +734,12 @@ impl Server {
 
     /// "Extend in my-site": a `WorkspaceEdit` taking the upstream file back to its committed text and writing what it
     /// added as the site component's extension (a new file made where the site has none), when the edit is mechanical
-    /// and the request's range is on an added element or carries an `upstream.edit` diagnostic.
+    /// and the request's range is on an added element or carries an `upstream.edit` diagnostic. Offered only to a
+    /// client that applies `documentChanges` with a `create` (its `initialize` capabilities).
     fn extend_action(&self, uri_text: &str, text: &str, params: &Json) -> Option<Json> {
+        if !self.edits_create_files {
+            return None;
+        }
         let path = path_of(uri_text)?;
         let documents: HashMap<PathBuf, &String> = self
             .documents
@@ -745,18 +775,29 @@ impl Server {
         if !on_added && diagnostics.is_empty() {
             return None;
         }
-        let mut changes = vec![json!({ "textDocument": { "uri": uri_text, "version": Json::Null },
-            "edits": [span_edit(text, &extension.reverted)] })];
+        // an open document's edit names the version it was made on, so the client refuses it on a later text
+        let version = |uri: &str| self.versions.get(uri).map_or(Json::Null, |version| json!(version));
+        let mut changes = vec![
+            json!({ "textDocument": { "uri": uri_text, "version": version(uri_text) },
+            "edits": [span_edit(text, &extension.reverted)] }),
+        ];
         for site_edit in &extension.site_edits {
             let uri = uri_of(&site_edit.path);
             let before = match &site_edit.before {
                 Some(before) => before.as_str(),
                 None => {
-                    changes.push(json!({ "kind": "create", "uri": uri, "options": { "ignoreIfExists": true } }));
+                    // a file made since is not written over: the client fails the edit instead
+                    changes.push(json!({ "kind": "create", "uri": uri,
+                        "options": { "overwrite": false, "ignoreIfExists": false } }));
                     ""
                 }
             };
-            changes.push(json!({ "textDocument": { "uri": uri, "version": Json::Null },
+            let version = if site_edit.before.is_some() {
+                version(&uri)
+            } else {
+                Json::Null
+            };
+            changes.push(json!({ "textDocument": { "uri": uri, "version": version },
                 "edits": [span_edit(before, &site_edit.after)] }));
         }
         let what: Vec<&str> = extension.added.iter().map(|added| added.what.as_str()).collect();
@@ -1048,7 +1089,7 @@ pub(crate) fn dispatch_lsp(args: &[String]) -> Result<(), Error> {
     };
     let (connection, io_threads) = Connection::stdio();
     let capabilities = serde_json::to_value(Server::capabilities()).unwrap_or(Json::Null);
-    let (id, _client) = connection
+    let (id, client) = connection
         .initialize_start()
         .map_err(|err| Error::new(format!("lsp initialize: {err}")))?;
     connection
@@ -1058,6 +1099,7 @@ pub(crate) fn dispatch_lsp(args: &[String]) -> Result<(), Error> {
         )
         .map_err(|err| Error::new(format!("lsp initialize: {err}")))?;
     let mut server = Server::new(backend);
+    server.set_client(&client);
     serve(&connection, &mut server)?;
     drop(connection);
     io_threads.join().map_err(|err| Error::new(format!("lsp: {err}")))?;

@@ -751,12 +751,19 @@ fn git_in(dir: &Path, args: &[&str]) {
 
 /// A bed whose files are committed, with the upstream screen beside the entity.
 fn committed_bed(name: &str, conf: &str) -> LspBed {
-    let bed = LspBed::with(name, conf, &[("up/screen/Things.xml", UP_SCREEN)]);
+    let mut bed = LspBed::with(name, conf, &[("up/screen/Things.xml", UP_SCREEN)]);
     git_in(&bed.dir, &["init", "-q"]);
     git_in(&bed.dir, &["add", "-A"]);
     git_in(&bed.dir, &["commit", "-q", "-m", "base"]);
+    bed.server.set_client(&CREATES_FILES);
     bed
 }
+
+/// A client's `initialize` whose `WorkspaceEdit`s take `documentChanges` with a `create`.
+static CREATES_FILES: std::sync::LazyLock<Json> = std::sync::LazyLock::new(|| {
+    json!({ "capabilities": { "workspace": { "workspaceEdit": {
+        "documentChanges": true, "resourceOperations": ["create", "rename", "delete"] } } } })
+});
 
 /// `text` with one protocol `TextEdit` applied.
 fn applied(text: &str, edit: &Json) -> String {
@@ -785,7 +792,7 @@ impl LspBed {
     fn open(&mut self, path: &str, text: &str) -> Vec<(u64, String)> {
         let notes = self.server.notify(&Notification::new(
             "textDocument/didOpen".into(),
-            json!({ "textDocument": { "uri": self.uri(path), "text": text } }),
+            json!({ "textDocument": { "uri": self.uri(path), "text": text, "version": 3 } }),
         ));
         notes
             .iter()
@@ -838,18 +845,26 @@ fn a_field_added_to_an_upstream_entity_is_extended_in_the_site() {
     assert_eq!(actions[0]["title"], "Extend in site: field note of up.Thing");
     let changes = actions[0]["edit"]["documentChanges"].as_array().unwrap();
     assert_eq!(changes[0]["textDocument"]["uri"], bed.uri(path));
+    // the open file's edit is of the version it was made on
+    assert_eq!(changes[0]["textDocument"]["version"], 3);
     assert_eq!(applied(&edited, &changes[0]["edits"][0]), UP_ENTITIES);
     let site_file = bed.uri("site/entity/SiteEntities.xml");
     assert_eq!(changes[1]["kind"], "create");
     assert_eq!(changes[1]["uri"], site_file);
+    // a file made since is not written over
+    assert_eq!(
+        changes[1]["options"],
+        json!({ "overwrite": false, "ignoreIfExists": false })
+    );
     assert_eq!(changes[2]["textDocument"]["uri"], site_file);
     let made = applied("", &changes[2]["edits"][0]);
     assert!(
         made.contains("    <extend-entity entity-name=\"Thing\" package=\"up\">\n        <field name=\"note\" type=\"text-long\">\n            <description>A note on it</description>\n        </field>\n    </extend-entity>\n</entities>"),
         "{made}"
     );
-    // a site file that extends the entity already gets the field in its extend-entity
-    let existing = "<entities>\n    <extend-entity entity-name=\"Thing\" package=\"up\">\n        <field name=\"other\" type=\"id\"/>\n    </extend-entity>\n</entities>\n";
+    // a site file that extends the entity already gets the field in its extend-entity, after its last field (before
+    // its relationship), in the file's own line endings
+    let existing = "<entities>\r\n    <extend-entity entity-name=\"Thing\" package=\"up\">\r\n        <field name=\"other\" type=\"id\"/>\r\n        <relationship type=\"one\" related=\"up.Thing\"/>\r\n    </extend-entity>\r\n</entities>\r\n";
     std::fs::create_dir_all(bed.dir.join("site/entity")).unwrap();
     std::fs::write(bed.dir.join("site/entity/Ext.xml"), existing).unwrap();
     let actions = bed.actions_at(path, 4);
@@ -858,8 +873,13 @@ fn a_field_added_to_an_upstream_entity_is_extended_in_the_site() {
     assert_eq!(changes[1]["textDocument"]["uri"], bed.uri("site/entity/Ext.xml"));
     assert_eq!(
         applied(existing, &changes[1]["edits"][0]),
-        "<entities>\n    <extend-entity entity-name=\"Thing\" package=\"up\">\n        <field name=\"other\" type=\"id\"/>\n        <field name=\"note\" type=\"text-long\">\n            <description>A note on it</description>\n        </field>\n    </extend-entity>\n</entities>\n"
+        "<entities>\r\n    <extend-entity entity-name=\"Thing\" package=\"up\">\r\n        <field name=\"other\" type=\"id\"/>\r\n        <field name=\"note\" type=\"text-long\">\r\n            <description>A note on it</description>\r\n        </field>\r\n        <relationship type=\"one\" related=\"up.Thing\"/>\r\n    </extend-entity>\r\n</entities>\r\n"
     );
+    // a client that takes no create in its edits is offered none
+    bed.server
+        .set_client(&json!({ "capabilities": { "workspace": { "workspaceEdit": { "documentChanges": true } } } }));
+    assert!(bed.actions_at(path, 4).is_empty());
+    bed.server.set_client(&CREATES_FILES);
     // more than an added field is no mechanical edit: the diagnostic at the top, no action
     let changed = edited.replace("type=\"text-medium\"", "type=\"text-long\"");
     let diagnostics = bed.open(path, &changed);
@@ -961,4 +981,66 @@ fn with_no_site_component_nothing_is_extended() {
             .unwrap();
         assert_eq!(actions, json!([]), "{name}");
     }
+}
+
+/// An entity with no package is extended with no package attribute; a file of mixed line endings goes back to HEAD's
+/// bytes exactly.
+#[test]
+fn an_entity_with_no_package_and_a_file_of_mixed_line_endings() {
+    let mut bed = committed_bed("extend-plain", SITE_CONF);
+    let path = "up/entity/Plain.xml";
+    let committed = "<entities>\r\n    <entity entity-name=\"Plain\">\n        <field name=\"plainId\" type=\"id\" is-pk=\"true\"/>\r\n    </entity>\n</entities>\n";
+    std::fs::write(bed.dir.join(path), committed).unwrap();
+    git_in(&bed.dir, &["add", path]);
+    git_in(&bed.dir, &["commit", "-q", "-m", "plain"]);
+    let edited = committed.replace(
+        "is-pk=\"true\"/>\r\n",
+        "is-pk=\"true\"/>\r\n        <field name=\"note\" type=\"text-long\"/>\n",
+    );
+    bed.open(path, &edited);
+    let actions = bed.actions_at(path, 3);
+    assert_eq!(actions.len(), 1, "{actions:?}");
+    let changes = actions[0]["edit"]["documentChanges"].as_array().unwrap();
+    assert_eq!(applied(&edited, &changes[0]["edits"][0]), committed);
+    let made = applied("", &changes[2]["edits"][0]);
+    assert!(
+        made.contains("<extend-entity entity-name=\"Plain\">\n        <field name=\"note\" type=\"text-long\"/>\n    </extend-entity>"),
+        "{made}"
+    );
+}
+
+/// A partial clone whose committed blob is missing, its promisor remote an `ext::` command: reading the committed text
+/// (which opening an upstream file does) fetches nothing and runs nothing.
+#[cfg(unix)]
+#[test]
+fn the_committed_text_never_fetches_from_a_planted_promisor_remote() {
+    let bed = committed_bed("extend-promisor", SITE_CONF);
+    let marker = bed.dir.join("RAN");
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&bed.dir)
+        .args(["rev-parse", "HEAD:up/entity/UpEntities.xml"])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .unwrap();
+    let blob = String::from_utf8(output.stdout).unwrap();
+    let blob = blob.trim();
+    std::fs::remove_file(bed.dir.join(".git/objects").join(&blob[..2]).join(&blob[2..])).unwrap();
+    let url = format!("ext::sh -c touch% {}% >&2", marker.display());
+    for (key, value) in [
+        ("core.repositoryformatversion", "1"),
+        ("extensions.partialClone", "origin"),
+        ("remote.origin.url", url.as_str()),
+        ("remote.origin.promisor", "true"),
+        ("remote.origin.partialclonefilter", "blob:none"),
+        ("protocol.ext.allow", "always"),
+    ] {
+        git_in(&bed.dir, &["config", key, value]);
+    }
+    assert_eq!(extend::committed_text(&bed.dir.join("up/entity/UpEntities.xml")), None);
+    assert!(
+        !marker.exists(),
+        "reading the committed text ran the promisor's command"
+    );
 }

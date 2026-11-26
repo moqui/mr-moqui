@@ -443,7 +443,8 @@ keeps, or `MOQUI_LOGIN_KEY`) and `--project DIR` or `--java DIR` for another Moq
   added to an upstream form with its layout ref, a column added to an upstream list with a column of its own, each
   after another field) the quick fix is one edit that puts the upstream file back as committed and writes the fields
   as the entity modeler and the screen builder do: an `extend-entity` in the site component's entity file, or a form
-  merge with `after=` in its `screen-extend` of the screen, the file made when there is none. The site component is the
+  merge with `after=` in its `screen-extend` of the screen, the file made when there is none (offered to a client whose
+  edits take `documentChanges` with a `create`, the open file's edit naming its version). The site component is the
   first of the conf's `dev-aide@site-component`; with none there nothing is upstream and nothing is offered (Settings ›
   Site components is the database's, which the command line does not read).
 

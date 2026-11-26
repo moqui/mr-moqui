@@ -389,7 +389,8 @@ in-parameter; and Extend in <site> for an in-place edit of an upstream component
 (diagnostic upstream.edit), where it is mechanical: a field added to an upstream entity becomes an
 extend-entity in the site component's entity file, a field or column added to an upstream form or list
 a form merge in the site's screen-extend of the screen, and the upstream file goes back to its text at
-git HEAD. With no dev-aide@site-component in the conf, nothing is upstream.
+git HEAD. It is offered to a client whose workspace edits take documentChanges with create. With no
+dev-aide@site-component in the conf, nothing is upstream.
 
 --server URL answers from a running dev instance instead, as moqui check --server does (no rename,
 no Extend). Logs go to stderr. In the Maximal (default) and Debug packages, and in Lite built with
