@@ -316,3 +316,39 @@ fn a_symlink_from_that_runtime_into_build_output_is_refused() {
         assert!(err.contains("is a build output"), "{path}: {err}");
     }
 }
+
+/// store#Root: a new root in a root's build output would open what that root refuses; the loaded runtime and
+/// components there are roots like any other.
+#[cfg(unix)]
+#[test]
+fn a_root_in_another_root_s_build_output_is_refused() {
+    let UnderTarget {
+        _scratch,
+        root,
+        runtime,
+        run,
+        component,
+    } = runtime_under_target("root-in-target");
+    let runtime = runtime.canonicalize().unwrap();
+    let roots = [root.as_path()];
+    for refused in ["target", "target/debug"] {
+        let location = root.join(refused);
+        assert!(in_build_output(&location, &runtime, &[], &roots), "{refused}");
+        // a test run's runtime elsewhere exempts no more than its loaded component
+        assert!(in_build_output(&location, &run, &[&component], &roots), "{refused}");
+    }
+    let real_component = component.canonicalize().unwrap();
+    for open in [
+        root.clone(),
+        root.join(".agents"),
+        runtime.clone(),
+        runtime.join("components/dev"),
+        real_component.clone(),
+    ] {
+        assert!(!in_build_output(&open, &runtime, &[], &roots), "{}", open.display());
+    }
+    assert!(!in_build_output(&real_component, &run, &[&component], &roots));
+    assert!(in_build_output(&runtime.join("conf"), &run, &[&component], &roots));
+    // a location in no root is root_location_open's to judge, not this
+    assert!(!in_build_output(Path::new("/"), &runtime, &[], &roots));
+}

@@ -158,12 +158,17 @@ pub fn resolve(root: &Path, runtime: &Path, components: &[&Path], relative: &str
 /// (crate::roots). A path in one of them is measured from the deepest that holds it, so only that one's own `target`
 /// is refused. `runtime` and `path` are canonical (`path` up to its deepest existing part) and the components are made
 /// so, so a symlink in one of them that leads to the root's other build output is measured from the root and refused.
+///
+/// A loaded component's whole real directory is exempt: only the server's own setup (its conf and `components.xml`)
+/// can point a component into build output, never a client. Where a base is not a plain prefix of `path` (a case the
+/// file system folds and [`inside`] does on Windows) the path is build output: it fails closed.
 fn build_output(path: &Path, root: &Path, runtime: Option<&Path>, components: &[&Path]) -> bool {
-    let under_target = |base: &Path| {
-        path.strip_prefix(base)
-            .ok()
-            .and_then(|after| after.components().next())
-            .is_some_and(|first| first.as_os_str() == "target")
+    let under_target = |base: &Path| match path.strip_prefix(base) {
+        Ok(after) => after
+            .components()
+            .next()
+            .is_some_and(|first| is_target(first.as_os_str())),
+        Err(_) => true,
     };
     if !under_target(root) {
         return false;
@@ -177,6 +182,28 @@ fn build_output(path: &Path, root: &Path, runtime: Option<&Path>, components: &[
         .filter(|dir| inside(dir, &target) && !inside(&target, dir) && inside(path, dir))
         .max_by_key(|dir| dir.components().count());
     base.is_none_or(|base| under_target(&base))
+}
+
+/// Whether a path part is `target`, ignoring case on Windows as its file system does.
+fn is_target(name: &std::ffi::OsStr) -> bool {
+    #[cfg(windows)]
+    {
+        name.to_string_lossy().eq_ignore_ascii_case("target")
+    }
+    #[cfg(not(windows))]
+    {
+        name == "target"
+    }
+}
+
+/// Whether `location` (canonical) is build output of one of `roots` (canonical) that holds it ([`build_output`]): a
+/// root made there would open what [`resolve`] refuses in the root that holds it.
+#[must_use]
+pub fn in_build_output(location: &Path, runtime: &Path, components: &[&Path], roots: &[&Path]) -> bool {
+    let runtime = runtime.canonicalize().ok();
+    roots
+        .iter()
+        .any(|root| inside(location, root) && build_output(location, root, runtime.as_deref(), components))
 }
 
 /// Whether `path` (canonical) is a name at the top of `runtime` (canonical) that starts with [`ENV_PREFIX`], or under one.
