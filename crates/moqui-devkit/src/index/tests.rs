@@ -148,7 +148,15 @@ fn the_ref_table_answers_as_the_memory_index() {
     let key = |entries: Vec<RefEntry>| {
         entries
             .into_iter()
-            .map(|entry| (entry.path, entry.line, entry.from, entry.to_id, entry.other.map(|other| other.id)))
+            .map(|entry| {
+                (
+                    entry.path,
+                    entry.line,
+                    entry.from,
+                    entry.to_id,
+                    entry.other.map(|other| other.id),
+                )
+            })
             .collect::<Vec<_>>()
     };
     let mut compared = 0;
@@ -156,11 +164,24 @@ fn the_ref_table_answers_as_the_memory_index() {
         for direction in [Direction::In, Direction::Out] {
             let expected = key(index.refs(&artifact.id, direction));
             compared += expected.len();
-            assert_eq!(key(table.refs(&artifact.id, direction)), expected, "{} {direction:?}", artifact.id);
+            assert_eq!(
+                key(table.refs(&artifact.id, direction)),
+                expected,
+                "{} {direction:?}",
+                artifact.id
+            );
         }
         assert_eq!(
-            table.children(&artifact.id).iter().map(|row| &row.id).collect::<Vec<_>>(),
-            index.children(&artifact.id).iter().map(|row| &row.id).collect::<Vec<_>>()
+            table
+                .children(&artifact.id)
+                .iter()
+                .map(|row| &row.id)
+                .collect::<Vec<_>>(),
+            index
+                .children(&artifact.id)
+                .iter()
+                .map(|row| &row.id)
+                .collect::<Vec<_>>()
         );
     }
     assert!(compared > 100, "{compared}");
@@ -213,4 +234,197 @@ fn a_project_index_walks_its_components_conf_mounts() {
         Some("screen:component://shop/screen/Shop/Detail.xml")
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A component `rows` in a scratch directory on an in-memory database, for the index's rows: its factory, the
+/// component's directory, and a context entered with authorization off.
+struct RowsBed {
+    ctx: moqui_core::context::ExecutionContext,
+    dir: PathBuf,
+}
+
+impl Drop for RowsBed {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
+impl RowsBed {
+    fn new(name: &str) -> Self {
+        let dir = std::env::temp_dir().join(format!("moqui-index-rows-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("framework")).unwrap();
+        std::fs::create_dir_all(dir.join("rows")).unwrap();
+        let component = moqui_core::context::ComponentInfo {
+            name: "rows".to_string(),
+            version: String::new(),
+            location: dir.join("rows"),
+            depends_on: Vec::new(),
+            purposes: Vec::new(),
+        };
+        let ctx = ExecutionContextFactory::test_context_with_components(
+            "",
+            moqui_core::service::ServicePools::idle(),
+            dir.join("framework"),
+            vec![component],
+        );
+        ctx.factory().set_entity(moqui_core::testing::open());
+        Self { ctx, dir }
+    }
+
+    fn factory(&self) -> &Arc<ExecutionContextFactory> {
+        self.ctx.factory()
+    }
+
+    fn write(&self, relative: &str, text: &str) -> PathBuf {
+        let path = self.dir.join("rows").join(relative);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, text).unwrap();
+        path
+    }
+
+    fn files(&self) -> Vec<Located> {
+        directory_files("rows", &self.dir.join("rows"))
+    }
+
+    /// The ids of the rows of `entity` whose `field` is `value`, the ids from `id_field`, sorted.
+    fn ids(&self, entity: &str, field: &str, value: &str, id_field: &str) -> Vec<String> {
+        let facade = self.factory().entity().unwrap();
+        let _lifted = fence::lift();
+        let mut ids: Vec<String> = facade
+            .find(entity)
+            .unwrap()
+            .disable_authz()
+            .eq(field, Value::string(value))
+            .list()
+            .unwrap()
+            .values()
+            .iter()
+            .map(|row| text(row, id_field))
+            .collect();
+        ids.sort();
+        ids
+    }
+
+    fn has_artifact(&self, id: &str) -> bool {
+        !self.ids(ARTIFACT, "artifactId", id, "artifactId").is_empty()
+    }
+}
+
+const ROWS_ENTITIES: &str = r#"<entities><entity entity-name="Thing" package="rows">
+    <field name="thingId" type="id" is-pk="true"/><field name="name" type="text-medium"/>
+</entity></entities>"#;
+
+const ROWS_SERVICES: &str = r#"<services><service verb="save" noun="Thing">
+    <in-parameters><auto-parameters entity-name="rows.Thing"/></in-parameters>
+</service></services>"#;
+
+/// The index's fault hook (plans/design-dev-aide.md 19): an expansion of a file not read now whose write fails is
+/// written again at the next update, though nothing it reads changed again.
+#[test]
+fn an_expansions_write_that_fails_is_written_again_at_the_next_update() {
+    let bed = RowsBed::new("retry");
+    let entities = bed.write("entity/ThingEntities.xml", ROWS_ENTITIES);
+    bed.write("service/rows/ThingServices.xml", ROWS_SERVICES);
+    let other = bed.write("service/rows/OtherServices.xml", "<services/>");
+    let _enter = bed.ctx.enter();
+    let _authz = bed.ctx.disable_authz();
+    build_files(bed.factory(), bed.files(), false).unwrap();
+    let service = "service:rows.ThingServices.save#Thing";
+    let color = "parameter:service:rows.ThingServices.save#Thing@in.color";
+    assert!(bed.has_artifact("parameter:service:rows.ThingServices.save#Thing@in.name"));
+
+    // a field added to the entity: the service in its own file is expanded again, and its write fails
+    lock(&FAIL_EXPANSION_WRITE).push((factory_key(bed.factory()), service.to_string()));
+    std::fs::write(
+        &entities,
+        ROWS_ENTITIES.replace(
+            r#"<field name="name""#,
+            r#"<field name="color" type="id"/><field name="name""#,
+        ),
+    )
+    .unwrap();
+    update_files(bed.factory(), std::slice::from_ref(&entities)).unwrap();
+    let key = (factory_key(bed.factory()), service.to_string());
+    assert!(
+        !lock(&FAIL_EXPANSION_WRITE).contains(&key),
+        "the failure point was reached"
+    );
+    assert!(!bed.has_artifact(color), "the failed write left no row");
+
+    // an update of another file: the expansion that failed is written then
+    std::fs::write(&other, r#"<services><service verb="run" noun="Other"/></services>"#).unwrap();
+    update_files(bed.factory(), std::slice::from_ref(&other)).unwrap();
+    assert!(bed.has_artifact(color), "the expansion was written again");
+    assert!(bed.has_artifact("service:rows.OtherServices.run#Other"));
+}
+
+/// An artifact group's members are references from the group to what each names, one whose name is a pattern to each
+/// artifact it matches whole; and an artifact an update adds that a pattern matches is a member at once.
+#[test]
+fn an_artifact_groups_patterns_resolve_to_the_artifacts_they_match() {
+    let bed = RowsBed::new("groups");
+    bed.write("entity/ThingEntities.xml", ROWS_ENTITIES);
+    bed.write("service/rows/ThingServices.xml", ROWS_SERVICES);
+    let _enter = bed.ctx.enter();
+    let _authz = bed.ctx.disable_authz();
+    let facade = bed.factory().entity().unwrap();
+    {
+        let _lifted = fence::lift();
+        for (name, kind, pattern) in [
+            ("rows\\.ThingServices\\..*", "AT_SERVICE", "Y"),
+            ("rows.Thing", "AT_ENTITY", "N"),
+            ("rows.Missing", "AT_ENTITY", "N"),
+            // matched whole as Java matches it: no group of its own to close, so it does not compile and matches none
+            ("x)|(.*", "AT_SERVICE", "Y"),
+        ] {
+            let mut member = facade.make_value(rows::ARTIFACT_GROUP_MEMBER).unwrap();
+            member.set("artifactGroupId", Value::string("THINGS"));
+            member.set("artifactName", Value::string(name));
+            member.set("artifactTypeEnumId", Value::string(kind));
+            member.set("nameIsPattern", Value::string(pattern));
+            member.set(
+                "inheritAuthz",
+                Value::string(if name == "rows.Thing" { "Y" } else { "N" }),
+            );
+            member.create(&facade).unwrap();
+        }
+    }
+    build_files(bed.factory(), bed.files(), true).unwrap();
+    let group = "artifact-group:THINGS";
+    assert!(bed.has_artifact(group));
+    let members = || bed.ids(REF, "fromArtifactId", group, "toArtifactId");
+    // the pattern's service, the entity by its name; the missing entity and the bad pattern unresolved
+    assert_eq!(
+        members(),
+        ["", "", "entity:rows.Thing", "service:rows.ThingServices.save#Thing"]
+    );
+
+    // a service the pattern matches, added by an update: a member of the group at once
+    let added = bed.write(
+        "service/rows/ThingServices.xml",
+        &ROWS_SERVICES.replace("</services>", r#"<service verb="ship" noun="Thing"/></services>"#),
+    );
+    update_files(bed.factory(), std::slice::from_ref(&added)).unwrap();
+    assert_eq!(
+        members(),
+        [
+            "",
+            "",
+            "entity:rows.Thing",
+            "service:rows.ThingServices.save#Thing",
+            "service:rows.ThingServices.ship#Thing"
+        ]
+    );
+
+    // and gone again: no member left naming it
+    bed.write("service/rows/ThingServices.xml", ROWS_SERVICES);
+    update_files(bed.factory(), std::slice::from_ref(&added)).unwrap();
+    assert_eq!(
+        members(),
+        ["", "", "entity:rows.Thing", "service:rows.ThingServices.save#Thing"]
+    );
+    // a member that inherits its authorization says so
+    let inherited = bed.ids(REF, "operation", "authz-inherit", "toArtifactId");
+    assert_eq!(inherited, ["entity:rows.Thing"]);
 }

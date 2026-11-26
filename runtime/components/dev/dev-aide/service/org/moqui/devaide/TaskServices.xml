@@ -17,9 +17,19 @@ along with this software (see the LICENSE.md file). If not, see
     create and a branch named for a task. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
     <service verb="get" noun="Tasks" type="rust" location="dev_aide::tasks::get_tasks" allow-remote="false" read-only="true">
-        <description>The user's open tasks from their source, each with its link in the chosen app; an unreachable source answers its error.</description>
+        <description>The user's open tasks from their source, each with its link in the chosen app; an unreachable source
+            answers its error. With rootId of a working tree whose hosted repository's server offers its issues
+            (tasks.issuesPath): its open issues (each with its key: #12 where issues have numbers, else the id), its
+            linked projects, whether issues have numbers, and the tasks of those projects first; a failure of the
+            issues is issuesError, and the tasks stay.</description>
+        <in-parameters><parameter name="rootId"/></in-parameters>
         <out-parameters>
             <parameter name="tasks" type="List"/>
+            <parameter name="issues" type="List"/>
+            <parameter name="issueProjects" type="List"/>
+            <parameter name="numbered" type="Boolean"/>
+            <parameter name="repositoryPath"/>
+            <parameter name="issuesError"/>
             <parameter name="source"/>
             <parameter name="sourceLabel"/>
             <parameter name="apps" type="List"/>
@@ -83,6 +93,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="rootId" required="true"/>
             <parameter name="taskId" required="true"/>
             <parameter name="title"/>
+            <parameter name="trailer"><description>What the root's commits name the task by, when not its id: an
+                issue's #12</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="branch"/>

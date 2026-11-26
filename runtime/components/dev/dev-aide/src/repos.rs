@@ -162,7 +162,7 @@ fn pull_all(
 }
 
 /// The runtime's moq, beside the runtime directory, when this platform can run it.
-fn moq(context: &Context) -> Option<PathBuf> {
+pub(crate) fn moq(context: &Context) -> Option<PathBuf> {
     moq_program(context.factory.runtime_dir().parent()?, cfg!(windows))
 }
 

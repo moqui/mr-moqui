@@ -26,7 +26,8 @@ along with this software (see the LICENSE.md file). If not, see
     (docs/security/Attack-Surface-Web.md "Parent frames"), so those always-actions read nothing privileged.
     The effective configuration, personal preferences and saved views (MapConfig.js), the mapProvider connection kind and
     the Maps readiness checks (MapProviders.js) are P1's; the postal lookup (MapLookup.js) and the Geo data readiness
-    (GeoData.js) are P2's; geocoding joins this file in P3. -->
+    (GeoData.js) are P2's; users' overlays and saved places (MapOverlays.js) and address and place search (MapGeocoders.js)
+    are P3's. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
     <!-- ========== The adapter contracts ========== -->
@@ -471,5 +472,154 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters><parameter name="providerKey" required="true"/></in-parameters>
         <out-parameters><parameter name="checks" type="List"/></out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/GeoData.js').execute('readiness', context))</script></actions>
+    </service>
+
+    <!-- ========== Overlays and saved places (P3; MapOverlays.js) ========== -->
+
+    <service verb="store" noun="Overlay">
+        <description>Add a GeoJSON, GPX or KML file as one of the signed-in user's map overlays: an upload (file), kept as it was
+            sent in Maps/overlays of their personal drive (a name already there gets "name (2).ext"), or a file of a drive
+            they read (driveId, path), which stays where it is. The file is read first (MapSourceServices.convert#Overlay: at
+            most maps@overlay-max-bytes within maps@import-max-bytes, at most maps@max-features features (5000 when that is
+            0), WGS84 or a declared EPSG:3857, at most 4 MiB of characters as GeoJSON) and, when it cannot be drawn,
+            refused with nothing written (FORMAT_UNKNOWN, TOO_LARGE, NOT_PARSED, NOT_FORMAT, CRS_UNSUPPORTED,
+            TOO_MANY_FEATURES, NO_FEATURES, TOO_LARGE_TO_DRAW; NOT_FOUND for a file the user does not read). A feature whose
+            geometry is not sane is left out and counted (rejectedCount, notes), as is what is not read (network links,
+            icons, styles, extended data). Records a moqui.maps.MapOverlay row of the user's (the same file again brings its
+            row up to date), at most 100 (TOO_MANY_OVERLAYS). Sharing it is sharing the file in Files.</description>
+        <in-parameters>
+            <parameter name="file" type="Object"><description>An uploaded file</description></parameter>
+            <parameter name="driveId"/>
+            <parameter name="path"/>
+            <parameter name="label"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="overlayId"/>
+            <parameter name="featureCount" type="Integer"/>
+            <parameter name="rejectedCount" type="Integer"/>
+            <parameter name="notes" type="List"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapOverlays.js').execute('storeOverlay', context))</script></actions>
+    </service>
+    <service verb="delete" noun="Overlay">
+        <description>Remove one of the signed-in user's overlays from their maps: the row only, the file stays in its drive.
+            Another user's overlay, and one that is not there, are RECORD_UNAVAILABLE.</description>
+        <in-parameters><parameter name="overlayId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="overlayId"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapOverlays.js').execute('deleteOverlay', context))</script></actions>
+    </service>
+    <service verb="find" noun="Overlays">
+        <description>The signed-in user's overlays (their saved places among them, isPlaces) and, read-only, other users'
+            overlays whose file the user may read now in its drive (a share of the file or a folder above it, or a
+            membership: FileServices get#DriveAccess), at most 100 of each. Each has its layerId (overlay:ID), label, owner,
+            file name (its path only for one's own), format, feature count, rejected count, bounds, notes and the overlay
+            transition's URL. Changes nothing.</description>
+        <in-parameters><parameter name="placesOnly" type="Boolean" default="false"/></in-parameters>
+        <out-parameters><parameter name="overlayList" type="List"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapOverlays.js').execute('findOverlays', context))</script></actions>
+    </service>
+    <service verb="get" noun="OverlayContent">
+        <description>An overlay's file as sanitized GeoJSON, for Browse's overlay transition on every request: the current user
+            must read the file in its drive now (the owner as any reader: a revoked share or a removed member is refused at
+            the next request), writing nothing (no ResourceRecent). Not there, or not readable, is OVERLAY_MISSING (404); a
+            file gone FILE_GONE (404); a file that no longer reads as an overlay 422 with its reason, one grown past 4 MiB of
+            GeoJSON 413 (TOO_LARGE_TO_DRAW). Cached by the file's version in maps.overlay.geojson, the 413 too.</description>
+        <in-parameters><parameter name="overlayId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="ok" type="Boolean"/>
+            <parameter name="status" type="Integer"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="geojson"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapOverlays.js').execute('overlayContent', context))</script></actions>
+    </service>
+    <service verb="find" noun="OverlayFiles">
+        <description>The GeoJSON, GPX and KML files the signed-in user could add as an overlay: those of their personal drive's
+            top folder, Maps and Maps/overlays, and their recent files of any drive they still read, at most 50, each
+            {driveId, path, name, driveName}. Changes nothing.</description>
+        <out-parameters><parameter name="fileList" type="List"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapOverlays.js').execute('findOverlayFiles', context))</script></actions>
+    </service>
+    <service verb="store" noun="Place">
+        <description>Save a named point to the signed-in user's places: Maps/places.geojson of their personal drive (written
+            through FileServices save#Text, so the drive's versions keep each change), listed as their overlay "My places".
+            The user's places row is locked first, so two saves at once are one after the other. Refused: no name
+            (LABEL_MISSING), a point out of range (POINT_INVALID), a places file that is not a GeoJSON FeatureCollection of at
+            most maps@overlay-max-bytes (PLACES_UNREADABLE: it is never overwritten), 1000 places or maps@max-features
+            (TOO_MANY_PLACES). Private until the user shares the file (or its folder) in Files.</description>
+        <in-parameters>
+            <parameter name="label" required="true"/>
+            <parameter name="longitude" required="true"/>
+            <parameter name="latitude" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="placeId"/>
+            <parameter name="overlayId"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapOverlays.js').execute('storePlace', context))</script></actions>
+    </service>
+    <service verb="delete" noun="Place">
+        <description>Remove one of the signed-in user's saved places by its ID; one that is not theirs is RECORD_UNAVAILABLE.</description>
+        <in-parameters><parameter name="placeId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="placeId"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapOverlays.js').execute('deletePlace', context))</script></actions>
+    </service>
+
+    <!-- ========== Address and place search (P3; MapGeocoders.js) ========== -->
+
+    <service verb="find" noun="Places">
+        <description>Candidate places for a text from one configured geocoder (plans/Maps.md §6.1, §6.2, §8): the provider named,
+            or the enabled geocoder (a MapProvider of a kind under MPK_GEOCODER: the US Census geocoder, a self-hosted
+            Nominatim or Photon) that passed its test as it is configured now, first by sequenceNum. Each candidate is
+            {label (plain text), lon, lat, matchKind (address, street, postal, place), precisionEnumId and precisionText
+            (the Census geocoder's: an address placed by street-range interpolation, GPP_STREET_RANGE, never a rooftop; an address point
+            GPP_ADDRESS_MATCH; a postal code GPP_POSTAL_AREA; a street or place GPP_PLACE_ESTIMATE), extent}; several are
+            ambiguous, choices with none chosen; with the provider's name, attribution and terms. Refused, nothing sent:
+            outside requests off (EXTERNAL_REQUESTS_OFF), no enabled tested geocoder (NO_GEOCODER), a text of fewer than 2 or
+            more than 200 characters (QUERY_INVALID), a country the geocoder does not cover (COUNTRY_NOT_COVERED, the Census
+            geocoder outside the US), a provider whose allowedOperations name neither geocode nor search
+            (OPERATION_NOT_ALLOWED), the provider's rate passed (RATE_LIMITED: requestsPerSecond, 1 for Nominatim and Photon
+            when empty, claimed atomically on each server by itself; requestsPerDay is not enforced). One GET with no
+            credentials, following no redirect, ten seconds, the body read to at most 1 MiB whatever its Content-Length, to
+            no internal address unless the provider is allowed the private network; a failure is PROVIDER_FAILED, naming the
+            provider, and no other outside service is asked. This server keeps an answer only for cachePolicy shared
+            (private is the browser's alone), for cacheSeconds or the answer's own max-age, by a digest, never the text.
+            Called only by an explicit search: no map, record or dialog calls it on opening.</description>
+        <in-parameters>
+            <parameter name="query" required="true"/>
+            <parameter name="countryGeoId"><description>A Geo ID or an ISO alpha-2 or alpha-3 code: narrows the search</description></parameter>
+            <parameter name="viewport" type="Object"><description>west, south, east, north (a list or a comma text): biases the search</description></parameter>
+            <parameter name="limit" type="Integer" default="10"/>
+            <parameter name="providerId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="candidates" type="List"/>
+            <parameter name="ambiguous" type="Boolean"/>
+            <parameter name="cached" type="Boolean"/>
+            <parameter name="providerId"/>
+            <parameter name="providerName"/>
+            <parameter name="attribution"/>
+            <parameter name="termsUrl"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapGeocoders.js').execute('findPlaces', context))</script></actions>
     </service>
 </services>

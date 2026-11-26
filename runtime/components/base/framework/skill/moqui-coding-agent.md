@@ -100,11 +100,41 @@ services and checks the rows they wrote with `checkData`.
 checks of `moqui check`), go to definition and references of the entities, services, screens and forms a file names
 (the artifact index, kept current with the open files), hover with an artifact's summary or an element's or
 attribute's documentation from the XSDs, completion of elements, attributes, enumerated values and entity and service
-names, and document and workspace symbols. Point an editor's generic LSP client at it for `*.xml` files in a Moqui
-runtime, for example in Neovim:
+names, and document and workspace symbols.
+
+Rename (with prepare) takes the entity field, service, form field or parameter that the attribute value or script
+string under the cursor names or defines (a `from` names none) and answers one edit across the files: each
+definition, each reference the index resolves to it, what takes the name from it (an `auto-parameters` parameter,
+an `alias-all` alias, an `auto-fields` form field, a transition's or REST method's parameter from its service, a form
+field that posts to the parameter, a declared one that merges with it, each followed by what it was made from, not
+by its name), a view alias's `field`, the `exclude`s that leave it out, a form's `field-ref`s, the `key-map`s that
+write both sides, and in data files a record's attribute of the field or a value that is the service's name. A
+service keeps its file's prefix: give the new `verb#Noun`. It is refused, with the reason: when a reference of the
+name does not resolve; when something reads the name by another name (a prefixed `alias-all`, a REST path
+parameter, a form field posting to a parameter outside the rename); when a use depends on the name itself (an
+`econdition` or `field-map` with no `from`, a `key-map` with no `related`, a relationship with no `key-map` on the
+field as a key or by its name); when a service's noun change would change its entity (`entity-auto`, an
+`auto-parameters` with no `entity-name`, a noun that names an entity); and when an edit would land in an upstream
+component while `dev-aide@allow-upstream-edits` is off: the site components are those of `dev-aide@site-component` in
+the conf, and with none there a rename that edits more than one component is refused.
+
+Expressions and scripts are not references: a `from="row.statusId"`, a `${statusId}`, a script's or a `.qvue`'s use
+of the name is not something rename can follow. So a rename ends with a scan that decides it: the name as a plain-text
+token (bounded by anything but a letter or digit, so `row.name`, `name_op`, `$name` and `<name>` count), its upper
+snake form in any case (`STATUS_ID`, for SQL) and a service's name without its `#`, in any text file of every component
+and every open buffer (markup, CDATA and data files included), refuses the rename unless the place is one the rename
+edits or another entity's field definition. Each place is listed (up to 20): change or check them, then rename again.
+A file that cannot be read or is not UTF-8 refuses it too; binary files are passed over. A common name such as `name`
+or `statusId` is written in so many places that its rename practically always refuses: rename it by hand. Code actions
+offer the
+nearest known names
+for an unknown entity, service, field or in-parameter (`reference.entity`, `reference.service`, `reference.field`,
+`reference.parameter`). With `--server` rename is refused and the quick fixes find entities and services there.
+
+Point an editor's generic LSP client at it for `*.xml` files in a Moqui runtime, for example in Neovim:
 
 ```lua
-vim.lsp.start({ name = "moqui", cmd = { "target/develop/moqui", "lsp" }, root_dir = vim.fn.getcwd() })
+vim.lsp.start({ name = "moqui", cmd = { "target/release/moqui", "lsp" }, root_dir = vim.fn.getcwd() })
 ```
 
 or in VS Code with any generic LSP client extension, its command `moqui lsp` and its document selector `xml`. Logs go to

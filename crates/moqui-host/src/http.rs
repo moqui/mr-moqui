@@ -271,7 +271,9 @@ type TokenRoutes = Arc<dyn Fn() -> Arc<moqui_core::screen::token_route::Redactio
 
 /// Bind `bind` (and the HTTPS address when there is one), publish the local addresses, and serve until `stop` is
 /// dropped or a ctrl-c arrives. With no `bind` nothing listens, and the app is reached in process only
-/// ([`crate::in_process::InProcess`], which every server has); `http` is then reported as port 0.
+/// ([`crate::in_process::InProcess`], which every server has); `http` is then reported as port 0. `termination` is
+/// the signal streams the caller registered before it said it serves.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn listen(
     factory: Arc<ExecutionContextFactory>,
     bind: Option<crate::WebBind>,
@@ -279,6 +281,7 @@ pub(crate) async fn listen(
     cluster: SocketAddr,
     posts: Arc<std::sync::Mutex<Vec<String>>>,
     stop: tokio::sync::oneshot::Receiver<()>,
+    termination: Termination,
     ready: Sender<Result<ListenReport, String>>,
 ) -> Result<(), Error> {
     let fail = |message: String| {
@@ -551,7 +554,7 @@ pub(crate) async fn listen(
         let _ = rx.wait_for(|stopped| *stopped).await;
     };
     moqui_core::devtools::restart::set_shutdown(|| RESTART.notify_one());
-    let signal = tokio::spawn(shutdown(stop, shutdown_tx));
+    let signal = tokio::spawn(shutdown(stop, shutdown_tx, termination));
     #[cfg(feature = "grpc")]
     let grpc = grpc.map(|bound| {
         tokio::spawn(crate::grpc_listen::serve(
@@ -865,10 +868,14 @@ const KEEPALIVE_IDLE: Duration = Duration::from_secs(60);
 /// The watch tells open notification sockets to close so graceful shutdown can finish. A restart asked for from the
 /// app (`moqui_core::devtools::restart`) ends it the same way, and so does the end of stdin when
 /// `moqui_stop_on_stdin_close` is true.
-async fn shutdown(mut stop: tokio::sync::oneshot::Receiver<()>, notify: tokio::sync::watch::Sender<bool>) {
+async fn shutdown(
+    mut stop: tokio::sync::oneshot::Receiver<()>,
+    notify: tokio::sync::watch::Sender<bool>,
+    mut termination: Termination,
+) {
     let restart = tokio::select! {
         _ = &mut stop => false,
-        _ = termination_signal() => false,
+        () = termination.recv() => false,
         () = stdin_closed() => false,
         () = RESTART.notified() => true,
     };
@@ -988,23 +995,76 @@ fn reload_conf_logged(factory: &ExecutionContextFactory) {
     }
 }
 
-async fn termination_signal() {
-    let ctrl_c = async {
-        if tokio::signal::ctrl_c().await.is_err() {
-            std::future::pending::<()>().await;
-        }
-    };
-    let terminate = async {
+/// Ctrl-C and SIGTERM, listened for from the moment this is made, so a signal that comes before the shutdown task
+/// first runs is kept rather than lost: the server makes it before it says it serves (`set_serving`). A stream that
+/// does not register stays pending, and the other signal and the stop still end the listener.
+pub(crate) struct Termination {
+    #[cfg(unix)]
+    terminate: Option<tokio::signal::unix::Signal>,
+    #[cfg(unix)]
+    interrupt: Option<tokio::signal::unix::Signal>,
+    #[cfg(windows)]
+    ctrl_c: Option<tokio::signal::windows::CtrlC>,
+}
+
+impl Termination {
+    /// Register the signal streams. Call it in a Tokio runtime's context.
+    pub(crate) fn listen() -> Self {
         #[cfg(unix)]
-        if let Ok(mut signal) = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
-            signal.recv().await;
-            return;
+        {
+            use tokio::signal::unix::{signal, SignalKind};
+            Self {
+                terminate: signal(SignalKind::terminate()).ok(),
+                interrupt: signal(SignalKind::interrupt()).ok(),
+            }
         }
+        #[cfg(windows)]
+        {
+            Self {
+                ctrl_c: tokio::signal::windows::ctrl_c().ok(),
+            }
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            Self {}
+        }
+    }
+
+    /// The first signal.
+    async fn recv(&mut self) {
+        #[cfg(unix)]
+        {
+            let Self { terminate, interrupt } = self;
+            let terminate = async {
+                match terminate.as_mut() {
+                    Some(signal) => {
+                        let _ = signal.recv().await;
+                    }
+                    None => std::future::pending::<()>().await,
+                }
+            };
+            let interrupt = async {
+                match interrupt.as_mut() {
+                    Some(signal) => {
+                        let _ = signal.recv().await;
+                    }
+                    None => std::future::pending::<()>().await,
+                }
+            };
+            tokio::select! {
+                () = terminate => {}
+                () = interrupt => {}
+            }
+        }
+        #[cfg(windows)]
+        match self.ctrl_c.as_mut() {
+            Some(signal) => {
+                let _ = signal.recv().await;
+            }
+            None => std::future::pending::<()>().await,
+        }
+        #[cfg(not(any(unix, windows)))]
         std::future::pending::<()>().await;
-    };
-    tokio::select! {
-        () = ctrl_c => {}
-        () = terminate => {}
     }
 }
 
@@ -1969,7 +2029,7 @@ mod signal_tests {
             let (_stop, receiver) = tokio::sync::oneshot::channel();
             let (notify, notified) = tokio::sync::watch::channel(false);
             moqui_core::devtools::restart::set_shutdown(|| super::RESTART.notify_one());
-            let shutdown = tokio::spawn(super::shutdown(receiver, notify));
+            let shutdown = tokio::spawn(super::shutdown(receiver, notify, super::Termination::listen()));
             assert!(moqui_core::devtools::restart::request_restart());
             tokio::time::timeout(Duration::from_secs(5), shutdown)
                 .await
@@ -2020,9 +2080,12 @@ mod signal_tests {
             tokio::runtime::Runtime::new().unwrap().block_on(async {
                 let (_stop, receiver) = tokio::sync::oneshot::channel();
                 let (notify, notified) = tokio::sync::watch::channel(false);
-                tokio::time::timeout(Duration::from_secs(10), super::shutdown(receiver, notify))
-                    .await
-                    .expect("closing stdin did not shut down");
+                tokio::time::timeout(
+                    Duration::from_secs(10),
+                    super::shutdown(receiver, notify, super::Termination::listen()),
+                )
+                .await
+                .expect("closing stdin did not shut down");
                 assert!(*notified.borrow());
             });
             return;
@@ -2061,7 +2124,7 @@ mod signal_tests {
             tokio::runtime::Runtime::new().unwrap().block_on(async {
                 let (_stop, receiver) = tokio::sync::oneshot::channel();
                 let (notify, mut notified) = tokio::sync::watch::channel(false);
-                let shutdown = super::shutdown(receiver, notify);
+                let shutdown = super::shutdown(receiver, notify, super::Termination::listen());
                 tokio::pin!(shutdown);
                 // Poll shutdown to register the signal handlers before telling the parent to send a signal.
                 assert!(tokio::time::timeout(Duration::from_millis(50), &mut shutdown)

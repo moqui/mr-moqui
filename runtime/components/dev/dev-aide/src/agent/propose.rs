@@ -756,3 +756,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "propose_card_tests.rs"]
+mod card_tests;

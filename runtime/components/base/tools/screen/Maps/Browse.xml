@@ -14,13 +14,15 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- Browse (plans/Maps.md §3.1; docs/tools/Maps.md): the full-screen map. Browse.qvue draws m-map over the effective
     configuration (getConfig: org.moqui.maps.MapServices.get#EffectiveConfig, with a record's adapterKey and recordKey when
-    LocalMap's Open in Maps sent them), with the search and results, layers (record layers among them, a layer that is not
-    shown named with Retry), saved views and the selected feature's details beside it, a bottom sheet on a phone.
+    LocalMap's Open in Maps sent them, and the user's own and shared overlays: MapOverlays.js), with the search and results,
+    layers (record layers and overlays among them, a layer that is not shown named with Retry, Add overlay), saved views and
+    the selected feature's details (Save place) beside it, a bottom sheet on a phone.
     Browse.tui.json is the terminal's: the map component over terminalMap (the places of the saved views and the record
     layers, the notices and the attribution). A qvue screen only: asked for in html under /apps it opens at the same path
-    under /qapps (screen/render.rs). Search reads saved places and the permitted records of the record layers (each read
-    through its adapter, which checks the caller) and postal codes of the local Geo data; a configured place or address
-    service joins it later (search, below). Navigating to a result saves nothing to its record. -->
+    under /qapps (screen/render.rs). Search reads saved views and places and the permitted records of the record layers
+    (each read through its adapter, which checks the caller), postal codes of the local Geo data and, only when an
+    administrator enabled one, the configured geocoder (search, below). Navigating to a result saves nothing to its
+    record. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Browse" default-menu-index="1" menu-image="sym_o_explore" menu-image-type="icon"
         render-modes="qvue,tui" server-static="qvue">
@@ -33,14 +35,93 @@ along with this software (see the LICENSE.md file). If not, see
     <parameter name="label"/>
     <parameter name="savedViewId"/>
 
-    <!-- the effective configuration m-map draws (WebrootMap.js documents its shape); the layers asked for are shown -->
+    <!-- the effective configuration m-map draws (WebrootMap.js documents its shape); the layers asked for are shown. The
+        user's overlays and those shared with them (find#Overlays) follow the profile's layers, each a GeoJSON layer read
+        from the overlay transition, shown at first; one that fails to list leaves the map as it is -->
     <transition name="getConfig" method="get" read-only="true">
         <actions><script><![CDATA[
             const out = ec.service.sync().name('org.moqui.maps.MapServices.get#EffectiveConfig').requireNewTransaction(true)
                 .parameters({profileId: profileId || null, layerIds: layerIds || null, adapterKey: adapterKey || null,
                     recordKey: recordKey || null, addressPurpose: addressPurpose || null}).call()
             if (ec.message.hasError()) { const errors = ec.message.getErrorsString(); ec.message.clearErrors(); ec.web.sendJsonResponse({errors}) }
-            else ec.web.sendJsonResponse(out.config || {})
+            else {
+                const config = out.config || {}
+                ec.message.pushErrors()
+                try {
+                    const found = ec.service.sync().name('org.moqui.maps.MapServices.find#Overlays').requireNewTransaction(true).call()
+                    if (!ec.message.hasError()) config.layers = Array.from(config.layers || []).concat(Array.from(found?.overlayList || []).map(entry => ({
+                        id: entry.layerId, label: entry.label, kind: 'geojson', url: entry.url, visible: true, attribution: '', overlayId: entry.overlayId,
+                        isOwn: entry.isOwn, isPlaces: entry.isPlaces, ownerName: entry.ownerName, fileName: entry.fileName, featureCount: entry.featureCount,
+                        rejectedCount: entry.rejectedCount, notes: entry.notes, bounds: entry.bounds})))
+                } catch (err) {
+                    ec.logger.warn('Maps Browse: the overlays were not listed: ' + (err?.message ?? err))
+                } finally { ec.message.clearErrors(); ec.message.popErrors() }
+                ec.web.sendJsonResponse(config)
+            }
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- An overlay's file as sanitized GeoJSON (get#OverlayContent): every request checks the reader's access to the file in
+        its drive (the owner, a member, a share of the file or a folder above it) and writes nothing; a revoked share is
+        refused at the next request -->
+    <transition name="overlay" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const content = ec.service.sync().name('org.moqui.maps.MapServices.get#OverlayContent')
+                .parameters({overlayId: String(overlayId ?? '')}).call()
+            if (ec.message.hasError() || !content?.ok) {
+                const status = ec.message.hasError() ? 404 : Number(content.status) || 404
+                ec.message.clearErrors()
+                ec.web.sendJsonError(status, status === 422 ? String(content.reason || 'The overlay cannot be drawn') : 'Overlay not available')
+            } else ec.web.sendTextResponse(content.geojson, 'application/json', null)
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- Add overlay: an uploaded file (overlayFile) or a file of a drive the user reads (driveId, path), store#Overlay -->
+    <transition name="addOverlay">
+        <actions><script><![CDATA[
+            const upload = context.overlayFile ?? null
+            const out = ec.service.sync().name('org.moqui.maps.MapServices.store#Overlay').requireNewTransaction(true)
+                .parameters({file: upload && typeof upload === 'object' ? upload : null, driveId: driveId || null, path: path || null, label: label || null}).call()
+            if (ec.message.hasError()) { const errors = ec.message.getErrorsString(); ec.message.clearErrors(); ec.web.sendJsonResponse({errors}) }
+            else ec.web.sendJsonResponse({applied: out.applied, reasonCode: out.reasonCode, reason: out.reason, overlayId: out.overlayId,
+                featureCount: out.featureCount, rejectedCount: out.rejectedCount, notes: out.notes || []})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="removeOverlay">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.maps.MapServices.delete#Overlay').requireNewTransaction(true)
+                .parameters({overlayId: String(overlayId ?? '')}).call()
+            if (ec.message.hasError()) { const errors = ec.message.getErrorsString(); ec.message.clearErrors(); ec.web.sendJsonResponse({errors}) }
+            else ec.web.sendJsonResponse({applied: out.applied, reason: out.reason})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- the files Add overlay offers to pick (find#OverlayFiles) -->
+    <transition name="overlayFiles" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.maps.MapServices.find#OverlayFiles').requireNewTransaction(true).call()
+            if (ec.message.hasError()) { const errors = ec.message.getErrorsString(); ec.message.clearErrors(); ec.web.sendJsonResponse({errors}) }
+            else ec.web.sendJsonResponse({fileList: out.fileList || []})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- Save place: a named point to the user's places file (store#Place); remove one (delete#Place) -->
+    <transition name="savePlace">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.maps.MapServices.store#Place').requireNewTransaction(true)
+                .parameters({label: label || '', longitude: longitude ?? '', latitude: latitude ?? ''}).call()
+            if (ec.message.hasError()) { const errors = ec.message.getErrorsString(); ec.message.clearErrors(); ec.web.sendJsonResponse({errors}) }
+            else ec.web.sendJsonResponse({applied: out.applied, reason: out.reason, placeId: out.placeId, overlayId: out.overlayId})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="removePlace">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.maps.MapServices.delete#Place').requireNewTransaction(true)
+                .parameters({placeId: String(placeId ?? '')}).call()
+            if (ec.message.hasError()) { const errors = ec.message.getErrorsString(); ec.message.clearErrors(); ec.web.sendJsonResponse({errors}) }
+            else ec.web.sendJsonResponse({applied: out.applied, reason: out.reason})
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
@@ -86,17 +167,21 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
-    <!-- Search: the saved places (the user's and shared saved views) whose name has the text, and the permitted records of the
-        record layers shown (layerIds, as Browse shows them) in the view on screen (extent: west, south, east, north), which
-        get#EffectiveConfig reads through their adapters, which check the caller; and a postal code of the local Geo data
-        (get#PostalLocation, kind postal: a code's point and broad extent, approximate, and its several places as choices), of
-        the country chosen (country), named in the text ("US 02134", "02134, US") or the user's; each result with its source
-        and precision. A configured place or address service (a geocoder connection) joins it in P3. -->
+    <!-- Search: the saved views (the user's and shared) and saved places (the user's and those shared with them in Files:
+        MapOverlays.js searchPlaces, each places file read through its drive's access) whose name has the text, and the
+        permitted records of the record layers shown (layerIds, as Browse shows them) in the view on screen (extent: west,
+        south, east, north), which get#EffectiveConfig reads through their adapters, which check the caller; and a postal code
+        of the local Geo data (get#PostalLocation, kind postal: a code's point and broad extent, approximate, and its several
+        places as choices), of the country chosen (country), named in the text ("US 02134", "02134, US") or the user's; and
+        third, only when outside requests are on and an administrator enabled a geocoder that passed its test, the
+        geocoder's candidates (find#Places, kind geocoder: one provider, never another on its failure, which is said beside
+        the local results), the text sent only because the user searched. Each result with its source and precision. -->
     <transition name="search" method="get" read-only="true">
         <actions><script><![CDATA[
             const term = String(q || '').trim().toLowerCase()
-            let postalCountries = null, postalCountryGeoId = null
+            let postalCountries = null, postalCountryGeoId = null, geocoder = null
             const results = []
+            const geocoded = []
             const sources = []
             try {
                 if (term) {
@@ -132,10 +217,31 @@ along with this software (see the LICENSE.md file). If not, see
                     postalCountries = postal.countries
                     postalCountryGeoId = postal.countryGeoId
                     results.unshift(...Array.from(postal.results || []))
-                    // later: a configured place or address service (a geocoder connection, P3)
+                    // the user's saved places and those shared with them, before the postal codes
+                    const places = ec.resource.script('component://framework/service/org/moqui/maps/MapOverlays.js')
+                        .execute('searchPlaces', {q: String(q || ''), limit: 20})
+                    sources.push('places')
+                    results.unshift(...Array.from(places.results || []))
+                    // third: the configured geocoder, only when one is enabled and tested and outside requests are on
+                    const geocoders = ec.resource.script('component://framework/service/org/moqui/maps/MapGeocoders.js')
+                    if (geocoders.availability().available) {
+                        const found = ec.service.sync().name('org.moqui.maps.MapServices.find#Places').requireNewTransaction(true)
+                            .parameters({query: String(q || ''), countryGeoId: country || null, viewport: extent || null, limit: 10}).call()
+                        if (ec.message.hasError()) { ec.logger.warn('Maps search: the geocoder was not asked: ' + ec.message.getErrorsString()); ec.message.clearErrors() }
+                        else {
+                            sources.push('geocoder')
+                            geocoder = {providerName: found.providerName || '', attribution: found.attribution || '', ambiguous: !!found.ambiguous,
+                                reasonCode: found.reasonCode || null, reason: found.reasonCode === 'NO_MATCH' ? null : (found.reason || null)}
+                            const sourceText = [found.providerName, found.attribution].filter(Boolean).join(' · ')
+                            Array.from(found.candidates || []).forEach((place, index) => geocoded.push({kind: 'geocoder', id: 'geocoder:' + index,
+                                label: place.label, lon: place.lon, lat: place.lat, extent: place.extent || null, matchKind: place.matchKind,
+                                precisionEnumId: place.precisionEnumId, precisionText: place.precisionText, sourceText}))
+                        }
+                    }
                 }
                 if (ec.message.hasError()) throw new Error(ec.message.getErrorsString())
-                ec.web.sendJsonResponse({results: results.slice(0, 60), sources, countries: postalCountries || [], countryGeoId: postalCountryGeoId || null})
+                ec.web.sendJsonResponse({results: results.slice(0, 60).concat(geocoded), sources, countries: postalCountries || [], countryGeoId: postalCountryGeoId || null,
+                    geocoder})
             } catch (err) {
                 ec.message.clearErrors()
                 ec.web.sendJsonResponse({errors: String(err.message || err)})

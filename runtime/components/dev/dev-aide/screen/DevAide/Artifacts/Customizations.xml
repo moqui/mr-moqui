@@ -14,14 +14,27 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- Customizations (plans/design-dev-aide.md 7.2, D17): every extension the site components make (an extend-entity, a
     screen-extend and each anchor it names, an ECA rule on an upstream service or entity), with whether what it extends is
-    still there: the upgrade checklist after a pull. Broken first. -->
+    still there: the upgrade checklist after a pull. Broken first. Below them the DbForms that change a screen form, each
+    with Convert (7.2, question 16: one way): the review of the site's screen-extend it writes and the rows that go, and
+    Accept, which writes the file and deletes the rows in one step. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Customizations" default-menu-index="3">
     <transition name="refs"><default-response url="../Refs"/></transition>
+    <transition name="convert"><default-response url="."/></transition>
+    <transition name="acceptConversion"><service-call name="org.moqui.devaide.ArtifactServices.convert#DbForm" out-map="converted"/>
+        <actions><if condition="converted.path"><message type="success">Wrote ${converted.path} and deleted DbForm ${formId}</message></if></actions>
+        <default-response url="."/><error-response url="." parameter-map="{convertFormId: formId}"/></transition>
 
     <actions>
         <service-call name="org.moqui.devaide.ArtifactServices.get#Customizations" out-map="custom"/>
         <set field="extensions" from="custom.extensions || []"/>
+        <service-call name="org.moqui.devaide.ArtifactServices.get#DbFormChanges" out-map="dbFormOut" ignore-error="true"/>
+        <set field="dbForms" from="(dbFormOut &amp;&amp; dbFormOut.dbForms) || []"/>
+        <set field="conversion" from="null"/>
+        <if condition="convertFormId">
+            <service-call name="org.moqui.devaide.ArtifactServices.get#DbFormConversion" in-map="{formId: convertFormId}" out-map="conversion" ignore-error="true"/>
+            <set field="conversionNotes" from="(conversion &amp;&amp; conversion.notes || []).map(note => ({note}))"/>
+        </if>
     </actions>
     <widgets>
         <label type="h5" text="Site extensions: ${custom.extensionCount || 0}, ${custom.brokenCount || 0} broken" id="CustomizationsSummary"/>
@@ -37,5 +50,36 @@ along with this software (see the LICENSE.md file). If not, see
                 <link url="${url || ''}" url-type="plain" text="${(relativePath || path || '').split('/').slice(-3).join('/')}:${line}" link-type="anchor" condition="url"/>
             </default-field></field>
         </form-list>
+
+        <container-box id="DevAideDbForms"><box-header title="DbForm changes: ${dbForms.length}"/><box-body>
+            <label type="p" text="Forms changed by DbForm rows in the database. Convert writes the same fields into the site component's screen-extend of the screen and, once you accept, deletes the DbForm: one way."/>
+        </box-body><box-body-nopad>
+            <form-list name="DbFormList" list="dbForms" skip-form="true">
+                <field name="formId"><default-field title="DbForm"><display text="${formId}${description ? ' · ' + description : ''}"/></default-field></field>
+                <field name="formName"><default-field title="Changes"><display text="${formName} in ${screenLocation}"/></default-field></field>
+                <field name="userGroups"><default-field title="For groups"><display/></default-field></field>
+                <field name="fieldCount"><default-field title="Fields"><display/></default-field></field>
+                <field name="convert"><default-field title="">
+                    <link url="convert" text="Convert" parameter-map="{convertFormId: formId}" link-type="anchor"/>
+                </default-field></field>
+            </form-list>
+        </box-body-nopad></container-box>
+
+        <section name="ConversionSection" condition="conversion &amp;&amp; conversion.digest"><widgets>
+            <container-box id="DevAideConversion"><box-header title="Convert DbForm ${convertFormId} to a site extension"/><box-body>
+                <label type="p" text="Writes ${conversion.path} in ${conversion.component}${conversion.exists ? '' : ' (a new file)'} and deletes the DbForm's rows: ${conversion.rows.map(row => row.entityName.split('.').pop() + ' ' + row.count).join(', ')}."/>
+                <form-list name="ConversionNotes" list="conversionNotes" skip-form="true">
+                    <field name="note"><default-field title="Not carried"><display/></default-field></field>
+                </form-list>
+                <label text="${conversion.diff}" type="pre" encode="true" id="DevAideConversionDiff"/>
+                <form-single name="AcceptConversionForm" transition="acceptConversion">
+                    <field name="formId"><default-field><hidden default-value="${convertFormId}"/></default-field></field>
+                    <field name="digest"><default-field><hidden default-value="${conversion.digest}"/></default-field></field>
+                    <field name="submitButton"><default-field title="Accept: write the extension and delete the DbForm">
+                        <submit confirmation="Write the site extension and delete DbForm ${convertFormId}? This does not run the other way."/></default-field></field>
+                </form-single>
+                <link url="." text="Cancel" link-type="anchor"/>
+            </box-body></container-box>
+        </widgets></section>
     </widgets>
 </screen>

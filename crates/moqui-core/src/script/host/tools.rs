@@ -761,22 +761,29 @@ macro_rules! tools_js {
         this.headerPairs = sent.headers || [];
         for (const [name, value] of this.headerPairs) (this.headerMap[name.toLowerCase()] ||= []).push(value);
     }
-    RestResponse.prototype.loadBody = function () {
-        if (this.bodyId == null) return;
-        const read = host.restReadBody(this.bodyId);
-        this.bodyId = null;
-        this.body = read.text;
-        this.bytesValue = read.bytes;
+    // maxBytes (send()'s kept body): at most that many bytes are read, and a larger body throws; a body call() already
+    // read throws when it is larger
+    RestResponse.prototype.loadBody = function (maxBytes) {
+        const max = Number(maxBytes) > 0 ? Math.floor(Number(maxBytes)) : 0;
+        if (this.bodyId != null) {
+            const id = this.bodyId;
+            this.bodyId = null;
+            const read = max ? host.restReadBody(id, max) : host.restReadBody(id);
+            this.body = read.text;
+            this.bytesValue = read.bytes;
+        } else if (max && this.body != null && (this.bytesValue ? this.bytesValue.length : String(this.body).length) > max) {
+            throw new Error("the response body is larger than " + max + " bytes");
+        }
     };
     // the body as received, a Uint8Array: use it for a body that is not text, such as a label image
-    RestResponse.prototype.bytes = function () { this.loadBody(); return this.bytesValue; };
+    RestResponse.prototype.bytes = function (maxBytes) { this.loadBody(maxBytes); return this.bytesValue; };
     RestResponse.prototype.headerList = function (name) { return (this.headerMap[String(name).toLowerCase()] || []).slice(); };
     RestResponse.prototype.headerFirst = function (name) { return (this.headerMap[String(name).toLowerCase()] || [null])[0]; };
     RestResponse.prototype.getContentType = function () { return this.headerFirst("content-type"); };
     RestResponse.prototype.getHeaders = function () { return this.headerMap; };
     RestResponse.prototype.getStatusCode = function () { return this.statusCode; };
     RestResponse.prototype.getReasonPhrase = function () { return this.reasonPhrase; };
-    RestResponse.prototype.text = function () { this.loadBody(); return this.body; };
+    RestResponse.prototype.text = function (maxBytes) { this.loadBody(maxBytes); return this.body; };
     RestResponse.prototype.jsonObject = function () {
         this.loadBody();
         try { return JSON.parse(this.body); }

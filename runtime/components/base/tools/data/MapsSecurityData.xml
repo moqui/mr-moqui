@@ -51,13 +51,24 @@ along with this software (see the LICENSE.md file). If not, see
         <authz artifactAuthzId="MAPS_DIALOG_USERS" userGroupId="ALL_USERS" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
     </artifactGroups>
 
-    <!-- What the Maps app changes for its user: their preferences and saved views, each service acting on the signed-in
-        user's own (a saved view another user shared is read, never changed). The app's users and ADMIN, as the app. -->
-    <artifactGroups artifactGroupId="MAPS_APP_SERVICES" description="Maps: preferences and saved views">
+    <!-- What the Maps app changes for its user: their preferences, saved views, overlays and saved places, each service acting
+        on the signed-in user's own (a saved view another user shared is read, never changed; an overlay or a places file
+        shared with them in Files is read through its drive's access, checked by the service, never changed here); and the
+        address and place search, which sends the text an explicit search names to the configured geocoder only. The
+        app's users and ADMIN, as the app. -->
+    <artifactGroups artifactGroupId="MAPS_APP_SERVICES" description="Maps: preferences, saved views, overlays, places and search">
         <artifacts artifactName="org.moqui.maps.MapServices.store#Preferences" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
         <artifacts artifactName="org.moqui.maps.MapServices.find#SavedViews" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
         <artifacts artifactName="org.moqui.maps.MapServices.store#SavedView" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
         <artifacts artifactName="org.moqui.maps.MapServices.delete#SavedView" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+        <artifacts artifactName="org.moqui.maps.MapServices.store#Overlay" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+        <artifacts artifactName="org.moqui.maps.MapServices.delete#Overlay" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+        <artifacts artifactName="org.moqui.maps.MapServices.find#Overlays" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+        <artifacts artifactName="org.moqui.maps.MapServices.get#OverlayContent" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+        <artifacts artifactName="org.moqui.maps.MapServices.find#OverlayFiles" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+        <artifacts artifactName="org.moqui.maps.MapServices.store#Place" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+        <artifacts artifactName="org.moqui.maps.MapServices.delete#Place" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+        <artifacts artifactName="org.moqui.maps.MapServices.find#Places" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
         <authz artifactAuthzId="MAPS_APP_SVC_USERS" userGroupId="MAPS_USERS" authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
         <authz artifactAuthzId="MAPS_APP_SVC_ADMIN" userGroupId="ADMIN" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
     </artifactGroups>

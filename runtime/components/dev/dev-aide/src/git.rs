@@ -152,6 +152,32 @@ impl Git {
         stdin: Option<&str>,
         progress: Option<Progress>,
     ) -> Result<Output, Error> {
+        self.run_inner(repo, mode, args, env, stdin, progress, None)
+            .map(|(output, _)| output)
+    }
+
+    /// A read whose output is kept to its first `max_stdout` bytes, the rest not read: git stops when its pipe
+    /// closes. Whether the output was cut (then the exit code is the broken pipe's, and the last line may be part of
+    /// one).
+    ///
+    /// # Errors
+    ///
+    /// As [`Git::run`].
+    pub fn read_capped(&self, repo: &Path, args: &[&str], max_stdout: usize) -> Result<(Output, bool), Error> {
+        self.run_inner(repo, Mode::Read, args, &[], None, None, Some(max_stdout))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn run_inner(
+        &self,
+        repo: &Path,
+        mode: Mode,
+        args: &[&str],
+        env: &[(&str, String)],
+        stdin: Option<&str>,
+        progress: Option<Progress>,
+        max_stdout: Option<usize>,
+    ) -> Result<(Output, bool), Error> {
         // a command that changes a repository, or reaches a remote, is never run under a fence or in a sim (an agent's
         // read tool, a preview): it would be real, and nothing undoes it
         if mode != Mode::Read {
@@ -194,16 +220,35 @@ impl Git {
                 let _ = pipe.write_all(text.as_bytes());
             });
         }
-        let reader = |pipe: Option<Box<dyn Read + Send>>| {
+        // the output, at most `max` bytes of it (and whether there was more); the pipe closes as the thread ends
+        let reader = |pipe: Option<Box<dyn Read + Send>>, max: Option<usize>| {
             std::thread::spawn(move || {
                 let mut bytes = Vec::new();
-                if let Some(mut pipe) = pipe {
-                    let _ = pipe.read_to_end(&mut bytes);
+                let mut capped = false;
+                if let Some(pipe) = pipe {
+                    match max {
+                        Some(max) => {
+                            let _ = pipe
+                                .take(u64::try_from(max).unwrap_or(u64::MAX).saturating_add(1))
+                                .read_to_end(&mut bytes);
+                            if bytes.len() > max {
+                                bytes.truncate(max);
+                                capped = true;
+                            }
+                        }
+                        None => {
+                            let mut pipe = pipe;
+                            let _ = pipe.read_to_end(&mut bytes);
+                        }
+                    }
                 }
-                String::from_utf8_lossy(&bytes).into_owned()
+                (String::from_utf8_lossy(&bytes).into_owned(), capped)
             })
         };
-        let stdout = reader(child.stdout.take().map(|pipe| Box::new(pipe) as Box<dyn Read + Send>));
+        let stdout = reader(
+            child.stdout.take().map(|pipe| Box::new(pipe) as Box<dyn Read + Send>),
+            max_stdout,
+        );
         let cancelled = Arc::new(AtomicBool::new(false));
         let (stderr, id) = match progress {
             Some(progress) => {
@@ -215,10 +260,14 @@ impl Git {
                     Some(id),
                 )
             }
-            None => (
-                reader(child.stderr.take().map(|pipe| Box::new(pipe) as Box<dyn Read + Send>)),
-                None,
-            ),
+            None => {
+                let pipe = child.stderr.take().map(|pipe| Box::new(pipe) as Box<dyn Read + Send>);
+                let errors = reader(pipe, None);
+                (
+                    std::thread::spawn(move || errors.join().map(|(text, _)| text).unwrap_or_default()),
+                    None,
+                )
+            }
         };
         let _registered = Registered(id);
         let timeout = match mode {
@@ -250,11 +299,15 @@ impl Git {
             }
             std::thread::sleep(Duration::from_millis(10));
         };
-        Ok(Output {
-            code: status.code(),
-            stdout: stdout.join().unwrap_or_default(),
-            stderr: stderr.join().unwrap_or_default(),
-        })
+        let (stdout, capped) = stdout.join().unwrap_or_default();
+        Ok((
+            Output {
+                code: status.code(),
+                stdout,
+                stderr: stderr.join().unwrap_or_default(),
+            },
+            capped,
+        ))
     }
 
     /// A read whose failure is an error.
@@ -534,15 +587,49 @@ pub fn parse_remotes(out: &str) -> Vec<(String, String)> {
     remotes
 }
 
-/// A commit message with a task trailer (`Task: PROJ-12`) after a blank line, unless the message has it already.
+/// Whether a task's key may name it in a commit: one short line (at most 100 bytes, no control character), so a key
+/// from a server or a request never adds lines of its own (a forged `Signed-off-by:`) to the message.
+#[must_use]
+pub fn task_key_valid(key: &str) -> bool {
+    !key.trim().is_empty() && key.len() <= 100 && !key.chars().any(char::is_control)
+}
+
+/// The trailer line of a task: `Task: PROJ-12` for a work item's key; `Fixes #12` for an issue of the repository by its
+/// number (plans/design-dev-aide.md 21.6), which closes it when the commit reaches the default branch; a line that is a
+/// closing keyword already (`Fixes PROJ-12`, `Closes #3`, `Resolves ...`) as it is.
+#[must_use]
+pub fn trailer_line(task: &str) -> String {
+    let task = task.trim();
+    let number = task
+        .strip_prefix('#')
+        .filter(|number| !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit()));
+    if number.is_some() {
+        return format!("Fixes {task}");
+    }
+    let keyword = ["Fixes ", "Closes ", "Resolves "]
+        .iter()
+        .any(|keyword| task.starts_with(keyword) && task.len() > keyword.len());
+    if keyword {
+        task.to_string()
+    } else {
+        format!("Task: {task}")
+    }
+}
+
+/// A commit message with a task's trailer ([`trailer_line`]) after a blank line, unless the message has it already.
 #[must_use]
 pub fn with_trailer(message: &str, task: Option<&str>) -> String {
     let message = message.trim_end();
     match task.map(str::trim).filter(|task| !task.is_empty()) {
-        Some(task) if !message.lines().any(|line| line.trim() == format!("Task: {task}")) => {
-            format!("{message}\n\nTask: {task}\n")
+        Some(task) => {
+            let line = trailer_line(task);
+            if message.lines().any(|have| have.trim() == line) {
+                format!("{message}\n")
+            } else {
+                format!("{message}\n\n{line}\n")
+            }
         }
-        _ => format!("{message}\n"),
+        None => format!("{message}\n"),
     }
 }
 
@@ -702,5 +789,21 @@ mod tests {
             "Add\n\nTask: PROJ-12\n"
         );
         assert_eq!(with_trailer("Add  \n", None), "Add\n");
+        // an issue by its number closes it; a closing keyword stays as written
+        assert_eq!(
+            with_trailer("Fix the total", Some("#12")),
+            "Fix the total\n\nFixes #12\n"
+        );
+        assert_eq!(with_trailer("Fix\n\nFixes #12", Some("#12")), "Fix\n\nFixes #12\n");
+        assert_eq!(with_trailer("Fix", Some("Closes PROJ-3")), "Fix\n\nCloses PROJ-3\n");
+        assert_eq!(with_trailer("Fix", Some("#12a")), "Fix\n\nTask: #12a\n");
+        // a key is one short line: a newline would add a trailer of its own
+        assert!(task_key_valid("PROJ-12") && task_key_valid("#12"));
+        assert!(!task_key_valid("PROJ-12\nSigned-off-by: Someone <x@example.com>"));
+        assert!(!task_key_valid("A\rB") && !task_key_valid(&"x".repeat(101)) && !task_key_valid(" "));
     }
 }
+
+#[cfg(test)]
+#[path = "git_cli_tests.rs"]
+mod cli_tests;

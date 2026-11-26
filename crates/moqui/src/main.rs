@@ -12,9 +12,10 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-// The framework's dev components (runtime/components/dev), in the packages with the dev tools (Dev and Debug). Naming
-// each keeps its `submit_component!` entry in the binary; it adds nothing unless its component loads. `./moq build`
-// generates a binary with these plus the add-on component crates in runtime/components/addon (target/moqui-app).
+// The framework's dev components (runtime/components/dev), in the packages with the dev tools (Maximal, the default,
+// and Debug; Lite only with `--features devtools`). Naming each keeps its `submit_component!` entry in the binary; it
+// adds nothing unless its component loads. `./moq build` generates a binary with these plus the add-on component
+// crates in runtime/components/addon (target/moqui-app).
 #[cfg(feature = "devtools")]
 use dev_aide as _;
 #[cfg(feature = "devtools")]

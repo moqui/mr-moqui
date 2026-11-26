@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- @Title@, a dev tool: load the test data (data/@Class@TestData.xml, of a data type of its own) and
+    try the mock service (service/@package@/@Class@MockServices.xml). Who may open it is in data/@Class@SecurityData.xml. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
+        require-authentication="true" default-menu-title="@Title@" menu-image="sym_o_construction" menu-image-type="icon">
+
+    <transition name="loadTestData"><service-call name="@package@.@Class@MockServices.load#TestData" out-map="loaded"/>
+        <actions><message type="success">Loaded ${loaded.recordsLoaded} test records</message></actions>
+        <default-response url="."/></transition>
+    <transition name="tryMock"><service-call name="@package@.@Class@MockServices.get#Rate" out-map="rate"/>
+        <actions><message type="info">${rate.fromCurrency} to ${rate.toCurrency}: ${rate.rate} (mock)</message></actions>
+        <default-response url="."/></transition>
+
+    <actions>
+        <entity-find entity-name="moqui.basic.Enumeration" list="testRecords">
+            <econdition field-name="enumTypeId" value="@Class@Test"/><order-by field-name="sequenceNum"/></entity-find>
+    </actions>
+    <widgets>
+        <container-box><box-header title="Test data"/><box-body>
+            <label type="p" text="Records for trying the apps by hand, from data/@Class@TestData.xml, loaded again here."/>
+            <form-single name="LoadTestDataForm" transition="loadTestData">
+                <field name="submitButton"><default-field title="Load test data"><submit/></default-field></field>
+            </form-single>
+        </box-body><box-body-nopad>
+            <form-list name="TestRecordList" list="testRecords" skip-form="true">
+                <field name="enumId"><default-field title="ID"><display/></default-field></field>
+                <field name="description"><default-field><display/></default-field></field>
+            </form-list>
+        </box-body-nopad></container-box>
+        <container-box><box-header title="Mock services"/><box-body>
+            <label type="p" text="get#Rate stands in for an outside rate service: the same parameters, a fixed answer, no network."/>
+            <form-single name="TryMockForm" transition="tryMock">
+                <field name="fromCurrency"><default-field title="From"><text-line size="5" default-value="USD"/></default-field></field>
+                <field name="toCurrency"><default-field title="To"><text-line size="5" default-value="EUR"/></default-field></field>
+                <field name="submitButton"><default-field title="Try"><submit/></default-field></field>
+            </form-single>
+        </box-body></container-box>
+    </widgets>
+</screen>

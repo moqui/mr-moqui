@@ -1237,18 +1237,23 @@ const AUTO_DEFINED: &str = r#"<services>
 
 /// The rows of the derived entity-auto services in the database index: written for a call to an entity-auto name, with
 /// the binding into its parameter; derived again when the entity's fields change; dropped while a file defines the id,
-/// and derived again when that file goes; and derived for a call indexed before its entity, once the entity comes.
+/// and derived again when that file goes; and derived for a call indexed before its entity, once the entity comes. A
+/// view entity's `alias-all` of the entity has the new field too, in the view's file.
 #[test]
 fn the_index_rows_derive_entity_auto_services() {
     if !crate::common::own_process() {
         return;
     }
+    let views = r#"<entities><view-entity entity-name="WidgetView" package="acme">
+        <member-entity entity-alias="W" entity-name="acme.Widget"/><alias-all entity-alias="W"/>
+    </view-entity></entities>"#;
     let files = [
         (
             "components/addon/acme-site/component.xml",
             r#"<component name="acme-site"/>"#,
         ),
         ("components/addon/acme-site/entity/AcmeEntities.xml", AUTO_ENTITIES),
+        ("components/addon/acme-site/entity/AcmeViews.xml", views),
         ("components/addon/acme-site/service/acme/WidgetServices.xml", AUTO_CALLS),
         ("components/addon/acme-site/service/acme/SaveServices.xml", AUTO_SAVE),
         ("components/addon/acme-site/screen/Widgets.xml", AUTO_SCREEN),
@@ -1359,6 +1364,19 @@ fn the_index_rows_derive_entity_auto_services() {
     assert_eq!(
         form_bound(&factory),
         [format!("{save_param}color"), format!("{save_param}widgetName")]
+    );
+    let view_field = index::describe(&factory, "field:acme.WidgetView.color")
+        .unwrap()
+        .map(|row| {
+            (
+                row.origin,
+                row.summary,
+                row.path.rsplit('/').next().unwrap_or_default().to_string(),
+            )
+        });
+    assert_eq!(
+        view_field,
+        Some(("alias-all".to_string(), "id".to_string(), "AcmeViews.xml".to_string()))
     );
 
     // a file defining the id: its service and parameters answer, the derived rows are gone
@@ -1734,6 +1752,215 @@ fn a_stamped_render_names_each_widgets_file() {
     assert!(!plain.contains("dbform:"));
 }
 
+/// Convert to site extension (plans/design-dev-aide.md 7.2, question 16): a DbForm that changes an upstream form (a
+/// required text field with a tooltip, a drop-down with options and a widget attribute, a dependency, a base field
+/// retitled and one made hidden) becomes the form merge of the site's screen-extend, after the field the site's merge has
+/// already; a dated DbForm is refused; a review's digest that no longer holds is refused and keeps the rows, and so does
+/// an accept whose file write fails after the rows were deleted (the transaction rolls them back); the accepted one
+/// deletes them and writes the file, and the form renders as it did.
+#[test]
+fn a_db_form_converts_to_a_site_extension() {
+    if !crate::common::own_process() {
+        return;
+    }
+    let screen = "<screen require-authentication=\"false\">\n    <widgets>\n        <form-single name=\"Facts\"><field name=\"upId\"><default-field title=\"Up Id\"><display/></default-field></field><field name=\"upNote\"><default-field title=\"Up Note\"><display/></default-field></field></form-single>\n    </widgets>\n</screen>\n";
+    let extend = "<screen-extend>\n    <form-single name=\"Facts\"><field name=\"extraNote\" after=\"upId\"><default-field title=\"Extra Note\"><display/></default-field></field></form-single>\n</screen-extend>\n";
+    let dev_aide = std::fs::canonicalize(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../runtime/components/dev/dev-aide"
+    ))
+    .unwrap();
+    let extend_path = "screen-extend/upstream-app/screen/UpApp/Detail.xml";
+    let files = [
+        ("components/addon/my-site/component.xml", SITE_COMPONENT),
+        (
+            "components/addon/my-site/screen-extend/upstream-app/screen/UpApp/Detail.xml",
+            extend,
+        ),
+        ("components/addon/upstream-app/component.xml", UPSTREAM_COMPONENT),
+        ("components/addon/upstream-app/screen/UpApp/Detail.xml", screen),
+    ];
+    let gate = start_with_files_and_links(
+        "dev-aide-dbform",
+        Some(&include_str!("../../../../runtime/components/dev/dev-aide/data/DevAideSecurityData.xml").replace(
+            "</entity-facade-xml>",
+            r#"    <moqui.screen.form.DbForm formId="DBF_CONVERT" description="Facts for the office" modifyXmlScreenForm="component://upstream-app/screen/UpApp/Detail.xml#Facts"/>
+    <moqui.screen.form.DbFormField formId="DBF_CONVERT" fieldName="dbNote" title="Db Note" tooltip="What the office notes" isRequired="Y" fieldTypeEnumId="DBFFT_text-line" layoutSequenceNum="1"/>
+    <moqui.screen.form.DbFormField formId="DBF_CONVERT" fieldName="dbKind" title="Db Kind" fieldTypeEnumId="DBFFT_drop-down" layoutSequenceNum="2"/>
+    <moqui.screen.form.DbFormFieldAttribute formId="DBF_CONVERT" fieldName="dbKind" attributeName="allow-empty" value="true"/>
+    <moqui.screen.form.DbFormFieldOption formId="DBF_CONVERT" fieldName="dbKind" sequenceNum="1" keyValue="A" text="Alpha Kind"/>
+    <moqui.screen.form.DbFormFieldOption formId="DBF_CONVERT" fieldName="dbKind" sequenceNum="2" keyValue="B" text="Beta Kind"/>
+    <moqui.screen.form.DbFormFieldDependency formId="DBF_CONVERT" dependencySeqId="01" sourceFieldName="dbNote" operator="not-empty" targetFieldName="dbKind" effect="show"/>
+    <moqui.screen.form.DbFormField formId="DBF_CONVERT" fieldName="upId" title="Up Number" fieldTypeEnumId="DBFFT_display" layoutSequenceNum="3"/>
+    <moqui.screen.form.DbFormField formId="DBF_CONVERT" fieldName="upNote" fieldTypeEnumId="DBFFT_hidden" layoutSequenceNum="4"/>
+    <moqui.screen.form.DbFormUserGroup formId="DBF_CONVERT" userGroupId="ADMIN"/>
+    <moqui.screen.form.DbForm formId="DBF_DATED" isDated="Y" modifyXmlScreenForm="component://upstream-app/screen/UpApp/Detail.xml#Facts"/>
+    <moqui.screen.form.DbFormField formId="DBF_DATED" fieldName="datedNote" title="Dated Note" fieldTypeEnumId="DBFFT_display"/>
+</entity-facade-xml>"#,
+        )),
+        &[("moqui_conf__instance__purpose", "dev"), ("moqui_conf__dev_aide__site_component", "my-site")],
+        &files,
+        &[(dev_aide.to_str().unwrap(), "components/dev/dev-aide")],
+    );
+    let factory = Arc::clone(gate.server.factory());
+    let site = gate.runtime.join("components/addon/my-site");
+    let render = || {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        moqui_core::user::internal_login_user("john.doe").unwrap();
+        moqui_core::screen::ScreenTest::new(&factory)
+            .root_screen("component://upstream-app/screen/UpApp/Detail.xml")
+            .render_mode("qvt")
+            .render("", BTreeMap::new())
+            .unwrap()
+            .text()
+    };
+    let rows = |entity: &str| {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        factory
+            .entity()
+            .unwrap()
+            .find(entity)
+            .unwrap()
+            .disable_authz()
+            .eq("formId", Value::string("DBF_CONVERT"))
+            .count()
+            .unwrap()
+    };
+    let before = render();
+    assert!(before.contains("Db Note") && before.contains("Beta Kind"), "{before}");
+    assert!(before.contains("Up Number") && !before.contains("Up Id"), "{before}");
+    let dated = call(
+        &factory,
+        "john.doe",
+        "org.moqui.devaide.ArtifactServices.get#DbFormConversion",
+        &[("formId", "DBF_DATED")],
+    )
+    .unwrap_err();
+    assert!(dated.contains("is dated"), "{dated}");
+
+    let changes = call(
+        &factory,
+        "john.doe",
+        "org.moqui.devaide.ArtifactServices.get#DbFormChanges",
+        &[],
+    )
+    .unwrap();
+    let listed = moqui_lib::json::to_json(&changes["dbForms"]);
+    assert!(
+        listed
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["formId"] == "DBF_CONVERT" && row["formName"] == "Facts"),
+        "{listed}"
+    );
+    let review = call(
+        &factory,
+        "john.doe",
+        "org.moqui.devaide.ArtifactServices.get#DbFormConversion",
+        &[("formId", "DBF_CONVERT")],
+    )
+    .unwrap();
+    assert_eq!(text(&review, "path"), extend_path);
+    let proposed = text(&review, "proposedText");
+    assert!(
+        proposed.contains(r#"title="Db Note" tooltip="What the office notes" required="true""#),
+        "{proposed}"
+    );
+    assert!(proposed.contains(r#"<option key="B" text="Beta Kind"/>"#), "{proposed}");
+    assert!(proposed.contains(r#"<drop-down allow-empty="true">"#), "{proposed}");
+    assert!(
+        proposed.contains(r#"<visible-when field="dbNote" value="" operator="not-empty"/>"#),
+        "{proposed}"
+    );
+    assert!(!proposed.contains("layoutSequenceNum"), "{proposed}");
+    // the base's fields as the DbForm changed them: retitled, and hidden
+    assert!(
+        proposed.contains(r#"<field name="upId">"#) && proposed.contains(r#"title="Up Number""#),
+        "{proposed}"
+    );
+    assert!(
+        proposed.contains(r#"<field name="upNote">"#) && proposed.contains("<hidden/>"),
+        "{proposed}"
+    );
+    // one merge, the site's field first and the DbForm's after it
+    assert_eq!(
+        proposed.matches("<form-single name=\"Facts\">").count(),
+        1,
+        "{proposed}"
+    );
+    assert!(proposed.find("extraNote").unwrap() < proposed.find("dbNote").unwrap());
+    let notes = moqui_lib::json::to_json(&review["notes"]).to_string();
+    assert!(notes.contains("ADMIN"), "the groups it applied to: {notes}");
+    assert!(
+        notes.contains("the one loaded last decides"),
+        "the merge order: {notes}"
+    );
+    assert!(text(&review, "diff").contains("+"), "{}", text(&review, "diff"));
+
+    // a review that no longer holds is refused and changes nothing
+    let convert = |digest: &str| {
+        call(
+            &factory,
+            "john.doe",
+            "org.moqui.devaide.ArtifactServices.convert#DbForm",
+            &[("formId", "DBF_CONVERT"), ("digest", digest)],
+        )
+    };
+    let stale = convert("0123").unwrap_err();
+    assert!(stale.contains("review the conversion again"), "{stale}");
+    assert_eq!(rows("moqui.screen.form.DbForm"), 1);
+    assert_eq!(std::fs::read_to_string(site.join(extend_path)).unwrap(), extend);
+
+    // a write that fails after the rows were deleted rolls the deletes back: the directory made read only
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = site.join(extend_path).parent().unwrap().to_path_buf();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+        // a user the mode does not stop (root) cannot see this case
+        let probe = dir.join(".probe");
+        if std::fs::write(&probe, "").is_ok() {
+            let _ = std::fs::remove_file(&probe);
+            eprintln!("skipped the failed write: the directory's mode does not stop this user");
+        } else {
+            let failed = convert(&text(&review, "digest")).unwrap_err();
+            assert!(!failed.contains("review the conversion again"), "{failed}");
+            assert_eq!(rows("moqui.screen.form.DbForm"), 1, "{failed}");
+            assert_eq!(rows("moqui.screen.form.DbFormField"), 4, "{failed}");
+            assert_eq!(rows("moqui.screen.form.DbFormFieldOption"), 2, "{failed}");
+            assert_eq!(std::fs::read_to_string(site.join(extend_path)).unwrap(), extend);
+        }
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    let converted = convert(&text(&review, "digest")).unwrap();
+    assert_eq!(text(&converted, "path"), extend_path);
+    for entity in [
+        "moqui.screen.form.DbForm",
+        "moqui.screen.form.DbFormField",
+        "moqui.screen.form.DbFormFieldAttribute",
+        "moqui.screen.form.DbFormFieldOption",
+        "moqui.screen.form.DbFormFieldDependency",
+        "moqui.screen.form.DbFormUserGroup",
+    ] {
+        assert_eq!(rows(entity), 0, "{entity}");
+    }
+    assert_eq!(std::fs::read_to_string(site.join(extend_path)).unwrap(), proposed);
+    let after = render();
+    assert!(after.contains("Db Note") && after.contains("Beta Kind"), "{after}");
+    assert_eq!(before, after, "the form renders as the DbForm made it");
+    // nothing is left to convert
+    assert!(call(
+        &factory,
+        "john.doe",
+        "org.moqui.devaide.ArtifactServices.get#DbFormConversion",
+        &[("formId", "DBF_CONVERT")]
+    )
+    .is_err());
+}
+
 const SCREENS: &str = "org.moqui.devaide.ScreenServices.";
 
 /// The screen tree's actions (plans/design-dev-aide.md 11.1): Set default and a menu index in the parent's file; Move
@@ -2086,9 +2313,10 @@ fn a_site_seca_runs_after_its_save() {
 }
 
 /// New component (`create#Component`, plans/design-dev-aide.md 12): a component from the component template
-/// (`runtime/components/dev/template`) in runtime/components/addon, or with dev in runtime/components/dev, of the part asked for,
-/// with a git repository of its own; a name taken, a name that is not one or an unknown part is refused, and the extend
-/// tier may not make one.
+/// (`runtime/components/dev/template`) in runtime/components/addon, or with dev in runtime/components/dev, of the part or
+/// kind asked for (a dev tool in runtime/components/dev unasked), with a git repository of its own and the remote asked for
+/// as its origin; a name taken, a name that is not one, an unknown part or kind, or a remote with a credential or a
+/// command in it is refused, and the extend tier may not make one.
 #[test]
 fn new_components_come_from_the_component_template() {
     if !crate::common::own_process() {
@@ -2151,10 +2379,51 @@ fn new_components_come_from_the_component_template() {
     assert!(api.join("service/demo-api.rest.xml").is_file());
     assert!(!api.join("screen").exists() && !api.join("MoquiConf.xml").exists());
 
+    // another kind, with a remote the repository starts with as origin; a dev tool goes in the dev set unasked
+    let native = create(
+        "john.doe",
+        &[
+            ("componentName", "demo-rates"),
+            ("kind", "native"),
+            ("gitRemote", "git@git.example.com:me/demo-rates.git"),
+        ],
+    )
+    .unwrap();
+    assert_eq!(text(&native, "rebuild"), "true");
+    assert_eq!(text(&native, "remoteAdded"), "true");
+    let rates = gate.runtime.join("components/addon/demo-rates");
+    assert!(rates.join("Cargo.toml").is_file() && rates.join("src/lib.rs").is_file());
+    let origin = std::process::Command::new("git")
+        .args(["-C", &rates.display().to_string(), "config", "remote.origin.url"])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&origin.stdout).trim(),
+        "git@git.example.com:me/demo-rates.git"
+    );
+    create("john.doe", &[("componentName", "demo-mocks"), ("kind", "dev-tool")]).unwrap();
+    let mocks = gate.runtime.join("components/dev/demo-mocks");
+    assert!(std::fs::read_to_string(mocks.join("component.xml"))
+        .unwrap()
+        .contains(r#"purpose="dev""#));
+    assert!(!gate.runtime.join("components/addon/demo-mocks").exists());
+    // a remote with a credential in it, or that runs a command, is refused before anything is made
+    for remote in ["https://ann:token@git.example.com/x.git", "ext::sh -c id"] {
+        let refused = create(
+            "john.doe",
+            &[("componentName", "demo-bad"), ("kind", "data"), ("gitRemote", remote)],
+        );
+        assert!(refused.is_err(), "{remote}");
+        assert!(!gate.runtime.join("components/addon/demo-bad").exists(), "{remote}");
+    }
+
     let taken = create("john.doe", &[("componentName", "demo-shop")]).unwrap_err();
     assert!(taken.contains("is there already"), "{taken}");
     assert!(create("john.doe", &[("componentName", "9lives")]).is_err());
     assert!(create("john.doe", &[("componentName", "other"), ("part", "both")]).is_err());
+    assert!(create("john.doe", &[("componentName", "other"), ("kind", "plugin")]).is_err());
     assert!(create("ext.user", &[("componentName", "ext-shop")]).is_err());
     assert!(!gate.runtime.join("components/addon/ext-shop").exists());
     // the template stays a template
