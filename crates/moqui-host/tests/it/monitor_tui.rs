@@ -419,7 +419,18 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
                 }
             }
             let _ = view.screen_text(100, 40);
-            let _ = view.screen_text(180, 80);
+            let text = view.screen_text(180, 80);
+            // DASH-UI-005, MON-B03: a release's time in the viewer's zone, not the raw UTC text of list#Releases
+            if name == "Monitor/Releases" {
+                let released = column_texts(&view, "ReleaseList", "Released");
+                assert!(
+                    !released.is_empty(),
+                    "release rows: {}",
+                    rows_text(&view, "ReleaseList")
+                );
+                assert!(released.iter().all(|time| shown_in_zone(time)), "{released:?}");
+                assert!(text.contains("Times shown in "), "{text}");
+            }
         }));
         if let Err(error) = result {
             let message = error
@@ -667,6 +678,13 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
                 .contains(&format!("traceId={TRACE}"))
         })
         .expect("a correlated log row");
+    // DASH-UI-005: each entry's time in the viewer's zone, not the hit's raw timestamp (the entry dialog keeps that)
+    let times = column_texts(&context, "LogContext", "Time");
+    assert!(
+        !times.is_empty() && times.iter().all(|time| shown_in_zone(time)) && !times.contains(&stamp),
+        "{times:?}"
+    );
+    assert!(context.screen_text(180, 60).contains("Times shown in "));
     focus(&mut context, "LogContext");
     for _ in 0..row {
         press(&mut context, Key::Down);
@@ -1032,6 +1050,24 @@ fn has_date(text: &str) -> bool {
             _ => byte.is_ascii_digit(),
         })
     })
+}
+/// Whether `time` is a date and time as `yyyy-MM-dd HH:mm` draws it, not ISO text (`T`, `Z`) or epoch millis.
+fn shown_in_zone(time: &str) -> bool {
+    has_date(time) && !time.contains(['T', 'Z']) && !has_millis(time)
+}
+/// The text of each row's cell under the column titled `title`.
+fn column_texts(view: &AppView<HostLink>, list: &str, title: &str) -> Vec<String> {
+    let form = view.session().list(list).unwrap_or_else(|| panic!("no list {list}"));
+    let at = form
+        .columns
+        .iter()
+        .position(|column| column.title == title)
+        .unwrap_or_else(|| panic!("no column {title} in {list}"));
+    form.rows
+        .iter()
+        .filter_map(|row| row.cells.get(at))
+        .map(|cell| cell.text().to_string())
+        .collect()
 }
 /// The url of the link of the current screen whose url holds `fragment`.
 fn link_url(view: &AppView<HostLink>, fragment: &str) -> String {
