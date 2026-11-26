@@ -17,7 +17,8 @@
 //! [`ServicePools::inline`] is the executor with no threads (`plans/archive/Wasm.md`). Async calls and
 //! `run_job_now` queue on the guard and run on the calling thread at a drain point:
 //! [`ExecutionContextFactory::run_pending`], or when the outermost execution context on the thread
-//! exits with no transaction in place. `callFuture()` runs at once, in a fresh context, under a new
+//! exits with no transaction in place, except on a thread started with
+//! [`crate::context::framework_thread`]. `callFuture()` runs at once, in a fresh context, under a new
 //! transaction. That new transaction suspends the caller's, so it needs a second connection: on a
 //! single-writer database (SQLite) a callee that writes while the caller holds a write
 //! transaction fails instead of waiting. The queue has no cap, so nothing spills to a one-shot job.

@@ -41,10 +41,25 @@ thread_local! {
 /// ([`super::Executor::Inline`]): the factory's queued work belongs to the thread that drains it (a test, the browser's
 /// worker), and run here it would be taken from under that thread's `run_pending`, or run while that thread is still
 /// in its transaction. The threaded executor never drains there, so a server is not changed by it.
+///
+/// Not for a thread that owns the queue: a test's thread, the spec runner's (`spawn_script_thread`), the browser's
+/// worker. moqui-host's server threads run only under the threaded executor and are left unmarked.
+///
+/// The mark lasts while `body` runs and is put back as it was when `body` ends or panics, so a job wrapped with it on a
+/// reused thread never leaves that thread unable to drain, and a nested use keeps the outer mark.
 pub fn framework_thread<T, F: FnOnce() -> T>(body: F) -> impl FnOnce() -> T {
     move || {
-        FRAMEWORK_THREAD.with(|mark| mark.set(true));
+        let _restore = MarkRestore(FRAMEWORK_THREAD.with(|mark| mark.replace(true)));
         body()
+    }
+}
+
+/// Puts this thread's [`FRAMEWORK_THREAD`] mark back to what it was before [`framework_thread`] set it.
+struct MarkRestore(bool);
+
+impl Drop for MarkRestore {
+    fn drop(&mut self) {
+        let _ = FRAMEWORK_THREAD.try_with(|mark| mark.set(self.0));
     }
 }
 
