@@ -36,8 +36,8 @@ use crate::context::Error;
 use crate::script::bounded::BoundedMap;
 use crate::script::run::{self, ScriptLimit, DEADLINE};
 
-/// `walker::walk` in JavaScript, over the tree's JSON text: the node objects (`name`, `text`, `attrs`, `src`, `inert`,
-/// `parent`, `children`) first, then the macros in post-order, each node's `source` set as its macro returns. The
+/// `walker::walk` in JavaScript, over the tree's JSON text: the node objects (`name`, `text`, `attrs`, `src`, `path`,
+/// `inert`, `parent`, `children`) first, then the macros in post-order, each node's `source` set as its macro returns. The
 /// result is `{source}`, or how the walk ended: `{missing}` for an element with no macro when there is no fallback,
 /// `{converting}` for a macro entry that is not a function or a macro that did not return a string (the `value`, the
 /// type it is `to` be, and whether it is a `proxy`, for the rquickjs conversion error Rust words), `{thrown}` for a
@@ -72,6 +72,7 @@ const WALK_JS: &str = r#"(function (stampedNames) {
     const build = (n, parent) => {
         const o = { name: n.name, text: n.text, attrs: n.attrs };
         if (n.src != null) o.src = n.src;
+        if (n.path != null) o.path = n.path;
         o.inert = n.inert;
         if (parent) o.parent = parent;
         o.children = [];
@@ -142,9 +143,10 @@ const WALK_FILE: &str = "moqui-walker";
 /// The file name of a macro source in a stack: QuickJS's for the scripts it evaluates (`compiled::eval_shared`).
 const MACROS_FILE: &str = "eval_script";
 
-/// Sets a support object's `options.debug` and `options.mode`, as `walker::load_chain_for` does.
-const OPTIONS_JS: &str =
-    "(function (support, debug, mode) { support.options.debug = debug; support.options.mode = mode; })";
+/// Sets a support object's `options.debug`, `options.mode` and `options.trace` (an XML actions text traced for a Try,
+/// `script::trace`), as `walker::load_chain_for` does.
+const OPTIONS_JS: &str = "(function (support, debug, mode, trace) { support.options.debug = debug; \
+     support.options.mode = mode; support.options.trace = trace; })";
 
 /// The generator runtime's heap cap, as the QuickJS engine's memory limit the walker runs in on QuickJS.
 const HEAP_CAP: usize = 64 * 1024 * 1024;
@@ -341,6 +343,7 @@ fn chain(
     modules: &[&str],
     debug: bool,
     mode: &str,
+    trace: bool,
 ) -> Result<Rc<Vec<ObjectRef>>, Error> {
     if let Some(found) = cache_key.and_then(|key| generator.chains.borrow().get(key).cloned()) {
         return Ok(found);
@@ -353,7 +356,12 @@ fn chain(
     ctx.call(
         &generator.options,
         Value::Undefined,
-        &[Value::Object(support.clone()), Value::Bool(debug), js_text(mode)?],
+        &[
+            Value::Object(support.clone()),
+            Value::Bool(debug),
+            js_text(mode)?,
+            Value::Bool(trace),
+        ],
     )
     .map_err(|err| failed(context, err))?;
     let mut results = vec![support];
@@ -432,7 +440,8 @@ fn walk(
     text_property(context, &result, "source")?.ok_or_else(|| Error::new("the walker gave no source"))
 }
 
-/// The script XML actions generate for `root`, on quickjs-oxide: `actions::generate_with`'s walk.
+/// The script XML actions generate for `root`, on quickjs-oxide: `actions::generate_with`'s walk. With `trace`, each
+/// statement element is between calls that count it and read what it set (`script::trace`), named by its path.
 ///
 /// # Errors
 ///
@@ -442,8 +451,9 @@ pub(crate) fn generate_actions(
     support: &str,
     actions: &str,
     debug: bool,
+    trace: bool,
 ) -> Result<String, Error> {
-    limited(|| actions_on_generator(root, support, actions, debug))
+    limited(|| actions_on_generator(root, support, actions, debug, trace))
 }
 
 fn actions_on_generator(
@@ -451,12 +461,18 @@ fn actions_on_generator(
     support: &str,
     actions: &str,
     debug: bool,
+    trace: bool,
 ) -> Result<String, Error> {
     let generator = generator()?;
-    let name = if debug { "xml-actions-debug" } else { "xml-actions" };
-    let loaded = chain(&generator, Some(name), support, &[actions], debug, "")?;
+    let name = match (debug, trace) {
+        (false, false) => "xml-actions",
+        (true, false) => "xml-actions-debug",
+        (false, true) => "xml-actions-trace",
+        (true, true) => "xml-actions-debug-trace",
+    };
+    let loaded = chain(&generator, Some(name), support, &[actions], debug, "", trace)?;
     let macros = loaded.last().ok_or_else(|| Error::new("no XML actions macros"))?;
-    let tree = crate::script::walker::tree_json(root, &HashSet::new(), None)?;
+    let tree = crate::script::walker::tree_json_at(root, &HashSet::new(), None, trace)?;
     #[cfg(test)]
     moqui_lib::sync::lock(&GENERATED_ACTIONS).push(tree.clone());
     walk(&generator, macros, &tree, "XML action macro", None)
@@ -490,7 +506,7 @@ pub(crate) fn generated_actions_with(marker: &str) -> bool {
 #[cfg(test)]
 pub(crate) fn action_macro_names(support: &str, module: &str) -> Result<Vec<String>, Error> {
     let generator = generator()?;
-    let loaded = chain(&generator, None, support, &[module], false, "")?;
+    let loaded = chain(&generator, None, support, &[module], false, "", false)?;
     let macros = loaded.last().ok_or_else(|| Error::new("no XML actions macros"))?;
     let context = &generator.context;
     let keys = context.own_property_keys(macros).map_err(|err| failed(context, err))?;
@@ -539,7 +555,7 @@ fn screen_module_on_generator(
     debug: bool,
 ) -> Result<ScreenModule, Error> {
     let generator = generator()?;
-    let loaded = chain(&generator, None, support, &[screen_support, source], debug, mode)?;
+    let loaded = chain(&generator, None, support, &[screen_support, source], debug, mode, false)?;
     let (Some(module), Some(support)) = (loaded.last(), loaded.get(loaded.len().wrapping_sub(2))) else {
         return Err(Error::new(format!("no macro module for {mode}")));
     };

@@ -53,6 +53,12 @@ const GLOBALS_JS: &str = concat!(
     for (const name of ["compare", "numberToWords", "numberToWordsWithDecimal", "__compareOrder", "__inDateRange"]) {
         global[name] = hidden[name];
     }
+    // the trace calls of a traced XML actions script (`script::trace`): a long list goes as its first items
+    const traceBound = (value) => Array.isArray(value) && value.length > 10
+        ? value.slice(0, 10).concat(["... " + (value.length - 10) + " more"]) : value;
+    global.__moquiTrace = function __moquiTrace(op, path, names, values) {
+        hidden.__moquiTrace(op, path, names, values === undefined ? undefined : values.map(traceBound));
+    };
     global.System = { getProperty: hidden.getProperty, isPropertySet: hidden.isPropertySet,
         propertyMatches: hidden.propertyMatches, secretCodeHash: hidden.secretCodeHash };
     const web = helpers.WebUtilities, string = helpers.StringUtilities, collection = helpers.CollectionUtilities;
@@ -186,6 +192,14 @@ pub(crate) static SHIM: Shim = Shim {
             number_to_words_with_decimal
         ),
         method!("global", "__compareOrder", [Value, Value], None, leaf, compare_order),
+        method!(
+            "global",
+            "__moquiTrace",
+            [Int, Text, OptValue, OptValue],
+            None,
+            leaf,
+            trace_record
+        ),
         method!(
             "global",
             "__inDateRange",
@@ -616,6 +630,14 @@ fn compare_order(call: &mut Call<'_>) -> Result<Ret, HostError> {
         Ordering::Greater => 1,
     }
     .into())
+}
+
+/// `__moquiTrace(op, path, names, values)`: a trace call of a traced XML actions script (`script::trace::record`).
+fn trace_record(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let op = call.int(0).unwrap_or(0);
+    let path = call.text(1).unwrap_or_default().to_string();
+    crate::script::trace::record(op, &path, call.value(2), call.value(3));
+    Ok(Ret::Undefined)
 }
 
 /// `__inDateRange(from, thru, valid)`: whether `valid` (now when empty) is in `[from, thru)`.

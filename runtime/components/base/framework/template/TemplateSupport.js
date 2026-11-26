@@ -44,7 +44,7 @@
     const RAW_END = "\u0002";
     const RAW_MARKS = /[\u0001\u0002]/g;
 
-    const options = { debug: false };
+    const options = { debug: false, trace: false };
 
     const attr = (node, name) => {
         const attrs = node.attrs || {};
@@ -177,6 +177,23 @@
         macro: () => null
     };
 
+    // A traced statement (options.trace, a Try's trace: `script::trace`): a call that counts it before it, by its path
+    // under the actions element, and one after it with the names it set (the attributes that name what an element
+    // sets, when each is a plain name or a dotted path of them), each read so that a name not set reads undefined.
+    const SETS = ["field", "value-field", "list", "out-map", "count-field", "to-value-field", "entry", "key"];
+    const PLAIN = /^[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*$/;
+    const traced = (node, out) => {
+        const id = JSON.stringify(node.path);
+        const names = [];
+        for (const name of SETS) {
+            const value = attr(node, name);
+            if (PLAIN.test(value) && value !== "context" && value !== "ec" && names.indexOf(value) < 0) names.push(value);
+        }
+        const reads = names.map((name) => `(() => { try { return ${name}; } catch (e) { return undefined; } })()`);
+        const after = names.length ? `, ${JSON.stringify(names)}, [${reads.join(", ")}]` : "";
+        return `__moquiTrace(0, ${id});\n${out}__moquiTrace(1, ${id}${after});\n`;
+    };
+
     const kind = (name) => (fn) => (node, children) => {
         let out;
         try {
@@ -188,6 +205,8 @@
         } catch (e) {
             throw new Error(`${describe(node)}: ${e.message}`);
         }
+        const tracing = options.trace && name === "stmt" && out !== "";
+        if (tracing && typeof node.path === "string" && node.path !== "") out = traced(node, out);
         if (options.debug && name === "stmt" && out !== "") out = `// ${describe(node)}\n${out}`;
         return out;
     };
