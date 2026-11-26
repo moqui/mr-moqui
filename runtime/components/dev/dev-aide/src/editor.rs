@@ -159,6 +159,64 @@ fn same_keys(a: &str, b: &str) -> bool {
         .any(|mac| matches!((pressed(a, mac), pressed(b, mac)), (Some(a), Some(b)) if a == b))
 }
 
+/// The Workspace's own commands, shell key map actions (scope `dev-aide`, `DevAide.js` WORKSPACE_KEYS): their id,
+/// label and default keys in the shell's form. An editor command is not rebound to their keys.
+pub(crate) const SHELL_ACTIONS: &[(&str, &str, &str)] = &[
+    ("devSave", "Save", "Mod+S"),
+    ("devGotoFile", "Go to file", "Mod+P"),
+    ("devGotoArtifact", "Go to artifact", "Mod+Shift+O"),
+    ("devSearchFiles", "Search in files", "Mod+Shift+F"),
+];
+
+/// The shell's preference of key map bindings, JSON {scope: {id: keys}}.
+pub const KEYMAP: &str = "KEYMAP";
+
+/// A shell key map's keys ("Mod+Shift+S", the chord "g s") as CodeMirror writes them ("Mod-Shift-s", "g s"), as
+/// `DevAide.js` codeMirrorKeys does.
+pub(crate) fn codemirror_keys(keys: &str) -> String {
+    keys.split_whitespace()
+        .map(|step| {
+            let mut parts: Vec<&str> = match step.strip_suffix("++").filter(|rest| !rest.is_empty()) {
+                Some(rest) => rest.split('+').chain(std::iter::once("+")).collect(),
+                None => step.split('+').collect(),
+            };
+            let key = parts.pop().unwrap_or_default();
+            let name = if key.chars().count() == 1 {
+                key.to_lowercase()
+            } else if key.eq_ignore_ascii_case("esc") || key.eq_ignore_ascii_case("escape") {
+                "Escape".to_string()
+            } else {
+                key.to_string()
+            };
+            parts
+                .iter()
+                .map(|part| (*part).to_string())
+                .chain(std::iter::once(name))
+                .collect::<Vec<_>>()
+                .join("-")
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The shell actions' labels and keys in CodeMirror's form: the `KEYMAP` preference's binding (`keymap`, its text), else
+/// the default.
+pub(crate) fn shell_keys(keymap: Option<&str>) -> Vec<(&'static str, String)> {
+    let overrides: serde_json::Value = keymap
+        .and_then(|text| serde_json::from_str(text).ok())
+        .unwrap_or(serde_json::Value::Null);
+    SHELL_ACTIONS
+        .iter()
+        .map(|(id, label, keys)| {
+            let bound = overrides["dev-aide"][*id]
+                .as_str()
+                .filter(|keys| !keys.trim().is_empty())
+                .unwrap_or(keys);
+            (*label, codemirror_keys(bound))
+        })
+        .collect()
+}
+
 fn command(name: &str) -> Option<&'static Command> {
     COMMANDS.iter().find(|command| command.name == name)
 }
@@ -198,10 +256,17 @@ impl EditorSettings {
             .unwrap_or_else(|| command.keys.to_string())
     }
 
-    /// `keys` for the command `name`, or its default when empty; refused for an unknown command, keys not in
-    /// CodeMirror's form, or keys another command runs on (on a Mac, where Mod is Cmd, or elsewhere, where it is Ctrl),
-    /// its default keys too.
+    /// [`Self::rebind_beside`] the shell actions' default keys, for the tests.
+    #[cfg(test)]
     pub(crate) fn rebind(&mut self, name: &str, keys: &str) -> Result<(), String> {
+        self.rebind_beside(name, keys, &shell_keys(None))
+    }
+
+    /// `keys` for the command `name`, or its default when empty; refused for an unknown command, keys not in
+    /// CodeMirror's form, keys another command runs on (on a Mac, where Mod is Cmd, or elsewhere, where it is Ctrl), its
+    /// default keys too, or the keys of a shell action (`shell`, each its label and keys in CodeMirror's form): the
+    /// Workspace's own commands keep theirs.
+    pub(crate) fn rebind_beside(&mut self, name: &str, keys: &str, shell: &[(&str, String)]) -> Result<(), String> {
         let Some(target) = command(name) else {
             return Err(format!("there is no editor command {name}"));
         };
@@ -219,6 +284,11 @@ impl EditorSettings {
             .find(|other| other.name != name && same_keys(&self.keys_of(other), keys))
         {
             return Err(format!("{keys} is the key of {}: rebind that first", other.label));
+        }
+        if let Some((label, _)) = shell.iter().find(|(_, bound)| same_keys(bound, keys)) {
+            return Err(format!(
+                "{keys} is the key of the Workspace's {label}, a shell action (the KEYMAP preference rebinds it)"
+            ));
         }
         if default {
             self.keys.remove(name);
@@ -344,8 +414,13 @@ fn store_editor_key(
 ) -> Result<Parameters, LibError> {
     tier::require(Tier::View)?;
     let mut settings = current();
+    let keymap = moqui_core::user::get_preference(KEYMAP).ok().flatten();
     settings
-        .rebind(&text(parameters, "command"), &text(parameters, "keys"))
+        .rebind_beside(
+            &text(parameters, "command"),
+            &text(parameters, "keys"),
+            &shell_keys(keymap.as_deref()),
+        )
         .map_err(LibError::new)?;
     store(&settings)?;
     let mut out = settings.answer();

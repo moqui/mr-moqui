@@ -152,3 +152,22 @@ fn search_answers_by_line_what_replace_matches_over_the_whole_text() {
     // an empty match is no match, in Search as in Replace
     assert!(matched_lines(&compile(r"\b", true, true).unwrap(), crlf, 10).is_empty());
 }
+
+#[test]
+fn a_replacement_s_expansion_is_bounded_before_it_runs() {
+    assert_eq!(group_refs("${1}a $name $$ $ ${x}"), 3);
+    // each ${0} puts the whole match in again
+    let many = "${0}".repeat(100);
+    let regex = Replacer::new("x+", &many, true, true).unwrap();
+    let text = format!("<{}>", "x".repeat(1000));
+    // refused before the expansion, which could be 100 times the match
+    assert!(regex
+        .replace(&text, &[0].into_iter().collect(), 50_000)
+        .unwrap_err()
+        .contains("over 50000"));
+    assert!(regex.replace("<xx>", &[0].into_iter().collect(), 50_000).is_ok());
+    // a preview shows such a replacement as written, cut
+    let (hits, _) = regex.hits(&text, 1);
+    assert!(hits[0].after.chars().count() <= SHOWN_CHARS + 1);
+    assert!(hits[0].after.contains("${0}"));
+}

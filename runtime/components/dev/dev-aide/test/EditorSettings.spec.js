@@ -75,8 +75,9 @@ feature("a command's keys rebound over the keymap; keys another has, or not a ke
         // the same key written another way, or as it is pressed on the platform, is the same key
         const taken = call("store#EditorKey", {command: "redo", keys: "ctrl-E"})
         const notKeys = call("store#EditorKey", {command: "redo", keys: "Mod-"})
-        // Save is the shell's devSave, in the text editor too
+        // Save is the shell's devSave, in the text editor too; and no editor command takes a shell action's keys
         const save = call("store#EditorKey", {command: "save", keys: "Alt-s"})
+        const shell = call("store#EditorKey", {command: "redo", keys: "Mod-p"})
         const unknown = call("store#EditorKey", {command: "nothing", keys: "Mod-q"})
         // the old key of the rebound command is free now
         const freed = call("store#EditorKey", {command: "find", keys: "Mod-z"})
@@ -86,15 +87,16 @@ feature("a command's keys rebound over the keymap; keys another has, or not a ke
         call("store#EditorKey", {command: "find", keys: ""})
         const back = call("store#EditorKey", {command: "undo", keys: ""})
         // the other settings are kept by a key's store
-        return {rebound, taken, notKeys, save, unknown, freed, settings, held, back}
+        return {rebound, taken, notKeys, save, shell, unknown, freed, settings, held, back}
     },
-    then({rebound, taken, notKeys, save, unknown, freed, settings, held, back}) {
+    then({rebound, taken, notKeys, save, shell, unknown, freed, settings, held, back}) {
         rebound.errors == ""
         keysOf(rebound.out, "undo") == "Mod-e"
         taken.errors.includes("is the key of Undo")
         notKeys.errors.includes("is not a key")
         unknown.errors.includes("no editor command nothing")
         save.errors.includes("no editor command save")
+        shell.errors.includes("Go to file, a shell action")
         freed.errors == ""
         settings.out.settings.keys.undo == "Mod-e"
         settings.out.settings.keys.find == "Mod-z"

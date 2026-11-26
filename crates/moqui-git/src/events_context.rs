@@ -101,6 +101,11 @@ impl Replay<'_> {
             self.truncated = true;
             return (Vec::new(), true);
         }
+        // the budget spent: no walk, and the list is short
+        if self.budget == 0 {
+            self.truncated = true;
+            return (Vec::new(), true);
+        }
         let room = room.min(self.budget);
         let (commits, more) = match revwalk::new_commits_at_most(store, &[tip], hidden, room) {
             Ok(walked) => walked,
@@ -246,7 +251,16 @@ impl GitProvider {
                     .filter_map(|hex| ObjectId::from_hex(hex.as_bytes()).ok())
                     .filter_map(|id| peel_to_commit(store, &id).ok().flatten())
                     .collect();
-                let gains: Vec<Gained> = asked
+                // the refs a context is made of: every ref for pre-receive, those inside the limit for pre-ref-update
+                let shown = if event == "pre-receive" {
+                    asked.len()
+                } else {
+                    asked.len().min(limit)
+                };
+                if shown < asked.len() {
+                    replay.truncated = true;
+                }
+                let gains: Vec<Gained> = asked[..shown]
                     .iter()
                     .map(|(reference, made)| {
                         if *made {
@@ -270,10 +284,6 @@ impl GitProvider {
                     });
                 } else {
                     for ((reference, _), gain) in asked.iter().zip(&gains) {
-                        if out.len() >= limit {
-                            replay.truncated = true;
-                            break;
-                        }
                         let mut fields = with(&base, ref_fields(reference, &branch_ref));
                         insert_new_commits(&mut fields, store, &gain.ids, gain.truncated);
                         out.push(EventContext {

@@ -62,6 +62,27 @@ pub(crate) struct Replacer {
     /// A regular expression's replacement expands `$1` and `${name}`; a text's is taken as it is.
     expand: bool,
     replacement: String,
+    /// The group references of an expanding replacement (`${1}`, `$name`): each puts at most its match's length in.
+    group_refs: usize,
+}
+
+/// The group references of a replacement as the regex crate expands it: each `$` that is not `$$`.
+pub(crate) fn group_refs(replacement: &str) -> usize {
+    let mut count = 0;
+    let mut chars = replacement.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch != '$' {
+            continue;
+        }
+        match chars.peek() {
+            Some('$') => {
+                chars.next();
+            }
+            Some(next) if *next == '{' || *next == '_' || next.is_alphanumeric() => count += 1,
+            _ => {}
+        }
+    }
+    count
 }
 
 /// A replacement's `$1` as `${1}`, so the group's number ends at its last digit (`$1a` is group 1, then `a`) where
@@ -157,14 +178,16 @@ impl Replacer {
                 "the regular expression matches an empty text, so it would replace between every character".into(),
             );
         }
+        let replacement = if regex {
+            numbered_groups(replacement)
+        } else {
+            replacement.to_string()
+        };
         Ok(Self {
             regex: compiled,
             expand: regex,
-            replacement: if regex {
-                numbered_groups(replacement)
-            } else {
-                replacement.to_string()
-            },
+            group_refs: if regex { group_refs(&replacement) } else { 0 },
+            replacement,
         })
     }
 
@@ -178,6 +201,14 @@ impl Replacer {
         self.regex
             .captures_iter(text)
             .filter(|captures| captures.get(0).is_some_and(|found| !found.is_empty()))
+    }
+
+    /// The most bytes the replacement of a match of `len` bytes can be: the replacement's own and, for each of its
+    /// group references, the match again (a group is at most its match).
+    fn replacement_bound(&self, len: usize) -> usize {
+        self.replacement
+            .len()
+            .saturating_add(self.group_refs.saturating_mul(len))
     }
 
     /// The replacement of one match.
@@ -215,7 +246,12 @@ impl Replacer {
                 ""
             };
             let before = &text[line_start..found.start()];
-            let replaced = self.replacement_of(&captures);
+            // a replacement that could be longer than a shown line is shown as written, not expanded
+            let replaced = if self.replacement_bound(found.len()) > SHOWN_CHARS * 4 {
+                self.replacement.clone()
+            } else {
+                self.replacement_of(&captures)
+            };
             hits.push(Hit {
                 index: hits.len(),
                 line,
@@ -248,6 +284,10 @@ impl Replacer {
                 continue;
             }
             out.push_str(&text[last..found.start()]);
+            // refused before it is expanded when it could take the text past the bound
+            if out.len().saturating_add(self.replacement_bound(found.len())) as u64 > max_bytes {
+                return Err(too_long());
+            }
             out.push_str(&self.replacement_of(&captures));
             last = found.end();
             count += 1;
@@ -281,14 +321,65 @@ struct Chosen {
     matches: Vec<usize>,
 }
 
-/// The files of `root` a preview looks in: what git tracks and the untracked files it does not ignore (a walk of a
-/// plain root), at most [`MAX_SCANNED`], each whose path has `filter`.
-pub(crate) fn candidates(context: &Context, root: &Root, filter: &str) -> Vec<String> {
+/// The most bytes, and the longest time, one search or preview reads files for.
+pub(crate) const MAX_READ_BYTES: u64 = 64 * 1024 * 1024;
+pub(crate) const MAX_SCAN_TIME: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// A file a scan read: its path in the root and its text.
+pub(crate) struct Scanned<'a> {
+    pub relative: &'a str,
+    pub hash: String,
+    pub body: &'a str,
+}
+
+/// Each file of `root` whose path has `filter` (the filter before the cap of [`MAX_SCANNED`]), as Search in files
+/// and Replace read them: what git tracks and the untracked files it does not ignore, or a walk of a plain root;
+/// confined as an open is; text up to `max-edit-bytes`, a file an editor would not open to edit passed over; at most
+/// [`MAX_READ_BYTES`] in all and for [`MAX_SCAN_TIME`]. `each` answers whether to go on. Whether the scan stopped
+/// short: the cap, the budget, or `each`.
+pub(crate) fn scan_files(
+    context: &Context,
+    root: &Root,
+    filter: &str,
+    each: &mut dyn FnMut(&Scanned<'_>) -> bool,
+) -> bool {
     let filter = filter.trim_matches('*');
-    workspace::root_files(context, root, MAX_SCANNED)
-        .into_iter()
-        .filter(|path| filter.is_empty() || path.contains(filter))
-        .collect()
+    let (paths, capped) = workspace::root_files_where(context, root, MAX_SCANNED, &|path| {
+        filter.is_empty() || path.contains(filter)
+    });
+    let started = std::time::Instant::now();
+    let mut read: u64 = 0;
+    for path in paths {
+        if read > MAX_READ_BYTES || started.elapsed() > MAX_SCAN_TIME {
+            return true;
+        }
+        // what an open would refuse is not read: the runtime's denied files, its conf below the full tier
+        let Ok(resolved) = context.resolve(root, &path) else {
+            continue;
+        };
+        let Ok(meta) = std::fs::metadata(&resolved.path) else {
+            continue;
+        };
+        if !meta.is_file() || meta.len() > context.settings.max_edit_bytes {
+            continue;
+        }
+        let Ok(bytes) = std::fs::read(&resolved.path) else {
+            continue;
+        };
+        read += bytes.len() as u64;
+        let Some((body, _)) = decode(&bytes) else {
+            continue;
+        };
+        let file = Scanned {
+            relative: &resolved.relative,
+            hash: sha256(&bytes),
+            body: &body,
+        };
+        if !each(&file) {
+            return true;
+        }
+    }
+    capped
 }
 
 /// `replace#Files`: the preview of a replace across a root's files, or with `files` the replace of the matches chosen
@@ -325,48 +416,32 @@ pub(crate) fn replace_files(
 fn preview(context: &Context, root: &Root, replacer: &Replacer, filter: &str) -> Parameters {
     let mut files = Vec::new();
     let mut total = 0;
-    let mut truncated = false;
-    for path in candidates(context, root, filter) {
+    let stopped = scan_files(context, root, filter, &mut |file| {
         if files.len() >= MAX_FILES || total >= MAX_MATCHES {
-            truncated = true;
-            break;
+            return false;
         }
-        // what an open would refuse is not shown: the runtime's denied files, its conf below the full tier
-        let Ok(resolved) = context.resolve(root, &path) else {
-            continue;
-        };
-        // a file an editor would not open to edit is not read
-        if std::fs::metadata(&resolved.path).map_or(true, |meta| {
-            !meta.is_file() || meta.len() > context.settings.max_edit_bytes
-        }) {
-            continue;
+        if !replacer.finds(file.body) {
+            return true;
         }
-        let Ok(bytes) = std::fs::read(&resolved.path) else {
-            continue;
-        };
-        let Some((body, _)) = decode(&bytes) else {
-            continue;
-        };
-        if !replacer.finds(&body) {
-            continue;
-        }
-        let (hits, more) = replacer.hits(&body, MAX_FILE_MATCHES.min(MAX_MATCHES - total));
+        let (hits, more) = replacer.hits(file.body, MAX_FILE_MATCHES.min(MAX_MATCHES - total));
         if hits.is_empty() {
-            continue;
+            return true;
         }
         total += hits.len();
         let refused = context
-            .may_write(root, &resolved.relative)
+            .may_write(root, file.relative)
             .err()
             .map(|err| err.message().to_string());
         files.push(json!({
-            "path": resolved.relative,
-            "hash": sha256(&bytes),
+            "path": file.relative,
+            "hash": file.hash,
             "matches": hits,
             "more": more,
             "refused": refused,
         }));
-    }
+        true
+    });
+    let truncated = stopped || files.len() >= MAX_FILES || total >= MAX_MATCHES;
     let mut out = Parameters::new();
     out.insert("files".into(), json_value(&files));
     out.insert(

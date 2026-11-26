@@ -306,17 +306,27 @@ pub(crate) fn new_commits(
     walk.limited()
 }
 
-/// Whether `ancestor` is `descendant` or reachable from it: a ref moving from `ancestor` to `descendant` is a
-/// fast-forward.
-/// [`new_commits`] stopping after `max` commits, newest first, and whether there are more: a bounded walk, for a replay
-/// of a change's events (`events::context`). It reads with [`Walk::next`], so a commit dated older than a descendant of
-/// it that a hidden tip also reaches may be listed, where the full walk ([`Walk::limited`]) leaves it out.
+/// [`new_commits`], at most `max` of them, newest first, and whether there are more: a bounded walk, for a replay of
+/// a change's events (`events::context`). It stops as soon as no visible commit is queued (a visible commit is queued
+/// only from a visible one), so a tip that is already hidden, or a few commits above a hidden one, costs those few
+/// pops and not the hidden history. A commit dated older than a descendant of it that a hidden tip reaches only later
+/// may be listed, where the full walk ([`Walk::limited`]) leaves it out.
 pub(crate) fn new_commits_at_most(
     store: &dyn GitStore,
     tips: &[ObjectId],
     hidden: &[ObjectId],
     max: usize,
 ) -> Result<(Vec<CommitInfo>, bool), Error> {
+    walk_at_most(store, tips, hidden, max).map(|(commits, more, _)| (commits, more))
+}
+
+/// [`new_commits_at_most`] with the commits the walk popped, for its test.
+fn walk_at_most(
+    store: &dyn GitStore,
+    tips: &[ObjectId],
+    hidden: &[ObjectId],
+    max: usize,
+) -> Result<(Vec<CommitInfo>, bool, usize), Error> {
     let mut walk = Walk::new(store);
     for tip in hidden {
         walk.push(*tip, true)?;
@@ -324,16 +334,34 @@ pub(crate) fn new_commits_at_most(
     for tip in tips {
         walk.push(*tip, false)?;
     }
-    let mut out = Vec::new();
-    while let Some(commit) = walk.next()? {
-        if out.len() >= max {
-            return Ok((out, true));
+    let mut order = Vec::new();
+    let mut more = false;
+    let mut pops = 0;
+    while walk.visible_queued > 0 {
+        let Some((id, hidden)) = walk.pop()? else { break };
+        pops += 1;
+        if hidden {
+            continue;
         }
-        out.push(commit);
+        if order.len() >= max {
+            more = true;
+            break;
+        }
+        order.push(id);
     }
-    Ok((out, false))
+    // a commit popped as visible that a hidden tip reached after it is not new
+    let commits = order
+        .into_iter()
+        .filter_map(|id| {
+            let node = &walk.nodes[&id];
+            (!node.hidden).then(|| node.commit.clone())
+        })
+        .collect();
+    Ok((commits, more, pops))
 }
 
+/// Whether `ancestor` is `descendant` or reachable from it: a ref moving from `ancestor` to `descendant` is a
+/// fast-forward.
 pub(crate) fn is_ancestor(store: &dyn GitStore, ancestor: &ObjectId, descendant: &ObjectId) -> Result<bool, Error> {
     if ancestor == descendant {
         return Ok(true);
@@ -409,6 +437,31 @@ mod tests {
         // and the other way: the visible side's old-dated commit is new
         let found = new_commits(&store, &[hidden_tip], &[visible]).unwrap();
         assert_eq!(names(&store, &found), ["hidden", "skewed"]);
+    }
+
+    #[test]
+    fn a_bounded_walk_stops_when_nothing_visible_is_queued() {
+        let store = MemoryStore::default();
+        let mut tip = commit(&store, "c0", 1000, &[]);
+        for n in 1..3000 {
+            tip = commit(&store, &format!("c{n}"), 1000 + n, &[tip]);
+        }
+        // a ref made at a commit the repository had: nothing new, and not a walk of its history
+        let (found, more, pops) = walk_at_most(&store, &[tip], &[tip], 50).unwrap();
+        assert!(found.is_empty() && !more);
+        assert!(pops <= 2, "{pops} pops");
+        // three commits above a hidden tip: those three, in a few pops
+        let mut top = tip;
+        for n in 0..3 {
+            top = commit(&store, &format!("new{n}"), 9000 + n, &[top]);
+        }
+        let (found, more, pops) = walk_at_most(&store, &[top], &[tip], 50).unwrap();
+        assert_eq!(names(&store, &found), ["new2", "new1", "new0"]);
+        assert!(!more);
+        assert!(pops <= 6, "{pops} pops");
+        // at most `max`, and says there are more
+        let (found, more, _) = walk_at_most(&store, &[top], &[], 2).unwrap();
+        assert_eq!((found.len(), more), (2, true));
     }
 
     #[test]

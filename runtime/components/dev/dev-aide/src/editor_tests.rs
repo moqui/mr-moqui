@@ -104,6 +104,28 @@ fn a_command_rebound_its_default_back_and_a_key_another_command_has_refused() {
 }
 
 #[test]
+fn an_editor_command_does_not_take_the_keys_of_a_shell_action() {
+    assert_eq!(codemirror_keys("Mod+Shift+S"), "Mod-Shift-s");
+    assert_eq!(codemirror_keys("Ctrl++"), "Ctrl-+");
+    assert_eq!(codemirror_keys("g s"), "g s");
+    assert_eq!(codemirror_keys("Esc"), "Escape");
+    let mut settings = EditorSettings::default();
+    // the defaults: Save is Mod+S, Go to file Mod+P
+    assert!(settings.rebind("undo", "Mod-p").unwrap_err().contains("Go to file"));
+    assert!(settings.rebind("undo", "ctrl-S").unwrap_err().contains("Save"));
+    // as the KEYMAP preference binds them: Go to file moved to Mod+E, so Mod-p is free and Mod-e is not
+    let keymap = r#"{"dev-aide": {"devGotoFile": "Mod+E"}, "global": {"assist": "Mod+P"}}"#;
+    let shell = shell_keys(Some(keymap));
+    settings.rebind_beside("undo", "Mod-p", &shell).unwrap();
+    assert!(settings
+        .rebind_beside("redo", "Mod-e", &shell)
+        .unwrap_err()
+        .contains("Go to file"));
+    // a preference that is not JSON is the defaults
+    assert_eq!(shell_keys(Some("not json")), shell_keys(None));
+}
+
+#[test]
 fn the_answer_has_every_command_with_its_keys_now() {
     let mut settings = EditorSettings::default();
     settings.rebind("toggleComment", "Alt-c").unwrap();

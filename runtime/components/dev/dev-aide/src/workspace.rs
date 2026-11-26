@@ -929,17 +929,31 @@ fn delete_path(
 /// The files of a root a search or Go to file reads: what git tracks and the untracked files it does not ignore, or a
 /// walk of a plain root that leaves out hidden directories and build output.
 pub(crate) fn root_files(context: &Context, root: &Root, limit: usize) -> Vec<String> {
+    root_files_where(context, root, limit, &|_| true).0
+}
+
+/// [`root_files`] that `keep` takes (a search's path filter, before the cap), at most `limit`, and whether there were
+/// more.
+pub(crate) fn root_files_where(
+    context: &Context,
+    root: &Root,
+    limit: usize,
+    keep: &dyn Fn(&str) -> bool,
+) -> (Vec<String>, bool) {
     if root.kind == RootKind::Git {
         if let Ok(out) = context.git().read(
             &root.path,
             &["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
         ) {
-            return out
+            let mut files: Vec<String> = out
                 .split('\0')
-                .filter(|path| !path.is_empty())
-                .take(limit)
+                .filter(|path| !path.is_empty() && keep(path))
+                .take(limit.saturating_add(1))
                 .map(str::to_string)
                 .collect();
+            let more = files.len() > limit;
+            files.truncate(limit);
+            return (files, more);
         }
     }
     let mut files = Vec::new();
@@ -968,16 +982,16 @@ pub(crate) fn root_files(context: &Context, root: &Root, limit: usize) -> Vec<St
                 if context.resolve(root, &path).is_ok() {
                     stack.push((entry.path(), path));
                 }
-            } else {
-                files.push(path);
+            } else if keep(&path) {
                 if files.len() >= limit {
-                    return files;
+                    return (files, true);
                 }
+                files.push(path);
             }
         }
     }
     files.sort();
-    files
+    (files, false)
 }
 
 /// `find#Files`: every file of a root, for Go to file (the client filters).
@@ -993,6 +1007,9 @@ fn find_files(
     out.insert("files".into(), json_value(&files));
     Ok(out)
 }
+
+/// The most bytes of `git grep`'s output a search reads.
+const GREP_MAX_BYTES: usize = 1 << 20;
 
 /// `search#Files`: lines matching `query` (text, or a regular expression with `regex`), at most 500: a text with `git
 /// grep` in a repository (its .gitignore respected); a regular expression, and any query in a plain root, by Rust's
@@ -1021,9 +1038,9 @@ fn search_files(
     const LIMIT: usize = 500;
     let mut results = Vec::new();
     // text through git grep; a regular expression by Rust's, as Replace across files reads it, so the two agree
+    let truncated;
     if root.kind == RootKind::Git && !regex {
-        let mut args = vec!["grep", "-n", "-I", "--no-color", "-z", "--untracked"];
-        args.push(if regex { "-E" } else { "-F" });
+        let mut args = vec!["grep", "-n", "-I", "--no-color", "-z", "--untracked", "-F"];
         if !case {
             args.push("-i");
         }
@@ -1031,12 +1048,19 @@ fn search_files(
         if !filter.is_empty() {
             args.push(&filter);
         }
-        let output = context.git().run(&root.path, git::Mode::Read, &args, &[], None)?;
-        // exit 1 is "no match"
-        if output.code != Some(0) && output.code != Some(1) {
+        // the first lines only: git stops at its closed pipe, not reading the rest of the root
+        let (output, capped) = context.git().read_capped(&root.path, &args, GREP_MAX_BYTES)?;
+        // exit 1 is "no match"; a cut output ends at the broken pipe
+        if !capped && output.code != Some(0) && output.code != Some(1) {
             return Err(LibError::new(format!("git grep: {}", output.stderr.trim())));
         }
-        for line in output.stdout.lines().take(LIMIT) {
+        truncated = capped;
+        let mut lines: Vec<&str> = output.stdout.lines().collect();
+        if capped {
+            // the last line may be part of one
+            lines.pop();
+        }
+        for line in lines.into_iter().take(LIMIT) {
             let mut parts = line.splitn(3, '\0');
             if let (Some(path), Some(number), Some(text)) = (parts.next(), parts.next(), parts.next()) {
                 // what an open would refuse is not shown: the runtime's denied files, its conf below the full tier
@@ -1051,36 +1075,15 @@ fn search_files(
     } else {
         // over the whole text, as Replace across files matches (`\n` across lines), answered by line
         let matcher = crate::replace::compile(&query, regex, case).map_err(LibError::new)?;
-        'files: for path in root_files(&context, root, 20_000) {
-            if !filter.is_empty() && !path.contains(filter.trim_matches('*')) {
-                continue;
+        truncated = crate::replace::scan_files(&context, root, &filter, &mut |file| {
+            for (line, text) in crate::replace::matched_lines(&matcher, file.body, LIMIT - results.len()) {
+                results.push(serde_json::json!({ "path": file.relative, "line": line, "text": text }));
             }
-            // confined as an open is: a symlink leading out, .git and the runtime's denied directories are passed over
-            let Ok(resolved) = context.resolve(root, &path) else {
-                continue;
-            };
-            // a file an editor would not open to edit is not read
-            if std::fs::metadata(&resolved.path).map_or(true, |meta| {
-                !meta.is_file() || meta.len() > context.settings.max_edit_bytes
-            }) {
-                continue;
-            }
-            let Ok(bytes) = std::fs::read(&resolved.path) else {
-                continue;
-            };
-            let Some((body, _)) = decode(&bytes) else {
-                continue;
-            };
-            for (line, text) in crate::replace::matched_lines(&matcher, &body, LIMIT - results.len()) {
-                results.push(serde_json::json!({ "path": path, "line": line, "text": text }));
-                if results.len() >= LIMIT {
-                    break 'files;
-                }
-            }
-        }
+            results.len() < LIMIT
+        });
     }
     let mut out = Parameters::new();
-    out.insert("truncated".into(), Value::Bool(results.len() >= LIMIT));
+    out.insert("truncated".into(), Value::Bool(truncated || results.len() >= LIMIT));
     out.insert("results".into(), json_value(&results));
     Ok(out)
 }

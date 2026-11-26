@@ -604,8 +604,11 @@
             if (this.restoreDrawer) this.restoreDrawer();
             this.unmounted = true;
             if (this.keysOff) this.keysOff();
-            // the editor settings are the Workspace's: the next page's editors have CodeMirror's
-            this.setEditorSettings(null);
+            // the editor settings are the Workspaces': the next page's editors have CodeMirror's once the last one goes
+            if (this.holdsSettings) {
+                devAide.settingsHolders = Math.max(0, (devAide.settingsHolders || 1) - 1);
+                if (!devAide.settingsHolders) this.setEditorSettings(null);
+            }
             const assist = moqui.assist;
             if (assist) {
                 if (assist.editorState) assist.editorState = null;
@@ -1091,7 +1094,8 @@
             copyPath(target) { if (target && root.navigator && root.navigator.clipboard) root.navigator.clipboard.writeText(target.path); },
             // ---- search and go to file ----
             runSearch() {
-                if (!this.search.query) return;
+                // one search at a time: a second Enter waits for the first
+                if (!this.search.query || this.search.running) return;
                 this.search.running = true;
                 this.get("search", { rootId: this.rootId, query: this.search.query, regex: this.search.regex, caseSensitive: this.search.caseSensitive,
                     pathFilter: this.search.pathFilter }).then((answer) => {
@@ -1104,7 +1108,7 @@
                     caseSensitive: this.search.caseSensitive, pathFilter: this.search.pathFilter };
             },
             previewReplace() {
-                if (!this.search.query) return;
+                if (!this.search.query || this.replace.running) return;
                 const replace = this.replace;
                 replace.running = true; replace.result = null;
                 // Replace sends what this preview showed, whatever is typed since
@@ -1657,6 +1661,7 @@
             loadEditorSettings() {
                 const apply = (settings) => {
                     if (this.unmounted) return;
+                    if (!this.holdsSettings) { this.holdsSettings = true; devAide.settingsHolders = (devAide.settingsHolders || 0) + 1; }
                     // Save's keys are the shell action's (devSave), in the text editor too
                     const save = this.saveKeys();
                     if (save) settings.keys = Object.assign({}, settings.keys, { save });

@@ -152,3 +152,21 @@ feature("Search in files and Replace read a regular expression alike, across lin
         preview.out.files[0].matches[0].line == 2
     }
 })
+
+feature("a text is searched with git grep in a repository root, its output read up to a cap", {
+    when() {
+        const roots = ec.service.sync().name("org.moqui.devaide.WorkspaceServices.get#Roots").call().roots || []
+        const repository = roots.find(root => root.kind == "git")
+        const searched = repository
+            ? ec.service.sync().name("org.moqui.devaide.WorkspaceServices.search#Files")
+                  .parameters({rootId: repository.id, query: "throw-away root the guided editors", pathFilter: "runtime/components/dev/dev-aide/test"})
+                  .call() || {}
+            : null
+        ec.message.clearErrors()
+        return {repository, searched}
+    },
+    then({repository, searched}) {
+        !repository || searched.results.some(hit => hit.path.endsWith("test/GuidedFixture.js") && hit.line == 3)
+        !repository || searched.truncated == false
+    }
+})
