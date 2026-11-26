@@ -718,33 +718,49 @@ fn a_postmaster_of_an_earlier_image_is_taken_over_and_stopped() {
 
 #[test]
 fn only_a_gone_owner_hands_its_postmaster_over() {
-    let me = 100;
-    let live = |pid: u32| pid == me || pid == 200;
-    let owner = |pid: u32, image: Option<&str>| Owner {
+    let live = |pid: u32| pid == 100 || pid == 200;
+    let owner = |pid: u32, image: Option<&str>, namespace: Option<&str>| Owner {
         pid,
         image: image.map(str::to_string),
+        namespace: namespace.map(str::to_string),
     };
-    assert!(!takes_over(None, me, "a", live), "no owner file: adopted as before");
+    let me = owner(100, Some("a"), Some("pid:[1]"));
+    assert!(!takes_over(None, &me, live), "no owner file: adopted as before");
     assert!(
-        !takes_over(Some(&owner(200, Some("b"))), me, "a", live),
+        !takes_over(Some(&owner(200, Some("b"), Some("pid:[1]"))), &me, live),
         "a live owner keeps its postmaster"
     );
     assert!(
-        !takes_over(Some(&owner(me, Some("a"))), me, "a", live),
+        !takes_over(Some(&owner(100, Some("a"), Some("pid:[1]"))), &me, live),
         "a second handle in the owner's image"
     );
     assert!(
-        takes_over(Some(&owner(300, Some("b"))), me, "a", live),
+        takes_over(Some(&owner(300, Some("b"), Some("pid:[1]"))), &me, live),
         "the owner is gone"
     );
     // an exec keeps the process id: the image that wrote the file is gone, and this one takes the postmaster over
     assert!(
-        takes_over(Some(&owner(me, Some("before"))), me, "a", live),
+        takes_over(Some(&owner(100, Some("before"), Some("pid:[1]"))), &me, live),
         "an earlier image of this process"
     );
     assert!(
-        takes_over(Some(&owner(me, None)), me, "a", live),
+        takes_over(Some(&owner(100, None, None)), &me, live),
         "this process's id from an older build's file"
+    );
+    // another PID namespace (a second container on the runtime's volume, each its pid 1): another process, whose
+    // liveness this one cannot tell, whatever its id
+    let container = owner(1, Some("a"), Some("pid:[1]"));
+    assert!(
+        !takes_over(Some(&owner(1, Some("b"), Some("pid:[2]"))), &container, |_| false),
+        "the same id in another namespace"
+    );
+    assert!(
+        !takes_over(Some(&owner(7, Some("b"), Some("pid:[2]"))), &container, |_| false),
+        "another id in another namespace"
+    );
+    assert!(
+        takes_over(Some(&owner(1, Some("b"), None)), &container, |_| false),
+        "a file with no namespace counts as this one's"
     );
 }
 
@@ -755,16 +771,29 @@ fn the_owner_file_round_trips() {
     std::fs::create_dir_all(&dir).unwrap();
     assert_eq!(owner_pid(&dir), None);
     write_owner(&dir);
+    assert_eq!(owner_of(&dir), Some(Owner::this_image()));
+    #[cfg(target_os = "linux")]
+    assert!(
+        Owner::this_image()
+            .namespace
+            .is_some_and(|namespace| namespace.starts_with("pid:[")),
+        "{:?}",
+        Owner::this_image()
+    );
+    // the image token: time and a random part, never empty or the clock alone
+    let token = image_token();
+    let (time, random) = token.split_once('-').unwrap_or_else(|| panic!("{token}"));
+    assert!(!time.is_empty() && random.len() == 16, "{token}");
+    // an older build's file names the process alone
+    std::fs::write(dir.join(OWNER_FILE), "1234\n").unwrap();
     assert_eq!(
         owner_of(&dir),
         Some(Owner {
-            pid: std::process::id(),
-            image: Some(image_token().to_string())
+            pid: 1234,
+            image: None,
+            namespace: None
         })
     );
-    // an older build's file names the process alone
-    std::fs::write(dir.join(OWNER_FILE), "1234\n").unwrap();
-    assert_eq!(owner_of(&dir), Some(Owner { pid: 1234, image: None }));
     write_owner(&dir);
     assert_eq!(owner_pid(&dir), Some(std::process::id()));
     remove_owner(&dir);

@@ -702,7 +702,7 @@ mod cluster {
         }
         let (mut cluster, driver) = launch(dir, data_dir, options, Some(lock.port))?;
         let owner = owner_of(data_dir);
-        if takes_over(owner.as_ref(), std::process::id(), image_token(), process_live) {
+        if takes_over(owner.as_ref(), &Owner::this_image(), process_live) {
             tracing::warn!(
                 "Postmaster {} of {} was started by process {} (image {}), which is gone; this process takes it over \
                  and stops it",
@@ -720,42 +720,83 @@ mod cluster {
         Ok((cluster, driver))
     }
 
-    /// What the owner file records: the process that owns the postmaster, and the image of it that does. An exec (a
-    /// restart from the app, `run_again` in the host) keeps the process id and starts a new image, which must take the
-    /// postmaster over to stop it, so the id alone does not name the owner.
+    /// What the owner file records: the process that owns the postmaster, the image of it that does, and (on Linux) its
+    /// PID namespace. An exec (a restart from the app, `run_again` in the host) keeps the process id and starts a new
+    /// image, which must take the postmaster over to stop it, so the id alone does not name the owner; and the same id
+    /// in another namespace (two containers sharing a runtime volume, each its pid 1) is another process.
     #[derive(Clone, Debug, PartialEq, Eq)]
     pub(crate) struct Owner {
         pub pid: u32,
         /// [`image_token`] of the image that wrote the file; none in a file of an older build.
         pub image: Option<String>,
+        /// The `/proc/self/ns/pid` link of the writer (`pid:[4026531836]`); none off Linux or from an older build.
+        pub namespace: Option<String>,
     }
 
-    /// A value this image of the process makes once, when it first names an owner, and an exec does not keep: the time
-    /// it was made, in nanoseconds. Two images of one process never make it in the same nanosecond.
-    pub(crate) fn image_token() -> &'static str {
-        static TOKEN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-        TOKEN.get_or_init(|| {
-            let nanos = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |since| since.as_nanos());
-            format!("{nanos:x}")
-        })
-    }
-
-    /// Whether a live postmaster whose owner file names `owner` is taken over by process `me` in its image `my_image`:
-    /// only when that owner is gone, another process that no longer runs or an earlier image of this one (replaced by
-    /// exec, so it can stop nothing). A postmaster with no owner file, or whose owner still runs, is only adopted and
-    /// keeps running: a server whose cluster `save-db` reaches, and a second handle in the owner's own image (a backup
-    /// run in the server).
-    pub(crate) fn takes_over(owner: Option<&Owner>, me: u32, my_image: &str, live: impl Fn(u32) -> bool) -> bool {
-        match owner {
-            None => false,
-            Some(owner) if owner.pid != me => !live(owner.pid),
-            Some(owner) => owner.image.as_deref() != Some(my_image),
+    impl Owner {
+        /// This image of this process.
+        pub(crate) fn this_image() -> Self {
+            Self {
+                pid: std::process::id(),
+                image: Some(image_token().to_string()),
+                namespace: pid_namespace(),
+            }
         }
     }
 
-    /// The owner named in `data_dir`'s owner file (`<pid> <image>`, or `<pid>` from an older build), if it reads.
+    /// A value this image of the process makes once, when it first names an owner, and an exec does not keep: the time
+    /// it was made, in nanoseconds, with a random part, so a clock before the epoch or one that stands still still
+    /// tells two images apart.
+    pub(crate) fn image_token() -> &'static str {
+        static TOKEN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+        TOKEN.get_or_init(|| {
+            use std::hash::{BuildHasher as _, Hasher as _};
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |since| since.as_nanos());
+            // the standard library seeds RandomState from the system's randomness, once per image
+            let random = std::collections::hash_map::RandomState::new().build_hasher().finish();
+            format!("{nanos:x}-{random:016x}")
+        })
+    }
+
+    /// This process's PID namespace, as `/proc/self/ns/pid` names it; none where there is no such link.
+    pub(crate) fn pid_namespace() -> Option<String> {
+        #[cfg(target_os = "linux")]
+        {
+            std::fs::read_link("/proc/self/ns/pid")
+                .ok()
+                .map(|link| link.to_string_lossy().into_owned())
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            None
+        }
+    }
+
+    /// Whether a live postmaster whose owner file names `owner` is taken over by `me` (this image of this process):
+    /// only when that owner is gone, another process that no longer runs or an earlier image of this one (replaced by
+    /// exec, so it can stop nothing). A postmaster with no owner file, or whose owner still runs, is only adopted and
+    /// keeps running: a server whose cluster `save-db` reaches, and a second handle in the owner's own image (a backup
+    /// run in the server). An owner in another PID namespace is another process whose liveness cannot be told from
+    /// here, whatever its id: adopted only.
+    pub(crate) fn takes_over(owner: Option<&Owner>, me: &Owner, live: impl Fn(u32) -> bool) -> bool {
+        let Some(owner) = owner else {
+            return false;
+        };
+        if let (Some(theirs), Some(mine)) = (&owner.namespace, &me.namespace) {
+            if theirs != mine {
+                return false;
+            }
+        }
+        if owner.pid != me.pid {
+            return !live(owner.pid);
+        }
+        owner.image != me.image
+    }
+
+    /// The owner named in `data_dir`'s owner file (`<pid> <image> [<namespace>]`, or `<pid>` from an older build), if
+    /// it reads.
     pub(crate) fn owner_of(data_dir: &Path) -> Option<Owner> {
         let text = std::fs::read_to_string(data_dir.join(OWNER_FILE)).ok()?;
         let mut fields = text.split_whitespace();
@@ -763,11 +804,12 @@ mod cluster {
         Some(Owner {
             pid,
             image: fields.next().map(str::to_string),
+            namespace: fields.next().map(str::to_string),
         })
     }
 
-    /// The owner process named in `data_dir`'s owner file.
-    #[cfg(test)]
+    /// The owner process named in `data_dir`'s owner file, for the cluster's tests (Unix only).
+    #[cfg(all(test, unix))]
     pub(crate) fn owner_pid(data_dir: &Path) -> Option<u32> {
         owner_of(data_dir).map(|owner| owner.pid)
     }
@@ -776,7 +818,17 @@ mod cluster {
     /// process leaves behind is only adopted by the next start, so a failure is logged and the start goes on.
     pub(crate) fn write_owner(data_dir: &Path) {
         let path = data_dir.join(OWNER_FILE);
-        if let Err(err) = std::fs::write(&path, format!("{} {}\n", std::process::id(), image_token())) {
+        let me = Owner::this_image();
+        let mut line = format!("{} {}", me.pid, me.image.unwrap_or_default());
+        if let Some(namespace) = me
+            .namespace
+            .filter(|namespace| !namespace.contains(char::is_whitespace))
+        {
+            line.push(' ');
+            line.push_str(&namespace);
+        }
+        line.push('\n');
+        if let Err(err) = std::fs::write(&path, line) {
             tracing::error!("could not write {}: {err}", path.display());
         }
     }
