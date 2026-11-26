@@ -1374,28 +1374,34 @@ impl EntityFacade {
         // the fields a row so far set, which every statement from then on binds
         let mut bound_fields = vec![false; fields.len()];
         let mut plain: Vec<Arc<FieldMap>> = Vec::new();
+        // the stamp a create sets, the same for every row of a transaction
+        let stamp = self.write_stamp(entity_name);
         loop {
             let first = plain.len();
             // a row's fields as sealed where sealing changed them, else none: the row binds its plain fields
             let mut sealed: Vec<Option<FieldMap>> = Vec::with_capacity(per_statement);
-            for row in rows.by_ref().take(per_statement) {
-                let fields = of_entity(row)?.into_fields();
-                let owned = if defaults {
-                    self.apply_field_defaults(entity_name, &fields)?
-                } else {
-                    fields
-                };
-                let values = self.normalize_values(entity_name, owned, false)?;
-                self.require_pk(entity_name, &values)?;
-                fk::enforce(self, entity_name, &values, &mut stack)?;
-                sealed.push(
-                    match self.seal_values(entity_name, "create", Cow::Borrowed(&values), None)? {
-                        Cow::Owned(changed) => Some(changed),
-                        Cow::Borrowed(_) => None,
-                    },
-                );
-                plain.push(Arc::new(values));
-            }
+            // the statement's rows prepared under one look-up of the entity
+            self.with_entity(entity_name, |entity, _, _| {
+                for row in rows.by_ref().take(per_statement) {
+                    let fields = of_entity(row)?.into_fields();
+                    let owned = if defaults {
+                        self.apply_field_defaults(entity_name, &fields)?
+                    } else {
+                        fields
+                    };
+                    let values = convert_fields(entity, owned, Some(|| stamp.clone()));
+                    pk_values(entity, &values)?;
+                    fk::enforce(self, entity_name, &values, &mut stack)?;
+                    sealed.push(
+                        match field_rw::before_write_shared(self, entity, "create", Cow::Borrowed(&values), None)? {
+                            Cow::Owned(changed) => Some(changed),
+                            Cow::Borrowed(_) => None,
+                        },
+                    );
+                    plain.push(Arc::new(values));
+                }
+                Ok(())
+            })?;
             if sealed.is_empty() {
                 break;
             }
@@ -1978,30 +1984,15 @@ impl EntityFacade {
     pub(crate) fn normalize_values(
         &self,
         entity_name: &str,
-        mut values: FieldMap,
+        values: FieldMap,
         update: bool,
     ) -> Result<FieldMap, Error> {
         self.with_entity(entity_name, |entity, _, _| {
-            // Converted in place: the map is usually all fields of the entity, so it is not built again.
-            let mut known = 0;
-            for field in &entity.fields {
-                let Some(value) = values.get_mut(field.name.as_str()) else {
-                    continue;
-                };
-                known += 1;
-                let java = field.java_type.as_str();
-                // Text is a script's or a caller's, so a timestamp without an offset is in the session time zone.
-                if !moqui_lib::object::is_java_type(value, java) {
-                    *value = crate::hooks::basic_convert(value, java).value;
-                }
-            }
-            if known != values.len() {
-                values.retain(|name, _| entity.field(name).is_some());
-            }
-            if !update && entity.field(STAMP).is_some() && values.get(STAMP).is_none_or(Value::is_null) {
-                values.insert(Arc::from(STAMP), self.write_stamp(entity_name));
-            }
-            Ok(values)
+            Ok(convert_fields(
+                entity,
+                values,
+                (!update).then_some(|| self.write_stamp(entity_name)),
+            ))
         })
     }
 
@@ -2046,6 +2037,33 @@ impl EntityFacade {
             }
         })
     }
+}
+
+/// [`EntityFacade::normalize_values`] of `entity`: each field converted to its type, a field the entity does not have
+/// left out, and with `stamp` (a create) a missing `lastUpdatedStamp` set to what it gives.
+fn convert_fields(entity: &EntityDefinition, mut values: FieldMap, stamp: Option<impl FnOnce() -> Value>) -> FieldMap {
+    // Converted in place: the map is usually all fields of the entity, so it is not built again.
+    let mut known = 0;
+    for field in &entity.fields {
+        let Some(value) = values.get_mut(field.name.as_str()) else {
+            continue;
+        };
+        known += 1;
+        let java = field.java_type.as_str();
+        // Text is a script's or a caller's, so a timestamp without an offset is in the session time zone.
+        if !moqui_lib::object::is_java_type(value, java) {
+            *value = crate::hooks::basic_convert(value, java).value;
+        }
+    }
+    if known != values.len() {
+        values.retain(|name, _| entity.field(name).is_some());
+    }
+    if let Some(stamp) = stamp {
+        if entity.field(STAMP).is_some() && values.get(STAMP).is_none_or(Value::is_null) {
+            values.insert(Arc::from(STAMP), stamp());
+        }
+    }
+    values
 }
 
 fn pk_values(entity: &EntityDefinition, values: &FieldMap) -> Result<FieldMap, Error> {

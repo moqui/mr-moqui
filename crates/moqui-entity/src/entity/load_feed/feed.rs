@@ -151,8 +151,9 @@ pub(crate) fn note_touch(
 }
 
 /// [`note_touch`] for the creates of `rows`, all of `entity_name`, that one call wrote (`EntityFacade::create_values`):
-/// the frame's registration and whether the feed keeps the values decided once for them all. Out of a transaction
-/// each is fed as [`note_touch`] feeds it.
+/// the frame's registration and whether the feed keeps the values decided once for them all, and where it keeps none
+/// one touch for them all, as the commit reads a touch with no values only for its entity. Out of a transaction each
+/// is fed as [`note_touch`] feeds it.
 pub(crate) fn note_creates(facade: &EntityFacade, entity_name: &str, rows: &[Arc<FieldMap>]) {
     let Some(tx) = facade.transactions_for(entity_name).ok() else {
         return;
@@ -172,18 +173,21 @@ pub(crate) fn note_creates(facade: &EntityFacade, entity_name: &str, rows: &[Arc
     }
     let keep_fields = feed_keeps_values(facade, entity_name);
     let origin_agent = keep_fields.then(|| (crate::hooks::get().agent_id)()).flatten();
+    let touch = |fields: Option<Arc<FieldMap>>| Touch {
+        entity_name: entity_name.to_string(),
+        operation: "create".to_string(),
+        fields,
+        old: None,
+        origin_agent: origin_agent.clone(),
+    };
     TOUCHES.with(|touches| {
         let mut touches = touches.borrow_mut();
         let frame_touches = touches.entry(frame).or_default();
-        frame_touches.reserve(rows.len());
-        for row in rows {
-            frame_touches.push(Touch {
-                entity_name: entity_name.to_string(),
-                operation: "create".to_string(),
-                fields: keep_fields.then(|| Arc::clone(row)),
-                old: None,
-                origin_agent: origin_agent.clone(),
-            });
+        if keep_fields {
+            frame_touches.extend(rows.iter().map(|row| touch(Some(Arc::clone(row)))));
+        } else {
+            // with no values a touch says only that the entity was written, which the first says for them all
+            frame_touches.push(touch(None));
         }
     });
 }
