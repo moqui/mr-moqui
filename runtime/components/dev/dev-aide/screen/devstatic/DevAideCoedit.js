@@ -10,9 +10,10 @@
  * by the hash of the file it read: a save by another member moves this tab's base to the new file (its DevSaved names
  * the hash), so the next save of the shared text is no conflict.
  *
- * A session lasts as long as one open socket: when the socket closes the sessions end (the editors keep their text) and
- * the next open starts them again with fresh documents, so a room seeded again after everyone left is never merged with
- * an old copy. A join the server refuses (not shared, not a writer of the file, too many files, too large) leaves the
+ * A session lasts as long as one open socket and one join: when the socket closes, or the server refuses the session
+ * past its join (the room closed under it), the session ends (the editor keeps its text) and a new one starts with a
+ * fresh document, so a room seeded again after everyone left is never merged with an old copy (the provider's rejoin:
+ * false). The room is one server's: on a server with cluster peers the join is refused. A join the server refuses (not shared, not a writer of the file, too many files, too large) leaves the
  * tab to plain editing until the socket opens again. Loaded by the Workspace in shared mode only.
  *
  * The pure parts are moqui.devAide.coedit, which test/client/pages/DevAideCoedit.page.js runs in the page with a fake
@@ -103,17 +104,22 @@
                 if (this.tab.text !== text) this.tab.text = text;
             };
             this.provider = new moqui.coedit.Provider({ client: this.options.client, docKey: this.key, doc, awareness: this.awareness,
-                lib: Yjs, batchMs: this.options.batchMs,
+                lib: Yjs, batchMs: this.options.batchMs, rejoin: false,
                 onStatus: (status) => this.status(status),
-                onAccess: (canEdit) => this.access(canEdit),
+                onAccess: (canEdit, message) => this.access(canEdit, message),
                 onFallback: (info) => { this.end(); if (this.options.onRefused) this.options.onRefused(this.tab, info); } });
             this.provider.start();
             return this;
         }
         // the join answered: the tab's text and the room's made one, then the editor binds the Y.Text
-        access(canEdit) {
+        access(canEdit, message) {
             if (this.ended) return;
-            if (!canEdit) { this.end(); if (this.options.onRefused) this.options.onRefused(this.tab, { reason: "server", code: 403 }); return; }
+            if (!canEdit) {
+                const joined = !!this.joined;
+                this.end();
+                if (this.options.onRefused) this.options.onRefused(this.tab, { reason: "server", code: 403, message: message || "", joined });
+                return;
+            }
             if (this.joined) return;
             this.joined = true;
             const plan = coedit.joinPlan(this.tab, this.ytext.toString());
@@ -157,15 +163,18 @@
 
     // One per Workspace: sync(rootId, tabs, hosted) starts a session for each eligible tab and ends the others; the
     // sessions end with the socket and start again when it opens; a refused tab waits for the next open. options:
-    // client, user, markRaw, watch(tab, fn) (Vue's $watch of the tab's text, answering its stop), onDropped, batchMs.
+    // client, user, markRaw, watch(tab, fn) (Vue's $watch of the tab's text, answering its stop), onDropped, onEnded(tab,
+    // {code, message}) (the server ended a joined session for good: the right was taken away), batchMs.
     class Sessions {
         constructor(options) {
             this.options = options;
             this.sessions = new Map();
             this.refused = new Set();
+            // the sessions started again after the server ended one past its join, by key, since the socket opened
+            this.restarts = new Map();
             this.lib = null;
             this.stateOff = options.client.onState((state) => {
-                if (state === "open") { this.refused.clear(); this.resync(); }
+                if (state === "open") { this.refused.clear(); this.restarts.clear(); this.resync(); }
                 else this.endAll();
             });
         }
@@ -200,9 +209,18 @@
                     markRaw: this.options.markRaw, batchMs: this.options.batchMs,
                     onDropped: this.options.onDropped,
                     onRefused: (refusedTab, info) => {
-                        this.refused.add(key);
                         const entry = this.sessions.get(key);
                         if (entry && entry.session.tab === refusedTab) { if (entry.stop) entry.stop(); this.sessions.delete(key); }
+                        // ended by the server past its join, not for the right (the room closed, too many updates): a new
+                        // session with a new document, a few times a socket
+                        const again = info && info.joined && info.code !== 403 && (this.restarts.get(key) || 0) < 3;
+                        if (again) {
+                            this.restarts.set(key, (this.restarts.get(key) || 0) + 1);
+                            setTimeout(() => this.resync(), 0);
+                            return;
+                        }
+                        this.refused.add(key);
+                        if (info && info.joined && this.options.onEnded) this.options.onEnded(refusedTab, info);
                         if (info && info.code && info.code !== 403) console.info("Co-editing " + refusedTab.path + " was refused (" + info.code + "): " + (info.message || ""));
                     } });
                 const entry = { session };

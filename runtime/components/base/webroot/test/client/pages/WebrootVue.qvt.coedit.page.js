@@ -316,7 +316,7 @@ test("an error answering the join, or no answer, is a fallback; a 409 after it j
             client.open = true;
             ed.provider.start();
             client.deliver({ topic: "collab:WikiPage:100023", type: "error", client: ed.provider.clientId, code, message: "no such page" });
-            assert.deepEqual(ed.seen.fallback, [{ reason: "server", code, message: "no such page" }]);
+            assert.deepEqual(ed.seen.fallback, [{ reason: "server", code, message: "no such page", joined: false }]);
             assert.equal(ed.last().state, "failed");
             assert.equal(client.ofKind("leave").length, 1);
             // nothing more is taken
@@ -351,6 +351,20 @@ test("an error answering the join, or no answer, is a fallback; a 409 after it j
         assert.deepEqual(ed.seen.fallback.map((info) => info.code), [409]);
     } finally {
         ed.done();
+    }
+    // rejoin false (a document its server seeds again, a Dev AIDE file): the first error past the join is a fallback,
+    // told it came after the join, and no join goes again with this doc
+    const once = fakeClient();
+    const fresh = editor(once, { rejoin: false });
+    try {
+        fakeServer().attach(once, "EX_ANN", "Ann");
+        once.open = true;
+        fresh.provider.start();
+        once.deliver({ topic: "collab:WikiPage:100023", type: "error", client: fresh.provider.clientId, code: 409, message: "conflict" });
+        assert.equal(once.ofKind("join").length, 1);
+        assert.deepEqual(fresh.seen.fallback, [{ reason: "server", code: 409, message: "conflict", joined: true }]);
+    } finally {
+        fresh.done();
     }
 });
 

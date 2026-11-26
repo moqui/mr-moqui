@@ -41,6 +41,10 @@ function fakeRoom() {
     return {
         members,
         text: () => (doc ? doc.getText("codemirror").toString() : null),
+        // the room closes on the server (its members gone), and its next join seeds it again from the file
+        close() { members.clear(); doc = null; },
+        // the server's error to one client
+        refuse(fake, client, code) { fake.deliver({ topic, type: "error", client, code, message: "join the document first" }); },
         attach(fake, userId, name) {
             fake.onClose = () => {
                 for (const [client, member] of Array.from(members.entries())) if (member.fake === fake) members.delete(client);
@@ -138,14 +142,21 @@ test("two tabs on one room: edits go both ways, unsaved edits go into a fresh ro
         bob.session.fromTab("<services/>\r\n");
         await sleep(30);
         assert.equal(ann.editor.view.state.doc.toString(), "<services/>\n");
-        // ann's caret, from her awareness, in bob's editor with her name
+        // ann's caret, from her awareness, in bob's editor with her name: the server's, not the one her awareness claims,
+        // and only a color that is one
         const ytext = ann.tab.collab.ytext;
         const at = Y.createRelativePositionFromTypeIndex(ytext, 2);
+        ann.session.awareness.setLocalStateField("user", { name: "Mallory", color: "red;background:url(/x)", colorLight: "#e5393533" });
         ann.session.awareness.setLocalStateField("cursor", { anchor: Y.relativePositionToJSON(at), head: Y.relativePositionToJSON(at) });
         await sleep(30);
+        const seen = bob.session.awareness.getStates().get(ann.session.awareness.clientID).user;
+        assert.equal(seen.name, "Ann Example");
+        assert.ok(/^#[0-9a-f]{6}$/i.test(seen.color), seen.color);
+        assert.equal(seen.colorLight, "#e5393533");
         const caret = bob.editor.parent.querySelector(".cm-ySelectionCaret");
         assert.ok(caret, "ann's caret");
-        assert.ok(caret.textContent.includes("Ann Example"), caret.textContent);
+        assert.ok(caret.textContent.includes("Ann Example") && !caret.textContent.includes("Mallory"), caret.textContent);
+        assert.ok(!caret.getAttribute("style").includes("url("), caret.getAttribute("style"));
         // undo is Yjs' and only this user's own: bob's takes back his Take the disk's, not ann's edit
         bob.tab.collab.undoManager.undo();
         await sleep(30);
@@ -181,6 +192,40 @@ test("the Workspace's sessions end with the socket and start again when it opens
         await sessions.sync("site", [], false);
         assert.equal(tab.collab, null);
         assert.equal(room.members.size, 0);
+    } finally {
+        sessions.destroy();
+    }
+});
+
+test("a session the server ends past its join starts again with a new document, so a room seeded again is not doubled", async () => {
+    const room = fakeRoom();
+    const client = fakeClient();
+    room.attach(client, "ann", "Ann");
+    const tab = { path: "service/Things.xml", text: SEED, saved: SEED, collab: null, coedit: null };
+    const ended = [];
+    const sessions = new coedit.Sessions({ client, user: { id: "ann", name: "Ann" }, batchMs: 1, onEnded: (endedTab, info) => ended.push(info) });
+    try {
+        await sessions.sync("site", [tab], false);
+        await sleep(20);
+        const first = tab.collab;
+        assert.ok(first, "joined");
+        // the room closes under the session (its socket's updates over the rate, say), and the server says so
+        room.close();
+        const session = sessions.sessions.get(coedit.keyOf("site", tab.path)).session;
+        room.refuse(client, session.provider.clientId, 409);
+        await sleep(30);
+        assert.ok(tab.collab && tab.collab !== first, "a new session");
+        assert.ok(tab.collab.ytext.doc !== first.ytext.doc, "with a new document");
+        assert.equal(room.text(), SEED, "the room seeded again holds the file once");
+        assert.equal(tab.text, SEED);
+        assert.deepEqual(ended, []);
+        // a right taken away past the join ends it for good, said once
+        const again = sessions.sessions.get(coedit.keyOf("site", tab.path)).session;
+        room.refuse(client, again.provider.clientId, 403);
+        await sleep(20);
+        assert.equal(tab.collab, null);
+        assert.equal(ended.length, 1);
+        assert.equal(ended[0].code, 403);
     } finally {
         sessions.destroy();
     }

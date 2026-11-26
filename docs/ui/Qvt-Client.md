@@ -1401,7 +1401,9 @@ shows the others' avatars (once per user, not the user here) and the sync state.
 answered, and read-only when `canEdit` is false or after a 403; it stays editable offline.
 
 `moqui.coedit.Provider` speaks the protocol on the shell's notification socket, `{client, docKey, doc, awareness, lib}` (`lib` is
-the `Yjs` global of `libs/yjs`, or `Tiptap`, which re-exports it: Yjs is its own library, loaded before Tiptap's bundle, which
+the `Yjs` global of `libs/yjs`, or `Tiptap`, which re-exports it; the others' awareness states are cleaned as they arrive,
+before an editor reads them: the name is the one of the peer frame for that awareness id, and a color or colorLight that is
+not `#rrggbb` or `#rrggbbaa` is replaced (`moqui.coedit.cleanUser`): Yjs is its own library, loaded before Tiptap's bundle, which
 reads `Y` and the awareness protocol from it, so a page has one copy of Yjs). The same provider carries a Dev AIDE file
 (`DevFile:<rootId>:<path>`, a `Y.Text` bound to `m-code-editor` with y-codemirror.next; `runtime/components/dev/dev-aide`
 `DevAideCoedit.js`). The client id `C` is random per editor; `D` is the doc key; updates are base64 of Yjs's binary update
@@ -1424,7 +1426,7 @@ Server to client, `topic: "collab:" + D`; `ack`, `error` and `joined` for anothe
 | `awareness` `{client, update}` | `applyAwarenessUpdate`, unless our own |
 | `peer` `{client, userId, name, awareness, joined}` | the peers list; `joined: false` removes that caret (`removeAwarenessStates`) |
 | `saved` `{versionName, userId, name}` | the `saved` event (the host says a version was saved) |
-| `error` `{client, code, message}` | before the join is answered: fallback; after it, 403 is read-only, another code joins again (three times without an ack between, then fallback) |
+| `error` `{client, code, message}` | before the join is answered: fallback; after it, 403 is read-only, another code joins again (three times without an ack between, then fallback), or with the option `rejoin: false` falls back at once (`joined: true` in the fallback), for a document the server seeds again when its room closes (a Dev AIDE file), whose owner starts a new doc |
 
 `status` is `{state, peers: [{client, userId, name}], pending}`, `state` one of `loading`, `connecting`, `synced`, `saving`, `offline`,
 `readonly`, `failed`. `fallback` is `{reason, code, message}`: `library` (Tiptap did not load or start), `socket` (no notification

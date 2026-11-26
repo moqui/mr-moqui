@@ -4905,6 +4905,18 @@
             for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
             return bytes;
         },
+        // Another editor's awareness user as an editor may show it: the name of its peer frame (the server's, not its
+        // own claim; "" until the peer is known), and its color and colorLight when they are #rrggbb or #rrggbbaa, else the
+        // color of its user id. Other fields stay as they are.
+        cleanUser(user, peer, id) {
+            const given = user && typeof user === "object" ? user : {};
+            const out = Object.assign({}, given, { name: peer ? String(peer.name || peer.userId || "") : "",
+                color: moqui.coedit.COLOR.test(given.color) ? given.color : moqui.coedit.userColor(peer ? peer.userId || peer.name : id) });
+            if (moqui.coedit.COLOR.test(given.colorLight)) out.colorLight = given.colorLight;
+            else delete out.colorLight;
+            return out;
+        },
+        COLOR: /^#[0-9a-f]{6}([0-9a-f]{2})?$/i,
         // a color for a user id (or a name), the same each time; #rrggbb, the only form the caret extension takes
         userColor(id) {
             let hash = 0;
@@ -4916,7 +4928,10 @@
     // One editor's side of a shared document. options: client (a moqui.NotificationClient: send, registerListener, onState,
     // isOpen), docKey, doc (a Y.Doc), awareness (an Awareness of it), lib (the Yjs global, or Tiptap's, which re-exports it:
     // Y and the awareness functions),
-    // onStatus({state, peers, pending}), onAccess(canEdit), onSaved(message), onFallback({reason, code, message}), batchMs
+    // onStatus({state, peers, pending}), onAccess(canEdit, message), onSaved(message), onFallback({reason, code, message,
+    // joined}), rejoin (true: after an error past the join it joins again with the same doc; false, for a document the
+    // server seeds again when its room closes, such as a Dev AIDE file, it falls back instead, for the owner to start a
+    // new doc), batchMs
     // (50: local updates in that time go as one message), joinTimeoutMs (20 s: a join no one answers on an open socket is a
     // fallback). A remote update is applied with the provider as its origin, so it is not sent back. Each open of the socket
     // joins again with the state vector, so what was edited offline merges; an update sent and not acknowledged before a
@@ -4950,6 +4965,14 @@
                 if (!this.batchTimer) this.batchTimer = setTimeout(() => this.flush(), this.batchMs);
                 this.tell();
             };
+            // the others' states as received, before an editor reads them: each one's name is the server's (its peer
+            // frame), its colors only #rrggbb or #rrggbbaa, so a caret's style takes nothing else (registered here, ahead
+            // of the editor's own listener)
+            this.onAwarenessChange = (changes, origin) => {
+                if (origin !== this || this.destroyed) return;
+                this.cleanStates([].concat(changes.added, changes.updated));
+            };
+            this.awareness.on("change", this.onAwarenessChange);
             // the local state changed (a caret, the user; the Awareness renews it every 15 s): sent once per batch
             this.onAwarenessUpdate = (changes, origin) => {
                 if (origin === this || this.destroyed) return;
@@ -4967,6 +4990,15 @@
             else this.tell();
         }
         send(message) { this.client.send(Object.assign({ doc: this.docKey, client: this.clientId }, message)); }
+        cleanStates(ids) {
+            const states = this.awareness.getStates();
+            for (const id of ids) {
+                if (id === this.awareness.clientID) continue;
+                const state = states.get(id);
+                if (!state || typeof state !== "object") continue;
+                state.user = moqui.coedit.cleanUser(state.user, this.peers.find((peer) => peer.awareness === id), id);
+            }
+        }
         join() {
             if (this.destroyed || this.failed) return;
             this.joined = false;
@@ -5065,7 +5097,7 @@
         onPeer(message) {
             const peer = peerOf(message);
             this.peers = this.peers.filter((other) => other.client !== peer.client);
-            if (message.joined !== false) this.peers.push(peer);
+            if (message.joined !== false) { this.peers.push(peer); if (peer.awareness !== null) this.cleanStates([peer.awareness]); }
             else if (peer.awareness !== null) this.lib.removeAwarenessStates(this.awareness, [peer.awareness], this);
             this.tell();
         }
@@ -5078,10 +5110,12 @@
                 this.canEdit = false;
                 this.unacked.clear();
                 this.dropQueue();
-                if (this.options.onAccess) this.options.onAccess(false);
+                if (this.options.onAccess) this.options.onAccess(false, message.message);
                 this.tell();
                 return;
             }
+            // a document seeded again with its room is never joined again with this doc, which would merge an old copy
+            if (this.options.rejoin === false) { this.fail("server", code, message.message); return; }
             this.retries += 1;
             if (this.retries > 3) { this.fail("server", code, message.message); return; }
             console.info("m-coedit: the server answered " + code + " for " + this.docKey + ", joining again: " + (message.message || ""));
@@ -5094,7 +5128,7 @@
             this.dropQueue();
             if (this.client.isOpen()) this.send({ collab: "leave" });
             this.tell();
-            if (this.options.onFallback) this.options.onFallback({ reason, code: code || null, message: text || "" });
+            if (this.options.onFallback) this.options.onFallback({ reason, code: code || null, message: text || "", joined: this.joinedOnce });
         }
         status() {
             let state;
@@ -5124,6 +5158,7 @@
             if (this.stateOff) this.stateOff();
             this.doc.off("update", this.onDocUpdate);
             this.awareness.off("update", this.onAwarenessUpdate);
+            this.awareness.off("change", this.onAwarenessChange);
         }
     }
     const peerOf = (message) => ({ client: message.client, userId: message.userId || "", name: message.name || message.userId || "",

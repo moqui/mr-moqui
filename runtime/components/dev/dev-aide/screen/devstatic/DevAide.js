@@ -1057,7 +1057,8 @@
                         this.coeditSessions = new devAide.coedit.Sessions({ client, markRaw: root.Vue && root.Vue.markRaw,
                             user: { id: userId, name, color: moqui.coedit.userColor(userId || name) },
                             watch: (tab, fn) => this.$watch(() => tab.text, fn),
-                            onDropped: (tab) => this.note(tab.path.split("/").pop() + ": the shared text of the others replaced your unsaved changes", "warning") });
+                            onDropped: (tab) => this.note(tab.path.split("/").pop() + ": the shared text of the others replaced your unsaved changes", "warning"),
+                            onEnded: (tab, info) => this.note(tab.path.split("/").pop() + ": co-editing ended" + (info.message ? ": " + info.message : ""), "warning") });
                     }
                     this.coeditSessions.sync(this.rootId, this.tabs, !!(this.root && this.root.kind === "hosted"));
                 }, (error) => console.error("Co-editing could not load; the files are edited alone", error));
