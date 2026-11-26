@@ -7,14 +7,15 @@ mount its dialog under their own routes. The design is [plans/Maps.md](../../pla
 [TUI](../ui/TUI.md#components).
 
 A fresh installation makes no outside request: maps draw the Natural Earth country outline from this server until an
-administrator enables a map provider.
+administrator enables a map provider, and no address is sent to a geocoder until an administrator enables one and a user
+searches.
 
 ## The screens
 
 | Screen | What it is |
 | --- | --- |
-| Browse (`Maps/Browse.xml`, `Browse.qvue`, `Browse.tui.json`) | The map filling the page, with optional browser full screen. One panel at a time beside it, a bottom sheet on a phone: Search (saved places and the permitted records of the record layers shown), Layers (the basemap, overlays and record layers; a layer that is not shown is named with Retry; a record layer cut to `maps@max-features` says so), Saved views (and Save view, which keeps where the map is, its basemap and its layers) and the selected feature's details. The scale, attribution, coordinate readout and Locate me are the map's. A qvue screen: under `/apps` it opens at the same path under `/qapps`. In the terminal, the `map` component over `terminalMap`: the saved places and records as a list over the braille land mask, the notices and the attribution |
-| Saved views (`Maps/Views.xml`) | The user's saved views and those others shared, each with its place, owner and whether its layers are all available; Share, Stop sharing and Delete for one's own, View map for any |
+| Browse (`Maps/Browse.xml`, `Browse.qvue`, `Browse.tui.json`) | The map filling the page, with optional browser full screen. One panel at a time beside it, a bottom sheet on a phone: Search (saved views and places, the permitted records of the record layers shown, postal codes and, when one is enabled, the geocoder's addresses), Layers (the basemap, overlays and record layers, and the user's own and shared overlays with Add overlay ([below](#overlays-and-places)); a layer that is not shown is named with Retry; a record layer cut to `maps@max-features` says so), Saved views (and Save view, which keeps where the map is, its basemap and its layers) and the selected feature's details (Save place). The scale, attribution, coordinate readout and Locate me are the map's. A qvue screen: under `/apps` it opens at the same path under `/qapps`. In the terminal, the `map` component over `terminalMap`: the saved places and records as a list over the braille land mask, the notices and the attribution |
+| Saved views (`Maps/Views.xml`) | The user's saved views and those others shared, each with its place, owner and whether its layers are all available; Share, Stop sharing and Delete for one's own, View map for any. Below them the user's overlays and saved places and, read-only, those shared with them, with Remove for one's own |
 | Preferences (`Maps/Preferences.xml`) | The user's map profile, basemap, initial area, units, the layers shown and Restore my last view. Only what an administrator enabled is offered, and a profile's `allowedOverrides` decide what a preference changes. No location is asked for unless Locate me is pressed, and the last view is kept only while its restoring is on |
 | Configuration (`Maps/Configuration.xml`, route key `mapsConfiguration`) | For `MAPS_ADMIN`: readiness, the outside-request policy and limits (read from the conf), map providers (connections of the `mapProvider` kind: a provider's page is `Configuration/ConnectionDetail` over `tools/template/ConnectionParts.xml`), profiles (enable, disable, make the installation default) and layers; Archives (`Configuration/Archives.xml`, [below](#archives)); and Geo data (`Configuration/GeoData.xml`, [below](#geo-data)). Its settings index entry is `maps.configuration` |
 | Local map (`Maps/LocalMap.xml`) | The dialog below |
@@ -26,15 +27,18 @@ data, which then shows the country searched), or one named in the text (`US 0213
 and its rules read the rest as a code (so `MA 02134` is not Morocco while only US data is there). Otherwise the user's
 country is tried first and then every other country with postal data whose rules read the text as a code; a code found
 in more than one country lists each, labeled with its country, and says so. A postal result goes to the code's broad
-area, not a close zoom, and a code with several places lists each as a choice. A configured place or address service joins the `search` transition
-later. Going to a result changes nothing in its record.
+area, not a close zoom, and a code with several places lists each as a choice. The user's saved places and those shared
+with them come first ([Overlays and places](#overlays-and-places)), and the configured geocoder's candidates last, only
+when one is enabled ([Address and place search](#address-and-place-search)). Going to a result changes nothing in its
+record.
 
 ## Access
 
 Three artifact groups in `tools/data/MapsSecurityData.xml`:
 
-- `MAPS_APP`: the app's root, for `MAPS_USERS` and `ADMIN`. `MAPS_APP_SERVICES` gives the same groups the preference and
-  saved-view services, each acting on the signed-in user's own.
+- `MAPS_APP`: the app's root, for `MAPS_USERS` and `ADMIN`. `MAPS_APP_SERVICES` gives the same groups the preference,
+  saved-view, overlay and place services, each acting on the signed-in user's own (a shared overlay is read through its
+  file's drive access), and the address and place search (`find#Places`).
 - `MAPS_DIALOG`: LocalMap and its transitions, the effective configuration, the user's own preferences
   (`get#Preferences`), the postal lookup (`get#PostalLocation`, public reference data only), the map-source check (`MapSourceServices.get#SourceAccess`, [Archives](#archives)) and the adapter registry, for every signed-in user (`ALL_USERS`, always-allow, not inherited). Opening a record's map needs neither the Maps app, System
   nor any app's access.
@@ -57,7 +61,8 @@ provider that has not passed is not drawn, whatever its own state, and Configura
 The installation-wide switches are attributes of the `maps` conf element (`MoquiDefaultConf.xml`), set in a conf file
 or the environment (`moqui_conf__maps__external_requests`) and shown read-only under Configuration:
 `maps@external-requests` (false: no outside basemap or layer is offered and the server makes no outside request for
-maps), `maps@max-features` (the most features one record layer or viewport sends) and `maps@import-max-bytes`. A page
+maps), `maps@max-features` (the most features one record layer or viewport sends, and a user's overlay may have),
+`maps@import-max-bytes` and `maps@overlay-max-bytes` (a user's overlay file, 10 MiB). A page
 `Content-Security-Policy` stricter than the default needs each provider's host in `connect-src`, `img-src` and
 `font-src`; the readiness checks name what to add.
 
@@ -118,6 +123,81 @@ planet archive is placed on the server's disk and registered there, not uploaded
 on, its `all` rate limit (50 requests a second, a burst of 500) counts every range a map asks for, for everyone behind one
 address together. A pan of six steps and two zooms asked 17 ranges in about four seconds (`MapsLocalOnly`), and a
 range the browser has read is not asked again while it keeps it.
+
+## Overlays and places
+
+A user adds a GeoJSON, GPX or KML file as a personal overlay with Add overlay under Browse › Layers: an upload, kept as it
+was sent in `Maps/overlays` of their personal drive ("My files"; a name already there gets "name (2).ext"), or one of
+their files (their personal drive's top, `Maps` and `Maps/overlays` folders and their recent files of any drive they
+still read), which stays where it is (`MapServices.store#Overlay`, `MapOverlays.js`). The file is read before anything is
+kept (`MapSourceServices.convert#Overlay`, in Rust: `moqui-lib` `geo/overlay.rs`):
+
+- At most `maps@overlay-max-bytes` (10 MiB, within `maps@import-max-bytes`), and at most 4 MiB of characters as the
+  GeoJSON it is served as: an overlay is drawn whole in the browser. At most `maps@max-features` features (5000 when that
+  is 0, which turns only record layers off); a file with more is refused, not cut. A label or description is read from at
+  most eight times its kept length, so a large field costs no more than a short one.
+- Coordinates WGS84 (GPX and KML always are); a GeoJSON file's pre-2016 `crs` may name EPSG:4326 or CRS84, or EPSG:3857,
+  which is converted. Any other CRS is refused (`CRS_UNSUPPORTED`): no reprojection is made.
+- Each feature's geometry is checked by itself (positions in range and numbers, a line of two positions or more, a ring
+  of four or more, closed when it was not): one that fails is left out and counted, with the first ten named, and the rest
+  are kept. A file with none left is refused.
+- Sanitized: a feature keeps its label and description as plain text (markup, scripts and styles removed); a GeoJSON
+  feature's other properties and a KML placemark's extended data are not kept. Nothing a file points to is fetched: KML
+  network links, image overlays, styles and icons are counted in the notes and never followed, and the XML reader refuses
+  a DOCTYPE or an entity declaration. In the browser the overlay is plain GeoJSON, drawn by `m-map` with its own style. A
+  `<` that starts no tag (`a<b`) stays in the text, which is shown as text, never as markup.
+
+A refusal says why and keeps nothing. The overlay is a `moqui.maps.MapOverlay` row of the user's (its file's drive and
+path, format, feature and rejected counts, bounds, CRS and notes), at most 100 a user. Browse draws it from its `overlay`
+transition (`/apps/maps/Browse/overlay?overlayId=...`, `get#OverlayContent`), which checks the reader's access to the file
+in its drive on every request, the owner's as anyone's, writes nothing, and answers sanitized GeoJSON, cached by the
+file's version (`maps.overlay.geojson`, 16 entries); a file that grew past 4 MiB of GeoJSON since it was added is a 413,
+remembered until it changes. Remove takes an overlay off the user's maps; its file stays in their files. A
+saved view keeps the overlays shown (`overlay:ID`), and a reader of the view sees each only while its file is readable to
+them.
+
+**Saved places** are named points in one GeoJSON file, `Maps/places.geojson` of the personal drive: Save place on the
+selected place or search result (`store#Place`, written through `FileServices.save#Text`, so the drive keeps each change
+as a version), Remove place on one of one's own (`delete#Place`). The file is the user's overlay "My places", and Browse's
+search finds its places by name, as user-confirmed points. A save locks the user's places row first, so two saves at once
+are one after the other, and the file is read only up to `maps@overlay-max-bytes` (a larger or broken one is refused,
+never overwritten).
+
+**Sharing.** A collection is shared the way any file is, with a share of the file, or of the `Maps` folder, in Files
+(`ResourceShare`, to a user, a group or a party): there is no other access model. An overlay or places file shared with a
+user lists, read-only and named by its owner, in their Layers and Saved views, and its places in their search; revoking
+the share takes it away at the next request. A drive's members read its files' overlays the same way.
+
+## Address and place search
+
+A geocoder is a map provider of a geocoder kind (`MapProviderKind` under `MPK_GEOCODER`):
+
+| Kind | Service | Precision of its points |
+| --- | --- | --- |
+| `MPK_GEOCODER_CENSUS` | The US Census geocoder's one-line address search (`.../geocoder/locations/onelineaddress`, the current benchmark); US addresses only | An address matched, placed by street-range interpolation (`GPP_STREET_RANGE`): a position along the street's address range, never a rooftop or an entrance |
+| `MPK_GEOCODER_NOMINATIM` | A Nominatim server's `/search` (self-hosted: the public OSM endpoint's policy forbids an application's searches beyond one a second and autocomplete) | An address point `GPP_ADDRESS_MATCH`; a postal code `GPP_POSTAL_AREA`; a street or a place `GPP_PLACE_ESTIMATE` |
+| `MPK_GEOCODER_PHOTON` | A Photon server's `/api` (self-hosted) | As Nominatim's, by the result's type |
+
+The seed has the US Census geocoder, `CENSUS_GEOCODER`, disabled. It is enabled as every map provider is: its test
+(System › Integrations or Maps › Configuration) sends a fixed search, a public address for the Census geocoder and a city
+name for the others, never a user's text, and a provider is enabled only after a passing test of its configuration as it
+is. While `maps@external-requests` is false nothing is sent. The test and the readiness check name the public demo servers
+(`nominatim.openstreetmap.org`, `photon.komoot.io`), whose policies allow an application very little.
+
+`MapServices.find#Places` (`MapGeocoders.js`) asks one provider, the enabled, tested geocoder first by `sequenceNum`, for a
+text: one GET with no credentials, following no redirect, ten seconds, reading at most 1 MiB of the answer whether or
+not it says its length (`text(maxBytes)` of the RestClient), to no internal address unless the provider is allowed the
+private network, and only when its allowed operations are empty or name geocode or search. Each candidate has its label, point, match kind (address, street, postal,
+place), precision in words and source; several candidates are ambiguous and shown as choices. A failure says so beside the
+local results (`PROVIDER_FAILED`) and no other outside service is asked; the log names the provider, never the text.
+The provider's policy is set beside its URL, and a change of it needs no new test. This server keeps an answer only when
+its cache policy is `shared` (`none` or empty keeps nothing, and `private` means the user's browser alone, so nothing on
+the server), for its cache seconds or, when empty, the answer's own `Cache-Control` max-age (at most a day; nothing with
+`no-store`, `no-cache` or `private`), under a digest of the request, never its text. Its requests per second are enforced
+(`RATE_LIMITED`, not queued), 1 for Nominatim and Photon when empty: a request claims its slot atomically, on each server
+by itself, so a cluster of n servers may send n times the rate. Requests per day are recorded, not enforced. Browse's search asks the geocoder third, after saved places and records and the postal codes, only
+when one is enabled, and says which service was asked and its attribution. Opening a map or the local-map dialog never
+calls it: an address leaves the server only when the user searches.
 
 ## The local-map dialog
 
@@ -272,7 +352,12 @@ The regression spec is `tools/test/MapsScreens.spec.js` (Browse in qvue and tui;
 qvt for a writer and once in html for a user it refuses the record; the access rules, Save location, the profile
 rules); the configuration services' rules are `framework/test/MapsConfig.spec.js`, and the archives'
 (registering, the map-source transition's access, ranges, revocation and stale revisions) `framework/test/MapsSource.spec.js`,
-with the header's in Rust (`moqui-lib` `pmtiles_tests.rs`). The archive backends, local-only browsing and an installation
+with the header's in Rust (`moqui-lib` `pmtiles_tests.rs`). Overlays and places: `framework/test/MapsOverlays.spec.js`
+(a file refused before it is kept, an upload kept with its bad feature counted, the overlay transition for the owner, a
+share holder, a non-holder and a revoked share, saved places), with the converter's rules in Rust (`moqui-lib`
+`geo/overlay_tests.rs`: geometry, CRS, caps, KML sanitizing, GPX); the geocoder: `framework/test/MapsGeocoder.spec.js`
+(nothing sent untested or with outside requests off, the test's fixed address, the Census answer through `HttpFixtures`,
+a failure with nothing else asked, the dialog's reads sending nothing). The archive backends, local-only browsing and an installation
 without Mantle are the acceptance tests `MapsArchiveBackends`, `MapsLocalOnly` and `MapsFrameworkOnly`
 (`./moq accept framework --spec MapsArchiveBackends`). Geo data: the importer's rules are
 `framework/test/GeoDataImport.spec.js`, the postal lookup's `framework/test/MapsPostalLookup.spec.js`, and the Geo data

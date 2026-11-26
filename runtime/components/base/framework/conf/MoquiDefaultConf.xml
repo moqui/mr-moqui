@@ -158,7 +158,7 @@
         well past every registered source, GeoNames' allCountries at 19 MB zipped, and under the 2 GiB upload).
         max-features is the most features one overlay or one viewport query of a layer adapter returns; 0 turns record
         layers off. -->
-    <maps external-requests="true" import-max-bytes="536870912" max-features="5000"/>
+    <maps external-requests="true" import-max-bytes="536870912" max-features="5000" overlay-max-bytes="10485760"/>
 
     <!-- This server as a cluster member (plans/archive/Cluster.md). tls-cert and tls-key: the cluster TLS pair, base64 DER
         on one line each, generated together into runtime/.env (moqui_conf__cluster_member__tls_cert and _tls_key) and
@@ -425,6 +425,13 @@
         <!-- the postal lookup of org.moqui.maps.MapServices.get#PostalLocation (JSON text by country and code); an import of
             Geo data clears it when it finishes -->
         <cache name="maps.postal.lookup" type="distributed" expire-time-live="86400" max-elements="20000" value-type="String"/>
+        <!-- a user's overlay as sanitized GeoJSON (MapOverlays.js get#OverlayContent), by the file's location and version,
+            read only after the reader's drive access was checked -->
+        <cache name="maps.overlay.geojson" type="local" expire-time-live="3600" max-elements="16" value-type="String"/>
+        <!-- a geocoder's answers, kept only when its provider's cachePolicy is shared (MapGeocoders.js find#Places), by a
+            digest of the request, never its text; and each provider's claimed request slots, for its rate (each server's) -->
+        <cache name="maps.geocoder.answer" type="local" expire-time-live="86400" max-elements="5000" value-type="String"/>
+        <cache name="maps.geocoder.last" type="local" expire-time-live="60" max-elements="2000" value-type="Long"/>
     </cache-list>
     <!-- sample-ratio: the share of traces whose spans below the request or job root are kept, decided from the trace id.
         At 0 every root span is kept, and the whole trace of an error or a slow root (the tail rule); 1 keeps every span. -->

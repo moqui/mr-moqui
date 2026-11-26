@@ -29,7 +29,8 @@
 // is kept only when the user opted in, and turning that off clears it.
 //
 // Saved views (moqui.maps.MapSavedView, shaped as GridView): the owner's, and others' to read when shared; only the owner
-// changes or deletes one. A layer a shared view names that the reader may not see is left out of what they read.
+// changes or deletes one. A layer a shared view names that the reader may not see is left out of what they read; a view
+// may name a user's overlay (overlay:ID), which a reader sees only while its file is readable to them.
 const PROFILE = "moqui.maps.MapProfile"
 const PROFILE_LAYER = "moqui.maps.MapProfileLayer"
 const LAYER = "moqui.maps.MapLayer"
@@ -548,7 +549,8 @@ function effectiveConfig(p) {
             text(p.layerIds)
                 .split(",")
                 .map(id => id.trim())
-                .filter(id => id)
+                // a user's overlay (overlay:ID) is not a MapLayer: Browse lists it itself (find#Overlays)
+                .filter(id => id && !id.startsWith("overlay:"))
         )
     ).slice(0, MAX_LAYERS)
     const wanted = asked.length
@@ -979,6 +981,16 @@ function normalizedView(value) {
     if (text(view.basemap)) out.basemap = text(view.basemap)
     return out
 }
+// A layer a saved view names: a MapLayer resolved for the reader, or a user's overlay (overlay:ID, MapOverlays.js) the
+// reader may read in its drive now
+let overlays = null
+function viewLayer(layerId) {
+    if (!text(layerId).startsWith("overlay:")) return resolveLayer(one(LAYER, {layerId}), layerId, false)
+    overlays = overlays || ec.resource.script("component://framework/service/org/moqui/maps/MapOverlays.js")
+    return overlays.overlayLayerReadable(layerId)
+        ? {ok: true}
+        : refusal("LAYER_MISSING", say("the layer ${layerId} is not registered", {layerId}))
+}
 function savedViewRefusal(row) {
     if (!row || (row.ownerUserId !== ec.user.userId && row.isShared !== "Y"))
         return refused("RECORD_UNAVAILABLE", L("The saved view is not available"))
@@ -1023,7 +1035,7 @@ function storeSavedView(p) {
     if (given(p.view) || !row) {
         const view = normalizedView(p.view)
         for (const layerId of view.layers) {
-            const resolved = resolveLayer(one(LAYER, {layerId}), layerId, false)
+            const resolved = viewLayer(layerId)
             if (!resolved.ok)
                 return refused(
                     "LAYER_UNAVAILABLE",
@@ -1119,7 +1131,7 @@ function findSavedViews(p) {
         try {
             const view = row.viewJson ? JSON.parse(row.viewJson) : {}
             const layers = Array.isArray(view.layers) ? view.layers.map(text) : []
-            const shown = layers.filter(layerId => resolveLayer(one(LAYER, {layerId}), layerId, false).ok)
+            const shown = layers.filter(layerId => viewLayer(layerId).ok)
             view.layers = shown
             if (view.basemap && !resolveLayer(one(LAYER, {layerId: view.basemap}), view.basemap, true).ok) delete view.basemap
             const left = layers.length - shown.length
