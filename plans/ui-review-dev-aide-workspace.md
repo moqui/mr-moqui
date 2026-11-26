@@ -1,5 +1,7 @@
 # MR Moqui — UI review: Dev AIDE workspace and collaboration
 
+**Active pass · November 26.** [DEVW-B03](#devw-b03--november-26-change-led-review) records the selected branches and their outcomes. Earlier batches retain their dated evidence.
+
 **Review update — 2026-11-25.** DEVW-B02 records the latest live evidence. The activity ledger identifies the branches still open.
 
 **Status — 2026-11-25, refinement.** All three DEVW-B01 findings are fixed (DEVW-UI-001–003).
@@ -415,6 +417,20 @@ The ledger records the strongest observed outcome. The remaining steps, recovery
 | DEVW-11 | Supply a hosted failed job with a test location, follow its log and source, then rerun it. |
 | DEVW-12 | Start an Assist task in a disposable worktree, review its proposed diff and confirm its disposition. |
 | DEVW-13 | Repeat the same valid Workspace write across View, Edit and host-local grants through browser and TUI. |
+
+### DEVW-B03 · November 26 change-led review
+
+The Workspace tabs and dialogs below extend the screen inventory. Each row names the existing flow it extends, the evidence level, and the point to resume. The fixtures used a local group peer, a disposable Git tree, two browser contexts and a local BusyBox image.
+
+| New activity | Observed path and result | Evidence and next check |
+|---|---|---|
+| DEVW-14 · Hosted roots and task apps (DEVW-01/04/08/09) | HostedRoot exercised visibility for a viewer and non-viewer, a file tree backed by a Git branch, Save as a commit, move and folder deletion. TaskApps exercised creation, ownership and refusal of invalid local paths. The editor gate saved and committed fixture changes in Chromium. | rules.txt and gates.txt. The local group-server check filed a repository issue, named a branch for it and inspected the commit reference. A second task fixture checked project and task URLs, local creation and remote reads. See issues.txt. A live addon UI handoff still needs a Mantle project installed and linked to a repository. |
+| DEVW-15 · Shared file editing (DEVW-02/03/13) | John Doe and Fixture Contributor opened the same file. Each saw the other by name. Both edits appeared in the saved disk text. After disconnect the remaining editor lost the peer chip. Rejoin restored both names and the same text. Saving a pending edit after an independent disk write opened conflict handling and preserved the external disk content. | coedit.json. Selecting Take the disk’s restored “Independent disk edit” in both editors. A fresh open and the disk read agreed (resolve.json). |
+| DEVW-16 · Checks and job execution (DEVW-10/11) | The Chromium gate opened and reviewed a hosted merge request and opened its commit’s failed check. On a disposable working tree, the same CI step printed review-ok and exited in busybox:latest without creating its marker in the original. The host-terminal run wrote the marker there. | gates.txt, runner.json, hosted-ci.json and checks-ui.json. In a second real pipeline, the Checks chip opened source-check’s retained log and linked to line 2 of Review.txt. Its text matched the committed source. Clicking Retry queued attempt 3, which the registered runner took and finished with the same intentional exit 1. |
+| DEVW-17 · Editor settings and diagnostics (DEVW-02/13) | EditorSettings persisted Vim and rejected an unknown keymap. The browser worker loaded its declarations and located the misspelled member on line 2 and returned zero diagnostics for the corrected expression. The editor gate exercised replace, save, data load and commit. | rules.txt, editor.txt, keymaps.txt and gates.txt. Chromium exercised the default command bindings, VS Code and Vim, shared undo and filename-based language selection. The actual Workspace editor retained the open file at both desktop themes, 1280px and 390px (workspace-layout.json). |
+| DEVW-18 · Assist worktrees and change review (DEVW-12) | Chromium created an Assist session worktree, saved the proposed file there and followed the worktree through the conversation ending. The change-card fixtures compared its summary and decisions with the underlying edits. | gates.txt and extra-editor.txt. Carry any follow-up on the generated artifact into DEVA-17. |
+
+In an actual 120×40 remote terminal, John Doe opened Terminal.txt, focused the file editor and typed into it. Save explained that Dev AIDE requires a session for writes, and the original bytes stayed intact. In the in-process terminal, the same user opened a disposable site’s Terminal.txt, edited and activated Save. The client reported Saved and the disk contained “Native editTerminal reference”. See terminal-workspace.txt. The service and browser fixtures cover tier-specific refusals separately.
 
 ## 7. Decisions
 

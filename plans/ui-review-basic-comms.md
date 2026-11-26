@@ -1,5 +1,7 @@
 # MR Moqui — UI review: BasicComms
 
+**Active pass · November 26.** [COM-B12](#com-b12--november-26-change-led-review) records the selected branches and their outcomes. Earlier batches retain their dated evidence.
+
 **Review update — 2026-11-25.** COM-B11 records the latest live evidence. The activity ledger identifies the branches still open.
 
 **Status — 2026-11-25.** [COM-B10](#com-b10--current-build-recheck-2026-11-25) reconciles the 37 historical findings against the two refinement records. B10 observed one new P2 in message printing and one P3 in empty-folder wording (COM-UI-038–039); both are fixed and checked 2026-11-25. The EML download, Bcc-only delivery, compact Send and recipient mention all worked on the current release.
@@ -1768,6 +1770,10 @@ The ledger records the strongest observed outcome. The remaining steps, recovery
 | COM-16 | Use a recording-enabled media node, consenting parties and retained media for authorised playback and refusal. |
 | COM-17 | Use an enabled desktop host and two offline stores to reconcile queued work and conflicting drafts. |
 | COM-18 | Repeat direct helper and alternate-mode access with private content and distinct account grants. |
+
+### COM-B12 · November 26 change-led review
+
+COM-UI-032 was selected for the changed notification transaction. The mention test checked send and edit against the committed notification rows and captured events, including rollback. PushDevice checked a registered callee and socket with controlled phone delivery before and after commit and rollback. Both passed. This evidence covers the application recipient and dispatch paths. Physical notification display, lock-screen content and Android Back still need a registered device. The B10 design dispositions and dated physical-device gaps retain their history. See mentions.txt and rules.txt.
 
 ## 7. Decisions
 

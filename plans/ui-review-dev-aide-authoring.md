@@ -1,5 +1,7 @@
 # MR Moqui — UI review: Dev AIDE artifact authoring
 
+**Active pass · November 26.** [DEVA-B03](#deva-b03--november-26-change-led-review) records the selected branches and their outcomes. Earlier batches retain their dated evidence.
+
 **Review update — 2026-11-25.** DEVA-B02 records the latest live evidence. The activity ledger identifies the branches still open.
 
 **Status — 2026-11-25, refinement.** Both DEVA-B01 findings are fixed (DEVA-UI-001/002).
@@ -476,6 +478,16 @@ The ledger records the strongest observed outcome. The remaining steps, recovery
 | DEVA-12 | Repeat the original canvas action without preview permission and restore the grant for the same actor. |
 | DEVA-13 | Use two writers on one saved artifact and reconcile the retained buffer with reopened disk state. |
 | DEVA-14 | Follow the generated component through reload with a scoped non-author consumer. |
+
+### DEVA-B03 · November 26 change-led review
+
+These activities extend existing authoring screens and their terminal companions. Workspace owns the shared editor session and Git transport.
+
+| New activity | Observed path and result | Evidence and next check |
+|---|---|---|
+| DEVA-15 · Three-way load (DEVA-07/13) | DataLoad established the file baseline, compared file and database changes and required a conflict choice. The browser editor walk verified selected writes and the retained row after an unselected removal. Changed plan hashes were refused. | rules.txt and gates.txt. Retry from a separately edited database row after a browser session expires. |
+| DEVA-16 · Try, trace and saved rule fixtures (DEVA-08/09/10) | The service writer ran unsaved text without publishing it, traced the actions and identified a failed element. The lower tier was refused. Chromium composed a service, tried it and saved a fixture spec. On the local site, a saved SECA fixture ran its trigger, reported its executed source line, and generated test/MySiteSecas.spec.js. The check reopened the file, inspected the saved fixture reference, and ran the generated spec successfully. | rules.txt, gates.txt and rule-consumer.txt. |
+| DEVA-17 · Guided changes and consumers (DEVA-01/04/11/12/14) | Chromium extended an upstream list from the screen builder and exercised the authoring consumer. EntityEditTui, ServiceEditTui and ScreenDesignTui covered their staged edits, saves and conflict handling. ArtifactIndex, DbFormConvert and Rebuild checked the changed index, form conversion and rebuild rules. | rules.txt, gates.txt, extra-guided.txt and rule-consumer.txt. A disposable site’s entity save reloaded the model, added the expected database column and loaded its seed. A restart after changing compiled code belongs to the earlier DEVA-14 lifecycle branch. |
 
 ## 7. Decisions
 

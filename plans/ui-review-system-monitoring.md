@@ -1,5 +1,7 @@
 # MR Moqui — UI review: System monitoring and recovery
 
+**Active pass · November 26.** [MON-B04](#mon-b04--november-26-change-led-review) records the selected branches and their outcomes. Earlier batches retain their dated evidence.
+
 **Review update — 2026-11-25.** MON-B03 records the latest live evidence. The activity ledger identifies the branches still open.
 
 **Status — 2026-11-25.** The [MON-B02 browser recheck](#mon-b02--post-cleanup-recheck-2026-11-25) confirmed both historical fixes, including the fingerprint fallback for a group with blank message and type. The System readiness comparison is recorded under SYS-UI-001.
@@ -469,6 +471,10 @@ The ledger records the strongest observed outcome. The remaining steps, recovery
 | MON-10 | Apply a short-lived diagnostic override and verify its consumer after expiry. |
 | MON-11 | Use a disposable recovery adapter and separate approver to verify the target symptom before and after approval. |
 | MON-12 | Compare alternate diagnostic mounts under a restricted reader and its grant holder. |
+
+### MON-B04 · November 26 change-led review
+
+MON-02 and MON-09 were selected for Log Context and Releases. Both screens showed the indexed fixture instant in the two viewer zones on opposite calendar dates. The native reader and Releases TUI checks separately passed. MON-11 was selected because the Recovery forms now pass their input to the store services. In Standard, an administrator created a manual adapter and reopened its description in Recovery. The existing monitoring browser walk covered the report and telemetry handoffs. The form check independently verified stored policy and adapter edits. A separate recovery fixture waited for incident approval, executed through the configured adapters and verified the resulting state (recovery-form.txt and recovery-native.txt). See zones.txt, native.txt, context.txt, browser.txt and maps-modes.json.
 
 ## 7. Decisions
 

@@ -1,5 +1,7 @@
 # MR Moqui — UI review: Tools
 
+**Active pass · November 26.** [TOOL-B04](#tool-b04--november-26-change-led-review) records the selected branches and their outcomes. Earlier batches retain their dated evidence.
+
 **Review update — 2026-11-25.** TOOL-B03 records the latest live evidence. The activity ledger identifies the branches still open.
 
 **Status — 2026-11-25.** All four Grid findings are fixed and checked live. Back to Find from Record now reopens the Grid with its filter, and one result reads “1 row” (TOOL-UI-003/004).
@@ -641,6 +643,10 @@ The ledger records the strongest observed outcome. The remaining steps, recovery
 | TOOL-15 | Invoke a harmless discoverable service with valid and invalid inputs and inspect its outputs under both grants. |
 | TOOL-16 | Repeat the same small load run without its grant and exercise interrupted-run recovery. |
 | TOOL-17 | Repeat the same entity handoff in the alternate mode with a scoped consumer. |
+
+### TOOL-B04 · November 26 change-led review
+
+The standalone Maps branch is now owned by MAP-01–08. Tools carries its Grid and shared connection-form handoffs. Under TOOL-17 the operator used Grid on two independent databases to verify that the first sync window delivered zero rows and the next delivered the selected row once. Maps Configuration separately paired a grant holder with a Maps-only user. The compared revisions added no standalone Tools XML route outside Maps. See sync-consecutive.json and the [Maps activity register](ui-review-maps.md).
 
 ## 7. Decisions
 

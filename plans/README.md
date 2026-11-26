@@ -11,8 +11,8 @@ Design, status and review documents for MR Moqui. User guides for built features
 **UI review plans**
 
 Full screen inventories, user workflows, verification maps and running records for the framework apps, without
-addons, including shared helpers and generated email/report outputs. All review activities start pending; source
-audits and historical tests do not complete a walk. The
+addons, including shared helpers and generated email/report outputs. The November 26 change-led queue supersedes the November 25 execution queue. Dated activity outcomes and evidence remain available in the owning ledgers.
+See the [active queue and results](ui-review-shared-gallery.md#november-26-change-led-review). The
 [shared review protocol](ui-review-shared-gallery.md#common-review-protocol) applies to the whole set.
 
 - [Shared shell and Gallery](ui-review-shared-gallery.md): authentication, navigation, preferences, shared controls,
@@ -20,6 +20,7 @@ audits and historical tests do not complete a walk. The
 - [Dashboards](ui-review-dashboards.md): datasets, analysis, dashboards, CalcGrid, alerts, report delivery and playlists.
 - System: [administration](ui-review-system.md), [monitoring and recovery](ui-review-system-monitoring.md), and
   [AI and integrations](ui-review-system-ai-integrations.md), including the Voice and Chat Bridges mounts.
+- [Maps](ui-review-maps.md) covers Browse, saved state, local data and providers, Configuration and consumer handoffs.
 - [Tools](ui-review-tools.md): data, SQL, schema, database maintenance, ETL, services and load testing.
 - [BasicComms](ui-review-basic-comms.md): mail, chat, devices, calls, guests, voicemail and recordings.
 - Dev AIDE: [workspace and collaboration](ui-review-dev-aide-workspace.md) and

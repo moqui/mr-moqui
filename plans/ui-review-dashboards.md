@@ -1,5 +1,7 @@
 # MR Moqui — UI review: Dashboards
 
+**Active pass · November 26.** [DASH-B03](#dash-b03--november-26-change-led-review) records the selected branches and their outcomes. Earlier batches retain their dated evidence.
+
 **Review update — 2026-11-25.** DASH-B02 records the latest live evidence. The activity ledger identifies the branches still open.
 
 **Status — 2026-11-25, refinement.** All four DASH-B01 findings are fixed (DASH-UI-001–004). DASH-UI-003 was a shared `m-form-link` defect that dropped the clicked submit button for every form to a screen.
@@ -406,6 +408,7 @@ presentation; P3 is a localized refinement. Label evidence as observed behavior,
 | DASH-UI-003 / P1 | Scoped author, DASH-05, Analysis, Material | Select rdr-sales → Count of records → Group by relatedEnumId → Run. The URL contains dataset, aggregate, grouping and range. The form redisplays without a result, error or Save panel action. The same happened for ungrouped count. The four source rows are visible in DatasetView. | B01 07-run-without-result.jpg. The Analysis screen expects the run submit parameter and ReportAnalysis.view gates evaluation on it. The observed URLs omitted it. | **Fixed and checked 2026-11-25.** The cause was in the shared client. `m-form-link` read the submit button from the focused element, and a pressed QBtn moves the focus to its inner helper span, so no form to a screen sent its button name. It now records the clicked button, as `m-form` does; WebrootVue.qvt checks a mouse click. The ungrouped count also had no row, because the search engine has no bucketless count; it now shows the answer's source count as one row. Live: grouped otel_logs Run showed INFO 2719, WARN 13, ERROR 2, and ungrouped showed All records, count 2744, both with Save analysis. A grant-scoped rdr-sales author was not rechecked. |
 | DASH-UI-004 / P3 | Administrator, DASH-12, Git sync, Material | Add local database-backed example-wiki with folder UI review and directory review-b01, then Push now. Last push displays a raw 13-digit epoch (1795607783560), making the time of the last sync difficult to read. Format the time in the viewer’s zone. GitSync.xml displays the returned numeric date directly. Unlike 002, this surface has the correct timestamp and needs presentation formatting. | B01 20-git-sync-times.jpg, GitSync list rendering. | **Fixed and checked 2026-11-25.** Last push and Last pull are shown in the viewer's zone, with the zone named once, and "Never" when empty. Live in DASH-B02: the page named US/Central and showed 2026-11-25 19:06:09 for both push and pull. |
 | DASH-UI-005 / P3 | DASH-05, scoped author, Material Definition version history | Changed Date shows 1795655096257 and 1795655163876 for versions 1 and 2. The author cannot read when either version was saved. | Definition.xml displays changedDate without formatting. See panel-folder.json. | **Fixed 2026-11-25.** `versions#Definition` answers each time stamp as epoch-millisecond text, which the history displayed as it came; Changed Date now has a date format, so it is shown as a date in the viewer's zone, with the zone named once. DefinitionVersions checks the shown date. Log context's times, raw date text or epoch milliseconds from the hit, are now shown the same way, as Explore shows them; the Rust monitor_readers (html) test asserts the Time cell is the fixture's ISO time in john.doe's zone (`yyyy-MM-dd HH:mm:ss.SSS`) with "Times shown in America/Chicago.". Not rechecked live. |
+| DASH-UI-006 / P2 | DASH-03/13 and MAP-08, John Doe, Material Dashboard | Open the persisted fresh-geo-board in a fresh browser session. The panel still shows “Loading the map outline…” after the local outline is available. No country is selectable. Opening the panel menu draws the countries. | dashboard-drill.json. HTTP 200, 107,761 bytes, 177 decoded entries and zero country paths before Menu. The same panel then had 174 paths. | **Open.** WebrootReport.js, geomap panel. Recheck fresh entry and Back with no intervening panel interaction. |
 
 ### Bounded batch record
 
@@ -456,6 +459,10 @@ The ledger records the strongest observed outcome. The remaining steps, recovery
 | DASH-11 | Play a multi-dashboard playlist as a reader after one item loses its grant. |
 | DASH-12 | Change an accessible Git definition on the remote, pull it and compare its persisted body. |
 | DASH-13 | Repeat the same export through the standalone dashboard and embedded consumer under a scoped reader. |
+
+### DASH-B03 · November 26 change-led review
+
+DASH-05 and DASH-12 were selected for DASH-UI-005. Definition history displayed the stored instant and named the session zone in both Pacific/Honolulu and Pacific/Kiritimati, on opposite calendar dates. DefinitionVersions separately checked that the raw milliseconds did not appear. DASH-03/13 handed the geomap grant and navigation checks to MAP-08. The report component’s country and point click checks capture the navigation destination. A persisted dashboard reproduced DASH-UI-006 on fresh entry. After Menu made the country paths appear, France opened a live Maps canvas at [−4.5918, 42.3433, 8.0983, 51.1480]. Back returned to fresh-geo-board and the selected path was absent again on observation. See zones.txt, rules.txt, report-client.txt and dashboard-drill.json.
 
 ## 7. Decisions
 

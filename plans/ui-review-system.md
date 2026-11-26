@@ -1,5 +1,7 @@
 # MR Moqui — UI review: System administration
 
+**Active pass · November 26.** [SYS-B04](#sys-b04--november-26-change-led-review) records the selected branches and their outcomes. Earlier batches retain their dated evidence.
+
 **Review update — 2026-11-25.** SYS-B03 records the latest live evidence. The activity ledger identifies the branches still open.
 
 **Status — 2026-11-25.** Both historical findings passed the [SYS-B02 recheck](#sys-b02--post-cleanup-recheck-2026-11-25). The active exporter had dropped records, and the conf filter retained its accessible name. The wider administration review remains in progress.
@@ -773,6 +775,10 @@ The ledger records the strongest observed outcome. The remaining steps, recovery
 | SYS-18 | End an attached shell and check its client disconnects while the neighbouring shell survives. |
 | SYS-19 | With an isolated certificate and test trust store, inspect renewal and failure without affecting other identities. |
 | SYS-20 | Use the same group and effective time in Capabilities and Access Review to reconcile a concrete decision. |
+
+### SYS-B04 · November 26 change-led review
+
+SYS-08 was selected for the change to Fleet’s last-deploy time. A completed deployment fixture rendered the expected local date and named zone in both Honolulu and Kiritimati. HostedInstances also exercised Fleet’s scoped administration rules. Instance lifecycle coverage retains its earlier disposition. See zones.txt and rules.txt.
 
 ## 7. Decisions
 

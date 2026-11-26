@@ -1,5 +1,7 @@
 # MR Moqui — UI review: Shared shell and Gallery
 
+**Active pass · November 26.** The replacement queue and its results follow. Earlier batches retain their dated evidence.
+
 **Review update — 2026-11-25.** SH-B04 records the latest live evidence. The activity ledger identifies the branches still open.
 
 **Status — 2026-11-25.** [SH-B03](#sh-b03--post-cleanup-recheck-2026-11-25) rechecked all seven historical findings. Six passed their live checks. The export link and bytes passed, while in-browser download activation remains unverified in this curl-transfer workflow. The activity ledger records the scope of each walk.
@@ -8,6 +10,54 @@ Contents: [scope](#1-purpose-scope-and-sources) · [method](#2-review-method-and
 [inventory](#3-screen-and-surface-inventory) · [activities](#4-end-to-end-activities) ·
 [verification](#5-existing-checks-and-future-verification) · [record](#6-coverage-findings-and-running-record) ·
 [decisions](#7-decisions).
+
+## November 26 change-led review
+
+The November 25 nine-plan execution queue is superseded. Its 147 rows, counts and findings describe that build and remain available below. This pass selected changed behavior, new surfaces, landed fixes and consequential evidence gaps. Unselected rows carry their dated evidence forward. The new queue includes ten owning ledgers.
+
+| Owner | Selection and execution batch |
+|---|---|
+| Shared shell and Gallery | SH-03/13/17, changed Assist, shared Vue/Markdown, editor, map and whiteboard assets. The browser exercised Assist and Whiteboard, plus Maps as a shared widget consumer. The responsive and theme evidence belongs to MAP-01. Gallery gained no changed screen definition in the comparison. |
+| Maps | New standalone app, embedded dialog, terminal map, configuration, Geo data, Overture and dashboard handoff. See [MAP-B01](ui-review-maps.md). |
+| Dev AIDE Workspace | Hosted roots, issue/task integration, shared editing, keymaps, browser worker, Checks and local runner. See DEVW-14–18 in [Workspace](ui-review-dev-aide-workspace.md). |
+| Dev AIDE Authoring | Three-way load, Try over an unsaved service, trace marks, ECA fixtures, index and screen-builder consumers. See DEVA-15–17 in [Authoring](ui-review-dev-aide-authoring.md). |
+| Dashboards | Definition history fix and Maps drill links. See DASH-B03. |
+| System | Fleet last-deploy time change. See SYS-B04. |
+| Monitor | Log Context and Releases time fixes, Recovery form parameters and diagnostic handoffs. See MON-B04. |
+| AI and integrations | Consecutive Entity Sync windows, independent receipt and the Detail form fix. See AI-B03. |
+| Tools | Standalone Maps moves to its own ledger. Grid verifies the source and receiver. See TOOL-B04. |
+| BasicComms | Mention and ring transaction fix, including recipient events. See COM-B12. |
+
+### Results and open findings
+
+| Priority | Observed failure | Owner and next observation |
+|---|---|---|
+| P2 · AI-UI-006 | Changing only the delay in Standard Entity Sync Detail submitted the untouched split as `60,000`. The commit failed. Reopening showed the old delay. Entering unformatted digits in both fields saved the change. | [AI-B03](ui-review-system-ai-integrations.md#ai-b03--november-26-change-led-review). Recheck a one-field edit with the other field untouched. |
+| P2 · DASH-UI-006 | A newly opened dashboard geomap had zero country links after the local outline downloaded. Opening the panel menu drew 174 country paths. France then opened the correct Maps extent. | [DASH-B03](ui-review-dashboards.md#dash-b03--november-26-change-led-review). Check fresh entry and return navigation without interacting with the panel first. |
+
+The table counts original activity IDs selected for a branch this pass. A passing branch does not close every step of its older activity. New Maps and Dev AIDE IDs are additional. The dated November 25 findings and dispositions below retain their original wording.
+
+| Owner | Original IDs selected | Earlier IDs carried forward without a new selection | New IDs | Current outcome |
+|---|---|---:|---:|---|
+| Shared shell/Gallery | SH-03, 13, 17 | 15 | 0 | Assist and Whiteboard component checks passed. The shared Maps widget drew at the measured widths and in both themes. |
+| Dashboards | DASH-03, 05, 12, 13 | 9 | 0 | Definition time passed in two zones. The geomap drill opened the expected extent after the P2 loading failure. |
+| System | SYS-08 | 19 | 0 | Fleet passed in two viewer zones. |
+| Monitor | MON-02, 09, 11 | 9 | 0 | Both time surfaces passed. A stored Recovery adapter reopened. The separate incident fixture waited for approval, executed through its adapters and verified the outcome. |
+| Tools | TOOL-17 | 16 | 0 | Two independent Grid reads verified the receiver before and after the qualifying sync. |
+| AI/integrations | AI-21 | 21 | 0 | Both consecutive intervals agreed with the receiver. The original primary-key fix passed and normal form submission exposed AI-UI-006. |
+| BasicComms | COM-07, 11 | 16 | 0 | Mention and ring commit/rollback checks passed with recipient and controlled delivery evidence. Physical delivery needs a registered handset. |
+| Dev AIDE Workspace | DEVW-01–04, 08–13 | 3 | 5 | Hosted Git, two-user editing, conflict resolution, the Checks source and retry, and both local execution modes produced evidence. The installed issue-tracker UI remains an addon dependency. |
+| Dev AIDE Authoring | DEVA-01, 04, 07–14 | 4 | 3 | The three-way load, traced Try, saved rule fixture/spec and entity reload reached their consumers. |
+| Maps | First standalone review | 0 | 8 | All eight activities were exercised. The reference raster and post-interruption archive passed. The dashboard handoff exposed DASH-UI-006. The graphical overlay recovered after a stale save. Comparison against a current public edition requires an enabled provider and a bounded region. |
+| **Total** | **35 of 147** | **112** | **16** | **Two new product findings.** The 112 carried-forward IDs retain dated outcomes, including any existing open branches. |
+
+Of the 16 new IDs, 13 demonstrated their selected local outcomes. Two have conditional external branches (MAP-07 and DEVW-14), and MAP-08 recorded the dashboard rendering failure alongside its successful record handoff. Physical notification display under COM-07/11 remains blocked on a registered device. These are branch results for this pass.
+
+The [evidence manifest](ui-refinement-evidence/fresh-719e/manifest.json) pins the executable, component trees, actors, fixtures, browser assets and listener cleanup. The [inventory](ui-refinement-evidence/fresh-719e/inventory.json) groups the current screen files and companions by owner and indexes changed paths. The [comparison](ui-refinement-evidence/fresh-719e/changes.tsv) preserves the complete source delta. Evidence files follow the repository’s local, Git-ignored review convention. Focused reruns overlap; the manifest records their results individually.
+
+The execution checkout was `719e1ddf9665`, compared with `d10e22fde7b0`. The same-revision maximal release executable had SHA-256 `7e6551a29f72cf006cbde36e7e7b9c22c2b7e9f23d85185684e86df091689fe0` and included Overture, DevTools, collaboration, Git and TUI. The six loaded components were framework, webroot, tools, basic-comms, dev-aide and example. The browser used rebuilt webroot assets. Material was measured at 1920×1080 in light and dark, with 1280×800 and 390×844 samples. Terminal evidence used 120×40. Provider scenarios used recorded responses. An initial rules run with outside requests disabled failed provider prerequisites. The manifest identifies the focused reruns and their scope.
+
+Cleanup verified that ports 19874–19878 had no remaining listeners. The registered jobs ended, the review containers were removed, and the scratch databases, editor checkout, credentials and browser profiles were removed. The test settings and grants were confined to those databases.
 
 ## 1. Purpose, scope and sources
 
@@ -42,7 +92,7 @@ surfaces and reuse the owning app's planned branch when a suitable local host is
 
 ### Common review protocol
 
-This protocol applies to all nine companion plans. The [UI review guide](../docs/dev/UI-Review.md) supplies the
+This protocol applies to the shared review and its nine companion plans. The [UI review guide](../docs/dev/UI-Review.md) supplies the
 activity/evidence method; [application practices](../docs/dev/Practices-App-Dev.md), the
 [building skill](../.agents/skills/building/SKILL.md) and [testing skill](../.agents/skills/testing/SKILL.md) govern later
 changes. Preparing or auditing these plans starts no runtime, writes no fixture, executes no activity, runs no
@@ -843,6 +893,8 @@ Local evidence is under `plans/ui-refinement-evidence/closeout-d10e22f/`.
 
 #### Nine-plan result on the disposable runtime
 
+Historical November 25 accounting. The [November 26 queue](#november-26-change-led-review) supersedes the remaining-branch list from this run.
+
 All 147 activities have an owning ledger row, a last observed result, and a next check. None has evidence for every planned branch. The count below groups activities by their strongest ledger disposition. A partially exercised activity can contain both passing checks and deferred branches.
 
 | Area | Partial | Inspection only | Blocked | Failed | Deferred | Total |
@@ -896,6 +948,10 @@ The ledger records the strongest observed outcome. The remaining steps, recovery
 | SH-16 | Use a registered display and expired registration code for the remaining shared-device branches. |
 | SH-17 | Carry the same scoped context through a second app and its offered alternate mode. |
 | SH-18 | Use a completed harmless run and a skill author to share a personal skill for review and verify the administrator's copy. |
+
+### SH-B05 · November 26 change-led review
+
+Shared Assist, Markdown, editor and Whiteboard browser checks used local fixtures (editor.txt, extra-editor.txt and keymaps.txt). The Maps and Workspace screenshots record the Material desktop light/dark, 1280px and 390px observations. In the Maps consumer, Back restored the selected record and its permitted Gallery link. The reader saw the source place, had no Gallery link and was refused direct entry. See record-link.json and MAP-08.
 
 ## 7. Decisions
 
