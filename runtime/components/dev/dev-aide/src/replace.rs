@@ -392,6 +392,13 @@ pub(crate) fn replace_files(
     let context = Context::of(ec, Tier::Extend)?;
     let _authz = ec.disable_authz();
     let root = context.root(&text(parameters, "rootId"))?;
+    if root.hosted_branch.is_some() {
+        // a hosted root has no working tree to replace across (crate::hosted): its files are edited one Save at a time
+        return Err(LibError::new(format!(
+            "{} is a hosted repository: Replace across files is not offered there",
+            root.label
+        )));
+    }
     let query = text(parameters, "query");
     let regex = flag(parameters, "regex");
     let case = flag(parameters, "caseSensitive");

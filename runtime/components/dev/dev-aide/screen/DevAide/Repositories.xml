@@ -56,6 +56,8 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response url="."/></transition>
 
     <parameter name="loadName"/>
+    <!-- Add hosted root asks the hosting for the repositories only once it is opened: a call for each repository -->
+    <parameter name="addHosted"/>
     <actions>
         <service-call name="org.moqui.devaide.VcsServices.list#Repositories" out-map="found"/>
         <set field="repositories" from="found.repositories || []"/>
@@ -65,7 +67,7 @@ along with this software (see the LICENSE.md file). If not, see
         <set field="extend" from="full || ec.user.hasPermission('DEV_AIDE_EXTEND')" type="Boolean"/>
         <!-- the hosting's repositories this user may update, each branch an option (none without the git services) -->
         <set field="hostedOptions" from="[]"/>
-        <script>if (extend) {
+        <script>if (extend &amp;&amp; addHosted == 'true') {
             const listed = ec.service.sync().name('org.moqui.devaide.HostedRootServices.get#HostedRepositories').call() || {}
             for (const repository of listed.repositories || []) for (const branch of (repository.branches.length ? repository.branches : [repository.defaultBranch]))
                 hostedOptions.push({key: JSON.stringify([repository.repositoryId, branch]), text: repository.repositoryId + ' · ' + branch + (repository.description ? ' (' + repository.description + ')' : '')})
@@ -104,15 +106,23 @@ along with this software (see the LICENSE.md file). If not, see
                 <link url="loadComponent" text="Load" link-type="hidden-form" btn-type="primary" parameter-map="{loadName: loadName}"/>
             </box-body></container-box>
         </widgets></section>
-        <section name="HostedSection" condition="extend &amp;&amp; hostedOptions.length"><widgets>
+        <section name="HostedSection" condition="extend"><widgets>
             <container-box id="DevAddHostedRootBox"><box-header title="Add hosted root"/><box-body>
                 <label type="p" text="A repository of this server's git hosting at a branch, edited in the Workspace: each Save is a commit to the branch as you, which the repository's rights and branch rules allow or refuse. It is not loaded or run."/>
+                <section name="HostedClosed" condition="addHosted != 'true'"><widgets>
+                    <link url="." text="Choose a repository" link-type="anchor" parameter-map="{addHosted: 'true'}"/>
+                </widgets></section>
+                <section name="HostedNone" condition="addHosted == 'true' &amp;&amp; !hostedOptions.length"><widgets>
+                    <label type="p" text="No repository of this server's hosting that you may update."/>
+                </widgets></section>
+                <section name="HostedForm" condition="hostedOptions.length"><widgets>
                 <form-single name="AddHostedRootForm" transition="addHostedRoot">
                     <field name="hostedBranch"><default-field title="Repository and branch"><drop-down allow-empty="false">
                         <list-options list="hostedOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
                     <field name="hostedLabel"><default-field title="Label (the repository and branch when empty)"><text-line size="30"/></default-field></field>
                     <field name="submitButton"><default-field title="Add hosted root"><submit/></default-field></field>
                 </form-single>
+                </widgets></section>
             </box-body></container-box>
         </widgets></section>
         <section name="AddSection" condition="full"><widgets>

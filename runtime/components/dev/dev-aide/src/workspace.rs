@@ -297,7 +297,13 @@ fn get_roots(
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::View)?;
     let mut out = Parameters::new();
-    out.insert("roots".into(), json_value(&context.roots));
+    // a hosted root only for a user who may view its repository (crate::hosted)
+    let roots: Vec<&Root> = context
+        .roots
+        .iter()
+        .filter(|root| root.hosted_branch.as_ref().is_none_or(crate::hosted::visible))
+        .collect();
+    out.insert("roots".into(), json_value(&roots));
     out.insert("gitAvailable".into(), Value::Bool(context.git().available()));
     out.insert("tier".into(), Value::string(context.tier.name()));
     out.insert("siteComponents".into(), json_value(&context.settings.site_components));
@@ -786,8 +792,12 @@ fn create_file(
     parameters: &Parameters,
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::Extend)?;
-    let _authz = ec.disable_authz();
     let root = context.root(&text(parameters, "rootId"))?;
+    if let Some(hosted) = &root.hosted_branch {
+        // a commit as the user, with the hosting's checks on (crate::hosted)
+        return crate::hosted::create_file(&context, root, hosted, parameters);
+    }
+    let _authz = ec.disable_authz();
     let resolved = context.resolve(root, &text(parameters, "path"))?;
     context.may_write(root, &resolved.relative)?;
     if resolved.path.exists() {
@@ -820,8 +830,12 @@ fn create_directory(
     parameters: &Parameters,
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::Extend)?;
-    let _authz = ec.disable_authz();
     let root = context.root(&text(parameters, "rootId"))?;
+    if let Some(hosted) = &root.hosted_branch {
+        // a commit as the user, with the hosting's checks on (crate::hosted)
+        return crate::hosted::create_directory(&context, root, hosted, parameters);
+    }
+    let _authz = ec.disable_authz();
     let resolved = context.resolve(root, &text(parameters, "path"))?;
     context.may_write(root, &resolved.relative)?;
     unfenced(moqui_core::entity::fence::Effect::Resource, &resolved.relative)?;
@@ -848,8 +862,12 @@ fn rename_path(
     parameters: &Parameters,
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::Extend)?;
-    let _authz = ec.disable_authz();
     let root = context.root(&text(parameters, "rootId"))?;
+    if let Some(hosted) = &root.hosted_branch {
+        // a commit as the user, with the hosting's checks on (crate::hosted)
+        return crate::hosted::rename_path(&context, root, hosted, parameters);
+    }
+    let _authz = ec.disable_authz();
     let from = context.resolve(root, &text(parameters, "path"))?;
     let to = context.resolve(root, &text(parameters, "to"))?;
     context.may_write(root, &from.relative)?;
@@ -913,8 +931,12 @@ fn delete_path(
     parameters: &Parameters,
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::Extend)?;
-    let _authz = ec.disable_authz();
     let root = context.root(&text(parameters, "rootId"))?;
+    if let Some(hosted) = &root.hosted_branch {
+        // a commit as the user, with the hosting's checks on (crate::hosted)
+        return crate::hosted::delete_path(&context, root, hosted, parameters);
+    }
+    let _authz = ec.disable_authz();
     let resolved = context.resolve(root, &text(parameters, "path"))?;
     if resolved.relative.is_empty() {
         return Err(LibError::new("a root is not deleted from here"));
@@ -1063,8 +1085,7 @@ fn search_files(
     if let Some(hosted) = &root.hosted_branch {
         // a hosted root through the hosting's reads, with the same matcher and the scan's budgets (crate::hosted)
         let matcher = crate::replace::compile(&query, regex, case).map_err(LibError::new)?;
-        results = crate::hosted::search_files(&context, hosted, &matcher, &filter, LIMIT);
-        truncated = results.len() >= LIMIT;
+        truncated = crate::hosted::search_files(&context, hosted, &matcher, &filter, LIMIT, &mut results);
     } else if root.kind == RootKind::Git && !regex {
         let mut args = vec!["grep", "-n", "-I", "--no-color", "-z", "--untracked", "-F"];
         if !case {

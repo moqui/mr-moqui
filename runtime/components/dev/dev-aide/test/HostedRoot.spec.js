@@ -1,9 +1,12 @@
 // A hosted root (plans/design-dev-aide.md 4.10, src/hosted.rs): a db repository of this server's git hosting, added
-// at its branch by a user who may update it (one who may not is refused), is a root of kind hosted with no working tree.
-// Its tree, a file, Go to file and search read the branch; a Save is a commit by the user with "Edit <path>" and the
-// task trailer; a Save over a file the branch moved past since it was opened is a conflict with the branch's text,
-// which a Save at that blob then commits over; Repositories offers the repository and lists the root; a branch whose rules refuse a direct commit refuses the Save and the
-// root says why; the git commands of a working tree and the file writes outside Save are refused.
+// at its branch by a user who may update it (one who may not is refused, and is not shown the root; another who may
+// does not relabel it), is a root of kind hosted with no working tree. Its tree, a file, Go to file and search read the
+// branch; a Save is a commit by the user with its message (Edit <path> by default) and the task trailer; a Save over a
+// file the branch moved past since it was opened is a conflict with the branch's text, which a Save at that blob then
+// commits over; a new file, a new folder, a move and a delete are commits too, and the first Save of an empty
+// repository makes its branch; a branch whose rules refuse a direct commit refuses the Save and the root says why; the
+// git commands of a working tree and Replace across files are refused. Repositories' Add hosted root is checked
+// through its transition and get#HostedRepositories (WorkspaceTui renders the screen).
 // Run: ./moq test dev-aide --spec HostedRoot
 const GIT = "org.moqui.git.GitServices."
 const HOSTED = "org.moqui.devaide.HostedRootServices."
@@ -11,6 +14,7 @@ const WS = "org.moqui.devaide.WorkspaceServices."
 // a suffix keeps each run's repository apart on a database kept between runs
 const RUN = Date.now().toString(36).slice(-5).toUpperCase()
 const REPO = "SPEC_HOSTED_" + RUN
+const EMPTY = "SPEC_HOSTED_EMPTY_" + RUN
 const README = "# Spec\n\nThe first line.\n"
 
 const call = (name, parameters) => {
@@ -62,6 +66,37 @@ spec({
                 branch: "main",
                 description: "Spec hosted root"
             })
+            make("moqui.resource.GitRepository", {
+                repositoryId: EMPTY,
+                repositoryKind: "db",
+                branch: "main",
+                description: "Spec empty"
+            })
+            // a second user who may update the repository: a member of a group with every right on it
+            const since = new Date(Date.now() - 60000)
+            make("moqui.security.UserAccount", {
+                userId: "specHostedPeer",
+                username: "spec.hosted.peer",
+                userFullName: "Spec Hosted Peer"
+            })
+            make("moqui.security.UserGroupMember", {userGroupId: "DEV_AIDE_EXTENDERS", userId: "specHostedPeer", fromDate: since})
+            make("moqui.security.UserGroup", {userGroupId: "SPEC_HOSTED_" + RUN, description: "Spec hosted peers"})
+            make("moqui.security.UserGroupMember", {userGroupId: "SPEC_HOSTED_" + RUN, userId: "specHostedPeer", fromDate: since})
+            make("moqui.security.ArtifactGroup", {artifactGroupId: "SPEC_HOSTED_" + RUN, description: "Spec hosted repository"})
+            make("moqui.security.ArtifactGroupMember", {
+                artifactGroupId: "SPEC_HOSTED_" + RUN,
+                artifactName: REPO,
+                artifactTypeEnumId: "AT_GIT_REPOSITORY",
+                nameIsPattern: "N",
+                inheritAuthz: "N"
+            })
+            make("moqui.security.ArtifactAuthz", {
+                artifactAuthzId: "SPEC_HOSTED_" + RUN,
+                userGroupId: "SPEC_HOSTED_" + RUN,
+                artifactGroupId: "SPEC_HOSTED_" + RUN,
+                authzTypeEnumId: "AUTHZT_ALWAYS",
+                authzActionEnumId: "AUTHZA_ALL"
+            })
             // an extend-tier user with no right in the repository
             make("moqui.security.UserAccount", {
                 userId: "specHostedOutsider",
@@ -83,6 +118,8 @@ spec({
         ec.user.setPreference("DEV_AIDE_CURRENT_TASK." + rootId, "")
         asSystem(() => {
             ec.entity.find("moqui.dev.DevAideRoot").condition("gitRepositoryId", REPO).deleteAll()
+            ec.entity.find("moqui.dev.DevAideRoot").condition("gitRepositoryId", EMPTY).deleteAll()
+            ec.entity.find("moqui.security.UserGroupMember").condition("userId", "specHostedPeer").deleteAll()
             ec.entity.find("moqui.resource.GitBranchRule").condition("repositoryId", REPO).deleteAll()
             ec.entity.find("moqui.security.UserGroupMember").condition("userId", "specHostedOutsider").deleteAll()
         })
@@ -111,11 +148,9 @@ feature("a user who may not update the repository is refused, and one who may ad
     }
 })
 
-// Repositories' one render (its own logic: the hosted repositories offered, a hosted root's Remove for its Terminal)
-feature("Repositories offers each branch of a repository the user may update and lists the hosted root", {
+feature("a user who may not view the repository is not shown the root, and one who did not add it does not relabel it", {
     when() {
-        const r = ec.screen.makeTest().rootScreen("component://dev-aide/screen/DevAide.xml").render("Repositories", {}, null)
-        // the form's choice names the repository and branch: an added root takes the label
+        // Repositories' form names the repository and branch; the root takes its label
         const posted = ec.screen
             .makeTest()
             .rootScreen("component://dev-aide/screen/DevAide.xml")
@@ -124,19 +159,22 @@ feature("Repositories offers each branch of a repository the user may update and
                 {hostedBranch: JSON.stringify([REPO, "main"]), hostedLabel: "Spec hosted"},
                 "post"
             )
-        const root = (call(WS + "get#Roots").out.roots || []).find(item => item.id === rootId) || {}
-        return {r, out: String(r.output), posted, label: root.label}
+        const mine = (call(WS + "get#Roots").out.roots || []).find(item => item.id === rootId) || {}
+        ec.user.internalLoginUser("spec.hosted.outsider")
+        const outsider = (call(WS + "get#Roots").out.roots || []).some(item => item.id === rootId)
+        ec.user.internalLoginUser("spec.hosted.peer")
+        const peer = (call(WS + "get#Roots").out.roots || []).some(item => item.id === rootId)
+        const relabel = call(HOSTED + "store#HostedRoot", {repositoryId: REPO, branch: "main", label: "Taken"})
+        login("john.doe")
+        return {posted, label: mine.label, outsider, peer, relabel}
     },
-    then({r, out, posted, label}) {
+    then({posted, label, outsider, peer, relabel}) {
         posted.status == 302
         posted.errorMessages.length == 0
         label == "Spec hosted"
-        r.status == 200
-        r.errorMessages.length == 0
-        !out.includes("Error rendering")
-        out.includes("Add hosted root")
-        out.includes(REPO + " · main")
-        out.includes("removeHostedRoot")
+        outsider == false
+        peer == true
+        relabel.errors.includes("added by another user")
     }
 })
 
@@ -160,7 +198,7 @@ feature("the tree, a file, Go to file and search read the branch", {
     }
 })
 
-feature("a Save is a commit by the user with the default message and the task trailer", {
+feature("a Save is a commit by the user with its message (Edit <path> by default) and the task trailer", {
     when() {
         ec.user.setPreference("DEV_AIDE_CURRENT_TASK." + rootId, "SPEC-12")
         const opened = call(WS + "get#File", {rootId, path: "README.md"}).out
@@ -174,9 +212,20 @@ feature("a Save is a commit by the user with the default message and the task tr
             () => call(GIT + "get#GitLog", {repositoryId: REPO, revision: "main", limit: 1}).out.commitList || []
         )
         const now = call(WS + "get#File", {rootId, path: "README.md"}).out
-        return {opened, saved, top: log[0] || {}, now}
+        // the Save dialog's message
+        const named = call(WS + "save#File", {
+            rootId,
+            path: "README.md",
+            text: now.text + "Third.\n",
+            baseHash: now.hash,
+            message: "Say more"
+        })
+        const after = asSystem(
+            () => call(GIT + "get#GitLog", {repositoryId: REPO, revision: "main", limit: 1}).out.commitList || []
+        )
+        return {opened, saved, top: log[0] || {}, now, named, last: after[0] || {}}
     },
-    then({opened, saved, top, now}) {
+    then({opened, saved, top, now, named, last}) {
         saved.errors == ""
         saved.out.conflict == false
         saved.out.commitId == top.commitId
@@ -186,6 +235,8 @@ feature("a Save is a commit by the user with the default message and the task tr
         saved.out.hash == now.hash
         now.hash != opened.hash
         now.text.endsWith("A second line.\n")
+        named.errors == ""
+        last.summary == "Say more"
     }
 })
 
@@ -230,15 +281,56 @@ feature("a branch whose rules refuse a direct commit refuses the Save, and the r
     }
 })
 
-feature("the git commands of a working tree and the writes outside Save are refused", {
+feature("a new file, a new folder, a move and a delete are commits; the git commands of a working tree and Replace are refused", {
     when() {
+        const created = call(WS + "create#File", {rootId, path: "notes/new.txt", text: "new\n"})
+        const again = call(WS + "create#File", {rootId, path: "notes/new.txt", text: "x"})
+        const folder = call(WS + "create#Directory", {rootId, path: "empty"})
+        const moved = call(WS + "rename#Path", {rootId, path: "notes/new.txt", to: "notes/moved.txt"})
+        const deleted = call(WS + "delete#Path", {rootId, path: "notes"})
+        const files = call(WS + "find#Files", {rootId}).out.files || []
+        const log = asSystem(
+            () => call(GIT + "get#GitLog", {repositoryId: REPO, revision: "main", limit: 4}).out.commitList || []
+        )
         return {
+            created,
+            again,
+            folder,
+            moved,
+            deleted,
+            files,
+            summaries: log.map(commit => commit.summary),
             status: call("org.moqui.devaide.VcsServices.get#Status", {rootId}).errors,
-            created: call(WS + "create#File", {rootId, path: "new.txt", text: "x"}).errors
+            replaced: call("org.moqui.devaide.WorkspaceServices.replace#Files", {rootId, query: "Spec", replacement: "x"}).errors
         }
     },
-    then({status, created}) {
+    then({created, again, folder, moved, deleted, files, summaries, status, replaced}) {
+        created.errors == ""
+        again.errors.includes("already there")
+        folder.errors == ""
+        moved.errors == ""
+        deleted.errors == ""
+        JSON.stringify(files) == JSON.stringify(["README.md", "data/Seed.xml", "empty/.gitkeep"])
+        JSON.stringify(summaries) ==
+            JSON.stringify(["Delete notes", "Move notes/new.txt to notes/moved.txt", "Add empty", "Add notes/new.txt"])
         status.includes("not a git repository")
-        created.includes("no working tree")
+        replaced.includes("Replace across files is not offered")
+    }
+})
+
+feature("the first Save of an empty repository makes its branch", {
+    when() {
+        const added = call(HOSTED + "store#HostedRoot", {repositoryId: EMPTY})
+        const empty = added.out.rootId
+        const opened = call(WS + "get#File", {rootId: empty, path: "README.md", missingOk: "true"}).out
+        const saved = call(WS + "save#File", {rootId: empty, path: "README.md", text: "First\n", baseHash: ""})
+        return {added, opened, saved, now: call(WS + "get#File", {rootId: empty, path: "README.md"}).out}
+    },
+    then({added, opened, saved, now}) {
+        added.errors == ""
+        opened.missing == true
+        saved.errors == ""
+        saved.out.conflict == false
+        now.text == "First\n"
     }
 })

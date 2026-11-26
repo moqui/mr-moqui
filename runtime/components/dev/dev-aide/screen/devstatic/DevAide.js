@@ -994,11 +994,18 @@
                     return answer;
                 });
             },
-            saveTab(tab, inAll) {
+            saveTab(tab, inAll, message) {
                 if (!tab || tab.readOnly || (tab.saving && !inAll)) return Promise.resolve();
                 if (tab.text === tab.saved) return Promise.resolve();
+                // a hosted root (4.10): each Save is a commit, its message asked first ("Edit <path>" as given)
+                if (this.root && this.root.kind === "hosted" && message === undefined) {
+                    return new Promise((resolve) => this.$q.dialog({ title: "Commit to " + this.root.hostedBranch.branch,
+                        prompt: { model: "Edit " + tab.path, type: "text" }, cancel: true, persistent: true })
+                        .onOk((given) => resolve(this.saveTab(tab, inAll, String(given || "").trim())))
+                        .onCancel(() => (inAll ? resolve(Promise.reject({ errors: "The commit was cancelled" })) : resolve())));
+                }
                 tab.saving = true;
-                return this.post("save", { rootId: this.rootId, path: tab.path, text: tab.text, baseHash: tab.base }).then((answer) => {
+                return this.post("save", { rootId: this.rootId, path: tab.path, text: tab.text, baseHash: tab.base, message: message || "" }).then((answer) => {
                     tab.saving = inAll;
                     if (answer.conflict) {
                         tab.conflict = { diskText: answer.diskText || "", diskHash: answer.diskHash };
@@ -1859,7 +1866,7 @@
           <q-checkbox dense size="xs" v-model="search.regex" label=".*"></q-checkbox>
           <q-checkbox dense size="xs" v-model="search.caseSensitive" label="Aa" class="q-ml-sm"></q-checkbox>
           <q-input dense borderless v-model="search.pathFilter" placeholder="in path" class="q-ml-sm col"></q-input>
-          <q-btn v-if="canWrite" dense flat round size="sm" icon="sym_o_find_replace" :color="replace.open ? 'primary' : undefined" :aria-label="t('Replace')"
+          <q-btn v-if="canWrite && !(root && root.kind === 'hosted')" dense flat round size="sm" icon="sym_o_find_replace" :color="replace.open ? 'primary' : undefined" :aria-label="t('Replace')"
               @click="replace.open = !replace.open; replace.preview = null" id="DevReplaceToggle"><q-tooltip>{{ t('Replace across files') }}</q-tooltip></q-btn>
         </div>
         <div v-if="replace.open && canWrite" class="row items-center no-wrap q-gutter-x-xs" id="DevReplace">

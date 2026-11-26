@@ -26,7 +26,10 @@ fn a_hosted_path_stays_in_the_repository() {
 }
 
 #[test]
-fn a_hosted_root_is_named_by_its_repository_and_branch() {
-    assert_eq!(id_of("DOCS", "feature/new page"), "DOCS-feature-new-page");
-    assert_eq!(location_of("DOCS", "main"), "git://DOCS@main");
+fn a_hosted_root_is_named_so_that_no_two_share_a_name() {
+    // a repository id has no `/`, so the location of each repository and branch is its own
+    assert_eq!(location_of("DOCS", "feature/new page"), "git://DOCS/feature/new page");
+    assert_ne!(location_of("A-b", "c"), location_of("A", "b-c"));
+    // the id is the row's sequenced id
+    assert_eq!(id_of("100050"), "hosted-100050");
 }
