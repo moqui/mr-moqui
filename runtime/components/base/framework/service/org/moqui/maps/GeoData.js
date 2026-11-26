@@ -33,13 +33,11 @@ const MAX_RUNS = 50
 // The estimate an import of every GeoNames country is confirmed with (plans/Maps.md §6.3): the rows of the 124 country
 // files, as allCountries.zip counted them on November 25, 2026 (1,836,751; its Canadian, Dutch and British codes the
 // first part only, as the country files), and the database rows a file row came to and the file rows a second a queue
-// loaded, as GeoDataEveryCountry measured them (five countries, 119,956 rows in 42 s)
-const EVERY_COUNTRY = {fileRows: 1840000, countries: 124, databaseRowsPerRow: 3, rowsPerSecond: 2800}
-// The GeoNames country files of 50,000 rows or more, as allCountries.zip counted them (November 25, 2026)
+// loaded, as GeoDataEveryCountry measured them (five countries under 52,000 rows, 119,956 rows in 42 s; Brazil, Portugal
+// and Canada, 214,124 rows in 115 s, Portugal's 206,942 at about 1,900 a second)
+const EVERY_COUNTRY = {fileRows: 1840000, countries: 124, databaseRowsPerRow: 3, rowsPerSecond: 2000}
+// The GeoNames country files of 50,000 rows or more, as allCountries.zip counted them (November 25, 2026), for the estimate
 const LARGE_FILES = {PT: 206942, AE: 178171, IN: 155570, JP: 146883, MX: 144655, SG: 121154, PE: 96943, ID: 81058, PL: 72899, FR: 51611}
-// For now a queue runs only the countries estimated under this many file rows: a run as a ServiceJob grows about 20 KB of
-// memory a file row (plans/Maps.md §6.3), so a larger country is imported one at a time until the job runner is fixed
-const QUEUE_MAX_ROWS = 50000
 // A run whose row has not changed for this long is taken as abandoned, as the importer takes it (STALE_AFTER)
 const STALE_MS = 3600 * 1000
 
@@ -419,9 +417,8 @@ function queueCountries(set) {
         .filter(code => byCode.has(code))
         .map(code => byCode.get(code))
 }
-// The countries of an import of every country of a set: those estimated under QUEUE_MAX_ROWS, queued, and the larger,
-// to import one at a time; each with its estimated file rows (its last completed run's where it has one, else its
-// counted size if it is large, else the average of the others)
+// The countries of an import of every country of a set, each with its estimated file rows (its last completed run's where
+// it has one, else its counted size if it is large, else the average of the others)
 function queuePlan(set) {
     const known = new Map()
     for (const run of runsOf(set.sourceKey))
@@ -429,15 +426,10 @@ function queuePlan(set) {
             known.set(run.countryGeoId, Number(run.rowsRead || 0))
     const largeRows = Object.values(LARGE_FILES).reduce((sum, rows) => sum + rows, 0)
     const average = (EVERY_COUNTRY.fileRows - largeRows) / (EVERY_COUNTRY.countries - Object.keys(LARGE_FILES).length)
-    const queued = [],
-        large = []
-    for (const country of queueCountries(set)) {
-        const rows = known.get(country.geoId) ?? LARGE_FILES[text(country.geoCodeAlpha2)] ?? average
-        const entry = {country, rows}
-        if (rows < QUEUE_MAX_ROWS) queued.push(entry)
-        else large.push(entry)
-    }
-    return {queued, large}
+    return queueCountries(set).map(country => ({
+        country,
+        rows: known.get(country.geoId) ?? LARGE_FILES[text(country.geoCodeAlpha2)] ?? average
+    }))
 }
 // What an import of every country of a set comes to, for its confirmation: its runs, the file rows (a country's last
 // completed run's where it has one, else GeoNames' average), the database rows and the minutes, as estimated from the
@@ -445,7 +437,7 @@ function queuePlan(set) {
 function everyCountryEstimate(p) {
     const set = one(DATA_SET, {dataSetId: text(p.dataSetId)})
     if (!set || set.perCountry !== "Y" || set.coverageGeoId || !text(set.urlTemplate)) return {countryCount: 0}
-    const {queued, large} = queuePlan(set)
+    const queued = queuePlan(set)
     const countryCount = queued.length
     const total = queued.reduce((sum, entry) => sum + entry.rows, 0)
     const fileRows = Math.round(total / 10000) * 10000 || 10000
@@ -455,37 +447,17 @@ function everyCountryEstimate(p) {
         countries: countryCount,
         fileRows: ec.l10n.format(fileRows, "#,##0"),
         databaseRows: ec.l10n.format(databaseRows, "#,##0"),
-        minutes,
-        max: ec.l10n.format(QUEUE_MAX_ROWS, "#,##0")
+        minutes
     }
-    const largeCountries = large
-        .sort((a, b) => b.rows - a.rows)
-        .map(entry => ({
-            geoId: entry.country.geoId,
-            geoName: text(entry.country.geoName) || entry.country.geoId,
-            rows: Math.round(entry.rows / 1000) * 1000
-        }))
     return {
         countryCount,
         fileRows,
         databaseRows,
         minutes,
-        largeCountries,
         estimateText: say(
             "Imports ${countries} countries one after another, each its own run: about ${fileRows} postal code rows, about ${databaseRows} database rows, roughly ${minutes} minutes of runs. Canada, the Netherlands and Great Britain come with the first part of their codes only.",
             values
-        ),
-        largeText: largeCountries.length
-            ? say(
-                  "Import these one at a time: ${countries}. Each has ${max} rows or more, and an import running in the background takes about 20 KB of memory a row for now, so they are left out of the queue.",
-                  {
-                      max: values.max,
-                      countries: largeCountries
-                          .map(country => country.geoName + " (" + ec.l10n.format(country.rows, "#,##0") + ")")
-                          .join(", ")
-                  }
-              )
-            : null
+        )
     }
 }
 // The countries Import offers for a set: those of its countryCodes, else every country, by name
@@ -525,8 +497,32 @@ function runningRun(set, countryGeoId) {
     )
 }
 
-// Every country of a set read a country at a time, as a queue: a pending run a country (those under QUEUE_MAX_ROWS, for
-// now) sharing the first run's ID as queueId; only the first is started here, and each run starts the next when it ends
+// A removal under way of the source key's rows for the country (or of either for every country), as remove#GeoData
+// marks it on its data set's row (removingStamp, touched before each batch; one not changed for STALE_MS is abandoned):
+// the data set and country, if any
+function removalRunning(set, countryGeoId) {
+    const sets = Array.from(find(DATA_SET).condition("dataSetId", "in", setIdsOf(set.sourceKey)).useCache(false).list())
+    return sets.find(
+        row =>
+            row.removingStamp &&
+            Number(row.removingStamp) >= Date.now() - STALE_MS &&
+            (!countryGeoId || !row.removingCountryGeoId || row.removingCountryGeoId === countryGeoId)
+    )
+}
+const removalRefusal = (set, countryGeoId) => {
+    const removing = removalRunning(set, countryGeoId)
+    return removing
+        ? refuse(
+              say("The rows of ${id} for ${country} are being removed; import after the removal ends", {
+                  id: removing.dataSetId,
+                  country: countryName(removing.removingCountryGeoId) || L("every country")
+              })
+          )
+        : null
+}
+
+// Every country of a set read a country at a time, as a queue: a pending run a country sharing the first run's ID as
+// queueId; only the first is started here, and each run starts the next when it ends
 // (import#GeoData)
 function startQueue(set, force) {
     if (set.perCountry !== "Y" || set.coverageGeoId || !text(set.urlTemplate))
@@ -535,6 +531,8 @@ function startQueue(set, force) {
     // first's runs
     find(DATA_SET, {dataSetId: set.dataSetId}).forUpdate(true).one()
     runCache.delete(set.sourceKey)
+    const removal = removalRefusal(set, null)
+    if (removal) return removal
     const running = runningRun(set, null)
     if (running)
         return refuse(
@@ -543,7 +541,7 @@ function startQueue(set, force) {
                 run: running.geoDataImportId
             })
         )
-    const countries = queuePlan(set).queued.map(entry => entry.country)
+    const countries = queuePlan(set).map(entry => entry.country)
     if (!countries.length) return refuse(say("${id} lists no country to import", {id: set.dataSetId}))
     const runs = asSystemWrite(() => {
         let queueId = null
@@ -611,6 +609,8 @@ function startImport(p) {
         countryGeoId = country.geoId
     }
     // refused before an upload is written
+    const removal = removalRefusal(set, countryGeoId)
+    if (removal) return removal
     const running = runningRun(set, countryGeoId)
     if (running)
         return refuse(

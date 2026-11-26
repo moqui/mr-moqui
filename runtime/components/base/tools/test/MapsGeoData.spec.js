@@ -21,10 +21,7 @@ function waitFor(test, millis) {
     const deadline = Date.now() + millis
     while (Date.now() < deadline) {
         if (test()) return true
-        const pause = Date.now() + 50
-        while (Date.now() < pause) {
-            /* look again shortly */
-        }
+        sleep(50)
     }
     return test()
 }

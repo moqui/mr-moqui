@@ -1228,7 +1228,7 @@ The server the execution context belongs to.
 | `getStartupReport()` | What the server reported when it became ready: listeners, integrations, tools |
 | `getThreadList()` | A row for each thread |
 | `workerPool` | The service worker pool, as `ec.service.jobWorkerPool` |
-| `waitWorkerPoolEmpty(retryLimit)` | Waits up to `retryLimit` (50) times 100 ms for async service work to finish; whether the pool is empty |
+| `waitWorkerPoolEmpty(retryLimit)` | Waits up to `retryLimit` (50) times 100 ms for async service work to finish; whether the pool is empty. The service worker pool only: it returns at once while a ServiceJob runs on a job worker (a spec waits for one with `sleep`, [JS-Testkit](JS-Testkit.md#helpers)) |
 | `isDestroyed()` | false |
 | `entity`, `service`, `l10n`, `resource`, `cache`, `screen`, `logger` | The same objects as `ec.entity` and the rest |
 | `getTool(name, ...parameters)` | A tool (below) |

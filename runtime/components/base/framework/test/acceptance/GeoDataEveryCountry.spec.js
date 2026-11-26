@@ -1,20 +1,21 @@
 // GeoDataEveryCountry (plans/Maps.md §6.3 "Every country", §6.4): an import of every country of a set read a country at a
 // time, as Geo data's Import starts one (start#GeoDataImport with everyCountry), with outside requests (opened to
 // download.geonames.org alone): a set as an administrator adds one for a mirror, sharing GeoNames postal's source key, whose
-// countryCodes are five countries of different sizes (Brazil, Canada's first parts, Germany, Spain, France). France (51,611
-// rows) is left out of the queue and listed to import one at a time, as every country of 50,000 rows or more is for now
-// (plans/Maps.md §6.3); the queue runs the other four one after another, each its own run and edition of the
-// GeoDataImport ServiceJob. It records each run's wall time and counts and the rows in use after it, logged as
-// GeoDataEveryCountry lines for plans/Maps.md §6.3 (the server's memory is sampled beside the run). Cleanup cancels what is
-// still running and removes what it loaded: the set shares GeoNames postal's source key, so that is the GEONAMES_POSTAL data
-// of these countries, which a test database has none of before it.
-// Run when asked: ./moq accept framework --spec GeoDataEveryCountry (minutes; about 2 MB downloaded)
+// countryCodes are two small countries and the largest GeoNames country file between them (Brazil, Portugal's 206,942
+// rows, Canada's first parts). The queue runs the three one after another, each its own run and edition of the
+// GeoDataImport ServiceJob, the one after Portugal showing the queue goes on past a large country. It records each run's
+// wall time and counts and the rows in use after it, logged as GeoDataEveryCountry lines for plans/Maps.md §6.3 (the
+// server's memory is sampled beside the run). The wait looks at the runs every half second, pausing with sleep between
+// looks (ec.factory.waitWorkerPoolEmpty waits for the service worker pool only, not a job's run). Cleanup cancels what is
+// still running and removes what it loaded: the set shares GeoNames postal's source key, so that is the GEONAMES_POSTAL
+// data of these countries, which a test database has none of before it.
+// Run when asked: ./moq accept framework --spec GeoDataEveryCountry (about four minutes, most of it Portugal and its removal; a few MB downloaded)
 const S = "org.moqui.maps.GeoDataServices."
 const IMPORT = "moqui.maps.GeoDataImport"
 const SET = "SPEC_GN_FEW"
-const CODES = ["BR", "CA", "DE", "ES", "FR"]
-// queued: those under 50,000 rows
-const QUEUED = ["BRA", "CAN", "DEU", "ESP"]
+const CODES = ["BR", "PT", "CA"]
+// queued, in the order of the set's countryCodes
+const QUEUED = ["BRA", "PRT", "CAN"]
 const http = ec.factory.getTool("HttpFixtures")
 const results = {}
 let queueId = null
@@ -83,7 +84,7 @@ spec({
         if (queueId) {
             invoke(S + "cancel#GeoDataImport", {queueId})
             const deadline = Date.now() + 120000
-            while (Date.now() < deadline && queueRuns(queueId).some(run => inProgress(run.statusId))) ec.factory.waitWorkerPoolEmpty(10)
+            while (Date.now() < deadline && queueRuns(queueId).some(run => inProgress(run.statusId))) sleep(500)
         }
         const started = Date.now()
         for (const country of countries()) invoke(S + "remove#GeoData", {dataSetId: SET, countryGeoId: country.geoId})
@@ -111,7 +112,7 @@ feature("every country runs as a queue, one after another, each its own complete
         let runs = queueRuns(started.queueId || "_NA_")
         let lastLog = 0
         while (Date.now() < deadline && runs.some(run => inProgress(run.statusId))) {
-            ec.factory.waitWorkerPoolEmpty(10)
+            sleep(500)
             runs = queueRuns(started.queueId || "_NA_")
             if (Date.now() - lastLog > 30000) {
                 lastLog = Date.now()
@@ -144,10 +145,7 @@ feature("every country runs as a queue, one after another, each its own complete
     },
     then({estimate, started, runs}) {
         estimate.countryCount == QUEUED.length
-        estimate.estimateText.includes("4 countries")
-        estimate.largeCountries.length == 1
-        estimate.largeCountries[0].geoId == "FRA"
-        estimate.largeText.includes("France")
+        estimate.estimateText.includes("3 countries")
         started.error == ""
         started.countryCount == QUEUED.length
         runs.length == QUEUED.length

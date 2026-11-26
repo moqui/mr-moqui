@@ -10,7 +10,8 @@
 // (also with authorization off, by the importer's own MAPS_ADMIN check), for a license not acknowledged and for an
 // operator's file with no country or outside the allowed locations; a ServiceJob run with no user runs as its
 // runAsUserId only when that user added themselves to the job; and a queue of every country starts its next run when one
-// ends and is cancelled as a group; and a GeoNames first-level code finds its division by its ISO code (the crosswalk).
+// ends and is cancelled as a group; a GeoNames first-level code finds its division by its ISO code (the crosswalk); and a
+// removal under way refuses an import's start and another Remove of its scope.
 // Run: ./moq test framework --spec GeoDataImport
 const S = "org.moqui.maps.GeoDataServices."
 const IMPORT = "moqui.maps.GeoDataImport"
@@ -516,12 +517,8 @@ feature("a ServiceJob run with no user runs as its runAsUserId only when that us
                     .one()
             )
         const deadline = Date.now() + 10000
-        while (Date.now() < deadline && !runIds.every(id => ended(id)?.endTime)) {
-            const pause = Date.now() + 50
-            while (Date.now() < pause) {
-                /* look again shortly */
-            }
-        }
+        // each run on a job worker: look every 50 ms
+        while (Date.now() < deadline && !runIds.every(id => ended(id)?.endTime)) sleep(50)
         const [other, self] = runIds.map(ended)
         return {other, self, imported: all(IMPORT, {dataSetId: "OPERATOR_CSV"}), me}
     },
@@ -560,7 +557,11 @@ feature("every country is a queue: a run that ends starts the queue's next pendi
         })
         // the first was cancelled before it started: it ends, and starts the next
         const first = invoke(S + "import#GeoData", {geoDataImportId: "SPEC_GQ_1"})
-        ec.factory.waitWorkerPoolEmpty(50)
+        // the next run is the GeoDataImport job's, on a job worker: wait (at most 10 s) for it to end
+        const going = () =>
+            ["GdiPending", "GdiDownloading", "GdiValidating", "GdiLoading"].includes(one(IMPORT, {geoDataImportId: "SPEC_GQ_2"})?.statusId)
+        const deadline = Date.now() + 10000
+        while (Date.now() < deadline && going()) sleep(50)
         const cancel = invoke(S + "cancel#GeoDataImport", {queueId: "SPEC_GQ_3"})
         const again = invoke(S + "cancel#GeoDataImport", {queueId: "SPEC_GQ_1"})
         const row = geoDataImportId => one(IMPORT, {geoDataImportId})
@@ -636,5 +637,28 @@ feature("a GeoNames first-level code finds its division by its ISO 3166-2 code t
         bavaria.geoName == "Bavaria"
         // one made before gets it now
         backfilled.geoCodeAlpha2 == "BW"
+    }
+})
+
+feature("a removal under way refuses an import's start and another Remove of its scope, and not another country's", {
+    when() {
+        const mark = fields => sys(() => ec.entity.find("moqui.maps.GeoDataSet").condition({dataSetId: "OPERATOR_CSV"}).one().setAll(fields).update())
+        // as remove#GeoData marks the set while it removes the US rows, a batch at a time
+        mark({removingStamp: ec.user.nowTimestamp, removingCountryGeoId: "USA"})
+        try {
+            return {
+                start: invoke(S + "start#GeoDataImport", {dataSetId: "OPERATOR_CSV", countryGeoId: "USA", location: ROOT + "/none.csv"}),
+                remove: invoke(S + "remove#GeoData", {dataSetId: "OPERATOR_CSV", countryGeoId: "USA"}),
+                otherCountry: invoke(S + "remove#GeoData", {dataSetId: "OPERATOR_CSV", countryGeoId: "CAN"})
+            }
+        } finally {
+            mark({removingStamp: null, removingCountryGeoId: null})
+        }
+    },
+    then({start, remove, otherCountry}) {
+        start.error.includes("being removed")
+        start.geoDataImportId == null
+        remove.error.includes("being removed")
+        otherCountry.error == ""
     }
 })

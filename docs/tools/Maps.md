@@ -510,8 +510,10 @@ file (5), then Census (10), then GeoNames (20).
 - **Imported** lists each data set and country with its edition in use, its postal codes and points in use and its last
   run, with **Refresh** (that scope again; an operator's file is the one its last run read), **Cancel** (a run stops at
   its next step, retiring nothing) and **Remove** (`remove#GeoData`: the rows nothing refers to are deleted, the rest
-  end-dated, a batch of Geo IDs at a time in its own transaction, so one stopped part way is finished by another; not
-  offered for countries and divisions, whose rows are shared).
+  end-dated, a batch of Geo IDs at a time in its own transaction, so one stopped part way is finished by another; a
+  batch that fails is rolled back and named in the error while the rest go on; an import of the scope is refused while
+  it runs, by its mark on the data set, and an import that starts anyway stops it; not offered for countries and
+  divisions, whose rows are shared).
 - **Refresh all** runs the `GeoDataRefresh` ServiceJob now (`request#GeoDataRefresh`, also System › Health's refresh
   `maps.geodata.refresh`, offered to holders of `ADMIN_SETTINGS_MANAGE` and run only for those who also hold `MAPS_ADMIN`,
   `ADMIN`'s): each scope in use (one that ever completed a run and still has rows, whatever its last run) is imported

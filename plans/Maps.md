@@ -587,9 +587,11 @@ Removing what the test loaded (`remove#GeoData`, the three countries, called syn
 and point associations whole and deleted them a row at a time in one transaction. A removal now goes a batch of Geo IDs
 at a time (`moqui-tools` `geo/remove.rs`: about 2,000, each kind of row paged by Geo ID, the references checked with
 `IN` queries of the batch), each batch in its own transaction, so a Remove stopped part way leaves whole batches removed
-and another finishes it; its rules are as before. Measured the same way, the three countries' removal took 86 s and the
-process went from about 570 MB to 940 MB (it still grows about 1.8 KB a removed code, as the import grows about 2.2 KB a
-row, outside the transactions, which commit; not found yet), and the test process peaked at 1.58 GB, during Portugal's
+and another finishes it; its rules are as before. A batch that fails is rolled back and named in the error while the
+rest go on. While a removal runs it marks its data set (`removingStamp`, touched before each batch, abandoned after an
+hour unchanged): an import's start and the import itself refuse the scope, a second Remove of the set is refused, and an
+import that starts anyway stops the removal before its next batch. Measured the same way, the three countries' removal
+took 86 s and the process went from about 570 MB to 940 MB, and the test process peaked at 1.58 GB, during Portugal's
 import, not its removal.
 
 Cancel between batches, measured by the acceptance test `GeoDataImportCancel`: a job run of a 20,000-code operator file
@@ -600,6 +602,17 @@ only then the three codes the new edition lacked retired.
 A framework postal lookup accepts country and postal code only; it does not need a street address or party ID.
 
 ### 6.4 Geo data importer
+
+The three largest countries back to back (November 26, 2026, the same measurement, a queue of Portugal, the United Arab
+Emirates and India, then the removal of the three): Portugal 111 s (206,942 rows), the United Arab Emirates 78 s
+(178,171 rows) and India 23 s (155,570 rows, 155,542 place names on 19,238 codes, 28 rejected), all completed; the
+removal 206 s. The memory does not pile up from one run to the next: each run grows while it loads (about 2.2 KB a
+row: about 690 MB to 1,170 MB for Portugal, 735 MB to 1,410 MB for the Emirates, 1.55 GB at each one's retire step) and
+returns it when it ends (735 MB after Portugal, about 600 MB after India), and each country's Remove grows about 1.8 KB
+a removed code (586 MB to 953 MB for one) and returns it when its call ends (612 MB). The growth is held for the life of
+the job run or the service call, outside its transactions, which commit; what holds it is not found yet. The test process
+peaked at 1.72 GB. So a queue of every country needs what its largest country needs, about 1 GB beyond the server at
+rest, however many countries it runs.
 
 No reference data ships. A proposed importer, framework work in P2, brings a data set in when an administrator
 asks for it from Maps › Configuration › Geo data: the server downloads the source, or takes a file the operator

@@ -106,14 +106,20 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="remove" noun="GeoData" type="rust" location="moqui_tools::geo::service::remove_geo_data"
             transaction="ignore">
         <description>Remove what a data set's source key owns, for countryGeoId (needed for a set read a country at a
-            time; every country for a set with none), in one transaction: its place names and point associations, then
-            each point, postal code and county, place or city Geo it made that no row of any entity refers to (from the
-            entity model's relationships to Geo, GeoPoint and GeoPostalCode: another source's points and place names, an
-            address, a group); the rest are end-dated. A user-confirmed point stays, with its association, and keeps its
-            Geo; a record's own location is left alone. For the ZCTA-to-county set, its county-to-code links are deleted;
-            a set of countries or divisions is refused, those rows being shared. Refused while an import of the source
-            key and country is in progress. rowsDeleted and rowsRetired count rows. The operator's uploads its runs read (under
-            dbresource://moqui/maps/import/) are deleted, and the postal lookup cache is cleared.</description>
+            time; every country for a set with none), a batch of about 2,000 Geo IDs at a time, each batch in its own
+            transaction: a batch's place names and point associations, then each point, postal code and county, place or
+            city Geo it made that no row of any entity refers to (from the entity model's relationships to Geo, GeoPoint
+            and GeoPostalCode: another source's points and place names, an address, a group); the rest are end-dated. A
+            user-confirmed point stays, with its association, and keeps its Geo; a record's own location is left alone.
+            For the ZCTA-to-county set, its county-to-code links are deleted, 2,000 a batch; a set of countries or
+            divisions is refused, those rows being shared. A removal stopped part way leaves whole batches removed, and a
+            Remove again finishes it. A batch that fails is rolled back and the removal goes on with the next; the error
+            names the failed batches' Geo IDs. Refused while an import of the source key and country, or another removal
+            of the set, is in progress: the removal marks the data set (removingStamp, removingCountryGeoId, touched
+            before each batch, abandoned after an hour unchanged), and start#GeoDataImport and the import refuse the scope
+            meanwhile; an import that starts anyway stops the removal before its next batch. rowsDeleted and rowsRetired
+            count rows. When every batch is removed, the operator's uploads its runs read (under
+            dbresource://moqui/maps/import/) are deleted; the postal lookup cache is cleared.</description>
         <in-parameters>
             <parameter name="dataSetId" required="true"/>
             <parameter name="countryGeoId"/>
@@ -181,12 +187,12 @@ along with this software (see the LICENSE.md file). If not, see
             (GdiPending, the signed-in user's) that the job's import#GeoData takes, so it has a job run, its notification
             (topic GeoDataImport) and the run row from the start. Refused here, with no run: a set that is not there or is
             disabled, a license not acknowledged, a download while outside requests are off, no country for a set read a
-            country at a time or an operator's file (or one its countryCodes do not list), no file for an operator's file, and a run of the same source key and
-            country in progress, each before an upload is written. An operator's file is an upload (file, at most maps@import-max-bytes, kept under
+            country at a time or an operator's file (or one its countryCodes do not list), no file for an operator's file, a run of the same source key and
+            country in progress, and a removal of its rows under way (remove#GeoData's mark), each before an upload is
+            written. An operator's file is an upload (file, at most maps@import-max-bytes, kept under
             dbresource://moqui/maps/import/(userId)/) or a location the importer allows. A refused job start leaves the run
             failed. everyCountry (a set read a country at a time) imports every country of its countryCodes that has a country
-            Geo as a queue (for now only those estimated under 50,000 file rows: a run as a ServiceJob grows about 20 KB of
-            memory a row, plans/Maps.md §6.3): a pending run a country sharing a queueId (the first run's ID), refused while
+            Geo as a queue (plans/Maps.md §6.3): a pending run a country sharing a queueId (the first run's ID), refused while
             a run of the source key is in progress (one with no word for an hour not counted; the data set's row is locked
             so two starts do not both pass); only the first starts here, and each run starts the next when it ends
             (import#GeoData), one at a time, each its own run and edition; cancel#GeoDataImport with the queueId cancels the

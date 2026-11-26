@@ -393,6 +393,11 @@ along with this software (see the LICENSE.md file). If not, see
         <seed-data>
             <moqui.basic.EnumerationType description="Geo Data Parser" enumTypeId="GeoDataParser"/>
             <moqui.basic.Enumeration description="Census pipe-delimited text with a header" enumId="GDP_CENSUS" enumTypeId="GeoDataParser" sequenceNum="1"/>
+        <field name="removingStamp" type="date-time"><description>Set while remove#GeoData removes this set's rows, a
+            batch at a time, and touched before each batch: an import of its source key and country, or another Remove of
+            the set, is refused meanwhile; taken as abandoned when it has not changed for an hour</description></field>
+        <field name="removingCountryGeoId" type="id"><description>The country of the removal under way; empty for every
+            country</description></field>
             <moqui.basic.Enumeration description="GeoNames tab-delimited text, no header" enumId="GDP_GEONAMES" enumTypeId="GeoDataParser" sequenceNum="2"/>
             <moqui.basic.Enumeration description="Operator CSV (country, code, place, admin codes, latitude, longitude, precision)" enumId="GDP_OPERATOR_CSV" enumTypeId="GeoDataParser" sequenceNum="3"/>
 

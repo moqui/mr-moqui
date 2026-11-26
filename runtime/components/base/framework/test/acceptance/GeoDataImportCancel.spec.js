@@ -31,13 +31,14 @@ function invoke(name, params) {
 }
 const run = geoDataImportId => sys(() => ec.entity.find(IMPORT).condition({geoDataImportId}).one())
 const inProgress = status => ["GdiPending", "GdiDownloading", "GdiValidating", "GdiLoading"].includes(status)
-// Wait (up to `seconds`) until `done` holds of the run's row; the row
+// The run's row once `done` holds of it, or after `seconds`, whichever comes first. The run is a ServiceJob's, on a job
+// worker, so the loop looks every 100 ms with sleep between looks: ec.factory.waitWorkerPoolEmpty waits for the service
+// worker pool only, and returns at once while a job runs.
 function waitFor(geoDataImportId, seconds, done) {
     const deadline = Date.now() + seconds * 1000
     let row = run(geoDataImportId)
     while (Date.now() < deadline && !done(row)) {
-        // a pause of at most 100 ms: the pool is busy with the import
-        ec.factory.waitWorkerPoolEmpty(1)
+        sleep(100)
         row = run(geoDataImportId)
     }
     return row
@@ -70,7 +71,7 @@ function clean() {
         )
     for (const row of running()) invoke(S + "cancel#GeoDataImport", {geoDataImportId: row.geoDataImportId})
     const deadline = Date.now() + 120000
-    while (Date.now() < deadline && running().length) ec.factory.waitWorkerPoolEmpty(10)
+    while (Date.now() < deadline && running().length) sleep(250)
     invoke(S + "remove#GeoData", {dataSetId: "OPERATOR_CSV", countryGeoId: "NZL"})
     sys(() => {
         ec.entity.find(IMPORT).condition({dataSetId: "OPERATOR_CSV", countryGeoId: "NZL"}).deleteAll()

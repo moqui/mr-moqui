@@ -227,6 +227,7 @@ A failed `assert` is an assertion failure, as a false condition is, not an error
 | `setConf(selector, value)` | A conf attribute by its selector (`ssh-server@public-host`), set over the conf files as its environment name would set it ([Conf-Paths](../../plans/archive/Conf-Paths.md#1-paths-and-names)): `ec.factory.getConfValue` and the server's readers of the conf see it; `null` puts back what the files and the environment give. It holds for the rest of the spec |
 | `withConf(selector, value, fn)` | The attribute only while `fn` runs, then as it was before; returns what `fn` returned |
 | `log` | `ec.logger`: `log.info(...)`, `log.warn(...)` |
+| `sleep(ms)` | Pause the spec's thread for `ms` milliseconds (at most a minute; a value that is not a finite number throws), as a client spec's `sleep`: between the looks of a loop that waits for work on another thread, such as a ServiceJob's run ([Pitfalls](#pitfalls)) |
 | `skip(reason)` | Skip the feature, or in `setupSpec` the spec ([Skipped and ignored](#skipped-and-ignored)) |
 | `assert(condition, message)` and its methods | [`assert`](#assert) |
 | `dec(value)` | The value as a decimal, for arithmetic with its methods: `dec(a).add(b)`, `subtract`, `multiply`, `negate()`, `compare()` |
@@ -570,4 +571,7 @@ How a Moqui Java Spock specification maps to a spec file, as used to port mr-man
   after it; give a new spec its own stock or its own product.
 - The switches of `MailCapture`, `HttpFixtures` and `NotificationCapture` outlive the spec: reset or disable them in
   `cleanupSpec` or a `finally`.
+- A loop that waits for a ServiceJob's run (its `ServiceJobRun` row, or a row the job writes) pauses with `sleep(ms)`
+  between its looks. `ec.factory.waitWorkerPoolEmpty` is no pause there: it waits for the service worker pool only, not
+  the job workers, so it returns at once while a job runs and the loop spins, reading the row as fast as it can.
 - Generic JavaScript linters report `no-unused-expressions` in `then` and `expect`; those expressions are the conditions.

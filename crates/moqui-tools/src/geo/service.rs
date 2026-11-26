@@ -270,6 +270,19 @@ fn scope_runs(facade: &EntityFacade, set: &DataSet, country: Option<&str>) -> Re
 /// Why a new run of `set` for `country` may not start: one of its scope is in progress. A run whose row has not changed
 /// for [`STALE_AFTER`] is taken as abandoned and marked failed (and stops at its next check if it was alive after all).
 fn running_refusal(facade: &EntityFacade, set: &DataSet, country: Option<&str>, own: &str) -> Option<String> {
+    runs_refusal(facade, set, country, own).or_else(|| removal_refusal(facade, set, country))
+}
+
+/// The time before which a row not changed since is taken as abandoned ([`STALE_AFTER`]).
+fn stale_before() -> jiff::Timestamp {
+    jiff::Timestamp::now()
+        .checked_sub(jiff::SignedDuration::try_from(STALE_AFTER).unwrap_or_default())
+        .unwrap_or_else(|_| jiff::Timestamp::now())
+}
+
+/// Why a removal or a run of `set` for `country` may not start, or a removal go on: a run of its scope is in progress
+/// ([`running_refusal`]'s runs).
+fn runs_refusal(facade: &EntityFacade, set: &DataSet, country: Option<&str>, own: &str) -> Option<String> {
     let runs = match scope_runs(facade, set, country) {
         Ok(runs) => runs,
         Err(err) => return Some(err.to_string()),
@@ -303,10 +316,82 @@ fn running_refusal(facade: &EntityFacade, set: &DataSet, country: Option<&str>, 
 /// Whether run row `run`, in progress, has not changed for [`STALE_AFTER`]: a live run touches its row at least every
 /// [`HEARTBEAT`], so it is taken as abandoned (a server stopped under it).
 fn is_stale(run: &EntityValue) -> bool {
-    let stale_before = jiff::Timestamp::now()
-        .checked_sub(jiff::SignedDuration::try_from(STALE_AFTER).unwrap_or_default())
-        .unwrap_or_else(|_| jiff::Timestamp::now());
+    let stale_before = stale_before();
     matches!(run.get("lastUpdatedStamp"), Some(Value::Timestamp(stamp)) if *stamp < stale_before)
+}
+
+/// A removal under way of `set`'s source key for `country` (or of either for every country), by the mark remove#GeoData
+/// keeps on its data set's row (`removingStamp`, touched before each batch): the refusal naming it. A mark that has not
+/// changed for [`STALE_AFTER`] is abandoned (a server stopped under the removal) and not counted.
+fn removal_refusal(facade: &EntityFacade, set: &DataSet, country: Option<&str>) -> Option<String> {
+    let rows = match load::rows_in(facade, DATA_SET, "dataSetId", &set.owned_set_ids, &[]) {
+        Ok(rows) => rows,
+        Err(err) => return Some(err.to_string()),
+    };
+    let stale_before = stale_before();
+    for row in &rows {
+        if !matches!(row.get("removingStamp"), Some(Value::Timestamp(stamp)) if *stamp >= stale_before) {
+            continue;
+        }
+        let removing = text_of(row, "removingCountryGeoId");
+        if removing.is_empty() || country.is_none_or(|country| country == removing) {
+            let scope = if removing.is_empty() {
+                "every country".to_string()
+            } else {
+                removing
+            };
+            return Some(format!(
+                "Geo data set {}'s rows for {scope} are being removed; start again after the removal ends",
+                text_of(row, "dataSetId")
+            ));
+        }
+    }
+    None
+}
+
+/// Set (`mark`, for `country`, none for every country) or clear the mark of a removal of `set` under way on its row,
+/// in a transaction of its own. With `claim`, first the data set rows of its source key are locked and the mark is set
+/// only when no run of the scope and no other removal is under way ([`running_refusal`]), so two Removes, or a Remove
+/// and an import's start, do not both pass: the refusal, if any.
+fn mark_removal(
+    facade: &EntityFacade,
+    set: &DataSet,
+    country: Option<&str>,
+    mark: bool,
+    claim: bool,
+) -> Result<Option<String>, LibError> {
+    facade
+        .transactions_for(DATA_SET)?
+        .run(TransactionAttribute::ForceNew, None, || {
+            if claim {
+                load::uncached(facade, DATA_SET)?
+                    .condition(Condition::In(
+                        "dataSetId".into(),
+                        set.owned_set_ids.iter().map(Value::string).collect(),
+                    ))
+                    .order_by("dataSetId", false)
+                    .for_update(true)
+                    .list()?;
+                if let Some(refusal) = running_refusal(facade, set, country, "") {
+                    return Ok(Some(refusal));
+                }
+            }
+            let Some(mut row) = load::uncached(facade, DATA_SET)?
+                .eq("dataSetId", Value::string(&set.data_set_id))
+                .one()?
+            else {
+                return Ok(None);
+            };
+            if mark {
+                row.set("removingStamp", now());
+                row.set("removingCountryGeoId", country.map_or(Value::Null, Value::string));
+            } else {
+                row.set("removingStamp", Value::Null);
+                row.set("removingCountryGeoId", Value::Null);
+            }
+            row.update(facade)?;
+            Ok(None)
+        })
 }
 
 /// A pending run `run_id` refused before its preflight (its job's user refused, or not authorized): marked failed, and
@@ -1325,22 +1410,59 @@ pub(crate) fn remove_geo_data(
         }
     };
     let country_id = country.as_ref().map(|country| country.geo_id.clone());
-    if let Some(refusal) = running_refusal(facade, &set, country_id.as_deref(), "") {
-        add_error(refusal);
-        return Ok(Out::new());
+    // the removal's mark on the set, claimed with no run of the scope and no other removal under way
+    match mark_removal(facade, &set, country_id.as_deref(), true, true) {
+        Ok(None) => {}
+        Ok(Some(refusal)) => {
+            add_error(refusal);
+            return Ok(Out::new());
+        }
+        Err(err) => {
+            add_error(format!(
+                "Could not start removing Geo data set {data_set_id}'s rows: {err}"
+            ));
+            return Ok(Out::new());
+        }
     }
-    match remove::remove(facade, &set, country.as_ref()) {
+    // before each batch: an import of the scope that started meanwhile stops the removal; the mark kept fresh
+    let mut before_batch = || -> Result<(), String> {
+        if let Some(refusal) = runs_refusal(facade, &set, country_id.as_deref(), "") {
+            return Err(format!("An import started ({refusal}); Remove again after it ends"));
+        }
+        if let Err(err) = mark_removal(facade, &set, country_id.as_deref(), true, false) {
+            tracing::warn!(data_set = %data_set_id, error = %err, "Could not touch the mark of a Geo data removal");
+        }
+        Ok(())
+    };
+    let result = remove::remove(facade, &set, country.as_ref(), &mut before_batch);
+    if let Err(err) = mark_removal(facade, &set, None, false, false) {
+        tracing::error!(data_set = %data_set_id, error = %err, "Could not clear the mark of a Geo data removal; it is taken as abandoned after an hour");
+    }
+    // what was removed, all or some, is gone from the lookup too
+    super::clear_postal_cache();
+    match result {
         Ok(removed) => {
-            tracing::info!(data_set = %data_set_id, deleted = removed.deleted, retired = removed.retired, "Removed Geo data");
-            super::clear_postal_cache();
-            delete_uploads(facade, &set, country_id.as_deref(), None);
+            tracing::info!(data_set = %data_set_id, deleted = removed.deleted, retired = removed.retired, failed = removed.failed.len(), "Removed Geo data");
+            if let Some(stopped) = &removed.stopped {
+                add_error(format!("Stopped removing Geo data set {data_set_id}'s rows: {stopped}"));
+            } else if !removed.failed.is_empty() {
+                add_error(format!(
+                    "Could not remove some of Geo data set {data_set_id}'s rows (Remove again to retry them): {}",
+                    removed.failed.join("; ")
+                ));
+            } else {
+                delete_uploads(facade, &set, country_id.as_deref(), None);
+            }
             let mut out = Out::new();
             out.insert("rowsDeleted".to_string(), Value::I64(removed.deleted as i64));
             out.insert("rowsRetired".to_string(), Value::I64(removed.retired as i64));
             Ok(out)
         }
         Err(err) => {
-            add_error(format!("Could not remove Geo data set {data_set_id}'s rows: {err}"));
+            // the batches before the error are removed, and a Remove again finishes it
+            add_error(format!(
+                "Could not remove all of Geo data set {data_set_id}'s rows (Remove again to finish): {err}"
+            ));
             Ok(Out::new())
         }
     }

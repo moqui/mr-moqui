@@ -13,7 +13,7 @@
  */
 
 //! An in-memory SQL database for unit tests. It understands the statements the entity layer writes
-//! for the framework entities: single-table inserts, updates, deletes, and selects with `AND`,
+//! for the framework entities: single-table inserts, updates, deletes, and selects (`DISTINCT` too) with `AND`,
 //! `OR`, `IN`, `IS NULL`, `UPPER(...) LIKE UPPER(?)`, ordering, and paging, view selects that join member tables on
 //! equal columns, and the sequence refill.
 
@@ -838,6 +838,17 @@ impl MemConn {
             matched = group_rows(matched, &query.group, &query.columns);
         }
         matched.sort_by(|left, right| sort_rows(left, right, &query.order));
+        if query.distinct {
+            let mut seen = Vec::new();
+            matched.retain(|row| {
+                let selected = project(row, &query.columns).columns;
+                let first = !seen.contains(&selected);
+                if first {
+                    seen.push(selected);
+                }
+                first
+            });
+        }
         let mut idx = start + pred_slots(&query.pred);
         // The statement reads LIMIT then OFFSET, and the parameters follow that order.
         let take_n = if query.limit {
@@ -1317,6 +1328,8 @@ enum Stmt {
 
 struct SelectQuery {
     count: bool,
+    /// `SELECT DISTINCT`: rows whose selected columns are equal are returned once, the first in order.
+    distinct: bool,
     columns: Vec<String>,
     /// The name each column is returned as.
     names: Vec<String>,
@@ -1522,6 +1535,7 @@ fn parse_delete(cur: &mut Cur) -> Result<Stmt, Error> {
 }
 
 fn parse_select(cur: &mut Cur) -> Result<Stmt, Error> {
+    let distinct = cur.eat_keyword("DISTINCT");
     let start = cur.i;
     let count = if cur.eat_keyword("COUNT") && cur.eat_symbol(b'(') && cur.eat_symbol(b'*') {
         cur.expect_symbol(b')')?;
@@ -1650,8 +1664,13 @@ fn parse_select(cur: &mut Cur) -> Result<Stmt, Error> {
         }
     }
     cur.expect_end()?;
+    // as Postgres refuses it: the order of rows made one by DISTINCT would be undefined
+    if distinct && order.iter().any(|key| !columns.contains(&key.field)) {
+        return Err(cur.fail("for SELECT DISTINCT, ORDER BY expressions must appear in select list"));
+    }
     Ok(Stmt::Select(Box::new(SelectQuery {
         count,
+        distinct,
         columns,
         names,
         table,
