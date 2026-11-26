@@ -45,6 +45,8 @@ pub struct EcaRule {
     pub run_on_error: bool,
     pub condition: String,
     pub actions: String,
+    /// Where `actions` is in its file, for a trace and a generated script's name.
+    pub actions_source: Option<moqui_lib::error::SourceLocation>,
 }
 
 /// Match ECA rules for a write, and note the write for the data feed. Returns the ids of the matched rules.
@@ -213,6 +215,13 @@ impl EcaIndex {
                     .first_named("actions")
                     .map(|child| child.write_string())
                     .unwrap_or_default(),
+                actions_source: node
+                    .first_named("actions")
+                    .map(|actions| moqui_lib::error::SourceLocation {
+                        file: actions.file_location(),
+                        line: actions.line(),
+                        column: actions.column(),
+                    }),
             };
             if let Some(pos) = self
                 .rules
