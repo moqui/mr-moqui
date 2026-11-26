@@ -8,7 +8,8 @@
 // server, and with generalize is kept and cut into tiles beside it (the MapOverlayTiles job) that the tile transition
 // answers its owner and refuses a non-holder; a delimited text and a binary WKB upload are read by their own readers; and
 // an overlay edited on the map is saved by its owner only, beside a KML file as name.edited.geojson, refused for a
-// geometry that is not valid and for a file changed since the edit began. The converter's own rules (geometry, CRS, caps,
+// geometry that is not valid and for a file changed since the edit began; a file in UTM or the British National Grid is
+// converted to WGS84 with its CRS and transform recorded (P4c). The converter's own rules (geometry, CRS, caps,
 // sanitizing, each format's reader) are moqui-lib geo/overlay_tests.rs and geo/overlay/formats_tests.rs, the tiler's
 // geo/tiles_tests.rs.
 // Run: ./moq test framework --spec MapsOverlays
@@ -267,6 +268,44 @@ feature("a delimited text and a binary WKB upload are read by their own readers"
         out.csv.notes.some(note => note.includes("other properties"))
         out.wkb.applied == true && out.wkb.featureCount == 1
         out.gpkg.reasonCode == "FORMAT_UNKNOWN" && out.gpkg.reason.includes("GeoPackage")
+    }
+})
+
+feature("an overlay in UTM or the British National Grid is converted to WGS84, its CRS and transform recorded", {
+    when() {
+        const crsOf = name => ({type: "name", properties: {name}})
+        const utm = {
+            type: "FeatureCollection",
+            crs: crsOf("EPSG:32619"),
+            features: [{type: "Feature", properties: {name: "Boston"}, geometry: {type: "Point", coordinates: [330000, 4691000]}}]
+        }
+        const bng = {
+            type: "FeatureCollection",
+            crs: crsOf("urn:ogc:def:crs:EPSG::27700"),
+            features: [
+                {type: "Feature", properties: {name: "Greenwich"}, geometry: {type: "Point", coordinates: [538874, 177344]}}
+            ]
+        }
+        const stored = as(OWNER, () =>
+            invoke(S + "store#Overlay", {file: uploadedFile("boston-utm.geojson", JSON.stringify(utm))})
+        )
+        const convert = (text, format) =>
+            invoke("org.moqui.maps.MapSourceServices.convert#Overlay", {text, format, summaryOnly: true})
+        return {
+            stored,
+            row: stored.overlayId
+                ? ec.entity.find("moqui.maps.MapOverlay").condition("overlayId", stored.overlayId).disableAuthz().one()
+                : null,
+            bng: convert(JSON.stringify(bng), "MLF_GEOJSON"),
+            unknown: convert("SRID=2056;POINT(2600000 1200000)", "MLF_WKT")
+        }
+    },
+    then({stored, row, bng, unknown}) {
+        stored.applied == true && row.sourceCrs == "EPSG:32619" && /transverse Mercator/.test(row.crsTransform)
+        row.minLongitude > -71.1 && row.maxLongitude < -71.0 && row.minLatitude > 42.3 && row.maxLatitude < 42.4
+        bng.valid == true && bng.crs == "EPSG:27700" && /OSGB36/.test(bng.transform)
+        bng.bounds[1] > 51.47 && bng.bounds[1] < 51.49 && Math.abs(bng.bounds[0]) < 0.01
+        unknown.valid == false && unknown.reasonCode == "CRS_UNSUPPORTED" && /2056/.test(unknown.reason)
     }
 })
 

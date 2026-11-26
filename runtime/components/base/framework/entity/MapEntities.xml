@@ -167,6 +167,11 @@ along with this software (see the LICENSE.md file). If not, see
             one; empty for its default</description></field>
         <field name="ogcSingleImage" type="text-indicator"><description>Y: a WMS layer is drawn as one image of the
             view (ImageWMS) rather than as tiles (TileWMS)</description></field>
+        <field name="rasterJson" type="text-long"><description>A Cloud Optimized GeoTIFF layer (MLF_COG): what its header
+            holds, read when it was registered or its provider tested (MapSourceServices.read#CogHeader): {bands,
+            sampleType, compression, width, height, tileWidth, overviews, nodata, epsg, bounds (in its CRS), statistics
+            [[band, min, max]]}, and its default band settings {rgb [r, g, b] or band, min, max, colormap}, which a
+            user's preferences or saved view override</description></field>
         <field name="isBasemap" type="text-indicator"/>
         <field name="adapterKey" type="id"><description>A dynamic layer: the registered adapter whose
             find#LayerFeatures answers a viewport, after its own access check</description></field>
@@ -199,7 +204,34 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.Enumeration description="WKB" enumId="MLF_WKB" enumTypeId="MapLayerFormat" sequenceNum="16"/>
             <moqui.basic.Enumeration description="Delimited text (WKT, WKB or latitude and longitude)" enumId="MLF_CSV" enumTypeId="MapLayerFormat" sequenceNum="17"/>
             <moqui.basic.Enumeration description="Shapefile (zipped)" enumId="MLF_SHAPEFILE" enumTypeId="MapLayerFormat" sequenceNum="18"/>
+            <!-- P4c: a raster read by range in the browser with geotiff.js, a registered resource or a tested provider's URL -->
+            <moqui.basic.Enumeration description="Cloud Optimized GeoTIFF" enumId="MLF_COG" enumTypeId="MapLayerFormat" sequenceNum="19"/>
         </seed-data>
+    </entity>
+
+    <!-- A projection of the registry (P4c, plans/Maps.md §4.1): a CRS a map may be drawn in, a COG may be in and a user's
+        overlay may be converted from. Its definition is PROJ.4 text, which m-map registers with proj4js from the effective
+        configuration (never fetched from an outside service) and moqui-lib geo/proj reads on the server for the methods it
+        has (geographic, Mercator, transverse Mercator and UTM, Lambert conformal conic and azimuthal equal-area, Albers,
+        polar stereographic, with a zero or Helmert datum shift; a grid shift is refused). The seed's definitions are the
+        EPSG Geodetic Parameter Dataset's parameters written in PROJ's syntax (framework data/MapsProjectionData.xml). -->
+    <entity entity-name="MapProjection" package="moqui.maps" use="configuration" cache="true">
+        <field name="projectionId" type="id" is-pk="true"><description>Its code: EPSG:32633</description></field>
+        <field name="label" type="text-medium"/>
+        <field name="proj4Definition" type="text-medium"><description>+proj=utm +zone=33 +datum=WGS84 +units=m +no_defs</description></field>
+        <field name="axisOrder" type="text-short"><description>The authority's axis order: enu (easting, northing; the
+            default for a projected CRS) or neu (northing first, as EPSG:3035 and a geographic CRS are), which a GML URN of
+            it gives</description></field>
+        <field name="minLongitude" type="number-float"><description>The area of use, WGS84 degrees: where a map in it is
+            drawn and its view constrained</description></field>
+        <field name="minLatitude" type="number-float"/><field name="maxLongitude" type="number-float"/>
+        <field name="maxLatitude" type="number-float"/>
+        <field name="projectedExtent" type="text-medium"><description>The extent in its own units (minx,miny,maxx,maxy),
+            for a view drawn in it; empty to take its area of use's</description></field>
+        <field name="transformNote" type="text-medium"><description>The datum shift to WGS84 and its accuracy, in
+            words</description></field>
+        <field name="sourceNote" type="text-medium"><description>Where the definition came from</description></field>
+        <field name="disabled" type="text-indicator"/>
     </entity>
 
     <!-- A map profile (§4.2): a basemap with compatible layers and defaults (extent, display units), whether it reaches an
@@ -221,6 +253,9 @@ along with this software (see the LICENSE.md file). If not, see
             reaches only this server</description></field>
         <field name="allowedOverrides" type="text-medium"><description>What a user's preferences may change, comma
             separated: basemap, layers, extent, units</description></field>
+        <field name="viewProjection" type="text-short"><description>The projection the map is drawn in: EPSG:3857 (Web
+            Mercator) when empty, EPSG:4326, or a projection of MapProjection (a polar or regional one). A basemap of vector
+            tiles is drawn only in EPSG:3857, so such a basemap is refused in another, with the reason</description></field>
         <field name="viewPermission" type="id"/>
         <field name="disabled" type="text-indicator" enable-audit-log="update"/>
         <relationship type="one" title="Basemap" related="moqui.maps.MapLayer" short-alias="basemap">
@@ -279,7 +314,10 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="rejectedCount" type="number-integer"><description>Features left out for a geometry that is not sane</description></field>
         <field name="minLongitude" type="number-float"/><field name="minLatitude" type="number-float"/>
         <field name="maxLongitude" type="number-float"/><field name="maxLatitude" type="number-float"/>
-        <field name="sourceCrs" type="text-short"><description>EPSG:4326, or EPSG:3857 for a file that declared it</description></field>
+        <field name="sourceCrs" type="text-short"><description>EPSG:4326, or the CRS the file declared: EPSG:3857 or a
+            projection of MapProjection, converted to WGS84 when it was read</description></field>
+        <field name="crsTransform" type="text-medium"><description>What converting sourceCrs to WGS84 did (the provenance):
+            the method, the ellipsoid and the datum shift with its accuracy; empty for WGS84</description></field>
         <field name="importNotes" type="text-long"><description>What was not read or kept, a line each</description></field>
         <field name="createdDate" type="date-time"/>
         <!-- a file too large to draw whole, generalized on the server into vector tiles (MapSourceServices

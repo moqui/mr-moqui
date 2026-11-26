@@ -12,7 +12,9 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Maps › Configuration › Archives (plans/Maps.md §4.1, §5; docs/tools/Maps.md "Archives"): the PMTiles layers, each with its
+<!-- Maps › Configuration › Archives (plans/Maps.md §4.1, §5; docs/tools/Maps.md "Archives"): the PMTiles and Cloud Optimized
+    GeoTIFF layers (a COG at a resource location registered as a PMTiles archive is, its header read instead; a COG at its
+    provider's URL read from there, P4c), each with its
     archive's location, registered revision, size, zoom range and state now (org.moqui.maps.MapSourceServices
     find#ArchiveLayers), Register (register#ArchiveLayer: an archive in a drive, a git repository as a Git LFS object or on
     disk, its header checked and its revision recorded, for the layer chosen and those chosen to draw it too, such as the
@@ -81,7 +83,7 @@ along with this software (see the LICENSE.md file). If not, see
     <widgets>
         <label text="Map archives" type="h5"/>
         <label type="p" style="text-caption m-muted"
-                text="A PMTiles archive on this server draws a map with no outside request: place a regional extract (such as a Protomaps download) in a drive, in a git repository as a Git LFS object, or on the server's disk, then register its location here. Registering checks the archive and records the revision maps read; register again after replacing the file."/>
+                text="A PMTiles archive or a Cloud Optimized GeoTIFF on this server draws a map with no outside request: place a regional extract (such as a Protomaps download) or a COG in a drive, in a git repository as a Git LFS object, or on the server's disk, then register its location here. Registering checks its header and records the revision maps read; register again after replacing the file. A COG layer with no location and its provider's URL is read from the provider, its header recorded."/>
         <label type="p" style="text-negative" condition="!configured" text="Maps configuration is not available to you."/>
         <section name="ArchiveSections" condition="configured">
             <widgets>
@@ -98,7 +100,7 @@ along with this software (see the LICENSE.md file). If not, see
                                 </default-field>
                             </field>
                             <field name="resourceLocation">
-                                <default-field title="Location" tooltip="A file's resource location: dbresource://drive/..., git://repository/path.pmtiles (a Git LFS object), file:/path or runtime://path; empty for the layer's own">
+                                <default-field title="Location" tooltip="A file's resource location: dbresource://drive/..., git://repository/path.pmtiles or .tif (a Git LFS object), file:/path or runtime://path; empty for the layer's own (a COG layer's provider URL when it has no location)">
                                     <text-line size="60"/></default-field>
                             </field>
                             <field name="submitButton"><default-field title="Register"><submit/></default-field></field>
@@ -111,7 +113,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <container-box id="MapsArchivesBox">
                     <box-header title="Archive layers"/>
                     <box-body>
-                        <label type="p" style="m-muted" condition="!archiveRows.length" text="No PMTiles layer is registered."/>
+                        <label type="p" style="m-muted" condition="!archiveRows.length" text="No PMTiles or COG layer is registered."/>
                         <form-list name="ArchiveList" list="archiveRows" skip-form="true" paginate="false">
                             <field name="layerName"><default-field title="Layer"><display/></default-field></field>
                             <field name="resourceLocation"><default-field title="Location"><display/></default-field></field>

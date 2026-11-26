@@ -263,7 +263,7 @@ impl Reader {
                         Crs::Wgs84
                     }
                 };
-                self.use_crs(crs);
+                self.use_crs(crs)?;
                 Ok(raw)
             }
             Err(reason) => Err(reason),

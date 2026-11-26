@@ -45,7 +45,8 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="storeProfile">
         <service-call name="org.moqui.maps.MapServices.store#ProfileSettings" out-map="stored"
-                in-map="{profileId:profileId, enabled:(enabled || null), makeDefault:(makeDefault === 'Y')}"/>
+                in-map="{profileId:profileId, enabled:(enabled || null), makeDefault:(makeDefault === 'Y'),
+                    viewProjection:(viewProjection !== undefined &amp;&amp; viewProjection !== null ? String(viewProjection) : null)}"/>
         <actions>
             <if condition="!ec.message.hasError()">
                 <script>ec.message.addMessage(stored.reason, stored.applied ? 'success' : 'warning')</script>
@@ -108,6 +109,8 @@ along with this software (see the LICENSE.md file). If not, see
             }
             mayAddOgcLayer = ogcProviders.length > 0 && ec.artifactExecution.isPermittedOwn('component://tools/screen/Maps/Configuration.xml', 'AT_XML_SCREEN', 'AUTHZA_UPDATE')
             profileOptions = Array.from(configuration?.profileList || []).map(row => ({value: row.profileId, label: row.profileName}))
+            // the projections a profile's view may be drawn in (P4c): EPSG:3857, EPSG:4326 and the registry's
+            projectionOptions = Array.from(configuration?.projectionList || []).map(row => ({key: row.code, text: row.code + ' · ' + row.label}))
             mayStartProvider = !!found?.canManage && Array.from(found?.adapterList || []).some(row => row.adapterKey === 'mapProvider' && row.creatable)
             profileRows = Array.from(configuration?.profileList || []).map(row => Object.assign({}, row, {
                 stateText: (row.enabled ? ec.l10n.localize('Enabled') : ec.l10n.localize('Disabled')) + (row.installationDefault ? ' · ' + ec.l10n.localize('Default') : ''),
@@ -255,6 +258,7 @@ along with this software (see the LICENSE.md file). If not, see
                                 </default-field>
                             </field>
                             <field name="drawText"><default-field title="Now"><display/></default-field></field>
+                            <field name="viewProjection"><default-field title="Projection"><display/></default-field></field>
                             <field name="actions">
                                 <default-field title="">
                                     <link url="storeProfile" text="Make default" icon="sym_o_star" link-type="hidden-form-link"
@@ -275,6 +279,17 @@ along with this software (see the LICENSE.md file). If not, see
                                 <column><field-ref name="stateText"/><field-ref name="actions"/></column>
                             </columns>
                         </form-list>
+                        <!-- the projection a profile's map is drawn in (P4c): one a map draws, in which its basemap can be drawn -->
+                        <form-single name="ProfileProjection" transition="storeProfile">
+                            <field name="profileId">
+                                <default-field title="Profile"><drop-down><list-options list="profileOptions" key="${value}" text="${label}"/></drop-down></default-field>
+                            </field>
+                            <field name="viewProjection">
+                                <default-field title="View projection" tooltip="Web Mercator (EPSG:3857) unless another is chosen: EPSG:4326 or a registered projection, such as a polar one. A basemap of vector tiles (a MapLibre style, a vector PMTiles archive) is drawn only in Web Mercator, so it is refused in another; raster basemaps are reprojected.">
+                                    <drop-down><list-options list="projectionOptions" key="${key}" text="${text}"/></drop-down></default-field>
+                            </field>
+                            <field name="submitButton"><default-field title="Set projection"><submit/></default-field></field>
+                        </form-single>
                     </box-body>
                 </container-box>
 

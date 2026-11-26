@@ -51,6 +51,9 @@ use moqui_vault_server as _;
 // CalcGrid, the same way, where xlsx (the spreadsheet engine) is built in.
 #[cfg(feature = "xlsx")]
 use moqui_calc as _;
+// Optional Overture data for Maps, the same way, under its feature.
+#[cfg(feature = "overture")]
+use moqui_maps as _;
 // The business messaging channels (the sms chat bridge adapter), the same way.
 #[cfg(feature = "channels")]
 use moqui_channels as _;

@@ -11,6 +11,8 @@
 // non-administrator); a record's link resolved by a MapRoute of the host app, else of no app, for a holder of its screen,
 // and left out for a non-holder; and the Maps readiness checks, the page policy read from the header and webapp@csp-append.
 // The adapters are test/service/org/moqui/mapstest's.
+// A profile's view projection (P4c): a registered one handed to the map with its definition, a vector-style basemap refusing
+// one, an unknown code refused.
 // Run: ./moq test framework --spec MapsConfig
 const S = "org.moqui.maps.MapServices."
 const C = "org.moqui.admin.ConfigurationServices."
@@ -781,6 +783,33 @@ feature(
         }
     }
 )
+
+feature("a profile's view projection: a registered one is drawn with its definition, and a vector-style basemap refuses one", {
+    when() {
+        return as(null, () => {
+            const store = (profileId, viewProjection) => invoke(S + "store#ProfileSettings", {profileId, viewProjection})
+            const polar = store("MAPS_CFG_PROFILE_LOCAL", "EPSG:3413")
+            const drawn = effective({profileId: "MAPS_CFG_PROFILE_LOCAL"})
+            const out = {
+                polar,
+                drawn,
+                definition: Array.from(drawn.projections || []).find(row => row.code == "EPSG:3413") || {},
+                styled: store("MAPS_CFG_PROFILE", "EPSG:3413"),
+                unknown: store("MAPS_CFG_PROFILE_LOCAL", "EPSG:9999")
+            }
+            out.reset = store("MAPS_CFG_PROFILE_LOCAL", "")
+            out.mercator = effective({profileId: "MAPS_CFG_PROFILE_LOCAL"})
+            return out
+        })
+    },
+    then({polar, drawn, definition, styled, unknown, reset, mercator}) {
+        polar.applied === true && drawn.projection == "EPSG:3413"
+        definition.proj4.startsWith("+proj=stere") && definition.extent.length == 4 && definition.bounds[3] == 90
+        styled.applied === false && styled.reasonCode == "PROJECTION_INCOMPATIBLE" && /Web Mercator/.test(styled.reason)
+        unknown.applied === false && unknown.reasonCode == "PROJECTION_UNKNOWN"
+        reset.applied === true && mercator.projection === undefined && mercator.projections === undefined
+    }
+})
 
 feature("readiness: the default profile and the outline in use, an untested provider, and a page policy that blocks a provider", {
     when() {

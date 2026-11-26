@@ -1442,6 +1442,8 @@ const operations = {runMapProviderAdapter, readiness, providerAsset}
     },
     // for the effective configuration (MapConfig.js): a provider's test state, and a proxied provider's URLs and access
     tested,
+    // for the COG readiness check (MapSources.js): the page's policy, each directive with its sources
+    cspDirectives,
     proxyUrl,
     proxyOffered,
     proxyRecorded

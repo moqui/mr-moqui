@@ -102,6 +102,32 @@ fn rings(value: &Value) -> Option<Vec<Vec<Xy>>> {
 }
 
 impl TileFeature {
+    /// Feature `id` of `shape` (already in the unit square, [`project`]); `None` for a shape with no position.
+    #[must_use]
+    pub fn new(id: u64, shape: Shape, label: String, description: String) -> Option<Self> {
+        let mut bbox = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
+        let mut grow = |point: &Xy| {
+            bbox = [
+                bbox[0].min(point[0]),
+                bbox[1].min(point[1]),
+                bbox[2].max(point[0]),
+                bbox[3].max(point[1]),
+            ];
+        };
+        match &shape {
+            Shape::Points(points) => points.iter().for_each(&mut grow),
+            Shape::Lines(lines) => lines.iter().flatten().for_each(&mut grow),
+            Shape::Polygons(polygons) => polygons.iter().flatten().flatten().for_each(&mut grow),
+        }
+        bbox[0].is_finite().then_some(Self {
+            id,
+            shape,
+            label,
+            description,
+            bbox,
+        })
+    }
+
     /// A GeoJSON Feature (WGS84, as an overlay's reading gives it) as feature `id`; `None` for one with no geometry of a
     /// kind tiled (Point, LineString, Polygon and their Multi kinds).
     #[must_use]

@@ -298,6 +298,9 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="restoreLastView" type="Boolean"/>
             <parameter name="lastView" type="Map"><description>{center: [lon, lat], zoom}</description></parameter>
             <parameter name="layers" type="Map"><description>{layerId: true or false}</description></parameter>
+            <parameter name="rasters" type="Map"><description>A COG layer's band settings by its ID (P4c): {layerId: {rgb: [r, g,
+                b] or band, min, max, colormap (grey, viridis, terrain, magma), nodata}}, each band one of the layer's; a layer's
+                null clears its settings (RASTER_INVALID for one that does not read)</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="applied" type="Boolean"/>
@@ -376,6 +379,45 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapConfig.js').execute('findConfiguration', context))</script></actions>
     </service>
+    <service verb="find" noun="Projections">
+        <description>The map projection registry (P4c, MapProjection) for Maps › Configuration › Projections: each row with
+            its definition, axis order, area of use, extent, whether it is enabled and whether the server reads its definition
+            (check#ProjectionDefinition: overlays in it are converted and a COG's bounds known) or only a browser draws it,
+            with the reason. For a caller who may open Configuration (their own grant; PERMISSION_DENIED otherwise).</description>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="projectionList" type="List"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapConfig.js').execute('findProjections', context))</script></actions>
+    </service>
+    <service verb="store" noun="Projection">
+        <description>Add or change a map projection (P4c, MapProjection), or enable or disable one (only projectionId and
+            disabled given), for a caller who may change Maps › Configuration (their own grant; PERMISSION_DENIED). The code is
+            an EPSG code other than EPSG:4326 and EPSG:3857 (every map's own); the definition PROJ.4 text of plain parameters
+            (no URL, no grid but +nadgrids=@null), which a browser registers with proj4 (DEFINITION_INVALID otherwise); the
+            area of use west, south, east, north in degrees; the extent four numbers in its units. The answer says whether the
+            server reads it too (serverReadable, serverReason): one it does not is still drawn by a map, and an overlay in it
+            is refused with that reason.</description>
+        <in-parameters>
+            <parameter name="projectionId" required="true"/>
+            <parameter name="label"/>
+            <parameter name="proj4Definition" allow-html="any"/>
+            <parameter name="axisOrder"/>
+            <parameter name="bounds"><description>west,south,east,north in degrees</description></parameter>
+            <parameter name="projectedExtent"><description>minx,miny,maxx,maxy in its units; empty for none</description></parameter>
+            <parameter name="disabled"><description>Y or N; empty to leave it</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="serverReadable" type="Boolean"/>
+            <parameter name="serverReason"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapConfig.js').execute('storeProjection', context))</script></actions>
+    </service>
     <service verb="store" noun="ProfileSettings">
         <description>Enable or disable a map profile and make one the installation's default (the ALL_USERS
             UserGroupPreference maps.profile), for a caller who may open and change Maps › Configuration (its view and update;
@@ -388,6 +430,9 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="profileId" required="true"/>
             <parameter name="enabled"><description>Y or N; empty to leave it</description></parameter>
             <parameter name="makeDefault" type="Boolean"/>
+            <parameter name="viewProjection"><description>The projection the profile's map is drawn in (P4c): EPSG:3857 (also
+                for empty), EPSG:4326 or a MapProjection row's code; a basemap of vector tiles is drawn only in EPSG:3857, so it
+                is refused with another (PROJECTION_INCOMPATIBLE); not given to leave it</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="applied" type="Boolean"/>

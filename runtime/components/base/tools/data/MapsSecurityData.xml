@@ -90,6 +90,7 @@ along with this software (see the LICENSE.md file). If not, see
         <artifacts artifactName="org.moqui.maps.MapServices.check#Readiness" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
         <artifacts artifactName="org.moqui.maps.MapSourceServices.check#ArchiveReadiness" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
         <artifacts artifactName="org.moqui.maps.MapServices.check#GeoDataReadiness" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+        <artifacts artifactName="org.moqui.maps.OvertureServices.check#OvertureReadiness" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
         <authz artifactAuthzId="MAPS_READINESS_ALL" userGroupId="ALL_USERS" authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
     </artifactGroups>
 
@@ -107,10 +108,19 @@ along with this software (see the LICENSE.md file). If not, see
         <artifacts artifactName="org.moqui.maps.MapServices.store#ProfileSettings" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
         <artifacts artifactName="org.moqui.maps.MapServices.get#OgcLayerOptions" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
         <artifacts artifactName="org.moqui.maps.MapServices.store#OgcLayer" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+        <!-- the projection registry (P4c) -->
+        <artifacts artifactName="org.moqui.maps.MapServices.find#Projections" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+        <artifacts artifactName="org.moqui.maps.MapServices.store#Projection" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+        <artifacts artifactName="org.moqui.maps.MapSourceServices.check#ProjectionDefinition" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
         <!-- map archives (MapSourceServices): registering one also checks that its caller may change Configuration -->
         <artifacts artifactName="org.moqui.maps.MapSourceServices.read#ArchiveHeader" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+        <!-- a COG's header (P4c), as an archive's: register#ArchiveLayer calls it after its own check -->
+        <artifacts artifactName="org.moqui.maps.MapSourceServices.read#CogHeader" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
         <artifacts artifactName="org.moqui.maps.MapSourceServices.register#ArchiveLayer" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
         <artifacts artifactName="org.moqui.maps.MapSourceServices.find#ArchiveLayers" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+        <!-- Overture data (plans/Maps-Overture.md), each asked again of the caller's own grant (OvertureData.js); its two
+            read# services (the moqui-maps crate's) are no group's -->
+        <artifacts artifactName="org\.moqui\.maps\.OvertureServices\.(find|acknowledge|store|start|run|cancel|activate|discard|rollback|remove)#.*" artifactTypeEnumId="AT_SERVICE" nameIsPattern="Y" inheritAuthz="Y"/>
         <authz artifactAuthzId="MAPS_ADMIN_ADMIN" userGroupId="ADMIN" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
         <authz artifactAuthzId="MAPS_ADMIN_USERS_DENY" userGroupId="MAPS_USERS" authzTypeEnumId="AUTHZT_DENY" authzActionEnumId="AUTHZA_ALL"/>
     </artifactGroups>

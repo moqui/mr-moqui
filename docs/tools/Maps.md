@@ -17,7 +17,7 @@ searches.
 | Browse (`Maps/Browse.xml`, `Browse.qvue`, `Browse.tui.json`) | The map filling the page, with optional browser full screen. One panel at a time beside it, a bottom sheet on a phone: Search (saved views and places, the permitted records of the record layers shown, postal codes and, when one is enabled, the geocoder's addresses), Layers (the basemap, overlays and record layers, and the user's own and shared overlays with Add overlay and, on one's own, Edit ([below](#overlays-and-places)); a layer that is not shown is named with Retry; a record layer cut to `maps@max-features` says so), Saved views (and Save view, which keeps where the map is, its basemap and its layers) and the selected feature's details: a place's, a record's (with its [links](#record-links)) or an overlay's feature, selected by a click or by Enter on the map for the feature at its center, with its label and description as plain text, its overlay and its coordinates (Save place; Remove place on one of one's own places). The scale, attribution, coordinate readout and Locate me are the map's. A qvue screen: under `/apps` it opens at the same path under `/qapps`. In the terminal, the `map` component over `terminalMap`: a postal search's places (`s`: a code and its country, the local Geo data's approximate place), the saved places (own and, read-only, shared), the saved views' and the records' places as a list over the braille land mask, then the overlays, own and shared, the notices and the attribution |
 | Saved views (`Maps/Views.xml`) | The user's saved views and those others shared, each with its place, owner and whether its layers are all available; Share, Stop sharing and Delete for one's own, View map for any. Below them the user's overlays and saved places and, read-only, those shared with them, with Remove for one's own |
 | Preferences (`Maps/Preferences.xml`) | The user's map profile, basemap, initial area, units, the layers shown and Restore my last view. Only what an administrator enabled is offered, and a profile's `allowedOverrides` decide what a preference changes. No location is asked for unless Locate me is pressed, and the last view is kept only while its restoring is on |
-| Configuration (`Maps/Configuration.xml`, route key `mapsConfiguration`) | For `MAPS_ADMIN`: readiness, the outside-request policy and limits (read from the conf), map providers (connections of the `mapProvider` kind: a provider's page is `Configuration/ConnectionDetail` over `tools/template/ConnectionParts.xml`), profiles (enable, disable, make the installation default) and layers; Archives (`Configuration/Archives.xml`, [below](#archives)); and Geo data (`Configuration/GeoData.xml`, [below](#geo-data)). Its settings index entry is `maps.configuration` |
+| Configuration (`Maps/Configuration.xml`, route key `mapsConfiguration`) | For `MAPS_ADMIN`: readiness, the outside-request policy and limits (read from the conf), map providers (connections of the `mapProvider` kind: a provider's page is `Configuration/ConnectionDetail` over `tools/template/ConnectionParts.xml`), profiles (enable, disable, make the installation default, the view projection) and layers; Archives (`Configuration/Archives.xml`, [below](#archives), PMTiles and COG layers); Projections (`Configuration/Projections.xml`, [below](#projections)); Geo data (`Configuration/GeoData.xml`, [below](#geo-data)); and Overture (`Configuration/Overture.xml`, [below](#overture-places-and-buildings)). Its settings index entry is `maps.configuration` |
 | Local map (`Maps/LocalMap.xml`) | The dialog below |
 
 Search reads saved places, the records of the record layers shown within the view on screen (each read through its
@@ -28,7 +28,8 @@ and its rules read the rest as a code (so `MA 02134` is not Morocco while only U
 country is tried first and then every other country with postal data whose rules read the text as a code; a code found
 in more than one country lists each, labeled with its country, and says so. A postal result goes to the code's broad
 area, not a close zoom, and a code with several places lists each as a choice. The user's saved places and those shared
-with them come first ([Overlays and places](#overlays-and-places)), and the configured geocoder's candidates last, only
+with them come first ([Overlays and places](#overlays-and-places)), then the imported Overture places
+([below](#overture-places-and-buildings)), and the configured geocoder's candidates last, only
 when one is enabled ([Address and place search](#address-and-place-search)). Going to a result changes nothing in its
 record.
 
@@ -43,13 +44,13 @@ Three artifact groups in `tools/data/MapsSecurityData.xml`:
   (`get#Preferences`), the postal lookup (`get#PostalLocation`, public reference data only), the map-source check (`MapSourceServices.get#SourceAccess`, [Archives](#archives)) and the adapter registry, for every signed-in user (`ALL_USERS`, always-allow, not inherited). Opening a record's map needs neither the Maps app, System
   nor any app's access.
 - `MAPS_ADMIN`: Configuration, its `find#Configuration` and `store#ProfileSettings`, the archive services (`read#ArchiveHeader`,
-  `register#ArchiveLayer`, `find#ArchiveLayers`) and the Geo data services, `ADMIN`'s;
+  `read#CogHeader`, `register#ArchiveLayer`, `find#ArchiveLayers`) and the Geo data services, `ADMIN`'s;
   `MAPS_USERS` is denied it. It is asked for as the user's **own** grant: an allow of `Maps.xml` that an app grants its own
   group is inheritable and would reach Configuration and the services its transitions call, so Configuration's
   always-actions refuse a user without their own grant (`isPermittedOwn`, a 403 for every render and transition below it),
   `Maps.xml` shows its tab only to them, and the Geo data services, the importer and the archive and profile services ask
   the same of their own artifacts. An app that shows Configuration under its own root has its administrators hold
-  `MAPS_ADMIN`. `read#ArchiveHeader` is not remote: only the archive services call it, after their check. A profile setting changes only with Configuration's update (view alone reads it), and a
+  `MAPS_ADMIN`. `read#ArchiveHeader` and `read#CogHeader` are not remote: only the archive services call them, after their check. A profile setting changes only with Configuration's update (view alone reads it), and a
   profile enabled or disabled and a change of the installation default are in the audit log.
 
 `Maps.xml` has no `always-actions`: a render of LocalMap runs the always-actions of the screens above it without their
@@ -69,7 +70,14 @@ or the environment (`moqui_conf__maps__external_requests`) and shown read-only u
 maps), `maps@max-features` (the most features one record layer or viewport sends, and a user's overlay may have),
 `maps@import-max-bytes` and `maps@overlay-max-bytes` (a user's overlay file, 10 MiB). A page
 `Content-Security-Policy` stricter than the default needs each provider's host in `connect-src`, `img-src` and
-`font-src`; the readiness checks name what to add.
+`font-src`; the readiness checks name what to add. A map with a [COG layer](#cloud-optimized-geotiff) decodes it in module
+workers of this server (the OpenLayers build's decoder entry under `libs/openlayers/`), so such a policy also needs `worker-src` (or `child-src`,
+`script-src`, `default-src`) to allow `'self'`; the hillshade raster operation needs `worker-src blob:`. The decoder
+worker's LERC and Zstandard decoders are WebAssembly (`WebAssembly.instantiate` of a `data:` URL): this server sends a
+screen's policy only with screens, so the worker, a static file, has none of its own, but a proxy that adds the policy to
+every response needs `'wasm-unsafe-eval'` in `script-src` and `data:` in `connect-src` for it. The `maps.archives`
+readiness warns when an enabled COG layer meets a policy whose `worker-src` does not allow `'self'` (`CSP_WORKER`), and notes one
+without `'wasm-unsafe-eval'` (`CSP_WASM`, informational).
 
 **A provider through this server.** A provider's page has Through this server (`proxyRequests`) and Key parameter
 (`apiKeyParameter`: a query parameter's name, `key` when empty, or `header:Name`). A provider with a key is drawn only so:
@@ -212,6 +220,9 @@ day): after a share is revoked, the ranges a browser already has stay readable i
 one). Registering one says so, and Archives says it beside the form. Keep an archive only some users may read in a drive
 shared with them, or give its layer a `viewPermission`.
 
+**A Cloud Optimized GeoTIFF** is registered the same way ([below](#cloud-optimized-geotiff)): its header is read instead
+of a PMTiles one, and the map-source transition serves its ranges with the same check and pinning.
+
 **Tiles one at a time.** A client with no PMTiles reader (OpenLayers' XYZ vector tile source, a terminal, another
 program) reads one tile at `/apps/maps/LocalMap/tile/{layerId}/{revision}/{z}/{x}/{y}` (the `y` may end in `.mvt`,
 `.pbf` or `.png`; the revision is the one in the layer's `source` URL). It is the same facade and the same check as the
@@ -234,6 +245,91 @@ planet archive is placed on the server's disk and registered there, not uploaded
 on, its `all` rate limit (50 requests a second, a burst of 500) counts every range a map asks for, for everyone behind one
 address together. A pan of six steps and two zooms asked 17 ranges in about four seconds (`MapsLocalOnly`), and a
 range the browser has read is not asked again while it keeps it.
+
+## Cloud Optimized GeoTIFF
+
+A raster of measurements or imagery (an elevation model, a satellite scene, a scanned map) is a layer of the format
+`MLF_COG` (P4c), drawn by the browser itself with geotiff.js and OpenLayers' WebGL tiles, reading only the ranges of the
+tiles in view (plans/Maps.md §4.1). It is either:
+
+- **a registered resource**, registered as a PMTiles archive is (Configuration › Archives, `register#ArchiveLayer`: a drive,
+  a Git LFS object or `runtime://maps/`), its revision pinned and read through the map-source transition with the same
+  access check on every range ([Archives](#archives)); or
+- **a provider's URL** (a layer with a `sourceUrl` on its provider's own origin and no location): registering it reads one
+  range of its first 64 KiB from there (no credentials, no redirect, ten seconds, no internal address unless the provider
+  is allowed the private network), which must answer 206 (`NO_RANGES`) and allow other origins by CORS (`NO_CORS`: the
+  browser reads it directly, with no credentials of the page); it is drawn only while its provider is enabled and tested
+  and outside requests are on, as any provider layer, never through this server's proxy, and nothing of it is pinned.
+
+**The header** is read in Rust (`MapSourceServices.read#CogHeader`, `moqui-lib` `geo/tiff.rs`), never a tile: the TIFF or
+BigTIFF header, in either byte order, and its image directories, at most 64 of them (one seen twice is a loop, refused), at
+most 1024 entries each, at most 1 MiB read past the first 64 KiB, every offset and count checked against the file's size
+before it is read, and only the small tags' values read (a tile's offsets are counted, not read). A map draws it when it is
+tiled (16 to 4096 pixels, a multiple of 16; a file in strips is not cloud optimized, `gdal_translate -of COG`), compressed
+as a browser decodes (none, LZW, JPEG, Deflate, PackBits, LERC, Zstandard, WebP), of 8, 16, 32 or 64-bit samples of one
+size, georeferenced by a pixel scale and a tiepoint or an unrotated transformation, in a CRS its GeoTIFF keys name by an
+EPSG code (a user-defined one is refused) that is WGS84, Web Mercator or a [registered projection](#projections), and, past
+2048 pixels, with overviews; each reason it is not is said (`COG_INVALID`). Registering records its CRS (`crs`), its
+bounds in WGS84 (its edges converted) and what its header holds (`rasterJson`: bands, sample type, compression, size,
+tiles, overviews, GDAL's no-data and band statistics), with its default band settings: an 8-bit image of three bands or
+more as red, green and blue, else its first band through the grey colormap, stretched between its statistics or its
+type's range.
+
+**Bands** (Browse › Layers, Bands beside a COG layer): which bands are red, green and blue, or one band through a colormap
+(grey, viridis, terrain, magma), the stretch's minimum and maximum, and a no-data value drawn transparent. Applying them
+draws them at once and keeps them as the user's own (`store#Preferences` `rasters`, each band checked against the layer's
+count, `RASTER_INVALID` otherwise); Its defaults goes back to the layer's. A saved view keeps the settings of the COG
+layers it shows. The effective configuration hands each COG layer its bands, sample type, CRS and settings (the user's,
+else the layer's).
+
+**In the browser.** The raster and projection part of the OpenLayers bundle (its raster entry under `libs/openlayers/`: OpenLayers'
+GeoTIFF source and WebGL tile layer, geotiff.js and its decoders, proj4) is imported only by a map that needs it (a COG
+layer, or a view or layer in a registered projection); every other map loads the main bundle alone. They share one
+OpenLayers (an ES module build split into chunks), and the decoders load in module workers only for a tile of their
+compression. A map without WebGL names the layer as not drawn. The bundle's reviewed hosts are in `refresh.mjs`
+(`OPENLAYERS_HOSTS`). Every file of the build is named by its hash and kept a year, immutable; `ol-map.json`, the one file
+of a fixed name, names its entries and is revalidated each time a page loads the map, so an upgrade never pairs an entry
+with another build's chunks. spatialreference.org, which `ol/proj/proj4` would ask for a CRS it does not know, is replaced by a
+refusal when the part loads, so it is never asked ([Projections](#projections)).
+
+## Projections
+
+The registry of projections (P4c) is `moqui.maps.MapProjection`: a code (`EPSG:32633`), a label, a PROJ.4 definition,
+the authority's axis order (`neu` for a CRS whose coordinates are northing first, as EPSG:3035 and a geographic CRS's), its
+area of use in WGS84, its extent in its own units for a view drawn in it, and notes on its datum shift and its source. The
+seed (`framework/data/MapsProjectionData.xml`) has WGS 84 and Web Mercator, NAD83, the 120 WGS 84 UTM zones and NAD83's
+zones 1 to 23, the British National Grid (EPSG:27700), Lambert-93 (EPSG:2154), LAEA Europe (EPSG:3035), the US Albers
+(EPSG:5070) and the two polar stereographic projections NSIDC and NASA GIBS draw (EPSG:3413, EPSG:3031): the EPSG Geodetic
+Parameter Dataset's parameters (IOGP, whose terms let its data be used and redistributed, naming it) written in PROJ's
+syntax. An administrator adds a row for another CRS. A definition is never fetched: the effective configuration hands a
+map the rows it needs (`projections`: its view's, its COG layers'), which m-map registers with proj4 (a UTM zone
+OpenLayers makes itself is left to it), and a lookup of any other code is refused. **Configuration › Projections** (`MAPS_ADMIN`, the
+caller's own grant; `find#Projections`, `store#Projection`) lists the rows with whether the server reads each, and adds,
+changes, enables or disables one: its definition must be PROJ.4 parameters a browser registers (no URL, no grid file but
+`+nadgrids=@null`, `DEFINITION_INVALID`), and the answer says whether the server reads it too (`check#ProjectionDefinition`,
+`geo/proj.rs`): one it does not is drawn by maps only, and an overlay in it is refused with that reason rather than as an
+unknown CRS. A definition whose ellipsoid is not WGS 84's or GRS 1980's must give its shift (`+datum`, or `+towgs84`, zeros to
+take it as WGS84 as written); a parameter its method does not use is refused, so a row is read as written or not at all.
+
+**On the server** (`moqui-lib` `geo/proj.rs`) a row is read for the methods a user's overlay is converted with:
+geographic, Mercator, transverse Mercator and UTM (Krüger's series to the sixth order, millimetres within a zone),
+Lambert conformal conic, Lambert azimuthal equal-area, Albers equal-area and polar stereographic, each ellipsoidal and
+tested against the EPSG guidance examples. A datum whose shift to WGS84 is zero (`+datum=NAD83`, `+towgs84=0,...`: NAD83,
+ETRS89, RGF93) is taken as WGS84, which differs from it by about 1 to 2 metres today; a `+towgs84` of three or seven
+parameters is a Helmert shift through geocentric coordinates (EPSG method 9606): the British National Grid's is the
+Ordnance Survey's approximation, about 5 metres (the OSTN15 grid, good to centimetres, is not used). A definition that
+needs a grid (`+nadgrids`, NAD27), another method or a prime meridian other than Greenwich is not used on the server, and
+logged by its code. `proj4rs` (MIT or Apache-2.0) would read any PROJ.4 text, but these methods are a few hundred lines
+with their own tests, as the overlay readers are the framework's own.
+
+**A profile's view** (Configuration › Settings › Map profiles, View projection; `MapProfile.viewProjection`) is drawn in
+Web Mercator (EPSG:3857) unless it names EPSG:4326 or a registered projection (a polar one for a polar basemap, a national
+grid for a national WMS). A basemap or layer of vector tiles (a MapLibre style, a vector PMTiles archive, an overlay
+simplified into tiles) is not reprojected, so it is drawn only in EPSG:3857: a profile whose basemap is one is refused in
+another projection with that reason (`PROJECTION_INCOMPATIBLE`, and the profile setting is refused so), another basemap of
+that kind is not offered, and such a layer is named as not drawn. Rasters (XYZ, WMS, WMTS, a raster archive, a COG) are
+reprojected by OpenLayers, and vector files (GeoJSON, WFS, a user's overlay) drawn in any. A saved view may name a
+registered projection.
 
 ## Overlays and places
 
@@ -269,13 +365,17 @@ dependencies for what a few hundred lines do. The rules every format shares:
   GeoJSON it is served as: an overlay is drawn whole in the browser. At most `maps@max-features` features (5000 when that
   is 0, which turns only record layers off); a file with more is refused, not cut. A label or description is read from at
   most eight times its kept length, so a large field costs no more than a short one.
-- Coordinates WGS84 (GPX and KML always are) or Web Mercator, converted: a GeoJSON or TopoJSON file's pre-2016 `crs`, an
+- Coordinates WGS84 (GPX and KML always are), Web Mercator or a [registered projection](#projections), converted: a GeoJSON or TopoJSON file's pre-2016 `crs`, an
   EsriJSON `spatialReference` (WKID 4326, or 3857, 102100 and Web Mercator's other codes; none is WGS84, noted), a GML
   geometry's `srsName` or the nearest one above it (EPSG:4326 as a URN or an `opengis.net/def/crs` URL is latitude first,
   as GML 3.2 has it, the short `EPSG:4326` and `CRS:84` longitude first; a member geometry's own must be its geometry's
-  CRS; none is WGS84 longitude first, noted), an EWKT or EWKB SRID (none is WGS84, noted), or a shapefile's `.prj` (a GEOGCS of the WGS 84 datum, or Web or Pseudo Mercator; with no `.prj` the
-  coordinates are read as WGS84 when the file's box is within degrees). Any other CRS is refused by its name
-  (`CRS_UNSUPPORTED`, NAD83 and UTM among them): no reprojection is made until P4c. The CRS recorded is the file's first.
+  CRS; none is WGS84 longitude first, noted), an EWKT or EWKB SRID (none is WGS84, noted), or a shapefile's `.prj` (a
+  GEOGCS of the WGS 84 datum, or Web or Pseudo Mercator, or a registered CRS it names by its EPSG authority, by ESRI's name
+  for it, `WGS_1984_UTM_Zone_33N`, `British_National_Grid`, or by its parameters; with no `.prj` the coordinates are read as
+  WGS84 when the file's box is within degrees). A registered CRS is converted to WGS84 by its row (a GML URN or URL of one
+  is read in its authority's axis order, its short name easting first), a position outside its projection rejecting its
+  feature. Any other CRS is refused by its name (`CRS_UNSUPPORTED`). The CRS recorded is the file's first (`sourceCrs`),
+  with what converting it did (`crsTransform`: the method, the ellipsoid, the datum shift and its accuracy).
 - Each feature's geometry is checked by itself (positions in range and numbers, a line of two positions or more, a ring
   of four or more, closed when it was not): one that fails is left out and counted, with the first ten named, and the rest
   are kept. A file with none left is refused.
@@ -602,12 +702,97 @@ Results are cached in `maps.postal.lookup` (`MoquiDefaultConf.xml`: at most 20,0
 language, put in the user's words when read. A run that committed rows (a whole load, or the batches of one that failed or
 was cancelled after them) and a Remove clear it. Every signed-in user may call it (`MAPS_DIALOG`).
 
+## Overture places and buildings
+
+Optional regional data from an [Overture Maps](https://overturemaps.org/) release (plans/Maps-Overture.md, stage O1 of
+plans/Maps.md §4.3): **Places**, named destinations with their categories, for Browse's search, and **Buildings**, footprints
+drawn as a map layer. Nothing of it ships and nothing is read until an administrator imports a region; maps, archives and
+postal lookup need none of it. It is the `moqui-maps` crate, which the host links under its `overture` feature (Maximal and
+Enterprise, not Lite); a server without it keeps what was imported usable and says it cannot import.
+
+**Maps › Configuration › Overture** (`MAPS_ADMIN`; `org.moqui.maps.OvertureServices`, `OvertureData.js`):
+
+- **Themes and licenses.** Overture's licenses are by theme and source, never one: Places are CDLA Permissive 2.0 (Meta,
+  Microsoft and others), Apache 2.0 (Foursquare) and CC0 1.0 (AllThePlaces); Buildings are ODbL 1.0 (OpenStreetMap,
+  Microsoft) with CC BY 4.0 sources (Esri Community Maps, Google Open Buildings). **Acknowledge license** records who and when
+  (`moqui.maps.OvertureTheme`, in the audit log) and the source licenses it covers (`licenses`); nothing of a theme is
+  imported before. A run whose sources name a license the acknowledgement does not cover is staged but waits for review
+  (**Waiting for license review**, its `newLicenses` named); **Acknowledge and activate** adds them and activates it.
+- **Regions.** Add region: a name, a box in degrees of at most `maps@overture-max-area` km² (2,500; west less than east, so
+  not across the antimeridian), the release to import (from the catalog, or the latest when imported), the profile its
+  Buildings layer is shown in and its themes. Each region theme shows its active release and rows, the previous one and its
+  last run, with **Import**, **Cancel**, **Roll back** and **Remove**.
+- **Runs**: the last 50 with what each read. A run held for review shows **Acknowledge and activate** and **Discard**.
+
+**A run** (`start#OvertureImport` makes it pending and starts the `OvertureImport` ServiceJob as the administrator, who is
+notified when it ends, topic `OvertureImport`; `run#OvertureImport`):
+
+1. **Preflight**, refused with no run: the feature built in, `maps@external-requests`, the theme's license acknowledged, the
+   region's size, no run of the region and theme in progress (one with no word for an hour is taken as abandoned), the
+   caller's own `MAPS_ADMIN` grant (asked again when the job runs).
+2. **Pinned.** The run records its release (`releaseVersion`, explicit before anything is read) and reads its catalog from
+   `maps@overture-catalog` (https only; Overture's STAC root, `https://stac.overturemaps.org/catalog.json`; documents only
+   on its host): the release's and the collection's `schema:version` must be 2.x (`SCHEMA_UNSUPPORTED` otherwise, before
+   any data), then only the items whose extent meets the region (a collection whose items must each be read for their box
+   is refused past 1,024 items, `TOO_MANY_ITEMS`).
+3. **Read by range** (`read#OvertureTheme`, in Rust: our own GeoParquet reader on `ruzstd`, no C library). For each file,
+   through `moqui_core::outbound` (https on the public host its item names, no internal address, 60 s and 64 MiB a
+   request): its end, which holds the footer and gives the length, then only the row groups whose `bbox` statistics meet
+   the region, and of each only the theme's columns (checked for their types); a row is kept when its own box meets the
+   region. Every later range is sent with `If-Match` the first answer's `ETag` (else `If-Unmodified-Since` its
+   `Last-Modified`), so a file replaced while it is read fails the run rather than mixing two files. Every count a file
+   claims is checked before memory is taken for it: a chunk of at most two million entries, 32 MiB a page and 128 MiB
+   decoded, a row group's columns 256 MiB together. A row with no ID, no name (a place)
+   or a geometry that does not read is counted as rejected (the first 20 kept with why) and the rest go on. At most 200,000
+   places or 250,000 buildings a run (`TOO_MANY_ROWS`: choose a smaller region). The counts are written to the run as it
+   goes and a cancel is read between row groups and while tiles are made.
+4. **Staged.** Places as `moqui.maps.OverturePlace` rows of the run (2,000 a transaction); Buildings cut into MVT tiles (the
+   large overlays' tiler, layer `overlay`, each footprint's name or class as its label and its class, height, floors and
+   sources as its description) and written as one PMTiles archive at
+   `dbresource://moqui/maps/overture/(regionId)/buildings-(importId).pmtiles`.
+5. **Checked**, nothing in use changed: no rows (`NO_ROWS`), fewer than half the active run's rows unless forced
+   (`FEWER_ROWS`), a license not covered or none named (`UNKNOWN`: review, above), and the run still going as it was (one
+   cancelled, or taken for abandoned, while it read is not activated). A run held for review is activated after its
+   licenses are acknowledged (refused when it is older than the active one, `OLDER_THAN_ACTIVE`), or **Discard**ed.
+6. **Activated**, in one transaction: the region theme's active run becomes it and the one before it the previous one, kept
+   for rollback; for Buildings the region's layer (`OVT_BLD_(regionId)`, `MLF_PMTILES_VECTOR`, the theme's attribution) is
+   registered to the new archive (`register#ArchiveLayer`), so a map drawing the old revision is refused it (409) and loads
+   its configuration again, and added to the region's profile. The region theme's other runs waiting for review are
+   superseded, and they and the runs older than the previous one are then removed.
+
+A run that fails or is cancelled deletes what it staged, and the active release stays as it was. **Roll back** makes the
+previous run active again (its rows and archive were kept, the layer registered to its archive) and removes the one rolled
+back. **Remove** deletes a region theme's rows, archives and layer, and keeps the run history. Overture deletes a release's
+files 60 days after it, so nothing here reads a release again: rollback and search use what was imported.
+
+**What an import never touches.** It writes only these rows, its archives and its own layer: no party, facility, Geo,
+point, address or record's location is created or changed, and a place that a later release removes or renumbers changes
+nothing outside them. A GERS ID (`gersId`, with the run's release) is an external reference, not a key: Overture does not
+promise it never changes. Footprints are not legal property boundaries.
+
+**Search.** Browse's search lists the places of the active Places runs within the view on screen whose name or category
+has the text (two characters at least; the names that start with it first, by the `importId` and `nameSearch` index, then
+the names and categories that have it anywhere, each query bounded; then the nearest to the view's middle), after the saved places, records and
+postal codes and before the geocoder: local rows, no outside request. Each result names its category, locality, source
+datasets and licenses, its GERS ID and release, and the search says "Places from Overture Maps Foundation" with the theme's
+attribution.
+
+**ODbL.** The Buildings archive is a Derivative Database of ODbL data. Drawing it on a map is a Produced Work, which shows
+the layer's attribution ("© OpenStreetMap contributors, Overture Maps Foundation" and the CC BY sources). Giving the
+archive, or tiles of it, to anyone outside the installation is a public use of the Derivative Database, which must then be
+offered under the ODbL (or with its source data and the means to make it): the archive is outside every drive, so only the
+layer guards it, and the import sets no `viewPermission`; give the layer one or keep its profile to the users meant.
+
+The readiness provider `maps.overture` (`check#OvertureReadiness`) says when a run waits for license review, when the last
+import of a region theme failed, and when regions are set up on a server built without the feature.
+
 ## Tests
 
 The regression spec is `tools/test/MapsScreens.spec.js` (Browse in qvue and tui, its terminal's overlays and postal search; LocalMap, a plain XML screen, once in
 qvt for a writer and once in html for a user it refuses the record; the access rules, Save location, the profile
 rules); the configuration services' rules are `framework/test/MapsConfig.spec.js` (with a record link resolved to the host
-app's route, else one of no app, and left out for a non-holder), and the archives'
+app's route, else one of no app, and left out for a non-holder, and a profile's view projection: a registered one handed
+to the map with its definition, refused for a vector-style basemap and for an unknown code), and the archives'
 (registering, the map-source transition's access, ranges, revocation and stale revisions, and the tile transition's tile,
 304, 204, non-holder and stale revision) `framework/test/MapsSource.spec.js`, with the header's, the tile IDs', the
 directories' and the archive writer's in Rust (`moqui-lib` `pmtiles_tests.rs`) and the tile reader's (`moqui-tools`
@@ -623,7 +808,16 @@ by Stop simplifying), with the converter's rules in Rust
 (`moqui-lib` `geo/overlay_tests.rs`: geometry, CRS, caps, KML sanitizing, GPX; `geo/overlay/formats_tests.rs`: each
 other format's reader, its CRS and axis order, and its malformed and oversized inputs: shared TopoJSON arcs, claimed WKB
 and shapefile counts, a zip that inflates too far, nested collections, a geometry of thousands of rings, the positions
-bound, code pages and CRS names) and the tiler's (`geo/tiles_tests.rs`:
+bound, code pages and CRS names; and registered CRSs converted: a NAD83 UTM shapefile by ESRI's name, a GeoJSON file in
+the British National Grid, LAEA Europe's GML URN northing first, an EWKT and EsriJSON one, an unregistered SRID refused);
+the projections (`geo/proj_tests.rs`: the EPSG guidance examples of transverse Mercator, Lambert conformal conic, LAEA,
+polar stereographic, the Helmert and geocentric conversions, Snyder's Albers, the definitions refused by name, a `.prj`
+found by authority, name or parameters); a COG's header (`geo/tiff_tests.rs`: classic and BigTIFF in both byte orders,
+what a map cannot draw, and hostile files: a loop, a directory past the end, a count that overflows, too many directories
+or entries); `MapsSource` registers a COG of a drive, refuses one in strips and reads its ranges for a holder of its share
+and not another user, with its projection in the holder's configuration and the holder's own band settings kept (a band
+it lacks refused); `MapsOverlays` converts a UTM and a British
+National Grid overlay and the tiler's (`geo/tiles_tests.rs`:
 the budgets against a pathological file, a stop within a zoom, points, the poles and the antimeridian;
 `geo/simplify_tests.rs`, `geo/mvt_tests.rs`); the geocoder: `framework/test/MapsGeocoder.spec.js`
 (nothing sent untested or with outside requests off, the test's fixed address, the Census answer through `HttpFixtures`,
@@ -647,8 +841,21 @@ screen and its Import `tools/test/MapsGeoData.spec.js`, with the parsers, the cr
 (`moqui-lib` `geo/tests.rs`); the real US import, with its times and counts, is the acceptance test `GeoDataUsaImport`
 (`./moq accept framework --spec GeoDataUsaImport`), a queue of three GeoNames countries with the largest, Portugal, `GeoDataEveryCountry`, and a real
 import cancelled between batches and run again `GeoDataImportCancel`.
-m-map's feature selection (plain-text details, the feature nearest the center) and its editing helpers (the edited
-FeatureCollection, a keyboard shape, which overlays are editable) are a page test,
+m-map's feature selection (plain-text details, the feature nearest the center), its editing helpers (the edited
+FeatureCollection, a keyboard shape, which overlays are editable) and the raster part (loaded only for a COG layer or a
+registered projection, a COG's band settings and WebGL style, projections registered from the configuration and a lookup
+refused with no outside request) are a page test,
 `webroot/test/client/pages/WebrootMap.page.js`, a dashboard geomap's link into Maps `WebrootReport.page.js`, and the terminal's postal search and overlays `moqui-tui`
 `components/map_tests.rs`. The acceptance walks are `MapsBrowseWalk` and `MapsDialogWalk` (browser, desktop and phone width) and
 `MapsTerminalWalk`, with their fixture `MapsWalkFixtures`: `./moq accept tools --spec MapsBrowseWalk`.
+Overture: the services' rules are `framework/test/MapsOverture.spec.js` (a non-holder, outside requests off, a license not
+acknowledged, a region too large and a release of schema 3 refused; a Places import read by range from the one item and row
+group that meet the region, active and searched, the later ranges pinned to the file's ETag; a failed update and a file
+replaced while it is read leaving the release before it active; a new license held for review, activated and rolled back;
+a run cancelled while it reads and a run held for review discarded; Buildings as the region's layer, removed; Configuration › Overture rendered once
+for an administrator and refused to a non-holder), over `HttpFixtures` with `ranges`, its
+Parquet fixtures (`framework/test/fixtures/overture`) goldens of the reader's tests in Rust (`moqui-maps`: the reader on the
+`parquet` crate's files, v1 and v2 pages, dictionary, delta and byte-stream-split encodings, Snappy, ZSTD and GZIP, bounds,
+corrupted pages and crafted counts (delta block sizes, width-0 runs, row counts, deep schemas, a zero type length); the STAC catalog; WKB; the themes' rows). The real latest release for central Florence, with its
+times, bytes, rows and memory, is the acceptance test `OvertureRegionImport` (`./moq accept framework --spec
+OvertureRegionImport`).

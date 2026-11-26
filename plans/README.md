@@ -76,6 +76,7 @@ audits and historical tests do not complete a walk. The
 
 **Maps**
 - [Maps.md](Maps.md): shared OpenLayers Maps app and address dialogs in Tools, OpenFreeMap, ResourceFacade-backed PMTiles, global/personal configuration, postal-code coordinate lookup and Rust server work for BOSS, HOME and other consumers.
+- [Maps-Overture.md](Maps-Overture.md): Maps' optional Overture data (stage O1): the `moqui-maps` crate and its own GeoParquet reader (measured against the `parquet` crate), a region's Places for search and Buildings as a layer, pinned releases, license review and rollback.
 
 **3D**
 - [IronStone THREE](../runtime/components/addon/mr-three/plan/concept.md) (`mr-three`, Three-d Hosted-Roleplay Enterprise Ensuite): the 3D add-on on the three.js ecosystem, kept in its own component: 3D previews and later editors inside the business apps, and a game-like village UI laid over the qvt UI, with each division a building (a PASS front office open to the world, the BOSS back office behind a lock and privacy glass), a world grant for internal and external users, decorations that show real state, avatars, meeting rooms on the existing calls and distance audio. Its [technical design](../runtime/components/addon/mr-three/plan/design-technical.md) lists what the framework must gain, kept small and reusable (a socket for a component's own messages, a shell layer, model media types, changes to calls); the [world design](../runtime/components/addon/mr-three/plan/design-world.md) is a skeleton. Plan; nothing built.

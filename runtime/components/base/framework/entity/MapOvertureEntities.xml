@@ -1,0 +1,163 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Optional Overture data for Maps (plans/Maps-Overture.md §4, stage O1 of plans/Maps.md §4.3): the themes with their
+    licenses, an administrator's regions, the runs that import a theme of a region from a pinned release, and the places
+    of each run. An import writes only these, its PMTiles archives and its own map layer: never a Mantle record, a Geo,
+    a point or a record's location. The services are service/org/moqui/maps/OvertureServices.xml; the reader is the
+    moqui-maps crate, linked under the host's overture feature. -->
+<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-entity-definition.xsd">
+
+    <!-- A theme O1 imports, seeded: PLACES and BUILDINGS. licenses is the source licenses an administrator's
+        acknowledgement covers (comma separated SPDX IDs); a run that finds another is held for review (OviReview) until
+        it is acknowledged too. -->
+    <entity entity-name="OvertureTheme" package="moqui.maps" use="configuration" cache="true">
+        <field name="themeId" type="id" is-pk="true"/>
+        <field name="themeName" type="text-medium"/>
+        <field name="overtureTheme" type="text-short"><description>The catalog's theme (places, buildings)</description></field>
+        <field name="overtureType" type="text-short"><description>The collection of the theme (place, building)</description></field>
+        <field name="description" type="text-long"/>
+        <field name="licenseName" type="text-medium"><description>The theme's license in words</description></field>
+        <field name="licenseUrl" type="text-medium"/>
+        <field name="attribution" type="text-long"><description>Shown with its layer, its search results and beside its
+            data in Configuration</description></field>
+        <field name="licenses" type="text-long"><description>The source licenses the acknowledgement covers, comma separated</description></field>
+        <field name="obligations" type="text-long"><description>What its license asks of an installation that uses or
+            shares the data (ODbL's for a derived database)</description></field>
+        <field name="licenseAckUserId" type="id" enable-audit-log="true"/>
+        <field name="licenseAckDate" type="date-time" enable-audit-log="true"/>
+        <field name="disabled" type="text-indicator"/>
+    </entity>
+
+    <!-- An administrator's region: a box of at most maps@overture-max-area km², the release to import (a version of the
+        catalog; a run records the one it read) and the profile its Buildings layer is shown in. -->
+    <entity entity-name="OvertureRegion" package="moqui.maps" use="configuration" cache="never">
+        <field name="regionId" type="id" is-pk="true"/>
+        <field name="regionName" type="text-medium"/>
+        <field name="west" type="number-float"/>
+        <field name="south" type="number-float"/>
+        <field name="east" type="number-float"/>
+        <field name="north" type="number-float"/>
+        <field name="releaseVersion" type="text-short"><description>The release the next import reads; empty for the
+            catalog's latest when it starts, recorded on the run</description></field>
+        <field name="profileId" type="id"><description>The map profile its Buildings layer is added to when one is
+            activated</description></field>
+        <field name="createdByUserId" type="id"/>
+        <field name="createdDate" type="date-time"/>
+        <relationship type="one-nofk" related="moqui.maps.MapProfile" short-alias="profile"/>
+    </entity>
+
+    <!-- A theme of a region: its active run and the one before it (kept for rollback), and its layer (Buildings) -->
+    <entity entity-name="OvertureRegionTheme" package="moqui.maps" use="configuration" cache="never">
+        <field name="regionId" type="id" is-pk="true"/>
+        <field name="themeId" type="id" is-pk="true"/>
+        <field name="activeImportId" type="id" enable-audit-log="true"/>
+        <field name="previousImportId" type="id"/>
+        <field name="layerId" type="id"/>
+        <relationship type="one" related="moqui.maps.OvertureRegion" short-alias="region"/>
+        <relationship type="one" related="moqui.maps.OvertureTheme" short-alias="theme"/>
+        <relationship type="one-nofk" title="Active" related="moqui.maps.OvertureImport" short-alias="active">
+            <key-map field-name="activeImportId" related="importId"/></relationship>
+    </entity>
+
+    <!-- A run: one theme of one region from one release. Staged rows (OverturePlace) and an archive (Buildings) are its own
+        until it is activated; a failed, cancelled or removed run's are deleted, and the active run stays as it was. -->
+    <entity entity-name="OvertureImport" package="moqui.maps" use="transactional" cache="never">
+        <field name="importId" type="id" is-pk="true"/>
+        <field name="regionId" type="id"/>
+        <field name="themeId" type="id"/>
+        <field name="statusId" type="id" enable-audit-log="true"/>
+        <field name="releaseVersion" type="text-short"/>
+        <field name="schemaVersion" type="text-short"/>
+        <field name="filesRead" type="number-integer"/>
+        <field name="rowGroupsRead" type="number-integer"/>
+        <field name="rowGroupsSkipped" type="number-integer"/>
+        <field name="bytesRead" type="number-integer"/>
+        <field name="rowsRead" type="number-integer"/>
+        <field name="rowsKept" type="number-integer"/>
+        <field name="rowsRejected" type="number-integer"/>
+        <field name="licensesJson" type="text-very-long"><description>The rows of each source dataset and license, as
+            [{dataset, license, rows}]</description></field>
+        <field name="newLicenses" type="text-medium"><description>The licenses found that the theme's acknowledgement
+            did not cover: the run waits for review</description></field>
+        <field name="rejectionsJson" type="text-very-long"><description>The first rows rejected, each with why</description></field>
+        <field name="archiveLocation" type="text-medium"><description>Buildings: its PMTiles archive</description></field>
+        <field name="archiveSize" type="number-integer"/>
+        <field name="tileCount" type="number-integer"/>
+        <field name="maxZoom" type="number-integer"/>
+        <field name="minLongitude" type="number-float"/><field name="minLatitude" type="number-float"/>
+        <field name="maxLongitude" type="number-float"/><field name="maxLatitude" type="number-float"/>
+        <field name="forced" type="text-indicator"><description>Y: activated with far fewer rows than the run active
+            before it</description></field>
+        <field name="cancelRequested" type="text-indicator"/>
+        <field name="failureText" type="text-long"/>
+        <field name="reasonCode" type="text-short"/>
+        <field name="jobRunId" type="id"/>
+        <field name="userId" type="id"/>
+        <field name="startedDate" type="date-time"/>
+        <field name="lastProgressDate" type="date-time"/>
+        <field name="finishedDate" type="date-time"/>
+        <field name="activatedDate" type="date-time"/>
+        <!-- no foreign key: a run's row is its history, kept when its region is removed -->
+        <relationship type="one-nofk" related="moqui.maps.OvertureRegion" short-alias="region"/>
+        <relationship type="one" related="moqui.maps.OvertureTheme" short-alias="theme"/>
+        <relationship type="one" title="OvertureImport" related="moqui.basic.StatusItem" short-alias="status"/>
+        <relationship type="one-nofk" related="moqui.service.job.ServiceJobRun" short-alias="jobRun"/>
+        <relationship type="one-nofk" related="moqui.security.UserAccount"/>
+        <index name="MAPS_OVT_IMPORT_RG"><index-field name="regionId"/><index-field name="themeId"/></index>
+        <seed-data>
+            <moqui.basic.StatusType description="Overture Import" statusTypeId="OvertureImport"/>
+            <moqui.basic.StatusItem description="Pending" sequenceNum="1" statusId="OviPending" statusTypeId="OvertureImport"/>
+            <moqui.basic.StatusItem description="Reading" sequenceNum="2" statusId="OviRunning" statusTypeId="OvertureImport"/>
+            <moqui.basic.StatusItem description="Waiting for license review" sequenceNum="3" statusId="OviReview" statusTypeId="OvertureImport"/>
+            <moqui.basic.StatusItem description="Active" sequenceNum="4" statusId="OviActive" statusTypeId="OvertureImport"/>
+            <moqui.basic.StatusItem description="Previous (kept for rollback)" sequenceNum="5" statusId="OviPrevious" statusTypeId="OvertureImport"/>
+            <moqui.basic.StatusItem description="Rolled back" sequenceNum="6" statusId="OviRolledBack" statusTypeId="OvertureImport"/>
+            <moqui.basic.StatusItem description="Superseded" sequenceNum="7" statusId="OviSuperseded" statusTypeId="OvertureImport"/>
+            <moqui.basic.StatusItem description="Failed" sequenceNum="8" statusId="OviFailed" statusTypeId="OvertureImport"/>
+            <moqui.basic.StatusItem description="Cancelled" sequenceNum="9" statusId="OviCancelled" statusTypeId="OvertureImport"/>
+            <moqui.basic.StatusItem description="Removed" sequenceNum="10" statusId="OviRemoved" statusTypeId="OvertureImport"/>
+            <moqui.basic.StatusItem description="Discarded" sequenceNum="11" statusId="OviDiscarded" statusTypeId="OvertureImport"/>
+        </seed-data>
+    </entity>
+
+    <!-- A place of a run. placeId is internal (the run and the row's place in it); gersId with the run's release is the
+        external reference, which a later release may change (GERS stability varies). Search reads the places of active
+        runs only. -->
+    <entity entity-name="OverturePlace" package="moqui.maps" use="transactional" cache="never">
+        <field name="placeId" type="id-long" is-pk="true"/>
+        <field name="importId" type="id"/>
+        <field name="gersId" type="text-short"/>
+        <field name="featureVersion" type="number-integer"/>
+        <field name="placeName" type="text-medium"/>
+        <field name="nameSearch" type="text-medium"><description>placeName in lower case, for search</description></field>
+        <field name="basicCategory" type="text-short"/>
+        <field name="taxonomyPrimary" type="text-short"/>
+        <field name="latitude" type="number-float"/>
+        <field name="longitude" type="number-float"/>
+        <field name="confidence" type="number-float"/>
+        <field name="operatingStatus" type="text-short"/>
+        <field name="brandName" type="text-medium"/>
+        <field name="addressText" type="text-medium"/>
+        <field name="locality" type="text-medium"/>
+        <field name="region" type="text-short"/>
+        <field name="postcode" type="text-short"/>
+        <field name="countryCode" type="text-short"/>
+        <field name="sourceDatasets" type="text-medium"/>
+        <field name="sourceLicenses" type="text-medium"/>
+        <relationship type="one" related="moqui.maps.OvertureImport" short-alias="import"/>
+        <index name="MAPS_OVT_PLACE_IMPORT"><index-field name="importId"/><index-field name="nameSearch"/></index>
+        <index name="MAPS_OVT_PLACE_GERS"><index-field name="gersId"/></index>
+    </entity>
+</entities>

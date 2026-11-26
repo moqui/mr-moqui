@@ -1,11 +1,20 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
 /*
- * The map widget (plans/Maps.md §3.2), on the vendored OpenLayers bundle (libs/openlayers/ol-map.min.js, the global MoquiOl,
- * with ol-mapbox-style and the PMTiles sources). m-map of WebrootVue.qvt.js loads this file, the bundle and ol.css when the
- * first map mounts and draws m-map-view by its definition; the map-view XML element writes m-map. A render function, not a
- * template, so it needs no template compiler. The pure helpers are moqui.map, which test/client/pages/WebrootMap.page.js runs
- * in the page.
+ * The map widget (plans/Maps.md §3.2), on the vendored OpenLayers bundle (libs/openlayers, an ES module build whose files
+ * are named by their hash: map.loadOpenLayers reads ol-map.json for its entries, imports the main one and sets it as the
+ * global MoquiOl, with ol-mapbox-style and the PMTiles sources). m-map of WebrootVue.qvt.js loads this
+ * file, the bundle and ol.css when the first map mounts and draws m-map-view by its definition; the map-view XML element
+ * writes m-map. A render function, not a template, so it needs no template compiler. The pure helpers are moqui.map, which
+ * test/client/pages/WebrootMap.page.js runs in the page.
+ *
+ * The raster and projection part (the build's raster entry, P4c: OpenLayers' GeoTIFF source and WebGL tile layer,
+ * geotiff.js, proj4) is imported only when a map needs it (map.needsRaster: a COG layer, or a view or a layer in a
+ * projection other than EPSG:3857 and EPSG:4326), and shares the main bundle's OpenLayers. A projection is registered with
+ * proj4 from the configuration's projections (the server's MapProjection rows), never fetched: the part refuses any lookup of
+ * a code it was not given. geotiff decodes in module workers of this server (the build's decoder entry), so a page whose
+ * Content-Security-Policy is stricter than the default needs worker-src to allow 'self'; the LERC and Zstandard decoders are
+ * WebAssembly, instantiated in the worker.
  *
  * Coordinates are WGS84 degrees, longitude first wherever they are a pair or a list (GeoJSON's order): a point {lon, lat},
  * a center [lon, lat], an extent [west, south, east, north] (west greater than east crosses the antimeridian). Text shows
@@ -30,6 +39,10 @@
  *                       server recorded it from the capabilities: {Identifier, SupportedCRS, TileMatrix}), projection,
  *                       requestEncoding KVP or REST, dimensions}: the tile grid is made from matrixSet, so the browser never
  *                       reads the capabilities
+ *         kind cog:     url a Cloud Optimized GeoTIFF (this server's map-source transition, its revision pinned, a 409
+ *                       loading the configuration again; or a tested provider's URL, read with no credentials of the page),
+ *                       raster {bands, sampleType, projection (its EPSG code), nodata, cors, style: {rgb: [r, g, b] or band
+ *                       with colormap (grey, viridis, terrain, magma), min, max, nodata}}: drawn with WebGL (map.rasterStyle)
  *       basemap: the id of the one drawn first (else the first),
  *       allowedOrigins: ["https://tiles.example.org"]   origins its styles' sources, sprites and tiles may also come from
  *       notice: {text, href, linkText}  shown over the map: the effective configuration gives an administrator the way to
@@ -39,7 +52,9 @@
  *             attribution, visible, ogc}] (as the effective configuration resolved them); an ID left unresolved shows as not
  *             available. kind wfs: url a WFS 2.0.0 service, ogc {typeName, outputFormat (GeoJSON), srsName, version,
  *             maxFeatures}: read as GeoJSON for the view's box (the bbox strategy), at most maxFeatures at a time,
- *     center: [lon, lat], zoom: 0-22, extent: [west, south, east, north], projection: "EPSG:3857" | "EPSG:4326",
+ *     center: [lon, lat], zoom: 0-22, extent: [west, south, east, north], projection: "EPSG:3857" | "EPSG:4326" | a code of
+ *             projections (a vector-tile basemap or layer is drawn only in EPSG:3857: refused in another, with the reason),
+ *     projections: [{code, label, proj4, extent (in its units), bounds (WGS84)}]  the registered projections the map needs,
  *     points: [{id, lon, lat, label, precisionEnumId, precision, source}]  (longitude/latitude, sourceText are read too),
  *     features: a GeoJSON FeatureCollection in WGS84 (each feature's label or name property its label),
  *     pick: true to let the user choose a point, pickForm: the name of a form of the page whose latitude and longitude
@@ -103,8 +118,21 @@
     const OUTLINE = { profileId: "OUTLINE", profileName: "Outline", basemaps: [{ id: "OUTLINE_NE110", label: "Country outlines", kind: "outline",
         url: "/libs/naturalearth/countries-110m.json", attribution: "Natural Earth", attributionUrls: ["https://www.naturalearthdata.com/"] }] };
     map.OUTLINE = OUTLINE;
-    const KINDS = ["outline", "style", "xyz", "pmtiles", "wms", "wmts"];
-    const LAYER_KINDS = ["geojson", "gpx", "kml", "topojson", "xyz", "pmtiles", "wms", "wmts", "wfs", "mvt"];
+    const KINDS = ["outline", "style", "xyz", "pmtiles", "wms", "wmts", "cog"];
+    const LAYER_KINDS = ["geojson", "gpx", "kml", "topojson", "xyz", "pmtiles", "wms", "wmts", "wfs", "mvt", "cog"];
+    const BUILT_IN_PROJECTIONS = ["EPSG:3857", "EPSG:4326"];
+    const COLORMAPS = {
+        grey: [[0, [0, 0, 0]], [1, [255, 255, 255]]],
+        viridis: [[0, [68, 1, 84]], [0.25, [59, 82, 139]], [0.5, [33, 145, 140]], [0.75, [94, 201, 98]], [1, [253, 231, 37]]],
+        terrain: [[0, [51, 51, 153]], [0.15, [0, 153, 255]], [0.25, [0, 204, 102]], [0.5, [255, 255, 153]], [0.75, [128, 92, 84]], [1, [255, 255, 255]]],
+        magma: [[0, [0, 0, 4]], [0.25, [81, 18, 124]], [0.5, [183, 55, 121]], [0.75, [252, 137, 97]], [1, [252, 253, 191]]]
+    };
+    map.COLORMAPS = Object.keys(COLORMAPS);
+    // the OpenLayers build (P4c): every file named by its hash, and this map of its entries ({main, raster, decoder}), the
+    // one file of a fixed name, asked with cache: "no-cache" so an entry never pairs with another build's files
+    const OL_DIR = "/libs/openlayers/";
+    const OL_FILES = OL_DIR + "ol-map.json";
+    const fileName = (name) => (typeof name === "string" && /^[A-Za-z0-9_.-]+\.js$/.test(name) ? name : null);
     // the vector files an overlay layer is read from by url
     const FILE_KINDS = ["geojson", "gpx", "kml", "topojson"];
     const PRECISION = { GPP_USER_CONFIRMED: "User-confirmed point", GPP_ADDRESS_MATCH: "Address match", GPP_STREET_RANGE: "Street-range interpolation",
@@ -190,7 +218,7 @@
             styleUrl: text(basemap.styleUrl), attribution: text(basemap.attribution),
             attributionUrls: Array.isArray(urls) ? urls.map(text) : text(urls) ? text(urls).split("\n").map((url) => url.trim()) : [],
             minZoom: num(basemap.minZoom), maxZoom: num(basemap.maxZoom), raster: basemap.raster === true || basemap.raster === "true",
-            ogc: map.normalizeOgc(basemap.ogc, kind) };
+            ogc: map.normalizeOgc(basemap.ogc, kind), cog: kind === "cog" ? map.normalizeRaster(basemap.raster) : null };
     };
     const normalizeLayer = (layer, index) => {
         if (typeof layer === "string") return text(layer) ? { id: text(layer), requested: true } : null;
@@ -198,8 +226,147 @@
         const kind = text(layer.kind).toLowerCase();
         return { id: text(layer.id) || "layer" + index, label: text(layer.label) || text(layer.id), kind, url: text(layer.url),
             styleUrl: text(layer.styleUrl), attribution: text(layer.attribution), visible: layer.visible !== false && layer.visible !== "false",
-            ogc: map.normalizeOgc(layer.ogc, kind), maxZoom: num(layer.maxZoom) };
+            ogc: map.normalizeOgc(layer.ogc, kind), maxZoom: num(layer.maxZoom), cog: kind === "cog" ? map.normalizeRaster(layer.raster) : null };
     };
+
+    // ---- rasters and projections (P4c) ----
+
+    const EPSG = /^EPSG:[0-9]{1,6}$/;
+    // A COG layer's band settings checked against its band count: {rgb: [r, g, b]} or {band, colormap}, with min below max
+    // and an optional nodata; null when they do not read (the layer is then drawn with its defaults, or not at all).
+    map.normalizeRasterStyle = (style, bands) => {
+        if (!style || typeof style !== "object") return null;
+        const bandOk = (band) => Number.isInteger(band) && band >= 1 && band <= (bands || 64);
+        const out = {};
+        if (Array.isArray(style.rgb)) {
+            const rgb = style.rgb.map(num);
+            if (rgb.length !== 3 || !rgb.every(bandOk)) return null;
+            out.rgb = rgb;
+        } else {
+            const band = num(style.band);
+            if (!bandOk(band)) return null;
+            out.band = band;
+            out.colormap = COLORMAPS[text(style.colormap)] ? text(style.colormap) : "grey";
+        }
+        const min = num(style.min), max = num(style.max);
+        if (min === null || max === null || !(min < max)) return null;
+        out.min = min;
+        out.max = max;
+        const nodata = num(style.nodata);
+        if (nodata !== null) out.nodata = nodata;
+        return out;
+    };
+    // A COG layer's raster as the server resolved it, checked; null when it is not one (the layer then fails by name).
+    map.normalizeRaster = (raster) => {
+        if (!raster || typeof raster !== "object") return null;
+        const bands = num(raster.bands);
+        const projection = text(raster.projection).toUpperCase();
+        if (!Number.isInteger(bands) || bands < 1 || bands > 64 || !EPSG.test(projection)) return null;
+        const style = map.normalizeRasterStyle(raster.style, bands) || map.normalizeRasterStyle(raster.defaults, bands);
+        if (!style) return null;
+        return { bands, sampleType: shortText(raster.sampleType, 16), projection, nodata: num(raster.nodata), cors: raster.cors !== false,
+            style, defaults: map.normalizeRasterStyle(raster.defaults, bands), own: raster.own === true };
+    };
+    // The registered projections a configuration gives: an EPSG code and a PROJ.4 definition of plain parameters each (no
+    // URL, no grid file), with its extent in its own units and its bounds in WGS84 when given.
+    map.normalizeProjections = (projections) => (Array.isArray(projections) ? projections : []).map((row) => {
+        if (!row || typeof row !== "object") return null;
+        const code = text(row.code).toUpperCase();
+        const proj4 = text(row.proj4);
+        if (!EPSG.test(code) || BUILT_IN_PROJECTIONS.includes(code) || proj4.length > 600 || !/^\+proj=[a-z]+(\s+\+[a-z_0-9]+(=[A-Za-z0-9_.,+@-]+)?)*$/.test(proj4) ||
+            /\+(nadgrids|geoidgrids)=(?!@null)/.test(proj4)) return null;
+        const extent = numbers(row.extent, 4);
+        const bounds = numbers(row.bounds, 4);
+        return { code, label: text(row.label) || code, proj4, extent: extent && extent[0] < extent[2] && extent[1] < extent[3] ? extent : null,
+            bounds: bounds && lonOk(bounds[0]) && lonOk(bounds[2]) && latOk(bounds[1]) && latOk(bounds[3]) ? bounds : null };
+    }).filter((row, index, all) => row && all.findIndex((other) => other && other.code === row.code) === index).slice(0, 50);
+    // Whether a basemap or layer may be drawn in a projection: anything in EPSG:3857; vector tiles (a MapLibre style, a vector
+    // PMTiles archive, an overlay simplified into tiles) only there, since they are not reprojected.
+    map.drawableIn = (entry, projection) => projection === "EPSG:3857" || !(entry.kind === "style" || entry.kind === "mvt" || (entry.kind === "pmtiles" && !entry.raster));
+    // The projections a configuration draws in: its view's, its COG layers', its OGC layers'.
+    const projectionsUsed = (config) => {
+        const out = new Set([config.projection]);
+        config.profile.basemaps.concat(config.layers).forEach((entry) => {
+            if (entry.cog) out.add(entry.cog.projection);
+            if (entry.ogc && entry.ogc.projection) out.add(text(entry.ogc.projection).toUpperCase());
+        });
+        return out;
+    };
+    // Whether a map needs the raster and projection part: a COG layer, or a projection that is not EPSG:3857 or EPSG:4326
+    // (a registered one, which proj4 draws). A map that needs neither never loads it.
+    map.needsRaster = (config) => config.profile.basemaps.concat(config.layers).some((entry) => entry.kind === "cog") ||
+        Array.from(projectionsUsed(config)).some((code) => EPSG.test(code) && !BUILT_IN_PROJECTIONS.includes(code));
+    // The main bundle: the map of the build's entries read again (revalidated), then its main entry imported once and set
+    // as the global MoquiOl. A failure is not kept, so a later map tries again.
+    let olLoad = null;
+    map.loadOpenLayers = () => {
+        if (root.MoquiOl && root.MoquiOlFiles) return Promise.resolve(root.MoquiOl);
+        return olLoad || (olLoad = root.fetch(OL_FILES, { cache: "no-cache", credentials: "same-origin" }).then((response) => {
+            if (!response.ok) throw new Error("HTTP " + response.status + " for " + OL_FILES);
+            return response.json();
+        }).then((files) => {
+            const main = fileName(files && files.main);
+            if (!main || !fileName(files.raster) || !fileName(files.decoder)) throw new Error(OL_FILES + " does not name the build's entries");
+            root.MoquiOlFiles = files;
+            return import(OL_DIR + main);
+        }).then((ol) => (root.MoquiOl = root.MoquiOl || ol), (err) => { olLoad = null; throw err; }));
+    };
+    // The raster part of the same build, imported once, its decoder workers set to the build's own (each a module worker,
+    // whose failure to start fails the COG layers drawn: map.decoderFailed). A failure is not kept.
+    let rasterLoad = null;
+    const decoderListeners = new Set();
+    map.decoderFailed = (event) => decoderListeners.forEach((listener) => { try { listener(event); } catch (err) { console.warn("m-map:", err); } });
+    map.loadRaster = () => {
+        if (root.MoquiOlRaster) return Promise.resolve(root.MoquiOlRaster);
+        const files = root.MoquiOlFiles;
+        if (!files || !fileName(files.raster) || !fileName(files.decoder)) return Promise.reject(new Error("The map's library is not loaded"));
+        return rasterLoad || (rasterLoad = import(OL_DIR + files.raster).then((part) => {
+            part.setWorkerFactory(() => {
+                const worker = new root.Worker(OL_DIR + files.decoder, { type: "module" });
+                // a worker the page's policy refuses, or that does not load, fails the layers rather than leave them waiting
+                worker.addEventListener("error", (event) => map.decoderFailed(event));
+                return worker;
+            });
+            return (root.MoquiOlRaster = part);
+        }, (err) => { rasterLoad = null; throw err; }));
+    };
+    // Register a configuration's projections with proj4 and OpenLayers (each once): its definition (a UTM zone OpenLayers
+    // makes itself is left to it), its extent and its area of use. Answers the codes registered with proj4.
+    map.registerProjections = (O, R, projections) => {
+        const added = [];
+        projections.forEach((row) => {
+            if (O.getProjection(row.code)) return;
+            R.proj4.defs(row.code, row.proj4);
+            added.push(row.code);
+        });
+        // proj4 is registered even with nothing added, so a code no row gave goes to the part's refusing lookup
+        R.registerProj4(R.proj4);
+        projections.forEach((row) => {
+            const projection = O.getProjection(row.code);
+            if (!projection) return;
+            if (row.extent) projection.setExtent(row.extent);
+            if (row.bounds) projection.setWorldExtent(row.bounds);
+        });
+        return added;
+    };
+    // The WebGL style of a COG layer's settings: the bands read (as the source's bands, so the style's are 1 to 3, or 1), each
+    // stretched from min to max, through a colormap for one band; a nodata value transparent (the source's alpha band after
+    // them).
+    map.rasterStyle = (style) => {
+        const scaled = (band) => ["clamp", ["/", ["-", ["band", band], ["var", "min"]], ["var", "range"]], 0, 1];
+        const alphaBand = (style.rgb ? 3 : 1) + 1;
+        let color;
+        // a vector of 0 to 1 values (the 'array' operator's color); a colormap's stops are color literals
+        if (style.rgb) color = ["array", scaled(1), scaled(2), scaled(3), 1];
+        else {
+            const stops = COLORMAPS[style.colormap] || COLORMAPS.grey;
+            color = ["interpolate", ["linear"], scaled(1)].concat(...stops.map(([at, rgb]) => [at, rgb.concat([1])]));
+        }
+        if (style.nodata !== undefined) color = ["case", ["==", ["band", alphaBand], 0], [0, 0, 0, 0], color];
+        return { color, variables: { min: style.min, range: style.max - style.min } };
+    };
+    // The bands a COG layer's source reads (1 from the first), in the style's order
+    map.rasterBands = (style) => (style.rgb ? style.rgb.slice() : [style.band]);
 
     // ---- OGC layers ----
 
@@ -284,6 +451,7 @@
         const extent = numbers(given.extent, 4);
         const zoom = num(given.zoom);
         const projection = text(given.projection).toUpperCase();
+        const projections = map.normalizeProjections(given.projections);
         return {
             profileId: text(given.profileId) || text(profileIn.profileId),
             profile, outline,
@@ -291,7 +459,8 @@
             center: center && lonOk(center[0]) && latOk(center[1]) ? center : null,
             zoom: zoom !== null && zoom >= 0 && zoom <= 22 ? zoom : null,
             extent: extent && lonOk(extent[0]) && lonOk(extent[2]) && latOk(extent[1]) && latOk(extent[3]) && extent[1] <= extent[3] ? extent : null,
-            projection: projection === "EPSG:4326" ? "EPSG:4326" : "EPSG:3857",
+            projection: BUILT_IN_PROJECTIONS.includes(projection) || projections.some((row) => row.code === projection) ? projection : "EPSG:3857",
+            projections,
             points: map.normalizePoints(given.points),
             features: given.features && given.features.type === "FeatureCollection" && Array.isArray(given.features.features) ? given.features : null,
             pick: given.pick === true || given.pick === "true",
@@ -316,14 +485,16 @@
         const out = Object.assign({}, server);
         ["center", "zoom", "extent"].forEach((key) => { if (local[key] !== null) out[key] = local[key]; });
         if (local.projection !== "EPSG:3857") out.projection = local.projection;
+        const known = new Set(server.projections.map((row) => row.code));
+        out.projections = server.projections.concat(local.projections.filter((row) => !known.has(row.code)));
         out.pick = server.pick || local.pick;
         if (local.units) out.units = local.units;
         if (local.pickForm) out.pickForm = local.pickForm;
         // the map-view's own features (a record's area) beside the server's
         if (local.features) out.features = server.features ? { type: "FeatureCollection", features: server.features.features.concat(local.features.features) } : local.features;
         out.points = map.normalizePoints(server.points.concat(local.points));
-        const known = new Set(server.layers.map((layer) => layer.id));
-        out.layers = server.layers.concat(local.layers.filter((layer) => !known.has(layer.id)));
+        const knownLayers = new Set(server.layers.map((layer) => layer.id));
+        out.layers = server.layers.concat(local.layers.filter((layer) => !knownLayers.has(layer.id)));
         return out;
     };
 
@@ -581,7 +752,7 @@
         emits: ["pick", "select", "view-change", "edit-change"],
         data() {
             return { effective: null, loadError: "", fallback: "", drawn: false, layerStatus: [], readout: "", picked: null, pickText: "", pickError: "",
-                locating: false, located: "", basemapId: "", selectedId: "", announced: "", focused: false, editing: false };
+                locating: false, located: "", basemapId: "", selectedId: "", announced: "", focused: false, editing: false, projectionNote: "" };
         },
         computed: {
             local() {
@@ -600,7 +771,12 @@
             config(value, before) { if (JSON.stringify(value) !== JSON.stringify(before)) this.load(); }
         },
         mounted() { this.load(); },
-        beforeUnmount() { this.editSnapshot = null; this.editor = null; this.teardown(); },
+        beforeUnmount() {
+            this.editSnapshot = null;
+            this.editor = null;
+            if (this.decoderListener) decoderListeners.delete(this.decoderListener);
+            this.teardown();
+        },
         methods: {
             pageOrigin() { return root.location.origin; },
             webfonts() { return map.webfonts(this.pageOrigin()); },
@@ -628,12 +804,31 @@
                 const O = root.MoquiOl;
                 if (this.libraryError || !O) { this.fallback = L("The map could not be drawn here") + (this.libraryError ? ": " + this.libraryError : ""); return; }
                 this.fallback = "";
-                this.$nextTick(() => {
-                    try { this.build(O, config); } catch (err) {
-                        console.error("m-map: the map could not be drawn", err);
-                        this.teardown();
-                        this.fallback = L("The map could not be drawn here") + ": " + (err && err.message || err);
+                this.projectionNote = "";
+                // the raster and projection part only for a map that needs it (a COG layer, a registered projection)
+                const seq = this.startSeq = (this.startSeq || 0) + 1;
+                const ready = map.needsRaster(config) ? map.loadRaster().then((R) => { map.registerProjections(O, R, config.projections); return R; }, (err) => {
+                    console.warn("m-map: the raster and projection part did not load", err);
+                    this.rasterError = L("The raster and projection part did not load") + ": " + (err && err.message || err);
+                    return null;
+                }) : Promise.resolve(null);
+                ready.then((R) => {
+                    if (seq !== this.startSeq) return;
+                    this.raster = R;
+                    // a view in a projection that could not be registered is drawn in Web Mercator, and says so
+                    let drawn = config;
+                    if (!O.getProjection(config.projection)) {
+                        drawn = Object.assign({}, config, { projection: "EPSG:3857" });
+                        this.effective = drawn;
+                        this.projectionNote = L("The map's projection could not be loaded, so it is drawn in Web Mercator") + ": " + config.projection;
                     }
+                    this.$nextTick(() => {
+                        try { this.build(O, drawn); } catch (err) {
+                            console.error("m-map: the map could not be drawn", err);
+                            this.teardown();
+                            this.fallback = L("The map could not be drawn here") + ": " + (err && err.message || err);
+                        }
+                    });
                 });
             },
             teardown() {
@@ -658,7 +853,12 @@
                 if (!canvas) return;
                 this.fallback = "";
                 this.origins = map.allowedOrigins(config, this.pageOrigin());
-                const view = new O.View({ projection: config.projection, center: this.toMap(0, 20), zoom: 2, maxZoom: 22 });
+                // a registered projection's view starts at the middle of its area of use and stays within its extent
+                const registered = config.projections.find((row) => row.code === config.projection);
+                const middle = registered && registered.bounds ? [(registered.bounds[0] + registered.bounds[2]) / 2, (registered.bounds[1] + registered.bounds[3]) / 2] : [0, 20];
+                const viewOptions = { projection: config.projection, center: this.toMap(middle[0], middle[1]), zoom: 2, maxZoom: 22 };
+                if (registered && registered.extent) Object.assign(viewOptions, { extent: registered.extent, showFullExtent: true });
+                const view = new O.View(viewOptions);
                 const olMap = new O.Map({
                     target: canvas, view, keyboardEventTarget: canvas,
                     controls: O.defaultControls({ rotate: false, attributionOptions: { collapsible: true } }).extend([new O.ScaleLine({ units: map.scaleUnits(config) })])
@@ -730,12 +930,14 @@
                 this.status(basemap.id, basemap.label, "loading");
                 const attributions = map.attributionHtml(basemap.attribution, basemap.attributionUrls);
                 try {
+                    if (!map.drawableIn(basemap, this.projection())) throw new Error(L("It is drawn only in Web Mercator (EPSG:3857), not in") + " " + this.projection());
                     if (basemap.kind === "outline") this.outlineLayer(O, group, basemap, attributions);
                     else if (basemap.kind === "xyz") this.xyzLayer(O, group, basemap, attributions);
                     else if (basemap.kind === "style") this.styleLayer(O, group, basemap, attributions).catch(fail);
                     else if (basemap.kind === "pmtiles") this.pmtilesLayer(O, group, basemap, attributions).catch(fail);
                     else if (basemap.kind === "wms") this.wmsLayer(O, group, basemap, attributions);
                     else if (basemap.kind === "wmts") this.wmtsLayer(O, group, basemap, attributions);
+                    else if (basemap.kind === "cog") this.cogLayer(O, group, basemap, attributions);
                     else throw new Error(L("Not a kind of basemap this map draws") + ": " + basemap.kind);
                 } catch (err) { fail(err); }
             },
@@ -860,6 +1062,46 @@
                 vector.set("overlayLabel", entry.label);
                 group.getLayers().push(vector);
             },
+            // A Cloud Optimized GeoTIFF (P4c), read by range with geotiff.js from the raster part and drawn with WebGL: its
+            // bands as the settings choose them, stretched and colored by map.rasterStyle. This server's (the map-source
+            // transition) is read with the session and a 409 loads the configuration again; a provider's with no credentials
+            // of the page, and only when its test saw CORS.
+            cogLayer(O, group, entry, attributions) {
+                const R = this.raster;
+                if (!entry.cog) throw new Error(L("The layer's raster settings are missing") + ": " + entry.id);
+                if (!R) throw new Error(this.rasterError || L("The raster and projection part is not loaded"));
+                if (!root.WebGLRenderingContext) throw new Error(L("A GeoTIFF is drawn with WebGL, which this browser does not have"));
+                this.checkUrl(entry.url, L("The GeoTIFF"));
+                const page = this.pageOrigin();
+                const same = map.sameOrigin(entry.url, page);
+                if (!same && entry.cog.cors === false) throw new Error(L("Its provider does not let a browser read it (CORS)"));
+                const style = entry.cog.style;
+                const olMap = this.olMap;
+                const info = { url: new URL(entry.url, page + "/").href, bands: map.rasterBands(style),
+                    loader: (asked, headers, signal) => root.fetch(asked, { headers, signal, credentials: same ? "same-origin" : "omit" }).then((response) => {
+                        if (response.status === 409 && this.olMap === olMap) this.sourceChanged(entry);
+                        return response;
+                    }) };
+                if (style.nodata !== undefined) info.nodata = style.nodata;
+                // a decoder worker that does not start fails this layer (its tiles would wait for it)
+                if (!this.decoderListener) {
+                    this.decoderListener = () => {
+                        if (!this.olMap) return;
+                        this.shown.profile.basemaps.concat(this.shown.layers).filter((one) => one.kind === "cog").forEach((one) =>
+                            this.status(one.id, one.label, "failed", L("Its decoder did not start: the page's policy may refuse its worker (worker-src 'self')")));
+                    };
+                    decoderListeners.add(this.decoderListener);
+                }
+                const source = new R.GeoTIFF({ sources: [info], normalize: false, projection: entry.cog.projection });
+                if (attributions) source.setAttributions(attributions);
+                source.on("change", () => {
+                    if (source.getState() !== "error") return;
+                    const error = source.getError();
+                    this.status(entry.id, entry.label, "failed", (error && error.message) || L("Its data did not load"));
+                });
+                this.watchSource(source, entry, "tile");
+                group.getLayers().push(new R.WebGLTileLayer({ source, style: map.rasterStyle(style) }));
+            },
             // the request filter of what ol-mapbox-style fetches (TileJSON, tiles, sprites): only the profile's hosts
             // A TileJSON ("Source") is fetched here and answered with its attribution escaped, since the attribution control sets it
             // as HTML before m-map can replace it.
@@ -977,12 +1219,14 @@
                 this.overlayGroup.getLayers().push(group);
                 const attributions = map.attributionHtml(layer.attribution);
                 try {
+                    if (!map.drawableIn(layer, this.projection())) throw new Error(L("It is drawn only in Web Mercator (EPSG:3857), not in") + " " + this.projection());
                     if (layer.kind === "xyz") this.xyzLayer(O, group, layer, attributions);
                     else if (layer.kind === "pmtiles") this.pmtilesLayer(O, group, layer, attributions).catch(fail);
                     else if (layer.kind === "wms") this.wmsLayer(O, group, layer, attributions);
                     else if (layer.kind === "wmts") this.wmtsLayer(O, group, layer, attributions);
                     else if (layer.kind === "wfs") this.wfsLayer(O, group, layer, attributions);
                     else if (layer.kind === "mvt") this.mvtLayer(O, group, layer, attributions);
+                    else if (layer.kind === "cog") this.cogLayer(O, group, layer, attributions);
                     else if (FILE_KINDS.includes(layer.kind)) {
                         this.checkUrl(layer.url, L("The layer"));
                         const format = layer.kind === "gpx" ? new O.GPX() : layer.kind === "kml" ? new O.KML(map.kmlOptions()) :
@@ -1433,6 +1677,7 @@
             return h("div", { class: "m-map", id: this.id }, [
                 notice ? h("div", { class: "m-map-notice", role: "note" }, notice) : null,
                 this.loadError ? h("div", { class: "m-map-status m-map-status-failed", role: "status" }, this.loadError) : null,
+                this.projectionNote ? h("div", { class: "m-map-status m-map-projection-note", role: "note" }, this.projectionNote) : null,
                 this.fallback ? h("div", { class: "m-map-fallback", role: "status" }, [this.fallback, ". ", L("The places are listed below.")]) :
                     h("div", { class: "m-map-frame", style: { height: this.height || "360px" } }, [
                         h("div", { ref: "canvas", class: "m-map-canvas", tabindex: 0, role: "application", "aria-label": canvasLabel,

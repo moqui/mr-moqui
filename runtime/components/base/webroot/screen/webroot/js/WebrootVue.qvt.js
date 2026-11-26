@@ -8224,19 +8224,21 @@
         }
     });
 
-    // m-map (plans/Maps.md §3.2), the map-view element: js/WebrootMap.js, the vendored OpenLayers bundle and its style sheet,
-    // loaded once when the first map mounts, then m-map-view of that file drawn by its definition (as m-diagram-zoom draws
-    // m-pan-zoom). The bundle failing is passed on as library-error, so m-map-view lists the places in its place; until the file
+    // m-map (plans/Maps.md §3.2), the map-view element: js/WebrootMap.js, the vendored OpenLayers bundle (an ES module with
+    // shared chunks, imported and set as the global MoquiOl; its raster and projection part is imported by m-map-view only
+    // for a map that needs it) and its style sheet, loaded once when the first map mounts, then m-map-view of that file drawn
+    // by its definition (as m-diagram-zoom draws m-pan-zoom). The bundle failing is passed on as library-error, so m-map-view lists the places in its place; until the file
     // has loaded, and when it cannot, the places are listed here, so a record's actions stay usable. config is the map's
     // configuration (an object or its JSON; the shape is in js/WebrootMap.js), config-url a transition answering the effective
     // one. Emits pick ({lon, lat}), select, view-change and edit-change; editCommand(name, value) is m-map-view's (the editing
     // of an overlay, js/WebrootMap.js), answering null until the map has loaded.
     let mapLoad = null;
-    const loadMap = () => mapLoad || (mapLoad = Promise.all([
-        moqui.loadScript("/js/WebrootMap.js", null, () => !!(moqui.map && moqui.map.components)),
-        (moqui.loadStylesheet("/libs/openlayers/ol.css"), moqui.loadScript("/libs/openlayers/ol-map.min.js", null, () => !!root.MoquiOl))
-            .then(() => "", (err) => String(err && err.message || err || "OpenLayers did not load"))
-    ]).then(([, libraryError]) => libraryError, (err) => { mapLoad = null; throw err; }));
+    // The bundle is imported by js/WebrootMap.js's map.loadOpenLayers (its entries by the hashed names ol-map.json gives); a
+    // library that did not load is not kept, so the next map tries again.
+    const loadMap = () => mapLoad || (mapLoad = (moqui.loadStylesheet("/libs/openlayers/ol.css"),
+        moqui.loadScript("/js/WebrootMap.js", null, () => !!(moqui.map && moqui.map.components)))
+        .then(() => moqui.map.loadOpenLayers().then(() => "", (err) => String(err && err.message || err || "OpenLayers did not load")))
+        .then((libraryError) => { if (libraryError) mapLoad = null; return libraryError; }, (err) => { mapLoad = null; throw err; }));
     component("m-map", {
         name: "mMap",
         props: { id: String, config: [Object, String], configUrl: String, height: String, pick: Boolean },

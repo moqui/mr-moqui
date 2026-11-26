@@ -21,7 +21,7 @@ default = ["maximal", "devtools"]
 # gRPC (the cluster's transport, and the OTLP receiver when it is turned on).
 lite = ["axum", "embedded-postgres", "pdf", "smtp", "tui", "llm", "test-client", "telemetry", "web-push", "backup-s3", "grpc", "vault", "manage"]
 # Enterprise package (`./moq build --enterprise`): everything, with the databases external.
-enterprise = ["axum", "postgres", "mysql", "pdf", "mail", "git", "image", "xlsx", "ssh", "sso", "print", "inbound-smtp", "tui", "llm", "test-client", "telemetry", "grpc", "web-push", "backup-s3", "rtc", "sip", "channels", "xmpp", "edge", "vault", "instances", "manage"]
+enterprise = ["axum", "postgres", "mysql", "pdf", "mail", "git", "image", "xlsx", "ssh", "sso", "print", "inbound-smtp", "tui", "llm", "test-client", "telemetry", "grpc", "web-push", "backup-s3", "rtc", "sip", "channels", "xmpp", "edge", "vault", "instances", "manage", "overture"]
 # Maximal package (`./moq build`, the default, and the debug build), with devtools: everything, Postgres embedded.
 maximal = ["enterprise", "embedded-postgres"]
 
@@ -84,6 +84,9 @@ web-push = ["moqui-core/web-push"]
 # The encrypted S3 mirror of the embedded database backup, in every package.
 backup-s3 = ["moqui-core/backup-s3"]
 xlsx = ["moqui-core/xlsx", "moqui-report/xlsx", "dep:moqui-calc"]
+# Optional Overture data for Maps (crates/moqui-maps, plans/Maps-Overture.md): the GeoParquet reader and the import of a
+# region's Places and Buildings. In Maximal and Enterprise; not Lite.
+overture = ["dep:moqui-maps"]
 # The agents and the model providers (crates/moqui-llm).
 llm = ["dep:moqui-llm"]
 # Calls (crates/moqui-rtc, plans/archive/Comms-Framework.md §6): the media socket and its SFU (src/rtc/), and the call signaling
@@ -165,6 +168,8 @@ moqui-collab = { workspace = true }
 moqui-tools = { workspace = true }
 # CalcGrid, database-driven spreadsheets on the IronCalc engine (crates/moqui-calc), under the xlsx feature.
 moqui-calc = { workspace = true, optional = true }
+# Optional Overture data for Maps (crates/moqui-maps), under the overture feature.
+moqui-maps = { workspace = true, optional = true }
 # Calls: the SFU on str0m (crates/moqui-rtc), under the rtc feature.
 moqui-rtc = { workspace = true, optional = true }
 # The edge wizard's TURN check, a browser's allocation on the edge node's TURN (src/rtc/turn_probe.rs), under rtc: sans-IO,

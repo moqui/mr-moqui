@@ -183,7 +183,7 @@ function quietly(read) {
         if (!wasDisabled) ec.artifactExecution.enableAuthz()
     }
 }
-// convert#Overlay (Rust): {valid, reasonCode, reason, featureCount, rejectedCount, bounds, crs, notes, geojson}
+// convert#Overlay (Rust): {valid, reasonCode, reason, featureCount, rejectedCount, bounds, crs, transform, notes, geojson}
 function convert(parameters) {
     const out = probe(
         "org.moqui.maps.MapSourceServices.convert#Overlay",
@@ -211,6 +211,8 @@ function recordReading(row, reading) {
     row.set("maxLongitude", bounds[2])
     row.set("maxLatitude", bounds[3])
     row.set("sourceCrs", text(reading.crs) || "EPSG:4326")
+    // the provenance of a converted CRS (P4c): what converting it to WGS84 did, empty for WGS84
+    row.set("crsTransform", text(reading.transform).slice(0, 250) || null)
     row.set(
         "importNotes",
         Array.from(reading.notes || [])
@@ -721,7 +723,7 @@ function saveEdit(p) {
         if (!written) return refused("NOT_SAVED", errors[0] || L("The overlay was not saved"))
         path = cleanPath(written.path)
     }
-    const kept = {sourceCrs: row.sourceCrs, importNotes: row.importNotes}
+    const kept = {sourceCrs: row.sourceCrs, crsTransform: row.crsTransform, importNotes: row.importNotes}
     if (path !== cleanPath(row.path)) {
         row.set("sourcePath", cleanPath(row.path))
         row.set("path", path)

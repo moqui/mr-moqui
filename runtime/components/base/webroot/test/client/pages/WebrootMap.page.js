@@ -1,12 +1,15 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
 // m-map's pure helpers in the page (moqui.map of /js/WebrootMap.js), and its list of places when the map cannot be drawn. The
-// OpenLayers bundle is loaded for its formats and vector sources only: drawing the map is a browser walk, not a regression
-// test. The page is https://moqui.test.
+// OpenLayers bundle (an ES module, imported as m-map imports it) is loaded for its formats and vector sources only, and its
+// raster part for the projections and the lookup it refuses: drawing the map is a browser walk, not a regression test. The
+// page is https://moqui.test.
 "use strict";
 
 const map = moqui.map;
 const page = location.origin;
+// the main bundle as m-map loads it: its entries' hashed names from ol-map.json, the main one imported, the global MoquiOl
+const olLoad = map.loadOpenLayers();
 
 test("a configuration is checked: numbers from texts, WGS84 degrees, longitude first, a zero kept, the outline by default", () => {
     const config = map.normalizeConfig(JSON.stringify({
@@ -129,6 +132,7 @@ test("a KML file is read with no request for its icons, whatever its styles name
         if (this instanceof HTMLImageElement && String(name).toLowerCase() === "src") asked.push(String(value));
         return setAttribute.call(this, name, value);
     };
+    await olLoad;
     const before = performance.getEntriesByType("resource").length;
     try {
         const features = new MoquiOl.KML(map.kmlOptions()).readFeatures(kml, { featureProjection: "EPSG:3857" });
@@ -255,7 +259,8 @@ test("what the server did not resolve is named under the map, a cut feature list
     }
 });
 
-test("an overlay's feature is selected by its text, never markup; Enter takes the feature nearest the map's center", () => {
+test("an overlay's feature is selected by its text, never markup; Enter takes the feature nearest the map's center", async () => {
+    await olLoad;
     // a profile layer's KML description may hold HTML: shown as plain text, scripts and tags gone, a lone "<" kept
     assert.equal(map.plainText('<p>Trail <b>head</b></p><script>alert(1)</script><img src=x onerror="alert(2)">&lt;b&gt; a<b'), "Trail head <b> a<b");
     assert.equal(map.plainText("Line one\r\nLine two\u0007"), "Line one\nLine two");
@@ -301,7 +306,7 @@ test("a registered archive's 409 says its revision changed; another failure does
 });
 
 test("an OGC layer's options are checked, and its WMS, WMTS and WFS sources ask only the URL the server gave, with no network", async () => {
-    const O = MoquiOl;
+    const O = await olLoad;
     // WMS: only the parameters a GetMap takes, VERSION 1.3.0 whatever is given
     const wms = map.normalizeConfig({ layers: [{ id: "W", kind: "WMS", url: "https://maps.example.org/wms?map=a",
         ogc: { params: { LAYERS: "roads,rivers", STYLES: ",", FORMAT: "image/png", TRANSPARENT: "TRUE", VERSION: "1.1.1", REQUEST: "GetFeatureInfo", EVIL: "x" }, projection: "EPSG:3857" } }] }).layers[0];
@@ -362,8 +367,8 @@ test("an OGC layer's options are checked, and its WMS, WMTS and WFS sources ask 
     assert.ok(!map.wfsLatitudeFirst("CRS:84") && !map.wfsLatitudeFirst("EPSG:4326") && map.wfsLatitudeFirst("http://www.opengis.net/def/crs/EPSG/0/4326"));
 });
 
-test("m-map builds its WMS, WMTS and WFS layers only for the URL it was given, with CORS as the provider answers", () => {
-    const O = MoquiOl;
+test("m-map builds its WMS, WMTS and WFS layers only for the URL it was given, with CORS as the provider answers", async () => {
+    const O = await olLoad;
     const methods = map.components["m-map-view"].methods;
     const matrixSet = { Identifier: "g", SupportedCRS: "EPSG:3857", TileMatrix: [{ Identifier: "0", ScaleDenominator: 559082264.0287178,
         TopLeftCorner: [-20037508.3427892, 20037508.3427892], TileWidth: 256, TileHeight: 256, MatrixWidth: 1, MatrixHeight: 1 }] };
@@ -397,7 +402,8 @@ test("m-map builds its WMS, WMTS and WFS layers only for the URL it was given, w
     assert.equal(map.ogcCrossOrigin(page + "/apps/x", { cors: true }, page), undefined, "this server's proxy is asked with the session");
 });
 
-test("an edit is saved as plain GeoJSON: WGS84 to seven decimals, plain text, unique ids; a keyboard shape needs its vertices", () => {
+test("an edit is saved as plain GeoJSON: WGS84 to seven decimals, plain text, unique ids; a keyboard shape needs its vertices", async () => {
+    await olLoad;
     const edited = map.editedCollection({ type: "FeatureCollection", features: [
         { type: "Feature", id: "a", geometry: { type: "Point", coordinates: [190.123456789, 10] },
             properties: { label: "<b>Spring</b>", other: "dropped", description: "Fresh <script>alert(1)</script>water" } },
@@ -423,4 +429,101 @@ test("an edit is saved as plain GeoJSON: WGS84 to seven decimals, plain text, un
     assert.equal(map.canEditOverlay(Object.assign({}, own, { tilesStatus: "ready", kind: "mvt" })), false, "simplified into tiles");
     assert.equal(map.canEditOverlay({ id: "PARKS", kind: "geojson" }), false, "a profile's layer");
     assert.ok(typeof MoquiOl.Snap === "function" && typeof MoquiOl.Draw === "function" && typeof MoquiOl.Modify === "function", "the bundle has the editing interactions");
+});
+
+test("the raster and projection part loads only for a map that needs it: a COG layer or a registered projection", () => {
+    const utm = { code: "EPSG:32633", label: "UTM 33N", proj4: "+proj=utm +zone=33 +datum=WGS84 +units=m +no_defs", bounds: [12, 0, 18, 84] };
+    const cog = { id: "DEM", kind: "cog", url: "/apps/maps/LocalMap/source?layerId=DEM&revision=r1",
+        raster: { bands: 1, sampleType: "float32", projection: "EPSG:32633", style: { band: 1, min: 0, max: 3000, colormap: "terrain" } } };
+    assert.equal(map.needsRaster(map.normalizeConfig({})), false, "the outline");
+    assert.equal(map.needsRaster(map.normalizeConfig({ projection: "EPSG:4326", layers: [{ id: "X", kind: "xyz", url: "/t/{z}/{x}/{y}.png" }] })), false,
+        "EPSG:4326 and a raster of tiles");
+    assert.equal(map.needsRaster(map.normalizeConfig({ layers: [cog], projections: [utm] })), true, "a COG layer");
+    assert.equal(map.needsRaster(map.normalizeConfig({ projection: "EPSG:32633", projections: [utm] })), true, "a registered view");
+    // a view in a projection it was not given is Web Mercator, and needs nothing
+    const unknown = map.normalizeConfig({ projection: "EPSG:32633" });
+    assert.equal(unknown.projection, "EPSG:3857");
+    assert.equal(map.needsRaster(unknown), false);
+    const wms = map.normalizeConfig({ projections: [utm], layers: [{ id: "W", kind: "wms", url: "https://maps.example.org/wms",
+        ogc: { params: { LAYERS: "a" }, projection: "EPSG:32633" } }] });
+    assert.equal(map.needsRaster(wms), true, "a WMS layer in a registered projection");
+    assert.equal(window.MoquiOlRaster, undefined, "deciding loads nothing");
+    // a definition that names a grid or anything but plain parameters is not registered
+    const given = map.normalizeProjections([utm, { code: "EPSG:4267", proj4: "+proj=longlat +datum=NAD27 +nadgrids=conus" },
+        { code: "EPSG:9999", proj4: "+proj=utm +zone=1 +x=https://example.org/x" }, { code: "EPSG:3857", proj4: "+proj=merc" }, utm]);
+    assert.deepEqual(given.map((row) => row.code), ["EPSG:32633"]);
+    // vector tiles are drawn only in Web Mercator; rasters and vector files in any
+    assert.equal(map.drawableIn({ kind: "style" }, "EPSG:3413"), false);
+    assert.equal(map.drawableIn({ kind: "pmtiles", raster: false }, "EPSG:3413"), false);
+    assert.equal(map.drawableIn({ kind: "pmtiles", raster: true }, "EPSG:3413"), true);
+    assert.equal(map.drawableIn({ kind: "wmts" }, "EPSG:3413"), true);
+    assert.equal(map.drawableIn({ kind: "style" }, "EPSG:3857"), true);
+});
+
+test("a COG layer's band settings are checked and drawn as a WebGL style: bands, stretch, colormap, nodata", () => {
+    const layer = (style) => map.normalizeConfig({ layers: [{ id: "C", kind: "cog", url: "/c.tif", raster: { bands: 4, projection: "EPSG:3857", style,
+        defaults: { rgb: [1, 2, 3], min: 0, max: 255 } } }] }).layers[0].cog;
+    assert.deepEqual(layer({ rgb: [4, 3, 2], min: 0, max: 3000 }).style, { rgb: [4, 3, 2], min: 0, max: 3000 });
+    assert.deepEqual(layer({ rgb: [5, 3, 2], min: 0, max: 3000 }).style, { rgb: [1, 2, 3], min: 0, max: 255 }, "a band it does not have: its defaults");
+    assert.deepEqual(layer({ band: 2, min: 10, max: 10 }).style, { rgb: [1, 2, 3], min: 0, max: 255 }, "min not below max");
+    assert.equal(layer({ band: 2, min: 0, max: 1, colormap: "<b>" }).style.colormap, "grey", "an unknown colormap is grey");
+    assert.equal(map.normalizeRaster({ bands: 3, projection: "not a code", style: { band: 1, min: 0, max: 1 } }), null);
+    const rgb = map.rasterStyle({ rgb: [4, 3, 2], min: 100, max: 3100 });
+    assert.deepEqual(rgb.variables, { min: 100, range: 3000 });
+    assert.equal(rgb.color[0], "array");
+    assert.deepEqual(map.rasterBands({ rgb: [4, 3, 2] }), [4, 3, 2]);
+    const single = map.rasterStyle({ band: 2, min: 0, max: 50, colormap: "viridis", nodata: -9999 });
+    assert.equal(single.color[0], "case", "nodata transparent");
+    assert.deepEqual(single.color[1], ["==", ["band", 2], 0], "its alpha is the band after the one read");
+    assert.equal(single.color[3][0], "interpolate");
+    assert.deepEqual(map.rasterBands({ band: 2 }), [2]);
+});
+
+test("the raster part registers the projections it is given and looks up none", async () => {
+    const O = await olLoad;
+    const R = await map.loadRaster();
+    assert.equal(R, window.MoquiOlRaster);
+    assert.ok(typeof R.GeoTIFF === "function" && typeof R.WebGLTileLayer === "function", "the GeoTIFF source and the WebGL tile layer");
+    assert.notEqual(O.getProjection("EPSG:3857"), null, "one OpenLayers: the main bundle's projections");
+    const laea = { code: "EPSG:3035", proj4: "+proj=laea +lat_0=52 +lon_0=10 +x_0=4321000 +y_0=3210000 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs",
+        extent: [1896628.62, 1507846.05, 4662111.45, 6829874.45], bounds: [-35.58, 24.6, 44.83, 84.73] };
+    const utm = { code: "EPSG:32633", proj4: "+proj=utm +zone=33 +datum=WGS84 +units=m +no_defs", extent: [166021.44, 0, 833978.56, 9329005.18],
+        bounds: [12, 0, 18, 84] };
+    // a UTM zone OpenLayers makes itself; LAEA Europe from its definition, as the server gave it
+    const added = map.registerProjections(O, R, map.normalizeProjections([laea, utm]));
+    assert.deepEqual(added, ["EPSG:3035"]);
+    const [east, north] = O.fromLonLat([5, 50], "EPSG:3035");
+    assert.ok(Math.abs(east - 3962799.45) < 0.01 && Math.abs(north - 2999718.85) < 0.01, "the EPSG guidance example: " + east + " " + north);
+    const before = performance.getEntriesByType("resource").filter((entry) => !entry.name.startsWith(page)).length;
+    // a code it was not given is refused, never asked of spatialreference.org
+    await assert.rejects(R.fromProjectionCode("EPSG:2056"), /not registered/);
+    assert.equal(performance.getEntriesByType("resource").filter((entry) => !entry.name.startsWith(page)).length, before, "no outside request");
+    assert.deepEqual(map.registerProjections(O, R, map.normalizeProjections([laea])), [], "once");
+    const [x, y] = O.fromLonLat([15, 0], "EPSG:32633");
+    assert.ok(Math.abs(x - 500000) < 1e-6 && Math.abs(y) < 1e-6, x + " " + y);
+    assert.deepEqual(O.getProjection("EPSG:32633").getExtent(), [166021.44, 0, 833978.56, 9329005.18]);
+});
+
+test("the build's files are named by their hash, and its decoder worker inflates a Deflate tile", async () => {
+    await olLoad;
+    const files = window.MoquiOlFiles;
+    for (const role of ["main", "raster", "decoder"]) assert.ok(/^ol-[a-z-]+-[A-Z0-9]+\.min\.js$/.test(files[role]), role + ": " + files[role]);
+    // a tile of 4 by 4 bytes, compressed as a TIFF's Deflate is (zlib), decoded by the build's module worker
+    const pixels = Uint8Array.from({ length: 16 }, (unused, index) => (index * 17) % 256);
+    const compressed = new Uint8Array(await new Response(new Blob([pixels]).stream().pipeThrough(new CompressionStream("deflate"))).arrayBuffer());
+    const worker = new Worker("/libs/openlayers/" + files.decoder, { type: "module" });
+    try {
+        const answer = await new Promise((resolve, reject) => {
+            const timer = setTimeout(() => reject(new Error("the decoder did not answer")), 10000);
+            worker.addEventListener("message", (event) => { clearTimeout(timer); resolve(event.data); });
+            worker.addEventListener("error", (event) => { clearTimeout(timer); reject(new Error("the decoder worker failed: " + (event.message || "to load"))); });
+            worker.postMessage({ compression: 8, decoderParameters: { tileWidth: 4, tileHeight: 4, planarConfiguration: 1, bitsPerSample: [8], predictor: 1 },
+                buffer: compressed.buffer, jobId: 1 }, [compressed.buffer]);
+        });
+        assert.equal(answer.error, undefined);
+        assert.equal(answer.jobId, 1);
+        assert.deepEqual(Array.from(new Uint8Array(answer.decoded)), Array.from(pixels));
+    } finally {
+        worker.terminate();
+    }
 });

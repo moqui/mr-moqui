@@ -2395,6 +2395,13 @@ along with this software (see the LICENSE.md file). If not, see
                 The largest GeoJSON, GPX or KML file a user adds as an overlay, and their places file, in bytes (10 MiB),
                 within import-max-bytes: an overlay is drawn whole in the browser. Its GeoJSON is served up to 4 MiB of
                 characters.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="overture-catalog" type="xs:string" default="https://stac.overturemaps.org/catalog.json"><xs:annotation><xs:documentation>
+                The root of the STAC catalog Overture releases are found in (plans/Maps-Overture.md): its releases are
+                offered under Maps › Configuration › Overture, and an import reads only documents on its host and the
+                https files its items name. A mirror of the catalog, or a spec's fixtures.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="overture-max-area" type="xs:string" default="2500"><xs:annotation><xs:documentation>
+                The largest Overture region, in km² (a box's area near enough): a region of a few cities, not a country,
+                so an import reads a few row groups of a few files.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
     <xs:element name="cluster-member">

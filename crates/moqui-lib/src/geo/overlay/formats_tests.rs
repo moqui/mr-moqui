@@ -577,7 +577,7 @@ fn positions_bounded_for_every_format() {
         max_bytes: 100_000,
         max_features: 10_000,
     };
-    let mut reader = Reader::new(&tight);
+    let mut reader = Reader::new(&tight, &crate::geo::proj::Registry::empty());
     reader.positions_left = 3_000;
     let error = reader.wkt_file(&text).expect_err("too many positions");
     assert_eq!(error.code, "TOO_LARGE");
@@ -641,4 +641,122 @@ fn encodings_crs_names_and_srid_notes() {
         OverlayFormat::Shapefile,
     );
     assert!(notes(&overlay).contains("dBASE 7"), "{:?}", overlay.notes);
+}
+
+/// The registry the specs and the seed have for these: WGS 84 / UTM zone 19N, the British National Grid, NAD83 and
+/// LAEA Europe (northing first by its authority)
+fn registry() -> crate::geo::proj::Registry {
+    let mut registry = crate::geo::proj::Registry::empty();
+    for (code, label, definition, axis) in [
+        ("EPSG:32619", "WGS 84 / UTM zone 19N", "+proj=utm +zone=19 +datum=WGS84 +units=m +no_defs", "enu"),
+        ("EPSG:26919", "NAD83 / UTM zone 19N", "+proj=utm +zone=19 +datum=NAD83 +units=m +no_defs", "enu"),
+        (
+            "EPSG:27700",
+            "OSGB36 / British National Grid",
+            "+proj=tmerc +lat_0=49 +lon_0=-2 +k=0.9996012717 +x_0=400000 +y_0=-100000 +ellps=airy +towgs84=446.448,-125.157,542.06,0.15,0.247,0.842,-20.489 +units=m +no_defs",
+            "enu",
+        ),
+        ("EPSG:4269", "NAD83", "+proj=longlat +datum=NAD83 +no_defs", "neu"),
+        (
+            "EPSG:3035",
+            "ETRS89-extended / LAEA Europe",
+            "+proj=laea +lat_0=52 +lon_0=10 +x_0=4321000 +y_0=3210000 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs",
+            "neu",
+        ),
+    ] {
+        registry.add(code, label, definition, axis).expect(code);
+    }
+    registry
+}
+
+fn read_with(bytes: &[u8], format: OverlayFormat) -> Overlay {
+    convert_overlay_with(bytes, format, &LIMITS, &registry()).expect("the file reads")
+}
+
+fn point_of(overlay: &Overlay, index: usize) -> (f64, f64) {
+    let coordinates = &overlay.features[index]["geometry"]["coordinates"];
+    (coordinates[0].as_f64().unwrap(), coordinates[1].as_f64().unwrap())
+}
+
+#[test]
+fn registered_crs_reprojected_with_provenance() {
+    // a NAD83 UTM 19N shapefile (Boston, about 42.36°N 71.06°W): its .prj named by ESRI, read through the registry
+    let shp_bytes = shp(
+        &[point_record(330_000.0, 4_691_000.0)],
+        [330_000.0, 4_691_000.0, 330_000.0, 4_691_000.0],
+    );
+    let utm = r#"PROJCS["NAD_1983_UTM_Zone_19N",GEOGCS["GCS_North_American_1983",DATUM["D_North_American_1983",SPHEROID["GRS_1980",6378137.0,298.257222101]],PRIMEM["Greenwich",0.0],UNIT["Degree",0.0174532925199433]],PROJECTION["Transverse_Mercator"],PARAMETER["False_Easting",500000.0],PARAMETER["False_Northing",0.0],PARAMETER["Central_Meridian",-69.0],PARAMETER["Scale_Factor",0.9996],PARAMETER["Latitude_Of_Origin",0.0],UNIT["Meter",1.0]]"#;
+    let zip = zip_of(&[("a.shp", &shp_bytes), ("a.prj", utm.as_bytes())]);
+    let overlay = read_with(&zip, OverlayFormat::Shapefile);
+    assert_eq!(overlay.crs, "EPSG:26919");
+    assert!(
+        overlay.transform.contains("transverse Mercator") && overlay.transform.contains("within about 2 m"),
+        "{}",
+        overlay.transform
+    );
+    let (lon, lat) = point_of(&overlay, 0);
+    assert!((lon + 71.06).abs() < 0.05 && (lat - 42.35).abs() < 0.05, "{lon} {lat}");
+    // the same file is still refused with no registry
+    assert_eq!(refused(&zip, OverlayFormat::Shapefile).code, "CRS_UNSUPPORTED");
+
+    // a GeoJSON file in the British National Grid (its pre-2016 crs member), converted with the OSGB36 shift
+    let bng = r#"{"type":"FeatureCollection","crs":{"type":"name","properties":{"name":"urn:ogc:def:crs:EPSG::27700"}},
+        "features":[{"type":"Feature","properties":{"name":"Greenwich"},"geometry":{"type":"Point","coordinates":[538874,177344]}}]}"#;
+    let overlay = read_with(bng.as_bytes(), OverlayFormat::GeoJson);
+    assert_eq!(overlay.crs, "EPSG:27700");
+    assert!(overlay.transform.contains("OSGB36"), "{}", overlay.transform);
+    let (lon, lat) = point_of(&overlay, 0);
+    assert!(lon.abs() < 0.01 && (lat - 51.478).abs() < 0.01, "{lon} {lat}");
+
+    // GML: a URN of LAEA Europe gives northing first, its short name easting first; NAD83's URN latitude first
+    let gml = |srs: &str, pos: &str| {
+        format!(
+            r#"<wfs:FeatureCollection xmlns:wfs="http://www.opengis.net/wfs/2.0" xmlns:gml="http://www.opengis.net/gml/3.2" xmlns:x="urn:x">
+            <wfs:member><x:p><x:geom><gml:Point srsName="{srs}"><gml:pos>{pos}</gml:pos></gml:Point></x:geom></x:p></wfs:member>
+            </wfs:FeatureCollection>"#
+        )
+    };
+    let north_first = read_with(
+        gml("urn:ogc:def:crs:EPSG::3035", "2999718.85 3962799.45").as_bytes(),
+        OverlayFormat::Gml,
+    );
+    let east_first = read_with(gml("EPSG:3035", "3962799.45 2999718.85").as_bytes(), OverlayFormat::Gml);
+    for overlay in [&north_first, &east_first] {
+        let (lon, lat) = point_of(overlay, 0);
+        assert!(
+            (lon - 5.0).abs() < 1e-6 && (lat - 50.0).abs() < 1e-6,
+            "the GN 7-2 LAEA point: {lon} {lat}"
+        );
+    }
+    let nad83 = read_with(
+        gml("urn:ogc:def:crs:EPSG::4269", "42.36 -71.06").as_bytes(),
+        OverlayFormat::Gml,
+    );
+    assert_eq!(point_of(&nad83, 0), (-71.06, 42.36));
+
+    // EWKT's SRID and EsriJSON's WKID of a registered CRS; one not registered is refused by its code
+    let ewkt = read_with(b"SRID=32619;POINT(330000 4691000)", OverlayFormat::Wkt);
+    assert_eq!(ewkt.crs, "EPSG:32619");
+    let esri = r#"{"spatialReference":{"wkid":32619},"features":[{"attributes":{"name":"a"},"geometry":{"x":330000,"y":4691000}}]}"#;
+    assert_eq!(read_with(esri.as_bytes(), OverlayFormat::EsriJson).crs, "EPSG:32619");
+    let unknown = convert_overlay_with(
+        b"SRID=2056;POINT(2600000 1200000)",
+        OverlayFormat::Wkt,
+        &LIMITS,
+        &registry(),
+    )
+    .expect_err("not registered");
+    assert_eq!(unknown.code, "CRS_UNSUPPORTED");
+    assert!(unknown.message.contains("2056"), "{}", unknown.message);
+    // a position outside a projection's domain rejects its feature, not the file
+    let far = r#"{"type":"FeatureCollection","crs":{"type":"name","properties":{"name":"EPSG:3035"}},"features":[
+        {"type":"Feature","properties":{},"geometry":{"type":"Point","coordinates":[1e12,1e12]}},
+        {"type":"Feature","properties":{},"geometry":{"type":"Point","coordinates":[3962799.45,2999718.85]}}]}"#;
+    let overlay = read_with(far.as_bytes(), OverlayFormat::GeoJson);
+    assert_eq!(
+        (overlay.features.len(), overlay.rejected),
+        (1, 1),
+        "{:?}",
+        overlay.notes
+    );
 }

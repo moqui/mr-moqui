@@ -25,7 +25,9 @@ along with this software (see the LICENSE.md file). If not, see
     edit-change: draw points, lines and areas, move the selected feature's vertices, delete it, give it a label and
     description as plain text; from the keyboard a vertex at the map's center), saved through saveOverlayEdit as a new version
     of the file (or of name.edited.geojson beside a file of another format), refused when the file changed since it was
-    opened. Below 600 px the panel is a bottom sheet over the map. Full screen is the browser's, on request. The last view
+    opened. A Cloud Optimized GeoTIFF layer has Bands under Layers (P4c): which bands as red, green and blue or one band
+    through a colormap, the stretch's minimum and maximum and a no-data value, drawn at once and kept as the user's own
+    (rasterBands; a saved view keeps them too). Below 600 px the panel is a bottom sheet over the map. Full screen is the browser's, on request. The last view
     is posted (rememberView) only when the user turned Restore my last view on. Brand color names and Quasar classes
     only. -->
 <template><div ref="frame" class="m-maps-browse column no-wrap" :class="fullscreen ? ($q.dark.isActive ? 'bg-dark' : 'bg-white') : ''">
@@ -80,6 +82,7 @@ along with this software (see the LICENSE.md file). If not, see
                     </q-item>
                 </q-list>
                 <div class="text-caption m-muted q-mt-sm">{{t('Saved views and places, the records of the layers shown in the view on screen and the postal codes of the imported Geo data are searched. Going to a result changes nothing in its record.')}}</div>
+                <div v-if="overture" class="text-caption m-muted q-mt-xs" id="MapsOvertureSource">{{t('Places from Overture Maps Foundation, imported on this server')}}{{overture.attribution ? ': ' + overture.attribution : ''}}.</div>
                 <div v-if="geocoder" class="text-caption m-muted q-mt-xs" id="MapsGeocoderSource">{{t('Addresses and places were also asked of')}} {{geocoder.providerName}}{{geocoder.attribution ? ' (' + attributionText(geocoder.attribution) + ')' : ''}}.</div>
             </template>
 
@@ -103,9 +106,36 @@ along with this software (see the LICENSE.md file). If not, see
                             <q-item-section>
                                 <q-item-label>{{layer.label}}</q-item-label>
                                 <q-item-label v-if="layer.adapterKey" caption>{{t('Records')}}</q-item-label>
+                                <q-item-label v-if="layer.kind === 'cog' && layer.raster" caption>{{rasterCaption(layer)}}</q-item-label>
+                            </q-item-section>
+                            <q-item-section v-if="layer.kind === 'cog' && layer.raster" side>
+                                <q-btn dense flat round size="sm" icon="sym_o_tune" :aria-label="t('Bands of') + ' ' + layer.label" :data-maps-bands="layer.id"
+                                        :aria-pressed="bandLayerId === layer.id ? 'true' : 'false'" @click.stop="openBands(layer)"></q-btn>
                             </q-item-section>
                         </q-item>
                     </q-list>
+                    <div v-if="bandLayer" class="q-mt-sm q-pa-sm m-tonal rounded-borders" data-maps-band-form :aria-label="t('Bands of') + ' ' + bandLayer.label" role="group">
+                        <div class="text-caption">{{t('Bands of')}} {{bandLayer.label}}: {{rasterCaption(bandLayer)}}</div>
+                        <q-option-group v-model="bandForm.mode" inline dense :options="[{ label: t('Red, green and blue'), value: 'rgb' }, { label: t('One band'), value: 'single' }]"></q-option-group>
+                        <div v-if="bandForm.mode === 'rgb'" class="row q-gutter-xs">
+                            <q-select v-for="(color, index) in [t('Red'), t('Green'), t('Blue')]" :key="index" v-model="bandForm.rgb[index]" :options="bandOptions"
+                                    emit-value map-options dense outlined class="col" :label="color"></q-select>
+                        </div>
+                        <div v-else class="row q-gutter-xs">
+                            <q-select v-model="bandForm.band" :options="bandOptions" emit-value map-options dense outlined class="col" :label="t('Band')"></q-select>
+                            <q-select v-model="bandForm.colormap" :options="colormapOptions" emit-value map-options dense outlined class="col" :label="t('Colors')"></q-select>
+                        </div>
+                        <div class="row q-gutter-xs q-mt-xs">
+                            <q-input v-model="bandForm.min" type="number" dense outlined class="col" :label="t('Minimum')"></q-input>
+                            <q-input v-model="bandForm.max" type="number" dense outlined class="col" :label="t('Maximum')"></q-input>
+                            <q-input v-model="bandForm.nodata" type="number" dense outlined class="col" :label="t('No data')"></q-input>
+                        </div>
+                        <div v-if="bandError" class="text-negative text-caption q-mt-xs" role="alert">{{bandError}}</div>
+                        <div class="row justify-end q-gutter-xs q-mt-xs">
+                            <q-btn dense flat no-caps :label="t('Its defaults')" :disable="bandSaving" @click="resetBands"></q-btn>
+                            <q-btn dense unelevated no-caps color="primary" :label="t('Apply')" :loading="bandSaving" @click="applyBands"></q-btn>
+                        </div>
+                    </div>
                 </template>
                 <div v-else class="text-caption m-muted q-mt-sm">{{t('This map profile has no layers over its basemap.')}}</div>
                 <div class="row items-center no-wrap q-mt-sm">
@@ -248,7 +278,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <m-dialog v-model="addShown" :title="t('Add overlay')" width="480">
         <div>
-            <div class="text-caption m-muted">{{t('A GeoJSON, TopoJSON, EsriJSON, GPX, KML, GML, WKT, WKB or CSV file, or a shapefile zipped with its .dbf and .prj, of at most 10 MB, in WGS84 or Web Mercator. It is kept in Maps/overlays of your files, checked, and drawn only by this server: links, icons and scripts in it are not followed.')}}</div>
+            <div class="text-caption m-muted">{{t('A GeoJSON, TopoJSON, EsriJSON, GPX, KML, GML, WKT, WKB or CSV file, or a shapefile zipped with its .dbf and .prj, of at most 10 MB, in WGS84, Web Mercator or a registered projection (UTM, the British National Grid and others an administrator adds), converted to WGS84. It is kept in Maps/overlays of your files, checked, and drawn only by this server: links, icons and scripts in it are not followed.')}}</div>
             <q-file v-model="addFile" dense outlined clearable :accept="OVERLAY_ACCEPT" :label="t('Upload a file')" class="q-mt-sm" id="MapsOverlayFile" @update:model-value="addOffer = false"></q-file>
             <div v-if="picker.drives.length" class="q-mt-sm" id="MapsOverlayPicker">
                 <div class="text-caption m-muted">{{t('Or a file of a drive you may open')}}</div>
@@ -316,10 +346,11 @@ module.exports = {
     data() {
         return { effective: null, error: '', panel: '', query: '', results: [], postalCountries: [], postalCountry: null, postalNote: '', searching: false, savedViews: [], hidden: {}, basemapId: '',
             view: null, lastView: null, marker: null, selected: null, mapPx: 480, phone: false, fullscreen: false, saveShown: false,
-            saveName: '', saveShared: 'N', saving: false, restoreLastView: false, geocoder: null, addShown: false, addFile: null, addPick: null,
+            saveName: '', saveShared: 'N', saving: false, restoreLastView: false, geocoder: null, overture: null, addShown: false, addFile: null, addPick: null,
             addLabel: '', adding: false, addOffer: false, placeShown: false, placeName: '', OVERLAY_ACCEPT,
             editing: null, editState: { count: 0, dirty: false, selected: null, sketch: 0 }, editLabel: '', editDescription: '', editNotes: [],
             editSaving: false, editLoading: false, editStale: false,
+            rasters: {}, bandLayerId: '', bandForm: { mode: 'rgb', rgb: [1, 2, 3], band: 1, colormap: 'grey', min: '', max: '', nodata: '' }, bandError: '', bandSaving: false,
             picker: { drives: [], driveId: null, crumbs: [], rows: [], loading: false, text: '', searching: false } };
     },
     computed: {
@@ -333,6 +364,13 @@ module.exports = {
         personalOverlays() { return this.overlays.filter((layer) => layer.overlayId); },
         profileOverlays() { return this.overlays.filter((layer) => !layer.overlayId); },
         layerErrors() { return this.effective ? this.effective.layerErrors || [] : []; },
+        // the COG layer whose bands are being chosen, and its choices
+        bandLayer() { return this.bandLayerId ? this.overlays.find((layer) => layer.id === this.bandLayerId && layer.kind === 'cog' && layer.raster) || null : null; },
+        bandOptions() {
+            const count = this.bandLayer ? Number(this.bandLayer.raster.bands) || 1 : 1;
+            return Array.from({ length: Math.min(count, 64) }, (unused, index) => ({ label: t('Band') + ' ' + (index + 1), value: index + 1 }));
+        },
+        colormapOptions() { return [{ label: t('Grey'), value: 'grey' }, { label: 'Viridis', value: 'viridis' }, { label: t('Terrain'), value: 'terrain' }, { label: 'Magma', value: 'magma' }]; },
         problemCount() { return this.layerErrors.length + (this.effective && this.effective.featuresTruncated ? 1 : 0); },
         panelTitle() {
             return { search: t('Search results'), layers: t('Layers'), views: t('Saved views'), details: t('Selected'), edit: t('Edit') }[this.panel] || '';
@@ -360,7 +398,8 @@ module.exports = {
             if (!config) return null;
             const out = Object.assign({}, config, { layerErrors: [], featuresTruncated: false });
             out.profile = Object.assign({}, config.profile || {}, this.basemapId ? { basemap: this.basemapId } : {});
-            out.layers = this.overlays.map((layer) => Object.assign({}, layer, { visible: this.layerShown(layer) }));
+            out.layers = this.overlays.map((layer) => Object.assign({}, layer, { visible: this.layerShown(layer) },
+                layer.kind === 'cog' && layer.raster && this.rasters[layer.id] ? { raster: Object.assign({}, layer.raster, { style: this.rasters[layer.id] }) } : {}));
             if (config.features && Array.isArray(config.features.features)) {
                 out.features = Object.assign({}, config.features, { features: config.features.features.filter((feature) =>
                     !(feature.properties && feature.properties.layerId && this.hidden[feature.properties.layerId])) });
@@ -390,7 +429,7 @@ module.exports = {
         precisionText(id) { return PRECISION[id] ? t(PRECISION[id]) : ''; },
         resultIcon(result) {
             return { savedView: 'sym_o_bookmark', postal: 'sym_o_markunread_mailbox', postalPlace: 'sym_o_markunread_mailbox', place: 'sym_o_star',
-                geocoder: 'sym_o_travel_explore' }[result.kind] || 'sym_o_location_on';
+                geocoder: 'sym_o_travel_explore', overture: 'sym_o_storefront' }[result.kind] || 'sym_o_location_on';
         },
         attributionText(value) { return String(value || '').split(/\s*\n\s*/).filter(Boolean).join(', '); },
         overlayCaption(layer) {
@@ -401,6 +440,58 @@ module.exports = {
             return [owner, layer.featureCount + ' ' + t('features'), tiles].filter(Boolean).join(' · ');
         },
         coordinates(place) { return Number(place.lat).toFixed(5) + ', ' + Number(place.lon).toFixed(5); },
+        // ---- a COG layer's bands (P4c) ----
+        rasterStyle(layer) { return this.rasters[layer.id] || (layer.raster && layer.raster.style) || null; },
+        rasterCaption(layer) {
+            const style = this.rasterStyle(layer);
+            const what = !style ? '' : style.rgb ? t('bands') + ' ' + style.rgb.join(', ') + ' ' + t('as red, green, blue')
+                : t('band') + ' ' + style.band + ' · ' + style.colormap;
+            return [layer.raster.bands + ' ' + t('bands of') + ' ' + (layer.raster.sampleType || '?'), what].filter(Boolean).join(' · ');
+        },
+        openBands(layer) {
+            if (this.bandLayerId === layer.id) { this.bandLayerId = ''; return; }
+            const style = this.rasterStyle(layer) || {};
+            const count = Number(layer.raster.bands) || 1;
+            this.bandForm = { mode: style.rgb ? 'rgb' : 'single', rgb: style.rgb ? style.rgb.slice() : [1, Math.min(2, count), Math.min(3, count)],
+                band: style.band || 1, colormap: style.colormap || 'grey', min: style.min !== undefined ? String(style.min) : '',
+                max: style.max !== undefined ? String(style.max) : '', nodata: style.nodata !== undefined && style.nodata !== null ? String(style.nodata) : '' };
+            this.bandError = '';
+            this.bandLayerId = layer.id;
+        },
+        // the settings drawn at once and kept as the user's own; refused ones say why and change nothing
+        applyBands() {
+            const layer = this.bandLayer;
+            if (!layer) return;
+            const form = this.bandForm;
+            const min = Number(form.min), max = Number(form.max);
+            if (String(form.min).trim() === '' || String(form.max).trim() === '' || !Number.isFinite(min) || !Number.isFinite(max) || !(min < max)) {
+                this.bandError = t('Give a minimum below the maximum');
+                return;
+            }
+            const style = form.mode === 'rgb' ? { rgb: form.rgb.map(Number), min, max } : { band: Number(form.band), colormap: form.colormap, min, max };
+            if (String(form.nodata).trim() !== '') {
+                const nodata = Number(form.nodata);
+                if (!Number.isFinite(nodata)) { this.bandError = t('The no-data value is a number'); return; }
+                style.nodata = nodata;
+            }
+            this.storeBands(layer, style);
+        },
+        resetBands() { if (this.bandLayer) this.storeBands(this.bandLayer, null); },
+        storeBands(layer, style) {
+            this.bandError = '';
+            this.bandSaving = true;
+            this.request('rasterBands', { method: 'POST', params: { layerId: layer.id, bands: JSON.stringify(style) } }).then((json) => {
+                if (json.applied === false) { this.bandError = json.reason || t('The band settings were not kept'); return; }
+                this.keepView();
+                const next = Object.assign({}, this.rasters);
+                if (style) next[layer.id] = style;
+                else delete next[layer.id];
+                this.rasters = next;
+                // back to its defaults: the configuration's style is the user's no longer
+                if (!style) this.load();
+                this.bandLayerId = '';
+            }, (err) => { this.bandError = String(err && err.message || err); }).then(() => { this.bandSaving = false; });
+        },
         layerShown(layer) { return this.hidden[layer.id] !== undefined ? !this.hidden[layer.id] : layer.visible !== false; },
         // the parameters a configuration is asked with: the page's record, and the layers to show (a hidden record layer's
         // adapter was not asked, so showing one asks for the configuration again with it)
@@ -473,6 +564,7 @@ module.exports = {
                 if (!this.postalCountry && json.countryGeoId && !json.ambiguous && this.postalCountries.some((one) => one.geoId === json.countryGeoId)) this.postalCountry = json.countryGeoId;
                 this.postalNote = json.reason || '';
                 this.geocoder = json.geocoder || null;
+                this.overture = json.overture || null;
             }, (err) => {
                 this.results = [];
                 this.error = t('The search did not run') + ': ' + (err && err.message || err);
@@ -494,6 +586,8 @@ module.exports = {
             if (Array.isArray(view.extent)) this.view = { extent: view.extent };
             else if (Array.isArray(view.center)) this.view = Object.assign({ center: view.center }, view.zoom !== undefined && view.zoom !== null ? { zoom: view.zoom } : {});
             if (view.basemap && this.basemaps.some((basemap) => basemap.id === view.basemap)) this.basemapId = view.basemap;
+            // its COG layers' band settings, for this session (each still checked against the layer's bands when drawn)
+            if (view.rasters && typeof view.rasters === 'object') this.rasters = Object.assign({}, this.rasters, view.rasters);
             if (Array.isArray(view.layers) && view.layers.length) {
                 const wanted = new Set(view.layers);
                 const hidden = {};
@@ -551,6 +645,13 @@ module.exports = {
             const view = { center: this.lastView.center, zoom: Math.round((this.lastView.zoom || 0) * 100) / 100,
                 layers: this.overlays.concat(this.recordLayers).filter((layer) => this.layerShown(layer)).map((layer) => layer.id) };
             if (this.basemapId) view.basemap = this.basemapId;
+            // the band settings of the COG layers shown
+            const rasters = {};
+            this.overlays.filter((layer) => layer.kind === 'cog' && layer.raster && this.layerShown(layer)).forEach((layer) => {
+                const style = this.rasterStyle(layer);
+                if (style) rasters[layer.id] = style;
+            });
+            if (Object.keys(rasters).length) view.rasters = rasters;
             const params = { description: this.saveName.trim(), isShared: this.saveShared, view: JSON.stringify(view) };
             if (this.effective && this.effective.profileId) params.profileId = this.effective.profileId;
             this.request('saveView', { method: 'POST', params }).then((json) => {

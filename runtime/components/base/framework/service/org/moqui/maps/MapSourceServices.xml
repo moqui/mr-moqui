@@ -51,6 +51,46 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
 
+    <service verb="read" noun="CogHeader" type="rust" location="moqui_tools::maps_archive::read_cog_header" allow-remote="false">
+        <description>The header of a Cloud Optimized GeoTIFF (P4c; moqui-lib geo/tiff.rs) at a resource location
+            (location#versionName for a version), read by range, or its first bytes (bytes, the file's size) a provider's
+            COG answered a range with: the TIFF or BigTIFF header and its image directories (at most 64, each of at most
+            1024 entries, at most 1 MiB read past the first 64 KiB, every offset and count checked against the size; a loop
+            refused), never a tile. A map draws it when it is tiled (a multiple of 16, at most 4096), of a compression a
+            browser decodes, of 8, 16, 32 or 64-bit samples, georeferenced without rotation, in an EPSG CRS that is WGS84, Web
+            Mercator or a registered projection (MapProjection), with overviews when it is larger than 2048 pixels; each
+            reason it cannot in problems. Writes nothing. It reads whatever location it is given, so it is MAPS_ADMIN's and
+            not remote, as read#ArchiveHeader is: register#ArchiveLayer calls it after its own check of the caller.</description>
+        <in-parameters>
+            <parameter name="location"/>
+            <parameter name="bytes" type="Object"><description>The file's first bytes, instead of a location</description></parameter>
+            <parameter name="size" type="Long"><description>The file's size with bytes (a Content-Range's total)</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="found" type="Boolean"/>
+            <parameter name="valid" type="Boolean"/>
+            <parameter name="problems" type="List"/>
+            <parameter name="notes" type="List"/>
+            <parameter name="size" type="Long"/>
+            <parameter name="tag"/>
+            <parameter name="cog" type="Map"><description>{bigTiff, width, height, bands, bitsPerSample, sampleFormat,
+                sampleType, compression, photometric, tileWidth, tileHeight, overviews, masks, epsg, geographic, bounds (in its
+                CRS), wgs84Bounds, resolution, nodata, statistics [[band, min, max]]}</description></parameter>
+        </out-parameters>
+    </service>
+    <service verb="check" noun="ProjectionDefinition" type="rust" location="moqui_tools::maps_overlay::check_projection_definition" allow-remote="false">
+        <description>Whether the server reads a map projection's PROJ.4 definition (P4c; moqui-lib geo/proj.rs): its methods
+            (geographic, Mercator, transverse Mercator and UTM, Lambert conformal conic and azimuthal equal-area, Albers, polar
+            stereographic) with a datum of WGS84, NAD83 or a +towgs84 shift; readable false with the reason otherwise (a
+            grid, another method, an ellipsoid with no shift). A pure function of its text: store#Projection calls it.</description>
+        <in-parameters><parameter name="definition" required="true" allow-html="any"/></in-parameters>
+        <out-parameters>
+            <parameter name="readable" type="Boolean"/>
+            <parameter name="reason"/>
+            <parameter name="transform"/>
+            <parameter name="geographic" type="Boolean"/>
+        </out-parameters>
+    </service>
     <service verb="convert" noun="Overlay" type="rust" location="moqui_tools::maps_overlay::convert_overlay_service" allow-remote="false">
         <description>A geographic file read as a map overlay (plans/Maps.md §4.1, §8; moqui-lib geo/overlay.rs and its
             readers): GeoJSON, TopoJSON, EsriJSON, GPX, KML, GML, WKT, WKB, delimited text with a WKT, WKB or latitude and
@@ -86,6 +126,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="rejectedCount" type="Integer"/>
             <parameter name="bounds" type="List"/>
             <parameter name="crs"/>
+            <parameter name="transform"><description>What converting crs to WGS84 did (P4c: a registered projection's method,
+                ellipsoid and datum shift with its accuracy); empty for WGS84</description></parameter>
             <parameter name="notes" type="List"/>
             <parameter name="size" type="Long"/>
             <parameter name="geojson"/>
@@ -194,7 +236,16 @@ along with this software (see the LICENSE.md file). If not, see
             loads its configuration again. One action registers every layer drawn from the archive: layerId, those of
             alsoLayerIds and every other PMTiles layer of its format that already names the location, the header read once
             (one that is not of the archive's format refuses the whole action, nothing changed). layerId and alsoLayerIds are
-            enabled; a layer that only named the location keeps its enabled or disabled state.</description>
+            enabled; a layer that only named the location keeps its enabled or disabled state.
+
+            A Cloud Optimized GeoTIFF layer (MLF_COG, P4c) is registered the same way from a resource location, its header
+            read by read#CogHeader instead (COG_INVALID with each of problems), and records its CRS (crs), bounds and what
+            its header holds (rasterJson: bands, sample type, no-data, statistics and its default band settings). A COG layer
+            with no location and a sourceUrl of its provider (enabled, tested, the URL on its own origin, outside requests
+            on) is read from there: one range of its first 64 KiB with no credentials, no redirect and no internal address
+            unless the provider is allowed the private network, which must answer 206 (NO_RANGES otherwise) and allow the
+            page's origin by CORS (NO_CORS: a browser reads it itself); nothing is pinned, so a later change of the file is
+            the provider's.</description>
         <in-parameters>
             <parameter name="layerId" required="true"/>
             <parameter name="resourceLocation"/>
@@ -217,6 +268,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="driveId"/>
             <parameter name="header" type="Map"/>
             <parameter name="metadata" type="Map"/>
+            <parameter name="cog" type="Map"><description>A COG layer's header (read#CogHeader's cog)</description></parameter>
             <parameter name="notes" type="List"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapSources.js').execute('register', context))</script></actions>

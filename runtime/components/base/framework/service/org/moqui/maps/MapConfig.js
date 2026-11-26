@@ -29,6 +29,14 @@
 // profile the user is permitted, so it cannot turn on an unapproved provider. No location is collected: the last view
 // is kept only when the user opted in, and turning that off clears it.
 //
+// Projections (P4c, moqui.maps.MapProjection): a profile's view is drawn in EPSG:3857 unless it names another
+// (viewProjection: EPSG:4326 or a registered row), and a basemap of vector tiles (a MapLibre style, a vector PMTiles archive),
+// which a map cannot reproject, is drawn only in EPSG:3857: a profile with one in another view is refused with that reason,
+// and the other basemaps offered are those its view can draw. The configuration hands the browser the rows of the
+// projections it needs (its view's, its COG layers'), whose PROJ.4 text m-map registers with proj4js: no definition is
+// fetched from anywhere else. A Cloud Optimized GeoTIFF layer (MLF_COG) carries its header's bands and its band settings:
+// the user's own (maps.preferences rasters, by layer), else the layer's defaults (rasterJson).
+//
 // Saved views (moqui.maps.MapSavedView, shaped as GridView): the owner's, and others' to read when shared; only the owner
 // changes or deletes one. A layer a shared view names that the reader may not see is left out of what they read; a view
 // may name a user's overlay (overlay:ID), which a reader sees only while its file is readable to them.
@@ -64,7 +72,8 @@ const BASEMAP_KINDS = {
     MLF_PMTILES_VECTOR: "pmtiles",
     MLF_PMTILES_RASTER: "pmtiles",
     MLF_WMS: "wms",
-    MLF_WMTS: "wmts"
+    MLF_WMTS: "wmts",
+    MLF_COG: "cog"
 }
 const OVERLAY_KINDS = {
     MLF_GEOJSON: "geojson",
@@ -77,8 +86,13 @@ const OVERLAY_KINDS = {
     MLF_ADAPTER: "features",
     MLF_WMS: "wms",
     MLF_WMTS: "wmts",
-    MLF_WFS: "wfs"
+    MLF_WFS: "wfs",
+    MLF_COG: "cog"
 }
+const PROJECTION = "moqui.maps.MapProjection"
+const WEB_MERCATOR = "EPSG:3857"
+const BUILT_IN_PROJECTIONS = ["EPSG:3857", "EPSG:4326"]
+const COLORMAPS = ["grey", "viridis", "terrain", "magma"]
 const GEOMETRY_TYPES = ["Point", "MultiPoint", "LineString", "MultiLineString", "Polygon", "MultiPolygon"]
 const OVERRIDES = ["basemap", "layers", "extent", "units"]
 
@@ -293,7 +307,7 @@ function layerUrls(layer, provider, kind) {
         if (kind === "pmtiles") styleUrl = text(layer.styleLocation)
     }
     if (!url && text(layer.resourceLocation)) {
-        if (kind !== "pmtiles")
+        if (kind !== "pmtiles" && kind !== "cog")
             return refusal(
                 "SOURCE_NOT_SERVED",
                 L("its file is a registered resource, which this server does not hand to a map here")
@@ -338,6 +352,9 @@ function layerUrls(layer, provider, kind) {
                 })
             )
     }
+    // a provider's COG is read by the browser itself, by range: never through the proxy
+    if (kind === "cog" && provider?.proxyRequests === "Y" && isWeb(url))
+        return refusal("PROVIDER_PROXIED", L("a GeoTIFF is read by the browser itself, not through this server"))
     // a proxied provider: the browser asks this server's proxy, at the same paths of the provider's origin, the key added
     // there; only a caller the proxy lets reach the provider is handed them
     if (provider?.proxyRequests === "Y" && isWeb(url)) {
@@ -401,12 +418,136 @@ function resolveLayer(layer, layerId, asBasemap) {
     // an OGC layer: what m-map builds its source from (MapOgc.js layerSource), its URL the service's or the proxy's
     if (urls.ogc) entry.ogc = urls.ogc
     if (format === "MLF_PMTILES_RASTER") entry.raster = true
+    if (kind === "cog") {
+        const raster = cogRaster(layer)
+        if (!raster.ok) return raster
+        entry.raster = raster.raster
+    }
     if (num(layer.minZoom) !== null) entry.minZoom = num(layer.minZoom)
     if (num(layer.maxZoom) !== null) entry.maxZoom = num(layer.maxZoom)
     if (kind === "features") entry.adapterKey = text(layer.adapterKey)
     const origins = [urls.url, urls.styleUrl].flatMap(originsOf)
     return {ok: true, entry, origins}
 }
+// ===== projections and rasters (P4c) =====
+// A projection a map may be drawn in or read a COG in: EPSG:3857 and EPSG:4326, which every map has, or an enabled row of
+// the registry with a definition; null otherwise. The rows a configuration uses are collected for its projections list.
+const usedProjections = new Map()
+function projectionOf(code) {
+    const value = text(code).toUpperCase()
+    if (!value) return null
+    if (BUILT_IN_PROJECTIONS.includes(value)) return {code: value, builtIn: true}
+    const row = one(PROJECTION, {projectionId: value})
+    if (!row || row.disabled === "Y" || !text(row.proj4Definition)) return null
+    const projected = text(row.projectedExtent)
+        .split(",")
+        .map(num)
+        .filter(value => value !== null)
+    const out = {
+        code: value,
+        label: text(row.label) || value,
+        proj4: text(row.proj4Definition),
+        bounds: extentOf([row.minLongitude, row.minLatitude, row.maxLongitude, row.maxLatitude]),
+        extent: projected.length === 4 ? projected : null
+    }
+    usedProjections.set(value, out)
+    return out
+}
+// The projection a profile's map is drawn in: its viewProjection when that is one a map draws, else EPSG:3857
+const viewProjectionOf = profile => projectionOf(profile?.viewProjection)?.code || WEB_MERCATOR
+// Whether a basemap or layer of a kind may be drawn in a projection: everything in EPSG:3857; vector tiles (a MapLibre
+// style, a vector PMTiles archive, a user's overlay simplified into tiles) only there, since a map cannot reproject them;
+// rasters (XYZ, WMS, WMTS, a raster archive, a COG) are reprojected, and vector files read in any.
+const drawableIn = (entry, projection) =>
+    projection === WEB_MERCATOR ||
+    !(entry.kind === "style" || entry.kind === "mvt" || (entry.kind === "pmtiles" && !entry.raster))
+const projectionRefusal = (entry, projection) =>
+    refusal(
+        "PROJECTION_INCOMPATIBLE",
+        say("${label} is drawn only in Web Mercator (EPSG:3857), not in ${projection}: its vector tiles are not reprojected", {
+            label: entry.label,
+            projection
+        })
+    )
+// A COG's band settings checked against its band count: {rgb: [r, g, b]} or {band, colormap}, with min and max (min below
+// max) and an optional nodata; null when they do not read
+function rasterStyleOf(value, bands) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null
+    const bandOk = band => Number.isInteger(band) && band >= 1 && band <= (bands || 64)
+    const out = {}
+    if (Array.isArray(value.rgb)) {
+        const rgb = value.rgb.map(num)
+        if (rgb.length !== 3 || !rgb.every(bandOk)) return null
+        out.rgb = rgb
+    } else {
+        const band = num(value.band)
+        if (!bandOk(band)) return null
+        out.band = band
+        const colormap = text(value.colormap) || COLORMAPS[0]
+        if (!COLORMAPS.includes(colormap)) return null
+        out.colormap = colormap
+    }
+    const min = num(value.min)
+    const max = num(value.max)
+    if (min === null || max === null || !(min < max)) return null
+    out.min = min
+    out.max = max
+    if (value.nodata !== undefined && value.nodata !== null && value.nodata !== "") {
+        const nodata = num(value.nodata)
+        if (nodata === null) return null
+        out.nodata = nodata
+    }
+    return out
+}
+// What m-map draws a COG layer with: its header's bands and type, its CRS (registered), its band settings (the user's
+// own, else the layer's defaults) and whether its provider answers CORS; a refusal when its header was never read or its CRS
+// is not a projection a map draws
+let rasterPreferences = null
+function cogRaster(layer) {
+    let raster = null
+    try {
+        raster = JSON.parse(text(layer.rasterJson) || "null")
+    } catch (error) {
+        raster = null
+    }
+    if (!raster || typeof raster !== "object")
+        return refusal(
+            "SOURCE_NOT_REGISTERED",
+            L("its GeoTIFF's header has not been read: register it under Maps › Configuration › Archives")
+        )
+    const projection = projectionOf(raster.epsg || layer.crs)
+    if (!projection) {
+        const crs = text(raster.epsg || layer.crs).toUpperCase() || "?"
+        const row = one(PROJECTION, {projectionId: crs})
+        return refusal(
+            "PROJECTION_UNREGISTERED",
+            !row
+                ? say("its CRS ${crs} is not a registered map projection", {crs})
+                : row.disabled === "Y"
+                  ? say("its CRS ${crs} is a disabled map projection", {crs})
+                  : say("its CRS ${crs} is registered with no definition", {crs})
+        )
+    }
+    const bands = num(raster.bands) || 1
+    rasterPreferences = rasterPreferences || storedPreferences().rasters || {}
+    const own = rasterStyleOf(rasterPreferences[layer.layerId], bands)
+    const style = own || rasterStyleOf(raster.defaults, bands) || {band: 1, min: 0, max: 255, colormap: COLORMAPS[0]}
+    return {
+        ok: true,
+        raster: {
+            bands,
+            sampleType: text(raster.sampleType),
+            projection: projection.code,
+            nodata: num(raster.nodata),
+            statistics: Array.isArray(raster.statistics) ? raster.statistics.slice(0, 64) : [],
+            cors: raster.cors !== false,
+            style,
+            defaults: rasterStyleOf(raster.defaults, bands),
+            own: !!own
+        }
+    }
+}
+
 const overridesOf = profile =>
     text(profile?.allowedOverrides)
         .split(",")
@@ -430,6 +571,11 @@ function resolveProfile(profile, profileId) {
     const basemap = resolveLayer(one(LAYER, {layerId: profile.basemapLayerId}), text(profile.basemapLayerId) || "(none)", true)
     if (!basemap.ok)
         return refusal("BASEMAP_UNAVAILABLE", say("its basemap is not available: ${reason}", {reason: basemap.reason}))
+    const projection = viewProjectionOf(profile)
+    if (!drawableIn(basemap.entry, projection)) {
+        const refused = projectionRefusal(basemap.entry, projection)
+        return refusal("BASEMAP_UNAVAILABLE", say("its basemap is not available: ${reason}", {reason: refused.reason}))
+    }
     return {ok: true, basemap}
 }
 const profileName = (profile, profileId) => (profile && text(profile.profileName) ? L(profile.profileName) : profileId)
@@ -581,6 +727,7 @@ function effectiveConfig(p) {
         fallbacks.push({kind: "profile", id: row.profileId, reasonCode: row.refused.reasonCode, message})
     }
     const profile = chosen?.profile || null
+    const viewProjection = profile ? viewProjectionOf(profile) : WEB_MERCATOR
     const overrides = profile ? overridesOf(profile) : []
     const allowed = name => overrides.includes(name)
 
@@ -594,7 +741,8 @@ function effectiveConfig(p) {
             for (const layer of others) {
                 if (layer.layerId === profile.basemapLayerId || layer.disabled === "Y") continue
                 const resolved = resolveLayer(layer, layer.layerId, true)
-                if (!resolved.ok) continue
+                // one the profile's view cannot draw is not offered
+                if (!resolved.ok || !drawableIn(resolved.entry, viewProjection)) continue
                 basemaps.push(resolved.entry)
                 resolved.origins.forEach(origin => origins.add(origin))
                 if (basemaps.length >= 20) break
@@ -607,13 +755,18 @@ function effectiveConfig(p) {
         if (basemaps.some(entry => entry.id === preferredBasemap)) basemap = preferredBasemap
         else {
             const resolved = resolveLayer(one(LAYER, {layerId: preferredBasemap}), preferredBasemap, true)
+            const incompatible = resolved.ok && !drawableIn(resolved.entry, viewProjection)
             fallbacks.push({
                 kind: "basemap",
                 id: preferredBasemap,
-                reasonCode: resolved.ok ? "BASEMAP_UNAVAILABLE" : resolved.reasonCode,
+                reasonCode: incompatible ? "PROJECTION_INCOMPATIBLE" : resolved.ok ? "BASEMAP_UNAVAILABLE" : resolved.reasonCode,
                 message: say("Your basemap ${id} is not available (${reason}): the profile's is shown.", {
                     id: preferredBasemap,
-                    reason: resolved.ok ? L("the profile does not offer it") : resolved.reason
+                    reason: incompatible
+                        ? projectionRefusal(resolved.entry, viewProjection).reason
+                        : resolved.ok
+                          ? L("the profile does not offer it")
+                          : resolved.reason
                 })
             })
         }
@@ -644,7 +797,10 @@ function effectiveConfig(p) {
         for (const row of wanted) if (Object.hasOwn(visibility, row.layerId)) row.visible = yes(visibility[row.layerId])
     for (const row of wanted) {
         const layer = one(LAYER, {layerId: row.layerId})
-        const resolved = resolveLayer(layer, row.layerId, false)
+        const found = resolveLayer(layer, row.layerId, false)
+        // a layer of vector tiles over a view in another projection is named, not drawn
+        const resolved =
+            found.ok && !drawableIn(found.entry, viewProjection) ? projectionRefusal(found.entry, viewProjection) : found
         if (!resolved.ok) {
             const label =
                 layer && resolved.reasonCode !== "LAYER_MISSING" && text(layer.layerName) ? L(layer.layerName) : row.layerId
@@ -682,6 +838,7 @@ function effectiveConfig(p) {
 
     // ----- the viewport: the profile's, the user's extent, the last view (when kept), then the record's place -----
     const config = {profileId: chosen ? chosen.profileId : OUTLINE_ID}
+    if (viewProjection !== WEB_MERCATOR) config.projection = viewProjection
     if (profile) {
         const center = centerOf([profile.centerLongitude, profile.centerLatitude])
         if (center) config.center = center
@@ -898,6 +1055,10 @@ function effectiveConfig(p) {
         notice
     }
     config.layers = shownLayers
+    // the definitions of the registered projections the map needs (its view's, its COG layers'): m-map registers each with
+    // proj4js, and fetches none
+    const projections = Array.from(usedProjections.values()).filter(row => !BUILT_IN_PROJECTIONS.includes(row.code))
+    if (projections.length) config.projections = projections.slice(0, 50)
     // the record layers, drawn as features: each with whether it is shown (a hidden one's adapter was not asked)
     if (recordLayers.length) config.recordLayers = recordLayers
     config.points = points
@@ -940,7 +1101,8 @@ function getPreferences() {
             units: ["metric", "imperial"].includes(text(stored.units)) ? text(stored.units) : null,
             restoreLastView: yes(stored.restoreLastView),
             lastView: yes(stored.restoreLastView) && stored.lastView && centerOf(stored.lastView.center) ? stored.lastView : null,
-            layers: Object.fromEntries(Object.keys(layers).map(layerId => [layerId, yes(layers[layerId])]))
+            layers: Object.fromEntries(Object.keys(layers).map(layerId => [layerId, yes(layers[layerId])])),
+            rasters: stored.rasters && typeof stored.rasters === "object" ? stored.rasters : {}
         },
         installationProfileId: installationProfileId() || null,
         profileOptions: profileOptions(),
@@ -1010,6 +1172,37 @@ function storePreferences(p) {
         }
         next.layers = Object.fromEntries(ids.map(layerId => [layerId, yes(layers[layerId])]))
     }
+    // a COG layer's band settings, each checked against the layer's bands; a layer's null clears its own
+    if (given(p.rasters)) {
+        const rasters = p.rasters && typeof p.rasters === "object" && !Array.isArray(p.rasters) ? p.rasters : null
+        if (!rasters) throw new Error(L("The band settings are each COG layer's ID with its settings"))
+        const kept = Object.assign({}, next.rasters || {})
+        for (const layerId of Object.keys(rasters).slice(0, MAX_LAYERS)) {
+            if (rasters[layerId] === null || rasters[layerId] === "") {
+                delete kept[layerId]
+                continue
+            }
+            const layer = one(LAYER, {layerId})
+            const resolved = resolveLayer(layer, layerId, false)
+            if (!resolved.ok || resolved.entry.kind !== "cog")
+                return refused("LAYER_UNAVAILABLE", say("The layer ${layerId} is not a COG layer you may be offered", {layerId}))
+            const style = rasterStyleOf(rasters[layerId], resolved.entry.raster.bands)
+            if (!style)
+                return refused(
+                    "RASTER_INVALID",
+                    say(
+                        "The band settings of ${layerId} are bands of the layer, a minimum below a maximum and a known colormap",
+                        {
+                            layerId
+                        }
+                    )
+                )
+            kept[layerId] = style
+        }
+        if (Object.keys(kept).length > MAX_LAYERS) throw new Error(say("At most ${count} layers", {count: MAX_LAYERS}))
+        if (Object.keys(kept).length) next.rasters = kept
+        else delete next.rasters
+    }
     // the last view is kept only while the user wants it restored; turning that off clears it
     if (given(p.restoreLastView)) next.restoreLastView = yes(p.restoreLastView)
     if (!yes(next.restoreLastView)) {
@@ -1064,9 +1257,19 @@ function normalizedView(value) {
     if (!out.extent && !out.center) throw new Error(L("A saved view has a center or an extent"))
     const projection = text(view.projection).toUpperCase()
     if (projection) {
-        if (!["EPSG:3857", "EPSG:4326"].includes(projection))
-            throw new Error(L("The view's projection is EPSG:3857 or EPSG:4326"))
+        if (!projectionOf(projection))
+            throw new Error(L("The view's projection is EPSG:3857, EPSG:4326 or a registered map projection"))
         out.projection = projection
+    }
+    // the band settings of its COG layers, as a user's preferences hold them (each layer's bands checked when it is drawn)
+    if (view.rasters && typeof view.rasters === "object" && !Array.isArray(view.rasters)) {
+        const rasters = {}
+        for (const layerId of Object.keys(view.rasters).slice(0, MAX_LAYERS)) {
+            const style = rasterStyleOf(view.rasters[layerId], 64)
+            if (!style) throw new Error(say("The view's band settings of ${layerId} do not read", {layerId}))
+            rasters[layerId] = style
+        }
+        if (Object.keys(rasters).length) out.rasters = rasters
     }
     const layers = view.layers == null ? [] : Array.isArray(view.layers) ? view.layers : text(view.layers).split(",")
     out.layers = Array.from(new Set(layers.map(text).filter(id => id)))
@@ -1289,6 +1492,7 @@ function findConfiguration() {
             externalAccess: profile.externalAccess === "Y",
             enabled: profile.disabled !== "Y",
             installationDefault: profile.profileId === installed,
+            viewProjection: viewProjectionOf(profile),
             drawable: resolved.ok,
             reason: resolved.ok ? "" : resolved.reason
         }
@@ -1300,6 +1504,15 @@ function findConfiguration() {
         externalRequests: !offline(),
         maxFeatures: setting("max-features") || null,
         importMaxBytes: setting("import-max-bytes") || null,
+        // the projections a profile's view may be drawn in: the two every map has, and the registry's (P4c)
+        projectionList: BUILT_IN_PROJECTIONS.map(code => ({
+            code,
+            label: code === WEB_MERCATOR ? L("Web Mercator") : L("WGS 84 (degrees)")
+        })).concat(
+            Array.from(find(PROJECTION, {}).orderBy("projectionId").limit(500).list())
+                .filter(row => row.disabled !== "Y" && !BUILT_IN_PROJECTIONS.includes(row.projectionId))
+                .map(row => ({code: row.projectionId, label: text(row.label) || row.projectionId}))
+        ),
         profileList,
         layerList
     }
@@ -1332,6 +1545,24 @@ function storeProfileSettings(p) {
             "DEFAULT_PROFILE",
             L("This profile is the installation's default map profile: choose another default before disabling it")
         )
+    // the projection its view is drawn in: one a map draws, in which its basemap can be drawn
+    if (given(p.viewProjection)) {
+        const code = text(p.viewProjection).toUpperCase() || WEB_MERCATOR
+        if (!projectionOf(code))
+            return refused("PROJECTION_UNKNOWN", say("${code} is not a projection a map draws: register it first", {code}))
+        const basemap = resolveLayer(
+            one(LAYER, {layerId: profile.basemapLayerId}),
+            text(profile.basemapLayerId) || "(none)",
+            true
+        )
+        if (basemap.ok && !drawableIn(basemap.entry, code))
+            return refused("PROJECTION_INCOMPATIBLE", projectionRefusal(basemap.entry, code).reason)
+        const stored = code === WEB_MERCATOR ? null : code
+        if (text(profile.viewProjection) !== text(stored)) {
+            profile.viewProjection = stored
+            asCaller(() => ec.entity.makeValue(PROFILE).setAll({profileId, viewProjection: stored}).update())
+        }
+    }
     if (enable !== null && (profile.disabled !== "Y") !== enable) {
         profile.disabled = enable ? "N" : "Y"
         asCaller(() =>
@@ -1361,6 +1592,113 @@ function storeProfileSettings(p) {
             reason: say("${name} is enabled, but it is not drawn yet: ${reason}", {name, reason: resolved.reason})
         }
     return {applied: true, reason: enable === false ? say("${name} is disabled", {name}) : say("${name} is saved", {name})}
+}
+
+// ===== the projection registry (P4c; Configuration › Projections) =====
+// A PROJ.4 definition a browser registers: plain parameters only, no URL, no grid but Web Mercator's @null (as m-map's
+// moqui.map.normalizeProjections takes them)
+const BROWSER_DEFINITION = /^\+proj=[a-z]+(\s+\+[a-z_0-9]+(=[A-Za-z0-9_.,+@-]+)?)*$/
+const definitionRefusal = definition =>
+    definition.length > 600 || !BROWSER_DEFINITION.test(definition) || /\+(nadgrids|geoidgrids)=(?!@null)/.test(definition)
+// Whether the server reads a definition (moqui-lib geo/proj.rs): {readable, reason, transform}
+function serverReads(definition) {
+    const out = ec.service
+        .sync()
+        .name("org.moqui.maps.MapSourceServices.check#ProjectionDefinition")
+        .parameters({definition})
+        .disableAuthz()
+        .call()
+    return {readable: out?.readable === true, reason: text(out?.reason), transform: text(out?.transform)}
+}
+const browserOnlyNote = reason =>
+    say(
+        "A map draws it, but the server does not read its definition (${reason}): an overlay in it is refused, and a COG in it has no recorded bounds",
+        {
+            reason
+        }
+    )
+// find#Projections
+function findProjections() {
+    if (!canConfigure()) return refused("PERMISSION_DENIED", L("Maps configuration is not available to you"))
+    const projectionList = Array.from(ec.entity.find(PROJECTION).orderBy("projectionId").limit(2000).disableAuthz().list()).map(
+        row => {
+            const builtIn = BUILT_IN_PROJECTIONS.includes(row.projectionId)
+            const server = builtIn ? {readable: true, reason: "", transform: ""} : serverReads(text(row.proj4Definition))
+            return {
+                projectionId: row.projectionId,
+                label: text(row.label) || row.projectionId,
+                proj4Definition: text(row.proj4Definition),
+                axisOrder: text(row.axisOrder) || null,
+                bounds: extentOf([row.minLongitude, row.minLatitude, row.maxLongitude, row.maxLatitude]),
+                projectedExtent: text(row.projectedExtent) || null,
+                enabled: row.disabled !== "Y",
+                builtIn,
+                serverReadable: server.readable,
+                serverNote: builtIn ? L("Every map's own") : server.readable ? server.transform : browserOnlyNote(server.reason),
+                transformNote: text(row.transformNote) || null,
+                sourceNote: text(row.sourceNote) || null
+            }
+        }
+    )
+    return {applied: true, projectionList}
+}
+// store#Projection
+function storeProjection(p) {
+    if (!canConfigure() || !canChangeConfiguration())
+        return refused("PERMISSION_DENIED", L("Changing the maps configuration is not available to you"))
+    const code = text(p.projectionId).toUpperCase()
+    if (!/^EPSG:[0-9]{1,6}$/.test(code)) return refused("CODE_INVALID", L("A projection's code is EPSG: and its number"))
+    if (BUILT_IN_PROJECTIONS.includes(code)) return refused("BUILT_IN", L("EPSG:4326 and EPSG:3857 are every map's own"))
+    const existing = ec.entity.find(PROJECTION).condition({projectionId: code}).disableAuthz().one()
+    const disabled = text(p.disabled).toUpperCase()
+    if (disabled && !["Y", "N"].includes(disabled)) return refused("VALUE_INVALID", L("Disabled is Y or N"))
+    // enable or disable alone
+    if (existing && !given(p.proj4Definition) && !given(p.label) && disabled) {
+        asCaller(() => ec.entity.makeValue(PROJECTION).setAll({projectionId: code, disabled}).update())
+        return {applied: true, reason: say(disabled === "Y" ? "${code} is disabled" : "${code} is enabled", {code})}
+    }
+    const definition = text(p.proj4Definition).replace(/\s+/g, " ")
+    if (!definition) return refused("DEFINITION_INVALID", L("Give its PROJ.4 definition"))
+    if (definitionRefusal(definition))
+        return refused(
+            "DEFINITION_INVALID",
+            L("The definition is PROJ.4 parameters (+proj=... +name=value), with no URL and no grid file but +nadgrids=@null")
+        )
+    const axisOrder = text(p.axisOrder).toLowerCase() || null
+    if (axisOrder && !["enu", "neu"].includes(axisOrder))
+        return refused("VALUE_INVALID", L("The axis order is enu (easting first) or neu (northing first)"))
+    const bounds = text(p.bounds) ? extentOf(p.bounds) : null
+    if (text(p.bounds) && !bounds) return refused("VALUE_INVALID", L("The area of use is west, south, east and north in degrees"))
+    const extent = text(p.projectedExtent)
+        .split(",")
+        .map(num)
+        .filter(value => value !== null)
+    if (text(p.projectedExtent) && (extent.length !== 4 || !(extent[0] < extent[2] && extent[1] < extent[3])))
+        return refused("VALUE_INVALID", L("The extent is the least and greatest x and y in its units"))
+    const server = serverReads(definition)
+    const fields = {
+        projectionId: code,
+        label: text(p.label) || text(existing?.label) || code,
+        proj4Definition: definition,
+        axisOrder,
+        minLongitude: bounds ? bounds[0] : null,
+        minLatitude: bounds ? bounds[1] : null,
+        maxLongitude: bounds ? bounds[2] : null,
+        maxLatitude: bounds ? bounds[3] : null,
+        projectedExtent: extent.length === 4 ? extent.join(",") : null,
+        transformNote: server.readable ? server.transform.slice(0, 250) : null,
+        sourceNote: existing ? text(existing.sourceNote) || null : L("Added under Maps › Configuration")
+    }
+    if (disabled) fields.disabled = disabled
+    asCaller(() => ec.entity.makeValue(PROJECTION).setAll(fields).createOrUpdate())
+    return {
+        applied: true,
+        serverReadable: server.readable,
+        serverReason: server.readable ? null : server.reason,
+        reason: server.readable
+            ? say("${code} is saved; the server reads it too: ${transform}", {code, transform: server.transform})
+            : say("${code} is saved. ${note}", {code, note: browserOnlyNote(server.reason)})
+    }
 }
 
 // ===== Add OGC layer (Configuration) =====
@@ -1485,7 +1823,9 @@ const operations = {
     deleteSavedView,
     findSavedViews,
     findConfiguration,
-    storeProfileSettings
+    storeProfileSettings,
+    findProjections,
+    storeProjection
 }
 ;({
     execute: (op, parameters) => {

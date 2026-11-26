@@ -157,8 +157,10 @@
         import-max-bytes is the largest Geo data download or operator file, and the largest it may unzip to (512 MiB:
         well past every registered source, GeoNames' allCountries at 19 MB zipped, and under the 2 GiB upload).
         max-features is the most features one overlay or one viewport query of a layer adapter returns; 0 turns record
-        layers off. -->
-    <maps external-requests="true" import-max-bytes="536870912" max-features="5000" overlay-max-bytes="10485760"/>
+        layers off. overture-catalog is the STAC root Overture releases are found in and overture-max-area the largest
+        Overture region in km² (plans/Maps-Overture.md). -->
+    <maps external-requests="true" import-max-bytes="536870912" max-features="5000" overlay-max-bytes="10485760"
+            overture-catalog="https://stac.overturemaps.org/catalog.json" overture-max-area="2500"/>
 
     <!-- This server as a cluster member (plans/archive/Cluster.md). tls-cert and tls-key: the cluster TLS pair, base64 DER
         on one line each, generated together into runtime/.env (moqui_conf__cluster_member__tls_cert and _tls_key) and
@@ -1756,6 +1758,8 @@
         <load-data location="component://framework/data/InstanceTypeData.xml"/>
         <load-data location="component://framework/data/MapsData.xml"/>
         <load-data location="component://framework/data/MapsSetupData.xml"/>
+        <load-data location="component://framework/data/MapsOvertureData.xml"/>
+        <load-data location="component://framework/data/MapsProjectionData.xml"/>
     </entity-facade>
     <database-list>
         <dictionary-type type="id" java-type="String" default-sql-type="VARCHAR(40)"/>

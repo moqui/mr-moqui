@@ -26,7 +26,7 @@ use std::collections::BTreeMap;
 use std::io::Write;
 
 use moqui_lib::error::Error as LibError;
-use moqui_lib::geo::overlay::{convert_overlay_bytes, OverlayFormat, OverlayLimits};
+use moqui_lib::geo::overlay::{convert_overlay_with, OverlayFormat, OverlayLimits};
 use moqui_lib::geo::tiles::{build_tiles, Progress, TileFeature, TilerLimits, LAYER, MAX_ZOOM};
 use moqui_lib::object::{to_plain_string, Value};
 use moqui_lib::pmtiles::{write_archive, ArchiveOptions, Compression, TileType};
@@ -127,7 +127,12 @@ pub(crate) fn generalize_overlay(
         max_bytes: usize::try_from(max_bytes).unwrap_or(usize::MAX),
         max_features: usize::try_from(limit(parameters, "maxFeatures", DEFAULT_MAX_FEATURES)).unwrap_or(usize::MAX),
     };
-    let overlay = match convert_overlay_bytes(&content, format, &limits) {
+    let overlay = match convert_overlay_with(
+        &content,
+        format,
+        &limits,
+        &crate::maps_overlay::projection_registry(facade),
+    ) {
         Ok(overlay) => overlay,
         Err(err) => return refusal(out, err.code, err.message),
     };

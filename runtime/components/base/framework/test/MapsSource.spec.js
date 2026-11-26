@@ -7,7 +7,9 @@
 // and refuses a non-holder, a revoked share and a stale revision (409); the effective configuration hands the same-origin
 // URL only to a user the transition lets read; the Z/X/Y tile transition answers a holder one tile with its strong ETag
 // (and 304, and 204 for no tile) and refuses a non-holder and a stale revision. The archive is a tiny valid PMTiles
-// version 3 file made here.
+// version 3 file made here. A Cloud Optimized GeoTIFF (P4c) is registered by its header (its CRS and bands recorded, one in
+// strips refused), read by range by a holder of its share and not by another user, and handed to the holder's map with its
+// projection's definition.
 // Run: ./moq test framework --spec MapsSource
 const S = "org.moqui.maps.MapSourceServices."
 const HOLDER = "MAPS_SRC_HOLDER"
@@ -24,12 +26,30 @@ const OUTSIDE_LOCATION = "runtime://tmp/maps-source-spec/outside.pmtiles"
 const PROVIDER_OFF = "MAPS_SRC_OFF"
 const BAD_LOCATION = ROOT + "/archives/broken.pmtiles"
 const GIT_LOCATION = "git://" + REPO + "/plain.pmtiles"
+const COG_LOCATION = ROOT + "/archives/spec.tif"
+const COG_STRIPS = ROOT + "/archives/strips.tif"
+const COG_SHARE = "MAPS_SRC_COG_SHARE"
+// a provider's COGs (registerCogUrl), answered by the HTTP fixtures
+const http = ec.factory.getTool("HttpFixtures")
+const COG_HOST = "https://cog.spec.example"
+const COG_PROVIDERS = {tested: "MAPS_SRC_COGP", untested: "MAPS_SRC_COGP_NEW", proxied: "MAPS_SRC_COGP_PROXY"}
+const COG_URL_LAYERS = {
+    good: COG_HOST + "/data/good.tif",
+    whole: COG_HOST + "/data/whole.tif",
+    noCors: COG_HOST + "/data/nocors.tif",
+    otherOrigin: COG_HOST + "/data/other.tif",
+    notProviders: "https://elsewhere.spec.example/data/a.tif",
+    untested: COG_HOST + "/data/untested.tif",
+    proxied: COG_HOST + "/data/proxied.tif"
+}
+const cogUrlLayer = name => "MAPS_SRC_COGU_" + name.toUpperCase()
 const layers = {
     drive: "MAPS_SRC_DRIVE",
     file: "MAPS_SRC_FILE",
     fileUri: "MAPS_SRC_FILE_URI",
     raster: "MAPS_SRC_RASTER",
-    git: "MAPS_SRC_GIT"
+    git: "MAPS_SRC_GIT",
+    cog: "MAPS_SRC_COG"
 }
 const usernameOf = userId => userId.toLowerCase().replace(/_/g, ".")
 
@@ -69,6 +89,16 @@ function as(userId, action) {
     }
 }
 const register = (layerId, resourceLocation) => as(null, () => invoke(S + "register#ArchiveLayer", {layerId, resourceLocation}))
+// signed in as the user with authorization as the spec has it (off): the services' own checks of their caller only
+function asSignedIn(userId, action) {
+    ec.user.internalLoginUser(usernameOf(userId))
+    try {
+        return action()
+    } finally {
+        ec.message.clearErrors()
+        ec.user.internalLoginUser("john.doe")
+    }
+}
 // the map-source transition as the user, with a Range header when given: status, the headers it is checked by
 function source(userId, layerId, revision, range) {
     return as(userId, () => {
@@ -151,6 +181,44 @@ spec({
         })
         layer(layers.raster, "MLF_PMTILES_RASTER")
         layer(layers.git, "MLF_PMTILES_VECTOR")
+        // a COG of the drive, shared with the holder; and one in strips
+        put(COG_LOCATION, lib.cog())
+        put(COG_STRIPS, lib.cog({strips: true}))
+        make("moqui.resource.ResourceShare", {
+            shareId: COG_SHARE,
+            driveId: DRIVE,
+            path: "archives/spec.tif",
+            sharedWithUserId: HOLDER,
+            permissionEnumId: "RspView",
+            createdByUserId: "EX_JOHN_DOE",
+            createdDate: ec.user.nowTimestamp
+        })
+        layer(layers.cog, "MLF_COG")
+        // a provider's COGs: a raster provider tested through the fixtures, one never tested and one through the proxy
+        http.enable()
+        for (const [key, providerId] of Object.entries(COG_PROVIDERS))
+            make("moqui.maps.MapProvider", {
+                providerId,
+                providerName: "Spec COG " + key,
+                providerKindEnumId: "MPK_RASTER_TILES",
+                endpointUrl: COG_HOST + "/tiles/{z}/{x}/{y}.png",
+                proxyRequests: key === "proxied" ? "Y" : "N",
+                disabled: "N"
+            })
+        for (const [name, sourceUrl] of Object.entries(COG_URL_LAYERS))
+            make("moqui.maps.MapLayer", {
+                layerId: cogUrlLayer(name),
+                layerName: "Spec COG URL " + name,
+                formatEnumId: "MLF_COG",
+                sourceUrl,
+                providerId:
+                    name === "untested"
+                        ? COG_PROVIDERS.untested
+                        : name === "proxied"
+                          ? COG_PROVIDERS.proxied
+                          : COG_PROVIDERS.tested,
+                disabled: "Y"
+            })
         ec.message.clearErrors()
     },
     cleanupSpec() {
@@ -159,10 +227,14 @@ spec({
         ec.artifactExecution.disableAuthz()
         const del = (entity, field, values) => ec.entity.find(entity).condition(field, "in", values).deleteAll()
         del("moqui.maps.MapLayer", "layerId", Object.values(layers))
-        del("moqui.resource.ResourceShare", "shareId", [SHARE])
+        del("moqui.resource.ResourceShare", "shareId", [SHARE, COG_SHARE])
         del("moqui.resource.ResourceDrive", "driveId", [DRIVE])
         del("moqui.maps.MapProvider", "providerId", [PROVIDER_OFF])
-        for (const location of [DRIVE_LOCATION, BAD_LOCATION, FILE_LOCATION, OUTSIDE_LOCATION])
+        http.reset()
+        del("moqui.maps.MapLayer", "layerId", Object.keys(COG_URL_LAYERS).map(cogUrlLayer))
+        del("moqui.server.ConnectionCheck", "connectionKey", Object.values(COG_PROVIDERS))
+        del("moqui.maps.MapProvider", "providerId", Object.values(COG_PROVIDERS))
+        for (const location of [DRIVE_LOCATION, BAD_LOCATION, FILE_LOCATION, OUTSIDE_LOCATION, COG_LOCATION, COG_STRIPS])
             try {
                 ec.resource.getLocationReference(location).delete()
             } catch (e) {
@@ -354,5 +426,115 @@ feature("a layer's viewPermission, a disabled provider and no signed-in user eac
         unpermitted == 404
         providerOff == 404
         anonymous.ok == false && anonymous.status == 403 && !anonymous.location
+    }
+})
+
+feature("a Cloud Optimized GeoTIFF is registered by its header and read by range by a holder of its share only", {
+    when() {
+        const registered = register(layers.cog, COG_LOCATION)
+        const row = layerRow(layers.cog)
+        const effective = as(HOLDER, () => invoke("org.moqui.maps.MapServices.get#EffectiveConfig", {layerIds: layers.cog}))
+        const config = effective.config || {}
+        return {
+            registered,
+            row,
+            raster: JSON.parse(row.rasterJson || "{}"),
+            strips: register(layers.cog, COG_STRIPS),
+            holder: source(HOLDER, layers.cog, row.sourceRevision, "bytes=0-1023"),
+            other: source(OTHER, layers.cog, row.sourceRevision, "bytes=0-1023"),
+            drawn: Array.from(config.layers || []).find(layer => layer.id == layers.cog) || {},
+            projection: Array.from(config.projections || []).find(projection => projection.code == "EPSG:32633") || {},
+            // the holder's own band settings: a band the COG lacks refused, one it has kept and drawn
+            ...asSignedIn(HOLDER, () => {
+                const refusedBands = invoke("org.moqui.maps.MapServices.store#Preferences", {
+                    rasters: {[layers.cog]: {band: 2, min: 0, max: 100}}
+                })
+                const kept = invoke("org.moqui.maps.MapServices.store#Preferences", {
+                    rasters: {[layers.cog]: {band: 1, min: 5, max: 200, colormap: "terrain"}}
+                })
+                const after = invoke("org.moqui.maps.MapServices.get#EffectiveConfig", {layerIds: layers.cog}).config || {}
+                invoke("org.moqui.maps.MapServices.store#Preferences", {rasters: {[layers.cog]: null}})
+                return {refusedBands, kept, styled: Array.from(after.layers || []).find(layer => layer.id == layers.cog) || {}}
+            })
+        }
+    },
+    then({registered, row, raster, strips, holder, other, drawn, projection, refusedBands, kept, styled}) {
+        registered.applied && row.crs == "EPSG:32633" && row.disabled == "N"
+        raster.bands == 1 && raster.sampleType == "uint8" && raster.nodata == "0" && raster.defaults.band == 1
+        // UTM zone 33N from 500 km east, 6000 km north: about 15°E, 54°N
+        row.minLongitude > 14.9 && row.maxLongitude < 15.2 && row.minLatitude > 54 && row.maxLatitude < 54.2
+        !strips.applied && strips.reasonCode == "COG_INVALID" && /strips/.test(strips.reason)
+        // a refusal changes nothing: the layer keeps its registered revision
+        layerRow(layers.cog).sourceRevision == row.sourceRevision
+        holder.status == 206 && holder.etag == '"' + row.sourceTag + '"'
+        other.status == 403
+        drawn.kind == "cog" && drawn.raster.projection == "EPSG:32633" && drawn.raster.style.band == 1
+        drawn.url.includes("layerId=" + layers.cog)
+        projection.proj4.includes("+zone=33")
+        refusedBands.applied === false && refusedBands.reasonCode == "RASTER_INVALID"
+        kept.applied === true &&
+            styled.raster.own === true &&
+            styled.raster.style.colormap == "terrain" &&
+            styled.raster.style.min == 5
+    }
+})
+
+feature("a provider's COG is read by one range from its URL: a 206 this site may read by CORS, on a tested provider's host", {
+    when() {
+        const image = lib.cog()
+        http.clear()
+        http.add({
+            method: "GET",
+            url: COG_HOST + "/tiles/0/0/0.png",
+            contentType: "image/png",
+            body: Uint8Array.from([137, 80, 78, 71])
+        })
+        http.add({
+            method: "GET",
+            url: COG_URL_LAYERS.good,
+            contentType: "image/tiff",
+            body: image,
+            ranges: true,
+            headers: {"Access-Control-Allow-Origin": "*"}
+        })
+        http.add({
+            method: "GET",
+            url: COG_URL_LAYERS.whole,
+            contentType: "image/tiff",
+            body: image,
+            headers: {"Access-Control-Allow-Origin": "*"}
+        })
+        http.add({method: "GET", url: COG_URL_LAYERS.noCors, contentType: "image/tiff", body: image, ranges: true})
+        http.add({
+            method: "GET",
+            url: COG_URL_LAYERS.otherOrigin,
+            contentType: "image/tiff",
+            body: image,
+            ranges: true,
+            headers: {"Access-Control-Allow-Origin": "https://elsewhere.spec.example"}
+        })
+        const tested = as(null, () =>
+            invoke("org.moqui.admin.ConfigurationServices.test#Connection", {
+                adapterKey: "mapProvider",
+                connectionKey: COG_PROVIDERS.tested
+            })
+        )
+        const out = {tested}
+        for (const name of Object.keys(COG_URL_LAYERS)) out[name] = register(cogUrlLayer(name))
+        out.row = layerRow(cogUrlLayer("good"))
+        out.ranged = http.requests().filter(request => request.url == COG_URL_LAYERS.good)
+        return out
+    },
+    then(out) {
+        out.tested.error == "" || !out.tested.error
+        out.good.applied === true && out.row.crs == "EPSG:32633" && out.row.disabled == "N" && !out.row.sourceRevision
+        JSON.parse(out.row.rasterJson).cors === true && JSON.parse(out.row.rasterJson).bands == 1
+        out.ranged.length == 1 && out.ranged[0].headers.Range == "bytes=0-65535" && !out.ranged[0].headers.Cookie
+        out.whole.applied === false && out.whole.reasonCode == "NO_RANGES"
+        out.noCors.applied === false && out.noCors.reasonCode == "NO_CORS"
+        out.otherOrigin.applied === false && out.otherOrigin.reasonCode == "NO_CORS"
+        out.notProviders.applied === false && out.notProviders.reasonCode == "URL_NOT_PROVIDERS"
+        out.untested.applied === false && out.untested.reasonCode == "PROVIDER_UNTESTED"
+        out.proxied.applied === false && out.proxied.reasonCode == "PROVIDER_PROXIED"
     }
 })

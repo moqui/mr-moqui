@@ -33,7 +33,9 @@ pub mod ogc;
 pub mod operator;
 pub mod overlay;
 pub mod postal;
+pub mod proj;
 pub mod simplify;
+pub mod tiff;
 pub mod text;
 pub mod tiles;
 

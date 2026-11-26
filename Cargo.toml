@@ -21,6 +21,8 @@ members = [
     "crates/moqui-collab",
     "crates/moqui-tools",
     "crates/moqui-calc",
+    # Optional Overture data for Maps (plans/Maps-Overture.md); the host links it under its overture feature.
+    "crates/moqui-maps",
     "crates/moqui-rtc",
     "crates/moqui-sip",
     "crates/moqui-channels",
@@ -98,6 +100,9 @@ moqui-collab = { path = "crates/moqui-collab" }
 # moqui-core (plans/archive/Tools-Database.md §13); the host links it in every build.
 moqui-tools = { path = "crates/moqui-tools" }
 moqui-calc = { path = "crates/moqui-calc" }
+# Optional Overture data for Maps: the GeoParquet reader, the STAC catalog and the regional import (plans/Maps-Overture.md);
+# the host links it under its overture feature.
+moqui-maps = { path = "crates/moqui-maps" }
 # The vault crypto, with no I/O and no framework dependency, linked natively and built to wasm for the browser
 # (plans/archive/Vault-Instances.md §3.2). default-features off so the wasm build leaves out getrandom.
 moqui-vault = { path = "crates/moqui-vault", default-features = false }
@@ -187,6 +192,14 @@ reqwest = { version = "0.13", default-features = false, features = [
     "multipart",
     "charset",
 ] }
+
+# ZSTD for the GeoParquet reader of moqui-maps (plans/Maps-Overture.md §1): pure Rust (MIT); the reader decodes, and its
+# encoder makes the tests' frames. The C zstd the parquet crate would link is refused (docs/Build-Test.md, Native code
+# and C libraries). hash: frames' checksums are checked (twox-hash, already in the graph).
+ruzstd = { version = "0.9", default-features = false, features = ["std", "hash"] }
+# The reference writer of moqui-maps' Parquet fixtures, a dev-dependency only: no default features (no arrow, no C codec),
+# Snappy on the pure Rust snap crate.
+parquet = { version = "60.2", default-features = false, features = ["snap"] }
 
 # Charsets for SFTP text (SystemMessageRemote.remoteCharset). Already in the graph under reqwest.
 encoding_rs = "0.8"

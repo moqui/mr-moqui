@@ -1,0 +1,32 @@
+# Optional Overture data for Maps (plans/Maps-Overture.md, stage O1 of plans/Maps.md): our own reader of GeoParquet (on
+# ruzstd for ZSTD; no C), the STAC catalog of Overture's releases, and the import of a region's Places (an indexed table
+# for search) and Buildings (a PMTiles archive of footprints), through moqui_core::extension. The host links it under its
+# overture feature; a build without it reports that overture is not built in.
+
+[package]
+name = "moqui-maps"
+description = "Optional Overture data for Maps: a GeoParquet reader, the STAC catalog and the regional import."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# http: the catalog and the files are read through moqui_core::outbound, which sends only with it
+moqui-core = { workspace = true, features = ["http"] }
+moqui-lib = { workspace = true }
+flate2 = { workspace = true }
+jiff = { workspace = true }
+ruzstd = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+# moqui_core::testing, the in-memory entity facade the tests open.
+moqui-core = { workspace = true, features = ["http", "test-support"] }
+# The reference writer of the reader's fixtures (Apache-2.0, pure Rust with these features): pages another implementation
+# made, dictionary and plain, v1 and v2, delta encodings and Snappy. Tests only; the reader is our own (plans/Maps-Overture.md §1).
+parquet = { workspace = true }
+
+[lints]
+workspace = true
