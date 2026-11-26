@@ -1,7 +1,8 @@
 # Maps
 
-November 1, 2026 — initial design. Built P0 to P3 on November 25, 2026 (each stage's row in §9 says what was built;
-P3's HOME mount and walks are mr-home's H1c, and P4 and the optional O2 remain; the optional O1 was built November 26, 2026, [Maps-Overture](Maps-Overture.md)). Reviewed November 25, 2026
+November 1, 2026 — initial design. Built P0 to P3 on November 25, 2026, and P4 and the optional O1 and O2 on
+November 26, 2026 (each stage's row in §9 says what was built; Overture's own plan is [Maps-Overture](Maps-Overture.md)).
+P3's HOME mount and walks are mr-home's H1c; the later research items of §9 remain. Reviewed November 25, 2026
 against the code, the sibling plans and the outside projects it relies on: paths, settings and existing mechanisms
 are named as they are today, and what is still to build is marked proposed. The selected browser renderer is
 OpenLayers. This plan owns the framework Maps app, reusable map interface, configuration, resource delivery and
