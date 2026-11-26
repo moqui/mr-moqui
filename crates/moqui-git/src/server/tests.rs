@@ -2154,6 +2154,7 @@ fn git_eca_rules_check_pushes_and_see_their_commits_and_tags() {
             provider
                 .event_contexts("eca", &field(update, "updateId"), event, 50)
                 .unwrap()
+                .contexts
         };
         let at = |context: &crate::events::context::EventContext, name: &str| {
             context
@@ -2205,6 +2206,79 @@ fn git_eca_rules_check_pushes_and_see_their_commits_and_tags() {
     git_ok(&work, &home, &["commit", "--amend", "-m", "Second commit, rewritten"]);
     let (ok, out) = git_in(&work, &home, &["push", "--force", "origin", "main"]);
     assert!(!ok && out.contains("main cannot be forced"), "{out}");
+}
+
+#[test]
+fn a_tag_that_cannot_be_read_fails_alone_and_the_other_events_run() {
+    let fixture = fixture("eca-tolerant");
+    moqui_core::service::git_eca::install(
+        fixture.context.factory(),
+        r#"<gitecas>
+            <giteca rule-name="Tags" event="tag"><actions>
+                <entity-make-value entity-name="moqui.test.TestEntity" value-field="row" map="{testId: 'T' + tag.tagName}"/>
+                <entity-create value-field="row"/></actions></giteca>
+            <giteca rule-name="Refs" event="ref-update" run-on-error="true"><actions>
+                <entity-make-value entity-name="moqui.test.TestEntity" value-field="row" map="{testId: 'R' + shortName}"/>
+                <entity-create value-field="row"/></actions></giteca>
+            <giteca rule-name="After" event="post-receive" run-on-error="true"><actions>
+                <entity-make-value entity-name="moqui.test.TestEntity" value-field="row" map="{testId: 'P' + updateId}"/>
+                <entity-create value-field="row"/></actions></giteca>
+        </gitecas>"#,
+    );
+    define(&fixture, "tolerant", "db");
+    let _entered = fixture.context.enter();
+    let _authz = fixture.context.disable_authz();
+    let provider = crate::provider(fixture.context.factory()).unwrap();
+    let repo = provider.repo("tolerant").unwrap();
+    let tree = repo.store.write(Kind::Tree, b"").unwrap();
+    let commit = repo
+        .store
+        .write(
+            Kind::Commit,
+            format!("tree {tree}\nauthor A <a@example.com> 0 +0000\ncommitter A <a@example.com> 0 +0000\n\nFirst\n")
+                .as_bytes(),
+        )
+        .unwrap();
+    // a tag object that does not parse
+    let bad = repo.store.write(Kind::Tag, b"not a tag at all").unwrap();
+    let mut update = EntityValue::make(&fixture.entity, crate::events::GIT_UPDATE).unwrap();
+    for (name, value) in [
+        ("updateId", "TOLERANT"),
+        ("repositoryId", "tolerant"),
+        ("source", "push"),
+        ("ecaStatus", "pending"),
+    ] {
+        update.set(name, Value::string(value));
+    }
+    update.create(&fixture.entity).unwrap();
+    for (name, new) in [("refs/heads/main", commit), ("refs/tags/bad", bad)] {
+        let mut row = EntityValue::make(&fixture.entity, crate::events::GIT_UPDATE_REF).unwrap();
+        row.set("updateId", Value::string("TOLERANT"));
+        row.set("refName", Value::string(name));
+        row.set("newObjectId", Value::string(new.to_string()));
+        row.set("changeType", Value::string("create"));
+        row.set("result", Value::string("ok"));
+        row.create(&fixture.entity).unwrap();
+    }
+    assert_eq!(provider.process_update("TOLERANT").unwrap(), "failed");
+    drop((_authz, _entered));
+    let rows = test_rows(&fixture);
+    // the tag's rule did not run; the rules that run after an error (as the framework's own: merge requests, webhooks)
+    // still ran for both refs and post-receive, where the unread tag stopped them all before
+    assert!(!rows.contains_key("Tbad"), "{:?}", rows.keys());
+    assert!(
+        rows.contains_key("Rmain") && rows.contains_key("Rbad"),
+        "{:?}",
+        rows.keys()
+    );
+    assert!(rows.contains_key("PTOLERANT"), "{:?}", rows.keys());
+    let updates = settled(&fixture);
+    let failed = updates
+        .iter()
+        .find(|row| row.get("updateId").and_then(Value::as_str) == Some("TOLERANT"))
+        .unwrap();
+    let error = failed.get("ecaError").and_then(Value::as_str).unwrap_or_default();
+    assert!(error.contains("refs/tags/bad"), "{error}");
 }
 
 #[test]

@@ -340,8 +340,9 @@ const MAX_EVENT_CONTEXTS: usize = 50;
 
 /// `get#GitUpdateEventContexts`: the contexts the rules of `event` had from an update of the push log, built as the
 /// events build them (`events::context`), for trying a rule's condition against a recorded push. For who may push to
-/// the repository, as the whole log is (they hold the user, the push options and object ids). Out: `contextList`
-/// (`label`, `context`).
+/// the repository, as the whole log is (they hold the user, the push options and object ids), and listing only the
+/// commits that user reads by id. Out: `contextList`
+/// (`label`, `context`), `truncated` (some were left out).
 fn get_update_contexts(parameters: &Parameters, _facade: &EntityFacade) -> Out {
     let Some((provider, id)) = allowed(parameters, "update") else {
         return none();
@@ -358,7 +359,9 @@ fn get_update_contexts(parameters: &Parameters, _facade: &EntityFacade) -> Out {
             return none();
         }
     };
+    let truncated = contexts.truncated;
     let list = contexts
+        .contexts
         .into_iter()
         .map(|context| {
             map([
@@ -367,7 +370,10 @@ fn get_update_contexts(parameters: &Parameters, _facade: &EntityFacade) -> Out {
             ])
         })
         .collect();
-    Ok(out([("contextList", Value::List(list))]))
+    Ok(out([
+        ("contextList", Value::List(list)),
+        ("truncated", Value::Bool(truncated)),
+    ]))
 }
 
 /// `find#GitUpdates`: a repository's push log, newest first, each with its refs. Out: `updateList`,

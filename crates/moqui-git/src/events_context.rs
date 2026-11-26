@@ -16,9 +16,14 @@
 //! and its refs), built by the same parts as the events themselves: for trying a rule's condition against a recorded
 //! push (the Dev AIDE's ECA view, plans/design-dev-aide.md 10). The post events (ref-update, commit, tag,
 //! post-receive) are of the refs the change made; the pre events (pre-receive, pre-ref-update) of every ref it asked
-//! for, with the commits the repository still has (a refused push's new objects were not kept, so it lists none and
-//! says the list is short). What a recorded change does not keep is as for a push: no merge, and the refs before it
-//! are its `priorTips`.
+//! for. What a recorded change does not keep is as for a push: no merge, and the refs before it are its `priorTips`.
+//!
+//! A replay is read by who may push to the repository, but the store may hold commits that user does not read (a
+//! hidden merge request's, another fork's in a fork network): every commit it lists, and every tip it walks from, is
+//! one the user reads by id (`readable_by_id`, as `get#GitCommit` is), and a ref the change did not make (a refused
+//! push's) lists none. What is left out marks the list short (`newCommitsTruncated`, and the answer's `truncated`), so
+//! the answer says no more about the store than the reads by id do. The walks are bounded, and so are the commits
+//! listed in all ([`COMMIT_BUDGET`]).
 
 use std::collections::BTreeMap;
 
@@ -26,20 +31,29 @@ use gix::ObjectId;
 use moqui_lib::object::Value;
 
 use super::{
-    commits_by_ref, gained, insert_new_commits, new_commit_ids, parse_id, post_base, pre_base, receive_commits,
-    ref_fields, tag_event_value, PreOrigin, RefUpdate, GIT_UPDATE, GIT_UPDATE_REF,
+    commits_by_ref, insert_new_commits, max_commits, parse_id, post_base, pre_base, receive_commits, ref_fields,
+    tag_event_value, Gained, PreOrigin, RefUpdate, GIT_UPDATE, GIT_UPDATE_REF,
 };
-use crate::ops;
-use crate::revwalk::peel_to_commit;
+use crate::revwalk::{self, peel_to_commit};
 use crate::values::commit_value;
-use crate::{rows_guard, text, GitProvider};
+use crate::{ops, rows_guard, text, GitProvider, Repo};
 use moqui_core::context::Error;
+
+/// The most commits a replay lists in all its contexts, as commits or as ids.
+pub(crate) const COMMIT_BUDGET: usize = 200;
 
 /// One context of an event: what a rule's condition and actions read, and which ref or commit it is of.
 #[derive(Clone, Debug)]
 pub(crate) struct EventContext {
     pub label: String,
     pub fields: BTreeMap<String, Value>,
+}
+
+/// A replay's contexts, and whether it left some out (past the limit or the commit budget, or not the user's to read).
+#[derive(Debug, Default)]
+pub(crate) struct EventContexts {
+    pub contexts: Vec<EventContext>,
+    pub truncated: bool,
 }
 
 /// The events a context is built for.
@@ -52,9 +66,97 @@ pub(crate) const EVENTS: [&str; 6] = [
     "post-receive",
 ];
 
+/// The reads of one replay: the user's reads by id, and the commits it may still list.
+struct Replay<'a> {
+    provider: &'a GitProvider,
+    repo: &'a Repo,
+    budget: usize,
+    /// Something was left out.
+    truncated: bool,
+}
+
+impl Replay<'_> {
+    /// Whether the user reads the commit `id` by its id; one that cannot be told is not.
+    fn readable(&self, id: &ObjectId) -> bool {
+        self.provider.readable_by_id(self.repo, id).unwrap_or_else(|err| {
+            tracing::warn!(repository = %self.repo.definition.id, "commit {id} of a replay not read: {err}");
+            false
+        })
+    }
+
+    /// The commits `new` reaches and `hidden` does not, oldest first, at most `room` and what the budget has left, only
+    /// those the user reads, from a tip the user reads; and whether more are there (or some were left out).
+    fn walk(&mut self, new: ObjectId, hidden: &[ObjectId], room: usize) -> (Vec<ObjectId>, bool) {
+        let store = self.repo.store.as_ref();
+        let tip = match peel_to_commit(store, &new) {
+            Ok(Some(tip)) => tip,
+            // a tag of a tree or a blob brings no commit; an object the store no longer has brings unknown ones
+            Ok(None) => return (Vec::new(), !matches!(store.find(&new), Ok(Some(_)))),
+            Err(err) => {
+                tracing::warn!(repository = %self.repo.definition.id, "{new} of a replay: {err}");
+                return (Vec::new(), true);
+            }
+        };
+        if !self.readable(&tip) {
+            self.truncated = true;
+            return (Vec::new(), true);
+        }
+        let room = room.min(self.budget);
+        let (commits, more) = match revwalk::new_commits_at_most(store, &[tip], hidden, room) {
+            Ok(walked) => walked,
+            Err(err) => {
+                tracing::warn!(repository = %self.repo.definition.id, "the commits of {tip} in a replay: {err}");
+                return (Vec::new(), true);
+            }
+        };
+        let walked = commits.len();
+        let mut ids: Vec<ObjectId> = commits
+            .into_iter()
+            .map(|commit| commit.id)
+            .filter(|id| self.readable(id))
+            .collect();
+        ids.reverse();
+        let dropped = ids.len() < walked;
+        self.budget -= ids.len();
+        if dropped || (more && self.budget == 0) {
+            self.truncated = true;
+        }
+        (ids, more || dropped)
+    }
+
+    /// The commits a ref of a pre event would gain: those of [`Replay::walk`] from its new commit, hidden by its old
+    /// one or, for a new ref, by what the refs reached before (`prior_tips`), at most `eca-max-commits` as the events
+    /// list.
+    fn gained(&mut self, reference: &RefUpdate, prior_tips: &[ObjectId]) -> Gained {
+        let Some(new) = reference.new else {
+            return Gained {
+                ids: Vec::new(),
+                truncated: false,
+            };
+        };
+        let store = self.repo.store.as_ref();
+        let hidden: Vec<ObjectId> = match reference.old {
+            Some(old) => vec![peel_to_commit(store, &old).ok().flatten().unwrap_or(old)],
+            None => prior_tips.to_vec(),
+        };
+        let (ids, truncated) = self.walk(new, &hidden, max_commits());
+        Gained { ids, truncated }
+    }
+}
+
+/// A context's fields: `base` with `extra` over it.
+fn with(base: &BTreeMap<String, Value>, extra: Vec<(&str, Value)>) -> BTreeMap<String, Value> {
+    let mut fields = base.clone();
+    for (name, value) in extra {
+        fields.insert(name.to_string(), value);
+    }
+    fields
+}
+
 impl GitProvider {
     /// The contexts of `event`'s rules from the update `update_id` of `repository_id`: one for pre-receive and
-    /// post-receive, one a ref for pre-ref-update and ref-update, one a tag created, one a new commit; at most `limit`.
+    /// post-receive, one a ref for pre-ref-update and ref-update, one a tag created, one a new commit; at most `limit`
+    /// contexts and [`COMMIT_BUDGET`] commits.
     ///
     /// # Errors
     ///
@@ -65,7 +167,7 @@ impl GitProvider {
         update_id: &str,
         event: &str,
         limit: usize,
-    ) -> Result<Vec<EventContext>, Error> {
+    ) -> Result<EventContexts, Error> {
         if !EVENTS.contains(&event) {
             return Err(Error::new(format!("no git event {event}: {}", EVENTS.join(", "))));
         }
@@ -95,18 +197,19 @@ impl GitProvider {
             new: parse_id(row.get("newObjectId")),
             change_type: text(row.get("changeType")).unwrap_or_default(),
         };
-        let asked: Vec<RefUpdate> = rows.iter().map(reference_of).collect();
-        let made: Vec<RefUpdate> = rows
+        let made_row = |row: &moqui_core::entity::EntityValue| text(row.get("result")).as_deref() == Some("ok");
+        // every ref asked for, and whether the change made it
+        let asked: Vec<(RefUpdate, bool)> = rows.iter().map(|row| (reference_of(row), made_row(row))).collect();
+        let made: Vec<RefUpdate> = asked
             .iter()
-            .filter(|row| text(row.get("result")).as_deref() == Some("ok"))
-            .map(reference_of)
+            .filter(|(_, made)| *made)
+            .map(|(reference, _)| reference.clone())
             .collect();
-        let with = |base: &BTreeMap<String, Value>, extra: Vec<(&str, Value)>| {
-            let mut fields = base.clone();
-            for (name, value) in extra {
-                fields.insert(name.to_string(), value);
-            }
-            fields
+        let mut replay = Replay {
+            provider: self,
+            repo: &repo,
+            budget: COMMIT_BUDGET,
+            truncated: false,
         };
         let mut out = Vec::new();
         match event {
@@ -123,7 +226,7 @@ impl GitProvider {
                     .map(moqui_lib::object::to_plain_string)
                     .and_then(|bytes| bytes.parse::<u64>().ok())
                     .unwrap_or(0);
-                let chosen: Vec<&RefUpdate> = asked.iter().collect();
+                let chosen: Vec<&RefUpdate> = asked.iter().map(|(reference, _)| reference).collect();
                 let base = pre_base(
                     &PreOrigin {
                         repository_id,
@@ -143,30 +246,34 @@ impl GitProvider {
                     .filter_map(|hex| ObjectId::from_hex(hex.as_bytes()).ok())
                     .filter_map(|id| peel_to_commit(store, &id).ok().flatten())
                     .collect();
-                let gains: Vec<_> = asked
+                let gains: Vec<Gained> = asked
                     .iter()
-                    .map(|reference| {
-                        let mut gain = gained(store, reference, &prior_tips);
-                        // a refused push's new objects were not kept: its commits are not known, which the list says
-                        if reference
-                            .new
-                            .is_some_and(|new| !matches!(store.find(&new), Ok(Some(_))))
-                        {
-                            gain.truncated = true;
+                    .map(|(reference, made)| {
+                        if *made {
+                            replay.gained(reference, &prior_tips)
+                        } else {
+                            // a ref the change did not make: its commits are not the repository's, and are not listed
+                            Gained {
+                                ids: Vec::new(),
+                                truncated: reference.new.is_some(),
+                            }
                         }
-                        gain
                     })
                     .collect();
                 if event == "pre-receive" {
                     let mut fields = base.clone();
-                    let (ids, truncated) = receive_commits(&gains, limit);
+                    let (ids, truncated) = receive_commits(&gains, max_commits());
                     insert_new_commits(&mut fields, store, &ids, truncated);
                     out.push(EventContext {
                         label: format!("the push of {} refs", asked.len()),
                         fields,
                     });
                 } else {
-                    for (reference, gain) in asked.iter().zip(&gains).take(limit) {
+                    for ((reference, _), gain) in asked.iter().zip(&gains) {
+                        if out.len() >= limit {
+                            replay.truncated = true;
+                            break;
+                        }
                         let mut fields = with(&base, ref_fields(reference, &branch_ref));
                         insert_new_commits(&mut fields, store, &gain.ids, gain.truncated);
                         out.push(EventContext {
@@ -184,9 +291,24 @@ impl GitProvider {
                         fields: base,
                     }),
                     "ref-update" => {
-                        for reference in made.iter().take(limit) {
+                        for reference in &made {
+                            if out.len() >= limit {
+                                replay.truncated = true;
+                                break;
+                            }
+                            let ids = match reference.new {
+                                Some(new) => {
+                                    replay
+                                        .walk(new, &reference.old.into_iter().collect::<Vec<_>>(), max_commits())
+                                        .0
+                                }
+                                None => Vec::new(),
+                            };
                             let mut extra = ref_fields(reference, &branch_ref);
-                            extra.push(("newCommitIds", new_commit_ids(store, reference)));
+                            extra.push((
+                                "newCommitIds",
+                                Value::List(ids.iter().map(|id| Value::string(id.to_string())).collect()),
+                            ));
                             out.push(EventContext {
                                 label: reference.name.clone(),
                                 fields: with(&base, extra),
@@ -197,9 +319,31 @@ impl GitProvider {
                         let created = made
                             .iter()
                             .filter(|reference| reference.name.starts_with("refs/tags/") && reference.old.is_none());
-                        for reference in created.take(limit) {
+                        for reference in created {
                             let Some(new) = reference.new else { continue };
-                            let tag = tag_event_value(store, &reference.name, &new)?;
+                            if out.len() >= limit {
+                                replay.truncated = true;
+                                break;
+                            }
+                            // a tag of a commit the user does not read is not shown, nor one that cannot be read
+                            if let Ok(Some(commit)) = peel_to_commit(store, &new) {
+                                if !replay.readable(&commit) {
+                                    replay.truncated = true;
+                                    continue;
+                                }
+                            }
+                            let tag = match tag_event_value(store, &reference.name, &new) {
+                                Ok(tag) => tag,
+                                Err(err) => {
+                                    tracing::warn!(
+                                        update = update_id,
+                                        "tag {} of a recorded change: {err}",
+                                        reference.name
+                                    );
+                                    replay.truncated = true;
+                                    continue;
+                                }
+                            };
                             out.push(EventContext {
                                 label: reference.name.clone(),
                                 fields: with(
@@ -214,12 +358,18 @@ impl GitProvider {
                         }
                     }
                     _ => {
-                        let (walked, _) = commits_by_ref(store, &update, &made, &branch_ref, limit);
+                        let room = max_commits().min(limit);
+                        let (walked, more) =
+                            commits_by_ref(&update, &made, &branch_ref, room, &mut |new, hidden, room| {
+                                Ok(replay.walk(new, hidden, room))
+                            });
+                        let mut truncated = more;
                         for (reference, commits) in walked {
                             let commits = match commits {
                                 Ok(commits) => commits,
                                 Err(err) => {
                                     tracing::warn!(update = update_id, "the commits of a recorded change: {err}");
+                                    truncated = true;
                                     continue;
                                 }
                             };
@@ -232,6 +382,7 @@ impl GitProvider {
                                             update = update_id,
                                             "commit {commit} of a recorded change: {err}"
                                         );
+                                        truncated = true;
                                         continue;
                                     }
                                 };
@@ -248,10 +399,14 @@ impl GitProvider {
                                 });
                             }
                         }
+                        replay.truncated |= truncated;
                     }
                 }
             }
         }
-        Ok(out)
+        Ok(EventContexts {
+            contexts: out,
+            truncated: replay.truncated,
+        })
     }
 }

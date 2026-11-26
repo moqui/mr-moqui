@@ -837,7 +837,14 @@ impl GitProvider {
         // branches, then tags
         if git_eca::listening(GitEvent::Commit, source) {
             let limit = max_commits();
-            let (walked, truncated) = commits_by_ref(store, update, &made, &branch_ref, limit);
+            let (walked, truncated) = commits_by_ref(update, &made, &branch_ref, limit, &mut |new, hidden, room| {
+                let commits = revwalk::new_commits(store, &[new], hidden)?;
+                let more = commits.len() > room;
+                Ok((
+                    commits.into_iter().rev().take(room).map(|commit| commit.id).collect(),
+                    more,
+                ))
+            });
             if truncated {
                 tracing::warn!(
                     repository = %repository_id,
@@ -853,7 +860,15 @@ impl GitProvider {
                     }
                 };
                 for commit in commits {
-                    let details = ops::commit_details(store, &commit)?;
+                    // a commit that cannot be read is that commit's error; the other events still run
+                    let details = match ops::commit_details(store, &commit) {
+                        Ok(details) => details,
+                        Err(err) => {
+                            tracing::error!(repository = %repository_id, "commit {commit} of {}: {err}", reference.name);
+                            errors.push(format!("{}: commit {commit}: {err}", reference.name));
+                            continue;
+                        }
+                    };
                     run(
                         event_key(
                             GitEvent::Commit,
@@ -878,6 +893,15 @@ impl GitProvider {
                 .filter(|reference| reference.name.starts_with("refs/tags/") && reference.old.is_none())
             {
                 let Some(new) = reference.new else { continue };
+                // a tag that cannot be read is that tag's error; the other events still run
+                let tag = match tag_event_value(store, &reference.name, &new) {
+                    Ok(tag) => tag,
+                    Err(err) => {
+                        tracing::error!(repository = %repository_id, "tag {}: {err}", reference.name);
+                        errors.push(format!("{}: {err}", reference.name));
+                        continue;
+                    }
+                };
                 run(
                     event_key(
                         GitEvent::Tag,
@@ -887,7 +911,7 @@ impl GitProvider {
                         &branch_ref,
                     ),
                     vec![
-                        ("tag", tag_event_value(store, &reference.name, &new)?),
+                        ("tag", tag),
                         ("refName", Value::string(&reference.name)),
                         ("changeType", Value::string(&reference.change_type)),
                     ],
@@ -1006,15 +1030,19 @@ fn post_base(
 /// Each ref with the commits it brought, or why its walk failed.
 type CommitsByRef<'a> = Vec<(&'a RefUpdate, Result<Vec<ObjectId>, String>)>;
 
+/// How [`commits_by_ref`] walks one ref: the commits its new commit reaches and the hidden ones do not, oldest first,
+/// at most `room` of them, and whether there are more.
+type CommitWalk<'w> = dyn FnMut(ObjectId, &[ObjectId], usize) -> Result<(Vec<ObjectId>, bool), Error> + 'w;
+
 /// The commits new to the repository that `update` brought, each once, with the ref it came on: the default branch
 /// first, then the other branches, then tags, oldest first, at most `limit` in all (and whether there were more); a ref
-/// whose walk failed has why.
+/// whose walk failed has why. `walk` walks one ref: the events' full walk, or a replay's bounded one ([`context`]).
 fn commits_by_ref<'a>(
-    store: &dyn GitStore,
     update: &EntityValue,
     made: &'a [RefUpdate],
     branch_ref: &str,
     limit: usize,
+    walk: &mut CommitWalk<'_>,
 ) -> (CommitsByRef<'a>, bool) {
     let mut hidden: Vec<ObjectId> = text(update.get("priorTips"))
         .unwrap_or_default()
@@ -1037,19 +1065,15 @@ fn commits_by_ref<'a>(
         if count >= limit {
             break;
         }
-        let commits = match revwalk::new_commits(store, &[new], &hidden) {
-            Ok(commits) => commits,
+        let (ids, more) = match walk(new, &hidden, limit - count) {
+            Ok(walked) => walked,
             Err(err) => {
                 out.push((reference, Err(format!("{}: {err}", reference.name))));
                 continue;
             }
         };
         hidden.push(new);
-        let mut ids: Vec<ObjectId> = commits.into_iter().rev().map(|commit| commit.id).collect();
-        if count + ids.len() > limit {
-            truncated = true;
-            ids.truncate(limit - count);
-        }
+        truncated |= more;
         count += ids.len();
         out.push((reference, Ok(ids)));
     }

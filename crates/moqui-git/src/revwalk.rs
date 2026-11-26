@@ -308,6 +308,32 @@ pub(crate) fn new_commits(
 
 /// Whether `ancestor` is `descendant` or reachable from it: a ref moving from `ancestor` to `descendant` is a
 /// fast-forward.
+/// [`new_commits`] stopping after `max` commits, newest first, and whether there are more: a bounded walk, for a replay
+/// of a change's events (`events::context`). It reads with [`Walk::next`], so a commit dated older than a descendant of
+/// it that a hidden tip also reaches may be listed, where the full walk ([`Walk::limited`]) leaves it out.
+pub(crate) fn new_commits_at_most(
+    store: &dyn GitStore,
+    tips: &[ObjectId],
+    hidden: &[ObjectId],
+    max: usize,
+) -> Result<(Vec<CommitInfo>, bool), Error> {
+    let mut walk = Walk::new(store);
+    for tip in hidden {
+        walk.push(*tip, true)?;
+    }
+    for tip in tips {
+        walk.push(*tip, false)?;
+    }
+    let mut out = Vec::new();
+    while let Some(commit) = walk.next()? {
+        if out.len() >= max {
+            return Ok((out, true));
+        }
+        out.push(commit);
+    }
+    Ok((out, false))
+}
+
 pub(crate) fn is_ancestor(store: &dyn GitStore, ancestor: &ObjectId, descendant: &ObjectId) -> Result<bool, Error> {
     if ancestor == descendant {
         return Ok(true);
