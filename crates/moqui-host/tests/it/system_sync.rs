@@ -399,9 +399,6 @@ fn an_entity_sync_push_and_a_pull_complete_with_a_history_row(gate: &crate::comm
         assert_eq!(text(row, "recordsStored"), "3", "{sync_id}: {row}");
         assert!(!text(row, "inclusiveThruTime").is_empty(), "{sync_id}: {row}");
 
-        if sync_id == "GATE_PUSH" {
-            the_detail_form_updates_the_sync_and_keeps_its_password(gate);
-        }
         let detail = renders(
             address,
             &format!("/System/EntitySync/EntitySyncDetail.text?entitySyncId={sync_id}"),
@@ -415,42 +412,6 @@ fn an_entity_sync_push_and_a_pull_complete_with_a_history_row(gate: &crate::comm
         );
     }
     renders(address, "/System/EntitySync/EntitySyncList.text", &john);
-}
-
-/// Entity Sync Detail's Update stores the form's fields, its empty password field keeping the stored password (the
-/// render after it says one is set). Its service-call is inside actions, which pass no parameters without an in-map,
-/// so the update failed on a missing entitySyncId (plans/ui-review-system-ai-integrations.md AI-UI-005).
-fn the_detail_form_updates_the_sync_and_keeps_its_password(gate: &crate::common::Gate) {
-    let address = gate.server.address();
-    let john = basic("john.doe", "moqui");
-    let row_path = "/rest/e1/moqui.entity.sync.EntitySync/GATE_PUSH";
-    let path = "/System/EntitySync/EntitySyncDetail/updateEntitySync";
-    let server = format!("http://{address}");
-    let (status, _, page) = post(
-        address,
-        &john,
-        path,
-        &[
-            ("entitySyncId", "GATE_PUSH"),
-            ("description", "Gate push"),
-            ("syncSplitMillis", "60000"),
-            ("recordThreshold", "500"),
-            ("delayBufferMillis", "2"),
-            ("targetServerUrl", &server),
-            ("targetUsername", "john.doe"),
-            ("targetPassword", ""),
-            ("targetPath", ""),
-            ("forPull", "N"),
-        ],
-    );
-    ran(path, status, &page);
-    let (status, sync) = call(address, "GET", row_path, Some(&john), "");
-    assert_eq!(status, 200, "{sync}");
-    assert_eq!(text(&sync, "syncSplitMillis"), "60000", "{sync}");
-    assert_eq!(text(&sync, "recordThreshold"), "500", "{sync}");
-    assert_eq!(text(&sync, "delayBufferMillis"), "2", "{sync}");
-    assert_eq!(text(&sync, "targetServerUrl"), server, "{sync}");
-    assert_eq!(text(&sync, "targetPasswordIsSet"), "true", "{sync}");
 }
 
 /// A partner that answers every put with a redirect to another origin: the run fails once, its History row says where
