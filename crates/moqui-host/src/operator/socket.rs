@@ -53,6 +53,10 @@ static SERVED: LazyLock<Mutex<HashMap<PathBuf, PathBuf>>> = LazyLock::new(Mutex:
 /// embedded Postgres, which an exit then would leave running.
 static SERVING: AtomicBool = AtomicBool::new(false);
 
+/// A signal came while [`SERVING`] was set: the process is to stop ([`stop_asked`]), and a second signal ends it at
+/// once.
+static STOP_ASKED: AtomicBool = AtomicBool::new(false);
+
 /// Say whether the HTTP listener serves: true when it opens, false when a boot begins.
 pub(crate) fn set_serving(serving: bool) {
     SERVING.store(serving, Ordering::SeqCst);
@@ -261,7 +265,9 @@ fn run(listener: UnixListener, keeper: Arc<Keeper>, settings: Settings, shown: &
 
 /// A signal while sealed ends the wait of the gate, so the process stops instead of ignoring it. Once unsealed and
 /// before the HTTP listener serves (opening the database, loading data), nothing else answers a signal, so it ends
-/// the process here. While serving, the listener's own handler stops the server.
+/// the process here. Once the listener has served, the first signal is the shutdown's (the listener's own handler
+/// stops the server, or a restart's or seal's shutdown is under way) and marks the stop asked, which the server reads
+/// before it runs again or waits sealed; a second one ends the process at once ([`on_signal`]).
 async fn abandon_on_signal(keeper: Arc<Keeper>) {
     let Ok(mut term) = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) else {
         return;
@@ -274,14 +280,60 @@ async fn abandon_on_signal(keeper: Arc<Keeper>) {
             _ = term.recv() => 143,
             _ = interrupt.recv() => 130,
         };
-        if !keeper.is_unsealed() {
-            tracing::warn!("Stopping while sealed");
-            keeper.abandon();
-        } else if !SERVING.load(Ordering::SeqCst) {
-            tracing::warn!("Stopping on a signal before the listener opened");
-            std::process::exit(code);
+        let serving = SERVING.load(Ordering::SeqCst);
+        // the first signal while serving marks the stop asked; a later one finds it marked
+        let asked = serving && STOP_ASKED.swap(true, Ordering::SeqCst);
+        match on_signal(keeper.is_unsealed(), serving, asked) {
+            OnSignal::Abandon => {
+                tracing::warn!("Stopping while sealed");
+                keeper.abandon();
+            }
+            OnSignal::Exit => {
+                tracing::warn!("Stopping on a signal before the listener opened");
+                std::process::exit(code);
+            }
+            OnSignal::Leave => {}
+            OnSignal::ExitSecond => {
+                tracing::warn!("Stopping at once on a second signal: the shutdown is cut short");
+                std::process::exit(code);
+            }
         }
     }
+}
+
+/// What a SIGTERM or SIGINT does, by the process's state ([`on_signal`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum OnSignal {
+    /// Sealed: the gate's wait gives up.
+    Abandon,
+    /// Unsealed and booting: nothing else answers a signal yet, so the process ends.
+    Exit,
+    /// The listener has served: the first signal is the shutdown's (the listener's handler takes it, or the shutdown
+    /// of a restart or a seal is under way), and marks the stop asked, so the process ends after it rather than run
+    /// again or wait sealed.
+    Leave,
+    /// A second signal while the shutdown runs: the process ends at once.
+    ExitSecond,
+}
+
+/// The decision of [`abandon_on_signal`]: `unsealed`, whether the listener `serving` has served since this boot began,
+/// and whether a stop was `asked` by an earlier signal while it did.
+pub(crate) fn on_signal(unsealed: bool, serving: bool, asked: bool) -> OnSignal {
+    if !unsealed {
+        OnSignal::Abandon
+    } else if !serving {
+        OnSignal::Exit
+    } else if asked {
+        OnSignal::ExitSecond
+    } else {
+        OnSignal::Leave
+    }
+}
+
+/// Whether a signal came while the listener served or the server shut down after it: the process stops, rather than
+/// run again (a restart) or boot again sealed (a seal).
+pub(crate) fn stop_asked() -> bool {
+    STOP_ASKED.load(Ordering::SeqCst)
 }
 
 /// One connection: its peer's access, then its requests in turn.

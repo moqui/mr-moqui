@@ -16,7 +16,8 @@
 //! binary runs) in a child process on a seeded dev runtime, asked by an administrator's `restart#Server` (System › Conf ›
 //! Changes, Restart Now), shuts down and runs itself again with the same arguments. On Unix the process is replaced in
 //! place (`exec`), so its id stays and `./moq run` keeps it: the new image starts from `main` again, boots the runtime
-//! again and answers on the same port.
+//! again and answers on the same port. A signal during the restart's shutdown stops the process instead. Either way no
+//! postmaster outlives it.
 
 #![cfg(all(unix, feature = "embedded-postgres", feature = "axum"))]
 
@@ -147,19 +148,27 @@ impl Drop for NoPostmaster {
     }
 }
 
-/// An administrator's Restart Now on a dev instance: the server answers, stops, and comes back as a new image of the
-/// same process (the binary run again), which boots and answers on its port.
-#[test]
-fn a_restart_runs_the_server_again() {
-    if !crate::common::own_process() {
-        return;
-    }
-    let seeded = crate::common::seeded("restart", "");
+/// The binary's server running in its child process. Fields drop in order: the child stops, then any postmaster left
+/// is stopped, then the runtime goes.
+struct Running {
+    child: Stop,
+    _no_postmaster: NoPostmaster,
+    _seeded: crate::common::Seeded,
+    lines: Receiver<String>,
+    seen: Vec<String>,
+    data_dir: PathBuf,
+    address: SocketAddr,
+    pid: u32,
+}
+
+/// A seeded dev runtime served by the binary's server in a child process, booted and listening.
+fn start(label: &str) -> Running {
+    let seeded = crate::common::seeded(label, "");
     // the binary's server reads its cluster in the runtime
     std::fs::create_dir_all(seeded.runtime.join("db")).unwrap();
     std::os::unix::fs::symlink(&seeded.cluster_dir, seeded.runtime.join("db/embedded")).unwrap();
     let data_dir = seeded.cluster_dir.join("data");
-    let _no_postmaster = NoPostmaster {
+    let no_postmaster = NoPostmaster {
         data_dir: data_dir.clone(),
         install: moqui_host::db::embedded::shared_install_dir(&seeded.runtime, &seeded.cluster_dir),
     };
@@ -189,18 +198,28 @@ fn a_restart_runs_the_server_again() {
     let mut child = Stop { child, log: log_path };
     let lines = lines_of(&mut child.child);
     let mut seen = Vec::new();
-    let started = Instant::now();
-
-    let first: u32 = next_with(&lines, STARTED, &mut seen).parse().unwrap();
-    assert_eq!(first, child.child.id());
+    let pid: u32 = next_with(&lines, STARTED, &mut seen).parse().unwrap();
+    assert_eq!(pid, child.child.id());
     let listening = next_with(&lines, "Listening on ", &mut seen);
     let address: SocketAddr = listening
         .parse()
         .unwrap_or_else(|_| panic!("the address in {listening}"));
     assert_eq!(address.port(), port);
-    let booted = started.elapsed();
+    Running {
+        child,
+        _no_postmaster: no_postmaster,
+        _seeded: seeded,
+        lines,
+        seen,
+        data_dir,
+        address,
+        pid,
+    }
+}
 
-    // Restart Now, as System › Conf › Changes posts it, by an administrator with a session
+/// Restart Now, as System › Conf › Changes posts it, by an administrator with a session; the transition's answer as
+/// JSON, with its messages, so a refusal fails here at once.
+fn restart_now(address: SocketAddr) {
     let cookie = sign_in(address, "john.doe", "moqui");
     let (status, _, page) = exchange(
         address,
@@ -216,7 +235,6 @@ fn a_restart_runs_the_server_again() {
             &[
                 ("Cookie", &cookie),
                 ("Content-Type", "application/x-www-form-urlencoded"),
-                // the transition's answer as JSON, with its messages, so a refusal shows here at once
                 ("Accept", "application/json"),
                 ("Origin", "http://localhost"),
             ],
@@ -232,26 +250,10 @@ fn a_restart_runs_the_server_again() {
         .count();
     assert_eq!(errors, 0, "Restart Now was refused: {body}");
     assert!(body.contains("restarting"), "the restart's message: {body}");
+}
 
-    // the same process, a new image: it starts from main again, boots, and listens on its port
-    let again: u32 = next_with(&lines, STARTED, &mut seen).parse().unwrap();
-    assert_eq!(again, first, "exec keeps the process id");
-    assert!(
-        matches!(child.child.try_wait(), Ok(None)),
-        "the process did not end: it was replaced"
-    );
-    let listening = next_with(&lines, "Listening on ", &mut seen);
-    assert_eq!(listening.parse::<SocketAddr>().ok(), Some(address), "{seen:#?}");
-    let (status, _, text) = exchange(address, &http_request("GET", "/Login", &[], ""));
-    assert_eq!(status, 200, "the restarted server answers: {text}");
-    // the old session went with the old process's memory or stays in the database; either way a new sign-in works
-    let _ = sign_in(address, "john.doe", "moqui");
-    let restarted = started.elapsed();
-
-    // the new image owns the cluster: its stop stops the postmaster, which outlives no image of the process
-    let postmaster = postmaster_pid(&data_dir).expect("the restarted server's postmaster");
-    let log = child.log.clone();
-    drop(child);
+/// The postmaster `postmaster` is gone within a few seconds of the server's process: none outlives it.
+fn assert_gone(postmaster: u32, log: &Path) {
     let deadline = Instant::now() + Duration::from_secs(10);
     while moqui_host::db::embedded::process_live(postmaster) && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(50));
@@ -259,7 +261,76 @@ fn a_restart_runs_the_server_again() {
     assert!(
         !moqui_host::db::embedded::process_live(postmaster),
         "postmaster {postmaster} outlived the server's process\n{}",
-        log_tail(&log)
+        log_tail(log)
     );
+}
+
+/// An administrator's Restart Now on a dev instance: the server answers, stops, and comes back as a new image of the
+/// same process (the binary run again), which boots and answers on its port; the new image owns the cluster, so its
+/// stop stops the postmaster.
+#[test]
+fn a_restart_runs_the_server_again() {
+    if !crate::common::own_process() {
+        return;
+    }
+    let started = Instant::now();
+    let mut server = start("restart");
+    let booted = started.elapsed();
+    restart_now(server.address);
+
+    // the same process, a new image: it starts from main again, boots, and listens on its port
+    let again: u32 = next_with(&server.lines, STARTED, &mut server.seen).parse().unwrap();
+    assert_eq!(again, server.pid, "exec keeps the process id");
+    assert!(
+        matches!(server.child.child.try_wait(), Ok(None)),
+        "the process did not end: it was replaced"
+    );
+    let listening = next_with(&server.lines, "Listening on ", &mut server.seen);
+    assert_eq!(
+        listening.parse::<SocketAddr>().ok(),
+        Some(server.address),
+        "{:#?}",
+        server.seen
+    );
+    let (status, _, text) = exchange(server.address, &http_request("GET", "/Login", &[], ""));
+    assert_eq!(status, 200, "the restarted server answers: {text}");
+    // the old session went with the old process's memory or stays in the database; either way a new sign-in works
+    let _ = sign_in(server.address, "john.doe", "moqui");
+    let restarted = started.elapsed();
+
+    let postmaster = postmaster_pid(&server.data_dir).expect("the restarted server's postmaster");
+    let log = server.child.log.clone();
+    drop(server);
+    assert_gone(postmaster, &log);
     println!("server_restart: first boot {booted:?}, restarted and answering after {restarted:?}");
+}
+
+/// A SIGTERM while a restart shuts the server down asks the process to stop: it ends, and does not run again, and its
+/// postmaster stops with it. A second SIGTERM would cut the shutdown short; one is the shutdown's.
+#[test]
+fn a_signal_during_a_restart_stops_the_server() {
+    if !crate::common::own_process() {
+        return;
+    }
+    let mut server = start("restart-signal");
+    let postmaster = postmaster_pid(&server.data_dir).expect("the server's postmaster");
+    restart_now(server.address);
+    // the restart's shutdown begins just after the answer; the signal comes in it or just before it
+    let _ = Command::new("kill").args(["-TERM", &server.pid.to_string()]).status();
+    let deadline = Instant::now() + WAIT;
+    let status = loop {
+        if let Some(status) = server.child.child.try_wait().unwrap() {
+            break status;
+        }
+        assert!(Instant::now() < deadline, "the server did not stop: {:#?}", server.seen);
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert!(status.success(), "{status:?}\n{}", log_tail(&server.child.log));
+    // no new image started (the reader ends with the process's output)
+    while let Ok(line) = server.lines.recv_timeout(Duration::from_secs(5)) {
+        server.seen.push(line);
+    }
+    let images = server.seen.iter().filter(|line| line.contains(STARTED)).count();
+    assert_eq!(images, 1, "the process ran again: {:#?}", server.seen);
+    assert_gone(postmaster, &server.child.log);
 }

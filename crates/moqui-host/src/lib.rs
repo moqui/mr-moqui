@@ -282,6 +282,12 @@ fn run_server(detached: bool) -> Result<(), moqui_lib::error::Error> {
                 println!("Listening on {}", server.address());
             }
             server.wait();
+            // a signal while a restart's or a seal's shutdown ran asked the process to stop: it does, rather than boot
+            // again as if nothing had been asked
+            if stop_asked() {
+                tracing::warn!("Stopping: a signal came while the server shut down");
+                return Ok(());
+            }
             if moqui_core::devtools::restart::restart_requested() {
                 return run_again();
             }
@@ -298,6 +304,20 @@ fn run_server(detached: bool) -> Result<(), moqui_lib::error::Error> {
     {
         let _ = detached;
         Err(moqui_lib::error::Error::new("http server is not in this build"))
+    }
+}
+
+/// Whether a signal asked this process to stop while its server shut down ([`operator`]'s signal handler): then it
+/// neither runs again nor waits sealed. Never on a host with no Unix signals.
+#[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
+fn stop_asked() -> bool {
+    #[cfg(unix)]
+    {
+        operator::stop_asked()
+    }
+    #[cfg(not(unix))]
+    {
+        false
     }
 }
 
@@ -1813,6 +1833,12 @@ fn serve_thread(
         tracing::warn!("Sealed while the server started: the listener stays closed");
         return Ok(());
     }
+    // the listener's signal streams, registered before it says it serves: from then on the operator socket leaves the
+    // first signal to it, so one that came before its shutdown task ran would otherwise be lost
+    let termination = {
+        let _entered = runtime.enter();
+        http::Termination::listen()
+    };
     #[cfg(unix)]
     operator::set_serving(true);
     let listened = runtime.block_on(http::listen(
@@ -1822,6 +1848,7 @@ fn serve_thread(
         cluster_address,
         posts,
         stop,
+        termination,
         sender,
     ));
     // still serving for the operator socket's signal handler, which must not end the process now: the signal that
