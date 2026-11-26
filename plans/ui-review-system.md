@@ -745,7 +745,7 @@ The operator opened the seven added Fleet surfaces, including the seeded Kinds a
 
 Local evidence is under `plans/ui-refinement-evidence/closeout-d10e22f/`.
 
-Follow-up, 2026-11-25 (with DASH-UI-005): Fleet's Last deploy showed epoch milliseconds before its status; it is now a date in the viewer's zone, with the zone named once. HostedInstances checks the shown date. Not rechecked live.
+Follow-up, 2026-11-25 (with DASH-UI-005): a probe spec render showed Fleet's Last deploy as epoch milliseconds before its status; it is now a date in the viewer's zone, with the zone named once. HostedInstances checks the shown date. Not rechecked live.
 
 #### Remaining branches
 

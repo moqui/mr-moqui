@@ -237,17 +237,19 @@ feature("the fleet shows an instance's last deploy as a date in the viewer's zon
         make("moqui.server.instance.InstanceAction", { instanceActionId: "SPEC_HI_FLEET_DEPLOY", appInstanceId: "SPEC_HI_FLEET",
             actionEnumId: "IatDeploy", statusEnumId: "IasDone", startDate: String(started) })
         ec.artifactExecution.enableAuthz()
-        ec.user.internalLoginUser("spec.hi.holder")
-        const res = ec.screen.makeTest().rootScreen("component://tools/screen/System.xml").renderMode("html").render("Instances/Fleet", {}, null)
-        const out = { errors: res.errorMessages.join(" "), output: String(res.output || ""), millis: String(started),
-            shown: ec.l10n.format(new Date(started), "yyyy-MM-dd HH:mm:ss"), zone: "Times shown in " + ec.user.timeZone + "." }
-        ec.message.clearErrors()
-        ec.user.logoutUser()
-        ec.artifactExecution.disableAuthz()
-        ec.entity.find("moqui.server.instance.InstanceAction").condition("instanceActionId", "SPEC_HI_FLEET_DEPLOY").deleteAll()
-        ec.entity.find("moqui.server.instance.AppInstance").condition("appInstanceId", "SPEC_HI_FLEET").deleteAll()
-        ec.artifactExecution.enableAuthz()
-        return out
+        try {
+            ec.user.internalLoginUser("spec.hi.holder")
+            const res = ec.screen.makeTest().rootScreen("component://tools/screen/System.xml").renderMode("html").render("Instances/Fleet", {}, null)
+            return { errors: res.errorMessages.join(" "), output: String(res.output || ""), millis: String(started),
+                shown: ec.l10n.format(new Date(started), "yyyy-MM-dd HH:mm:ss"), zone: "Times shown in " + ec.user.timeZone + "." }
+        } finally {
+            ec.message.clearErrors()
+            ec.user.logoutUser()
+            ec.artifactExecution.disableAuthz()
+            ec.entity.find("moqui.server.instance.InstanceAction").condition("instanceActionId", "SPEC_HI_FLEET_DEPLOY").deleteAll()
+            ec.entity.find("moqui.server.instance.AppInstance").condition("appInstanceId", "SPEC_HI_FLEET").deleteAll()
+            ec.artifactExecution.enableAuthz()
+        }
     },
     then({ errors, output, millis, shown, zone }) {
         errors == ""
