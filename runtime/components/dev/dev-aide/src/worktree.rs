@@ -417,7 +417,9 @@ fn tell_kept(root: &Root, main: &Root, changes: usize) {
 /// `end#ConversationWorktrees`: the worktrees of a conversation that ended (`AgcArchived`, or deleted), after the write
 /// that ended it commits (`DevAide.eecas.xml`): each clean one removed as `remove#Worktree` removes it (its branch
 /// stays), each with uncommitted changes kept and its user told once. A conversation that is there and has not ended
-/// ends nothing, so a call for a live one does nothing. One worktree that fails is logged, and the others go on.
+/// ends nothing, and its worktrees' end notice is cleared (restored, a later end tells again). While a run of the
+/// conversation is still at work its worktrees stay and it is asked again later. One worktree that fails is logged,
+/// and the others go on.
 fn end_conversation_worktrees(
     ec: &ExecutionContext,
     _service: &ServiceInfo<'_>,
@@ -436,16 +438,36 @@ fn end_conversation_worktrees(
         .eq("conversationId", Value::string(&conversation))
         .one()?
         .is_none_or(|row| row.get("statusId").map(moqui_lib::object::to_plain_string).as_deref() == Some(ARCHIVED));
-    if !ended {
-        return Ok(out);
-    }
-    let mut removed = Vec::new();
-    let mut kept = Vec::new();
     let worktrees: Vec<&Root> = context
         .roots
         .iter()
         .filter(|root| root.worktree_of.is_some() && root.conversation_id.as_deref() == Some(conversation.as_str()))
         .collect();
+    if !ended {
+        // restored: a later end tells its user again
+        for root in &worktrees {
+            if let Some(mut row) = crate::roots::root_row(&context.facade, &root.path) {
+                moqui_lib::sync::lock(told()).remove(&root.path.display().to_string());
+                if row
+                    .get("worktreeEndedDate")
+                    .is_some_and(|date| !moqui_lib::object::is_empty(date))
+                {
+                    row.set("worktreeEndedDate", Value::Null);
+                    row.update(&context.facade)?;
+                }
+            }
+        }
+        return Ok(out);
+    }
+    // a run still at work in the session keeps its worktree until it ends: asked again later
+    if !worktrees.is_empty() && run_active(&context.facade, &conversation)? {
+        let attempt = text(parameters, "attempt").parse::<u32>().unwrap_or(0);
+        retry_later(ec, &conversation, attempt);
+        out.insert("waitingForRun".into(), Value::Bool(true));
+        return Ok(out);
+    }
+    let mut removed = Vec::new();
+    let mut kept = Vec::new();
     for root in worktrees {
         match end_one(&context, root) {
             Ok(true) => removed.push(Value::string(&root.id)),
@@ -464,6 +486,66 @@ fn end_conversation_worktrees(
     Ok(out)
 }
 
+/// The worktrees whose user this server told of their end, by location: what the stored `worktreeEndedDate` says,
+/// before its write commits.
+fn told() -> &'static std::sync::Mutex<std::collections::BTreeSet<String>> {
+    static TOLD: std::sync::OnceLock<std::sync::Mutex<std::collections::BTreeSet<String>>> = std::sync::OnceLock::new();
+    TOLD.get_or_init(Default::default)
+}
+
+/// The states of a run still at work (`AgentRun` status: submitted, working, or paused for its user).
+const ACTIVE_RUN: [&str; 4] = ["AgrSubmitted", "AgrWorking", "AgrInputRequired", "AgrAuthRequired"];
+/// How long to wait before asking again for a conversation whose run is still at work, and how many times.
+const RETRY_SECONDS: u64 = 60;
+const RETRIES: u32 = 60;
+
+/// Whether a run of `conversation` is still at work.
+fn run_active(facade: &moqui_core::entity::EntityFacade, conversation: &str) -> Result<bool, LibError> {
+    let active = facade
+        .find("moqui.agent.AgentRun")?
+        .eq("conversationId", Value::string(conversation))
+        .condition(moqui_core::entity::Condition::is_in(
+            "statusId",
+            ACTIVE_RUN.iter().map(|status| Value::string(*status)).collect(),
+        ))
+        .count()?;
+    Ok(active > 0)
+}
+
+/// Ask `end#ConversationWorktrees` again for `conversation` in [`RETRY_SECONDS`], on a thread of its own, at most
+/// [`RETRIES`] times; after that the worktree stays, as the Sessions tab shows it.
+fn retry_later(ec: &ExecutionContext, conversation: &str, attempt: u32) {
+    if attempt >= RETRIES {
+        tracing::warn!("Dev AIDE: the run of ended conversation {conversation} is still at work: its worktree stays");
+        return;
+    }
+    let factory = std::sync::Arc::clone(ec.factory());
+    let id = conversation.to_string();
+    let spawned = std::thread::Builder::new()
+        .name("dev-aide-worktree-end".into())
+        .spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(RETRY_SECONDS));
+            let context = factory.new_context();
+            let _entered = context.enter();
+            let _authz = context.disable_authz();
+            let parameters: Parameters = [
+                ("conversationId".to_string(), Value::string(&id)),
+                ("attempt".to_string(), Value::string((attempt + 1).to_string())),
+            ]
+            .into_iter()
+            .collect();
+            if let Err(err) = moqui_core::service::sync(
+                "org.moqui.devaide.WorktreeServices.end#ConversationWorktrees",
+                &parameters,
+            ) {
+                tracing::error!("Dev AIDE: the worktrees of conversation {id} were not ended: {err}");
+            }
+        });
+    if let Err(err) = spawned {
+        tracing::error!("Dev AIDE: the worktrees of conversation {conversation} will not be asked again: {err}");
+    }
+}
+
 /// End one worktree of a conversation that ended: whether it was removed.
 fn end_one(context: &Context, root: &Root) -> Result<bool, LibError> {
     let main_id = root.worktree_of.as_deref().unwrap_or_default();
@@ -474,11 +556,11 @@ fn end_one(context: &Context, root: &Root) -> Result<bool, LibError> {
     }
     let porcelain = context.git().read(&root.path, &["status", "--porcelain"]).ok();
     let row = crate::roots::root_row(&context.facade, &root.path);
-    let told = row.as_ref().is_some_and(|row| {
+    let already_told = row.as_ref().is_some_and(|row| {
         row.get("worktreeEndedDate")
             .is_some_and(|date| !moqui_lib::object::is_empty(date))
     });
-    match ending(porcelain.as_deref(), told) {
+    match ending(porcelain.as_deref(), already_told) {
         Ending::Remove => {
             let location = root.path.display().to_string();
             context
@@ -497,7 +579,9 @@ fn end_one(context: &Context, root: &Root) -> Result<bool, LibError> {
             Ok(true)
         }
         Ending::Keep { tell } => {
-            if tell {
+            // two ends heard at once (the rule's and one asked again) tell its user once: the first here marks it
+            let marked = tell && moqui_lib::sync::lock(told()).insert(root.path.display().to_string());
+            if marked {
                 if let Some(mut row) = row {
                     row.set("worktreeEndedDate", moqui_core::user::now_value());
                     row.update(&context.facade)?;

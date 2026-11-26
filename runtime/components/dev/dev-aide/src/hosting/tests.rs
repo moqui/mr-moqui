@@ -612,7 +612,8 @@ fn a_sign_in_keeps_a_key_for_each_service() {
             tasks: Some("t".into()),
             gateway: Some("w".into()),
             app: None,
-            end_account_key: true
+            end_account_key: true,
+            orphans: Vec::new(),
         }
     );
     let smithy = sign_in_keys("acct", made(), true);
@@ -623,6 +624,13 @@ fn a_sign_in_keeps_a_key_for_each_service() {
     assert_eq!(older.token, "acct");
     assert!(older.tasks.is_none() && older.app.is_none() && !older.end_account_key);
     assert_eq!(older.gateway.as_deref(), Some("w"));
+    assert!(older.orphans.is_empty());
+    // one of the two made: it is ended, and the account's key stays the token
+    let half = sign_in_keys("acct", [Some("g".into()), None, None], false);
+    assert_eq!(
+        (half.token.as_str(), half.orphans.as_slice()),
+        ("acct", ["g".to_string()].as_slice())
+    );
 }
 
 /// "Open on the server" takes a repository's page templates from the offer (the application's for a repository it
@@ -653,4 +661,14 @@ fn a_repositorys_pages_are_the_servers_own() {
     assert!(own["file"].is_null(), "{own}");
     assert_eq!(own["commit"], "https://team.example.com/c/{commitId}");
     assert!(repository_pages(&server, &json!({})).is_null());
+}
+
+/// A value put into a server's path as one part never names the part above it.
+#[test]
+fn a_path_part_of_dots_is_encoded() {
+    use super::client::query_text;
+    assert_eq!(query_text(".."), "%2E%2E");
+    assert_eq!(query_text("."), "%2E");
+    assert_eq!(query_text("a.b"), "a.b");
+    assert_eq!(query_text("a/b"), "a%2Fb");
 }

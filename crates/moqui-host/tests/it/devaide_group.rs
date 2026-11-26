@@ -594,6 +594,60 @@ fn a_dev_instance_connects_to_its_group_server_and_opens_merge_requests() {
         401,
         "the gateway key on my/tasks"
     );
+    // a key for one service signs in its own request alone: its response sets no session or token, and a cookie the
+    // client held, or one its response set, opens nothing by itself after it (a tasks key, the git key and a git access
+    // token; the gateway key's keyRevoke the same)
+    let access_token = "dev-aide-group-access-token-0123456789".to_string();
+    {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        let facade = factory.entity().unwrap();
+        let mut row = facade.make_value("moqui.security.UserLoginKey").unwrap();
+        row.set(
+            "loginKey",
+            Value::string(moqui_core::user::hash_login_key(&access_token).unwrap()),
+        );
+        row.set("userId", Value::string("EX_JOHN_DOE"));
+        row.set("description", Value::string("CI"));
+        row.set("scope", Value::string("git"));
+        row.set("fromDate", moqui_core::user::now_value());
+        row.set(
+            "thruDate",
+            moqui_core::user::stamp_value(moqui_core::user::now_millis() + 86_400_000),
+        );
+        row.create(&facade).unwrap();
+    }
+    let (_, first, _) = exchange(address, &http_request("GET", "/Login", &[], ""));
+    let brought = merge_cookies("", &first);
+    for (what, key, path) in [
+        ("the tasks key", tasks_key.as_str(), tasks_path),
+        ("the git key", app_key.as_str(), git_path),
+        ("a git access token", access_token.as_str(), git_path),
+    ] {
+        for held in ["", brought.as_str()] {
+            let mut headers = vec![("api_key", key)];
+            if !held.is_empty() {
+                headers.push(("Cookie", held));
+            }
+            let (got, answer, _) = exchange(address, &http_request("GET", path, &headers, ""));
+            assert_eq!(got, 200, "{what} on {path}");
+            assert!(header(&answer, "X-CSRF-Token").is_empty(), "{what}: no session token");
+            assert!(
+                header(&answer, "Set-Cookie").is_empty(),
+                "{what}: no session cookie: {answer:?}"
+            );
+            let jar = merge_cookies(held, &answer);
+            if jar.is_empty() {
+                continue;
+            }
+            let (later, _, _) = exchange(
+                address,
+                &http_request("GET", "/rest/s1/mantle/my/noticeCounts", &[("Cookie", &jar)], ""),
+            );
+            assert_eq!(later, 401, "{what}: the cookie after it is no session of the account");
+        }
+    }
     assert!(
         server["offer"]["git"]["httpsUrlTemplate"]
             .as_str()
@@ -1452,6 +1506,103 @@ fn a_dev_instance_connects_to_its_group_server_and_opens_merge_requests() {
         "john.doe",
         &format!("{WT}remove#Worktree"),
         &[("rootId", &two_id), ("discardChanges", "true")],
+    )
+    .unwrap();
+
+    // a session whose run is still at work keeps its worktree until the run ends; a session restored clears its notice,
+    // so a later end tells again
+    {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        let facade = factory.entity().unwrap();
+        let mut row = facade.make_value("moqui.agent.AgentConversation").unwrap();
+        row.set("conversationId", Value::string("CONV3"));
+        row.set("userId", Value::string("EX_JOHN_DOE"));
+        row.set("statusId", Value::string("AgcActive"));
+        row.create(&facade).unwrap();
+        let mut run = facade.make_value("moqui.agent.AgentRun").unwrap();
+        run.set("runId", Value::string("RUN3"));
+        run.set("conversationId", Value::string("CONV3"));
+        run.set("userId", Value::string("EX_JOHN_DOE"));
+        run.set("statusId", Value::string("AgrWorking"));
+        run.create(&facade).unwrap();
+    }
+    let three = call(
+        &factory,
+        "john.doe",
+        &format!("{WT}create#Worktree"),
+        &[("rootId", "my-site"), ("conversationId", "CONV3")],
+    )
+    .unwrap();
+    let (three_id, three_dir) = (text(&three, "rootId"), text(&three, "location"));
+    call(
+        &factory,
+        "john.doe",
+        "org.moqui.devaide.WorkspaceServices.save#File",
+        &[("rootId", &three_id), ("path", "NOTE.md"), ("text", "three\n")],
+    )
+    .unwrap();
+    end("update", &[("conversationId", "CONV3"), ("statusId", "AgcArchived")]);
+    let waiting = call(
+        &factory,
+        "john.doe",
+        &format!("{WT}end#ConversationWorktrees"),
+        &[("conversationId", "CONV3")],
+    )
+    .unwrap();
+    assert_eq!(waiting.get("waitingForRun"), Some(&Value::Bool(true)), "{waiting:?}");
+    assert!(
+        Path::new(&three_dir).join("NOTE.md").is_file() && told() == 1,
+        "kept while its run works"
+    );
+    {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        let facade = factory.entity().unwrap();
+        facade
+            .find("moqui.agent.AgentRun")
+            .unwrap()
+            .eq("runId", Value::string("RUN3"))
+            .update_all([("statusId".to_string(), Value::string("AgrCompleted"))])
+            .unwrap();
+    }
+    call(
+        &factory,
+        "john.doe",
+        &format!("{WT}end#ConversationWorktrees"),
+        &[("conversationId", "CONV3")],
+    )
+    .unwrap();
+    // the rule's end, heard after the run ended, and this one tell its user once between them
+    assert!(
+        waited(&|| told() == 2),
+        "its run ended: kept with its changes, its user told"
+    );
+    let ended_date = || {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        factory
+            .entity()
+            .unwrap()
+            .find("moqui.dev.DevAideRoot")
+            .unwrap()
+            .eq("location", Value::string(&three_dir))
+            .one()
+            .unwrap()
+            .and_then(|row| row.get("worktreeEndedDate").cloned())
+            .is_some_and(|date| !moqui_lib::object::is_empty(&date))
+    };
+    assert!(waited(&ended_date), "marked told");
+    end("update", &[("conversationId", "CONV3"), ("statusId", "AgcActive")]);
+    assert!(waited(&|| !ended_date()), "restored, its notice is cleared");
+    call(
+        &factory,
+        "john.doe",
+        &format!("{WT}remove#Worktree"),
+        &[("rootId", &three_id), ("discardChanges", "true")],
     )
     .unwrap();
 

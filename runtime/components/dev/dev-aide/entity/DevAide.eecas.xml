@@ -15,11 +15,14 @@ along with this software (see the LICENSE.md file). If not, see
 <eecas xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-entity-eca.xsd">
     <!-- An Assist conversation that ends (archived) or is deleted ends its session's worktrees (plans/design-dev-aide.md
         21.8): once the write commits, a clean one is removed and one with uncommitted changes is kept, its user told
-        (WorktreeServices.end#ConversationWorktrees). The condition is narrow: an update that does not write the archived
-        status registers nothing. A write with no transaction runs it at once, on its own thread. One that cannot be
-        registered is logged, and the conversation's write goes on. -->
-    <eeca id="DevAideConversationWorktrees" entity="moqui.agent.AgentConversation" on-update="true" on-delete="true">
-        <condition><expression>eecaOperation == 'delete' || statusId == 'AgcArchived'</expression></condition>
+        (WorktreeServices.end#ConversationWorktrees); one restored from archived clears that notice. The condition is
+        narrow: only a delete, or an update that writes a status into or out of AgcArchived (the stored row read before
+        the write, get-original-value), registers it. A write with no transaction runs it at once, on its own thread.
+        One that cannot be registered is logged, and the conversation's write goes on. -->
+    <eeca id="DevAideConversationWorktrees" entity="moqui.agent.AgentConversation" on-update="true" on-delete="true"
+            get-original-value="true">
+        <condition><expression>eecaOperation == 'delete' || (statusId != null &amp;&amp; originalValue != null
+            &amp;&amp; (statusId == 'AgcArchived') != (originalValue.statusId == 'AgcArchived'))</expression></condition>
         <actions><script><![CDATA[
             const name = 'org.moqui.devaide.WorktreeServices.end#ConversationWorktrees'
             try {

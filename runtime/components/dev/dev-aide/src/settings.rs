@@ -45,6 +45,11 @@ pub struct Settings {
     pub roots: Vec<(PathBuf, String)>,
     /// Paths left out of every root, as written (`runtime/db/**`).
     pub excludes: Vec<String>,
+    /// A run in a job's image (local_run.rs): its memory, processes, time and how many a user may have going.
+    pub local_run_memory_mb: i64,
+    pub local_run_pids: i64,
+    pub local_run_timeout_minutes: u64,
+    pub local_run_limit: usize,
 }
 
 impl Settings {
@@ -74,6 +79,10 @@ impl Settings {
             max_edit_bytes: attr("max-edit-bytes").parse().unwrap_or(2_097_152),
             roots: Vec::new(),
             excludes: Vec::new(),
+            local_run_memory_mb: attr("local-run-memory-mb").parse().unwrap_or(4096),
+            local_run_pids: attr("local-run-pids").parse().unwrap_or(1024),
+            local_run_timeout_minutes: attr("local-run-timeout-minutes").parse().unwrap_or(60),
+            local_run_limit: attr("local-run-limit").parse().unwrap_or(2),
         };
         if let Ok(conf) = MNode::parse_shared("moqui-conf", &factory.conf_text()) {
             for element in conf.named_iter("dev-aide") {

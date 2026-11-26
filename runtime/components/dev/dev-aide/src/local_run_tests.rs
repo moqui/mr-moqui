@@ -15,8 +15,15 @@
 use std::path::Path;
 
 use super::{
-    digest, digest_refusal, engine_sockets, image_run, jobs_of, pick, quoted, script, script_in, valid_run_name, Place,
-    LABEL_ROOT, LABEL_USER,
+    digest, digest_refusal, engine_sockets, image_refusal, image_run, jobs_of, pick, quoted, script, script_in,
+    valid_run_name, ImageLimits, Place, LABEL_ROOT, LABEL_USER,
+};
+
+const LIMITS: ImageLimits = ImageLimits {
+    memory_mb: 2048,
+    pids: 512,
+    timeout: std::time::Duration::from_secs(600),
+    per_user: 2,
 };
 
 const CI: &str = r#"<ci>
@@ -137,7 +144,11 @@ fn in_the_image_the_same_steps_run_from_the_mounted_tree() {
         "my-site",
         "moqui-devaide-dev-abc123",
         Path::new("/workspace"),
+        &LIMITS,
+        false,
     );
+    assert_eq!((run.memory_mb, run.pids_limit), (2048, 512));
+    assert_eq!(run.network_mode, "bridge");
     assert_eq!(run.image, "moqui-build");
     assert_eq!(run.command[..2], ["sh".to_string(), "-c".to_string()]);
     assert_eq!(run.command[2], text);
@@ -216,6 +227,7 @@ fn in_a_real_engine_a_job_runs_in_its_image_on_the_mounted_tree() {
             <env name="MODE" value="local"/><secret name="DEPLOY_KEY"/>
             <step name="Write" run="echo made-in-$MODE > made.txt"/>
             <step name="Show" run="cat made.txt; echo key=${{DEPLOY_KEY:-unset}}; id -u"/>
+            <step name="Hook" run="echo x > .git/hooks/post-checkout &amp;&amp; echo hook-written || echo hook-refused"/>
         </job></pipeline></ci>"#
     );
     let jobs = jobs_of(&ci).unwrap();
@@ -225,7 +237,17 @@ fn in_a_real_engine_a_job_runs_in_its_image_on_the_mounted_tree() {
     let host = moqui_git::ci::driver::docker::DockerHost::unix(&socket);
     let hardening = moqui_git::ci::driver::docker::Hardening::default();
     let name = format!("moqui-devaide-test-{}", std::process::id());
-    let run = image_run(job, &tree, "EX_TEST", "test", &name, Path::new(&hardening.workdir));
+    std::fs::create_dir_all(tree.join(".git/hooks")).unwrap();
+    let run = image_run(
+        job,
+        &tree,
+        "EX_TEST",
+        "test",
+        &name,
+        Path::new(&hardening.workdir),
+        &LIMITS,
+        false,
+    );
     let id = moqui_git::ci::driver::docker::start_local(&host, &run, &hardening).unwrap();
     let started = std::time::Instant::now();
     let info = loop {
@@ -250,5 +272,58 @@ fn in_a_real_engine_a_job_runs_in_its_image_on_the_mounted_tree() {
         log.contains("key=unset") && log.contains("== The job succeeded"),
         "{log}"
     );
+    assert!(log.contains("hook-refused"), "the tree's .git is read only: {log}");
     assert!(!log.lines().any(|line| line.trim() == "0"), "not root: {log}");
+}
+
+/// A run in the image needs TERMINAL_HOST, a root the run may write, and never mounts a tree that holds the runtime;
+/// the tree's .git is mounted read only, and a shared server's run has no network.
+#[test]
+fn a_run_in_the_image_is_refused_a_tree_it_may_not_write() {
+    let base = std::env::temp_dir().join(format!("dev-aide-image-refusal-{}", std::process::id()));
+    let runtime = base.join("runtime");
+    let site = runtime.join("component-site");
+    let elsewhere = base.join("my-site");
+    for dir in [&site, &elsewhere.join(".git")] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    assert!(image_refusal("my-site", &elsewhere, false, &runtime, true).is_none());
+    let no_permission = image_refusal("my-site", &elsewhere, false, &runtime, false).unwrap();
+    assert!(no_permission.contains("TERMINAL_HOST"), "{no_permission}");
+    assert!(image_refusal("my-site", &elsewhere, true, &runtime, true)
+        .unwrap()
+        .contains("read only"));
+    // the checkout that holds the runtime, and the runtime itself; a tree inside the runtime holds none of it
+    assert!(image_refusal("mr-moqui", &base, false, &runtime, true)
+        .unwrap()
+        .contains("runtime"));
+    assert!(image_refusal("runtime", &runtime, false, &runtime, true).is_some());
+    assert!(image_refusal("site", &site, false, &runtime, true).is_none());
+
+    let jobs = jobs_of(CI).unwrap();
+    let unit = pick(&jobs, "check", "unit", "").unwrap();
+    let run = image_run(
+        unit,
+        &elsewhere,
+        "EX_ANN",
+        "my-site",
+        "moqui-devaide-x-1",
+        Path::new("/workspace"),
+        &LIMITS,
+        true,
+    );
+    assert_eq!(run.read_only, [".git".to_string()]);
+    assert_eq!(run.network_mode, "none", "a shared server's run reaches no network");
+    let plain = image_run(
+        unit,
+        &site,
+        "EX_ANN",
+        "site",
+        "moqui-devaide-x-2",
+        Path::new("/workspace"),
+        &LIMITS,
+        false,
+    );
+    assert!(plain.read_only.is_empty());
+    let _ = std::fs::remove_dir_all(&base);
 }

@@ -63,10 +63,16 @@ along with this software (see the LICENSE.md file). If not, see
         <description>The worktrees of an Assist conversation that ended (archived, or deleted), called once the write that
             ended it commits (entity/DevAide.eecas.xml): each clean one removed as remove#Worktree removes it (its branch
             stays), each with uncommitted changes kept and its user told once (a DevAideWorktreeKept notification). A
-            conversation that is there and not archived ends nothing. Only a worktree under the runtime's worktrees
-            directory is removed.</description>
-        <in-parameters><parameter name="conversationId" required="true"/></in-parameters>
+            conversation that is there and not archived ends nothing, and its worktrees' notice is cleared, so a later end
+            tells again. While a run of the conversation is still at work its worktrees stay and the service asks again a
+            minute later (at most an hour: attempt). Only a worktree under the runtime's worktrees directory is
+            removed.</description>
+        <in-parameters>
+            <parameter name="conversationId" required="true"/>
+            <parameter name="attempt" type="Integer"/>
+        </in-parameters>
         <out-parameters>
+            <parameter name="waitingForRun" type="Boolean"/>
             <parameter name="removedRootIds" type="List"/>
             <parameter name="keptRootIds" type="List"/>
         </out-parameters>

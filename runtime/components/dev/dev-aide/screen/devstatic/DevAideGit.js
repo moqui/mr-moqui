@@ -658,7 +658,7 @@
                 this.ws.get("localRun", { runId: run.runId }).then((answer) => {
                     if (this.imageRun !== run) return;
                     Object.assign(run, { state: answer.state || "missing", log: answer.log || run.log, exitCode: answer.exitCode == null ? null : answer.exitCode,
-                        error: answer.error || "" });
+                        error: answer.error || (answer.timedOut ? "Stopped: it ran past its time" : "") });
                     if (!pure.localRunEnded(run.state)) this.imageTimer = setTimeout(() => this.followImage(), 2000);
                 }, this.ws.fail);
             },
@@ -702,12 +702,14 @@
         <pre class="m-dev-mono q-ma-none scroll text-caption" style="max-height: 30vh; white-space: pre-wrap">{{localLines.script}}</pre></q-expansion-item>
       <template v-if="localContainer">
         <div class="text-caption">{{localContainer.note}}</div>
+        <div v-if="localContainer.refusal" class="text-caption text-negative" id="DevImageRefusal">{{localContainer.refusal}}</div>
         <q-expansion-item dense dense-toggle label="The script in the job's image" header-class="text-caption q-px-none" id="DevLocalImageScript">
           <pre class="m-dev-mono q-ma-none scroll text-caption" style="max-height: 30vh; white-space: pre-wrap">{{localLines.imageScript}}</pre></q-expansion-item>
       </template>
       <div class="row q-gutter-x-sm q-mt-xs">
         <q-btn dense unelevated no-caps color="primary" size="sm" label="Run in a terminal" @click="startLocal" id="DevRunLocallyStart"></q-btn>
-        <q-btn v-if="localContainer" dense outline no-caps color="primary" size="sm" :label="'Run in the job\'s image (' + localContainer.engine + ')'"
+        <q-btn v-if="localContainer" dense outline no-caps color="primary" size="sm" :disable="!!localContainer.refusal"
+            :label="'Run in the job\'s image (' + localContainer.engine + ')'"
             @click="startInImage" id="DevRunInImage"></q-btn>
         <q-btn dense flat no-caps size="sm" label="Cancel" @click="local = null; localJobs = null"></q-btn></div>
     </template>

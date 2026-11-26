@@ -63,8 +63,12 @@ pub(crate) fn on_server(server: &Server, url: &str) -> Result<String, LibError> 
     Ok(url.trim().to_string())
 }
 
-/// `value` encoded for a URL's query.
+/// `value` encoded for a URL's query or as one part of its path: a part that is `.` or `..` is encoded too, so it never
+/// names the part above it.
 pub(crate) fn query_text(value: &str) -> String {
+    if value == "." || value == ".." {
+        return value.replace('.', "%2E");
+    }
     value
         .bytes()
         .map(|byte| {

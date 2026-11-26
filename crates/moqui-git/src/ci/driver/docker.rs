@@ -616,11 +616,17 @@ pub struct LocalRun {
     pub user: Option<String>,
     pub memory_mb: i64,
     pub pids_limit: i64,
+    /// Paths in the tree (a plain relative name each, such as `.git`) mounted read only over themselves: what the
+    /// developer's own tools read and the job must not write.
+    pub read_only: Vec<String>,
+    /// `bridge`, or `none` ([`egress_mode`] holds it to a mode a pool may have).
+    pub network_mode: String,
 }
 
 /// The body of `POST /containers/create` for a [`LocalRun`] on `engine`: a job's container's ([`create_body`]) with the
-/// working tree bound over the working directory in place of its tmpfs, `HOME` at `/tmp`, on the bridge network, and on
-/// Podman the host's user kept as the container's (`keep-id`), so a rootless Podman writes the tree as its owner.
+/// working tree bound over the working directory in place of its tmpfs (with its `read_only` paths bound read only over
+/// themselves), `HOME` at `/tmp`, on its network (bridge, or none), and on Podman the host's user kept as the
+/// container's (`keep-id`), so a rootless Podman writes the tree as its owner.
 pub fn local_body(run: &LocalRun, hardening: &Hardening, engine: Engine) -> serde_json::Value {
     let mut hardening = hardening.clone();
     if let Some(user) = run.user.as_deref().filter(|user| !is_root_user(user)) {
@@ -649,7 +655,7 @@ pub fn local_body(run: &LocalRun, hardening: &Hardening, engine: Engine) -> serd
         ),
         ("memoryMb".to_string(), Value::I64(run.memory_mb)),
         ("pidsLimit".to_string(), Value::I64(run.pids_limit)),
-        ("networkMode".to_string(), Value::string("bridge")),
+        ("networkMode".to_string(), Value::string(&run.network_mode)),
     ]
     .into_iter()
     .collect();
@@ -657,12 +663,29 @@ pub fn local_body(run: &LocalRun, hardening: &Hardening, engine: Engine) -> serd
     if let Some(tmpfs) = body["HostConfig"]["Tmpfs"].as_object_mut() {
         tmpfs.remove(&hardening.workdir);
     }
-    body["HostConfig"]["Mounts"] = json!([{
+    let mut mounts = vec![json!({
         "Type": "bind",
         "Source": run.tree.display().to_string(),
         "Target": hardening.workdir,
         "ReadOnly": false,
-    }]);
+    })];
+    for path in &run.read_only {
+        // a plain relative name in the tree only: nothing above it or beside it
+        let plain = !path.is_empty()
+            && !path.starts_with('/')
+            && path
+                .split('/')
+                .all(|part| !part.is_empty() && part != "." && part != "..");
+        if plain {
+            mounts.push(json!({
+                "Type": "bind",
+                "Source": run.tree.join(path).display().to_string(),
+                "Target": format!("{}/{path}", hardening.workdir.trim_end_matches('/')),
+                "ReadOnly": true,
+            }));
+        }
+    }
+    body["HostConfig"]["Mounts"] = json!(mounts);
     if engine == Engine::Podman {
         body["HostConfig"]["UsernsMode"] = json!("keep-id");
     }

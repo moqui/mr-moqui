@@ -290,8 +290,17 @@ fn get_local_jobs(
         "container".into(),
         json_value(&match &engine {
             Some(engine) => {
+                // what refuses a run in the image of this root, said before it is offered
+                let may = moqui_core::user::has_permission(HOST_PERMISSION).unwrap_or(false);
+                let refusal = image_refusal(
+                    &root.label,
+                    &root.path,
+                    root.read_only,
+                    context.factory.runtime_dir(),
+                    may,
+                );
                 json!({ "available": true, "engine": engine.name(), "socket": engine.socket.display().to_string(),
-                "note": IN_THE_IMAGE })
+                "note": IN_THE_IMAGE, "refusal": refusal })
             }
             None => json!({ "available": false }),
         }),
@@ -412,7 +421,12 @@ fn start_local_run(
             "Run locally is a person's, from a session: not a request logged in by a header",
         ));
     }
-    let root = git_root(&context, parameters)?;
+    // a run in the image writes the tree: a root the tier may write, as a git command that changes it
+    let root = if text(parameters, "where") == "image" {
+        crate::vcs::git_write_root(&context, parameters, "runs a job in its image")?
+    } else {
+        git_root(&context, parameters)?
+    };
     let jobs = read_jobs(&root.path).map_err(LibError::new)?;
     let (pipeline, name, matrix_key) = (
         text(parameters, "pipeline"),
@@ -555,17 +569,40 @@ fn local_engine() -> Option<LocalEngine> {
     local_engine_for(None)
 }
 
-/// A run in the image whose container is still being made (its image pulled), or that failed before it started, by
-/// its container's name. Once made, the engine says the rest.
-enum Start {
+/// What becomes of a run in the image, by its container's name, while this server follows it: being made (its image
+/// pulled), running, ended, or failed before it started, with whose it is and whether Remove asked for it to stop.
+/// Kept from `start#LocalRun` until `stop#LocalRun`; the engine says the rest.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Phase {
     Starting,
+    Running,
+    Ended,
+    TimedOut,
     Failed(String),
+}
+
+struct Start {
+    user: String,
+    phase: Phase,
+    cancelled: bool,
 }
 
 fn starts() -> &'static std::sync::Mutex<std::collections::BTreeMap<String, Start>> {
     static STARTS: std::sync::OnceLock<std::sync::Mutex<std::collections::BTreeMap<String, Start>>> =
         std::sync::OnceLock::new();
     STARTS.get_or_init(Default::default)
+}
+
+/// Set the phase of run `name`, and answer whether Remove asked for it to stop.
+fn set_phase(name: &str, phase: Phase) -> bool {
+    let mut starts = moqui_lib::sync::lock(starts());
+    match starts.get_mut(name) {
+        Some(start) => {
+            start.phase = phase;
+            start.cancelled
+        }
+        None => true,
+    }
 }
 
 /// A local run's container name: [`NAME_PREFIX`], then letters, digits and `-` alone (what [`start_in_image`] makes).
@@ -580,10 +617,47 @@ pub fn valid_run_name(name: &str) -> bool {
     })
 }
 
+/// The limits of a run in the image (the conf's `dev-aide` `local-run-*` attributes).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ImageLimits {
+    pub memory_mb: i64,
+    pub pids: i64,
+    pub timeout: std::time::Duration,
+    pub per_user: usize,
+}
+
+impl ImageLimits {
+    fn of(settings: &crate::settings::Settings) -> Self {
+        Self {
+            memory_mb: settings.local_run_memory_mb,
+            pids: settings.local_run_pids,
+            timeout: std::time::Duration::from_secs(settings.local_run_timeout_minutes.saturating_mul(60)),
+            per_user: settings.local_run_limit,
+        }
+    }
+}
+
 /// The [`LocalRun`] of `job` in its image for `user`: its container's name, the script as its command, the labels
-/// that say whose it is, the working tree and its owner.
+/// that say whose it is, the working tree and its owner, its `.git` (a directory, or a worktree's file) mounted read
+/// only over itself, the network (none on a shared dev server: `shared`), and the limits.
 #[must_use]
-pub fn image_run(job: &LocalJob, tree: &Path, user: &str, root_id: &str, name: &str, workdir: &Path) -> LocalRun {
+#[allow(clippy::too_many_arguments)]
+pub fn image_run(
+    job: &LocalJob,
+    tree: &Path,
+    user: &str,
+    root_id: &str,
+    name: &str,
+    workdir: &Path,
+    limits: &ImageLimits,
+    shared: bool,
+) -> LocalRun {
+    // what git reads to run a hook or a command (its hooks, config, a worktree's link) the job never writes
+    let read_only = if std::fs::symlink_metadata(tree.join(".git")).is_ok() {
+        vec![".git".to_string()]
+    } else {
+        Vec::new()
+    };
     LocalRun {
         name: name.to_string(),
         image: job.image.clone(),
@@ -598,14 +672,80 @@ pub fn image_run(job: &LocalJob, tree: &Path, user: &str, root_id: &str, name: &
         ],
         tree: tree.to_path_buf(),
         user: owner_of(tree).map(|(uid, gid)| format!("{uid}:{gid}")),
-        memory_mb: 4096,
-        pids_limit: 1024,
+        memory_mb: limits.memory_mb,
+        pids_limit: limits.pids,
+        read_only,
+        network_mode: if shared { "none".into() } else { "bridge".into() },
     }
 }
 
-/// Start `job` in its image: refused unless the script is the one the page showed, an engine answers here and the job
-/// names an image. The container is made on a thread of its own (its image may be pulled first); the user's earlier
-/// ended runs are removed. Out: `runId`, the container's name, which `get#LocalRun` follows.
+/// Why a working tree may not be mounted read-write in a job's image: its user may not run a program on this machine
+/// (`TERMINAL_HOST`, as a run in a terminal needs), the root is read only, or it holds the runtime (its database,
+/// `.env` and conf). `None` when it may.
+#[must_use]
+pub fn image_refusal(
+    label: &str,
+    tree: &Path,
+    read_only: bool,
+    runtime: &Path,
+    may_run_on_host: bool,
+) -> Option<String> {
+    if !may_run_on_host {
+        return Some(format!(
+            "A run in the job's image needs {}, as a run in a terminal does",
+            HOST_PERMISSION
+        ));
+    }
+    if read_only {
+        return Some(format!("{label} is read only: a run in the image would write it"));
+    }
+    let runtime = std::fs::canonicalize(runtime).unwrap_or_else(|_| runtime.to_path_buf());
+    let tree = std::fs::canonicalize(tree).unwrap_or_else(|_| tree.to_path_buf());
+    (runtime == tree || crate::confine::inside(&runtime, &tree)).then(|| {
+        format!("{label} holds this server's runtime (its database, .env and conf): it is not mounted in an image")
+    })
+}
+
+/// The permission a program on this machine needs, a run in the image as the Terminal's host session.
+pub const HOST_PERMISSION: &str = "TERMINAL_HOST";
+
+/// How many runs in the image `user` has that have not ended: being made here, or running on the engine.
+fn live_runs(host: &DockerHost, user: &str) -> usize {
+    let starting = moqui_lib::sync::lock(starts())
+        .values()
+        .filter(|start| start.user == user && start.phase == Phase::Starting)
+        .count();
+    let labels = [
+        format!(
+            "{}={}",
+            moqui_git::ci::driver::LABEL_SERVER,
+            moqui_git::ci::driver::server_id()
+        ),
+        format!("{LABEL_USER}={user}"),
+    ];
+    let running = host
+        .list(&labels)
+        .map(|listed| {
+            listed
+                .iter()
+                .filter(|container| {
+                    host.inspect(&container.id)
+                        .ok()
+                        .flatten()
+                        .is_some_and(|info| info.running || info.status == "created")
+                })
+                .count()
+        })
+        .unwrap_or(0);
+    starting + running
+}
+
+/// Start `job` in its image: refused unless the script is the one the page showed, the user may run a program here,
+/// the tree may be mounted ([`image_refusal`]), an engine answers, the job names an image and the user has fewer runs
+/// going than the conf's `local-run-limit`. The container is made on a thread of its own (its image may be pulled
+/// first), which follows it: a Remove while it is made stops it once it is, and one that runs past
+/// `local-run-timeout-minutes` is stopped. The user's earlier ended runs are removed. Out: `runId`, the container's name,
+/// which `get#LocalRun` follows.
 fn start_in_image(
     context: &Context,
     root: &crate::roots::Root,
@@ -617,6 +757,16 @@ fn start_in_image(
     if let Some(why) = digest_refusal(&body, seen) {
         return Err(LibError::new(why));
     }
+    let may_run_on_host = moqui_core::user::has_permission(HOST_PERMISSION).unwrap_or(false);
+    if let Some(why) = image_refusal(
+        &root.label,
+        &root.path,
+        root.read_only,
+        context.factory.runtime_dir(),
+        may_run_on_host,
+    ) {
+        return Err(LibError::new(why));
+    }
     if job.image.trim().is_empty() {
         return Err(LibError::new(format!("{}/{} names no image", job.pipeline, job.job)));
     }
@@ -624,28 +774,38 @@ fn start_in_image(
         .ok_or_else(|| LibError::new("Neither Docker nor Podman answers on this machine: run it in a terminal"))?;
     let user = moqui_core::user::current_user_id().ok().flatten().unwrap_or_default();
     clear_ended(&engine.host, &user);
+    let limits = ImageLimits::of(&context.settings);
+    if live_runs(&engine.host, &user) >= limits.per_user {
+        return Err(LibError::new(format!(
+            "You have {} runs in an image going, which is the most at once: remove one first",
+            limits.per_user
+        )));
+    }
     let tag = moqui_core::user::random_string(12)?.to_ascii_lowercase();
     let name = format!("{NAME_PREFIX}{}-{tag}", moqui_git::ci::driver::server_name_part());
-    let run = image_run(job, &root.path, &user, &root.id, &name, Path::new(&hardening.workdir));
-    moqui_lib::sync::lock(starts()).insert(name.clone(), Start::Starting);
+    let run = image_run(
+        job,
+        &root.path,
+        &user,
+        &root.id,
+        &name,
+        Path::new(&hardening.workdir),
+        &limits,
+        context.settings.shared,
+    );
+    moqui_lib::sync::lock(starts()).insert(
+        name.clone(),
+        Start {
+            user: user.clone(),
+            phase: Phase::Starting,
+            cancelled: false,
+        },
+    );
     let socket = engine.socket.clone();
     let thread_name = name.clone();
     std::thread::Builder::new()
         .name("dev-aide-local-run".into())
-        .spawn(move || {
-            let host = DockerHost::unix(&socket);
-            let started = moqui_git::ci::driver::docker::start_local(&host, &run, &hardening);
-            let mut starts = moqui_lib::sync::lock(starts());
-            match started {
-                Ok(_) => {
-                    starts.remove(&thread_name);
-                }
-                Err(err) => {
-                    tracing::warn!("Dev AIDE: the local run {thread_name} did not start: {err}");
-                    starts.insert(thread_name, Start::Failed(err.message().to_string()));
-                }
-            }
-        })
+        .spawn(move || follow(&socket, &thread_name, &run, &hardening, limits.timeout))
         .map_err(|err| LibError::new(format!("the local run could not start: {err}")))?;
     crate::vcs::audit_git(
         context,
@@ -659,6 +819,50 @@ fn start_in_image(
     out.insert("engine".into(), Value::string(engine.name()));
     out.insert("note".into(), Value::string(IN_THE_IMAGE));
     Ok(out)
+}
+
+/// The thread of a run in the image: make and start its container, then follow it until it ends, Remove asks for it
+/// to stop (it is removed), or it runs past `timeout` (it is stopped, and its log kept).
+fn follow(socket: &Path, name: &str, run: &LocalRun, hardening: &Hardening, timeout: std::time::Duration) {
+    let host = DockerHost::unix(socket);
+    let id = match moqui_git::ci::driver::docker::start_local(&host, run, hardening) {
+        Ok(id) => id,
+        Err(err) => {
+            tracing::warn!("Dev AIDE: the local run {name} did not start: {err}");
+            set_phase(name, Phase::Failed(err.message().to_string()));
+            return;
+        }
+    };
+    let started = std::time::Instant::now();
+    let mut cancelled = set_phase(name, Phase::Running);
+    loop {
+        if cancelled {
+            if let Err(err) = host.remove(&id) {
+                tracing::warn!("Dev AIDE: the local run {name}, removed while it started, was not removed: {err}");
+            }
+            moqui_lib::sync::lock(starts()).remove(name);
+            return;
+        }
+        match host.inspect(&id) {
+            Ok(Some(info)) if info.running || info.status == "created" => {}
+            Ok(_) => {
+                set_phase(name, Phase::Ended);
+                return;
+            }
+            Err(err) => tracing::debug!("Dev AIDE: the local run {name} was not inspected: {err}"),
+        }
+        if started.elapsed() > timeout {
+            if let Err(err) = host.stop(&id, std::time::Duration::from_secs(10)) {
+                tracing::warn!("Dev AIDE: the local run {name} past its time was not stopped: {err}");
+            }
+            set_phase(name, Phase::TimedOut);
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        cancelled = moqui_lib::sync::lock(starts())
+            .get(name)
+            .is_none_or(|start| start.cancelled);
+    }
 }
 
 /// Remove `user`'s local runs that have ended (this server's, by its label): what Remove did not take. One that does
@@ -680,6 +884,8 @@ fn clear_ended(host: &DockerHost, user: &str) {
             Ok(Some(info)) if !info.running && info.status != "created" => {
                 if let Err(err) = host.remove(&container.id) {
                     tracing::warn!("Dev AIDE: an ended local run was not removed: {err}");
+                } else {
+                    moqui_lib::sync::lock(starts()).remove(&info.name);
                 }
             }
             Ok(_) => {}
@@ -688,55 +894,78 @@ fn clear_ended(host: &DockerHost, user: &str) {
     }
 }
 
-/// The local run `runId` of the current user, as the engine has it: refused when it is not a local run's name, or the
-/// container is another user's or another server's.
-fn own_run(parameters: &Parameters) -> Result<(String, LocalEngine, Option<ContainerInfo>), LibError> {
+/// The current user's run `runId`: its name, its entry here (taken off when `take`), the engine and the container as
+/// the engine has it. Refused when it is not a local run's name, or the run (its entry, or its container's labels) is
+/// another user's or another server's.
+type OwnRun = (String, Option<Phase>, Option<LocalEngine>, Option<ContainerInfo>);
+
+fn own_run(parameters: &Parameters, take: bool) -> Result<OwnRun, LibError> {
     let name = text(parameters, "runId");
     if !valid_run_name(&name) {
         return Err(LibError::new(format!("{name} is not a local run")));
     }
-    let engine = local_engine().ok_or_else(|| LibError::new("Neither Docker nor Podman answers on this machine"))?;
-    let info = engine.host.inspect(&name)?;
-    if let Some(info) = &info {
-        let user = moqui_core::user::current_user_id().ok().flatten().unwrap_or_default();
-        let ours = info.labels.get(moqui_git::ci::driver::LABEL_SERVER) == Some(&moqui_git::ci::driver::server_id())
-            && info.labels.get(LABEL_USER) == Some(&user)
-            && !user.is_empty();
-        if !ours {
-            return Err(LibError::new(format!("{name} is not a local run of yours")));
-        }
+    let user = moqui_core::user::current_user_id().ok().flatten().unwrap_or_default();
+    let not_yours = || LibError::new(format!("{name} is not a local run of yours"));
+    if user.is_empty() {
+        return Err(not_yours());
     }
-    Ok((name, engine, info))
+    let phase = {
+        let mut starts = moqui_lib::sync::lock(starts());
+        match starts.get_mut(&name) {
+            Some(start) if start.user != user => return Err(not_yours()),
+            Some(start) => {
+                if take {
+                    start.cancelled = true;
+                }
+                Some(start.phase.clone())
+            }
+            None => None,
+        }
+    };
+    let engine = local_engine();
+    let info = match &engine {
+        Some(engine) if phase.as_ref() != Some(&Phase::Starting) => engine.host.inspect(&name)?,
+        _ => None,
+    };
+    if let Some(info) = &info {
+        let ours = info.labels.get(moqui_git::ci::driver::LABEL_SERVER) == Some(&moqui_git::ci::driver::server_id())
+            && info.labels.get(LABEL_USER) == Some(&user);
+        if !ours {
+            return Err(not_yours());
+        }
+    } else if phase.is_none() && engine.is_none() {
+        return Err(LibError::new("Neither Docker nor Podman answers on this machine"));
+    }
+    Ok((name, phase, engine, info))
 }
 
-/// `get#LocalRun`: a run in the image as it stands: `state` (starting, running, exited, failed or missing), `exitCode`
-/// and the last lines of its log.
+/// `get#LocalRun`: a run in the image of the current user's as it stands: `state` (starting, running, exited, failed
+/// or missing), `exitCode`, `timedOut`, and the last lines of its log.
 fn get_local_run(
     ec: &ExecutionContext,
     _service: &ServiceInfo<'_>,
     parameters: &Parameters,
 ) -> Result<Parameters, LibError> {
     let _context = Context::of(ec, Tier::Extend)?;
+    let (name, phase, engine, info) = own_run(parameters, false)?;
     let mut out = Parameters::new();
-    let name = text(parameters, "runId");
-    let pending = match moqui_lib::sync::lock(starts()).get(&name) {
-        Some(Start::Starting) => Some(("starting", None)),
-        Some(Start::Failed(why)) => Some(("failed", Some(why.clone()))),
-        None => None,
-    };
-    if let Some((state, error)) = pending {
-        // the name alone says nothing of whose it is: only the user's own run is answered
-        if !valid_run_name(&name) {
-            return Err(LibError::new(format!("{name} is not a local run")));
+    match (&phase, &info) {
+        (Some(Phase::Starting), _) => {
+            out.insert("state".into(), Value::string("starting"));
+            return Ok(out);
         }
-        out.insert("state".into(), Value::string(state));
-        if let Some(error) = error {
-            out.insert("error".into(), Value::string(error));
+        (Some(Phase::Failed(why)), None) => {
+            out.insert("state".into(), Value::string("failed"));
+            out.insert("error".into(), Value::string(why));
+            return Ok(out);
         }
-        return Ok(out);
+        (_, None) => {
+            out.insert("state".into(), Value::string("missing"));
+            return Ok(out);
+        }
+        _ => {}
     }
-    let (name, engine, info) = own_run(parameters)?;
-    let Some(info) = info else {
+    let (Some(info), Some(engine)) = (info, engine) else {
         out.insert("state".into(), Value::string("missing"));
         return Ok(out);
     };
@@ -751,11 +980,13 @@ fn get_local_run(
     if !info.running {
         out.insert("exitCode".into(), info.exit_code.map_or(Value::Null, Value::I64));
     }
+    out.insert("timedOut".into(), Value::Bool(phase == Some(Phase::TimedOut)));
     out.insert("log".into(), Value::string(engine.host.logs(&name, 2000)?));
     Ok(out)
 }
 
-/// `stop#LocalRun`: a run in the image removed, running or not.
+/// `stop#LocalRun`: a run in the image removed, running or not; one still being made is stopped and removed once it is
+/// made.
 fn stop_local_run(
     ec: &ExecutionContext,
     _service: &ServiceInfo<'_>,
@@ -763,13 +994,19 @@ fn stop_local_run(
 ) -> Result<Parameters, LibError> {
     let _context = Context::of(ec, Tier::Extend)?;
     crate::workspace::unfenced(moqui_core::entity::fence::Effect::Process, "stop#LocalRun")?;
-    let (name, engine, info) = own_run(parameters)?;
-    moqui_lib::sync::lock(starts()).remove(&name);
-    if info.is_some() {
-        engine.host.remove(&name)?;
+    let (name, phase, engine, info) = own_run(parameters, true)?;
+    // one being made is the following thread's to remove once it is: it reads the cancel
+    if phase != Some(Phase::Starting) {
+        moqui_lib::sync::lock(starts()).remove(&name);
+        if let (Some(engine), Some(_)) = (&engine, &info) {
+            engine.host.remove(&name)?;
+        }
     }
     let mut out = Parameters::new();
-    out.insert("removed".into(), Value::Bool(info.is_some()));
+    out.insert(
+        "removed".into(),
+        Value::Bool(info.is_some() || phase == Some(Phase::Starting)),
+    );
     Ok(out)
 }
 

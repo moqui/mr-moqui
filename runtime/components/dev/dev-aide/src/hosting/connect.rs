@@ -398,13 +398,15 @@ pub struct SignInKeys {
     pub app: Option<String>,
     /// The sign-in's own key ends on the server: nothing here takes it.
     pub end_account_key: bool,
+    /// Keys the server made that nothing here takes (a git key with no tasks key, or the reverse): ended on the server.
+    pub orphans: Vec<String>,
 }
 
 /// What a sign-in keeps of the account's key `account` and the scoped keys the server made with it (`made`: git,
 /// tasks, gateway, each `None` when the server did not make it). With the git and tasks keys made, the git key is the
 /// token and the account's key is ended, unless `application` (an application's REST, which takes only an installed
 /// app's key) keeps it for that REST alone; without them (a server that makes no such keys) the account's key stays
-/// the token, as before.
+/// the token, as before, and the one of the two that was made is ended (`orphans`).
 #[must_use]
 pub fn sign_in_keys(account: &str, made: [Option<String>; 3], application: bool) -> SignInKeys {
     let [git, tasks, gateway] = made;
@@ -415,10 +417,12 @@ pub fn sign_in_keys(account: &str, made: [Option<String>; 3], application: bool)
             gateway,
             app: application.then(|| account.to_string()),
             end_account_key: !application,
+            orphans: Vec::new(),
         },
-        _ => SignInKeys {
+        (git, tasks) => SignInKeys {
             token: account.to_string(),
             gateway,
+            orphans: git.into_iter().chain(tasks).collect(),
             ..SignInKeys::default()
         },
     }
@@ -552,6 +556,9 @@ fn finish_connect(
     row.update(&context.facade)?;
     if keys.end_account_key {
         revoke_on_server(&server, &key, "the sign-in's account key");
+    }
+    for orphan in &keys.orphans {
+        revoke_on_server(&server, orphan, "a key the sign-in does not keep");
     }
     let server = refresh(&context, &mut row)?;
     name_token(&context, &server.id, &server.username)?;
