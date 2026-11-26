@@ -29,10 +29,14 @@ spec({
             baseUrl: "https://team.example.com", username: "john.doe", statusText: "connected", offerJson: JSON.stringify(offer)}).create()
         ec.entity.makeValue("moqui.dev.DevAideCredential").setAll({credentialId: "SPEC_SERVER_KEY", serverId: "SPEC_SERVER",
             userId: ec.user.userId, token: "spec-s3cret-key", urlPrefix: "https://team.example.com"}).create()
+        // a task app added in Settings, for its list there (TaskApps.spec.js has the rules)
+        ec.entity.makeValue("moqui.dev.DevAideTaskApp").setAll({taskAppName: "spec-render", title: "Spec Render Tracker",
+            taskPath: "/qapps/Spec/Task?taskId={taskId}", createdByUserId: ec.user.userId}).createOrUpdate()
         ec.artifactExecution.enableAuthz()
     },
     cleanupSpec() {
         ec.artifactExecution.disableAuthz()
+        ec.entity.find("moqui.dev.DevAideTaskApp").condition("taskAppName", "spec-render").deleteAll()
         ec.entity.find("moqui.dev.DevAideCredential").condition("credentialId", "SPEC_SERVER_KEY").deleteAll()
         ec.entity.find("moqui.dev.DevAideServer").condition("serverId", "SPEC_SERVER").deleteAll()
         ec.artifactExecution.enableAuthz()
@@ -95,6 +99,10 @@ feature("Settings shows the group servers and the plan of one", {
         page.output.includes("Editor keys") && page.output.includes("Comment the lines") && page.output.includes("Mod-/")
         // the Workspace's own keys are the shell's, rebound by its KEYMAP preference
         page.output.includes("devGotoFile")
+        // and the task apps: the one added, which its adder may remove, and the form that adds one
+        page.output.includes("Task apps") && page.output.includes("Spec Render Tracker")
+        page.output.includes("Remove the task app Spec Render Tracker?")
+        page.output.includes("Add task app")
     }
 })
 

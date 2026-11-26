@@ -201,9 +201,10 @@ pub const PAGE_KINDS: [&str; 3] = ["file", "commit", "branch"];
 
 /// The pages of a hosted repository for a person, as templates the page fills ("Open on the server", 21.3): the
 /// offer's (`application.pages` for a repository the application keeps, else `pages`), each with `{repositoryPath}`
-/// filled in (each part encoded), and kept, as an absolute URL, only when its text before the first other placeholder
-/// is a page of the server's own address ([`page_url`]), so what the page fills in cannot take it elsewhere. Null when
-/// none is.
+/// (each part encoded) and `{repositoryId}` (encoded as one part, for pages that take the id, such as IronStone
+/// Projects' Code) filled in, and kept, as an absolute URL, only when its text before the first other placeholder is a
+/// page of the server's own address ([`page_url`]), so what the page fills in cannot take it elsewhere. Null when none
+/// is.
 pub(crate) fn repository_pages(server: &Server, repository: &Json) -> Json {
     let templates = match via(server, repository) {
         Via::Application(_) => &server.offer["application"]["pages"],
@@ -215,12 +216,19 @@ pub(crate) fn repository_pages(server: &Server, repository: &Json) -> Json {
     }
     let path: Vec<String> = path.split('/').map(query_text).collect();
     let path = path.join("/");
+    let id = repository["repositoryId"].as_str().and_then(client::path_segment);
     let mut pages = serde_json::Map::new();
     for kind in PAGE_KINDS {
         let Some(template) = templates[kind].as_str() else {
             continue;
         };
         let filled = template.replace("{repositoryPath}", &path);
+        let filled = match &id {
+            Some(id) => filled.replace("{repositoryId}", id),
+            // a page by the id, of a repository with none given, is no page
+            None if filled.contains("{repositoryId}") => continue,
+            None => filled,
+        };
         let prefix = filled.split('{').next().unwrap_or_default();
         // a path on the server, or its address with a path: a template that puts a value into the host is no page
         let with_path = prefix.starts_with('/') || prefix.split_once("://").is_some_and(|(_, rest)| rest.contains('/'));

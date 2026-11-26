@@ -32,7 +32,7 @@ See [the two suites](../../../../docs/Build-Test.md#the-two-suites). The regress
 
 - `./moq test dev-aide`: the screens, the Workspace's terminal form on a scratch root, the docs, the terminal's guided
   editors against a throw-away root, the three-way data load, a hosted root on a scratch repository, Replace, the
-  editor settings, the rule fixtures and the push contexts.
+  editor settings, the task apps added in Settings, the rule fixtures and the push contexts.
 - `cargo test -p dev-aide`: confinement, the git parsers, the Browser's sections, the edit buffers, the data load, the
   local runs and the worktrees. The opt-in real-engine run of Run locally needs Docker or Podman.
 - `moqui test-client runtime/components/dev/dev-aide --offline`: the client in headless Chromium. `test/vectors/` are

@@ -38,6 +38,7 @@ use moqui_lib::object::Value;
 use moqui_lib::sync::lock;
 
 use super::chat_bridge::{current_factory, millis_of, now_millis, param};
+use crate::context::framework_thread;
 use crate::context::ExecutionContextFactory;
 use crate::entity::EntityFacade;
 
@@ -192,7 +193,7 @@ pub fn start(factory: &Arc<ExecutionContextFactory>) {
     let weak: Weak<ExecutionContextFactory> = Arc::downgrade(factory);
     let spawned = std::thread::Builder::new()
         .name("moqui-chat-expiry".to_string())
-        .spawn(move || {
+        .spawn(framework_thread(move || {
             let mut planned: Option<i64> = Some(0);
             let mut stuck_times: u32 = 0;
             loop {
@@ -266,7 +267,7 @@ pub fn start(factory: &Arc<ExecutionContextFactory>) {
                     }
                 };
             }
-        });
+        }));
     match spawned {
         Ok(handle) => *lock(&state.thread) = Some(handle),
         Err(error) => tracing::error!("the chat expiry worker did not start: {error}"),

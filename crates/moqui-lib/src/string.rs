@@ -273,6 +273,30 @@ pub fn pretty_to_camel_case(pretty: &str, first_upper: bool) -> String {
     out
 }
 
+/// Whether a url is a path on this server: one leading `/`, and no backslash, whitespace or control character anywhere
+/// (a browser reads `/\host` and `/<tab>/host` as another host).
+#[must_use]
+pub fn local_path(url: &str) -> bool {
+    url.starts_with('/')
+        && !url.starts_with("//")
+        && !url.chars().any(|c| c == '\\' || c.is_whitespace() || c.is_control())
+}
+
+/// A component's name as the class part of its files' names, as the component template names them: `my-site` as
+/// `MySite`, `acme_site` as `AcmeSite` (each part's first letter upper case, the rest as written).
+#[must_use]
+pub fn component_class_name(name: &str) -> String {
+    name.split(['-', '_'])
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let mut chars = part.chars();
+            chars.next().map_or_else(String::new, |first| {
+                first.to_ascii_uppercase().to_string() + chars.as_str()
+            })
+        })
+        .collect()
+}
+
 /// Drop a leading UTF-8 BOM and decode. Invalid sequences become U+FFFD,
 /// which is what `new String(bytes, "UTF-8")` does.
 pub fn to_string_clean_bom(bytes: &[u8]) -> String {

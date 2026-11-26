@@ -1166,9 +1166,12 @@ gateway, `keyPath`: where a key for it alone is made, `requireClient`: whether t
 docs/ai/Gateway.md); `agreement` (`path`, `decided`); `forks`; `pages` (a repository's pages for a person: none
 here). `git-server` `offer-service` (interface `add#GitHostingOffer`, with the offer and the user, authorization off)
 returns the offer as the application has it: its REST (`application`: `name`, `restBase`, and `pages`, the templates of
-a repository's pages it keeps: `file` with `{repositoryPath}`, `{ref}`, `{file}` and `{line}`, `commit` with
-`{commitId}`, `branch` with `{branch}`, absolute URLs on the server's own address, which the Dev AIDE's "Open on the
-server" fills), its task source (`tasks`: `kind`, `path`, and a task app's paths), whether it makes forks, and so on.
+a repository's pages it keeps: `file` with `{repositoryPath}` or `{repositoryId}`, `{ref}`, `{file}` and `{line}`,
+`commit` with `{commitId}`, `branch` with `{branch}`, absolute URLs on the server's own address, which the Dev AIDE's
+"Open on the server" fills), the same templates in `pages` for the repositories this server's hosting keeps where the
+application has pages for them (IronStone Projects' Code: `ironstone.projects.CodeServices.add#HostingOffer`, which
+calls Mantle's first), its task source (`tasks`: `kind`, `path`, and a task app's paths), whether it makes forks, and
+so on. With no application's pages, a client shows no "Open on the server".
 It is asked for callers with no credentials too, so it gives no one's data.
 
 **An application that keeps a repository.** A hosting application with rules of its own (Smithy's roles, confirmed

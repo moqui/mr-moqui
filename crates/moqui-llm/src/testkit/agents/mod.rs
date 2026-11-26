@@ -59,6 +59,7 @@ use crate::run::{self, in_tx, quietly, RunState, StartRequest};
 use crate::screen::ScreenState;
 use crate::text_of;
 use crate::tools::PauseKind;
+use moqui_core::context::framework_thread;
 use moqui_core::context::ExecutionContextFactory;
 use moqui_core::entity::EntityFacade;
 use moqui_devkit::testkit::SpecFile;
@@ -805,7 +806,7 @@ fn save_in_screen(
     let method = write.method.clone();
     std::thread::scope(|scope| {
         scope
-            .spawn(|| -> Result<(), String> {
+            .spawn(framework_thread(|| -> Result<(), String> {
                 let context = factory.new_context();
                 let _entered = context.enter();
                 {
@@ -831,7 +832,7 @@ fn save_in_screen(
                     ));
                 }
                 Ok(())
-            })
+            }))
             .join()
             .unwrap_or_else(|_| Err("the save panicked".to_string()))
     })
