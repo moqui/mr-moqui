@@ -299,6 +299,59 @@ fn a_send_in_a_transaction_waits_for_its_commit() {
     assert!(mark_sent(&id, "").is_err());
 }
 
+/// A send in a transaction of its own inside another goes out at the inner commit, whatever the outer one does; a send
+/// from a commit hook, where no transaction is in place, goes at once.
+#[test]
+fn a_send_goes_out_at_the_commit_of_its_own_transaction_or_at_once_from_a_hook() {
+    let (ctx, facade) = open();
+    let _entered = ctx.enter();
+    let _authz = ctx.disable_authz();
+    account(&facade, "alice", None, None);
+    let label = unique("inner");
+    let (sub, seen) = kept(&label);
+    let send = {
+        let label = label.clone();
+        move || {
+            NotificationMessage::new()
+                .topic("InnerTopic")
+                .user_id("alice")
+                .persist(false)
+                .title(&label)
+                .send()
+                .unwrap();
+        }
+    };
+    let tx = facade.transactions_for(MESSAGE).unwrap();
+
+    facade.begin(MESSAGE, None).unwrap();
+    tx.run(crate::transaction::TransactionAttribute::ForceNew, None, || {
+        send();
+        assert!(lock(&seen).is_empty(), "nothing before the inner commit");
+        Ok::<(), moqui_lib::error::Error>(())
+    })
+    .unwrap();
+    assert_eq!(lock(&seen).len(), 1, "out at the inner commit");
+    facade.rollback(MESSAGE).unwrap();
+    assert_eq!(lock(&seen).len(), 1, "the outer rollback takes nothing back");
+
+    // in a commit hook no transaction is in place: the send is out before the hook returns
+    let in_hook = Arc::new(Mutex::new(None));
+    facade.begin(MESSAGE, None).unwrap();
+    {
+        let in_hook = Arc::clone(&in_hook);
+        let seen = Arc::clone(&seen);
+        tx.on_commit(move || {
+            send();
+            *lock(&in_hook) = Some(lock(&seen).len());
+        })
+        .unwrap();
+    }
+    facade.commit(MESSAGE).unwrap();
+    assert_eq!(*lock(&in_hook), Some(2));
+    assert_eq!(lock(&seen).len(), 2);
+    drop(sub);
+}
+
 /// The stored message keeps its own showAlert, N unless show_alert was called; the topic's default is for the message
 /// sent now. (What the sockets get is not checked here: a persisted message is published under its sequenced id, which
 /// the in-memory databases of parallel tests repeat, so another test may have taken it.)
