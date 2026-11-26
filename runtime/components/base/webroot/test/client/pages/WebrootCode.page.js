@@ -137,10 +137,10 @@ test("the bundle has what the widgets use, and a state for every language", () =
 });
 
 test("the editor settings: defaults filled in, sizes bounded, only valid keys of known commands", () => {
-    assert.deepEqual(editor.normalizeSettings(null), { fontSize: 13, tabSize: 4, wrap: false, whitespace: false, keymap: "default", keys: {} });
+    assert.deepEqual(editor.normalizeSettings(null), { fontSize: 13, tabSize: null, wrap: false, whitespace: false, keymap: "default", keys: {} });
     const given = editor.normalizeSettings({ fontSize: "16", tabSize: 40, wrap: true, whitespace: "true", keymap: "vim",
         keys: { toggleComment: "Mod-Shift-7", save: "Alt-s", nothing: "Mod-q", find: "Hyper-f" } });
-    assert.deepEqual(given, { fontSize: 16, tabSize: 4, wrap: true, whitespace: true, keymap: "vim", keys: { toggleComment: "Mod-Shift-7", save: "Alt-s" } });
+    assert.deepEqual(given, { fontSize: 16, tabSize: null, wrap: true, whitespace: true, keymap: "vim", keys: { toggleComment: "Mod-Shift-7", save: "Alt-s" } });
     assert.ok(editor.validKeys("Ctrl-Space") && editor.validKeys("F2") && editor.validKeys("Mod--"));
     assert.ok(!editor.validKeys("") && !editor.validKeys("Mod-") && !editor.validKeys("Super-x"));
     // the bundle has each command a key rebinds
@@ -180,26 +180,19 @@ test("an editor takes the settings: font size, tab size and indent, wrap, and th
     // wrap: the user's when the editor does not set it, else the editor's
     assert.equal(parts.wrap(), CM.EditorView.lineWrapping);
     assert.deepEqual(editorOf({ wrap: true }, false).wrap(), []);
-    // the page's settings when an editor has none of its own
+    // the page's settings when an editor has none of its own; with no tab size set, CodeMirror's tab and indent
     const page = editor.settings;
     try {
         editor.setSettings({ tabSize: 8 });
         const defaults = editorOf(undefined, undefined);
         assert.equal(CM.EditorState.create({ doc: "", extensions: [defaults.settings()] }).tabSize, 8);
+        editor.setSettings(null);
+        const plain = CM.EditorState.create({ doc: "", extensions: [editorOf(undefined, undefined).settings()] });
+        assert.equal(plain.tabSize, 4);
+        assert.equal(plain.facet(CM.indentUnit), "  ");
     } finally {
         editor.setSettings(page);
     }
-});
-
-test("a keydown is a key in CodeMirror's form, Mod by the platform", () => {
-    const event = (key, mods) => Object.assign({ key, ctrlKey: false, altKey: false, shiftKey: false, metaKey: false }, mods || {});
-    assert.ok(editor.keyMatches(event("p", { ctrlKey: true }), "Mod-p", false));
-    assert.ok(!editor.keyMatches(event("p", { ctrlKey: true }), "Mod-p", true));
-    assert.ok(editor.keyMatches(event("p", { metaKey: true }), "Mod-p", true));
-    assert.ok(editor.keyMatches(event("O", { ctrlKey: true, shiftKey: true }), "Mod-Shift-o", false));
-    assert.ok(!editor.keyMatches(event("o", { ctrlKey: true }), "Mod-Shift-o", false));
-    assert.ok(editor.keyMatches(event(" ", { ctrlKey: true }), "Ctrl-Space", false));
-    assert.ok(!editor.keyMatches(event("p"), "", false));
 });
 
 test("kept editor states come back by key, the most recent 50", () => {

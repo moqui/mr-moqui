@@ -153,11 +153,12 @@
 
     // ---- editor settings (plans/design-dev-aide.md 5.1) ----
 
-    // What a user sets (the dev-aide's DEV_AIDE_EDITOR preference, given to setSettings): the font size in pixels, the tab
-    // size (and the indent unit, that many spaces), wrap (for an editor whose `wrap` is not set), white space shown, the
-    // keymap (a base of KEYMAPS by name; "default" is CodeMirror's) and keys (a command's keys by its name, over the
-    // keymap).
-    editor.DEFAULT_SETTINGS = Object.freeze({ fontSize: 13, tabSize: 4, wrap: false, whitespace: false, keymap: "default", keys: Object.freeze({}) });
+    // What a user sets (the dev-aide's DEV_AIDE_EDITOR preference, given to setSettings by the page that holds it, which
+    // takes them back as it goes): the font size in pixels, the tab size and the indent unit (that many spaces; null
+    // keeps CodeMirror's, a tab of 4 and an indent of 2), wrap (for an editor whose `wrap` is not set), white space
+    // shown, the keymap (a base of KEYMAPS by name; "default" is CodeMirror's) and keys (a command's keys by its name,
+    // over the keymap). With none set an editor is as CodeMirror makes it.
+    editor.DEFAULT_SETTINGS = Object.freeze({ fontSize: 13, tabSize: null, wrap: false, whitespace: false, keymap: "default", keys: Object.freeze({}) });
     // The keymaps a user picks from: each a function of the bundle answering the extension it adds ahead of the editor's
     // own keys. Another (Vim) is added here by the script that loads its library: KEYMAPS.vim = (CM) => CM.vim().
     editor.KEYMAPS = editor.KEYMAPS || { default: () => [] };
@@ -184,7 +185,7 @@
             if (Object.prototype.hasOwnProperty.call(editor.COMMANDS, name) && typeof keyText === "string" && editor.validKeys(keyText)) keys[name] = keyText;
         const base = editor.DEFAULT_SETTINGS;
         return {
-            fontSize: number(given.fontSize, 8, 32, base.fontSize), tabSize: number(given.tabSize, 1, 8, base.tabSize),
+            fontSize: number(given.fontSize, 8, 32, base.fontSize), tabSize: number(given.tabSize, 1, 8, null),
             wrap: given.wrap === true || given.wrap === "true", whitespace: given.whitespace === true || given.whitespace === "true",
             keymap: typeof given.keymap === "string" && given.keymap ? given.keymap : base.keymap, keys
         };
@@ -202,25 +203,7 @@
         }
         return ahead.concat((bindings || []).filter((binding) => !dropped.has(binding.run)));
     };
-    // Whether a keydown `event` is `keys` in CodeMirror's form, Mod being Cmd on a Mac and Ctrl elsewhere: for a page's
-    // own keys that a user rebinds, as the Workspace's Go to file.
-    editor.keyMatches = (event, keys, isMac) => {
-        if (!event || !keys) return false;
-        const parts = String(keys).split(/-(?!$)/);
-        const key = parts.pop();
-        const want = { ctrl: false, alt: false, shift: false, meta: false };
-        for (const part of parts.map((name) => name.toLowerCase())) {
-            if (part === "mod") want[isMac ? "meta" : "ctrl"] = true;
-            else if (part === "ctrl" || part === "control") want.ctrl = true;
-            else if (part === "alt") want.alt = true;
-            else if (part === "shift") want.shift = true;
-            else if (part === "meta" || part === "cmd") want.meta = true;
-        }
-        const named = key === "Space" ? " " : key;
-        return String(event.key || "").toLowerCase() === named.toLowerCase() && !!event.ctrlKey === want.ctrl && !!event.altKey === want.alt
-            && !!event.shiftKey === want.shift && !!event.metaKey === want.meta;
-    };
-    // settings a page gave before this file loaded (the Workspace sets them as it starts) are kept
+    // settings a page gave before this file loaded (the dev-aide's Workspace sets them as it starts) are kept
     editor.settings = editor.normalizeSettings(editor.settings || null);
     // The editors on the page, which a change of the settings reconfigures.
     const liveEditors = new Set();
@@ -504,8 +487,9 @@
                     wrap: () => ((this.wrap === undefined ? this.effectiveSettings().wrap : this.wrap) ? CM.EditorView.lineWrapping : []),
                     settings: () => {
                         const settings = this.effectiveSettings();
-                        return [CM.EditorView.theme({ "&": { fontSize: settings.fontSize + "px" } }), CM.EditorState.tabSize.of(settings.tabSize),
-                            CM.indentUnit.of(" ".repeat(settings.tabSize)), settings.whitespace ? whitespaceMarks(CM) : []];
+                        // the tab size and indent only when the user set one: CodeMirror's otherwise
+                        const tab = settings.tabSize ? [CM.EditorState.tabSize.of(settings.tabSize), CM.indentUnit.of(" ".repeat(settings.tabSize))] : [];
+                        return [CM.EditorView.theme({ "&": { fontSize: settings.fontSize + "px" } }), tab, settings.whitespace ? whitespaceMarks(CM) : []];
                     },
                     keys: () => keys(CM, save, this.effectiveSettings()),
                     accessibility: () => CM.EditorView.contentAttributes.of(this.accessibilityAttributes),
