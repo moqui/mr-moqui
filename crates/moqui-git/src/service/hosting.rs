@@ -57,6 +57,7 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, moqui_core::extension::R
     rust_service!(map, find_repositories)?;
     rust_service!(map, set_repository_path)?;
     rust_service!(map, find_updates)?;
+    rust_service!(map, get_update_contexts)?;
     rust_service!(map, get_tree)?;
     rust_service!(map, create_ref)?;
     rust_service!(map, delete_ref)?;
@@ -332,6 +333,41 @@ fn find_repositories(parameters: &Parameters, facade: &EntityFacade) -> Out {
         ("pageIndex", count(index)),
         ("pageSize", count(if size == usize::MAX { total } else { size })),
     ]))
+}
+
+/// The most contexts `get#GitUpdateEventContexts` answers.
+const MAX_EVENT_CONTEXTS: usize = 50;
+
+/// `get#GitUpdateEventContexts`: the contexts the rules of `event` had from an update of the push log, built as the
+/// events build them (`events::context`), for trying a rule's condition against a recorded push. For who may push to
+/// the repository, as the whole log is (they hold the user, the push options and object ids). Out: `contextList`
+/// (`label`, `context`).
+fn get_update_contexts(parameters: &Parameters, _facade: &EntityFacade) -> Out {
+    let Some((provider, id)) = allowed(parameters, "update") else {
+        return none();
+    };
+    let Some(update_id) = text(parameters, "updateId") else {
+        add_error("name the update (updateId) of the push log");
+        return none();
+    };
+    let event = text(parameters, "event").unwrap_or_else(|| "post-receive".to_string());
+    let contexts = match provider.event_contexts(&id, &update_id, &event, MAX_EVENT_CONTEXTS) {
+        Ok(contexts) => contexts,
+        Err(err) => {
+            add_error(err.message());
+            return none();
+        }
+    };
+    let list = contexts
+        .into_iter()
+        .map(|context| {
+            map([
+                ("label", Value::string(context.label)),
+                ("context", Value::Map(context.fields.into_iter().collect())),
+            ])
+        })
+        .collect();
+    Ok(out([("contextList", Value::List(list))]))
 }
 
 /// `find#GitUpdates`: a repository's push log, newest first, each with its refs. Out: `updateList`,

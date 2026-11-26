@@ -40,6 +40,9 @@ use moqui_core::context::{Error, ExecutionContext};
 use moqui_core::entity::{Condition, EntityValue};
 use moqui_core::service::git_eca::{self, GitEvent, GitEventKey, RuleOutcome};
 
+#[path = "events_context.rs"]
+pub(crate) mod context;
+
 pub(crate) const GIT_UPDATE: &str = "moqui.resource.GitUpdate";
 pub(crate) const GIT_UPDATE_REF: &str = "moqui.resource.GitUpdateRef";
 
@@ -810,35 +813,7 @@ impl GitProvider {
         }
         let entity = self.entity()?;
         let transactions = entity.transactions_for(GIT_UPDATE)?;
-        let mut base = BTreeMap::new();
-        base.insert("repositoryId".to_string(), Value::string(&repository_id));
-        base.insert("source".to_string(), Value::string(source));
-        base.insert(
-            "transport".to_string(),
-            text(update.get("transport")).map_or(Value::Null, Value::string),
-        );
-        base.insert(
-            "userId".to_string(),
-            text(update.get("userId")).map_or(Value::Null, Value::string),
-        );
-        base.insert(
-            "updateId".to_string(),
-            text(update.get("updateId")).map_or(Value::Null, Value::string),
-        );
-        base.insert(
-            "pushOptions".to_string(),
-            Value::List(
-                text(update.get("pushOptions"))
-                    .unwrap_or_default()
-                    .lines()
-                    .map(Value::string)
-                    .collect(),
-            ),
-        );
-        base.insert(
-            "refUpdates".to_string(),
-            Value::List(made.iter().map(|reference| ref_value(reference, &branch_ref)).collect()),
-        );
+        let base = post_base(update, &repository_id, source, &made, &branch_ref);
         let mut errors = Vec::new();
         let run = |key: GitEventKey<'_>, extra: Vec<(&str, Value)>, errors: &mut Vec<String>| {
             let mut fields = base.clone();
@@ -861,45 +836,24 @@ impl GitProvider {
         // commits new to the repository, each once, with the ref it came on: the default branch first, then the other
         // branches, then tags
         if git_eca::listening(GitEvent::Commit, source) {
-            let mut hidden: Vec<ObjectId> = text(update.get("priorTips"))
-                .unwrap_or_default()
-                .split_whitespace()
-                .filter_map(|hex| ObjectId::from_hex(hex.as_bytes()).ok())
-                .collect();
-            let mut order: Vec<&RefUpdate> = made.iter().filter(|reference| reference.new.is_some()).collect();
-            order.sort_by_key(|reference| {
-                (
-                    reference.name != branch_ref,
-                    !reference.name.starts_with("refs/heads/"),
-                    reference.name.clone(),
-                )
-            });
             let limit = max_commits();
-            let mut count = 0;
-            for reference in order {
-                let Some(new) = reference.new else { continue };
-                if count >= limit {
-                    break;
-                }
-                let commits = match revwalk::new_commits(store, &[new], &hidden) {
+            let (walked, truncated) = commits_by_ref(store, update, &made, &branch_ref, limit);
+            if truncated {
+                tracing::warn!(
+                    repository = %repository_id,
+                    "a change brings more than {limit} new commits (git-server eca-max-commits); commit events stop there"
+                );
+            }
+            for (reference, commits) in walked {
+                let commits = match commits {
                     Ok(commits) => commits,
                     Err(err) => {
-                        errors.push(format!("{}: {err}", reference.name));
+                        errors.push(err);
                         continue;
                     }
                 };
-                hidden.push(new);
-                let mut commits: Vec<_> = commits.into_iter().rev().collect();
-                if count + commits.len() > limit {
-                    tracing::warn!(
-                        repository = %repository_id,
-                        "a change brings more than {limit} new commits (git-server eca-max-commits); commit events stop there"
-                    );
-                    commits.truncate(limit - count);
-                }
-                count += commits.len();
                 for commit in commits {
-                    let details = ops::commit_details(store, &commit.id)?;
+                    let details = ops::commit_details(store, &commit)?;
                     run(
                         event_key(
                             GitEvent::Commit,
@@ -1012,6 +966,94 @@ fn username_of(entity: &moqui_core::entity::EntityFacade, user_id: &str) -> Opti
         .ok()
         .flatten()
         .and_then(|row| text(row.get("username")))
+}
+
+/// What every post event of `update` has in its context: the repository, source, transport, user, update, push options
+/// and the refs it made (`made`).
+fn post_base(
+    update: &EntityValue,
+    repository_id: &str,
+    source: &str,
+    made: &[RefUpdate],
+    branch_ref: &str,
+) -> BTreeMap<String, Value> {
+    let mut base = BTreeMap::new();
+    base.insert("repositoryId".to_string(), Value::string(repository_id));
+    base.insert("source".to_string(), Value::string(source));
+    for name in ["transport", "userId", "updateId"] {
+        base.insert(
+            name.to_string(),
+            text(update.get(name)).map_or(Value::Null, Value::string),
+        );
+    }
+    base.insert(
+        "pushOptions".to_string(),
+        Value::List(
+            text(update.get("pushOptions"))
+                .unwrap_or_default()
+                .lines()
+                .map(Value::string)
+                .collect(),
+        ),
+    );
+    base.insert(
+        "refUpdates".to_string(),
+        Value::List(made.iter().map(|reference| ref_value(reference, branch_ref)).collect()),
+    );
+    base
+}
+
+/// Each ref with the commits it brought, or why its walk failed.
+type CommitsByRef<'a> = Vec<(&'a RefUpdate, Result<Vec<ObjectId>, String>)>;
+
+/// The commits new to the repository that `update` brought, each once, with the ref it came on: the default branch
+/// first, then the other branches, then tags, oldest first, at most `limit` in all (and whether there were more); a ref
+/// whose walk failed has why.
+fn commits_by_ref<'a>(
+    store: &dyn GitStore,
+    update: &EntityValue,
+    made: &'a [RefUpdate],
+    branch_ref: &str,
+    limit: usize,
+) -> (CommitsByRef<'a>, bool) {
+    let mut hidden: Vec<ObjectId> = text(update.get("priorTips"))
+        .unwrap_or_default()
+        .split_whitespace()
+        .filter_map(|hex| ObjectId::from_hex(hex.as_bytes()).ok())
+        .collect();
+    let mut order: Vec<&RefUpdate> = made.iter().filter(|reference| reference.new.is_some()).collect();
+    order.sort_by_key(|reference| {
+        (
+            reference.name != branch_ref,
+            !reference.name.starts_with("refs/heads/"),
+            reference.name.clone(),
+        )
+    });
+    let mut count = 0;
+    let mut truncated = false;
+    let mut out = Vec::new();
+    for reference in order {
+        let Some(new) = reference.new else { continue };
+        if count >= limit {
+            break;
+        }
+        let commits = match revwalk::new_commits(store, &[new], &hidden) {
+            Ok(commits) => commits,
+            Err(err) => {
+                out.push((reference, Err(format!("{}: {err}", reference.name))));
+                continue;
+            }
+        };
+        hidden.push(new);
+        let mut ids: Vec<ObjectId> = commits.into_iter().rev().map(|commit| commit.id).collect();
+        if count + ids.len() > limit {
+            truncated = true;
+            ids.truncate(limit - count);
+        }
+        count += ids.len();
+        out.push((reference, Ok(ids)));
+    }
+    (out, truncated)
 }
 
 /// A ref change as a map: `refName`, `refType`, `shortName`, `oldId`, `newId`, `changeType`, `isDefaultBranch`.
@@ -1171,6 +1213,83 @@ fn insert_new_commits(fields: &mut BTreeMap<String, Value>, view: &dyn GitStore,
     fields.insert("newCommitsTruncated".to_string(), Value::Bool(truncated));
 }
 
+/// Who and how for a pre event's context: a change's [`UpdateOrigin`], or a recorded one's `GitUpdate`.
+struct PreOrigin<'a> {
+    repository_id: &'a str,
+    source: &'a str,
+    transport: &'a str,
+    user_id: Option<&'a str>,
+    push_options: &'a [String],
+    pack_bytes: u64,
+    merge: Option<&'a MergeOrigin>,
+}
+
+/// What every pre event of a change has in its context: the repository, source, transport, user, push options, the
+/// pack's bytes, whether it is for review, the merge it is, and the refs it may still make (`refs`).
+fn pre_base(origin: &PreOrigin<'_>, refs: &[&RefUpdate], branch_ref: &str) -> BTreeMap<String, Value> {
+    let mut base = BTreeMap::new();
+    base.insert("repositoryId".to_string(), Value::string(origin.repository_id));
+    base.insert("source".to_string(), Value::string(origin.source));
+    base.insert("transport".to_string(), Value::string(origin.transport));
+    base.insert("userId".to_string(), origin.user_id.map_or(Value::Null, Value::string));
+    base.insert(
+        "pushOptions".to_string(),
+        Value::List(origin.push_options.iter().map(Value::string).collect()),
+    );
+    base.insert(
+        "packBytes".to_string(),
+        Value::I64(i64::try_from(origin.pack_bytes).unwrap_or(i64::MAX)),
+    );
+    base.insert(
+        "forReview".to_string(),
+        Value::Bool(
+            refs.iter()
+                .any(|reference| reference.name.starts_with(super::reach::REVIEW_REFS)),
+        ),
+    );
+    // a merge through a service says so, with what it merges: a squash's commit is not the source's commits
+    let merge = origin.merge;
+    base.insert("isMerge".to_string(), Value::Bool(merge.is_some()));
+    base.insert(
+        "mergeRequestId".to_string(),
+        merge
+            .and_then(|merge| merge.merge_request_id.clone())
+            .map_or(Value::Null, Value::string),
+    );
+    base.insert(
+        "mergeMethodEnumId".to_string(),
+        merge.map_or(Value::Null, |merge| Value::string(merge.method)),
+    );
+    base.insert(
+        "mergeSourceCommitId".to_string(),
+        merge.map_or(Value::Null, |merge| Value::string(merge.source.to_string())),
+    );
+    base.insert(
+        "refUpdates".to_string(),
+        Value::List(refs.iter().map(|reference| ref_value(reference, branch_ref)).collect()),
+    );
+    base
+}
+
+/// Every commit the refs of a change bring (`gains`), each once, at most `limit`, and whether there are more: a
+/// pre-receive rule's `newCommits`.
+fn receive_commits(gains: &[Gained], limit: usize) -> (Vec<ObjectId>, bool) {
+    let mut seen = HashSet::new();
+    let mut ids = Vec::new();
+    let mut truncated = gains.iter().any(|gain| gain.truncated);
+    for id in gains.iter().flat_map(|gain| &gain.ids) {
+        if !seen.insert(*id) {
+            continue;
+        }
+        if ids.len() >= limit {
+            truncated = true;
+            break;
+        }
+        ids.push(*id);
+    }
+    (ids, truncated)
+}
+
 /// Run the pre events of a change against `view` (the repository with the new objects over it): pre-receive once
 /// with every ref, then pre-ref-update for each ref the change may still make (`candidates`, by index), each with the
 /// commits it would bring (`newCommits`, `newCommitIds`, `newCommitsTruncated`). `prior` is the repository's refs
@@ -1193,55 +1312,19 @@ pub(crate) fn pre_receive(
         return decided;
     }
     let branch_ref = ops::branch_ref(branch);
-    let mut base = BTreeMap::new();
-    base.insert("repositoryId".to_string(), Value::string(repository_id));
-    base.insert("source".to_string(), Value::string(source));
-    base.insert("transport".to_string(), Value::string(origin.transport));
-    base.insert(
-        "userId".to_string(),
-        origin.user_id.clone().map_or(Value::Null, Value::string),
-    );
-    base.insert(
-        "pushOptions".to_string(),
-        Value::List(origin.push_options.iter().map(Value::string).collect()),
-    );
-    base.insert(
-        "packBytes".to_string(),
-        Value::I64(i64::try_from(origin.pack_bytes).unwrap_or(i64::MAX)),
-    );
-    base.insert(
-        "forReview".to_string(),
-        Value::Bool(
-            candidates
-                .iter()
-                .any(|index| refs[*index].name.starts_with(super::reach::REVIEW_REFS)),
-        ),
-    );
-    // a merge through a service says so, with what it merges: a squash's commit is not the source's commits
-    let merge = origin.merge.as_ref();
-    base.insert("isMerge".to_string(), Value::Bool(merge.is_some()));
-    base.insert(
-        "mergeRequestId".to_string(),
-        merge
-            .and_then(|merge| merge.merge_request_id.clone())
-            .map_or(Value::Null, Value::string),
-    );
-    base.insert(
-        "mergeMethodEnumId".to_string(),
-        merge.map_or(Value::Null, |merge| Value::string(merge.method)),
-    );
-    base.insert(
-        "mergeSourceCommitId".to_string(),
-        merge.map_or(Value::Null, |merge| Value::string(merge.source.to_string())),
-    );
-    base.insert(
-        "refUpdates".to_string(),
-        Value::List(
-            candidates
-                .iter()
-                .map(|index| ref_value(&refs[*index], &branch_ref))
-                .collect(),
-        ),
+    let chosen: Vec<&RefUpdate> = candidates.iter().map(|index| &refs[*index]).collect();
+    let base = pre_base(
+        &PreOrigin {
+            repository_id,
+            source,
+            transport: origin.transport,
+            user_id: origin.user_id.as_deref(),
+            push_options: &origin.push_options,
+            pack_bytes: origin.pack_bytes,
+            merge: origin.merge.as_ref(),
+        },
+        &chosen,
+        &branch_ref,
     );
     let prior_tips: Vec<ObjectId> = prior
         .iter()
@@ -1254,21 +1337,7 @@ pub(crate) fn pre_receive(
         .collect();
     if wants_receive {
         let mut fields = base.clone();
-        // every commit the change brings, each once, within the same bound
-        let limit = max_commits();
-        let mut seen = HashSet::new();
-        let mut ids = Vec::new();
-        let mut truncated = gains.iter().any(|gain| gain.truncated);
-        for id in gains.iter().flat_map(|gain| &gain.ids) {
-            if !seen.insert(*id) {
-                continue;
-            }
-            if ids.len() >= limit {
-                truncated = true;
-                break;
-            }
-            ids.push(*id);
-        }
+        let (ids, truncated) = receive_commits(&gains, max_commits());
         insert_new_commits(&mut fields, view, &ids, truncated);
         let outcome = git_eca::run_git_rules(
             &event_key(GitEvent::PreReceive, source, repository_id, None, &branch_ref),

@@ -2144,6 +2144,63 @@ fn git_eca_rules_check_pushes_and_see_their_commits_and_tags() {
         "2"
     );
 
+    // the push log gives back each event's contexts as the rules had them (the Dev AIDE's Try the condition against a
+    // push, events::context)
+    {
+        let _entered = fixture.context.enter();
+        let _authz = fixture.context.disable_authz();
+        let provider = crate::provider(fixture.context.factory()).unwrap();
+        let contexts = |update: &EntityValue, event: &str| {
+            provider
+                .event_contexts("eca", &field(update, "updateId"), event, 50)
+                .unwrap()
+        };
+        let at = |context: &crate::events::context::EventContext, name: &str| {
+            context
+                .fields
+                .get(name)
+                .map(moqui_lib::object::to_plain_string)
+                .unwrap_or_default()
+        };
+        let commits = contexts(&updates[1], "commit");
+        let summaries: Vec<String> = commits
+            .iter()
+            .map(|context| match context.fields.get("commit") {
+                Some(Value::Map(commit)) => commit
+                    .get("summary")
+                    .map(moqui_lib::object::to_plain_string)
+                    .unwrap_or_default(),
+                _ => String::new(),
+            })
+            .collect();
+        assert_eq!(summaries, ["First commit", "Second commit"]);
+        assert_eq!(at(&commits[0], "refName"), "refs/heads/main");
+        assert_eq!(at(&commits[0], "updateId"), field(&updates[1], "updateId"));
+        let refs = contexts(&updates[1], "ref-update");
+        assert_eq!(refs.len(), 1);
+        assert_eq!(
+            (at(&refs[0], "changeType"), at(&refs[0], "isDefaultBranch")),
+            ("create".into(), "true".into())
+        );
+        let tags: Vec<String> = contexts(&updates[2], "tag")
+            .iter()
+            .map(|context| context.label.clone())
+            .collect();
+        assert_eq!(tags, ["refs/tags/light", "refs/tags/v1"]);
+        assert_eq!(contexts(&updates[2], "post-receive").len(), 1);
+        // the refused push: its pre events with every ref it asked for, its objects gone, so no commits and said so
+        let refused = contexts(&updates[0], "pre-receive");
+        assert_eq!(refused.len(), 1);
+        assert_eq!(at(&refused[0], "newCommitsTruncated"), "true");
+        assert_eq!(contexts(&updates[0], "pre-ref-update")[0].label, "refs/heads/main");
+        assert!(provider
+            .event_contexts("eca", &field(&updates[0], "updateId"), "nothing", 50)
+            .is_err());
+        assert!(provider
+            .event_contexts("other", &field(&updates[0], "updateId"), "commit", 50)
+            .is_err());
+    }
+
     // a pre-ref-update rule protects main from a force push
     git_ok(&work, &home, &["commit", "--amend", "-m", "Second commit, rewritten"]);
     let (ok, out) = git_in(&work, &home, &["push", "--force", "origin", "main"]);
