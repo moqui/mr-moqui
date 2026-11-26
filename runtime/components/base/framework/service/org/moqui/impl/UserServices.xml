@@ -1396,12 +1396,14 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
     <service verb="create" noun="UserScopedKey" type="rust" location="moqui_core::service::user_keys::create_scoped_key">
         <description>A new key of the current user that opens one service alone (UserLoginKey.scope): gateway, the LLM
-            gateway's /llm/v1, which the web, REST, git and every other login refuse. It is in the user's device list
-            under deviceName (revoke#UserDeviceKey ends it) and good for login-key/@device-expire-hours. Shown only in the
-            out parameters. A dev instance keeps one for its group server's gateway (plans/design-dev-aide.md 21.2), in
-            place of the account's key.</description>
+            gateway's /llm/v1; git, git over HTTP and the REST resources that declare key-scope git (the framework's git
+            and hosting reads); tasks, the REST resources that declare key-scope tasks (Mantle's my/tasks and a
+            repository's issues: reading the user's tasks, reading and filing a repository's issues). The web, every other REST resource and every other login refuse it. It is in the
+            user's device list under deviceName (revoke#UserDeviceKey ends it) and good for
+            login-key/@device-expire-hours. Shown only in the out parameters. A dev instance keeps one of each for its
+            group server (plans/design-dev-aide.md 21.2, question 18), in place of the account's key.</description>
         <in-parameters>
-            <parameter name="scope" default-value="gateway"><description>gateway</description></parameter>
+            <parameter name="scope" default-value="gateway"><description>gateway, git or tasks</description></parameter>
             <parameter name="deviceName"><description>Who keeps it, as the device list shows it</description></parameter>
         </in-parameters>
         <out-parameters><parameter name="loginKey"/><parameter name="scope"/></out-parameters>
@@ -1409,7 +1411,8 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="revoke" noun="UserHeldKey" type="rust" location="moqui_core::service::user_keys::revoke_held_key">
         <description>End a key of the current user by the key itself, as its holder keeps it: a client let go ends the
             keys it held (a scoped key, and the key it signs in with). A key that is not the user's is not ended
-            (revoked false).</description>
+            (revoked false). A request a key made for one service signed in (hosting/keyRevoke takes every scope) ends
+            that key alone: another is refused.</description>
         <in-parameters><parameter name="loginKey" required="true"/></in-parameters>
         <out-parameters><parameter name="revoked" type="Boolean"/></out-parameters>
     </service>

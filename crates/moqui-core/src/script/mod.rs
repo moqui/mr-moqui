@@ -27,6 +27,7 @@ pub mod standalone;
 pub mod template;
 pub(crate) mod text;
 pub mod theme;
+pub(crate) mod trace;
 pub(crate) mod walker;
 
 pub use run::{declare_thread_stack, spawn_script_thread, ReleaseScope};
@@ -34,11 +35,13 @@ pub use run::{declare_thread_stack, spawn_script_thread, ReleaseScope};
 pub(crate) use actions::run_actions_at;
 pub(crate) use actions::{is_empty_value, is_groovy_false};
 pub use actions::{
-    check_actions, eval_condition_element, eval_condition_group, generated_source, run_actions, PreparedActions,
+    check_actions, condition_source, eval_condition_element, eval_condition_group, generated_source,
+    generated_source_with, run_actions, PreparedActions,
 };
 pub(crate) use bounded::BoundedMap;
 pub(crate) use parse::check_program;
 pub use parse::parse_js;
+pub use trace::traced;
 pub use runtime::{forget_scripts, oxide_heap_line};
 #[cfg(test)]
 pub(crate) use runtime::script_time_remaining;

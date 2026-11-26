@@ -263,8 +263,8 @@ pub(crate) fn forget_vault(facade: &EntityFacade, vault_id: &str) -> Result<(), 
     Ok(())
 }
 
-/// Tells every person of a vault's member list about a recovery: a notification, persisted, in the transaction of the
-/// change (a recovery whose notice cannot be written does not happen).
+/// Tells every person of a vault's member list about a recovery: a notification persisted in the transaction of the
+/// change, so a recovery whose notice cannot be written does not happen, and sent to them only once it commits.
 pub(crate) fn notify_members(
     entry: &KeyVersion,
     vault_id: &str,

@@ -133,7 +133,7 @@ the user services call.
 | Member | |
 |---|---|
 | `userId`, `username` | The signed-in user's id and username; null with nobody signed in |
-| `loginKeyKind` | The kind of login key this request's user signed in with (the `api_key` or `login_key` header, or `loginUserKey`), read from its `UserLoginKey`: `device` (a device's key, `deviceName`), `token` (an access token, `description`, which only git over HTTP and the git REST take: `scope` `git`), `session` (a `getLoginKey` key) or `scoped` (a key for one service, `scope`, which only that service's login takes); null for a password, cookie or any other login. For this request only: the session's next request by cookie has none |
+| `loginKeyKind` | The kind of login key this request's user signed in with (the `api_key` or `login_key` header, or `loginUserKey`), read from its `UserLoginKey`: `device` (a device's key, `deviceName`), `token` (an access token, `description`, or a key made for git alone, which only git over HTTP and the REST resources that declare `key-scope` `git` take: `scope` `git`), `session` (a `getLoginKey` key) or `scoped` (a key for one service, `scope`, which only that service's login and the REST resources that declare its `key-scope` take; such a key, and a token, sign in their request alone, never the web session); null for a password, cookie or any other login. For this request only: the session's next request by cookie has none |
 | `userAccount` | The signed-in `UserAccount` as a map, without its credential and lockout columns; null with nobody |
 | `locale`, `setLocale(locale)` | The session's locale (`en_US`); setting saves it on the signed-in user's account. Null or empty clears it |
 | `timeZone`, `setTimeZone(zone)` | The session's time zone (an IANA name), the user's own, else the server's; setting saves it on the account. An unknown zone is an error |
@@ -1262,7 +1262,7 @@ A notification to users, by topic. Each setter returns the builder.
 | `record(entityName, recordId)`, `recordEntityName(name)`, `recordId(id)` | The record the notification is about |
 | `actorUserId(userId)` | Who did what the notification tells of; the current user when not set |
 | `appName(name)` | The app root the notification comes from |
-| `send(persist)` | Sends it; returns the builder |
+| `send(persist)` | Sends it; returns the builder. Inside a transaction the saved notification is written in that transaction (a find there sees it, a rollback takes it away, and a write that fails marks it rollback-only), and the socket message, email and push go out only when it commits, none if it rolls back |
 | `getTopic()` | The topic |
 | `getNotificationTopic()` | The `NotificationTopic` value of the topic, or null |
 | `getTitle()`, `getLink()` | As expanded by the last send; null before |

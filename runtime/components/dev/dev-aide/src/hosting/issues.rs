@@ -154,7 +154,9 @@ pub(crate) fn root_issues(context: &Context, root: &Root) -> Result<Option<(Host
     let Some(path) = issues_path(&hosted.server.offered("tasks.issuesPath"), &hosted.id()) else {
         return Ok(None);
     };
-    let answer = hosted.server.get(&path, &[("pageSize", "200")])?;
+    // the task panel's read, with the key for tasks alone (question 18)
+    let kept = matches!(hosted.via(), super::review::Via::Application(_));
+    let answer = hosted.server.tasks_get(&path, &[("pageSize", "200")], kept)?;
     let issues = read_issues(&answer, Some(&hosted.server));
     Ok(Some((hosted, issues)))
 }
@@ -190,7 +192,11 @@ fn create_root_issue(
     if !project.is_empty() {
         body["rootWorkEffortId"] = json!(project);
     }
-    let answer = hosted.server.post(&path, &body)?;
+    // filed with the key for tasks alone, which a repository's issues take for reading and filing (question 18)
+    let kept = matches!(hosted.via(), super::review::Via::Application(_));
+    let answer = hosted
+        .server
+        .tasks_request(moqui_core::outbound::Method::Post, &path, &[], Some(&body), kept)?;
     let made = client::result_of(&answer);
     let issue = issue_item(&json!({
         "workEffortId": made["workEffortId"].clone(), "issueId": made["issueId"].clone(), "id": made["id"].clone(),

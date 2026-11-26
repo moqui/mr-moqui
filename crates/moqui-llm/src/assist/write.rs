@@ -293,6 +293,12 @@ pub(super) fn turn(caller: &Caller, params: &Params) -> Answer {
         Some(id) => Some(caller.conversation(id)?),
         None => None,
     };
+    // a message in an archived conversation brings it back first, as Restore does (what heard its end hears that)
+    if let (Some(id), Some(row)) = (&conversation_id, &conversation) {
+        if text_of(row, "statusId").as_deref() == Some(ARCHIVED) {
+            set_status(caller, id, ACTIVE)?;
+        }
+    }
     // the terminal's pane is a client of these calls too: its conversations are the terminal's (plan 4.12)
     let surface = match params.text("surface").as_deref() {
         None | Some("drawer") => Surface::Drawer,
@@ -486,6 +492,58 @@ pub(super) fn follow(caller: &Caller, params: &Params) -> Answer {
         "follow": {"clientId": owner, "contextVersion": version},
         "following": owner.as_deref() == Some(client_id.as_str()),
     }))
+}
+
+/// The statuses of a conversation that is on, and one the user put away (`AgentConversation`, AgentTypeData.xml).
+const ACTIVE: &str = "AgcActive";
+const ARCHIVED: &str = "AgcArchived";
+
+/// `POST archive`: the user's own conversation (`conversationId`) archived, or with `archived` false restored. An
+/// archived conversation stays in the list, marked; what hears its end does so then (the Dev AIDE ends its session's
+/// worktree). A turn in an archived conversation restores it. 409 while a run of it is active.
+/// `{"conversationId", "statusId"}`.
+pub(super) fn archive(caller: &Caller, params: &Params) -> Answer {
+    let conversation_id = params.required("conversationId")?;
+    let row = caller.conversation(&conversation_id)?;
+    let archived = params.flag("archived").unwrap_or(true);
+    if archived {
+        if let Some(active) = text_of(&row, "activeRunId") {
+            let running = caller.run(&active).is_ok_and(|run| !run.state.is_terminal());
+            if running {
+                return Err(DrawerError::conflict(
+                    "a run of this conversation is active: stop it first",
+                ));
+            }
+        }
+    }
+    let status = if archived { ARCHIVED } else { ACTIVE };
+    set_status(caller, &conversation_id, status)?;
+    Ok(json!({"conversationId": conversation_id, "statusId": status}))
+}
+
+/// Set a conversation's status, in a transaction of its own use: what hears its end or its return (an entity rule)
+/// hears it then.
+fn set_status(caller: &Caller, conversation_id: &str, status: &str) -> Result<(), DrawerError> {
+    let facade = &caller.facade;
+    quietly(|| {
+        in_tx(facade, || {
+            let Some(mut row) = facade
+                .find(run::CONVERSATION)?
+                .eq("conversationId", Value::string(conversation_id))
+                .for_update(true)
+                .disable_authz()
+                .one()?
+            else {
+                return Ok(());
+            };
+            if text_of(&row, "statusId").as_deref() != Some(status) {
+                row.set("statusId", Value::string(status));
+                row.update(facade)?;
+            }
+            Ok(())
+        })
+    })?;
+    Ok(())
 }
 
 /// `POST context`: the user navigated (or changed the page) in a tab. From the follow owner (or any tab when none

@@ -449,7 +449,7 @@ Following the synthetic result opened its trace with a 3 ms check, 2.97 ms HTTP 
 
 Local evidence is under `plans/ui-refinement-evidence/closeout-d10e22f/`.
 
-Follow-up, 2026-11-25 (with DASH-UI-005): per the code and a probe spec render, Releases showed Released as raw UTC date text; it is now shown in the viewer's zone, with the zone named once, as ReleaseDetail shows it. Log context's times likewise. Not rechecked live.
+Follow-up, 2026-11-25 (with DASH-UI-005): per the code and a probe spec render, Releases showed Released as raw UTC date text; it is now shown in the viewer's zone, with the zone named once, as ReleaseDetail shows it. Log context's times likewise. The regression test `monitor_tui::releases_show_times_in_the_viewer_s_zone` renders Releases once in the terminal and checks the Chicago text and "Times shown in America/Chicago.", and monitor_readers checks Log context's in html (it has no terminal template); the terminal sweep of every monitoring screen moved to acceptance (`cargo test-slow`). Not rechecked live.
 
 #### Remaining branches
 

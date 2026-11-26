@@ -883,8 +883,9 @@ Acceptance tests can be deleted freely, since nothing depends on them.
   `component://<component>/test/...` stay in `test/`, for both suites.
 - **Rust.** Rust has no such directory: its acceptance tests are `#[ignore = "..."]` (`cargo test-slow`, which runs
   those of the host modules its alias in `.cargo/config.toml` names: `tools_screens`, `gate2`, `tool_components`,
-  `qvt_report`, `notws`, `git_storage`, `factory_restart`, `authz_revocation` and `managed_sealed_start` (the
-  framework's ManagedSealedStart, about two minutes); a new module of them is added there
+  `qvt_report`, `notws`, `git_storage`, `factory_restart`, `authz_revocation`, `managed_sealed_start` (the
+  framework's ManagedSealedStart, about two minutes) and `monitor_tui` (its sweep of every monitoring and report
+  screen in the terminal); a new module of them is added there
   and here; and moqui-core's sweep of screen generation on both script engines) or opt-in `[[test]]`s (`gate3`, `gate3_browser`, `client_browser`, `tui_screens`). `./moq accept-all` runs them, and no
   regression command does.
 - **Who runs it.** `./moq accept-all` on a schedule (nightly, or weekly while it is long) and before a release, with

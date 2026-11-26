@@ -6228,3 +6228,1210 @@ fn a_dev_agent_change_set_is_previewed_reviewed_and_saved_in_chromium() {
     assert!(result.contains("accepted 2 of 3 hunks"), "{result}");
     assert!(result.contains("service/mysite/Things.xml"), "{result}");
 }
+
+/// The dev-aide component linked into a smoke's runtime, as the Workspace smokes link it.
+#[cfg(feature = "devtools")]
+fn dev_aide_link() -> String {
+    std::fs::canonicalize(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../runtime/components/dev/dev-aide"
+    ))
+    .unwrap()
+    .to_str()
+    .unwrap()
+    .to_string()
+}
+
+/// git kept from the desktop's config and credentials, for the server and the smoke alike (`it::devaide_group`'s).
+#[cfg(feature = "devtools")]
+fn isolate_dev_git(home: &std::path::Path) {
+    for (name, value) in [
+        ("HOME", home.display().to_string()),
+        ("GIT_CONFIG_GLOBAL", "/dev/null".to_string()),
+        ("GIT_CONFIG_NOSYSTEM", "1".to_string()),
+        ("GIT_TERMINAL_PROMPT", "0".to_string()),
+        ("GIT_ASKPASS", String::new()),
+        ("GIT_COMMITTER_NAME", "Dev Server".to_string()),
+        ("GIT_COMMITTER_EMAIL", "server@example.com".to_string()),
+        ("GIT_AUTHOR_NAME", "Setup".to_string()),
+        ("GIT_AUTHOR_EMAIL", "setup@example.com".to_string()),
+    ] {
+        std::env::set_var(name, value);
+    }
+}
+
+/// `git args` in `dir`, which must succeed; its output trimmed.
+#[cfg(feature = "devtools")]
+fn dev_git(dir: &std::path::Path, args: &[&str]) -> String {
+    let output = std::process::Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+/// A login key of `user`, as the server's Git access page makes one.
+#[cfg(feature = "devtools")]
+fn dev_login_key(gate: &common::Gate, user: &str) -> String {
+    let factory = std::sync::Arc::clone(gate.server.factory());
+    let context = factory.new_context();
+    let _entered = context.enter();
+    moqui_core::user::internal_login_user(user).unwrap();
+    let key = moqui_core::user::get_login_key(Some(2.0)).unwrap();
+    moqui_core::user::logout().unwrap();
+    key
+}
+
+/// A service called as `user`, which must not fail.
+#[cfg(feature = "devtools")]
+fn dev_call(
+    gate: &common::Gate,
+    user: &str,
+    name: &str,
+    parameters: &[(&str, &str)],
+) -> std::collections::BTreeMap<String, moqui_lib::object::Value> {
+    let factory = std::sync::Arc::clone(gate.server.factory());
+    let context = factory.new_context();
+    let _entered = context.enter();
+    moqui_core::user::internal_login_user(user).unwrap();
+    let parameters = parameters
+        .iter()
+        .map(|(key, value)| ((*key).to_string(), moqui_lib::object::Value::string(*value)))
+        .collect();
+    let out = moqui_core::service::sync(name, &parameters).unwrap_or_else(|err| panic!("{name}: {err}"));
+    let errors = context.message().errors().to_vec();
+    assert!(errors.is_empty(), "{name}: {errors:?}");
+    out
+}
+
+/// Sets the text of a Quasar input (the element, or the input or textarea inside it) as typing does, for its v-model.
+#[cfg(feature = "devtools")]
+fn set_input(browser: &mut Browser, element: &str, text: &str) {
+    browser.eval(&format!(
+        "(() => {{ const el = {element}; const input = el.matches('input, textarea') ? el : el.querySelector('input, textarea'); \
+         input.value = {text:?}; input.dispatchEvent(new Event('input', {{bubbles: true}})); return true; }})()"
+    ));
+}
+
+/// Edits the CodeMirror editor under `container`: the first `find` replaced by `insert`.
+#[cfg(feature = "devtools")]
+fn edit_code(browser: &mut Browser, container: &str, find: &str, insert: &str) {
+    browser.eval(&format!(
+        "(() => {{ const view = CodeMirror.EditorView.findFromDOM(document.querySelector({editor:?})); \
+         const at = view.state.doc.toString().indexOf({find:?}); if (at < 0) throw new Error('no ' + {find:?}); \
+         view.dispatch({{changes: {{from: at, to: at + {len}, insert: {insert:?}}}}}); return true; }})()",
+        editor = format!("{container} .cm-editor"),
+        len = find.encode_utf16().count(),
+    ));
+}
+
+/// Clicks `element` until `done` (an expression) holds: a click while a dialog or a notification still fades out lands
+/// on it, not on the element.
+#[cfg(feature = "devtools")]
+fn click_until(browser: &mut Browser, what: &str, element: &str, done: &str) {
+    let deadline = std::time::Instant::now() + WAIT;
+    loop {
+        browser.click(what, element);
+        for _ in 0..10 {
+            if browser.eval(&format!("!!({done})")) == true {
+                return;
+            }
+            browser.pump(Duration::from_millis(100));
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "{what}: {done} did not hold after clicks"
+        );
+    }
+}
+
+/// Waits until `check` holds, pumping the browser's events between tries.
+#[cfg(feature = "devtools")]
+fn wait_until(browser: &mut Browser, what: &str, mut check: impl FnMut() -> bool) {
+    let deadline = std::time::Instant::now() + WAIT;
+    while !check() {
+        assert!(std::time::Instant::now() < deadline, "timed out waiting for {what}");
+        browser.pump(Duration::from_millis(200));
+    }
+}
+
+/// The review application of the group server, as Mantle would be for threads (plans/design-dev-aide.md 21.10): a
+/// review-thread service over a table of its own (`it::devaide_group`'s stub, its threads alone).
+#[cfg(all(feature = "devtools", feature = "git"))]
+const REVIEW_STUB_CONF: &str =
+    r#"<moqui-conf><git-server review-thread-service="reviewstub.Stub.handle#Thread"/></moqui-conf>"#;
+#[cfg(all(feature = "devtools", feature = "git"))]
+const REVIEW_STUB_ENTITIES: &str = r#"<entities>
+    <entity entity-name="ReviewNote" package="reviewstub">
+        <field name="noteId" type="id" is-pk="true"/>
+        <field name="threadId" type="id"/>
+        <field name="mergeRequestId" type="id"/>
+        <field name="path" type="text-medium"/>
+        <field name="newLine" type="number-integer"/>
+        <field name="oldLine" type="number-integer"/>
+        <field name="authorName" type="text-medium"/>
+        <field name="body" type="text-long"/>
+        <field name="resolved" type="text-indicator"/>
+    </entity>
+</entities>"#;
+#[cfg(all(feature = "devtools", feature = "git"))]
+const REVIEW_STUB_SERVICES: &str = r#"<services>
+    <service verb="handle" noun="Thread">
+        <implements service="org.moqui.git.GitServices.handle#GitReviewThread"/>
+        <actions><script><![CDATA[
+            const E = 'reviewstub.ReviewNote'
+            if (operation === 'find') {
+                let find = ec.entity.find(E).condition('mergeRequestId', mergeRequestId).disableAuthz()
+                if (path) find = find.condition('path', path)
+                const byThread = {}
+                threadList = []
+                for (const note of Array.from(find.orderBy('noteId').list())) {
+                    let thread = byThread[note.threadId]
+                    if (!thread) {
+                        thread = byThread[note.threadId] = {threadId: note.threadId, path: note.path, newLine: note.newLine,
+                            oldLine: note.oldLine, resolved: false, commentList: []}
+                        threadList.push(thread)
+                    }
+                    if (note.resolved === 'Y') thread.resolved = true
+                    thread.commentList.push({commentId: note.noteId, authorName: note.authorName, body: note.body, bodyFormat: 'markdown'})
+                }
+            } else if (operation === 'comment') {
+                if (threadId && ec.entity.find(E).condition('threadId', threadId).condition('mergeRequestId', mergeRequestId)
+                        .disableAuthz().count() == 0) { ec.message.addError('No thread ' + threadId); return }
+                const note = ec.entity.makeValue(E).setAll({mergeRequestId, path, newLine, oldLine, body,
+                    authorName: ec.user.username}).setSequencedIdPrimary()
+                note.threadId = threadId || note.noteId
+                note.create()
+                threadId = note.threadId
+            } else if (operation === 'resolve') {
+                const notes = () => ec.entity.find(E).condition('threadId', threadId).condition('mergeRequestId', mergeRequestId).disableAuthz()
+                if (notes().count() == 0) { ec.message.addError('No thread ' + threadId); return }
+                notes().updateAll({resolved: resolved ? 'Y' : 'N'})
+            }
+        ]]></script></actions>
+    </service>
+</services>"#;
+
+/// The Dev AIDE with a group server (plans/design-dev-aide.md 21, P11-P13; DevAideCollaborationWalk in
+/// plans/ui-review-dev-aide-workspace.md, DEVW-09 to DEVW-11), the instance its own group server over loopback as
+/// `it::devaide_group` sets it up: the site's working tree has the instance's hosted `my-site` as its origin. Settings ›
+/// Group servers connects with a pasted access token (the app sign-in's browser handoff is `it::devaide_group`'s) and
+/// sets git's credential from it; the Workspace finds the hosted repository, pushes a branch and opens a merge request
+/// from the push's offer; the Merge requests tab's Review shows the file in the merge view with a reviewer's thread on
+/// its line, a reply that reaches the server, and a comment on another line that makes a thread there; a failed status
+/// posted to the branch's commit shows as a chip on Commits, and opens the commit's checks.
+#[cfg(all(feature = "devtools", feature = "git"))]
+#[test]
+fn a_group_server_merge_request_is_opened_reviewed_and_checked_in_chromium() {
+    if !crate::common::own_process() {
+        return;
+    }
+    let services = "<services>\n    <service verb=\"get\" noun=\"Thing\"/>\n</services>\n";
+    let records = include_str!("../../../runtime/components/dev/dev-aide/data/DevAideSecurityData.xml").replace(
+        "</entity-facade-xml>",
+        r#"
+    <moqui.resource.GitRepository repositoryId="my-site" repositoryKind="db" description="The site component, hosted"/>
+    <moqui.security.UserAccount userId="DEV_VIEWER" username="dev.viewer" userFullName="Dev Viewer" emailAddress="viewer@example.com"/>
+    <moqui.security.UserGroupMember userGroupId="DEV_AIDE_EXTENDERS" userId="DEV_VIEWER" fromDate="0"/>
+    <moqui.security.UserGroup userGroupId="MY_SITE_VIEWERS" description="May view my-site"/>
+    <moqui.security.UserGroupMember userGroupId="MY_SITE_VIEWERS" userId="DEV_VIEWER" fromDate="0"/>
+    <moqui.security.ArtifactGroup artifactGroupId="GIT_MY_SITE" description="my-site"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="GIT_MY_SITE" artifactName="my-site" artifactTypeEnumId="AT_GIT_REPOSITORY"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="GIT_MY_SITE_VIEW" userGroupId="MY_SITE_VIEWERS" artifactGroupId="GIT_MY_SITE"
+        authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_VIEW"/>
+</entity-facade-xml>"#,
+    );
+    let files = [
+        (
+            "components/addon/my-site/component.xml",
+            r#"<component name="my-site"/>"#,
+        ),
+        ("components/addon/my-site/service/mysite/Things.xml", services),
+        (
+            "components/addon/review-stub/component.xml",
+            r#"<component name="review-stub"/>"#,
+        ),
+        ("components/addon/review-stub/MoquiConf.xml", REVIEW_STUB_CONF),
+        (
+            "components/addon/review-stub/entity/ReviewStub.xml",
+            REVIEW_STUB_ENTITIES,
+        ),
+        (
+            "components/addon/review-stub/service/reviewstub/Stub.xml",
+            REVIEW_STUB_SERVICES,
+        ),
+    ];
+    let dev_aide = dev_aide_link();
+    let gate = common::start_with_files_and_links(
+        "browser-dev-group",
+        Some(&records),
+        &[
+            ("moqui_conf__instance__purpose", "dev"),
+            ("moqui_conf__dev_aide__site_component", "my-site"),
+            ("moqui_conf__dev_aide__shared", "false"),
+        ],
+        &files,
+        &[(&dev_aide, "components/dev/dev-aide")],
+    );
+    isolate_dev_git(&gate.runtime);
+    let address = gate.server.address();
+    let base = format!("http://127.0.0.1:{}", address.port());
+    let site = gate.runtime.join("components/addon/my-site");
+
+    // the working tree, whose origin is the instance's own hosted repository; a branch committed, not pushed
+    let john_key = dev_login_key(&gate, "john.doe");
+    let with_key = format!(
+        "http://john.doe:{john_key}@127.0.0.1:{}/git/my-site.git",
+        address.port()
+    );
+    dev_git(&site, &["init", "-q", "-b", "main"]);
+    dev_git(&site, &["add", "-A"]);
+    dev_git(&site, &["commit", "-q", "-m", "Start"]);
+    dev_git(&site, &["push", "-q", &with_key, "main"]);
+    dev_git(&site, &["remote", "add", "origin", &format!("{base}/git/my-site.git")]);
+    dev_git(&site, &["fetch", "-q", &with_key, "main:refs/remotes/origin/main"]);
+    dev_git(&site, &["branch", "-q", "--set-upstream-to=origin/main", "main"]);
+    dev_git(&site, &["switch", "-q", "-c", "due-date"]);
+    std::fs::write(
+        site.join("service/mysite/Things.xml"),
+        "<services>\n    <service verb=\"get\" noun=\"Thing\"/>\n    <service verb=\"get\" noun=\"DueDate\"/>\n</services>\n",
+    )
+    .unwrap();
+    dev_git(&site, &["commit", "-q", "-am", "Add a due date"]);
+    let head = dev_git(&site, &["rev-parse", "HEAD"]);
+
+    let mut browser = Browser::launch();
+    sign_in(&mut browser, &base);
+
+    // Settings › Group servers: a pasted access token, then git's credential set from the connection
+    browser.navigate(&format!("{base}/qapps/dev/Settings"));
+    let paste = by_text("button", "Paste an access token");
+    browser.wait_for("the group servers", &format!("!!{paste}"), WAIT);
+    browser.click("Paste an access token", &paste);
+    browser.wait_for(
+        "the token form",
+        "!!document.querySelector('.q-dialog [id=\"ServerTokenForm_token\"]')",
+        WAIT,
+    );
+    for (field, value) in [
+        ("baseUrl", base.as_str()),
+        ("label", "Team"),
+        ("token", john_key.as_str()),
+    ] {
+        browser.click(
+            field,
+            &format!("document.querySelector('.q-dialog [id=\"ServerTokenForm_{field}\"]')"),
+        );
+        browser.type_text(value);
+    }
+    browser.click("Save token", &by_text(".q-dialog button", "Save token"));
+    browser.wait_for(
+        "the setup from the server",
+        "!!document.getElementById('DevAideServerPlanBox') && document.body.innerText.indexOf('connected as john.doe') >= 0",
+        WAIT,
+    );
+    let mine = by_text(".q-radio", "My token from this connection");
+    browser.wait_for("git's credential choice", &format!("!!{mine}"), WAIT);
+    browser.click("My token from this connection", &mine);
+    browser.click("Set", &by_text("#DevAideServerPlanBox button", "Set"));
+    let credential = || {
+        let factory = std::sync::Arc::clone(gate.server.factory());
+        let context = factory.new_context();
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        factory
+            .entity()
+            .unwrap()
+            .find("moqui.dev.DevAideCredential")
+            .unwrap()
+            .list()
+            .unwrap()
+            .values()
+            .iter()
+            .any(|row| {
+                row.get("serverId").is_some_and(|id| !moqui_lib::object::is_empty(id))
+                    && row.get("username").map(moqui_lib::object::to_plain_string).as_deref() == Some("john.doe")
+            })
+    };
+    wait_until(&mut browser, "git's credential from the connection", credential);
+    assert_clean(&mut browser, "Settings › Group servers");
+
+    // the Workspace finds the hosted repository (the git Settings tab's Find on the server)
+    browser.navigate(&format!("{base}/qapps/dev/Workspace?rootId=my-site"));
+    browser.wait_for("the git status", "!!document.getElementById('DevChangeCount')", WAIT);
+    click_until(
+        &mut browser,
+        "Settings",
+        &by_text(".m-dev-tabs .q-tab", "Settings"),
+        "document.getElementById('DevFindHosted')",
+    );
+    browser.click("Find on the server", "document.getElementById('DevFindHosted')");
+    browser.wait_for(
+        "the Merge requests tab",
+        "!!document.getElementById('DevMergeRequestsTab')",
+        WAIT,
+    );
+
+    // Push, then the push's offer opens a merge request
+    browser.click("Push", &by_text(".m-dev-repo-bar button", "Push"));
+    let open = by_text(".q-notification button", "Open");
+    browser.wait_for("the merge request offer", &format!("!!{open}"), WAIT);
+    browser.click("Open", &open);
+    browser.wait_for("the title asked", "!!document.querySelector('.q-dialog input')", WAIT);
+    set_input(
+        &mut browser,
+        "document.querySelector('.q-dialog input')",
+        "Add a due date",
+    );
+    browser.click("OK", &by_text(".q-dialog button", "OK"));
+    browser.wait_for(
+        "the merge request opened",
+        "document.body.innerText.indexOf('Opened merge request !1') >= 0",
+        WAIT,
+    );
+    assert_eq!(
+        dev_git(&site, &["ls-remote", &with_key, "refs/heads/due-date"])
+            .split_whitespace()
+            .next(),
+        Some(head.as_str())
+    );
+    // a reviewer's thread on line 3 of the file, made on the server through its REST
+    let viewer_key = dev_login_key(&gate, "dev.viewer");
+    let threads_path = "/rest/s1/moqui/git/my-site/mergeRequests/1/threads";
+    let (status, _, body) = common::exchange(
+        address,
+        &common::http_request(
+            "POST",
+            threads_path,
+            &[("api_key", &viewer_key), ("Content-Type", "application/json")],
+            r#"{"body": "Is DueDate the right noun?", "path": "service/mysite/Things.xml", "newLine": 3}"#,
+        ),
+    );
+    assert_eq!(status, 200, "{body}");
+
+    // Merge requests › Review: the file in the merge view, the thread on its line, a reply and a comment on a line
+    browser.wait_for("the dialog closed", "!document.querySelector('.q-dialog')", WAIT);
+    click_until(
+        &mut browser,
+        "Merge requests",
+        "document.getElementById('DevMergeRequestsTab')",
+        "document.getElementById('DevMergeRequests')",
+    );
+    browser.wait_for(
+        "the merge request listed",
+        "(document.querySelector('#DevMergeRequests [data-merge-request=\"1\"]') || {innerText: ''}).innerText.indexOf('Add a due date') >= 0",
+        WAIT,
+    );
+    browser.click(
+        "Review",
+        "document.querySelector('#DevMergeRequests [data-review=\"1\"]')",
+    );
+    // the file's row, with its count of threads beside it
+    let file = "Array.from(document.querySelectorAll('#DevReview .q-item')).find((el) => el.innerText.indexOf('service/mysite/Things.xml') === 0)";
+    browser.wait_for("the changed file", &format!("!!{file}"), WAIT);
+    browser.click("the changed file", file);
+    browser.wait_for(
+        "the merge view with the thread on its line",
+        "!!document.querySelector('#DevReview .m-diff-view .cm-editor') \
+         && document.querySelector('#DevReview .m-diff-view').innerText.indexOf('DueDate') >= 0 \
+         && (document.querySelector('#DevReview [data-thread]') || {innerText: ''}).innerText.indexOf('service/mysite/Things.xml:3') >= 0 \
+         && document.querySelector('#DevReview [data-thread]').innerText.indexOf('Is DueDate the right noun?') >= 0",
+        WAIT,
+    );
+    set_input(
+        &mut browser,
+        "document.querySelector('#DevReview [data-thread] .q-field')",
+        "Yes: a due date is got",
+    );
+    browser.click("Reply", &by_text("#DevReview [data-thread] button", "Reply"));
+    browser.wait_for(
+        "the reply shown",
+        "(document.querySelector('#DevReview [data-thread]') || {innerText: ''}).innerText.indexOf('Yes: a due date is got') >= 0",
+        WAIT,
+    );
+    let on_server = || -> serde_json::Value {
+        let (status, _, body) = common::exchange(
+            address,
+            &common::http_request("GET", threads_path, &[("api_key", &viewer_key)], ""),
+        );
+        assert_eq!(status, 200, "{body}");
+        serde_json::from_str(&body).unwrap()
+    };
+    let threads = on_server();
+    let comments = &threads["threadList"][0]["commentList"];
+    assert_eq!(comments[1]["body"], "Yes: a due date is got", "{threads}");
+    assert_eq!(comments[1]["authorName"], "john.doe", "{threads}");
+    // a comment on line 2: a thread of its own there
+    set_input(
+        &mut browser,
+        "Array.from(document.querySelectorAll('#DevReview .q-field')).find((el) => el.innerText.trim() === 'Line')",
+        "2",
+    );
+    set_input(
+        &mut browser,
+        "Array.from(document.querySelectorAll('#DevReview .q-field')).find((el) => el.innerText.indexOf('A comment on service/mysite/Things.xml') >= 0)",
+        "The Thing service stays as it was",
+    );
+    browser.click("Comment", "document.getElementById('DevReviewComment')");
+    browser.wait_for(
+        "the new thread on line 2",
+        "Array.from(document.querySelectorAll('#DevReview [data-thread]')).some((el) => el.innerText.indexOf('service/mysite/Things.xml:2') >= 0 \
+         && el.innerText.indexOf('The Thing service stays as it was') >= 0)",
+        WAIT,
+    );
+    let threads = on_server();
+    let made = threads["threadList"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|thread| thread["newLine"] == 2)
+        .unwrap_or_else(|| panic!("no thread on line 2: {threads}"));
+    assert_eq!(made["path"], "service/mysite/Things.xml", "{threads}");
+    assert_eq!(
+        made["commentList"][0]["body"], "The Thing service stays as it was",
+        "{threads}"
+    );
+
+    // a failed status on the branch's commit: its chip on Commits, which opens the commit's checks
+    let (status, _, body) = common::exchange(
+        address,
+        &common::http_request(
+            "POST",
+            &format!("/rest/s1/moqui/git/my-site/commits/{head}/statuses"),
+            &[("api_key", &john_key), ("Content-Type", "application/json")],
+            r#"{"state": "failure", "context": "ci/test", "description": "1 failed"}"#,
+        ),
+    );
+    assert_eq!(status, 200, "{body}");
+    click_until(
+        &mut browser,
+        "Commits",
+        &by_text(".m-dev-tabs .q-tab", "Commits"),
+        "document.getElementById('DevCommits')",
+    );
+    browser.wait_for(
+        "the failure chip",
+        "!!document.querySelector('#DevCommits [data-state=\"failure\"]')",
+        WAIT,
+    );
+    browser.click(
+        "the chip",
+        "document.querySelector('#DevCommits [data-state=\"failure\"]')",
+    );
+    browser.wait_for(
+        "the commit's checks",
+        &format!(
+            "(document.getElementById('DevChecks') || {{innerText: ''}}).innerText.indexOf('Checks of {}') >= 0 \
+             && document.getElementById('DevChecks').innerText.indexOf('ci/test') >= 0",
+            &head[..9]
+        ),
+        WAIT,
+    );
+    assert_clean(&mut browser, "the merge request's review and checks");
+}
+
+/// An Assist session's worktree (plans/design-dev-aide.md 21.8, P13, question 19; DevAideSessionWorktreeWalk in
+/// plans/ui-review-dev-aide-workspace.md, DEVW-12): a conversation in the Workspace's Assist drawer, then the Sessions
+/// tab makes a worktree for it, saying a worktree is not loaded; opened, the Workspace's banner says so too; a file saved
+/// there is written in the worktree and not in the main tree, and nothing of it runs; committed, the worktree is clean,
+/// and archiving the conversation from Assist's History removes it (its branch stays).
+#[cfg(all(feature = "devtools", feature = "llm"))]
+#[test]
+fn an_assist_session_worktree_is_made_saved_in_and_ends_with_its_conversation_in_chromium() {
+    if !crate::common::own_process() {
+        return;
+    }
+    use moqui_llm::provider::fake::{self, Reply};
+    let site_services = "<services>\n    <service verb=\"get\" noun=\"Thing\">\n        <out-parameters><parameter name=\"result\"/></out-parameters>\n        <actions><set field=\"result\" value=\"first\"/></actions>\n    </service>\n</services>\n";
+    let files = [
+        (
+            "components/addon/my-site/component.xml",
+            r#"<component name="my-site"/>"#,
+        ),
+        ("components/addon/my-site/service/mysite/Things.xml", site_services),
+    ];
+    let records = |text: &str| -> String {
+        text.split_once("<entity-facade-xml type=\"seed\">")
+            .map_or("", |(_, rest)| rest)
+            .replace("</entity-facade-xml>", "")
+    };
+    let data = format!(
+        r#"<entity-facade-xml type="seed">
+        <moqui.llm.LlmEndpoint endpointId="gate-session" protocol="fake" description="Gate session fake" isLocal="Y"/>
+        <moqui.llm.LlmModel modelId="gate-session-fast" endpointId="gate-session" providerModel="fake-fast" tier="fast" contextWindow="32768"/>
+        <moqui.llm.LlmFeatureBinding featureId="assist" modelId="gate-session-fast" reasoningLevel="none"/>
+        {}{}</entity-facade-xml>"#,
+        records(include_str!(
+            "../../../runtime/components/dev/dev-aide/data/DevAideSecurityData.xml"
+        )),
+        records(include_str!(
+            "../../../runtime/components/dev/dev-aide/data/DevAideAgentData.xml"
+        )),
+    );
+    let dev_aide = dev_aide_link();
+    let gate = common::start_with_files_and_links(
+        "browser-dev-session",
+        Some(&data),
+        &[
+            ("moqui_conf__instance__purpose", "dev"),
+            ("moqui_conf__dev_aide__site_component", "my-site"),
+        ],
+        &files,
+        &[(&dev_aide, "components/dev/dev-aide")],
+    );
+    isolate_dev_git(&gate.runtime);
+    let site = gate.runtime.join("components/addon/my-site");
+    dev_git(&site, &["init", "-q", "-b", "main"]);
+    dev_git(&site, &["add", "-A"]);
+    dev_git(&site, &["commit", "-q", "-m", "Start"]);
+    fake::clear("gate-session");
+    let base = format!("http://{}", gate.server.address());
+    let mut browser = Browser::launch();
+    sign_in(&mut browser, &base);
+    browser.navigate(&format!("{base}/qapps/dev/Workspace?rootId=my-site"));
+    browser.wait_for(
+        "the Workspace and the Assist bootstrap",
+        "!!document.getElementById('DevChangeCount') && !!document.getElementById('m-assist-button') \
+         && !!moqui.assist.state.bootstrap && !!moqui.webrootVue && !moqui.webrootVue.loading",
+        WAIT,
+    );
+
+    // a conversation in the drawer
+    fake::script("gate-session", vec![Reply::text("Ready to work on the site.")]);
+    browser.eval("moqui.assist.openDrawer(true), true");
+    browser.wait_for(
+        "the composer",
+        "!!document.querySelector('#m-assist-composer textarea')",
+        WAIT,
+    );
+    browser.eval("(() => { document.querySelector('#m-assist-composer textarea').focus(); return true; })()");
+    browser.type_text("Start a session on the site");
+    browser.press("Enter");
+    let conversation = browser.wait_for(
+        "the conversation and its answer",
+        "(() => { const convo = moqui.assist.state.convo; return convo && convo.conversationId \
+         && document.getElementById('m-assist-drawer').innerText.indexOf('Ready to work on the site.') >= 0 ? String(convo.conversationId) : null; })()",
+        WAIT,
+    );
+    let conversation = conversation.as_str().unwrap().to_string();
+    // the drawer closed, as the user leaves it to work in the Workspace
+    browser.eval("moqui.assist.closeDrawer(), true");
+    browser.wait_for(
+        "the drawer closed",
+        "moqui.assist.state.open === false && document.body.innerText.indexOf('Ready to work on the site.') < 0",
+        WAIT,
+    );
+
+    // Sessions: a worktree for this session, which the panel says is not loaded
+    click_until(
+        &mut browser,
+        "Sessions",
+        "document.getElementById('DevSessionsTab')",
+        "document.getElementById('DevSessions')",
+    );
+    browser.wait_for(
+        "the sessions panel",
+        "(document.getElementById('DevSessionsNotLoaded') || {innerText: ''}).innerText.indexOf('A worktree is not loaded') >= 0 \
+         && document.getElementById('DevNewWorktree').innerText.indexOf('for this Assist session') >= 0",
+        WAIT,
+    );
+    browser.click(
+        "New worktree for this Assist session",
+        "document.getElementById('DevNewWorktree')",
+    );
+    let worktree = browser.wait_for(
+        "the session's worktree",
+        &format!(
+            "(() => {{ const row = Array.from(document.querySelectorAll('#DevSessions [data-worktree]')).find((el) => el.innerText.indexOf('session {conversation}') >= 0); \
+             return row ? row.getAttribute('data-worktree') : null; }})()"
+        ),
+        WAIT,
+    );
+    let worktree = worktree.as_str().unwrap().to_string();
+    let listed = dev_call(
+        &gate,
+        "john.doe",
+        "org.moqui.devaide.WorktreeServices.get#Worktrees",
+        &[("rootId", "my-site")],
+    );
+    let listed = moqui_lib::json::to_json(&listed["worktrees"]);
+    let made = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["rootId"] == worktree.as_str())
+        .unwrap_or_else(|| panic!("{listed}"))
+        .clone();
+    assert_eq!(made["conversationId"], conversation.as_str(), "{made}");
+    let location = std::path::PathBuf::from(made["location"].as_str().unwrap());
+    let branch = made["branch"].as_str().unwrap().to_string();
+    assert!(
+        location.starts_with(gate.runtime.join("worktrees")) || location.to_string_lossy().contains("/worktrees/"),
+        "{made}"
+    );
+    assert!(location.join("service/mysite/Things.xml").is_file(), "{made}");
+
+    // opened: the banner says it is not loaded; a file saved there is the worktree's alone, and nothing of it runs
+    browser.click(
+        "Open",
+        &format!(
+            "Array.from(document.querySelectorAll('#DevSessions [data-worktree=\"{worktree}\"] button')).find((el) => el.innerText.trim().toLowerCase() === 'open')"
+        ),
+    );
+    browser.wait_for(
+        "the worktree banner",
+        "(document.getElementById('DevWorktreeBanner') || {innerText: ''}).innerText.indexOf('not loaded') >= 0",
+        WAIT,
+    );
+    browser.navigate(&format!(
+        "{base}/qapps/dev/Workspace?rootId={worktree}&path=service/mysite/Things.xml"
+    ));
+    browser.wait_for(
+        "the worktree's file in the editor",
+        "!!document.getElementById('DevWorktreeBanner') && !!document.querySelector('#DevWorkspace .m-code-editor[data-state=ready] .cm-content') \
+         && document.querySelector('#DevWorkspace .cm-content').innerText.indexOf('value=\"first\"') >= 0",
+        WAIT,
+    );
+    edit_code(&mut browser, "#DevWorkspace", "first", "second");
+    browser.click("Save", "document.getElementById('DevSave')");
+    browser.wait_for(
+        "the M status",
+        "!!document.querySelector('#DevFileStatus .m-file-status-M')",
+        WAIT,
+    );
+    assert!(std::fs::read_to_string(location.join("service/mysite/Things.xml"))
+        .unwrap()
+        .contains("value=\"second\""));
+    assert_eq!(
+        std::fs::read_to_string(site.join("service/mysite/Things.xml")).unwrap(),
+        site_services
+    );
+    let result = {
+        let factory = std::sync::Arc::clone(gate.server.factory());
+        let context = factory.new_context();
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        moqui_core::service::sync("mysite.Things.get#Thing", &std::collections::BTreeMap::new()).unwrap()
+    };
+    assert_eq!(
+        moqui_lib::object::to_plain_string(&result["result"]),
+        "first",
+        "the worktree is not loaded"
+    );
+
+    // committed in the worktree, so it is clean
+    click_until(
+        &mut browser,
+        "Changes",
+        &by_text(".m-dev-tabs .q-tab", "Changes 1"),
+        "document.getElementById('DevChanges')",
+    );
+    let stage_all = by_text("#DevChanges button", "Stage all");
+    browser.wait_for("Stage all", &format!("!!{stage_all}"), WAIT);
+    browser.click("Stage all", &stage_all);
+    browser.wait_for(
+        "the file staged",
+        "(document.getElementById('DevChanges') || {innerText: ''}).innerText.toLowerCase().indexOf('staged 1') >= 0",
+        WAIT,
+    );
+    set_input(
+        &mut browser,
+        "document.querySelector('#DevChanges input.q-field__native')",
+        "Second",
+    );
+    browser.wait_for("Commit enabled", "!document.getElementById('DevCommit').disabled", WAIT);
+    browser.click("Commit", "document.getElementById('DevCommit')");
+    browser.wait_for(
+        "the worktree clean",
+        "(document.getElementById('DevChangeCount') || {innerText: 'x'}).innerText.indexOf('1 changed') < 0 \
+         && !document.querySelector('#DevChanges [data-path]')",
+        WAIT,
+    );
+    assert_eq!(dev_git(&location, &["log", "-1", "--format=%s"]), "Second");
+
+    // the conversation archived from Assist's History: its clean worktree is removed, its branch stays
+    browser.eval("moqui.assist.openDrawer(true), true");
+    browser.wait_for(
+        "the drawer open",
+        "moqui.assist.state.open === true && !!document.getElementById('m-assist-history')",
+        WAIT,
+    );
+    // the drawer slides in: a click during it lands beside the button
+    click_until(
+        &mut browser,
+        "History",
+        "document.getElementById('m-assist-history')",
+        "document.getElementById('m-assist-history-pane')",
+    );
+    let archive = format!("document.querySelector('[data-assist-archive=\"{conversation}\"]')");
+    browser.wait_for("the conversation in History", &format!("!!{archive}"), WAIT);
+    browser.click("Archive", &archive);
+    let roots_gone = || {
+        let factory = std::sync::Arc::clone(gate.server.factory());
+        let context = factory.new_context();
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        !location.exists()
+            && factory
+                .entity()
+                .unwrap()
+                .find("moqui.dev.DevAideRoot")
+                .unwrap()
+                .eq("conversationId", moqui_lib::object::Value::string(&conversation))
+                .list()
+                .unwrap()
+                .values()
+                .is_empty()
+    };
+    wait_until(&mut browser, "the worktree removed", roots_gone);
+    browser.wait_for(
+        "the conversation shown archived",
+        &format!(
+            "(document.querySelector('[data-conversation-id=\"{conversation}\"]') || {{innerText: ''}}).innerText.indexOf('Archived') >= 0"
+        ),
+        WAIT,
+    );
+    assert_eq!(
+        dev_git(&site, &["branch", "--list", &branch, "--format=%(refname:short)"]),
+        branch
+    );
+    assert_clean(&mut browser, "the session's worktree");
+}
+
+/// The Workspace's editor features (plans/design-dev-aide.md 4.3, 4.10, 9, 11.4, 12; DevAideWorkspaceWalk in
+/// plans/ui-review-dev-aide-workspace.md and the authoring walks of plans/ui-review-dev-aide-authoring.md), one walk
+/// over a site component: the service view's Parameters adds a child in a Map and saves it nested; a `.qvue` tab's Text
+/// .xml edits and saves its XML screen; Replace across files previews the matches, one file left out, and writes the
+/// other; Load the changed records plans a seed file the boot loaded (nothing to load), then, with a record changed in
+/// the file and in the database, shows the conflict, whose Take file choice the load writes; a hosted root (Repositories › Add hosted root)
+/// commits a Save with the message its dialog asks.
+#[cfg(all(feature = "devtools", feature = "git"))]
+#[test]
+fn the_workspace_editor_features_save_replace_load_and_commit_in_chromium() {
+    if !crate::common::own_process() {
+        return;
+    }
+    let orders = "<services>\n    <service verb=\"place\" noun=\"Order\">\n        <in-parameters>\n            <parameter name=\"order\" type=\"Map\">\n                <parameter name=\"orderId\"/>\n            </parameter>\n        </in-parameters>\n        <actions><log message=\"placed\"/></actions>\n    </service>\n</services>\n";
+    let board_xml = "<screen require-authentication=\"true\" render-modes=\"qvue\" default-menu-title=\"Board\">\n    <widgets><render-mode><text type=\"qvue\" location=\"component://my-site/screen/MySite/Board.qvue\" template=\"false\"/></render-mode></widgets>\n</screen>\n";
+    let board_qvue = "<template>\n<div class=\"q-pa-md\" id=\"BoardPage\">Board</div>\n</template>\n<script>module.exports = {};</script>\n";
+    let seed = |a: &str, b: &str| {
+        format!(
+            "<entity-facade-xml type=\"seed\">\n    <moqui.basic.EnumerationType enumTypeId=\"SITE_KIND\" description=\"Site kinds\"/>\n    \
+             <moqui.basic.Enumeration enumId=\"SITE_A\" enumTypeId=\"SITE_KIND\" description=\"{a}\"/>\n    \
+             <moqui.basic.Enumeration enumId=\"SITE_B\" enumTypeId=\"SITE_KIND\" description=\"{b}\"/>\n</entity-facade-xml>\n"
+        )
+    };
+    let first_seed = seed("One", "Two");
+    let files = [
+        (
+            "components/addon/my-site/component.xml",
+            r#"<component name="my-site"/>"#,
+        ),
+        ("components/addon/my-site/service/mysite/Orders.xml", orders),
+        ("components/addon/my-site/screen/MySite/Board.xml", board_xml),
+        ("components/addon/my-site/screen/MySite/Board.qvue", board_qvue),
+        ("components/addon/my-site/notes/a.txt", "The colour of the sky\n"),
+        ("components/addon/my-site/notes/b.txt", "Another colour\n"),
+        ("components/addon/my-site/data/SiteData.xml", &first_seed),
+    ];
+    let records = include_str!("../../../runtime/components/dev/dev-aide/data/DevAideSecurityData.xml").replace(
+        "</entity-facade-xml>",
+        r#"    <moqui.resource.GitRepository repositoryId="site-docs" repositoryKind="db" description="The site's docs"/>
+</entity-facade-xml>"#,
+    );
+    let dev_aide = dev_aide_link();
+    let gate = common::start_with_files_and_links(
+        "browser-dev-editor",
+        Some(&records),
+        &[
+            ("moqui_conf__instance__purpose", "dev"),
+            ("moqui_conf__dev_aide__site_component", "my-site"),
+        ],
+        &files,
+        &[(&dev_aide, "components/dev/dev-aide")],
+    );
+    isolate_dev_git(&gate.runtime);
+    let site = gate.runtime.join("components/addon/my-site");
+    dev_git(&site, &["init", "-q", "-b", "main"]);
+    dev_git(&site, &["add", "-A"]);
+    dev_git(&site, &["commit", "-q", "-m", "Start"]);
+    // the hosted repository's first commit, pushed to this server's hosting
+    let address = gate.server.address();
+    let john_key = dev_login_key(&gate, "john.doe");
+    let docs = gate.runtime.join("docs-source");
+    std::fs::create_dir_all(&docs).unwrap();
+    std::fs::write(docs.join("README.md"), "# Site docs\n\nThe first line.\n").unwrap();
+    dev_git(&docs, &["init", "-q", "-b", "main"]);
+    dev_git(&docs, &["add", "-A"]);
+    dev_git(&docs, &["commit", "-q", "-m", "Docs"]);
+    dev_git(
+        &docs,
+        &[
+            "push",
+            "-q",
+            &format!(
+                "http://john.doe:{john_key}@127.0.0.1:{}/git/site-docs.git",
+                address.port()
+            ),
+            "main",
+        ],
+    );
+    let base = format!("http://127.0.0.1:{}", address.port());
+    let mut browser = Browser::launch();
+    sign_in(&mut browser, &base);
+    let ready = |container: &str, text: &str| {
+        format!(
+            "!!document.querySelector('{container} .m-code-editor[data-state=ready] .cm-content') \
+             && document.querySelector('{container} .cm-content').innerText.indexOf({text:?}) >= 0"
+        )
+    };
+    let saved = |browser: &mut Browser, path: &std::path::Path, text: &str| {
+        let path = path.to_path_buf();
+        let text = text.to_string();
+        wait_until(browser, &format!("{text} saved in {}", path.display()), || {
+            std::fs::read_to_string(&path).unwrap_or_default().contains(&text)
+        });
+    };
+
+    // the service view: a child added in the order Map, shown before Save and saved nested
+    browser.navigate(&format!(
+        "{base}/qapps/dev/Workspace?rootId=my-site&path=service/mysite/Orders.xml&view=service"
+    ));
+    let parameters_tab = "Array.from(document.querySelectorAll('#DevServiceView .q-tab')).find((el) => el.innerText.indexOf('Parameters') === 0)";
+    browser.wait_for(
+        "the service view",
+        &format!("!!document.getElementById('DevServiceHeader') && !!{parameters_tab}"),
+        WAIT,
+    );
+    click_until(
+        &mut browser,
+        "Parameters",
+        parameters_tab,
+        "document.querySelector('#DevParameters_in [data-path=\"order\"]') && document.querySelector('#DevParameters_in [data-path=\"order\"]').offsetParent",
+    );
+    browser.click(
+        "Add child",
+        "document.querySelector('#DevParameters_in [data-path=\"order\"] .m-dev-add-child')",
+    );
+    browser.wait_for(
+        "the dialog for a parameter in order",
+        "(document.getElementById('DevParameterDialog') || {innerText: ''}).innerText.indexOf('Add a parameter in order') >= 0",
+        WAIT,
+    );
+    set_input(
+        &mut browser,
+        "document.querySelector('#DevParameterDialog input')",
+        "quantity",
+    );
+    browser.click("Add", "document.getElementById('DevParameterSave')");
+    browser.wait_for(
+        "the child row",
+        "!!document.querySelector('#DevParameters_in [data-path=\"order.quantity\"]') && !document.querySelector('.q-dialog')",
+        WAIT,
+    );
+    browser.click("Save", "document.getElementById('DevSave')");
+    let orders_file = site.join("service/mysite/Orders.xml");
+    saved(&mut browser, &orders_file, "quantity");
+    let text = std::fs::read_to_string(&orders_file).unwrap();
+    let in_order = &text[text.find("name=\"order\"").unwrap()..text.find("</in-parameters>").unwrap()];
+    assert!(
+        in_order.contains("<parameter name=\"orderId\"/>") && in_order.contains("<parameter name=\"quantity\""),
+        "{text}"
+    );
+
+    // a .qvue tab's Text .xml: the sibling XML screen edited and saved, the .qvue as it was
+    browser.navigate(&format!(
+        "{base}/qapps/dev/Workspace?rootId=my-site&path=screen/MySite/Board.qvue&view=qvue-xml"
+    ));
+    browser.wait_for(
+        "the XML screen in Text .xml",
+        &ready("#DevQvueXml", "render-modes"),
+        WAIT,
+    );
+    edit_code(
+        &mut browser,
+        "#DevQvueXml",
+        "default-menu-title=\"Board\"",
+        "default-menu-title=\"Team board\"",
+    );
+    browser.click("Save", "document.getElementById('DevSave')");
+    saved(&mut browser, &site.join("screen/MySite/Board.xml"), "Team board");
+    assert_eq!(
+        std::fs::read_to_string(site.join("screen/MySite/Board.qvue")).unwrap(),
+        board_qvue
+    );
+
+    // Replace across files: the preview's two files, one left out, the other written
+    browser.navigate(&format!("{base}/qapps/dev/Workspace?rootId=my-site"));
+    let search_rail = by_text("#DevRail button", "Search");
+    browser.wait_for("the rail", &format!("!!{search_rail}"), WAIT);
+    click_until(&mut browser, "Search", &search_rail, "document.querySelector('input[placeholder=\"Search in files\"]') && document.querySelector('input[placeholder=\"Search in files\"]').offsetParent");
+    browser.click(
+        "the search",
+        "document.querySelector('input[placeholder=\"Search in files\"]')",
+    );
+    browser.type_text("colour");
+    browser.press("Enter");
+    browser.wait_for(
+        "the two matches",
+        "(document.getElementById('DevSearchResults') || {innerText: ''}).innerText.indexOf('notes/a.txt') >= 0 \
+         && document.getElementById('DevSearchResults').innerText.indexOf('notes/b.txt') >= 0",
+        WAIT,
+    );
+    browser.click("Replace across files", "document.getElementById('DevReplaceToggle')");
+    browser.wait_for("the replacement", "!!document.querySelector('#DevReplace input')", WAIT);
+    set_input(&mut browser, "document.querySelector('#DevReplace input')", "color");
+    browser.click("Preview", "document.getElementById('DevReplacePreview')");
+    browser.wait_for(
+        "the preview",
+        "!!document.querySelector('#DevReplaceFiles [data-path=\"notes/a.txt\"]') && !!document.querySelector('#DevReplaceFiles [data-path=\"notes/b.txt\"]') \
+         && document.getElementById('DevReplaceFiles').innerText.indexOf('The color of the sky') >= 0",
+        WAIT,
+    );
+    browser.click(
+        "leave out b.txt",
+        "document.querySelector('#DevReplaceFiles [data-path=\"notes/b.txt\"] .q-checkbox')",
+    );
+    browser.wait_for(
+        "b.txt left out",
+        "document.querySelector('#DevReplaceFiles [data-path=\"notes/b.txt\"] .q-checkbox').getAttribute('aria-checked') === 'false'",
+        WAIT,
+    );
+    browser.click("Replace", "document.getElementById('DevReplaceApply')");
+    let confirm = by_text(".q-dialog button", "Replace");
+    browser.wait_for(
+        "the confirmation",
+        &format!("!!{confirm} && document.querySelector('.q-dialog').innerText.indexOf('Replace 1 matches in 1 files?') >= 0"),
+        WAIT,
+    );
+    browser.click("Replace", &confirm);
+    browser.wait_for(
+        "the result",
+        "(document.getElementById('DevReplaceResult') || {innerText: ''}).innerText.indexOf('1 replaced in 1 files') >= 0",
+        WAIT,
+    );
+    assert_eq!(
+        std::fs::read_to_string(site.join("notes/a.txt")).unwrap(),
+        "The color of the sky\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(site.join("notes/b.txt")).unwrap(),
+        "Another colour\n"
+    );
+
+    // Load the changed records: a plan, then a conflict settled by its choice
+    let description = |enum_id: &str| -> String {
+        let factory = std::sync::Arc::clone(gate.server.factory());
+        let context = factory.new_context();
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        factory
+            .entity()
+            .unwrap()
+            .find("moqui.basic.Enumeration")
+            .unwrap()
+            .eq("enumId", moqui_lib::object::Value::string(enum_id))
+            .one()
+            .unwrap()
+            .and_then(|row| row.get("description").map(moqui_lib::object::to_plain_string))
+            .unwrap_or_default()
+    };
+    let data_page = format!("{base}/qapps/dev/Workspace?rootId=my-site&path=data/SiteData.xml&view=entity");
+    let plan = |browser: &mut Browser, counts: &str| {
+        browser.wait_for(
+            "the records",
+            "!!document.getElementById('DevSeedRows') && !!document.getElementById('DevLoadChanged') && !document.getElementById('DevLoadChanged').disabled",
+            WAIT,
+        );
+        browser.click("Load the changed records", "document.getElementById('DevLoadChanged')");
+        browser.wait_for(
+            "the plan",
+            &format!("(document.getElementById('DevLoadPlanCounts') || {{innerText: ''}}).innerText.indexOf({counts:?}) >= 0"),
+            WAIT,
+        );
+    };
+    browser.navigate(&data_page);
+    // the file as committed: against the last commit nothing changed, so nothing is to load; Load this file loads it all
+    plan(&mut browser, "3 unchanged");
+    assert_eq!(
+        browser.eval("document.getElementById('DevLoadPlan').innerText.indexOf('Compared with the last commit') >= 0 && document.getElementById('DevLoadPlanRun').disabled"),
+        true
+    );
+    browser.click(
+        "Close the plan",
+        "document.querySelector('#DevLoadPlan [aria-label=\"Close the plan\"]')",
+    );
+    browser.wait_for("the plan closed", "!document.getElementById('DevLoadPlan')", WAIT);
+    browser.click("Load this file", "document.getElementById('DevLoadDataFile')");
+    wait_until(&mut browser, "the file loaded", || description("SITE_B") == "Two");
+    assert_eq!(description("SITE_A"), "One");
+    // a record changed in the database and in the file: a conflict, settled by Take file
+    {
+        let factory = std::sync::Arc::clone(gate.server.factory());
+        let context = factory.new_context();
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        let facade = factory.entity().unwrap();
+        let mut row = facade
+            .find("moqui.basic.Enumeration")
+            .unwrap()
+            .eq("enumId", moqui_lib::object::Value::string("SITE_A"))
+            .one()
+            .unwrap()
+            .unwrap();
+        row.set(
+            "description",
+            moqui_lib::object::Value::string("Changed in the database"),
+        );
+        row.update(&facade).unwrap();
+    }
+    std::fs::write(
+        site.join("data/SiteData.xml"),
+        seed("Changed in the file", "Two, again"),
+    )
+    .unwrap();
+    browser.navigate(&data_page);
+    browser.wait_for(
+        "the file's new text",
+        &ready("#DevWorkspace", "Changed in the file"),
+        WAIT,
+    );
+    // the tab came back as it was left, in Text: its Entity view
+    click_until(
+        &mut browser,
+        "Entity",
+        &by_text("#DevWorkspace button", "Entity"),
+        "document.getElementById('DevSeedRows')",
+    );
+    plan(&mut browser, "1 in conflict");
+    let conflict = "Array.from(document.querySelectorAll('#DevLoadPlan .m-dev-load-conflict')).find((el) => el.innerText.indexOf('enumId=SITE_A') >= 0)";
+    browser.wait_for(
+        "the conflict's three sides",
+        &format!("!!{conflict} && {conflict}.innerText.indexOf('Changed in the database') >= 0 && {conflict}.innerText.indexOf('Changed in the file') >= 0"),
+        WAIT,
+    );
+    browser.click(
+        "Take file",
+        &format!("Array.from({conflict}.querySelectorAll('button')).find((el) => el.innerText.trim().toLowerCase() === 'take file')"),
+    );
+    browser.wait_for(
+        "Take file chosen",
+        &format!("Array.from({conflict}.querySelectorAll('button')).find((el) => el.innerText.trim().toLowerCase() === 'take file').getAttribute('aria-pressed') === 'true'"),
+        WAIT,
+    );
+    browser.click("Load", "document.getElementById('DevLoadPlanRun')");
+    browser.wait_for("the plan done", "!document.getElementById('DevLoadPlan')", WAIT);
+    assert_eq!(
+        (description("SITE_A"), description("SITE_B")),
+        ("Changed in the file".to_string(), "Two, again".to_string())
+    );
+
+    // a hosted root: added from Repositories, and a Save there a commit with the message its dialog asks
+    browser.navigate(&format!("{base}/qapps/dev/Repositories"));
+    let choose = by_text(
+        "#DevAddHostedRootBox a, #DevAddHostedRootBox button",
+        "Choose a repository",
+    );
+    browser.wait_for("Add hosted root", &format!("!!{choose}"), WAIT);
+    browser.click("Choose a repository", &choose);
+    // the only repository the user may update, chosen already (the drop-down allows no empty choice)
+    browser.wait_for(
+        "the repository and branch",
+        "(document.querySelector('[id=\"AddHostedRootForm_hostedBranch\"]') || {closest: () => null}).closest('.q-field') \
+         && document.querySelector('[id=\"AddHostedRootForm_hostedBranch\"]').closest('.q-field').innerText.indexOf('site-docs · main') >= 0",
+        WAIT,
+    );
+    browser.click(
+        "Add hosted root",
+        &by_text("#DevAddHostedRootBox button", "Add hosted root"),
+    );
+    let hosted = || -> Option<String> {
+        let roots = dev_call(&gate, "john.doe", "org.moqui.devaide.WorkspaceServices.get#Roots", &[]);
+        moqui_lib::json::to_json(&roots["roots"])
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|root| root["kind"] == "hosted")
+            .and_then(|root| root["id"].as_str().map(str::to_string))
+    };
+    wait_until(&mut browser, "the hosted root", || hosted().is_some());
+    let hosted = hosted().unwrap();
+    browser.navigate(&format!("{base}/qapps/dev/Workspace?rootId={hosted}&path=README.md"));
+    browser.wait_for(
+        "the hosted file",
+        &format!(
+            "!!document.getElementById('DevHostedBanner') && {}",
+            ready("#DevWorkspace", "The first line.")
+        ),
+        WAIT,
+    );
+    edit_code(
+        &mut browser,
+        "#DevWorkspace",
+        "The first line.\n",
+        "The first line.\nThe second line.\n",
+    );
+    browser.click("Save", "document.getElementById('DevSave')");
+    browser.wait_for(
+        "the commit message asked",
+        "(document.querySelector('.q-dialog') || {innerText: ''}).innerText.indexOf('Commit to main') >= 0 && !!document.querySelector('.q-dialog input')",
+        WAIT,
+    );
+    assert_eq!(
+        browser.eval("document.querySelector('.q-dialog input').value"),
+        "Edit README.md"
+    );
+    set_input(
+        &mut browser,
+        "document.querySelector('.q-dialog input')",
+        "Docs: the second line",
+    );
+    browser.click("OK", &by_text(".q-dialog button", "OK"));
+    // what the hosting has, read with authorization off (the git services are the Dev AIDE's to call)
+    let hosting = |name: &str, parameters: &[(&str, &str)]| {
+        let factory = std::sync::Arc::clone(gate.server.factory());
+        let context = factory.new_context();
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        let parameters = parameters
+            .iter()
+            .map(|(key, value)| ((*key).to_string(), moqui_lib::object::Value::string(*value)))
+            .collect();
+        moqui_core::service::sync(&format!("org.moqui.git.GitServices.{name}"), &parameters).unwrap()
+    };
+    let last = || {
+        let log = hosting(
+            "get#GitLog",
+            &[("repositoryId", "site-docs"), ("revision", "main"), ("limit", "1")],
+        );
+        moqui_lib::json::to_json(&log["commitList"])[0].clone()
+    };
+    wait_until(&mut browser, "the commit on the hosted branch", || {
+        last()["summary"] == "Docs: the second line"
+    });
+    assert_eq!(last()["moquiUserId"], "EX_JOHN_DOE", "a commit by the user");
+    let blob = hosting(
+        "get#GitBlob",
+        &[
+            ("repositoryId", "site-docs"),
+            ("revision", "main"),
+            ("path", "README.md"),
+        ],
+    );
+    assert_eq!(
+        moqui_lib::object::to_plain_string(&blob["text"]),
+        "# Site docs\n\nThe first line.\nThe second line.\n"
+    );
+    browser.wait_for(
+        "the tab saved",
+        "!document.querySelector('.m-dev-editor-tab .m-dev-dirty')",
+        WAIT,
+    );
+    assert_clean(&mut browser, "the Workspace's editor features");
+}

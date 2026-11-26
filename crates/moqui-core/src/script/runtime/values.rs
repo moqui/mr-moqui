@@ -88,6 +88,35 @@ fn entity_facade() -> Option<crate::entity::EntityFacade> {
     ExecutionContext::with_current(|ec| ec.factory().entity()).flatten()
 }
 
+/// What a trace shows of a host object (`script::trace`): an entity value's entity and fields as it holds them (no
+/// localized field is looked up), or a script list's length and its first rows.
+pub(crate) enum HostParts {
+    Entity(String, Vec<(String, Value)>),
+    List(usize, Vec<Value>),
+}
+
+/// [`HostParts`] of `value`, a list's first `limit` rows; `None` for any other value.
+pub(crate) fn host_parts(value: &Value, limit: usize) -> Option<HostParts> {
+    let Value::Object(object) = value else {
+        return None;
+    };
+    if let Some(cell) = object.downcast::<EntityCell>() {
+        let guard = lock(&cell);
+        let fields = guard
+            .fields()
+            .iter()
+            .map(|(key, item)| (key.to_string(), item.clone()))
+            .collect();
+        return Some(HostParts::Entity(guard.entity_name().to_string(), fields));
+    }
+    let list = object.downcast::<ScriptList>()?;
+    let rows = (0..list.len().min(limit))
+        .filter_map(|index| list.cell(index))
+        .map(|cell| Value::Object(HostObject(cell as Arc<dyn std::any::Any + Send + Sync>)))
+        .collect();
+    Some(HostParts::List(list.len(), rows))
+}
+
 /// The entity name of an entity value.
 pub(crate) fn value_entity_name(value: &Value) -> Option<String> {
     let Value::Object(object) = value else {

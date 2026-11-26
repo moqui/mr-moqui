@@ -45,7 +45,8 @@ fn active_checkout(root: &Root, component: &RootComponent, active: &Path) -> boo
 fn get_libraries(ec: &ExecutionContext, _: &ServiceInfo<'_>, parameters: &Parameters) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::View)?;
     let (root, component, active) = component(&context, parameters)?;
-    let file = crate::confine::resolve(&active, context.factory.runtime_dir(), "build/js-build.json")?.path;
+    // the component itself is the root here, so no `target` above it is measured
+    let file = crate::confine::resolve(&active, context.factory.runtime_dir(), &[], "build/js-build.json")?.path;
     let config: Value = if file.exists() {
         serde_json::from_slice(&std::fs::read(file).map_err(io_error)?).map_err(|err| LibError::new(err.to_string()))?
     } else {

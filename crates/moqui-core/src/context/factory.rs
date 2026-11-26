@@ -365,7 +365,9 @@ impl ExecutionContextFactory {
             crate::seal::secrets::prepare_boot(&conf_node, &overrides, keeper.as_deref())?;
             let cookie_key = super::conf_env::conf_attribute(&conf_node, crate::user::session::COOKIE_KEY);
             // an .env value the seal's rule ignored (secrets::prepare_boot) is back at CHANGEME, for the store
-            let dotenv_ignored = keeper.as_deref().is_some_and(crate::seal::Keeper::refuses_dotenv_secrets);
+            let dotenv_ignored = keeper
+                .as_deref()
+                .is_some_and(crate::seal::Keeper::refuses_dotenv_secrets);
             let overridden = overrides.iter().any(|item| {
                 item.applied()
                     && !(dotenv_ignored && item.source == super::conf_env::Source::DotEnv)
@@ -1639,6 +1641,15 @@ impl ExecutionContext {
             drain,
             _scope: PhantomData,
         }
+    }
+
+    /// [`Self::enter`] for a background thread of the framework's own working for the factory, such as the shell counts
+    /// sender: leaving it is no drain point. An inline factory's queued work belongs to the thread that drains it (a
+    /// test, the browser's worker); run here it would be taken from under that thread's `run_pending`.
+    pub(crate) fn enter_background(&self) -> ContextGuard<'_> {
+        let mut guard = self.enter();
+        guard.drain = None;
+        guard
     }
 
     /// True while a context is entered on this thread.

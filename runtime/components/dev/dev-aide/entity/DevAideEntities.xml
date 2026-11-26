@@ -56,7 +56,29 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="conversationId" type="id"><description>The Assist conversation whose tools are rooted in the
             worktree</description></field>
         <field name="worktreeUserId" type="id"><description>Who made the worktree</description></field>
+        <field name="worktreeEndedDate" type="date-time"><description>When its conversation ended (archived or deleted)
+            while the worktree had uncommitted changes, so it was kept and its user told once (21.8)</description></field>
+        <field name="rootKind" type="text-short"><description>hosted: a repository of this server's git hosting at a
+            branch (plans/design-dev-aide.md 4.10), with no directory; empty for a directory</description></field>
+        <field name="gitRepositoryId" type="text-medium"><description>A hosted root's GitRepository</description></field>
+        <field name="gitBranch" type="text-medium"><description>A hosted root's branch: each Save is a commit to it</description></field>
+        <field name="hostedByUserId" type="id"><description>Who added the hosted root</description></field>
         <index name="DEV_AIDE_ROOT_LOC" unique="true"><index-field name="location"/></index>
+    </entity>
+    <entity entity-name="DevDataLoadBaseline" package="moqui.dev" use="configuration" cache="never">
+        <description>A data file's text as Load the changed records last loaded it (plans/design-dev-aide.md 12): the
+            base of the next load's three-way compare, written only after that load committed. One per root and file,
+            not per user: the database is the instance's, so what it last took from a file is too.</description>
+        <field name="rootId" type="text-short" is-pk="true"/>
+        <field name="filePath" type="text-medium" is-pk="true"/>
+        <field name="textHash" type="text-medium"><description>The text's SHA-256</description></field>
+        <field name="baselineText" type="text-very-long"/>
+        <field name="timeZone" type="text-short"><description>The zone the load read the text's time stamps in: the next
+            plan reads the base and the file in it, so a user in another zone sees the same instants</description></field>
+        <field name="loadedByUserId" type="id"/>
+        <field name="loadedDate" type="date-time"/>
+        <relationship type="one-nofk" title="LoadedBy" related="moqui.security.UserAccount">
+            <key-map field-name="loadedByUserId" related="userId"/></relationship>
     </entity>
     <entity entity-name="DevAideSetting" package="moqui.dev" use="configuration">
         <description>An instance-wide setting Settings stores over the conf: siteComponents (a comma list), networkGit
@@ -67,8 +89,9 @@ along with this software (see the LICENSE.md file). If not, see
     <entity entity-name="DevAideServer" package="moqui.dev" use="configuration">
         <description>A connection to a group server (plans/design-dev-aide.md 21.2, D20): its address, what it offers (asked
             of it: /rest/s1/moqui/hosting/offer), the user's account there, and what Connect set from it, so Remove takes
-            it back. The token is the DevAideCredential of the same serverId. A user's own; with no userId an admin's for
-            the instance (a shared server's deploy connection).</description>
+            it back. The token is the DevAideCredential of the same serverId: after an app sign-in a key for git alone
+            (question 18), with the tasks and gateway keys here. A user's own; with no userId an admin's for the instance (a
+            shared server's deploy connection).</description>
         <field name="serverId" type="id" is-pk="true"/>
         <field name="userId" type="id"/>
         <field name="label" type="text-medium"/>
@@ -87,7 +110,15 @@ along with this software (see the LICENSE.md file). If not, see
             the file had them before Connect wrote the gateway's: Remove puts them back where the lines are still
             Connect's</description></field>
         <field name="gatewayKey" type="text-medium" encrypt="true"><description>The key for the server's LLM gateway
-            alone (create#UserScopedKey) that Connect wrote into .env; Remove ends it on the server</description></field>
+            alone (create#UserScopedKey): made by the app sign-in, or by apply#ServerSetup for a pasted token, and
+            written into .env; Remove ends it on the server</description></field>
+        <field name="tasksKey" type="text-medium" encrypt="true"><description>The key for the task panel alone
+            (create#UserScopedKey scope tasks, question 18), made by the app sign-in: the task source's reads and an
+            issue's; Remove ends it on the server</description></field>
+        <field name="appKey" type="text-medium" encrypt="true"><description>The installed app's device key of the app
+            sign-in, kept only when the server's offer names an application (Smithy), whose REST, and the issues of a
+            repository it keeps, take only that key for the Dev AIDE's operations (mr-pass design-smithy 5.5): sent only
+            there; Remove ends it on the server</description></field>
         <field name="pendingState" type="text-medium"><description>An installed-app sign-in under way (F17): its state,
             PKCE verifier and redirect URI, good for 15 minutes</description></field>
         <field name="pendingVerifier" type="text-medium" encrypt="true"/>

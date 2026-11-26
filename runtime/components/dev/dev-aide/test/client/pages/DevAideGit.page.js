@@ -75,3 +75,60 @@ test("Run locally shows the combination it runs, and names a secret without sett
     assert.equal(pure.localRunLines(job, "").steps[0].run, "./moq test --db postgres");
     assert.deepEqual(pure.localRunLines(null, "").steps, []);
 });
+
+test("Run locally in the job's image shows its own script, and a run ends by its state", () => {
+    const job = { pipeline: "check", job: "unit", image: "busybox", combinations: [{ matrixKey: "", steps: [], env: [],
+        script: "#!/bin/sh\n# This machine\n", digest: "d-host", imageScript: "#!/bin/sh\n# In the job's image\n", imageDigest: "d-image" }] };
+    const lines = pure.localRunLines(job, "");
+    assert.equal(lines.imageDigest, "d-image");
+    assert.ok(lines.imageScript.includes("job's image"));
+    assert.equal(lines.digest, "d-host");
+    assert.ok(pure.localRunEnded("exited") && pure.localRunEnded("failed") && pure.localRunEnded("missing"));
+    assert.ok(!pure.localRunEnded("starting") && !pure.localRunEnded("running"));
+});
+
+test("Open on the server fills the server's page templates, each value as path parts", () => {
+    const pages = { file: "https://team.example.com/code/team/site/-/blob/{ref}/{file}#L{line}",
+        commit: "https://team.example.com/code/team/site/-/commit/{commitId}", branch: "https://team.example.com/code/team/site/-/tree/{branch}" };
+    assert.equal(pure.serverPage(pages, "file", { ref: "feature/x", file: "screen/My Screen.xml", line: 12 }),
+        "https://team.example.com/code/team/site/-/blob/feature/x/screen/My%20Screen.xml#L12");
+    // with no line the line's fragment goes
+    assert.equal(pure.serverPage(pages, "file", { ref: "main", file: "a.xml" }), "https://team.example.com/code/team/site/-/blob/main/a.xml");
+    assert.equal(pure.serverPage(pages, "commit", { commitId: "0123abcd" }), "https://team.example.com/code/team/site/-/commit/0123abcd");
+    assert.equal(pure.serverPage(pages, "commit", { commitId: "../../evil" }), null);
+    assert.equal(pure.serverPage(pages, "branch", { branch: "a?b#c" }), "https://team.example.com/code/team/site/-/tree/a%3Fb%23c");
+    assert.equal(pure.serverPage(pages, "branch", { branch: "" }), null);
+    assert.equal(pure.serverPage({ file: "javascript:alert(1)//{file}" }, "file", { file: "x" }), null);
+    assert.equal(pure.serverPage(null, "file", { file: "x" }), null);
+    assert.equal(pure.serverBranch("origin/feature/x", "origin"), "feature/x");
+    assert.equal(pure.serverBranch("fork/feature", "origin"), "");
+    assert.equal(pure.serverBranch(null, "origin"), "");
+});
+
+// DevAideGit.js loads after the Workspace's first render. A component of it in a slot of another component (a q-dialog,
+// a q-card) is resolved when that slot is made, and a stable slot is not made again: it stays an unknown element (the
+// Checks dialog of a commit's chip once rendered empty). So the component that holds it is made only once DevAideGit.js
+// has loaded: a v-if with gitLoaded on it or above it.
+test("each git component of the Workspace is in a slot made after DevAideGit.js loaded", () => {
+    const template = moqui.devAide.components["m-dev-workspace"].template;
+    const html = template.replace(/<template\b/g, "<m-tpl").replace(/<\/template>/g, "</m-tpl>");
+    const doc = new DOMParser().parseFromString("<body>" + html + "</body>", "text/html");
+    const isComponent = (el) => el.tagName.indexOf("-") > 0 && el.tagName !== "M-TPL";
+    const loaded = (el) => /\bgitLoaded\b/.test(el.getAttribute("v-if") || "");
+    const names = Object.keys(moqui.devAide.gitComponents);
+    const stale = [];
+    let found = 0;
+    for (const name of names) {
+        for (const el of doc.querySelectorAll(name)) {
+            found++;
+            let holder = el.parentElement;
+            while (holder && !isComponent(holder)) holder = holder.parentElement;
+            if (!holder) continue;
+            let made = holder;
+            while (made && !loaded(made)) made = made.parentElement;
+            if (!made) stale.push(name + " in " + holder.tagName.toLowerCase());
+        }
+    }
+    assert.ok(found >= names.length, "the Workspace uses each git component");
+    assert.deepEqual(stale, []);
+});
