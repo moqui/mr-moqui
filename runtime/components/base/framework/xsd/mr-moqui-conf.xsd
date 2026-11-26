@@ -3455,6 +3455,9 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="coedit-max-total-bytes" type="xs:string" default="67108864"><xs:annotation><xs:documentation>In
                 shared mode, the most bytes of every co-edited file's room on the server together (their state with its
                 edits); a join or an update past it is refused.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="hosted-max-deleted" type="xs:string" default="2000"><xs:annotation><xs:documentation>The
+                most files a delete of a folder of a hosted root removes in its one commit; a folder with more is
+                refused, never deleted in part.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
 
