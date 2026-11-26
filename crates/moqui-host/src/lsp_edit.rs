@@ -179,7 +179,7 @@ pub(crate) fn rename_edits(
     let family = if is_service {
         index::resolve::NameDependents {
             ids: vec![target.id.clone()],
-            blocking: Vec::new(),
+            ..Default::default()
         }
     } else {
         index.name_family(&target.id)

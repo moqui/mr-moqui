@@ -46,7 +46,7 @@ mod family;
 mod groups;
 
 pub use expand::{path_seed, Expansion, FormCall};
-pub use family::NameDependents;
+pub use family::{ExcludeOf, NameDependents, NameEdit};
 
 use std::collections::{HashMap, HashSet};
 
@@ -114,6 +114,19 @@ pub struct Resolver {
     /// The artifact groups' patterns ([`Self::expand_patterns`]): each group's id with the kind and the pattern, matched
     /// whole, of each member whose name is a pattern.
     patterns: HashMap<String, Vec<(ToKind, String, moqui_lib::object::CompiledRegex)>>,
+    /// An entity's relationships by its full name, for a view's `member-relationship` ([`Self::relationship`]).
+    relationships: HashMap<String, Vec<Relation>>,
+}
+
+/// A relationship of an entity, as its artifact names it (`relationship:<entity>@<[title#]related>`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Relation {
+    id: String,
+    /// `[title#]related`, the related entity by its full name when the model gave it.
+    key: String,
+    /// The related entity as written.
+    related: String,
+    short_alias: Option<String>,
 }
 
 /// One subscreens item of a screen.
@@ -210,6 +223,29 @@ impl Resolver {
                 }
             }
             "artifact-group" => self.add_group(artifact),
+            "relationship" => {
+                let Some((entity, key)) = artifact
+                    .id
+                    .strip_prefix("relationship:")
+                    .and_then(|rest| rest.split_once('@'))
+                else {
+                    return;
+                };
+                // the summary is `<type> <related as written>[, short-alias <alias>]`
+                let (head, short_alias) = match artifact.summary.split_once(", short-alias ") {
+                    Some((head, alias)) => (head, Some(alias.to_string())),
+                    None => (artifact.summary.as_str(), None),
+                };
+                let related = head.split_once(' ').map_or(head, |(_, related)| related).to_string();
+                let relations = self.relationships.entry(entity.to_string()).or_default();
+                relations.retain(|known| known.id != artifact.id);
+                relations.push(Relation {
+                    id: artifact.id.clone(),
+                    key: key.to_string(),
+                    related,
+                    short_alias,
+                });
+            }
             "field" => {
                 if let Some(entity) = artifact.parent.as_deref().and_then(|id| id.strip_prefix("entity:")) {
                     let (kind, pk) = match artifact.summary.strip_suffix(PK_MARK) {
@@ -315,6 +351,15 @@ impl Resolver {
             "artifact-group" => {
                 self.patterns.remove(&artifact.id);
             }
+            "relationship" => {
+                if let Some((entity, _)) = artifact
+                    .id
+                    .strip_prefix("relationship:")
+                    .and_then(|rest| rest.split_once('@'))
+                {
+                    remove_one(&mut self.relationships, entity, |known| known.id == artifact.id);
+                }
+            }
             "field" => {
                 if let Some(entity) = artifact.parent.as_deref().and_then(|id| id.strip_prefix("entity:")) {
                     if let Some(fields) = self.fields.get_mut(entity) {
@@ -358,6 +403,23 @@ impl Resolver {
         }
         let short = name.rsplit('.').next().unwrap_or(name);
         self.entities.get(short).and_then(|full| full.first()).cloned()
+    }
+
+    /// The full name of the entity the relationship `name` of the entity `entity` (full) leads to, matched as moqui-db's
+    /// `Relationship::matches`: its `[title#]related` name, its short alias, or, with no title, its related entity's
+    /// name.
+    #[must_use]
+    pub fn relationship(&self, entity: &str, name: &str) -> Option<String> {
+        let relation = self.relationships.get(entity)?.iter().find(|relation| {
+            relation.key == name
+                || relation.short_alias.as_deref() == Some(name)
+                || (!relation.key.contains('#') && relation.related == name)
+        })?;
+        let related = relation
+            .key
+            .rsplit_once('#')
+            .map_or(relation.key.as_str(), |(_, related)| related);
+        Some(self.entity(related).unwrap_or_else(|| related.to_string()))
     }
 
     /// The location of a screen named by its location, or by a location whose component differs but whose path under

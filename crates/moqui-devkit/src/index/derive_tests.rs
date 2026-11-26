@@ -896,7 +896,11 @@ fn a_rest_method_takes_its_services_parameters_and_binds_its_path_into_them() {
 #[test]
 fn an_entity_fields_name_family_follows_what_takes_its_name() {
     let mut files = base_files();
-    files.push((ArtifactKind::Entity, "component://c/entity/ViewEntities.xml", VIEW_ENTITIES));
+    files.push((
+        ArtifactKind::Entity,
+        "component://c/entity/ViewEntities.xml",
+        VIEW_ENTITIES,
+    ));
     let index = index_of(&files);
     let family = index.name_family("field:c.Example.statusId");
     let screen = SCREEN_LOCATION;
@@ -909,16 +913,84 @@ fn an_entity_fields_name_family_follows_what_takes_its_name() {
     ] {
         assert!(family.ids.contains(&id), "{id} in {:?}", family.ids);
     }
-    // the excluded field of a form is none of it
+    // the excluded field of a form is none of it, and its exclude is edited with it
     assert!(!family.ids.contains(&format!("form-field:{screen}#ByEntity@statusId")));
     assert_eq!(family.blocking, Vec::<String>::new());
-    // a field a view alias names in its field, and a prefixed alias-all aliases
+    assert_eq!(
+        family.edits,
+        [resolve::NameEdit {
+            artifact: format!("form:{screen}#ByEntity"),
+            attribute: "field-name".to_string(),
+            exclude_of: Some(resolve::ExcludeOf {
+                element: "auto-fields-entity".to_string(),
+                key_attribute: "entity-name".to_string(),
+                key: Some("c.Example".to_string()),
+            }),
+        }]
+    );
+    // a field a view alias names in its field is edited there; a prefixed alias-all's stops it
     let status = index.name_family("field:c.Status.description");
     assert_eq!(
         status.blocking,
-        [
-            "c.ExampleAndStatus aliases it as statusDescription by a prefixed alias-all",
-            "the alias statusLabel of c.ExampleAndStatus names it in its field",
-        ]
+        ["c.ExampleAndStatus aliases it as statusDescription by a prefixed alias-all"]
+    );
+    assert_eq!(
+        status.edits,
+        [resolve::NameEdit {
+            artifact: "field:c.ExampleAndStatus.statusLabel".to_string(),
+            attribute: "field".to_string(),
+            exclude_of: None,
+        }]
+    );
+}
+
+/// A rename follows what a row was made from, not its name: a view's alias of another member's field of that name, a
+/// parameter an `include="pk"` leaves apart from a non-key field, and a declared field an `auto-fields-entity` excludes
+/// the field from are none of the family. A `member-relationship`'s member is the relationship's related entity.
+#[test]
+fn a_name_family_follows_provenance_not_names() {
+    let entities = r#"<entities>
+    <entity entity-name="Order" package="c">
+        <field name="orderId" type="id" is-pk="true"/><field name="statusId" type="id"/>
+        <relationship type="one" related="c.Status"/>
+    </entity>
+    <entity entity-name="Status" package="c"><field name="statusId" type="id" is-pk="true"/><field name="label" type="text-medium"/></entity>
+    <view-entity entity-name="OrderStatus" package="c">
+        <member-entity entity-alias="O" entity-name="c.Order"/>
+        <member-relationship entity-alias="S" join-from-alias="O" relationship="c.Status"/>
+        <alias-all entity-alias="S"/>
+    </view-entity>
+</entities>"#;
+    let services = r#"<services>
+    <service verb="find" noun="Order">
+        <in-parameters><auto-parameters entity-name="c.Order" include="pk"/><parameter name="statusId"/></in-parameters>
+    </service>
+</services>"#;
+    let screen = r#"<screen><widgets><form-single name="Edit">
+        <auto-fields-entity entity-name="c.Order"><exclude field-name="statusId"/></auto-fields-entity>
+        <field name="statusId"><default-field><text-line/></default-field></field>
+    </form-single></widgets></screen>"#;
+    let index = index_of(&[
+        (ArtifactKind::Entity, "component://c/entity/Order.xml", entities),
+        (
+            ArtifactKind::Service,
+            "component://c/service/c/OrderServices.xml",
+            services,
+        ),
+        (ArtifactKind::Screen, "component://c/screen/Order.xml", screen),
+    ]);
+    // the view's statusId is the related Status's, by the member-relationship
+    let view_status = index.describe("field:c.OrderStatus.statusId").expect("aliased");
+    assert_eq!(view_status.summary, "id, pk");
+    let family = index.name_family("field:c.Order.statusId");
+    assert_eq!(family.ids, ["field:c.Order.statusId"]);
+    assert_eq!(family.blocking, Vec::<String>::new());
+    // the form's exclude names it, and is edited with it
+    assert_eq!(family.edits.len(), 1, "{:?}", family.edits);
+    let status = index.name_family("field:c.Status.statusId");
+    assert!(
+        status.ids.contains(&"field:c.OrderStatus.statusId".to_string()),
+        "{:?}",
+        status.ids
     );
 }

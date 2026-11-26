@@ -284,7 +284,10 @@ fn view_entities_auto_parameters_and_rest_methods_mark_what_they_expand() {
         <alias entity-alias="A" name="aName" field="name" type="text-long"/><alias entity-alias="A" name="kind"/>
     </view-entity></entities>"#,
     );
-    assert_eq!(marks(&view, "entity:c.AandB"), "member A c.A; alias-all A a one,two");
+    assert_eq!(
+        marks(&view, "entity:c.AandB"),
+        "member A c.A; member-rel R A Rel; alias-all A a one,two"
+    );
     assert_eq!(marks(&view, "field:c.AandB.aName"), "alias A name text-long");
     assert_eq!(marks(&view, "field:c.AandB.kind"), "alias A - -");
     let services = read(

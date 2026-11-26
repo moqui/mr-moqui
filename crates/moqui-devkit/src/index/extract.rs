@@ -2118,14 +2118,23 @@ fn service_marks(service: &MNode) -> Vec<String> {
     marks
 }
 
-/// The marks of a view entity ([`ArtifactRow::marks`]): each `member-entity` (`member <entity-alias> <entity>`) and each
-/// `alias-all` (`alias-all <entity-alias> <prefix, - for none> <excludes>`), in the order written. A member named by an
-/// expression, and a `member-relationship` (its entity is the relationship's, which the index does not follow), are left
-/// out: their aliases get no key and type, and an `alias-all` of one none.
+/// The marks of a view entity ([`ArtifactRow::marks`]): each `member-entity` (`member <entity-alias> <entity>`), each
+/// `member-relationship` (`member-rel <entity-alias> <join-from-alias> <relationship>`, its entity the relationship's
+/// related one, as moqui-db's `resolve_members` takes it) and each `alias-all` (`alias-all <entity-alias> <prefix, - for
+/// none> <excludes>`), in the order written. A member named by an expression is left out: its aliases get no key and
+/// type, and an `alias-all` of it none.
 fn view_marks(view: &MNode) -> Vec<String> {
     let mut marks = Vec::new();
     for child in view.child_iter() {
         match child.name().as_str() {
+            "member-relationship" => {
+                let word = |name: &str| child.attribute(name).filter(|value| is_mark_word(value));
+                if let (Some(alias), Some(from), Some(relationship)) =
+                    (word("entity-alias"), word("join-from-alias"), word("relationship"))
+                {
+                    marks.push(format!("member-rel {alias} {from} {relationship}"));
+                }
+            }
             "member-entity" => {
                 let (Some(alias), Some(entity)) = (
                     child.attribute("entity-alias").filter(|alias| is_mark_word(alias)),

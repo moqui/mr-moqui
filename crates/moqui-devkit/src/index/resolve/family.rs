@@ -13,10 +13,14 @@
  */
 
 //! What takes a name from an entity field, a parameter or a form field (plans/design-dev-aide.md 13.6): for the LSP's
-//! rename, through the expansions' declarations (`expand.rs`).
+//! rename, through the expansions (`expand.rs`), each row followed by what it was made from (its provenance), not by
+//! its name alone: a view's alias of another member's field of that name, or a declared parameter an `include="pk"`
+//! leaves apart from a field, is not of the family.
 
-use super::expand::Mark;
-use super::Resolver;
+use std::collections::HashSet;
+
+use super::expand::{Mark, ViewField};
+use super::{entity_auto, Resolver};
 use crate::index::extract::{parameter_id, parse_parameter_id};
 
 /// What takes a name from an entity field, parameter or form field ([`Resolver::same_name_dependents`]).
@@ -26,14 +30,37 @@ pub struct NameDependents {
     pub ids: Vec<String>,
     /// What reads it by another name, or a name a rename cannot follow, each said in words.
     pub blocking: Vec<String>,
+    /// The attributes that name it elsewhere and are edited with it ([`NameEdit`]).
+    pub edits: Vec<NameEdit>,
+}
+
+/// An attribute that names a field or parameter of a family and is edited with it: of the start tag of `artifact`'s
+/// element (a view alias's `field`), or, with `exclude_of`, of an `exclude` in `artifact`'s element under the auto
+/// element that names it (an `auto-parameters`' or `auto-fields-entity`'s `field-name`, an `auto-fields-service`'s
+/// `parameter-name`, an `alias-all`'s `field`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NameEdit {
+    pub artifact: String,
+    pub attribute: String,
+    pub exclude_of: Option<ExcludeOf>,
+}
+
+/// The auto element an `exclude` is in: its name, and its attribute naming what it reads with that attribute's value
+/// as written (none: the attribute is not written, an `auto-parameters` of the service's noun).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExcludeOf {
+    pub element: String,
+    pub key_attribute: String,
+    pub key: Option<String>,
 }
 
 impl Resolver {
     /// What takes the name of the entity field, parameter or form field `id` from it, one step on (for a rename,
     /// [`NameDependents`]): of each service, form, transition, REST method or view entity that expands from its entity,
-    /// service or form, the row of its name it expands (an `auto-parameters`' parameter, an `auto-fields` form field, an
-    /// `alias-all`'s alias, a parameter from an implemented or called service, a field of a form it extends), and the one
-    /// it declares of that name, which merges with it.
+    /// service or form, each row made from it (its provenance names `id`) whose name is its name: an
+    /// `auto-parameters`' parameter (or the declared one it merged into), an `auto-fields` form field, an `alias-all`'s
+    /// alias, a parameter from an implemented or called service, a field of a form it extends; an entity's derived
+    /// entity-auto parameters; the excludes that name it; and what reads it by another name.
     #[must_use]
     pub fn same_name_dependents(&self, id: &str) -> NameDependents {
         let mut found = NameDependents::default();
@@ -54,6 +81,11 @@ impl Resolver {
             return found;
         };
         let entity = parent.strip_prefix("entity:");
+        let add = |found: &mut NameDependents, id: String| {
+            if !found.ids.contains(&id) {
+                found.ids.push(id);
+            }
+        };
         // an entity's derived entity-auto services take its fields as parameters
         if let Some(entity) = entity {
             let mut derived: Vec<&String> = self
@@ -65,7 +97,7 @@ impl Resolver {
             for service in derived {
                 for row in &self.derived[service] {
                     if parse_parameter_id(&row.id).is_some_and(|(_, _, row_name)| row_name == name) {
-                        found.ids.push(row.id.clone());
+                        add(&mut found, row.id.clone());
                     }
                 }
             }
@@ -77,104 +109,166 @@ impl Resolver {
             .collect();
         readers.sort();
         for owner in readers {
-            let mut add = |id: String| {
-                if !found.ids.contains(&id) {
-                    found.ids.push(id);
-                }
-            };
-            // a parameter keeps its direction into a transition, REST method or implementing service; an entity's field
-            // is either
-            let direction_matches = |of: &str| direction.is_none_or(|direction| direction == of);
-            for row in self.expanded_rows(owner) {
-                match row.kind.as_str() {
-                    "parameter" => {
-                        if let Some((_, of, row_name)) = parse_parameter_id(&row.id) {
-                            if row_name == name && direction_matches(of) {
-                                add(row.id.clone());
-                            }
-                        }
+            let kind = self.owner(owner).map(|info| info.kind.as_str()).unwrap_or_default();
+            if kind == "view-entity" {
+                self.view_dependents(owner, id, &mut found);
+            } else {
+                for (row, row_name, from) in self.provenance(owner, kind) {
+                    if row_name == name && from.iter().any(|source| source == id) {
+                        add(&mut found, row);
                     }
-                    "form-field" | "field" => {
-                        let row_name = row
-                            .id
-                            .rsplit_once('@')
-                            .or_else(|| row.id.rsplit_once('.'))
-                            .map_or("", |(_, name)| name);
-                        if row_name == name {
-                            add(row.id.clone());
-                        }
-                    }
-                    _ => {}
                 }
             }
-            for param in self.params.get(owner).into_iter().flatten() {
-                if param.name == name && direction_matches(&param.direction) {
-                    add(parameter_id(owner, &param.direction, name));
-                } else if param.name == name && param.direction == "path" && direction == Some("in") {
+            // a REST method's path parameter is bound into the service's in-parameter of its name
+            if kind == "rest" && direction == Some("in") {
+                let bound = self
+                    .params
+                    .get(owner)
+                    .into_iter()
+                    .flatten()
+                    .any(|param| param.direction == "path" && param.name == name);
+                if bound {
                     found
                         .blocking
                         .push(format!("the path parameter {{{name}}} of {owner} is bound into it"));
                 }
             }
-            if let Some(form) = owner.strip_prefix("form:") {
-                if self
-                    .form_fields
-                    .get(owner)
-                    .into_iter()
-                    .flatten()
-                    .any(|field| field.name == name)
-                {
-                    add(format!("form-field:{form}@{name}"));
-                }
-            }
-            // a view: an alias of the field's name reads it by that name; one that names it in `field`, or a prefixed
-            // alias-all's, takes another name the rename cannot follow
-            if let (Some(view), Some(entity)) = (owner.strip_prefix("entity:"), entity) {
-                let marks = self.marks_of(owner);
-                let members: Vec<&str> = marks
-                    .iter()
-                    .filter_map(|mark| match mark {
-                        Mark::Member { alias, entity: member }
-                            if self.entity(member).as_deref().unwrap_or(member) == entity =>
-                        {
-                            Some(*alias)
-                        }
-                        _ => None,
-                    })
-                    .collect();
-                for alias in self.aliases.get(view).into_iter().flatten() {
-                    if !alias
-                        .entity_alias
-                        .as_deref()
-                        .is_some_and(|member| members.contains(&member))
-                    {
-                        continue;
-                    }
-                    match alias.field.as_deref() {
-                        Some(field) if field == name => found
-                            .blocking
-                            .push(format!("the alias {} of {view} names it in its field", alias.name)),
-                        None if alias.name == name => add(format!("field:{view}.{name}")),
-                        _ => {}
-                    }
-                }
-                for mark in &marks {
-                    if let Mark::AliasAll {
-                        alias,
-                        prefix: Some(prefix),
-                        excludes,
-                    } = mark
-                    {
-                        if members.contains(alias) && !excludes.contains(&name) {
-                            found.blocking.push(format!(
-                                "{view} aliases it as {} by a prefixed alias-all",
-                                moqui_db::model::prefixed_name(prefix, name)
-                            ));
-                        }
-                    }
-                }
-            }
+            self.exclude_edits(owner, &parent, name, &mut found);
         }
         found
+    }
+
+    /// Each row the owner `owner` (of `kind`) expands, with its name and what it was made from.
+    fn provenance(&self, owner: &str, kind: &str) -> Vec<(String, String, Vec<String>)> {
+        let mut rows = Vec::new();
+        match kind {
+            "service" => {
+                let noun = owner.rsplit_once('#').map(|(_, noun)| noun);
+                for direction in ["in", "out"] {
+                    let mut visited = HashSet::from([owner.to_string()]);
+                    for param in self.full_params(owner, direction, &mut visited, 0, noun) {
+                        rows.push((parameter_id(owner, direction, &param.name), param.name, param.from));
+                    }
+                }
+            }
+            "transition" | "rest" => {
+                let marks = self.marks_of(owner);
+                let Some(service) = Self::called_service(&marks) else {
+                    return rows;
+                };
+                let passes = kind == "rest"
+                    || marks.iter().any(
+                        |mark| matches!(mark, Mark::Call { service: called, passes: true, .. } if *called == service),
+                    );
+                let target = format!("service:{service}");
+                let noun = service.rsplit_once('#').map(|(_, noun)| noun);
+                for direction in ["in", "out"] {
+                    if direction == "in" && !passes {
+                        continue;
+                    }
+                    let mut visited = HashSet::from([owner.to_string(), target.clone()]);
+                    for param in self.full_params(&target, direction, &mut visited, 0, noun) {
+                        if param.required == "disabled" {
+                            continue;
+                        }
+                        // the transition's own parameter of the name has the id its service's would have
+                        let source = parameter_id(&target, direction, &param.name);
+                        rows.push((parameter_id(owner, direction, &param.name), param.name, vec![source]));
+                    }
+                }
+            }
+            "form" => {
+                let key = owner.strip_prefix("form:").unwrap_or(owner);
+                let mut visited = HashSet::from([owner.to_string()]);
+                for field in self.full_fields(owner, &mut visited, 0) {
+                    rows.push((format!("form-field:{key}@{}", field.name), field.name, field.from));
+                }
+            }
+            _ => {}
+        }
+        rows
+    }
+
+    /// The dependents in the view `view` (its id) of the field `id`: an alias that reads it by its name
+    /// (an `alias-all`'s, or one with no `field`), the `field` of an alias that names it, and a prefixed `alias-all`'s,
+    /// which a rename cannot follow.
+    fn view_dependents(&self, view: &str, id: &str, found: &mut NameDependents) {
+        let full = view.strip_prefix("entity:").unwrap_or(view);
+        for ViewField {
+            field,
+            from_alias_all,
+            from,
+            by_other_name,
+        } in self.view_fields(view, 0)
+        {
+            if from.as_deref() != Some(id) {
+                continue;
+            }
+            let alias = format!("field:{full}.{}", field.name);
+            match (from_alias_all, by_other_name) {
+                (_, false) => {
+                    if !found.ids.contains(&alias) {
+                        found.ids.push(alias);
+                    }
+                }
+                (false, true) => found.edits.push(NameEdit {
+                    artifact: alias,
+                    attribute: "field".to_string(),
+                    exclude_of: None,
+                }),
+                (true, true) => found
+                    .blocking
+                    .push(format!("{full} aliases it as {} by a prefixed alias-all", field.name)),
+            }
+        }
+    }
+
+    /// The excludes of the owner `owner` that name `name` of the entity or service `parent`, each an edit.
+    fn exclude_edits(&self, owner: &str, parent: &str, name: &str, found: &mut NameDependents) {
+        let marks = self.marks_of(owner);
+        let entity_of = |named: &str| format!("entity:{}", self.entity(named).unwrap_or_else(|| named.to_string()));
+        let members = self.view_members(&marks);
+        let mut edit = |element: &str, key_attribute: &str, key: Option<&str>, attribute: &str| {
+            found.edits.push(NameEdit {
+                artifact: owner.to_string(),
+                attribute: attribute.to_string(),
+                exclude_of: Some(ExcludeOf {
+                    element: element.to_string(),
+                    key_attribute: key_attribute.to_string(),
+                    key: key.map(str::to_string),
+                }),
+            });
+        };
+        for mark in &marks {
+            match mark {
+                Mark::AutoParameters { entity, excludes, .. } if excludes.contains(&name) => {
+                    let read = entity.or_else(|| owner.rsplit_once('#').map(|(_, noun)| noun));
+                    if read.is_some_and(|read| entity_of(read) == parent) {
+                        edit("auto-parameters", "entity-name", *entity, "field-name");
+                    }
+                }
+                Mark::AutoFieldsEntity { entity, excludes, .. }
+                    if excludes.contains(&name) && entity_of(entity) == parent =>
+                {
+                    edit("auto-fields-entity", "entity-name", Some(entity), "field-name");
+                }
+                Mark::AutoFieldsService { service, excludes, .. }
+                    if excludes.contains(&name)
+                        && format!("service:{service}") == parent
+                        && entity_auto(service).is_none() =>
+                {
+                    edit("auto-fields-service", "service-name", Some(service), "parameter-name");
+                }
+                Mark::AliasAll { alias, excludes, .. } if excludes.contains(&name) => {
+                    let reads = members.iter().any(|(member, entity)| {
+                        member == alias && entity.as_ref().is_some_and(|full| format!("entity:{full}") == parent)
+                    });
+                    if reads {
+                        edit("alias-all", "entity-alias", Some(alias), "field");
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 }

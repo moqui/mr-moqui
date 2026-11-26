@@ -48,7 +48,7 @@ use crate::index::parameter::{parameter_row, ParamDirection, ParamPlace, ParamSp
 /// where it is.
 #[derive(Clone, Debug)]
 pub(super) struct Owner {
-    kind: String,
+    pub(super) kind: String,
     path: String,
     component: String,
     line: u32,
@@ -98,6 +98,18 @@ pub(super) struct DeclaredAlias {
     stored: String,
 }
 
+/// An alias of a view entity as the view has it ([`Resolver::view_fields`]).
+#[derive(Clone, Debug)]
+pub(super) struct ViewField {
+    pub(super) field: AutoField,
+    /// An `alias-all` made it; else the view declares it.
+    pub(super) from_alias_all: bool,
+    /// The member field it reads (`field:<member entity>.<field>`), when the index knows it.
+    pub(super) from: Option<String>,
+    /// Its name is not the member field's as such: an alias with a `field`, or a prefixed `alias-all`'s.
+    pub(super) by_other_name: bool,
+}
+
 /// The widget of a declared form field.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Widget {
@@ -144,6 +156,12 @@ pub(super) enum Mark<'a> {
     Member {
         alias: &'a str,
         entity: &'a str,
+    },
+    /// A view entity's `member-relationship`: the related entity of `relationship` of the member `from`.
+    MemberRel {
+        alias: &'a str,
+        from: &'a str,
+        relationship: &'a str,
     },
     /// A view entity's `alias-all`.
     AliasAll {
@@ -220,6 +238,11 @@ fn parse_mark(text: &str) -> Option<Mark<'_>> {
             before: list(before),
         },
         ["member", alias, entity] => Mark::Member { alias, entity },
+        ["member-rel", alias, from, relationship] => Mark::MemberRel {
+            alias,
+            from,
+            relationship,
+        },
         ["alias-all", alias, prefix, excludes] => Mark::AliasAll {
             alias,
             prefix: given(prefix),
@@ -270,15 +293,18 @@ fn parse_mark(text: &str) -> Option<Mark<'_>> {
 /// A parameter as the service takes it, merged as Moqui merges them (`moqui_core::service::define::merge_param`), with
 /// where it comes from (empty: declared).
 #[derive(Clone, Debug)]
-struct FullParam {
-    name: String,
+pub(super) struct FullParam {
+    pub(super) name: String,
     kind: String,
     /// `true`, `false` or `disabled`.
-    required: String,
+    pub(super) required: String,
     default: Option<String>,
     origin: &'static str,
     /// For a declared one, its summary as its row has it.
     stored: Option<String>,
+    /// The artifacts it was merged from: an entity field (`field:`), an implemented service's parameter, and the
+    /// parameter as declared, for a rename's family ([`Resolver::provenance`]).
+    pub(super) from: Vec<String>,
 }
 
 impl FullParam {
@@ -307,6 +333,7 @@ impl FullParam {
         if other.stored.is_some() {
             self.stored = other.stored;
         }
+        self.from.extend(other.from);
     }
 }
 
@@ -320,8 +347,8 @@ fn merge_into(out: &mut Vec<FullParam>, param: FullParam, given: Option<&[String
 
 /// A field as the form has it, with where it comes from.
 #[derive(Clone, Debug)]
-struct FullField {
-    name: String,
+pub(super) struct FullField {
+    pub(super) name: String,
     summary: String,
     /// Empty when the form declares it.
     origin: &'static str,
@@ -331,6 +358,9 @@ struct FullField {
     filled: bool,
     /// The expansion makes its binding: an inherited field the user fills, or a declared one with no widget over one.
     bind: bool,
+    /// The artifacts it comes from: the extended form's field, an entity field, a service's parameter, and the field as
+    /// declared ([`Resolver::provenance`]).
+    pub(super) from: Vec<String>,
 }
 
 /// The text types a form-list's auto fields leave out, as Moqui's `add_entity_fields`.
@@ -564,7 +594,7 @@ impl Resolver {
 
     /// The definition of `id` the expansions read: of several (an override), the one whose file sorts last, so it
     /// does not depend on the order the files were read in.
-    fn owner(&self, id: &str) -> Option<&Owner> {
+    pub(super) fn owner(&self, id: &str) -> Option<&Owner> {
         self.owners.get(id)?.iter().max_by(|a, b| a.path.cmp(&b.path))
     }
 
@@ -631,7 +661,7 @@ impl Resolver {
             return self
                 .view_fields(&view, depth)
                 .into_iter()
-                .map(|(field, _)| field)
+                .map(|view_field| view_field.field)
                 .collect();
         }
         let own = self.entity_paths.get(full);
@@ -643,26 +673,58 @@ impl Resolver {
         fields
     }
 
+    /// The members of the view entity whose marks are `marks`, in the order written, each with its entity's full name:
+    /// a `member-entity`'s, and a `member-relationship`'s related entity of the relationship of the member it joins
+    /// from, as moqui-db's `resolve_members` takes it; none for one the index cannot follow.
+    pub(super) fn view_members<'a>(&self, marks: &[Mark<'a>]) -> Vec<(&'a str, Option<String>)> {
+        let mut members: Vec<(&'a str, Option<String>)> = Vec::new();
+        for mark in marks {
+            match mark {
+                Mark::Member { alias, entity } => {
+                    members.push((
+                        alias,
+                        Some(self.entity(entity).unwrap_or_else(|| (*entity).to_string())),
+                    ));
+                }
+                Mark::MemberRel {
+                    alias,
+                    from,
+                    relationship,
+                } => {
+                    let from_entity = members
+                        .iter()
+                        .find(|(known, _)| known == from)
+                        .and_then(|(_, entity)| entity.clone());
+                    let entity = from_entity.and_then(|from| self.relationship(&from, relationship));
+                    members.push((alias, entity));
+                }
+                _ => {}
+            }
+        }
+        members
+    }
+
     /// The aliases of the view entity `view` (its id) as Moqui completes the view (`moqui_db::model::view`): the
     /// declared ones in the order written, each with the primary key and type of the member field it reads (its own
-    /// type when it has one), then each `alias-all`'s, with whether an `alias-all` made it. A member the index does not
-    /// know gives its aliases no key and type, and its `alias-all` none.
-    fn view_fields(&self, view: &str, depth: usize) -> Vec<(AutoField, bool)> {
+    /// type when it has one), then each `alias-all`'s ([`ViewField`]). A member the index does not know gives its
+    /// aliases no key and type, and its `alias-all` none.
+    pub(super) fn view_fields(&self, view: &str, depth: usize) -> Vec<ViewField> {
         let (Some(owner), Some(full)) = (self.owner(view), view.strip_prefix("entity:")) else {
             return Vec::new();
         };
         let marks: Vec<Mark<'_>> = owner.marks.iter().filter_map(|mark| parse_mark(mark)).collect();
-        let mut members: HashMap<&str, Vec<AutoField>> = HashMap::new();
-        for mark in &marks {
-            if let Mark::Member { alias, entity } = mark {
-                let member = self.entity(entity).unwrap_or_else(|| (*entity).to_string());
-                let fields = if depth < FIND_DEPTH && member != full {
-                    self.fields_at(&member, depth + 1)
-                } else {
-                    Vec::new()
-                };
-                members.insert(alias, fields);
-            }
+        // each member's entity and fields
+        let mut members: HashMap<&str, (String, Vec<AutoField>)> = HashMap::new();
+        for (alias, entity) in self.view_members(&marks) {
+            let Some(member) = entity else {
+                continue;
+            };
+            let fields = if depth < FIND_DEPTH && member != full {
+                self.fields_at(&member, depth + 1)
+            } else {
+                Vec::new()
+            };
+            members.insert(alias, (member, fields));
         }
         let mut declared: Vec<&DeclaredAlias> = self
             .aliases
@@ -672,28 +734,32 @@ impl Resolver {
             .filter(|alias| alias.path == owner.path)
             .collect();
         declared.sort_by_key(|alias| alias.line);
-        let mut out: Vec<(AutoField, bool)> = Vec::new();
+        let mut out: Vec<ViewField> = Vec::new();
         for alias in declared {
             let source = alias.entity_alias.as_deref().and_then(|member| {
                 let field = alias.field.as_deref().unwrap_or(&alias.name);
-                members.get(member)?.iter().find(|known| known.name == field)
+                let (entity, fields) = members.get(member)?;
+                let found = fields.iter().find(|known| known.name == field)?;
+                Some((format!("field:{entity}.{field}"), found))
             });
-            out.push((
-                AutoField {
+            out.push(ViewField {
+                field: AutoField {
                     name: alias.name.clone(),
                     kind: alias
                         .kind
                         .clone()
-                        .or_else(|| source.map(|field| field.kind.clone()))
+                        .or_else(|| source.as_ref().map(|(_, field)| field.kind.clone()))
                         .unwrap_or_default(),
-                    pk: source.is_some_and(|field| field.pk),
+                    pk: source.as_ref().is_some_and(|(_, field)| field.pk),
                     path: alias.path.clone(),
                     line: alias.line,
                 },
-                false,
-            ));
+                from_alias_all: false,
+                from: source.map(|(id, _)| id),
+                by_other_name: alias.field.is_some(),
+            });
         }
-        let mut used: HashSet<String> = out.iter().map(|(field, _)| field.name.clone()).collect();
+        let mut used: HashSet<String> = out.iter().map(|view_field| view_field.field.name.clone()).collect();
         for mark in &marks {
             let Mark::AliasAll {
                 alias,
@@ -703,7 +769,10 @@ impl Resolver {
             else {
                 continue;
             };
-            for field in members.get(alias).into_iter().flatten() {
+            let Some((entity, fields)) = members.get(alias) else {
+                continue;
+            };
+            for field in fields {
                 if field.name == "lastUpdatedStamp" || excludes.contains(&field.name.as_str()) {
                     continue;
                 }
@@ -714,16 +783,18 @@ impl Resolver {
                 if !used.insert(name.clone()) {
                     continue;
                 }
-                out.push((
-                    AutoField {
+                out.push(ViewField {
+                    field: AutoField {
                         name,
                         kind: field.kind.clone(),
                         pk: field.pk,
                         path: owner.path.clone(),
                         line: owner.line,
                     },
-                    true,
-                ));
+                    from_alias_all: true,
+                    from: Some(format!("field:{entity}.{}", field.name)),
+                    by_other_name: prefix.is_some(),
+                });
             }
         }
         out
@@ -742,13 +813,14 @@ impl Resolver {
                     | Mark::Extends(_)
                     | Mark::ServiceCall(_)
                     | Mark::Member { .. }
+                    | Mark::MemberRel { .. }
                     | Mark::AliasAll { .. }
             )
         })
     }
 
     /// The service the transition's own `service-call` or the REST method's `service` names.
-    fn called_service<'a>(marks: &[Mark<'a>]) -> Option<&'a str> {
+    pub(super) fn called_service<'a>(marks: &[Mark<'a>]) -> Option<&'a str> {
         marks.iter().find_map(|mark| match mark {
             Mark::ServiceCall(service) => Some(*service),
             _ => None,
@@ -950,7 +1022,10 @@ impl Resolver {
                     .filter(|alias| alias.path == info.path)
                     .map(|alias| (alias.name.as_str(), alias.stored.as_str()))
                     .collect();
-                for (field, from_alias_all) in self.view_fields(owner, 0) {
+                for ViewField {
+                    field, from_alias_all, ..
+                } in self.view_fields(owner, 0)
+                {
                     let summary = if field.pk {
                         format!("{}{PK_MARK}", field.kind)
                     } else {
@@ -1048,7 +1123,7 @@ impl Resolver {
     /// before it, and a parameter written after one merges into it, setting what it gives. An `auto-parameters` with no
     /// entity reads the entity of `noun`, the implementing service's. `visited` holds the services on the way, so a
     /// cycle ends.
-    fn full_params(
+    pub(super) fn full_params(
         &self,
         service: &str,
         direction: &str,
@@ -1082,6 +1157,7 @@ impl Resolver {
                 }
                 param.origin = "implements";
                 param.stored = None;
+                param.from = vec![parameter_id(&target, direction, &param.name)];
                 out.push(param);
             }
         }
@@ -1093,6 +1169,7 @@ impl Resolver {
             default: param.default.clone(),
             origin: "",
             stored: Some(param.stored.clone()),
+            from: vec![parameter_id(service, direction, &param.name)],
         };
         // the declared parameters merged so far: those written before an auto-parameters go before it
         let mut merged: HashSet<&str> = HashSet::new();
@@ -1137,6 +1214,7 @@ impl Resolver {
                     default: None,
                     origin: "auto-parameters",
                     stored: None,
+                    from: vec![format!("field:{full}.{}", field.name)],
                 };
                 merge_into(&mut out, param, Some(&auto_given));
             }
@@ -1158,6 +1236,7 @@ impl Resolver {
                             default: param.default.clone(),
                             origin: "",
                             stored: None,
+                            from: vec![parameter_id(&id, direction, &param.name)],
                         })
                         .collect();
                 }
@@ -1176,6 +1255,7 @@ impl Resolver {
                                 default: param.default,
                                 origin: "",
                                 stored: None,
+                                from: vec![row.id.clone()],
                             }
                         })
                     })
@@ -1193,14 +1273,19 @@ impl Resolver {
     /// The fields the form `form` has: those of the form it extends (with the fields a `screen-extend` adds to that
     /// form), then those of its `auto-fields-entity` and `auto-fields-service`, then the ones it declares, each in
     /// place of one of its name (a declared one with no widget takes that one's widget).
-    fn full_fields(&self, form: &str, visited: &mut HashSet<String>, depth: usize) -> Vec<FullField> {
+    pub(super) fn full_fields(&self, form: &str, visited: &mut HashSet<String>, depth: usize) -> Vec<FullField> {
         let mut out: Vec<FullField> = Vec::new();
         if depth > FIND_DEPTH {
             return out;
         }
         let screen = form_screen(form);
         let form_list = self.owner(form).is_some_and(|owner| owner.form_list);
-        let inherit = |out: &mut Vec<FullField>, name: &str, summary: String, origin: &'static str, filled: bool| {
+        let inherit = |out: &mut Vec<FullField>,
+                       name: &str,
+                       summary: String,
+                       origin: &'static str,
+                       filled: bool,
+                       from: String| {
             if name != "lastUpdatedStamp" && !out.iter().any(|known| known.name == name) {
                 out.push(FullField {
                     name: name.to_string(),
@@ -1209,6 +1294,7 @@ impl Resolver {
                     source: origin,
                     filled,
                     bind: filled,
+                    from: vec![from],
                 });
             }
         };
@@ -1223,8 +1309,11 @@ impl Resolver {
                         continue;
                     }
                     let summary = format!("extends {base}");
+                    let base_key = base.strip_prefix("form:").unwrap_or(&base).to_string();
+                    let base_field = |name: &str| format!("form-field:{base_key}@{name}");
                     for field in self.full_fields(&base, visited, depth + 1) {
-                        inherit(&mut out, &field.name, summary.clone(), "extends", field.filled);
+                        let from = base_field(&field.name);
+                        inherit(&mut out, &field.name, summary.clone(), "extends", field.filled, from);
                     }
                     for field in self.form_extensions.get(&base).into_iter().flatten() {
                         match (out.iter_mut().find(|known| known.name == field.name), field.widget) {
@@ -1239,6 +1328,7 @@ impl Resolver {
                                 summary.clone(),
                                 "extends",
                                 widget == Widget::Own { filled: true },
+                                base_field(&field.name),
                             ),
                         }
                     }
@@ -1272,6 +1362,7 @@ impl Resolver {
                             format!("{field_type} of {full}"),
                             "auto-fields-entity",
                             true,
+                            format!("field:{full}.{}", field.name),
                         );
                     }
                 }
@@ -1296,7 +1387,15 @@ impl Resolver {
                             let mut seen = HashSet::from([id.clone()]);
                             for param in self.full_params(&id, direction, &mut seen, 0, noun) {
                                 if !excludes.contains(&param.name.as_str()) {
-                                    inherit(&mut out, &param.name, summary.clone(), "auto-fields-service", true);
+                                    let from = parameter_id(&id, direction, &param.name);
+                                    inherit(
+                                        &mut out,
+                                        &param.name,
+                                        summary.clone(),
+                                        "auto-fields-service",
+                                        true,
+                                        from,
+                                    );
                                 }
                             }
                         }
@@ -1305,17 +1404,27 @@ impl Resolver {
                             if form_list && LONG_TEXT.contains(&field.kind.as_str()) {
                                 continue;
                             }
-                            inherit(&mut out, &field.name, summary.clone(), "auto-fields-service", true);
+                            let from = format!("field:{full}.{}", field.name);
+                            inherit(
+                                &mut out,
+                                &field.name,
+                                summary.clone(),
+                                "auto-fields-service",
+                                true,
+                                from,
+                            );
                         }
                     }
                 }
                 _ => {}
             }
         }
+        let own = |name: &str| format!("form-field:{}@{name}", form.strip_prefix("form:").unwrap_or(form));
         for declared in self.form_fields.get(form).into_iter().flatten() {
             match out.iter_mut().find(|known| known.name == declared.name) {
                 Some(known) => {
                     known.origin = "";
+                    known.from.push(own(&declared.name));
                     match declared.widget {
                         // merged into the inherited field, whose widget it keeps: bound as that one
                         Widget::Inherited => known.bind = known.filled,
@@ -1332,6 +1441,7 @@ impl Resolver {
                     source: "",
                     filled: declared.widget == Widget::Own { filled: true },
                     bind: false,
+                    from: vec![own(&declared.name)],
                 }),
             }
         }
@@ -1511,7 +1621,12 @@ impl Resolver {
         let entity = |name: &str| format!("entity:{}", self.entity(name).unwrap_or_else(|| name.to_string()));
         let screen = form_screen(owner);
         let mut sources = Vec::new();
-        for mark in self.marks_of(owner) {
+        let marks = self.marks_of(owner);
+        // a view's members, a member-relationship's by the relationship of the member it joins from
+        for (_, member) in self.view_members(&marks) {
+            sources.extend(member.map(|full| format!("entity:{full}")));
+        }
+        for mark in marks {
             match mark {
                 Mark::AutoParameters { entity: named, .. } => {
                     if let Some(name) = named.or_else(|| owner.rsplit_once('#').map(|(_, noun)| noun)) {
@@ -1525,9 +1640,7 @@ impl Resolver {
                         sources.push(entity(noun));
                     }
                 }
-                Mark::AutoFieldsEntity { entity: named, .. } | Mark::Member { entity: named, .. } => {
-                    sources.push(entity(named));
-                }
+                Mark::AutoFieldsEntity { entity: named, .. } => sources.push(entity(named)),
                 Mark::AutoFieldsService { service, .. } => {
                     sources.push(format!("service:{service}"));
                     if let Some((_, noun)) = entity_auto(service) {

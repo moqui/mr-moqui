@@ -26,6 +26,7 @@ impl MemoryIndex {
         let mut family = resolve::NameDependents {
             ids: vec![id.to_string()],
             blocking: Vec::new(),
+            edits: Vec::new(),
         };
         let mut at = 0;
         while at < family.ids.len() {
@@ -33,6 +34,11 @@ impl MemoryIndex {
             at += 1;
             let mut next = self.resolver.same_name_dependents(&current);
             family.blocking.append(&mut next.blocking);
+            for edit in next.edits.drain(..) {
+                if !family.edits.contains(&edit) {
+                    family.edits.push(edit);
+                }
+            }
             if current.starts_with("parameter:") {
                 // the form fields that post to it by their name
                 next.ids.extend(
