@@ -767,3 +767,14 @@ fn a_format_string_from_untrusted_text_resolves_to_nothing_but_its_text() {
     );
     crate::script::clear_context_stack();
 }
+
+#[test]
+fn a_held_time_zone_answers_for_its_body_only() {
+    let before = super::time_zone().iana_name().map(str::to_string);
+    let held = super::with_time_zone("Asia/Tokyo", || super::time_zone().iana_name().map(str::to_string));
+    assert_eq!(held.as_deref(), Some("Asia/Tokyo"));
+    assert_eq!(super::time_zone().iana_name().map(str::to_string), before);
+    // an unknown zone holds nothing
+    let unknown = super::with_time_zone("Not/AZone", || super::time_zone().iana_name().map(str::to_string));
+    assert_eq!(unknown, before);
+}

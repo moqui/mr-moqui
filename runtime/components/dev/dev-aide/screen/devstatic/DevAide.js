@@ -514,7 +514,9 @@
                 advanced: !!store.get("advanced"), progress: null, hunks: null, conflictPath: null, gitLoaded: false,
                 // the checks of the commits shown (21.5), the commit whose checks are open, and the agreement (21.7)
                 logStates: {}, checksCommit: null, agreement: null,
-                logPage: 0, logMore: false, logPath: "", tree: null
+                logPage: 0, logMore: false, logPath: "", tree: null,
+                // a hosted root (4.10): whether the user may commit to its branch, and why not
+                hostedInfo: null
             };
         },
         computed: {
@@ -678,6 +680,9 @@
                     this.active = kept.active || null;
                 }
                 this.refreshStatus();
+                this.hostedInfo = null;
+                const picked = this.roots.find((item) => item.id === id);
+                if (picked && picked.kind === "hosted") this.get("hostedRoot", { rootId: id }).then((answer) => { if (this.rootId === id) this.hostedInfo = answer; }, () => {});
             },
             remember() {
                 if (!this.rootId) return;
@@ -992,11 +997,18 @@
                     return answer;
                 });
             },
-            saveTab(tab, inAll) {
+            saveTab(tab, inAll, message) {
                 if (!tab || tab.readOnly || (tab.saving && !inAll)) return Promise.resolve();
                 if (tab.text === tab.saved) return Promise.resolve();
+                // a hosted root (4.10): each Save is a commit, its message asked first ("Edit <path>" as given)
+                if (this.root && this.root.kind === "hosted" && message === undefined) {
+                    return new Promise((resolve) => this.$q.dialog({ title: "Commit to " + this.root.hostedBranch.branch,
+                        prompt: { model: "Edit " + tab.path, type: "text" }, cancel: true, persistent: true })
+                        .onOk((given) => resolve(this.saveTab(tab, inAll, String(given || "").trim())))
+                        .onCancel(() => (inAll ? resolve(Promise.reject({ errors: "The commit was cancelled" })) : resolve())));
+                }
                 tab.saving = true;
-                return this.post("save", { rootId: this.rootId, path: tab.path, text: tab.text, baseHash: tab.base }).then((answer) => {
+                return this.post("save", { rootId: this.rootId, path: tab.path, text: tab.text, baseHash: tab.base, message: message || "" }).then((answer) => {
                     tab.saving = inAll;
                     if (answer.conflict) {
                         tab.conflict = { diskText: answer.diskText || "", diskHash: answer.diskHash };
@@ -1776,7 +1788,9 @@
       <span class="text-caption" id="DevChangeCount">{{changeCount}} changed</span>
     </template>
     <span v-else-if="isGit" class="text-caption m-muted" role="status">Loading repository status…</span>
+    <q-chip v-else-if="root && root.kind === 'hosted'" dense square icon="sym_o_cloud" id="DevHostedChip">{{root.hostedBranch.repositoryId}} · {{root.hostedBranch.branch}} · no working tree</q-chip>
     <q-chip v-else-if="root" dense square icon="sym_o_folder_off" id="DevNotGit">{{root.label}} · {{root.kind === 'git' ? 'Git is unavailable' : 'Not a git repository'}}</q-chip>
+    <q-chip v-if="hostedInfo && !hostedInfo.canCommit" dense square icon="sym_o_lock" color="orange-3" id="DevHostedRefusal">Saves refused<q-tooltip max-width="24rem">{{hostedInfo.refusal}}</q-tooltip></q-chip>
     <q-space></q-space>
     <q-btn dense flat no-caps label="Fetch" :disable="!isGit || !canWrite" :loading="busy === 'fetch'" @click="network('fetch')"><q-tooltip v-if="!isGit">Not a git repository</q-tooltip></q-btn>
     <q-btn dense flat no-caps label="Pull" :disable="!isGit || !canWrite" :loading="busy === 'pull'" @click="network('pull')"></q-btn>
@@ -1788,6 +1802,8 @@
   </div>
   <q-banner v-if="root && root.worktreeOf" dense class="bg-blue-1 text-black" id="DevWorktreeBanner">A worktree of {{(roots.find((item) => item.id === root.worktreeOf) || {}).label || root.worktreeOf}}
     for an Assist session: not loaded, so the server keeps running the main tree. Check and commit here; a session that needs to run what it changes works in the main tree.</q-banner>
+  <q-banner v-if="root && root.kind === 'hosted'" dense class="bg-blue-1 text-black" id="DevHostedBanner">{{root.hostedBranch.repositoryId}} at {{root.hostedBranch.branch}}, hosted on this server:
+    not loaded or run. Each Save is a commit to {{root.hostedBranch.branch}} as you{{hostedInfo && hostedInfo.refusal ? '; ' + hostedInfo.refusal : ''}}.</q-banner>
   <q-banner v-if="restartNeeded" dense class="bg-amber-2 text-black" id="DevRestartBanner">{{ t('A change needs a restart to apply') }}.
     <span v-if="rebuildNote()"> {{ rebuildNote() }}</span>
     <template v-slot:action><q-btn v-if="rebuildOffered()" dense flat no-caps label="Rebuild" @click="rebuildNow" id="DevRebuild"></q-btn><q-btn v-if="rebuild.state !== 'running'" dense flat no-caps label="Restart" @click="restart"></q-btn><q-btn dense flat no-caps label="Later" @click="restartNeeded = false"></q-btn></template>
@@ -1853,7 +1869,7 @@
           <q-checkbox dense size="xs" v-model="search.regex" label=".*"></q-checkbox>
           <q-checkbox dense size="xs" v-model="search.caseSensitive" label="Aa" class="q-ml-sm"></q-checkbox>
           <q-input dense borderless v-model="search.pathFilter" placeholder="in path" class="q-ml-sm col"></q-input>
-          <q-btn v-if="canWrite" dense flat round size="sm" icon="sym_o_find_replace" :color="replace.open ? 'primary' : undefined" :aria-label="t('Replace')"
+          <q-btn v-if="canWrite && !(root && root.kind === 'hosted')" dense flat round size="sm" icon="sym_o_find_replace" :color="replace.open ? 'primary' : undefined" :aria-label="t('Replace')"
               @click="replace.open = !replace.open; replace.preview = null" id="DevReplaceToggle"><q-tooltip>{{ t('Replace across files') }}</q-tooltip></q-btn>
         </div>
         <div v-if="replace.open && canWrite" class="row items-center no-wrap q-gutter-x-xs" id="DevReplace">
