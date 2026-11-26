@@ -347,7 +347,7 @@ pub fn insert(entity: &EntityDefinition, dialect: &Dialect, columns: &[&str]) ->
 }
 
 /// `INSERT INTO table (columns) VALUES (?, ?), (?, ?)` with `rows` rows of the columns, which the caller binds row
-/// after row; one row is [`insert`]'s statement. Every database the framework runs on takes several rows to a statement
+/// after row; one row is [`insert`]'s statement. The databases the framework runs on take several rows to a statement
 /// ([`supports_insert_rows`]).
 pub fn insert_rows(
     entity: &EntityDefinition,
@@ -366,11 +366,11 @@ pub fn insert_rows(
     Ok(sql)
 }
 
-/// Whether `dialect` takes several rows in one `INSERT ... VALUES` ([`insert_rows`]): Postgres, MySQL, SQLite and H2;
-/// not Oracle before 23, so any other database inserts a row to a statement.
+/// Whether `dialect` takes several rows in one `INSERT ... VALUES` ([`insert_rows`]): the databases the framework runs
+/// on, Postgres, MySQL and SQLite. Any other profile in the conf inserts a row to a statement.
 #[must_use]
 pub fn supports_insert_rows(dialect: &Dialect) -> bool {
-    ["postgres", "mysql", "sqlite", "h2"]
+    ["postgres", "mysql", "sqlite"]
         .iter()
         .any(|prefix| dialect.name.starts_with(prefix))
 }
