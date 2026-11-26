@@ -3387,6 +3387,10 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="debounce-ms" type="xs:string" default="300"><xs:annotation><xs:documentation>
                 How long after the last change in a burst the reload runs, so an editor's write and rename is one
                 change.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="index-writers" type="xs:string" default="3"><xs:annotation><xs:documentation>The
+                connections the artifact index writes its rows on at once, each batch of files in a transaction of its
+                own (a build's write is bound by the database); at most the pool's size less two, at least
+                one.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
 

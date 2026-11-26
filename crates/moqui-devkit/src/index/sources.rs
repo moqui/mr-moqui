@@ -49,7 +49,7 @@ pub(super) fn refresh(factory: &Arc<ExecutionContextFactory>) {
 /// With the index's lock held: read again the conf's mounts when a conf reload is pending, and the `SubscreensItem`
 /// rows when one was written; what fails is left to be tried again at the next use, its failure logged at most once a
 /// minute.
-pub(super) fn refresh_locked(factory: &ExecutionContextFactory, facade: &EntityFacade, state: &IndexState) {
+pub(super) fn refresh_locked(factory: &Arc<ExecutionContextFactory>, facade: &EntityFacade, state: &IndexState) {
     let conf = state.conf_pending.swap(false, Ordering::SeqCst);
     if let Err(err) = update_sources(factory, facade, state, conf) {
         if conf {
@@ -66,7 +66,7 @@ pub(super) fn refresh_locked(factory: &ExecutionContextFactory, facade: &EntityF
 /// conf's screen mounts too); a mount added, moved or removed walks the screen paths again (`apply`). Nothing before
 /// the first build, which reads them all.
 fn update_sources(
-    factory: &ExecutionContextFactory,
+    factory: &Arc<ExecutionContextFactory>,
     facade: &EntityFacade,
     state: &IndexState,
     conf: bool,

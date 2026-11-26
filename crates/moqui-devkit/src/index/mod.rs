@@ -34,7 +34,7 @@ mod sources;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use moqui_db::sql::Condition;
@@ -49,7 +49,7 @@ use self::sources::{expand_source, refresh, refresh_locked, screen_rows_moved, s
 use super::ArtifactKind;
 use moqui_core::context::ExecutionContextFactory;
 use moqui_core::entity::{fence, EntityFacade, EntityValue};
-use moqui_core::transaction::TransactionAttribute;
+use moqui_core::transaction::{TransactionAttribute, TransactionManager};
 
 const FILE: &str = "moqui.devtools.DevArtifactFile";
 const ARTIFACT: &str = "moqui.devtools.DevArtifact";
@@ -1449,7 +1449,7 @@ fn change_of(factory: &ExecutionContextFactory, file: &Located, text: &str) -> C
 /// all of them, replace each file's rows in a transaction of its own, then mark the references to artifacts now gone
 /// unresolved and resolve those an added artifact answers.
 fn apply(
-    factory: &ExecutionContextFactory,
+    factory: &Arc<ExecutionContextFactory>,
     facade: &EntityFacade,
     state: &IndexState,
     mut changes: Vec<Change>,
@@ -1486,6 +1486,8 @@ fn apply(
         Change::Removed(path) => *path == groups_path,
     });
     let mut patterns_moved = false;
+    // ids whose old row is another changed file's: written after that file's rows go, their row deleted first
+    let mut moved: HashSet<String> = HashSet::new();
     {
         let paths: Vec<Value> = changes
             .iter()
@@ -1518,7 +1520,9 @@ fn apply(
         let mut walked_before: HashSet<(String, String)> = HashSet::new();
         let mut walked_after: HashSet<(String, String)> = HashSet::new();
         let mut resolver = lock(&state.resolver);
-        for change in &changes {
+        // each old row's change, by id
+        let mut old_in: HashMap<String, usize> = HashMap::new();
+        for (at, change) in changes.iter().enumerate() {
             let path = match change {
                 Change::Read { file, .. } => file.path.display().to_string(),
                 Change::Removed(path) => path.clone(),
@@ -1538,15 +1542,19 @@ fn apply(
                         if old.kind == "field" {
                             changed_entities.extend(old.parent.clone());
                         }
+                        old_in.insert(old.id.clone(), at);
                         gone.insert(old.id);
                     }
                 }
                 Err(err) => tracing::error!("Artifact index: the old rows of {path} were not read: {err}"),
             }
         }
-        for change in &changes {
+        for (at, change) in changes.iter().enumerate() {
             if let Change::Read { index, .. } = change {
                 for artifact in &index.artifacts {
+                    if old_in.get(&artifact.id).is_some_and(|from| *from != at) {
+                        moved.insert(artifact.id.clone());
+                    }
                     resolver.add(artifact);
                     walked_after.extend(walked(artifact));
                     touched.extend(declared_id(artifact));
@@ -1605,6 +1613,7 @@ fn apply(
             .iter()
             .filter(|artifact| resolver.count(&artifact.id) > 1)
             .map(|artifact| artifact.id.clone())
+            .chain(moved.iter().cloned())
             .collect();
         let exists = |location: &str| location_exists(factory, location);
         for change in &mut changes {
@@ -1648,58 +1657,58 @@ fn apply(
             );
         }
     }
-    // files a hundred to a transaction, each entity's rows of them in statements of many rows; a batch that fails is
-    // written again file by file, so one file's failure is that file's alone
-    let run = |batch: &[Change]| -> Result<(), Error> {
+    // files a hundred to a transaction, each entity's rows of them in statements of many rows, on several connections
+    // at once (`dev-reload@index-writers`); a batch that fails is written again file by file, so one file's failure is
+    // that file's alone
+    let plan = WritePlan::new(&changes, &shared, &moved);
+    let run = |batch: &[usize]| -> Result<(), Error> {
         tx.run(TransactionAttribute::ForceNew, None, || {
             // the statements go without waiting for each result, as a data file's do, and are all in before the commit
             let _pipeline = moqui_core::entity::exec::PipelineWrites::enter();
-            write_changes(facade, batch, &shared, &known)?;
+            write_changes(facade, &changes, batch, &plan.owners, &shared, &known)?;
             tx.finish_deferred()
         })
     };
-    let mut left = changes.len();
-    for batch in changes.chunks(100) {
-        // between batches, and after one that failed as the database went away: the shutdown waits for this thread
-        // before it stops the database, and the next build reads the files left by their hashes
-        if factory.is_shutting_down() {
-            tracing::info!("Artifact index: the rows of {left} files were not written for the shutdown");
-            return Ok(());
+    // each file's outcome; none when a batch failed for the shutdown
+    let write = |batch: &[usize]| -> Option<Vec<(usize, Result<(), Error>)>> {
+        match run(batch) {
+            Ok(()) => Some(batch.iter().map(|at| (*at, Ok(()))).collect()),
+            Err(_) if factory.is_shutting_down() => None,
+            Err(_) if batch.len() > 1 => Some(batch.iter().map(|at| (*at, run(std::slice::from_ref(at)))).collect()),
+            Err(err) => Some(batch.first().map(|at| (*at, Err(err))).into_iter().collect()),
         }
-        let outcomes: Vec<(&Change, Result<(), Error>)> = match run(batch) {
-            Ok(()) => batch.iter().map(|change| (change, Ok(()))).collect(),
-            Err(_) if factory.is_shutting_down() => {
-                tracing::info!("Artifact index: the rows of {left} files were not written for the shutdown");
-                return Ok(());
+    };
+    let mut outcomes: Vec<Option<Result<(), Error>>> = changes.iter().map(|_| None).collect();
+    // the files whose rows no other batch touches at once, then the others one batch after another
+    let writers = index_writers(factory, &tx);
+    let stopped = write_batches(factory, &plan.parallel, writers, &write, &mut outcomes)
+        || write_batches(factory, &plan.ordered, 1, &write, &mut outcomes);
+    if stopped {
+        let left = outcomes.iter().filter(|outcome| outcome.is_none()).count();
+        tracing::info!("Artifact index: the rows of {left} files were not written for the shutdown");
+        return Ok(());
+    }
+    for (change, outcome) in changes.iter().zip(outcomes) {
+        let outcome = outcome.unwrap_or_else(|| Err(Error::new("its writer stopped")));
+        match (outcome, change) {
+            (Ok(()), Change::Read { index, .. }) => {
+                report.read += 1;
+                report.artifacts += index.artifacts.len();
+                report.refs += index.refs.len();
+                report.bindings += index.bindings.len();
             }
-            Err(_) if batch.len() > 1 => batch
-                .iter()
-                .map(|change| (change, run(std::slice::from_ref(change))))
-                .collect(),
-            Err(err) => vec![(&batch[0], Err(err))],
-        };
-        for (change, outcome) in outcomes {
-            match (outcome, change) {
-                (Ok(()), Change::Read { index, .. }) => {
-                    report.read += 1;
-                    report.artifacts += index.artifacts.len();
-                    report.refs += index.refs.len();
-                    report.bindings += index.bindings.len();
-                }
-                (Ok(()), Change::Stale { .. }) => report.stale += 1,
-                (Ok(()), Change::Removed(_)) => report.removed += 1,
-                (Err(err), change) => {
-                    let path = match change {
-                        Change::Read { file, .. } | Change::Stale { file, .. } => file.path.display().to_string(),
-                        Change::Removed(path) => path.clone(),
-                    };
-                    tracing::error!("Artifact index: the rows of {path} were not written: {err}");
-                    #[cfg(test)]
-                    lock(&UNWRITTEN).push(path);
-                }
+            (Ok(()), Change::Stale { .. }) => report.stale += 1,
+            (Ok(()), Change::Removed(_)) => report.removed += 1,
+            (Err(err), change) => {
+                let path = match change {
+                    Change::Read { file, .. } | Change::Stale { file, .. } => file.path.display().to_string(),
+                    Change::Removed(path) => path.clone(),
+                };
+                tracing::error!("Artifact index: the rows of {path} were not written: {err}");
+                #[cfg(test)]
+                lock(&UNWRITTEN).push(path);
             }
         }
-        left -= batch.len();
     }
     unresolve(facade, &tx, &gone, &changed_paths)?;
     resolve_added(factory, facade, state, &tx, &added, &changed_paths)?;
@@ -1724,6 +1733,160 @@ fn apply(
         }
     }
     Ok(())
+}
+
+/// The files a batch of [`apply`]'s writes holds.
+const BATCH_FILES: usize = 100;
+
+#[cfg(test)]
+thread_local! {
+    /// Under test, the files a batch holds in place of [`BATCH_FILES`], so a few files make several batches.
+    pub(crate) static TEST_BATCH_FILES: std::cell::Cell<usize> = const { std::cell::Cell::new(BATCH_FILES) };
+}
+
+fn batch_files() -> usize {
+    #[cfg(test)]
+    {
+        TEST_BATCH_FILES.with(std::cell::Cell::get).max(1)
+    }
+    #[cfg(not(test))]
+    {
+        BATCH_FILES
+    }
+}
+
+/// How [`apply`] writes the files' rows: by positions in its changes, the batches written on several connections at
+/// once, then the batches written one after another, and which file writes an id that two define.
+struct WritePlan<'a> {
+    /// Of each id another file defines too (`shared`), the last change that defines it: only that file writes its row
+    /// (deleting the id's row of a file not written now first), so the later file's row is kept whichever batch is
+    /// written first, and no two batches write one id.
+    owners: HashMap<&'a str, usize>,
+    /// The files whose rows no other batch writes or deletes.
+    parallel: Vec<Vec<usize>>,
+    /// The files that define an id whose old row is another changed file's (`moved`: that file's batch deletes it as
+    /// the id's owner does), or name a path again: written in order once the others are, as when every batch was
+    /// written one after another.
+    ordered: Vec<Vec<usize>>,
+}
+
+impl<'a> WritePlan<'a> {
+    fn new(changes: &'a [Change], shared: &HashSet<String>, moved: &HashSet<String>) -> Self {
+        let mut owners: HashMap<&str, usize> = HashMap::new();
+        let mut paths: HashSet<String> = HashSet::new();
+        let mut free = Vec::new();
+        let mut ordered = Vec::new();
+        for (at, change) in changes.iter().enumerate() {
+            let (path, contended) = match change {
+                Change::Read { file, index, .. } => {
+                    let mut contended = false;
+                    for artifact in index.artifacts.iter().filter(|artifact| shared.contains(&artifact.id)) {
+                        owners.insert(artifact.id.as_str(), at);
+                        contended = contended || moved.contains(&artifact.id);
+                    }
+                    (file.path.display().to_string(), contended)
+                }
+                Change::Stale { file, .. } => (file.path.display().to_string(), false),
+                Change::Removed(path) => (path.clone(), false),
+            };
+            if !paths.insert(path) || contended {
+                ordered.push(at);
+            } else {
+                free.push(at);
+            }
+        }
+        let size = batch_files();
+        let batches = |positions: Vec<usize>| positions.chunks(size).map(<[usize]>::to_vec).collect();
+        Self {
+            owners,
+            parallel: batches(free),
+            ordered: batches(ordered),
+        }
+    }
+}
+
+/// How many connections the index writes its rows on at once: `dev-reload@index-writers` (3), at most the pool's size
+/// less two, so requests keep their connections, and at least one.
+fn index_writers(factory: &ExecutionContextFactory, tx: &TransactionManager) -> usize {
+    let room = usize::try_from(tx.pool_max()).unwrap_or(usize::MAX).saturating_sub(2);
+    factory
+        .conf_number("dev-reload", "index-writers", 3_usize)
+        .min(room)
+        .max(1)
+}
+
+/// A batch's write: each file's outcome, or none when the shutdown stopped it.
+type BatchWrite<'a> = dyn Fn(&[usize]) -> Option<Vec<(usize, Result<(), Error>)>> + Sync + 'a;
+
+/// Write `batches` with `write` on up to `writers` threads at once, this one among them; each other thread works in a
+/// context of its own, and `write` runs each batch in a transaction of its own. Each file's outcome goes to its
+/// position in `outcomes`; a file left without one was not written (its writer panicked). Whether the shutdown stopped
+/// the writing: no batch is taken once it began, and the next build reads the files left by their hashes.
+fn write_batches(
+    factory: &Arc<ExecutionContextFactory>,
+    batches: &[Vec<usize>],
+    writers: usize,
+    write: &BatchWrite<'_>,
+    outcomes: &mut [Option<Result<(), Error>>],
+) -> bool {
+    let next = AtomicUsize::new(0);
+    let stopped = AtomicBool::new(false);
+    let done: Mutex<Vec<(usize, Result<(), Error>)>> = Mutex::new(Vec::new());
+    let work = || loop {
+        // between batches, and after one that failed as the database went away: the shutdown waits for the build
+        // before it stops the database
+        if stopped.load(Ordering::SeqCst) || factory.is_shutting_down() {
+            stopped.store(true, Ordering::SeqCst);
+            return;
+        }
+        let Some(batch) = batches.get(next.fetch_add(1, Ordering::SeqCst)) else {
+            return;
+        };
+        match write(batch) {
+            Some(written) => lock(&done).extend(written),
+            None => {
+                stopped.store(true, Ordering::SeqCst);
+                return;
+            }
+        }
+    };
+    std::thread::scope(|scope| {
+        let mut helpers = Vec::new();
+        for _ in 1..writers.min(batches.len()) {
+            let spawned = std::thread::Builder::new()
+                .name("artifact-index-write".into())
+                .spawn_scoped(scope, || {
+                    let entered = factory.new_context();
+                    let _enter = entered.enter();
+                    let _authz = entered.disable_authz();
+                    let _lifted = fence::lift();
+                    work();
+                });
+            match spawned {
+                Ok(helper) => helpers.push(helper),
+                Err(err) => {
+                    tracing::error!(
+                        "Artifact index: a writer thread did not start, the others write its batches: {err}"
+                    );
+                    break;
+                }
+            }
+        }
+        work();
+        for helper in helpers {
+            if helper.join().is_err() {
+                tracing::error!(
+                    "Artifact index: a writer thread panicked; the files of the batch it wrote were not written"
+                );
+            }
+        }
+    });
+    for (at, outcome) in done.into_inner().unwrap_or_else(std::sync::PoisonError::into_inner) {
+        if let Some(slot) = outcomes.get_mut(at) {
+            *slot = Some(outcome);
+        }
+    }
+    stopped.into_inner()
 }
 
 /// The id an artifact's declaration counts toward for the expansions that read it ([`Resolver::dependents`]): an
@@ -2081,16 +2244,22 @@ fn old_artifacts(facade: &EntityFacade, path: &str) -> Result<Vec<ArtifactRow>, 
 fn write_changes(
     facade: &EntityFacade,
     changes: &[Change],
+    batch: &[usize],
+    owners: &HashMap<&str, usize>,
     shared: &HashSet<String>,
     known: &HashSet<String>,
 ) -> Result<(), Error> {
     // the paths whose artifact, reference and binding rows go, and those whose file row goes
     let mut cleared: Vec<Value> = Vec::new();
     let mut unfiled: Vec<Value> = Vec::new();
-    // the files read, with their paths
-    let mut read: Vec<(String, &FileIndex)> = Vec::new();
+    // the files read, with their paths and positions
+    let mut read: Vec<(String, &FileIndex, usize)> = Vec::new();
     let mut files: Vec<EntityValue> = Vec::new();
-    for change in changes {
+    let in_batch: Vec<(usize, &Change)> = batch
+        .iter()
+        .filter_map(|at| changes.get(*at).map(|change| (*at, change)))
+        .collect();
+    for (at, change) in &in_batch {
         match change {
             Change::Read { file, hash, index } => {
                 let path = file.path.display().to_string();
@@ -2099,7 +2268,7 @@ fn write_changes(
                     unfiled.push(Value::string(&path));
                 }
                 files.push(file_row(facade, file, hash, false, "")?);
-                read.push((path, index));
+                read.push((path, index, *at));
             }
             // its rows stay, marked stale by its file row
             Change::Stale { file, hash, problem } => {
@@ -2119,14 +2288,15 @@ fn write_changes(
     insert_artifacts(
         facade,
         read.iter()
-            .map(|(path, index)| (path.as_str(), index.artifacts.as_slice()))
+            .map(|(path, index, at)| (path.as_str(), index.artifacts.as_slice(), Some(*at)))
             .collect(),
+        owners,
         shared,
     )?;
     let template = &facade.make_value(REF)?;
     facade.create_values(
         REF,
-        read.iter().flat_map(|(path, index)| {
+        read.iter().flat_map(|(path, index, _)| {
             index.refs.iter().enumerate().map(move |(sequence, reference)| {
                 let mut row = template.clone();
                 row.set("filePath", Value::string(path));
@@ -2139,7 +2309,7 @@ fn write_changes(
     let template = &facade.make_value(BINDING)?;
     facade.create_values(
         BINDING,
-        read.iter().flat_map(|(path, index)| {
+        read.iter().flat_map(|(path, index, _)| {
             index.bindings.iter().enumerate().map(move |(sequence, binding)| {
                 let mut row = template.clone();
                 row.set("filePath", Value::string(path));
@@ -2152,7 +2322,7 @@ fn write_changes(
     facade.create_values(FILE, files)?;
     // under test, a batch with a failing file fails after its rows are sent, as a duplicate key would fail it
     #[cfg(test)]
-    for change in changes {
+    for (_, change) in &in_batch {
         if let Change::Read { file, .. } = change {
             let path = file.path.display().to_string();
             if lock(&FAIL_FILE_WRITE).contains(&path) {
@@ -2183,26 +2353,33 @@ fn write_artifacts(
     artifacts: &[ArtifactRow],
     shared: &HashSet<String>,
 ) -> Result<(), Error> {
-    insert_artifacts(facade, vec![(path, artifacts)], shared)
+    insert_artifacts(facade, vec![(path, artifacts, None)], &HashMap::new(), shared)
 }
 
-/// Insert the artifact rows of `files`, each a path and its artifacts, in the order written. A file naming one id twice
-/// (a field repeated) keeps the first; of one id in two files the later file's row is written, and an id another file
+/// Insert the artifact rows of `files`, each a path, its artifacts and its position in the changes written, in the order
+/// written. A file naming one id twice (a field repeated) keeps the first; of one id in two files the later file's row
+/// is written (of the changes written, the one `owners` names, whatever batch it is in), and an id another file
 /// defines too (`shared`) has its row elsewhere deleted first: a file's later definition replaces the earlier one, as
 /// when each file is written on its own.
 fn insert_artifacts(
     facade: &EntityFacade,
-    files: Vec<(&str, &[ArtifactRow])>,
+    files: Vec<(&str, &[ArtifactRow], Option<usize>)>,
+    owners: &HashMap<&str, usize>,
     shared: &HashSet<String>,
 ) -> Result<(), Error> {
     // each row kept, by its file and its sequence in the file, with where each id's row is
     let mut kept: Vec<Option<(&str, usize, &ArtifactRow)>> = Vec::new();
     let mut at: HashMap<&str, usize> = HashMap::new();
     let mut replaced: Vec<Value> = Vec::new();
-    for (path, artifacts) in files {
+    for (path, artifacts, position) in files {
         let mut seen = HashSet::new();
         for (sequence, artifact) in artifacts.iter().enumerate() {
             if !seen.insert(artifact.id.as_str()) {
+                continue;
+            }
+            // a later change defines it: that file writes its row
+            if position.is_some_and(|position| owners.get(artifact.id.as_str()).is_some_and(|owner| *owner != position))
+            {
                 continue;
             }
             if let Some(earlier) = at.insert(artifact.id.as_str(), kept.len()) {

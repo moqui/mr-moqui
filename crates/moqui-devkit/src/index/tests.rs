@@ -539,3 +539,101 @@ fn a_batch_that_fails_is_written_again_file_by_file() {
     assert_eq!((report.read, report.unchanged), (1, 2), "{report:?}");
     assert!(bed.has_artifact("entity:rows.Banana"));
 }
+
+/// Batches of `size` files for a test of batches written at once; the size as it was when dropped.
+struct SmallBatches(usize);
+
+impl SmallBatches {
+    fn of(size: usize) -> Self {
+        Self(TEST_BATCH_FILES.with(|batch| batch.replace(size)))
+    }
+}
+
+impl Drop for SmallBatches {
+    fn drop(&mut self) {
+        TEST_BATCH_FILES.with(|batch| batch.set(self.0));
+    }
+}
+
+/// Entity files, `count` of them, each with an entity of its own.
+fn entity_files(bed: &RowsBed, count: usize) {
+    for at in 0..count {
+        bed.write(
+            &format!("entity/F{at:02}Entities.xml"),
+            &format!(
+                r#"<entities><entity entity-name="F{at:02}" package="rows"><field name="id" type="id" is-pk="true"/></entity></entities>"#
+            ),
+        );
+    }
+}
+
+/// An entity two files define, in batches written at once on several connections: one row, the later file's, whichever
+/// batch is written first; an update of the earlier file then takes it.
+#[test]
+fn an_id_two_files_of_batches_written_at_once_define_is_the_later_files() {
+    let bed = RowsBed::new("shared-parallel");
+    entity_files(&bed, 12);
+    let first = bed.write("entity/AEntities.xml", ROWS_ENTITIES);
+    let second = bed.write("entity/ZEntities.xml", ROWS_ENTITIES);
+    let _enter = bed.ctx.enter();
+    let _authz = bed.ctx.disable_authz();
+    let _small = SmallBatches::of(1);
+    let files = bed.files();
+    let later = files
+        .iter()
+        .rposition(|file| file.path == first || file.path == second)
+        .map(|at| files[at].path.display().to_string())
+        .unwrap();
+    let earlier = if later == first.display().to_string() {
+        &second
+    } else {
+        &first
+    };
+    let report = build_files(bed.factory(), files, false).unwrap();
+    assert_eq!(report.read, 14, "{report:?}");
+    for at in 0..12 {
+        assert!(bed.has_artifact(&format!("entity:rows.F{at:02}")), "F{at:02}");
+    }
+    let paths = || bed.ids(ARTIFACT, "artifactId", "entity:rows.Thing", "filePath");
+    assert_eq!(paths(), [later]);
+    assert_eq!(
+        bed.ids(ARTIFACT, "artifactId", "field:rows.Thing.name", "filePath")
+            .len(),
+        1
+    );
+    update_files(bed.factory(), std::slice::from_ref(earlier)).unwrap();
+    assert_eq!(paths(), [earlier.display().to_string()]);
+}
+
+/// A failing file among batches written at once: its batch is written again file by file, the file is logged alone and
+/// has no rows, and every other batch's files are written.
+#[test]
+fn a_file_that_fails_among_batches_written_at_once_fails_alone() {
+    let bed = RowsBed::new("retry-parallel");
+    entity_files(&bed, 9);
+    let bad_path = bed.dir.join("rows/entity/F04Entities.xml").display().to_string();
+    let _enter = bed.ctx.enter();
+    let _authz = bed.ctx.disable_authz();
+    let _small = SmallBatches::of(2);
+    lock(&FAIL_FILE_WRITE).push(bad_path.clone());
+    let report = build_files(bed.factory(), bed.files(), false).unwrap();
+    lock(&FAIL_FILE_WRITE).retain(|path| *path != bad_path);
+    let logged: Vec<String> = lock(&UNWRITTEN)
+        .iter()
+        .filter(|path| path.starts_with(&bed.dir.display().to_string()))
+        .cloned()
+        .collect();
+    assert_eq!(
+        logged,
+        std::slice::from_ref(&bad_path),
+        "the failing file is logged alone"
+    );
+    assert_eq!(report.read, 8, "{report:?}");
+    for at in (0..9).filter(|at| *at != 4) {
+        assert!(bed.has_artifact(&format!("entity:rows.F{at:02}")), "F{at:02}");
+    }
+    assert!(!bed.has_artifact("entity:rows.F04"));
+    let report = build_files(bed.factory(), bed.files(), false).unwrap();
+    assert_eq!((report.read, report.unchanged), (1, 8), "{report:?}");
+    assert!(bed.has_artifact("entity:rows.F04"));
+}

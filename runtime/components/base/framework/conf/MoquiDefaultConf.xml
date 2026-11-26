@@ -1523,8 +1523,9 @@
         <allow component="site" repository-url="https://git.example.com/git/site.git" branch="main"/>). With
         require-passed-run true, deploy#Component, update#Component and load#Component refuse anything else: a deploy
         from this server's own pages needs such an attestation too. -->
-    <!-- The dev tools' project cache (crates/moqui-devkit): projects is how many it keeps (at least 1). -->
-    <dev-reload projects="3"/>
+    <!-- The dev tools (crates/moqui-devkit): projects is how many projects their cache keeps (at least 1); index-writers
+        the connections the artifact index writes its rows on at once, at most the pool's size less two (at least 1). -->
+    <dev-reload projects="3" index-writers="3"/>
 
     <!-- enabled: deploying a component from a git URL (System > Components) runs its code and loads its data: it needs
         the sealed COMPONENT_DEPLOY permission, and on a production instance also this set to true
