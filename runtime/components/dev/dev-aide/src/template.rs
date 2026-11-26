@@ -13,10 +13,11 @@
  */
 
 //! New components from a template (plans/design-dev-aide.md 12): the component template in
-//! `runtime/components/dev/template` and the dev-aide's Site template. The rules for the component template, its
-//! placeholders and its parts, are in `runtime/components/dev/README.md`; `./moq component-create` follows the same ones.
+//! `runtime/components/dev/template` (the App kind, and the other kinds in its `kinds/`) and the dev-aide's Site
+//! template. The rules for the component template, its placeholders, kinds and parts, are in
+//! `runtime/components/dev/README.md`; `./moq component-create` follows the same ones.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use moqui_lib::error::Error as LibError;
 
@@ -74,7 +75,7 @@ pub(crate) fn valid_name(name: &str) -> bool {
             .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
 }
 
-/// What a new component from the component template has: all of it, its screens only, or its REST API only.
+/// What an App component from the component template has: all of it, its screens only, or its REST API only.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Part {
     All,
@@ -121,13 +122,94 @@ impl Part {
     }
 }
 
-/// A component named `name` in `target` from the component template in `template`: its files with the placeholders
-/// filled in, less what `part` leaves out, and without the template's `disabled="true"`.
-pub(crate) fn create(template: &Path, target: &Path, name: &str, part: Part) -> Result<(), LibError> {
+/// The directory of the component template that holds the kinds other than App, each a template of its own
+/// (`kinds/<kind>`), which an App component leaves out.
+pub(crate) const KINDS_DIR: &str = "kinds";
+
+/// The kind of a new component (plans/design-dev-aide.md 12): an App (the template itself, with its part), data only,
+/// native (a Rust crate `./moq build` links), a theme of the `/qapps` shell, a skill pack, or a dev tool (in
+/// `runtime/components/dev`, `purpose="dev"`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Kind {
+    App(Part),
+    Data,
+    Native,
+    Theme,
+    Skills,
+    DevTool,
+}
+
+impl Kind {
+    /// Every kind other than App, as `kinds/<name>` of the template holds them.
+    #[cfg(test)]
+    pub(crate) const OTHERS: [Kind; 5] = [Kind::Data, Kind::Native, Kind::Theme, Kind::Skills, Kind::DevTool];
+
+    /// By name: `app` (or empty) with its `part`; a part's name alone (`all`, `screens`, `rest`) for an App; or `data`,
+    /// `native`, `theme`, `skills` or `dev-tool`, which take no part.
+    pub(crate) fn of(kind: &str, part: &str) -> Option<Kind> {
+        let partless = |kind: Kind| (part.is_empty() || part == "all").then_some(kind);
+        match kind {
+            "" | "app" => Part::of(part).map(Kind::App),
+            "data" => partless(Kind::Data),
+            "native" => partless(Kind::Native),
+            "theme" => partless(Kind::Theme),
+            "skills" => partless(Kind::Skills),
+            "dev-tool" => partless(Kind::DevTool),
+            other => Part::of(other)
+                .filter(|_| part.is_empty() || part == other)
+                .map(Kind::App),
+        }
+    }
+
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Kind::App(_) => "app",
+            Kind::Data => "data",
+            Kind::Native => "native",
+            Kind::Theme => "theme",
+            Kind::Skills => "skills",
+            Kind::DevTool => "dev-tool",
+        }
+    }
+
+    /// Whether a component of this kind goes in `runtime/components/dev` wherever it is asked for.
+    pub(crate) fn dev_only(self) -> bool {
+        self == Kind::DevTool
+    }
+
+    /// The template directory a component of this kind is copied from: the template itself for an App, else its
+    /// `kinds/<name>`.
+    pub(crate) fn source(self, template: &Path) -> PathBuf {
+        match self {
+            Kind::App(_) => template.to_path_buf(),
+            other => template.join(KINDS_DIR).join(other.name()),
+        }
+    }
+
+    /// The paths of [`Self::source`] a component of this kind leaves out: an App's part, and the other kinds.
+    fn left_out(self) -> Vec<&'static str> {
+        match self {
+            Kind::App(part) => part.left_out().iter().copied().chain([KINDS_DIR]).collect(),
+            _ => Vec::new(),
+        }
+    }
+}
+
+/// A component named `name` in `target` from the component template in `template`: the files of the kind's template
+/// with the placeholders filled in, less what the kind leaves out, and without the template's `disabled="true"`.
+pub(crate) fn create(template: &Path, target: &Path, name: &str, kind: Kind) -> Result<(), LibError> {
     let names = Names::of(name);
     let fill = |text: &str| names.fill(text);
-    copy_template(template, target, &fill, &fill)?;
-    for path in part.left_out() {
+    let source = kind.source(template);
+    if !source.join("component.xml").is_file() {
+        return Err(LibError::new(format!(
+            "the component template has no {} kind: {} is not there",
+            kind.name(),
+            source.display()
+        )));
+    }
+    copy_template(&source, target, &fill, &fill)?;
+    for path in kind.left_out() {
         let path = target.join(names.fill(path));
         let removed = if path.is_dir() {
             std::fs::remove_dir_all(&path)

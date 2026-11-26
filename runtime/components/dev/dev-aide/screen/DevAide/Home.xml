@@ -26,7 +26,7 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><if condition="location"><message type="success">Created ${location}: it loads after a restart</message></if></actions>
         <default-response url="."/></transition>
     <transition name="createComponent"><service-call name="org.moqui.devaide.WorkspaceServices.create#Component"/>
-        <actions><if condition="location"><message type="success">Created ${location}: it loads after a restart</message></if></actions>
+        <actions><if condition="location"><message type="success">Created ${location}: it loads after ${rebuild ? 'a rebuild and ' : ''}a restart</message></if></actions>
         <default-response url="."/></transition>
     <transition name="restart"><service-call name="org.moqui.dev.DevToolsServices.restart#Server"/>
         <actions><message type="warning">Restarting: the server comes back in a few seconds</message></actions>
@@ -93,9 +93,11 @@ along with this software (see the LICENSE.md file). If not, see
                             <form-single name="CreateSiteForm" transition="createSite">
                                 <field name="componentName"><default-field title="Name"><text-line size="20" default-value="my-site"/></default-field></field>
                                 <field name="dependsOn"><default-field title="Extends (components, comma separated)" tooltip="Components that load on every instance, as the site does: not a dev-only one such as example"><text-line size="40"/></default-field></field>
+                                <field name="gitRemote"><default-field title="Git remote (optional)" tooltip="The repository starts with it as origin: an https URL with no user name or token, ssh://, git:// or git@host:path"><text-line size="50"/></default-field></field>
                                 <field name="submitButton"><default-field title="Create"><submit/></default-field></field>
                                 <field-layout>
                                     <field-row><field-ref name="componentName"/><field-ref name="dependsOn"/></field-row>
+                                    <field-ref name="gitRemote"/>
                                     <field-row-big><field-ref name="submitButton"/></field-row-big>
                                 </field-layout>
                             </form-single>
@@ -110,21 +112,28 @@ along with this software (see the LICENSE.md file). If not, see
                 <row-col md="6">
                     <container id="DevAideNewComponent">
                         <label type="h6" text="New component"/>
-                        <label type="p" text="Start an application with entities, services, screens or a REST API, security, demo data and specs."/>
+                        <label type="p" text="Start an application with entities, services, screens or a REST API, security, demo data and specs; or data only, Rust, a theme, a skill pack or a dev tool."/>
                         <container-dialog id="DevAideCreateComponent" button-text="Create component" title="Create component">
                             <form-single name="CreateComponentForm" transition="createComponent">
                                 <field name="componentName"><default-field title="Name"><text-line size="20" default-value="my-app"/></default-field></field>
-                                <field name="part"><default-field title="Kind"><drop-down no-current-selected-key="all">
-                                    <option key="all" text="Screens and REST API"/>
-                                    <option key="screens" text="Screens only"/>
-                                    <option key="rest" text="REST API only"/>
+                                <field name="kind"><default-field title="Kind"><drop-down no-current-selected-key="all">
+                                    <option key="all" text="App: screens and REST API"/>
+                                    <option key="screens" text="App: screens only"/>
+                                    <option key="rest" text="App: REST API only"/>
+                                    <option key="data" text="Data only"/>
+                                    <option key="native" text="Native (Rust, built by ./moq build)"/>
+                                    <option key="theme" text="Theme of the apps shell"/>
+                                    <option key="skills" text="Skill pack (skills and prompts)"/>
+                                    <option key="dev-tool" text="Dev tool (mock services, test data; dev only)"/>
                                 </drop-down></default-field></field>
                                 <field name="dev"><default-field title="Dev only (runtime/components/dev)"><check><option key="true" text=" "/></check></default-field></field>
                                 <field name="test"><default-field title="Test only (runtime/components/test)"><check><option key="true" text=" "/></check></default-field></field>
+                                <field name="gitRemote"><default-field title="Git remote (optional)" tooltip="The repository starts with it as origin: an https URL with no user name or token, ssh://, git:// or git@host:path"><text-line size="50"/></default-field></field>
                                 <field name="submitButton"><default-field title="Create"><submit/></default-field></field>
                                 <field-layout>
-                                    <field-row><field-ref name="componentName"/><field-ref name="part"/></field-row>
+                                    <field-row><field-ref name="componentName"/><field-ref name="kind"/></field-row>
                                     <field-row><field-ref name="dev"/><field-ref name="test"/></field-row>
+                                    <field-ref name="gitRemote"/>
                                     <field-row-big><field-ref name="submitButton"/></field-row-big>
                                 </field-layout>
                             </form-single>

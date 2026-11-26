@@ -2086,9 +2086,10 @@ fn a_site_seca_runs_after_its_save() {
 }
 
 /// New component (`create#Component`, plans/design-dev-aide.md 12): a component from the component template
-/// (`runtime/components/dev/template`) in runtime/components/addon, or with dev in runtime/components/dev, of the part asked for,
-/// with a git repository of its own; a name taken, a name that is not one or an unknown part is refused, and the extend
-/// tier may not make one.
+/// (`runtime/components/dev/template`) in runtime/components/addon, or with dev in runtime/components/dev, of the part or
+/// kind asked for (a dev tool in runtime/components/dev unasked), with a git repository of its own and the remote asked for
+/// as its origin; a name taken, a name that is not one, an unknown part or kind, or a remote with a credential or a
+/// command in it is refused, and the extend tier may not make one.
 #[test]
 fn new_components_come_from_the_component_template() {
     if !crate::common::own_process() {
@@ -2151,10 +2152,51 @@ fn new_components_come_from_the_component_template() {
     assert!(api.join("service/demo-api.rest.xml").is_file());
     assert!(!api.join("screen").exists() && !api.join("MoquiConf.xml").exists());
 
+    // another kind, with a remote the repository starts with as origin; a dev tool goes in the dev set unasked
+    let native = create(
+        "john.doe",
+        &[
+            ("componentName", "demo-rates"),
+            ("kind", "native"),
+            ("gitRemote", "git@git.example.com:me/demo-rates.git"),
+        ],
+    )
+    .unwrap();
+    assert_eq!(text(&native, "rebuild"), "true");
+    assert_eq!(text(&native, "remoteAdded"), "true");
+    let rates = gate.runtime.join("components/addon/demo-rates");
+    assert!(rates.join("Cargo.toml").is_file() && rates.join("src/lib.rs").is_file());
+    let origin = std::process::Command::new("git")
+        .args(["-C", &rates.display().to_string(), "config", "remote.origin.url"])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&origin.stdout).trim(),
+        "git@git.example.com:me/demo-rates.git"
+    );
+    create("john.doe", &[("componentName", "demo-mocks"), ("kind", "dev-tool")]).unwrap();
+    let mocks = gate.runtime.join("components/dev/demo-mocks");
+    assert!(std::fs::read_to_string(mocks.join("component.xml"))
+        .unwrap()
+        .contains(r#"purpose="dev""#));
+    assert!(!gate.runtime.join("components/addon/demo-mocks").exists());
+    // a remote with a credential in it, or that runs a command, is refused before anything is made
+    for remote in ["https://ann:token@git.example.com/x.git", "ext::sh -c id"] {
+        let refused = create(
+            "john.doe",
+            &[("componentName", "demo-bad"), ("kind", "data"), ("gitRemote", remote)],
+        );
+        assert!(refused.is_err(), "{remote}");
+        assert!(!gate.runtime.join("components/addon/demo-bad").exists(), "{remote}");
+    }
+
     let taken = create("john.doe", &[("componentName", "demo-shop")]).unwrap_err();
     assert!(taken.contains("is there already"), "{taken}");
     assert!(create("john.doe", &[("componentName", "9lives")]).is_err());
     assert!(create("john.doe", &[("componentName", "other"), ("part", "both")]).is_err());
+    assert!(create("john.doe", &[("componentName", "other"), ("kind", "plugin")]).is_err());
     assert!(create("ext.user", &[("componentName", "ext-shop")]).is_err());
     assert!(!gate.runtime.join("components/addon/ext-shop").exists());
     // the template stays a template

@@ -281,6 +281,68 @@ pub(crate) fn checked_url(text: &str) -> Result<url::Url, LibError> {
     Ok(parsed)
 }
 
+/// A remote URL a new repository may start with as `origin` (create#Component's `gitRemote`), parsed by the `url` crate:
+/// `https` (or `http` to a loopback IP literal, as [`web_url`] takes it) with no user part, which would be a credential
+/// kept in `.git/config`; `ssh` or `git` with a host and no password (an SSH user is the account, not a secret); or the
+/// scp-like `[user@]host:path` of SSH. Never an option (`-...`), a local path or `file:`, git's `<transport>::<address>`
+/// (`ext::` runs a command), whitespace, a control character or `\`.
+pub(crate) fn checked_remote(text: &str) -> Result<String, LibError> {
+    let text = text.trim();
+    let refuse = || LibError::new(format!("{text} is not a remote URL a new repository takes"));
+    if text.is_empty()
+        || text.starts_with('-')
+        || text.contains("::")
+        || text.contains('\\')
+        || text.chars().any(|ch| ch.is_whitespace() || ch.is_control())
+    {
+        return Err(refuse());
+    }
+    if text.contains("://") {
+        let parsed = url::Url::parse(text).map_err(|_| refuse())?;
+        if parsed.password().is_some() || parsed.host_str().is_none_or(str::is_empty) {
+            return Err(refuse());
+        }
+        return match parsed.scheme() {
+            "https" | "http" => {
+                let web = web_url(text).ok_or_else(refuse)?;
+                if web.username().is_empty() {
+                    Ok(text.to_string())
+                } else {
+                    Err(LibError::new(format!(
+                        "{text} carries a user part: give the URL without it, and the credential to git"
+                    )))
+                }
+            }
+            "ssh" | "git" => Ok(text.to_string()),
+            _ => Err(refuse()),
+        };
+    }
+    // scp-like: [user@]host:path, the host a name or an IPv4 address (not one letter, which is a Windows drive), no slash
+    // before the colon
+    let (authority, path) = text.split_once(':').ok_or_else(refuse)?;
+    let host = authority.rsplit_once('@').map_or(authority, |(user, host)| {
+        if user.is_empty()
+            || !user
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-'))
+        {
+            ""
+        } else {
+            host
+        }
+    });
+    let host_ok = host.len() > 1
+        && host.chars().next().is_some_and(|ch| ch.is_ascii_alphanumeric())
+        && host
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-'));
+    if host_ok && !path.is_empty() && !path.starts_with('-') {
+        Ok(text.to_string())
+    } else {
+        Err(refuse())
+    }
+}
+
 /// A remote URL without its user part (`https://ann:secret@h/a.git` is `https://h/a.git`), to send to a server.
 pub(crate) fn without_userinfo(text: &str) -> String {
     match url::Url::parse(text.trim()) {
