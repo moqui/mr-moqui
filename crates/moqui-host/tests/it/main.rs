@@ -125,6 +125,7 @@ mod search_replica;
 mod search_semantic;
 mod sealed_start;
 mod second_factor_codes;
+mod server_restart;
 mod sim_steps;
 mod smtp;
 mod ssh;

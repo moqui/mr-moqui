@@ -1301,9 +1301,10 @@ pub(crate) struct FormService {
 pub(crate) fn service_form_info(name: &str) -> Option<FormService> {
     let def = super::define::find(&canonical(name))?;
     let facade = crate::context::ExecutionContext::with_current(|ec| ec.factory().entity()).flatten();
+    // merged by name: a name written after an auto-parameters is one field, not two
     let unexpanded = |err: Error, params: &[super::define::ParamDef]| {
         tracing::warn!(service = %def.name, error = %err, "auto-parameters not expanded for a form");
-        params.iter().filter(|param| !param.name.is_empty()).cloned().collect()
+        super::validate::merged_declared(params)
     };
     let in_params = super::validate::declared_in(&def, facade.as_ref())
         .map_or_else(|err| unexpanded(err, &def.in_params), |params| params.to_vec());

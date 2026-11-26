@@ -371,12 +371,12 @@ fn a_declared_field_with_no_widget_keeps_the_binding_of_the_field_it_merges_into
 #[test]
 fn parameters_merge_by_what_each_sets_as_moqui_merges_them() {
     let services = r#"<services>
-    <service verb="define" noun="Shape" type="interface">
+    <service verb="define" noun="Example" type="interface">
         <in-parameters><auto-parameters include="pk"/><parameter name="mode" required="true"/>
             <parameter name="hidden" required="disabled"/><parameter name="size" type="Long"/></in-parameters>
     </service>
     <service verb="update" noun="Example">
-        <implements service="c.ShapeServices.define#Shape"/>
+        <implements service="c.ShapeServices.define#Example"/>
         <in-parameters><parameter name="mode"/><auto-parameters entity-name="c.Example" include="nonpk" required="true"/>
             <parameter name="size" required="true"/></in-parameters>
     </service>
@@ -394,7 +394,7 @@ fn parameters_merge_by_what_each_sets_as_moqui_merges_them() {
             .describe(&format!("parameter:service:c.ShapeServices.update#Example@in.{name}"))
             .map(|row| (row.origin, row.summary))
     };
-    // the interface's auto-parameters read the implementing service's noun
+    // the interface's auto-parameters read its own noun, the entity, as Java expands them there
     assert_eq!(
         summary("exampleId"),
         Some(("implements".to_string(), "in id, required=false".to_string()))
@@ -697,4 +697,404 @@ fn a_same_screen_form_binds_by_the_transition_it_posts_to_and_a_link_through_a_w
     // the form posts to the post transition, whose call takes none of the request: no binding, though the get one's
     // call would take it
     assert!(index.bindings_of(&format!("form:{app}#Save"), "").is_empty());
+}
+
+/// The fields of the entity `id` with each one's origin (empty: declared) and summary, in name order.
+fn entity_fields(index: &MemoryIndex, id: &str) -> Vec<(String, String, String)> {
+    let mut found: Vec<(String, String, String)> = index
+        .children(id)
+        .into_iter()
+        .filter(|artifact| artifact.kind == "field")
+        .map(|artifact| (artifact.short_name, artifact.origin, artifact.summary))
+        .collect();
+    found.sort();
+    found
+}
+
+const VIEW_ENTITIES: &str = r#"<entities>
+    <entity entity-name="Status" package="c">
+        <field name="statusId" type="id" is-pk="true"/><field name="description" type="text-medium"/>
+    </entity>
+    <view-entity entity-name="ExampleAndStatus" package="c">
+        <member-entity entity-alias="EX" entity-name="c.Example"/>
+        <member-entity entity-alias="ST" entity-name="Status" join-from-alias="EX"><key-map field-name="statusId"/></member-entity>
+        <alias-all entity-alias="EX"><exclude field="comments"/></alias-all>
+        <alias-all entity-alias="ST" prefix="status"/>
+        <alias entity-alias="ST" name="statusLabel" field="description"/>
+        <alias entity-alias="EX" name="name" type="text-long"/>
+        <alias name="total" type="number-decimal"><complex-alias operator="+"><complex-alias-field entity-alias="EX" field="exampleId"/></complex-alias></alias>
+    </view-entity>
+</entities>"#;
+
+/// A view entity's `alias-all` gives it a field for each member field, its prefix before the field's name and the names
+/// its aliases have left out, as Moqui completes the view; each alias has the key and type of the member field it reads,
+/// its own type winning; and a service's `auto-parameters` of the view takes them all. A member entity's new field
+/// reaches the view, and through it the service.
+#[test]
+fn a_view_entity_has_its_alias_all_fields_and_the_key_and_type_of_each_alias() {
+    let services = r#"<services>
+    <service verb="find" noun="ExampleAndStatus">
+        <in-parameters><auto-parameters entity-name="c.ExampleAndStatus" include="pk"/></in-parameters>
+    </service>
+</services>"#;
+    let mut files = base_files();
+    files.push((
+        ArtifactKind::Entity,
+        "component://c/entity/ViewEntities.xml",
+        VIEW_ENTITIES,
+    ));
+    files.push((
+        ArtifactKind::Service,
+        "component://c/service/c/ViewServices.xml",
+        services,
+    ));
+    let mut index = index_of(&files);
+    let view = "entity:c.ExampleAndStatus";
+    let field = |name: &str, origin: &str, summary: &str| (name.to_string(), origin.to_string(), summary.to_string());
+    assert_eq!(
+        entity_fields(&index, view),
+        [
+            // the excluded field and the one an alias names are not aliased again
+            field("exampleId", "alias-all", "id, pk"),
+            field("name", "", "text-long"),
+            field("statusDescription", "alias-all", "text-medium"),
+            field("statusId", "alias-all", "id"),
+            field("statusLabel", "", "text-medium"),
+            field("statusStatusId", "alias-all", "id, pk"),
+            field("total", "", "number-decimal"),
+        ]
+    );
+    // an alias-all's field is in the view's file
+    let example_id = index.describe("field:c.ExampleAndStatus.exampleId").unwrap();
+    assert_eq!(example_id.path, path_of("component://c/entity/ViewEntities.xml"));
+    let pk_params = |index: &MemoryIndex| -> Vec<String> {
+        let mut names: Vec<String> = index
+            .children("service:c.ViewServices.find#ExampleAndStatus")
+            .into_iter()
+            .filter(|artifact| artifact.kind == "parameter")
+            .map(|artifact| artifact.short_name)
+            .collect();
+        names.sort();
+        names
+    };
+    assert_eq!(pk_params(&index), ["exampleId", "statusStatusId"]);
+
+    // a key field added to a member: an alias of the view, and a parameter of the service that reads the view
+    read_into(
+        &mut index,
+        ArtifactKind::Entity,
+        "component://c/entity/Entities.xml",
+        &ENTITIES.replace(
+            r#"<field name="name""#,
+            r#"<field name="seqId" type="id" is-pk="true"/><field name="name""#,
+        ),
+    );
+    index.resolve_all(&|_| false);
+    assert!(index.describe("field:c.ExampleAndStatus.seqId").is_some());
+    assert_eq!(pk_params(&index), ["exampleId", "seqId", "statusStatusId"]);
+}
+
+/// A parameter written before an `auto-parameters` of its name takes the field's type and `required`, as Moqui merges
+/// the fields into what is written before; one written after sets what it gives over the field.
+#[test]
+fn a_parameter_before_its_auto_parameters_takes_the_fields_type_and_required() {
+    let services = r#"<services>
+    <service verb="update" noun="Example">
+        <in-parameters><parameter name="statusId" type="Long" required="true"/>
+            <auto-parameters entity-name="c.Example" include="nonpk"/><parameter name="name" required="true"/></in-parameters>
+    </service>
+</services>"#;
+    let index = index_of(&[
+        (ArtifactKind::Entity, "component://c/entity/Entities.xml", ENTITIES),
+        (
+            ArtifactKind::Service,
+            "component://c/service/c/OrderServices.xml",
+            services,
+        ),
+    ]);
+    let summary = |name: &str| {
+        index
+            .describe(&format!("parameter:service:c.OrderServices.update#Example@in.{name}"))
+            .map(|row| (row.origin, row.summary))
+    };
+    assert_eq!(
+        summary("statusId"),
+        Some((String::new(), "in id, required=false".to_string()))
+    );
+    assert_eq!(
+        summary("name"),
+        Some((String::new(), "in text-medium, required=true".to_string()))
+    );
+    assert_eq!(
+        summary("comments"),
+        Some((
+            "auto-parameters".to_string(),
+            "in text-very-long, required=false".to_string()
+        ))
+    );
+}
+
+/// A REST method's service gives the method its parameters, as a transition's own `service-call` does (the path
+/// parameters its own), and each path parameter the service takes is bound into it.
+#[test]
+fn a_rest_method_takes_its_services_parameters_and_binds_its_path_into_them() {
+    let services = r#"<services>
+    <service verb="store" noun="Example">
+        <in-parameters><auto-parameters entity-name="c.Example"/></in-parameters>
+        <out-parameters><parameter name="done" type="Boolean"/></out-parameters>
+    </service>
+</services>"#;
+    let rest = r#"<resource name="things">
+    <id name="exampleId"><method type="put"><service name="c.StoreServices.store#Example"/></method></id>
+</resource>"#;
+    let index = index_of(&[
+        (ArtifactKind::Entity, "component://c/entity/Entities.xml", ENTITIES),
+        (
+            ArtifactKind::Service,
+            "component://c/service/c/StoreServices.xml",
+            services,
+        ),
+        (ArtifactKind::Rest, "component://c/service/c.rest.xml", rest),
+    ]);
+    let method = "rest:/things/{exampleId}:put";
+    let mut params: Vec<(String, String)> = index
+        .children(method)
+        .into_iter()
+        .filter(|artifact| artifact.kind == "parameter")
+        .map(|artifact| (artifact.id.rsplit_once('@').unwrap().1.to_string(), artifact.origin))
+        .collect();
+    params.sort();
+    let param = |name: &str, origin: &str| (name.to_string(), origin.to_string());
+    assert_eq!(
+        params,
+        [
+            param("in.comments", "service-call"),
+            param("in.name", "service-call"),
+            param("in.statusId", "service-call"),
+            param("out.done", "service-call"),
+            param("path.exampleId", ""),
+        ]
+    );
+    let bound: Vec<(String, Option<String>)> = index
+        .bindings_of(method, "")
+        .into_iter()
+        .map(|entry| (entry.binding.to_id, entry.binding.source_id))
+        .collect();
+    assert_eq!(
+        bound,
+        [(
+            "parameter:service:c.StoreServices.store#Example@in.exampleId".to_string(),
+            Some(format!("parameter:{method}@path.exampleId"))
+        )]
+    );
+}
+
+/// What takes an entity field's name from it, for a rename: the parameters of the `auto-parameters` that read its
+/// entity, the fields of the forms that read the entity or those services, a declared field of that name merging with
+/// one, and an alias-all's alias; and what reads it by another name stops it (a view alias's `field`, a prefixed
+/// alias-all).
+#[test]
+fn an_entity_fields_name_family_follows_what_takes_its_name() {
+    let mut files = base_files();
+    files.push((
+        ArtifactKind::Entity,
+        "component://c/entity/ViewEntities.xml",
+        VIEW_ENTITIES,
+    ));
+    let index = index_of(&files);
+    let family = index.name_family("field:c.Example.statusId");
+    let screen = SCREEN_LOCATION;
+    for id in [
+        "field:c.Example.statusId".to_string(),
+        "parameter:service:c.ThingServices.create#Thing@in.statusId".to_string(),
+        format!("form-field:{screen}#ByService@statusId"),
+        format!("form-field:{screen}#Listed@statusId"),
+        "field:c.ExampleAndStatus.statusId".to_string(),
+    ] {
+        assert!(family.ids.contains(&id), "{id} in {:?}", family.ids);
+    }
+    // the excluded field of a form is none of it, and its exclude is edited with it
+    assert!(!family.ids.contains(&format!("form-field:{screen}#ByEntity@statusId")));
+    assert_eq!(family.blocking, Vec::<String>::new());
+    assert_eq!(
+        family.edits,
+        [resolve::NameEdit {
+            artifact: format!("form:{screen}#ByEntity"),
+            attribute: "field-name".to_string(),
+            exclude_of: Some(resolve::ExcludeOf {
+                element: "auto-fields-entity".to_string(),
+                key_attribute: "entity-name".to_string(),
+                key: Some("c.Example".to_string()),
+            }),
+        }]
+    );
+    // a field a view alias names in its field is edited there; a prefixed alias-all's stops it
+    let status = index.name_family("field:c.Status.description");
+    assert_eq!(
+        status.blocking,
+        ["c.ExampleAndStatus aliases it as statusDescription by a prefixed alias-all"]
+    );
+    assert_eq!(
+        status.edits,
+        [resolve::NameEdit {
+            artifact: "field:c.ExampleAndStatus.statusLabel".to_string(),
+            attribute: "field".to_string(),
+            exclude_of: None,
+        }]
+    );
+}
+
+/// A rename follows what a row was made from, not its name: a view's alias of another member's field of that name, a
+/// parameter an `include="pk"` leaves apart from a non-key field, and a declared field an `auto-fields-entity` excludes
+/// the field from are none of the family. A `member-relationship`'s member is the relationship's related entity.
+#[test]
+fn a_name_family_follows_provenance_not_names() {
+    let entities = r#"<entities>
+    <entity entity-name="Order" package="c">
+        <field name="orderId" type="id" is-pk="true"/><field name="statusId" type="id"/>
+        <relationship type="one" related="c.Status"/>
+    </entity>
+    <entity entity-name="Status" package="c"><field name="statusId" type="id" is-pk="true"/><field name="label" type="text-medium"/></entity>
+    <view-entity entity-name="OrderStatus" package="c">
+        <member-entity entity-alias="O" entity-name="c.Order"/>
+        <member-relationship entity-alias="S" join-from-alias="O" relationship="c.Status"/>
+        <alias-all entity-alias="S"/>
+    </view-entity>
+</entities>"#;
+    let services = r#"<services>
+    <service verb="find" noun="Order">
+        <in-parameters><auto-parameters entity-name="c.Order" include="pk"/><parameter name="statusId"/></in-parameters>
+    </service>
+</services>"#;
+    let screen = r#"<screen><widgets><form-single name="Edit">
+        <auto-fields-entity entity-name="c.Order"><exclude field-name="statusId"/></auto-fields-entity>
+        <field name="statusId"><default-field><text-line/></default-field></field>
+    </form-single></widgets></screen>"#;
+    let index = index_of(&[
+        (ArtifactKind::Entity, "component://c/entity/Order.xml", entities),
+        (
+            ArtifactKind::Service,
+            "component://c/service/c/OrderServices.xml",
+            services,
+        ),
+        (ArtifactKind::Screen, "component://c/screen/Order.xml", screen),
+    ]);
+    // the view's statusId is the related Status's, by the member-relationship
+    let view_status = index.describe("field:c.OrderStatus.statusId").expect("aliased");
+    assert_eq!(view_status.summary, "id, pk");
+    let family = index.name_family("field:c.Order.statusId");
+    assert_eq!(family.ids, ["field:c.Order.statusId"]);
+    assert_eq!(family.blocking, Vec::<String>::new());
+    // the form's exclude names it, and is edited with it
+    assert_eq!(family.edits.len(), 1, "{:?}", family.edits);
+    let status = index.name_family("field:c.Status.statusId");
+    assert!(
+        status.ids.contains(&"field:c.OrderStatus.statusId".to_string()),
+        "{:?}",
+        status.ids
+    );
+}
+
+/// A parameter declared both before and after an auto-parameters merges twice, as the runtime merges it: the field
+/// sets its type over the first, the second sets its required over that. An implemented service's auto-parameters with
+/// no entity-name read that service's own noun, not the implementing one's.
+#[test]
+fn a_parameter_declared_twice_merges_twice_and_an_implemented_auto_reads_its_noun() {
+    let services = r#"<services>
+    <service verb="update" noun="Example">
+        <in-parameters><parameter name="name" type="Long"/><auto-parameters entity-name="c.Example" include="nonpk"/>
+            <parameter name="name" required="true"/></in-parameters>
+    </service>
+    <service verb="define" noun="Nothing" type="interface"><in-parameters><auto-parameters include="pk"/></in-parameters></service>
+    <service verb="create" noun="Example"><implements service="c.TwiceServices.define#Nothing"/></service>
+</services>"#;
+    let index = index_of(&[
+        (ArtifactKind::Entity, "component://c/entity/Entities.xml", ENTITIES),
+        (
+            ArtifactKind::Service,
+            "component://c/service/c/TwiceServices.xml",
+            services,
+        ),
+    ]);
+    let summary = |id: &str| index.describe(id).map(|row| row.summary);
+    assert_eq!(
+        summary("parameter:service:c.TwiceServices.update#Example@in.name").as_deref(),
+        Some("in text-medium, required=true")
+    );
+    // define#Nothing's noun is no entity: no exampleId though the implementing service's noun is Example
+    assert_eq!(
+        summary("parameter:service:c.TwiceServices.create#Example@in.exampleId"),
+        None
+    );
+}
+
+/// Of two implemented services, the second's parameter of a name the first gives only by its auto-parameters merges
+/// into the field, as the runtime keeps the first's as its auto element; a reverse relationship is found by its source
+/// entity's full name, or a short name only one source entity has.
+#[test]
+fn a_second_implemented_parameter_merges_into_the_firsts_auto_field() {
+    let services = r#"<services>
+    <service verb="define" noun="Auto" type="interface"><in-parameters><auto-parameters entity-name="c.Example" include="nonpk"/></in-parameters></service>
+    <service verb="define" noun="Named" type="interface"><in-parameters><parameter name="name" type="Long"/></in-parameters></service>
+    <service verb="save" noun="Both">
+        <implements service="c.PairServices.define#Auto"/><implements service="c.PairServices.define#Named"/>
+    </service>
+</services>"#;
+    let entities = r#"<entities>
+    <entity entity-name="Status" package="c"><field name="statusId" type="id" is-pk="true"/></entity>
+    <entity entity-name="Order" package="a"><field name="orderId" type="id" is-pk="true"/><field name="statusId" type="id"/>
+        <relationship type="one" related="c.Status"/></entity>
+    <entity entity-name="Order" package="b"><field name="orderId" type="id" is-pk="true"/><field name="statusId" type="id"/>
+        <relationship type="one" related="c.Status"/></entity>
+    <view-entity entity-name="ByShort" package="c">
+        <member-entity entity-alias="S" entity-name="c.Status"/>
+        <member-relationship entity-alias="O" join-from-alias="S" relationship="Order"/><alias entity-alias="O" name="orderId"/>
+    </view-entity>
+    <view-entity entity-name="ByFull" package="c">
+        <member-entity entity-alias="S" entity-name="c.Status"/>
+        <member-relationship entity-alias="O" join-from-alias="S" relationship="b.Order"/><alias entity-alias="O" name="orderId"/>
+    </view-entity>
+</entities>"#;
+    let index = index_of(&[
+        (ArtifactKind::Entity, "component://c/entity/Entities.xml", ENTITIES),
+        (ArtifactKind::Entity, "component://c/entity/Orders.xml", entities),
+        (
+            ArtifactKind::Service,
+            "component://c/service/c/PairServices.xml",
+            services,
+        ),
+    ]);
+    let summary = |id: &str| index.describe(id).map(|row| row.summary);
+    assert_eq!(
+        summary("parameter:service:c.PairServices.save#Both@in.name").as_deref(),
+        Some("in Long, required=false")
+    );
+    // two source entities named Order: the short name is no one's
+    assert_eq!(summary("field:c.ByShort.orderId").as_deref(), Some(""));
+    assert_eq!(summary("field:c.ByFull.orderId").as_deref(), Some("id, pk"));
+}
+
+/// A view's member-relationship by the related entity's short name, and by an auto-reverse relationship moqui-db adds
+/// to the related entity for another's relationship to it.
+#[test]
+fn a_member_relationship_by_short_name_and_by_an_auto_reverse_relationship() {
+    let entities = r#"<entities>
+    <entity entity-name="Order" package="c"><field name="orderId" type="id" is-pk="true"/><field name="statusId" type="id"/>
+        <relationship type="one" related="c.Status"/></entity>
+    <entity entity-name="Status" package="c"><field name="statusId" type="id" is-pk="true"/><field name="label" type="text-medium"/></entity>
+    <view-entity entity-name="OrderLabel" package="c">
+        <member-entity entity-alias="O" entity-name="c.Order"/>
+        <member-relationship entity-alias="S" join-from-alias="O" relationship="Status"/>
+        <alias entity-alias="S" name="label"/>
+    </view-entity>
+    <view-entity entity-name="StatusOrder" package="c">
+        <member-entity entity-alias="S" entity-name="c.Status"/>
+        <member-relationship entity-alias="O" join-from-alias="S" relationship="Order"/>
+        <alias entity-alias="O" name="orderId"/>
+    </view-entity>
+</entities>"#;
+    let index = index_of(&[(ArtifactKind::Entity, "component://c/entity/Order.xml", entities)]);
+    let summary = |id: &str| index.describe(id).map(|row| row.summary);
+    assert_eq!(summary("field:c.OrderLabel.label").as_deref(), Some("text-medium"));
+    assert_eq!(summary("field:c.StatusOrder.orderId").as_deref(), Some("id, pk"));
 }

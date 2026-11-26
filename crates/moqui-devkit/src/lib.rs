@@ -47,7 +47,9 @@ pub mod typegen;
 #[cfg(feature = "watch")]
 pub mod watch;
 
-pub use reload::{note_restart, on_reload, recent_reports, reload_paths, ArtifactKind, FileReload, ReloadReport};
+pub use reload::{
+    note_rebuild, note_restart, on_reload, recent_reports, reload_paths, ArtifactKind, FileReload, ReloadReport,
+};
 
 moqui_core::extension::submit! {
     moqui_core::extension::Extension {

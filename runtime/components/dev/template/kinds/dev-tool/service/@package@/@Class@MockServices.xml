@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The services of @Title@, a dev tool: a mock of an outside service, and the load of the test data. On a dev instance
+    only, so nothing here is for production. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
+    <service verb="get" noun="Rate">
+        <description>A mock of an outside exchange rate service: the parameters an app passes it, and a fixed answer with no
+            network, so an app can be tried and tested without the real one. A real integration names this service in its
+            conf or a SECA on dev instances.</description>
+        <in-parameters>
+            <parameter name="fromCurrency" required="true"/>
+            <parameter name="toCurrency" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="fromCurrency"/>
+            <parameter name="toCurrency"/>
+            <parameter name="rate" type="BigDecimal"/>
+        </out-parameters>
+        <actions>
+            <set field="rate" from="fromCurrency == toCurrency ? 1 : 1.25" type="BigDecimal"/>
+        </actions>
+    </service>
+
+    <service verb="load" noun="TestData">
+        <description>Load data/@Class@TestData.xml, of the data type @package@-test, which a load of chosen types leaves out.</description>
+        <out-parameters><parameter name="recordsLoaded" type="Integer"/></out-parameters>
+        <actions>
+            <script>
+                const messages = []
+                recordsLoaded = ec.entity.makeDataLoader().location("component://@component@/data/@Class@TestData.xml").load(messages)
+                for (const message of messages) ec.logger.info(message)
+            </script>
+        </actions>
+    </service>
+</services>

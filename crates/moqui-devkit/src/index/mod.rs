@@ -26,9 +26,11 @@
 // on the artifact stack's hot path, so core's
 pub use moqui_core::devtools::calls;
 pub mod extract;
+mod family;
 pub mod parameter;
 pub mod resolve;
 pub mod rows;
+mod sources;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -38,11 +40,12 @@ use std::sync::{Arc, Mutex};
 use moqui_db::sql::Condition;
 use moqui_lib::error::Error;
 use moqui_lib::object::Value;
-use moqui_lib::sync::{lock, try_lock};
+use moqui_lib::sync::lock;
 use serde::Serialize;
 
 pub use self::extract::{ArtifactRow, BindingRow, FileIndex, FileInfo, RefRow, ToKind};
 use self::resolve::Resolver;
+use self::sources::{expand_source, refresh, refresh_locked, screen_rows_moved, source_change, stored_hash};
 use super::ArtifactKind;
 use moqui_core::context::ExecutionContextFactory;
 use moqui_core::entity::{fence, EntityFacade, EntityValue};
@@ -217,7 +220,9 @@ pub fn hash_of(text: &str) -> String {
     // 7 the marks of what a service, form or transition declares to be filled in (auto-parameters, implements,
     // auto-fields, extends, a transition's calls and field-maps), and the references of auto-parameters and extends.
     // 8 a screen's allow-extra-path mark, and a form's bindings by the path it posts to, its own screen's transition too.
-    let digest = Sha256::digest(format!("8\n{text}").as_bytes());
+    // 9 a view entity's members, alias-alls and aliases, the parameters written before an auto-parameters, and a REST
+    // method's service. 10 a view's member-relationships. 11 a script reference's column.
+    let digest = Sha256::digest(format!("11\n{text}").as_bytes());
     digest.iter().take(12).map(|byte| format!("{byte:02x}")).collect()
 }
 
@@ -1261,6 +1266,10 @@ pub fn build_files(
         on_disk.insert(mounts.path.clone());
         sources.push(mounts);
     }
+    // the artifact groups' members are matched once this build's files are in the resolver, after them
+    let groups_path = format!("db:{}", rows::ARTIFACT_GROUP_MEMBER);
+    let (groups, sources): (Vec<rows::RowSource>, Vec<rows::RowSource>) =
+        sources.into_iter().partition(|source| source.path == groups_path);
     for source in sources {
         if hashes.get(&source.path).is_some_and(|hash| *hash == source.hash) {
             report.unchanged += 1;
@@ -1276,6 +1285,14 @@ pub fn build_files(
     }
     report.read_millis = started.elapsed().as_millis();
     apply(factory, &facade, &state, changes, &mut report)?;
+    for source in groups {
+        // the patterns as they match the artifacts now: the same rows matching other artifacts are written again
+        let source = expand_source(&state, source);
+        match stored_hash(&facade, &source.path) {
+            Ok(Some(hash)) if hash == source.hash => report.unchanged += 1,
+            _ => apply(factory, &facade, &state, vec![source_change(source)], &mut report)?,
+        }
+    }
     if factory.is_shutting_down() {
         // not marked built: what the build did not write is read again at the next start, by its file's hash
         return Ok(report);
@@ -1366,176 +1383,6 @@ pub fn update_located(factory: &Arc<ExecutionContextFactory>, files: &[Located])
     Ok(report)
 }
 
-/// Read again the sources that changed when no build or update holds the index's lock (a conf reload's hook, a query):
-/// one that holds it reads them before it lets go ([`refresh_locked`]), so nothing waits behind it.
-fn refresh(factory: &Arc<ExecutionContextFactory>) {
-    let state = state(factory);
-    let Some(_running) = try_lock(&state.running) else {
-        return;
-    };
-    let entered = factory.new_context();
-    let _enter = entered.enter();
-    let _authz = entered.disable_authz();
-    let _lifted = fence::lift();
-    let Some(facade) = factory.entity() else {
-        return;
-    };
-    refresh_locked(factory, &facade, &state);
-}
-
-/// With the index's lock held: read again the conf's mounts when a conf reload is pending, and the `SubscreensItem`
-/// rows when one was written; what fails is left to be tried again at the next use, its failure logged at most once a
-/// minute.
-fn refresh_locked(factory: &ExecutionContextFactory, facade: &EntityFacade, state: &IndexState) {
-    let conf = state.conf_pending.swap(false, Ordering::SeqCst);
-    if let Err(err) = update_sources(factory, facade, state, conf) {
-        if conf {
-            state.conf_pending.store(true, Ordering::SeqCst);
-        }
-        log_throttled(
-            state,
-            &format!("Artifact index: the update of the conf mounts and SubscreensItem rows failed: {err}"),
-        );
-    }
-}
-
-/// With the index's lock held: replace the rows of the sources that changed ([`source_changes`]; with `conf`, the
-/// conf's screen mounts too); a mount added, moved or removed walks the screen paths again (`apply`). Nothing before
-/// the first build, which reads them all.
-fn update_sources(
-    factory: &ExecutionContextFactory,
-    facade: &EntityFacade,
-    state: &IndexState,
-    conf: bool,
-) -> Result<BuildReport, Error> {
-    if !state.built.load(Ordering::SeqCst) || factory.is_shutting_down() {
-        return Ok(BuildReport::default());
-    }
-    let started = std::time::Instant::now();
-    let (changes, taken) = source_changes(factory, facade, state, conf);
-    let mut report = BuildReport {
-        files: changes.len(),
-        ..BuildReport::default()
-    };
-    if let Err(err) = apply(factory, facade, state, changes, &mut report) {
-        restore_screen_rows(state, taken);
-        return Err(err);
-    }
-    report.millis = started.elapsed().as_millis();
-    Ok(report)
-}
-
-/// Log `message` as an error unless one was logged in the last minute.
-fn log_throttled(state: &IndexState, message: &str) {
-    let now = now_millis();
-    let last = state.logged_at.load(Ordering::SeqCst);
-    if now - last >= 60_000
-        && state
-            .logged_at
-            .compare_exchange(last, now, Ordering::SeqCst, Ordering::SeqCst)
-            .is_ok()
-    {
-        tracing::error!("{message}");
-    }
-}
-
-/// Whether a `SubscreensItem` row was written since the index read them (a check of a counter, no lock).
-fn screen_rows_moved(factory: &ExecutionContextFactory) -> bool {
-    factory.entity().is_some_and(|facade| {
-        moqui_core::entity::screen_config_generation(&facade) != state(factory).screen_rows.load(Ordering::SeqCst)
-    })
-}
-
-/// The generation a refresh took in place of the one before it (old, new): put back when the refresh failed, so the
-/// next use tries again (not when another write moved it meanwhile).
-type Taken = Option<(u64, u64)>;
-
-fn restore_screen_rows(state: &IndexState, taken: Taken) {
-    if let Some((old, new)) = taken {
-        let _ = state
-            .screen_rows
-            .compare_exchange(new, old, Ordering::SeqCst, Ordering::SeqCst);
-    }
-}
-
-/// The sources whose rows are no longer what the index holds: with `conf`, the conf's screen mounts now
-/// ([`rows::conf_mounts`], read after a conf reload), and the `SubscreensItem` rows when one was written since they
-/// were read, with the generation taken for them. Each is compared with the hash of its pseudo file's row, so one that
-/// did not change writes nothing.
-fn source_changes(
-    factory: &ExecutionContextFactory,
-    facade: &EntityFacade,
-    state: &IndexState,
-    conf: bool,
-) -> (Vec<Change>, Taken) {
-    let mut sources = Vec::new();
-    if conf {
-        sources.push(rows::conf_mounts(
-            &moqui_core::screen::ScreenFacade::of(factory).conf().screens,
-        ));
-    }
-    // taken before the rows are read: a write while they are read moves it again
-    let generation = moqui_core::entity::screen_config_generation(facade);
-    let old = state.screen_rows.swap(generation, Ordering::SeqCst);
-    let mut taken = None;
-    if old != generation {
-        match rows::read_entity(facade, rows::SUBSCREENS_ITEM) {
-            Ok(source) => {
-                sources.push(source);
-                taken = Some((old, generation));
-            }
-            Err(err) => {
-                restore_screen_rows(state, Some((old, generation)));
-                log_throttled(
-                    state,
-                    &format!("Artifact index: the SubscreensItem rows were not read: {err}"),
-                );
-            }
-        }
-    }
-    let mut changes = Vec::new();
-    for source in sources {
-        let stored = match stored_hash(facade, &source.path) {
-            Ok(hash) => hash,
-            Err(err) => {
-                // written again: its rows are replaced whole, so a write of the same rows changes nothing
-                tracing::error!("Artifact index: the hash of {} was not read: {err}", source.path);
-                None
-            }
-        };
-        if stored.as_deref() != Some(source.hash.as_str()) {
-            changes.push(source_change(source));
-        }
-    }
-    (changes, taken)
-}
-
-/// The hash the rows hold for the file or pseudo file `path`; none when it has no row.
-fn stored_hash(facade: &EntityFacade, path: &str) -> Result<Option<String>, Error> {
-    Ok(facade
-        .find(FILE)?
-        .eq("filePath", Value::string(path))
-        .select_field("fileHash")
-        .list()?
-        .values()
-        .first()
-        .map(|row| text(row, "fileHash")))
-}
-
-/// The change that writes the rows of `source`, a pseudo file of no component.
-fn source_change(source: rows::RowSource) -> Change {
-    Change::Read {
-        file: Located {
-            path: PathBuf::from(&source.path),
-            component: String::new(),
-            location: source.path,
-            kind: ArtifactKind::Other,
-        },
-        hash: source.hash,
-        index: source.index,
-    }
-}
-
 fn read_change(factory: &ExecutionContextFactory, file: &Located) -> Option<Change> {
     match std::fs::read_to_string(&file.path) {
         Ok(text) => Some(change_of(factory, file, &text)),
@@ -1615,6 +1462,14 @@ fn apply(
     let shared: HashSet<String>;
     // the files that have rows: only theirs are read and removed first
     let mut known: HashSet<String> = HashSet::new();
+    // an artifact new to the index, or gone from it, that an artifact group's pattern matches: the members are read
+    // again after
+    let groups_path = format!("db:{}", rows::ARTIFACT_GROUP_MEMBER);
+    let reads_groups = changes.iter().any(|change| match change {
+        Change::Read { file, .. } | Change::Stale { file, .. } => file.location == groups_path,
+        Change::Removed(path) => *path == groups_path,
+    });
+    let mut patterns_moved = false;
     {
         let paths: Vec<Value> = changes
             .iter()
@@ -1682,7 +1537,10 @@ fn apply(
                     if artifact.kind == "field" {
                         changed_entities.extend(artifact.parent.clone());
                     }
-                    gone.remove(&artifact.id);
+                    let known_before = gone.remove(&artifact.id);
+                    if !known_before && !reads_groups && resolver.pattern_matches(&artifact.id) {
+                        patterns_moved = true;
+                    }
                     added.push(artifact.clone());
                 }
             }
@@ -1723,6 +1581,10 @@ fn apply(
         let mut made = expand_in(&mut resolver, &mut changes, &touched, &retry, &mut added, &mut gone);
         // an id another file still defines is not gone
         gone.retain(|id| !resolver.has(id));
+        // an artifact gone that a pattern matched: the members are matched again too
+        if !reads_groups && gone.iter().any(|id| resolver.pattern_matches(id)) {
+            patterns_moved = true;
+        }
         shared = added
             .iter()
             .filter(|artifact| resolver.count(&artifact.id) > 1)
@@ -1731,6 +1593,7 @@ fn apply(
         let exists = |location: &str| location_exists(factory, location);
         for change in &mut changes {
             if let Change::Read { index, .. } = change {
+                index.refs = resolver.expand_patterns(std::mem::take(&mut index.refs));
                 for row in &mut index.refs {
                     resolver.resolve(row, &exists);
                 }
@@ -1757,7 +1620,10 @@ fn apply(
     }
     // each owner's expansion in a transaction of its own: one that fails is that owner's alone
     for rewrite in &rewrites {
-        if let Err(err) = tx.run(TransactionAttribute::ForceNew, None, || write_expanded(facade, rewrite)) {
+        let written = tx.run(TransactionAttribute::ForceNew, None, || {
+            write_expanded(factory, facade, rewrite)
+        });
+        if let Err(err) = written {
             // the rows are written without a transaction of their own: the next update writes all of them again
             lock(&state.retry).insert(rewrite.owner.clone());
             tracing::error!(
@@ -1840,6 +1706,17 @@ fn apply(
         walk_again(factory, facade, state, &tx, &changed_paths, &walk_names)?;
     }
     report.write_millis = writing.elapsed().as_millis();
+    if patterns_moved {
+        // the artifact groups' members again, their patterns matched against the artifacts now; this update's own rows
+        // are written, so a failure here is logged and the next build reads them
+        let again = rows::read_entity(facade, rows::ARTIFACT_GROUP_MEMBER).and_then(|source| {
+            let source = expand_source(state, source);
+            apply(factory, facade, state, vec![source_change(source)], report)
+        });
+        if let Err(err) = again {
+            tracing::error!("Artifact index: the artifact group members were not matched again: {err}");
+        }
+    }
     Ok(())
 }
 
@@ -1966,9 +1843,30 @@ fn expand_in(
     rewrites
 }
 
+/// A test's failure point in the index writer (plans/design-dev-aide.md 19): the owners whose next expansion write
+/// ([`write_expanded`]) fails, each once, by the factory whose index writes it, so tests in parallel keep their own.
+#[cfg(test)]
+pub(crate) static FAIL_EXPANSION_WRITE: Mutex<Vec<(usize, String)>> = Mutex::new(Vec::new());
+
+/// The key of `factory` in [`FAIL_EXPANSION_WRITE`].
+#[cfg(test)]
+pub(crate) fn factory_key(factory: &ExecutionContextFactory) -> usize {
+    std::ptr::from_ref(factory) as usize
+}
+
 /// Replace the expanded rows of a service or form of a file not read now ([`expand_in`]): its artifacts and bindings of
-/// an expanded origin.
-fn write_expanded(facade: &EntityFacade, rewrite: &Rewrite) -> Result<(), Error> {
+/// an expanded origin. Under test, the failure point of `factory` fails it ([`FAIL_EXPANSION_WRITE`]).
+#[cfg_attr(not(test), allow(unused_variables))]
+fn write_expanded(factory: &ExecutionContextFactory, facade: &EntityFacade, rewrite: &Rewrite) -> Result<(), Error> {
+    #[cfg(test)]
+    {
+        let key = (factory_key(factory), rewrite.owner.clone());
+        let mut failing = lock(&FAIL_EXPANSION_WRITE);
+        if let Some(at) = failing.iter().position(|known| *known == key) {
+            failing.remove(at);
+            return Err(Error::new(format!("the failure point of {}", rewrite.owner)));
+        }
+    }
     let origins: Vec<Value> = extract::EXPANDED_ORIGINS
         .iter()
         .map(|origin| Value::string(*origin))

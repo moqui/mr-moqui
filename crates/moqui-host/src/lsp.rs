@@ -17,9 +17,11 @@
 //! `moqui_devkit::check`, on each open file's text as it changes), go to definition and references (the artifact
 //! index, read into memory on a model-only boot and kept current with the open buffers), hover (an artifact's summary,
 //! or an element's or attribute's documentation from the XSD digest), completion (the elements and attributes the
-//! digest gives, and entity and service names from the index in their attributes), and document and workspace symbols.
+//! digest gives, and entity and service names from the index in their attributes), document and workspace symbols, and
+//! on the local index rename (with `prepareRename`, `lsp_rename.rs`) and the check rules' quick fixes (`lsp_edit.rs`).
 //! With `--server URL` the checks and the index are a running dev instance's, over its MCP tools `check` and
-//! `artifact`, with the login key `moqui tui --server` keeps (or `MOQUI_LOGIN_KEY`).
+//! `artifact`, with the login key `moqui tui --server` keeps (or `MOQUI_LOGIN_KEY`); rename is refused there, and the
+//! quick fixes find names with the instance's `artifact` tool.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -34,6 +36,11 @@ use moqui_lib::error::Error;
 use serde_json::{json, Value as Json};
 
 use crate::devtools_remote::{Remote, Target};
+
+#[path = "lsp_edit.rs"]
+mod edit;
+#[path = "lsp_rename.rs"]
+mod rename;
 
 /// What answers the server: this checkout's model and index, or a running instance's.
 pub enum Backend {
@@ -90,6 +97,65 @@ impl Backend {
                 .map(|artifact| target_of(index, artifact))
                 .collect(),
             Self::Remote(remote) => remote.find(text, kinds, limit),
+        }
+    }
+
+    /// What a rename at the 0-based `line` and UTF-16 `character` of `path` (its text `text`) would rename, with the
+    /// span of its name, or why none: the local index's artifact the attribute or string under the cursor names.
+    fn rename_target(
+        &self,
+        path: &Path,
+        text: &str,
+        line: u32,
+        character: u32,
+    ) -> Result<(rename::RenameTarget, rename::Span), String> {
+        let Self::Local { index, .. } = self else {
+            return Err("moqui lsp renames on the local index only, not with --server".to_string());
+        };
+        rename::target_at(index, &path.display().to_string(), text, line, character)
+    }
+
+    /// The edits of renaming `target` to `new_name`, or why the rename is refused.
+    fn rename(
+        &self,
+        target: &rename::RenameTarget,
+        new_name: &str,
+        text_of: &dyn Fn(&Path) -> Option<String>,
+        open: &[PathBuf],
+    ) -> Result<std::collections::BTreeMap<PathBuf, Vec<edit::Edit>>, String> {
+        match self {
+            Self::Local { factory, index } => rename::rename_edits(factory, index, target, new_name, text_of, open),
+            Self::Remote(_) => Err("moqui lsp renames on the local index only, not with --server".to_string()),
+        }
+    }
+
+    /// The known names nearest a name a check says is unknown (at most three).
+    fn nearest(&self, unknown: &edit::UnknownName) -> Vec<String> {
+        match self {
+            Self::Local { index, .. } => edit::nearest(unknown, index),
+            Self::Remote(remote) => {
+                // the server's find by the name's last segment, ranked here
+                let (kinds, name): (&[&str], &str) = match unknown {
+                    edit::UnknownName::Entity(name) => (&["entity", "view-entity"], name),
+                    edit::UnknownName::Service(name) => (&["service"], name),
+                    _ => return Vec::new(),
+                };
+                let kinds: Vec<String> = kinds.iter().map(|kind| (*kind).to_string()).collect();
+                let segment = name.rsplit(['.', '#']).next().unwrap_or(name);
+                let short = !name.contains('.');
+                let found = remote
+                    .find(segment, &kinds, 50)
+                    .into_iter()
+                    .map(|target| {
+                        if short && target.kind != "service" {
+                            target.name.rsplit('.').next().unwrap_or(&target.name).to_string()
+                        } else {
+                            target.name
+                        }
+                    })
+                    .collect();
+                edit::rank_nearest(name, found)
+            }
         }
     }
 
@@ -192,8 +258,13 @@ fn uri(text: &str) -> lsp::Uri {
 
 /// The word under a position (0-based line and UTF-16 character): an attribute value's or a name's characters.
 pub(crate) fn word_at(text: &str, line: u32, character: u32) -> String {
+    word_span(text, line, character).2
+}
+
+/// [`word_at`] with where the word is on its line: its start and end UTF-16 characters.
+pub(crate) fn word_span(text: &str, line: u32, character: u32) -> (u32, u32, String) {
     let Some(line) = text.lines().nth(line as usize) else {
-        return String::new();
+        return (character, character, String::new());
     };
     let chars: Vec<char> = line.chars().collect();
     let mut at = 0usize;
@@ -211,7 +282,16 @@ pub(crate) fn word_at(text: &str, line: u32, character: u32) -> String {
     while end < chars.len() && part(chars[end]) {
         end += 1;
     }
-    chars[start..end].iter().collect()
+    let units_of = |part: &[char]| {
+        part.iter()
+            .map(|ch| u32::try_from(ch.len_utf16()).unwrap_or(1))
+            .sum::<u32>()
+    };
+    (
+        units_of(&chars[..start]),
+        units_of(&chars[..end]),
+        chars[start..end].iter().collect(),
+    )
 }
 
 /// The tag the cursor is in: its element's name, and where in the tag the cursor is.
@@ -369,6 +449,14 @@ impl Server {
             references_provider: Some(lsp::OneOf::Left(true)),
             document_symbol_provider: Some(lsp::OneOf::Left(true)),
             workspace_symbol_provider: Some(lsp::OneOf::Left(true)),
+            rename_provider: Some(lsp::OneOf::Right(lsp::RenameOptions {
+                prepare_provider: Some(true),
+                work_done_progress_options: lsp::WorkDoneProgressOptions::default(),
+            })),
+            code_action_provider: Some(lsp::CodeActionProviderCapability::Options(lsp::CodeActionOptions {
+                code_action_kinds: Some(vec![lsp::CodeActionKind::QUICKFIX]),
+                ..Default::default()
+            })),
             ..Default::default()
         }
     }
@@ -483,6 +571,13 @@ impl Server {
                 }
                 None => json!([]),
             },
+            "textDocument/prepareRename" | "textDocument/rename" => match self.rename(request) {
+                Ok(result) => result,
+                Err(message) => {
+                    return Response::new_err(request.id.clone(), lsp_server::ErrorCode::RequestFailed as i32, message)
+                }
+            },
+            "textDocument/codeAction" => self.code_actions(params),
             "textDocument/hover" => self.hover(params),
             "textDocument/completion" => self.completion(params),
             "textDocument/documentSymbol" => self.symbols(params),
@@ -509,6 +604,70 @@ impl Server {
             }
         };
         Response::new_ok(request.id.clone(), result)
+    }
+
+    /// `prepareRename` (the name's range and text) or `rename` (a `WorkspaceEdit` across the files), or why not.
+    fn rename(&self, request: &Request) -> Result<Json, String> {
+        let params = &request.params;
+        let TextPosition {
+            uri: uri_text,
+            line,
+            character,
+        } = Self::position(params);
+        let path = path_of(&uri_text).ok_or_else(|| format!("{uri_text} is no file"))?;
+        let text = self.text_of(&uri_text);
+        let (target, span) = self.backend.rename_target(&path, &text, line, character)?;
+        if request.method == "textDocument/prepareRename" {
+            let range = lsp::Range::new(
+                lsp::Position::new(span.line, span.start),
+                lsp::Position::new(span.line, span.end),
+            );
+            return Ok(json!({ "range": range, "placeholder": target.name }));
+        }
+        let new_name = params["newName"].as_str().unwrap_or_default();
+        let documents: HashMap<PathBuf, &String> = self
+            .documents
+            .iter()
+            .filter_map(|(uri_text, text)| Some((path_of(uri_text)?, text)))
+            .collect();
+        let text_of = |path: &Path| {
+            documents
+                .get(path)
+                .map(|text| (*text).clone())
+                .or_else(|| std::fs::read_to_string(path).ok())
+        };
+        let open: Vec<PathBuf> = documents.keys().cloned().collect();
+        let edits = self.backend.rename(&target, new_name, &text_of, &open)?;
+        Ok(json!({ "changes": workspace_changes(&edits) }))
+    }
+
+    /// The quick fixes of the diagnostics the client sends: for an unknown entity, service, field or in-parameter, the
+    /// nearest known names, each an edit of the name's value.
+    fn code_actions(&self, params: &Json) -> Json {
+        let uri_text = params["textDocument"]["uri"].as_str().unwrap_or_default();
+        let text = self.text_of(uri_text);
+        let mut actions = Vec::new();
+        for diagnostic in params["context"]["diagnostics"].as_array().into_iter().flatten() {
+            let rule = diagnostic["code"].as_str().unwrap_or_default();
+            let Some(unknown) = edit::unknown_name(rule, diagnostic["message"].as_str().unwrap_or_default()) else {
+                continue;
+            };
+            let line = u32::try_from(diagnostic["range"]["start"]["line"].as_u64().unwrap_or(0)).unwrap_or(0);
+            let character = u32::try_from(diagnostic["range"]["start"]["character"].as_u64().unwrap_or(0)).unwrap_or(0);
+            for (at, fix) in self.backend.nearest(&unknown).into_iter().enumerate() {
+                let Some(found) = edit::value_edit(&text, line, character, unknown.name(), &fix) else {
+                    continue;
+                };
+                actions.push(json!({
+                    "title": format!("Change to {fix}"),
+                    "kind": lsp::CodeActionKind::QUICKFIX,
+                    "diagnostics": [diagnostic],
+                    "isPreferred": at == 0,
+                    "edit": { "changes": { uri_text: [text_edit(&found)] } },
+                }));
+            }
+        }
+        json!(actions)
     }
 
     fn hover(&self, params: &Json) -> Json {
@@ -679,6 +838,23 @@ impl Server {
     }
 }
 
+/// An edit as the protocol's `TextEdit`.
+fn text_edit(edit: &edit::Edit) -> Json {
+    let range = lsp::Range::new(
+        lsp::Position::new(edit.line, edit.start),
+        lsp::Position::new(edit.line, edit.end),
+    );
+    json!({ "range": range, "newText": edit.text })
+}
+
+/// A `WorkspaceEdit`'s `changes`: each file's URI with its edits.
+fn workspace_changes(edits: &std::collections::BTreeMap<PathBuf, Vec<edit::Edit>>) -> serde_json::Map<String, Json> {
+    edits
+        .iter()
+        .map(|(path, list)| (uri_of(path), Json::Array(list.iter().map(text_edit).collect())))
+        .collect()
+}
+
 fn first_line(text: &str) -> String {
     text.lines().next().unwrap_or("").chars().take(120).collect()
 }
@@ -773,49 +949,5 @@ pub(crate) fn dispatch_lsp(args: &[String]) -> Result<(), Error> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn uris_and_paths_both_ways() {
-        let path = Path::new("/w/my site/screen/A.xml");
-        assert_eq!(uri_of(path), "file:///w/my%20site/screen/A.xml");
-        assert_eq!(path_of(&uri_of(path)).unwrap(), path);
-        assert_eq!(path_of("file:///C:/w/a.xml").unwrap(), PathBuf::from("C:/w/a.xml"));
-        assert!(path_of("untitled:1").is_none());
-        // a first character of several bytes before a colon is no drive letter's slash, and is kept
-        assert_eq!(path_of("file://\u{e9}:/a.xml").unwrap(), PathBuf::from("\u{e9}:/a.xml"));
-        // a % before a character of several bytes is taken as it is, not sliced
-        assert_eq!(
-            path_of("file:///w/%a\u{e9}.xml").unwrap(),
-            PathBuf::from("/w/%a\u{e9}.xml")
-        );
-    }
-
-    #[test]
-    fn the_word_and_the_tag_under_the_cursor() {
-        let text = "<screen>\n    <service-call name=\"mantle.order.OrderServices.place#Order\" in-map=\"\"/>\n    <entity-find ";
-        assert_eq!(word_at(text, 1, 30), "mantle.order.OrderServices.place#Order");
-        let context = |element: &str, place: TagPlace| {
-            Some(TagContext {
-                element: element.into(),
-                place,
-            })
-        };
-        assert_eq!(
-            tag_context(text, 1, 30),
-            context("service-call", TagPlace::Value("name".into()))
-        );
-        assert_eq!(tag_context(text, 2, 17), context("entity-find", TagPlace::Attributes));
-        assert_eq!(tag_context("<screen>\n    <ent", 1, 8), context("ent", TagPlace::Name));
-        assert_eq!(tag_context("<screen>text", 0, 10), None);
-    }
-
-    #[test]
-    fn a_flag_without_its_value_is_the_usage_error() {
-        for flag in ["--server", "--java", "--project"] {
-            let err = dispatch_lsp(&[flag.to_string()]).unwrap_err().to_string();
-            assert!(err.contains("moqui help lsp"), "{flag}: {err}");
-        }
-    }
-}
+#[path = "lsp_tests.rs"]
+mod tests;

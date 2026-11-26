@@ -154,8 +154,10 @@ its checks of the builds (test-all needs no Node).
 - **Debug info.** The dev profile keeps debug info unpacked in the object files ([Profiles](#profiles)), which is
   not a Windows option, and cargo has no per-target profile, so `moq` sets `CARGO_PROFILE_DEV_SPLIT_DEBUGINFO=packed`
   on Windows (a PDB beside the binary). A dev `cargo build` or `cargo test` that does not go through `moq` needs that
-  variable set too. `.github/workflows/windows.yml` sets it and runs `cargo lint` and
-  `cargo test -p moqui-host --lib test_cmd::` on `windows-latest`, which is what compiles `#[cfg(windows)]`.
+  variable set too. `.github/workflows/windows.yml` sets it and runs `cargo lint`,
+  `cargo test -p moqui-host --lib test_cmd::` and the dev-aide's path confinement and git layer
+  (`cargo test -p dev-aide --lib -- confine:: vcs:: git::`) on `windows-latest`, which is what compiles
+  `#[cfg(windows)]`.
 
 ### Native code and C libraries
 
@@ -891,8 +893,9 @@ Acceptance tests can be deleted freely, since nothing depends on them.
 - **In CI.** A server that hosts the repository runs the suites as pipelines ([Pipelines](interfaces/Pipelines.md)):
   the `ci.xml` at this repository's root runs the lints and `./moq test-framework` on every push and merge request,
   `./moq test-all` on main, and `./moq accept-all --junit` nightly, in the `moqui-build` image. `#[cfg(windows)]` is
-  compiled on `windows-latest` by `.github/workflows/windows.yml` (`cargo lint` and
-  `cargo test -p moqui-host --lib test_cmd::`), on a push to master and on a pull request. A component's own
+  compiled on `windows-latest` by `.github/workflows/windows.yml` (`cargo lint`,
+  `cargo test -p moqui-host --lib test_cmd::` and `cargo test -p dev-aide --lib -- confine:: vcs:: git::`), on a
+  push to master and on a pull request. A component's own
   repository needs no file and gets `./moq test <component> --junit` as its built-in pipeline. The same rules hold
   there: budgets are not raised, and acceptance is never part of a push's checks. The engine's own opt-in test, one
   container on a real Docker or Podman socket, is `cargo test -p moqui-git --test ci_docker` with

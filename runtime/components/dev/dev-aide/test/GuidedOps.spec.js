@@ -250,6 +250,33 @@ feature("an entity's element, Add field's naming and kinds, and a data file's ta
     }
 })
 
+feature("the twin's parameter rows show what the definition adds inside a declared Map, not to be edited", {
+    when() {
+        const edit = ec.resource.script("component://dev-aide/service/org/moqui/devaide/GuidedEdit.js")
+        // order (a Map) declares items; its definition adds fromAuto (its auto-parameters) and an implied partyId
+        const node = el("service", [0], [], [
+            el("in-parameters", [0, 0], [], [
+                el("parameter", [0, 0, 0], [["name", "order"], ["type", "Map"]], [el("parameter", [0, 0, 0, 0], [["name", "items"]])])
+            ])
+        ])
+        const defined = [
+            {name: "order", type: "Map", implied: false, children: [{name: "items", children: []}, {name: "fromAuto", children: [{name: "deep", children: []}]}]},
+            {name: "partyId", implied: true, children: [{name: "inner", children: []}]}
+        ]
+        const service = {ops: guided(), view: {service: {inParameters: defined}}, node, serviceFile: {staged: true}}
+        const staged = edit.parameterRows(service, "in-parameters")
+        const plain = edit.parameterRows(Object.assign({}, service, {serviceFile: {staged: false}}), "in-parameters")
+        return {staged, plain}
+    },
+    then({staged, plain}) {
+        staged.map(row => row.path + (row.editable ? "" : " (auto)")).join(", ") ==
+            "order, order.items, order.fromAuto (auto), order.fromAuto.deep (auto), partyId (auto), partyId.inner (auto)"
+        staged.find(row => row.path == "order.fromAuto").parentPath == "order"
+        // from the definition alone, an implied parameter's children are not editable either
+        plain.filter(row => !row.editable).map(row => row.path).join(", ") == "partyId, partyId.inner"
+    }
+})
+
 feature("a parameter, a SECA rule and a Try's parameters as the service writer writes them", {
     when() {
         const {service: ops} = guided()
@@ -356,15 +383,16 @@ feature("a parameter, a SECA rule and a Try's parameters as the service writer w
             ops.servicesOf(el("services", [], [], [service])).map(entry => entry.name),
             ["get#Thing"]
         )
-        // the terminal's own: Remove and Edit of a parameter, and a rule with its condition and call
+        // Remove and Edit of a parameter (the browser view's too, DevAideService.page.js), and the terminal's own rule
+        // with its condition and call
         same(ops.removeParameter(withIn, "in-parameters", "thingId"), [{op: "remove", at: [0, 0, 0]}])
         same(ops.editParameter(withIn, "in-parameters", "thingId", {type: "Long", required: false, description: "The thing"}), [
             {op: "set-attribute", at: [0, 0, 0], name: "type", value: "Long"},
             {op: "remove-attribute", at: [0, 0, 0], name: "required"},
             {op: "insert", at: [0, 0, 0], position: "last", xml: "<description>The thing</description>"}
         ])
-        // nested parameters (the terminal's own): found by their path of names, added inside a parent after its
-        // parameters and before its validations, removed and edited by path
+        // nested parameters (as the browser view's, DevAideService.page.js): found by their path of names, added inside
+        // a parent after its parameters and before its validations, removed and edited by path
         ops.parameterNode(nested, "in-parameters", "order.items").path.join(".") == "0.0.0.1"
         ops.parameterNode(nested, "in-parameters", ["order", "items"]).path.join(".") == "0.0.0.1"
         ops.parameterNode(nested, "in-parameters", "items") == null
@@ -398,6 +426,11 @@ feature("a parameter, a SECA rule and a Try's parameters as the service writer w
             position: "first",
             xml: "<description>Plain</description>"
         })
+        // the refusals the browser view makes too (DevAideService.page.js)
+        ops.parameterRefusal(nested, "in-parameters", {mode: "add", parent: "order", name: "items"}).includes("already")
+        ops.parameterRefusal(nested, "in-parameters", {mode: "add", parent: "order", name: "plain"}) == null
+        ops.parameterRefusal(nested, "in-parameters", {mode: "edit", path: "order", type: "String"}).includes("holds parameters")
+        ops.parameterRefusal(nested, "in-parameters", {mode: "edit", path: "extra", type: "String"}) == null
         ops.secaXml("create#Thing", "post-service", "thingId != null", "my.Svc.note#Thing") ==
             '<seca service="create#Thing" when="post-service"><condition><expression>thingId != null</expression></condition><actions><service-call name="my.Svc.note#Thing" in-map="context"/></actions></seca>'
     }

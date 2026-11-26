@@ -282,6 +282,9 @@ tonic-prost-build = { workspace = true }
 protox = { workspace = true }
 # the dev-aide component's services, for the tests of tests/it/devaide.rs
 dev-aide = { workspace = true }
+# A request's frame on the test's thread (moqui_core::screen::gate::with_request_frame): a header login's request, for
+# the refusals of tests/it/devaide_group.rs.
+moqui-core = { workspace = true, features = ["test-support"] }
 indexmap = { workspace = true }
 # The entity model the definition_speed test builds.
 moqui-db = { workspace = true }

@@ -195,13 +195,25 @@ function serviceContext(artifact) {
 // The parameter types that hold parameters of their own (Nested parameters are for List, Map, Node, etc.).
 const HOLDER_TYPES = ["Map", "List", "Set", "Collection", "Node"]
 // A service's parameters as rows: the staged element's own (children flattened and indented) when the file is
-// staged, else the definition's; the implied ones (auto) from the definition after them. Each row has its parent's
+// staged, else the definition's; the implied ones (auto) from the definition after them, and what the definition adds
+// inside a declared Map or List (its auto-parameters) in it, not to be edited, as the browser view shows them
+// (DevAideService.js parameterRows). Each row has its parent's
 // path of names (parentPath, dotted, empty at the top), its own (path), a key for ids made from them (key), and
 // whether it holds parameters (holder).
 function parameterRows(service, which) {
     const {ops, view, node, serviceFile} = service
     const defined = (view && view.service && view.service[which === "in-parameters" ? "inParameters" : "outParameters"]) || []
     const rows = []
+    // the definition's parameters by their path of names
+    const byPath = new Map()
+    const index = (list, parents) => {
+        for (const parameter of list || []) {
+            const path = parents.concat([parameter.name])
+            byPath.set(path.join("."), parameter)
+            index(parameter.children, path)
+        }
+    }
+    index(defined, [])
     const push = (parameter, parents, implied) => {
         const depth = parents.length
         const type = parameter.type || "String"
@@ -240,17 +252,25 @@ function parameterRows(service, which) {
                     parents,
                     false
                 )
-                walk(child, parents.concat([name]))
+                const inside = parents.concat([name])
+                walk(child, inside)
+                const declared = new Set(ops.pure.children(child, ["parameter"]).map(nested => ops.pure.attrOf(nested, "name")))
+                const known = byPath.get(inside.join("."))
+                for (const nested of (known && known.children) || []) if (!declared.has(nested.name)) implied(nested, inside)
             }
+        }
+        const implied = (parameter, parents) => {
+            push(parameter, parents, true)
+            for (const child of parameter.children || []) implied(child, parents.concat([parameter.name]))
         }
         if (holder) walk(holder, [])
         const own = new Set(rows.filter(row => !row.parentPath).map(row => row.name))
-        for (const parameter of defined) if (parameter.implied && !own.has(parameter.name)) push(parameter, [], true)
+        for (const parameter of defined) if (parameter.implied && !own.has(parameter.name)) implied(parameter, [])
         return rows
     }
     const walk = (parameter, parents, implied) => {
         push(parameter, parents, implied)
-        for (const child of parameter.children || []) walk(child, parents.concat([parameter.name]), false)
+        for (const child of parameter.children || []) walk(child, parents.concat([parameter.name]), implied)
     }
     for (const parameter of defined) walk(parameter, [], !!parameter.implied)
     return rows

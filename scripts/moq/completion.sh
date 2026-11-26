@@ -385,12 +385,13 @@ complete_task() {
                 -t | --type) filter_prefix "$cur" git current release binary; return ;;
                 -r | --repo) filter_prefix "$cur" $(addons_names repository); return ;;
                 --from) filter_prefix "$cur" $(component_template_names); return ;;
+                --kind) filter_prefix "$cur" app data native theme skills dev-tool; return ;;
                 --git-remote | --myaddons) return ;;
             esac
             case $cur in
                 -*)
                     if [ "$task" = component-create ]; then
-                        filter_prefix "$cur" --dev --test --from --rest --screens --git-remote --no-git --myaddons
+                        filter_prefix "$cur" --dev --test --from --kind --rest --screens --git-remote --no-git --myaddons
                     elif [ "$task" = component-get ]; then
                         filter_prefix "$cur" -t --type -r --repo --dev --test
                     else

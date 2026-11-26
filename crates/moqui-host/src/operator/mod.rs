@@ -35,7 +35,7 @@ pub use server::require_gate;
 #[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
 pub(crate) use server::{hook, sealed_now, stop_on_seal};
 #[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
-pub(crate) use socket::set_serving;
+pub(crate) use socket::{set_serving, stop_asked};
 
 #[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
 mod server {
