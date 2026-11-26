@@ -356,15 +356,16 @@ feature("a parameter, a SECA rule and a Try's parameters as the service writer w
             ops.servicesOf(el("services", [], [], [service])).map(entry => entry.name),
             ["get#Thing"]
         )
-        // the terminal's own: Remove and Edit of a parameter, and a rule with its condition and call
+        // Remove and Edit of a parameter (the browser view's too, DevAideService.page.js), and the terminal's own rule
+        // with its condition and call
         same(ops.removeParameter(withIn, "in-parameters", "thingId"), [{op: "remove", at: [0, 0, 0]}])
         same(ops.editParameter(withIn, "in-parameters", "thingId", {type: "Long", required: false, description: "The thing"}), [
             {op: "set-attribute", at: [0, 0, 0], name: "type", value: "Long"},
             {op: "remove-attribute", at: [0, 0, 0], name: "required"},
             {op: "insert", at: [0, 0, 0], position: "last", xml: "<description>The thing</description>"}
         ])
-        // nested parameters (the terminal's own): found by their path of names, added inside a parent after its
-        // parameters and before its validations, removed and edited by path
+        // nested parameters (as the browser view's, DevAideService.page.js): found by their path of names, added inside
+        // a parent after its parameters and before its validations, removed and edited by path
         ops.parameterNode(nested, "in-parameters", "order.items").path.join(".") == "0.0.0.1"
         ops.parameterNode(nested, "in-parameters", ["order", "items"]).path.join(".") == "0.0.0.1"
         ops.parameterNode(nested, "in-parameters", "items") == null

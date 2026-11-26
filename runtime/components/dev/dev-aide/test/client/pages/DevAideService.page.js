@@ -3,7 +3,7 @@
 // The service writer's pure parts in the page (moqui.devAide.serviceOps from DevAideService.js): the composer's
 // sentence table against the XSD of XML Actions, the chip and insert operations as the shared vectors have them
 // (crates/moqui-lib/testdata/xml-edit-vectors.json, "composer: ..."), the names known before each block, a parameter
-// and a SECA rule as written, and a Try's parameters.
+// (nested ones by their path of names, and the Parameters tab's rows) and a SECA rule as written, and a Try's parameters.
 "use strict";
 
 const ops = moqui.devAide.serviceOps;
@@ -78,4 +78,61 @@ test("a parameter, a SECA rule and a Try's parameters as written", () => {
     assert.deepEqual(ops.tryParameters({ a: "5", b: "x", c: "", d: "true" },
         [{ name: "a", type: "Integer" }, { name: "b", type: "String" }, { name: "c", type: "String" }, { name: "d", type: "Boolean" }]), { a: 5, b: "x", d: true });
     assert.deepEqual(ops.servicesOf(el("services", [], [], [service])).map((entry) => entry.name), ["get#Thing"]);
+});
+
+// nested parameters (D14): order (a Map with a description and a validation) holding items (a List holding nothing
+// yet), an empty Map, and a plain parameter with a validation; the same cases as the terminal twin's builders
+// (test/GuidedOps.spec.js), so the browser and the terminal make the same edits
+const nested = () => el("service", [0], [], [el("in-parameters", [0, 0], [], [
+    el("parameter", [0, 0, 0], [["name", "order"], ["type", "Map"]], [
+        el("description", [0, 0, 0, 0], [], [], "The order"),
+        el("parameter", [0, 0, 0, 1], [["name", "items"], ["type", "List"]]),
+        el("matches", [0, 0, 0, 2], [["regexp", "x"]])]),
+    el("parameter", [0, 0, 1], [["name", "extra"], ["type", "Map"]], [el("description", [0, 0, 1, 0], [], [], "More")]),
+    el("parameter", [0, 0, 2], [["name", "plain"]], [el("matches", [0, 0, 2, 0], [["regexp", "y"]])])])]);
+
+test("a nested parameter added in its parent, edited and removed by its path of names", () => {
+    const service = nested();
+    assert.equal(ops.parameterNode(service, "in-parameters", "order.items").path.join("."), "0.0.0.1");
+    assert.equal(ops.parameterNode(service, "in-parameters", ["order", "items"]).path.join("."), "0.0.0.1");
+    assert.equal(ops.parameterNode(service, "in-parameters", "items"), null);
+    assert.equal(ops.parameterNode(service, "in-parameters", ""), null);
+    assert.deepEqual(ops.addParameter(service, "in-parameters", { name: "quantity", type: "BigDecimal" }, "order"),
+        [{ op: "insert", at: [0, 0, 0, 1], position: "after", xml: "<parameter name=\"quantity\" type=\"BigDecimal\"/>" }]);
+    assert.deepEqual(ops.addParameter(service, "in-parameters", { name: "sku" }, "order.items"),
+        [{ op: "insert", at: [0, 0, 0, 1], position: "last", xml: "<parameter name=\"sku\"/>" }]);
+    assert.deepEqual(ops.addParameter(service, "in-parameters", { name: "note" }, "extra"),
+        [{ op: "insert", at: [0, 0, 1], position: "last", xml: "<parameter name=\"note\"/>" }]);
+    assert.deepEqual(ops.addParameter(service, "in-parameters", { name: "inner" }, "plain"),
+        [{ op: "insert", at: [0, 0, 2, 0], position: "before", xml: "<parameter name=\"inner\"/>" }]);
+    assert.deepEqual(ops.addParameter(service, "in-parameters", { name: "x" }, "order.nothing"), []);
+    assert.deepEqual(ops.removeParameter(service, "in-parameters", "order.items"), [{ op: "remove", at: [0, 0, 0, 1] }]);
+    // as JSON: the three operations share their element's path, which deepEqual takes for a cycle
+    const edited = ops.editParameter(service, "in-parameters", "order.items", { type: "List", required: true, description: "Its lines" });
+    assert.equal(JSON.stringify(edited), JSON.stringify([
+        { op: "set-attribute", at: [0, 0, 0, 1], name: "type", value: "List" },
+        { op: "set-attribute", at: [0, 0, 0, 1], name: "required", value: "true" },
+        { op: "insert", at: [0, 0, 0, 1], position: "last", xml: "<description>Its lines</description>" }]));
+    // a description goes first in a parameter that holds others
+    assert.deepEqual(ops.editParameter(service, "in-parameters", "plain", { description: "Plain" }).pop(),
+        { op: "insert", at: [0, 0, 2], position: "first", xml: "<description>Plain</description>" });
+    assert.deepEqual(ops.editParameter(service, "in-parameters", "order", { type: "Map", description: "" }).pop(), { op: "remove", at: [0, 0, 0, 0] });
+});
+
+test("the parameter rows: the buffer's, nested by path, then the definition's implied ones", () => {
+    const defined = [
+        { name: "order", type: "Map", required: "false", checks: ["MatchesRegexp"], implied: false, children: [{ name: "items", type: "List", children: [] }] },
+        { name: "partyId", type: "String", required: "true", checks: [], implied: true, children: [{ name: "inner", children: [] }] }];
+    const rows = ops.parameterRows(nested(), "in-parameters", defined);
+    assert.deepEqual(rows.map((row) => row.path), ["order", "order.items", "extra", "plain", "partyId", "partyId.inner"]);
+    const byPath = Object.fromEntries(rows.map((row) => [row.path, row]));
+    assert.equal(byPath.order.checks, 1);
+    assert.equal(byPath.order.description, "The order");
+    assert.ok(byPath.order.holder && byPath["order.items"].holder && byPath.extra.holder && !byPath.plain.holder);
+    assert.deepEqual([byPath["order.items"].depth, byPath["order.items"].parentPath], [1, "order"]);
+    // what the definition implies is not the buffer's to edit, nor are its children
+    assert.ok(!byPath.partyId.editable && !byPath["partyId.inner"].editable && byPath.partyId.required);
+    // with no service element in the buffer, the definition's
+    assert.deepEqual(ops.parameterRows(null, "in-parameters", defined).map((row) => row.path + (row.editable ? "" : " (auto)")),
+        ["order", "order.items", "partyId (auto)", "partyId.inner (auto)"]);
 });
