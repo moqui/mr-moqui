@@ -704,3 +704,7 @@ mod tests {
         assert_eq!(with_trailer("Add  \n", None), "Add\n");
     }
 }
+
+#[cfg(test)]
+#[path = "git_cli_tests.rs"]
+mod cli_tests;

@@ -44,7 +44,8 @@ jobs:
         run: cargo lint
       - name: test_cmd
         run: 'cargo test -p moqui-host --lib test_cmd::'
-      # The dev-aide's path confinement (drive letters, UNC and \\?\ paths, case folded) and its git layer (git's own
-      # output parsed, a credential helper answered by git for Windows, which windows-latest has on the PATH).
+      # The dev-aide's path confinement (drive letters, UNC and \\?\ paths refused, case folded) and its git layer: its
+      # parsers on fixed output, and git for Windows (on windows-latest's PATH) run in a canonical \\?\ root, its
+      # status, log and blame parsed, and its credential fill answered by the dev-aide's helper.
       - name: dev-aide confine and git
         run: 'cargo test -p dev-aide --lib -- confine:: vcs:: git::'
