@@ -55,6 +55,10 @@ test("the worker checks a script's buffer against the declarations: a type error
         const broken = await checker.check("const = 1");
         assert.ok(broken.length && broken.every((problem) => problem.severity === "error"), JSON.stringify(broken));
         assert.equal(asked, 1);
+        // a minute on, a check asks again by hash; the same hash sends no files
+        checker.refreshedAt = 0;
+        assert.deepEqual(await checker.check("return 1"), []);
+        assert.equal(asked, 2);
     } finally {
         checker.stop();
     }

@@ -19,10 +19,10 @@
     const devAide = moqui.devAide = moqui.devAide || {};
     const types = devAide.types = devAide.types || {};
 
-    // A server script: a JavaScript file under a component's script/ directory (component://<name>/script/...), the
-    // files a service or an action runs by location. A browser file is not one: it is not checked against the server's
+    // A server script (DevAide.js pure.isScript): a JavaScript file under a component's script/ directory, the files a
+    // service or an action runs by location. A browser file is not one: it is not checked against the server's
     // declarations.
-    types.isScript = (path) => /(^|\/)script\/(.+\/)?[^/]+\.(js|qjs|mjs|cjs)$/i.test(String(path || ""));
+    types.isScript = (path) => devAide.pure.isScript(path);
     // The wrapper of file_function: the script as a function's body, opening on its first line so its lines are the
     // file's (a last expression's return, which file_function adds, changes no type).
     types.PREFIX = "(function(){";
@@ -51,7 +51,8 @@
 
     // The checker of a page. options: worker, compiler, libs (the URLs of DevAideTsWorker.js, libs/typescript's
     // typescript.min.js and lib-es2023.js), declarations(knownHash) (a promise of {hash, files} from typeDeclarations;
-    // files left out when knownHash is still theirs), idleMs (5 minutes), timeoutMs (60 s for an answer).
+    // files left out when knownHash is still theirs), refreshMs (a minute: how often a check asks for them again), idleMs
+    // (5 minutes), timeoutMs (60 s for an answer).
     class Checker {
         constructor(options) {
             this.options = options;
@@ -92,6 +93,7 @@
                 this.stop();
             };
             this.hash = null;
+            this.refreshedAt = 0;
             this.ready = this.call({ type: "init", compiler: this.options.compiler, libs: this.options.libs })
                 .then(() => this.refresh())
                 .catch((error) => { this.stop(); throw error; });
@@ -99,6 +101,7 @@
         }
         // the declarations again when they changed (their hash)
         refresh() {
+            this.refreshedAt = Date.now();
             return Promise.resolve(this.options.declarations(this.hash)).then((answer) => {
                 if (!answer || !answer.files || answer.hash === this.hash) return;
                 this.hash = answer.hash;
@@ -108,7 +111,12 @@
         // the problems of `text`, a script's buffer
         check(text) {
             clearTimeout(this.idleTimer);
-            return this.start().then(() => this.call({ type: "check", text: types.wrap(text) })).then((answer) => {
+            return this.start().then(() => {
+                // a saved entity or service changes the declarations: asked again by hash at most once a minute; a
+                // failed ask keeps the ones the worker has
+                if (Date.now() - this.refreshedAt < (this.options.refreshMs || 60000)) return null;
+                return this.refresh().catch((error) => console.warn("The type declarations were not read again", error));
+            }).then(() => this.call({ type: "check", text: types.wrap(text) })).then((answer) => {
                 this.idleTimer = setTimeout(() => this.stop(), this.options.idleMs || 300000);
                 return types.problems(answer.diagnostics, text);
             });
