@@ -453,8 +453,11 @@ along with this software (see the LICENSE.md file). If not, see
             checked the password in a request signed in by it, while it waits for the second factor's code</description></field>
         <field name="scope" type="text-short"><description>A key that opens one service alone (create#UserScopedKey):
             gateway, the LLM gateway's /llm/v1, which every other login refuses; git, an access token
-            (create#UserAccessToken), which git over HTTP and the git REST take. Empty: the account's key, except an access
-            token made before tokens had a scope (a description and no deviceName), which is git's too.</description></field>
+            (create#UserAccessToken) or a scoped key, which git over HTTP and the REST resources that declare key-scope git
+            (the framework's git and hosting reads) take; tasks, which only the REST resources that declare key-scope tasks
+            take (Mantle's my/tasks and a repository's issues: reading the user's tasks, and reading and filing a repository's
+            issues). A key with a scope, git's included, signs in its own request alone, never the web session. Empty: the account's key, except an access token made before
+            tokens had a scope (a description and no deviceName), which is git's too.</description></field>
         <relationship type="one" related="moqui.security.UserAccount" short-alias="user"/>
     </entity>
     <entity entity-name="UserAppCode" package="moqui.security" use="transactional" cache="never">

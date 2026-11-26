@@ -756,9 +756,10 @@ fn renew_device_key(
     }
 }
 
-/// `create#UserScopedKey`: a new key of the current user that opens only `scope` (`gateway`, the LLM gateway), named
-/// `deviceName` in the user's device list, given once as `loginKey` (`user::get_scoped_key`): what a client keeps where
-/// the account's own key would open everything.
+/// `create#UserScopedKey`: a new key of the current user that opens only `scope` (`gateway`, the LLM gateway, by
+/// default; `git` or `tasks`, the REST resources that declare them, `user::KEY_SCOPES`), named `deviceName` in the
+/// user's device list, given once as `loginKey` (`user::get_scoped_key`): what a client keeps where the account's own
+/// key would open everything.
 fn create_scoped_key(
     parameters: &BTreeMap<String, Value>,
     _facade: &EntityFacade,
@@ -796,6 +797,11 @@ fn revoke_held_key(
         add_error("loginKey is required");
         return Ok(BTreeMap::new());
     };
+    // a key made for one service alone, which signed this request in, ends itself and no other (SEC-RTE-85)
+    if crate::user::scoped_login_is_not(&key)? {
+        add_error("A key made for one service ends only itself");
+        return Ok(BTreeMap::new());
+    }
     let revoked = crate::user::revoke_login_key(&key)?;
     Ok(out([("revoked", Value::Bool(revoked))]))
 }

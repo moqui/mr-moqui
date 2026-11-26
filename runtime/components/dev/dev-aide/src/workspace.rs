@@ -103,6 +103,25 @@ impl Context {
         })
     }
 
+    /// The context of a rule the server runs itself, not a person's request (a conversation that ended, 21.8): no
+    /// tier is asked, so what it does is the rule's own to bound. Its roots are the directories only: a hosted root
+    /// (crate::hosted) is no rule's.
+    pub(crate) fn of_rule(ec: &ExecutionContext) -> Result<Self, LibError> {
+        let factory = Arc::clone(ec.factory());
+        let facade = factory.entity().ok_or_else(|| LibError::new("no entity facade"))?;
+        let settings = Settings::of(&factory, Some(&facade));
+        let mut roots = roots::roots(&factory, &settings, Some(&facade));
+        roots.retain(|root| root.hosted_branch.is_none());
+        Ok(Self {
+            factory,
+            facade,
+            settings,
+            roots,
+            tier: Tier::View,
+            redirect: Vec::new(),
+        })
+    }
+
     pub(crate) fn root(&self, id: &str) -> Result<&Root, LibError> {
         roots::find(&self.roots, id).ok_or_else(|| LibError::new(format!("no root {id}")))
     }

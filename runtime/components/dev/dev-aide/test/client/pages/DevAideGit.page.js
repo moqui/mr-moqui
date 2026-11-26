@@ -75,3 +75,32 @@ test("Run locally shows the combination it runs, and names a secret without sett
     assert.equal(pure.localRunLines(job, "").steps[0].run, "./moq test --db postgres");
     assert.deepEqual(pure.localRunLines(null, "").steps, []);
 });
+
+test("Run locally in the job's image shows its own script, and a run ends by its state", () => {
+    const job = { pipeline: "check", job: "unit", image: "busybox", combinations: [{ matrixKey: "", steps: [], env: [],
+        script: "#!/bin/sh\n# This machine\n", digest: "d-host", imageScript: "#!/bin/sh\n# In the job's image\n", imageDigest: "d-image" }] };
+    const lines = pure.localRunLines(job, "");
+    assert.equal(lines.imageDigest, "d-image");
+    assert.ok(lines.imageScript.includes("job's image"));
+    assert.equal(lines.digest, "d-host");
+    assert.ok(pure.localRunEnded("exited") && pure.localRunEnded("failed") && pure.localRunEnded("missing"));
+    assert.ok(!pure.localRunEnded("starting") && !pure.localRunEnded("running"));
+});
+
+test("Open on the server fills the server's page templates, each value as path parts", () => {
+    const pages = { file: "https://team.example.com/code/team/site/-/blob/{ref}/{file}#L{line}",
+        commit: "https://team.example.com/code/team/site/-/commit/{commitId}", branch: "https://team.example.com/code/team/site/-/tree/{branch}" };
+    assert.equal(pure.serverPage(pages, "file", { ref: "feature/x", file: "screen/My Screen.xml", line: 12 }),
+        "https://team.example.com/code/team/site/-/blob/feature/x/screen/My%20Screen.xml#L12");
+    // with no line the line's fragment goes
+    assert.equal(pure.serverPage(pages, "file", { ref: "main", file: "a.xml" }), "https://team.example.com/code/team/site/-/blob/main/a.xml");
+    assert.equal(pure.serverPage(pages, "commit", { commitId: "0123abcd" }), "https://team.example.com/code/team/site/-/commit/0123abcd");
+    assert.equal(pure.serverPage(pages, "commit", { commitId: "../../evil" }), null);
+    assert.equal(pure.serverPage(pages, "branch", { branch: "a?b#c" }), "https://team.example.com/code/team/site/-/tree/a%3Fb%23c");
+    assert.equal(pure.serverPage(pages, "branch", { branch: "" }), null);
+    assert.equal(pure.serverPage({ file: "javascript:alert(1)//{file}" }, "file", { file: "x" }), null);
+    assert.equal(pure.serverPage(null, "file", { file: "x" }), null);
+    assert.equal(pure.serverBranch("origin/feature/x", "origin"), "feature/x");
+    assert.equal(pure.serverBranch("fork/feature", "origin"), "");
+    assert.equal(pure.serverBranch(null, "origin"), "");
+});
