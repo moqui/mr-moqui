@@ -762,19 +762,12 @@ fn convert_text(value: &Value, java_type: &str) -> Option<Value> {
     // Java parses number text with the locale (`L10nFacade.parseNumber`) to a BigDecimal and takes the type's value
     // of that, so `118,500` is 118500 and `1800.0` is 1800 for a Long.
     match value {
-        Value::String(text) if is_number_type(java_type) => {
+        Value::String(text) if crate::hooks::is_number_type(java_type) => {
             let decimal = convert_checked(&Value::String(text.replace(',', "")), "BigDecimal")?;
             convert_checked(&decimal, java_type)
         }
         _ => None,
     }
-}
-
-fn is_number_type(java_type: &str) -> bool {
-    matches!(
-        java_type.rsplit('.').next().unwrap_or(java_type),
-        "BigDecimal" | "BigInteger" | "Long" | "Integer" | "Double" | "Float" | "long" | "int" | "double" | "float"
-    )
 }
 
 fn pk_complete(shape: &Shape, fields: &FieldMap) -> bool {

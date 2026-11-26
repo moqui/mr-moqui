@@ -222,3 +222,46 @@ fn with_dummy_foreign_keys_a_row_finds_an_earlier_row_of_the_call() {
         Some(&Value::string("type ST_PARENT"))
     );
 }
+
+/// Number text as the user's locale writes it is the number, as Java's `convertFromString` reads it with
+/// `ec.l10n.parseNumber`: a create and an update of a form's grouped `60,000` store 60000, and text that is not a
+/// number stays text (plans/ui-review-system-ai-integrations.md AI-UI-006).
+#[test]
+fn grouped_number_text_is_the_number_on_a_create_and_an_update() {
+    let facade = crate::testing::open();
+    let read = |facade: &EntityFacade| {
+        facade
+            .find(TEST)
+            .unwrap()
+            .eq("testId", Value::string("G1"))
+            .use_cache(false)
+            .one()
+            .unwrap()
+            .unwrap()
+    };
+    let mut row = facade.make_value(TEST).unwrap();
+    row.set("testId", Value::string("G1"));
+    row.set("testNumberInteger", Value::string("60,000"));
+    row.set("testNumberDecimal", Value::string("1,234.50"));
+    row.create(&facade).unwrap();
+    let stored = read(&facade);
+    assert_eq!(stored.get("testNumberInteger"), Some(&Value::I64(60_000)));
+    assert_eq!(
+        stored.get("testNumberDecimal"),
+        Some(&Value::Decimal("1234.5".parse().unwrap()))
+    );
+
+    let mut row = read(&facade);
+    row.set("testNumberInteger", Value::string("6,100"));
+    row.update(&facade).unwrap();
+    assert_eq!(read(&facade).get("testNumberInteger"), Some(&Value::I64(6_100)));
+
+    assert_eq!(
+        crate::hooks::basic_convert(&Value::string("abc"), "Long").value,
+        Value::string("abc")
+    );
+    assert_eq!(
+        crate::hooks::basic_convert(&Value::string("1,800.0"), "Long").value,
+        Value::I64(1_800)
+    );
+}
