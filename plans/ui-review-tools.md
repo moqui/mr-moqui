@@ -1,5 +1,7 @@
 # MR Moqui — UI review: Tools
 
+**Review update — 2026-11-25.** TOOL-B03 records the latest live evidence. The activity ledger identifies the branches still open.
+
 **Status — 2026-11-25.** All four Grid findings are fixed and checked live. Back to Find from Record now reopens the Grid with its filter, and one result reads “1 row” (TOOL-UI-003/004).
 
 **Original review — 2026-11-16:** review pass in progress. B01 exercised bounded Home → Grid → Record and SQL
@@ -517,22 +519,22 @@ execution records it; “exercised” never implies that all modes and recovery 
 | Activity | Status | Outcome / remaining branches | Evidence / findings |
 | --- | --- | --- | --- |
 | TOOL-01 — Choose the database and resume an artifact | exercised — partial | Home chooser opened the selected entity; returning Home listed that entity and four SQL history entries. Database switching, reopening from recents, denied/missing artifacts and other modes pending. | B01: 01, 10 |
-| TOOL-02 — Edit and save a bounded grid | exercised — partial | Selected entity loaded 11 rows; EX_100 Record and Back to Find retained identity. B02 verified both date displays, unchanged editor blur, named filters, exact match, clear and reload. Sorting, saved edits, conflicts and alternate modes remain pending. | B01: 02–03; TOOL-UI-001/002 |
-| TOOL-03 — Open a file or result as a grid and spreadsheet | pending | All steps, modes and recovery branches pending. | — |
+| TOOL-02 — Edit and save a bounded grid | exercised — partial | Selected entity loaded 11 rows; EX_100 Record and Back to Find retained identity. B02 verified both date displays, unchanged editor blur, named filters, exact match, clear and reload. Sorting, saved edits, conflicts and alternate modes remain pending. Inspected the three-row generated entity in Grid; correlated the updated seed with its source. | B01: 02–03; TOOL-UI-001/002; TOOL-B03 |
+| TOOL-03 — Open a file or result as a grid and spreadsheet | exercised — partial | Opened entity rows in Calc, changed the sheet, saved, reopened, exported and deleted the fixture. File-source and failure branches remain open. | TOOL-B03 |
 | TOOL-04 — Browse and edit related records | exercised — partial | Inspected EX_100 Record values and related-record links. B02 reproduced the filtered Grid → Record → Back to Find path. Browse/master/detail navigation, relationship links, edits, cancellation/refusal and other modes pending. | B01: 03 |
-| TOOL-05 — Define and reuse a database view | pending | All steps, modes and recovery branches pending. | — |
-| TOOL-06 — Define, index and inspect a data document | pending | All steps, modes and recovery branches pending. | — |
-| TOOL-07 — Load data and inspect per-file outcomes | pending | All steps, modes and recovery branches pending. | — |
-| TOOL-08 — Export exactly the intended records | pending | All steps, modes and recovery branches pending. | — |
-| TOOL-09 — Retain and reload a disposable snapshot | pending | All steps, modes and recovery branches pending. | — |
-| TOOL-10 — Run, explain and recover a SQL query | exercised — partial | Read-only result, Explain, syntax error with retained editor, corrected run and history selection without execution observed. Database changes, saved queries, parameters, writes/refusals, cancel/timeout, downloads, keyboard walk and other modes pending. | B01: 04–09 |
-| TOOL-11 — Compare the entity model with the database | pending | All steps, modes and recovery branches pending. | — |
-| TOOL-12 — Investigate database pressure without losing source context | pending | All steps, modes and recovery branches pending. | — |
-| TOOL-13 — Follow maintenance and connection operations | pending | All steps, modes and recovery branches pending. | — |
-| TOOL-14 — Transform a file through an ETL mapping and repair errors | pending | All steps, modes and recovery branches pending. | — |
-| TOOL-15 — Discover and invoke a safe service | pending | All steps, modes and recovery branches pending. | — |
-| TOOL-16 — Start, stop and compare a short load run | pending | All steps, modes and recovery branches pending. | — |
-| TOOL-17 — Reconcile helper access and cross-app continuation | pending | All steps, modes and recovery branches pending. | — |
+| TOOL-05 — Define and reuse a database view | exercised — partial | Created ReviewEnums in Standard and verified review.closeout in the reopened list. DataViews separately saved checked master and related fields. | TOOL-B03 |
+| TOOL-06 — Define, index and inspect a data document | inspected — partial | Opened /qapps/tools/Data/Documents as John Doe. Visible controls included Batch Size, Index Feed Documents. | TOOL-B03; entry-TOOL-06.json |
+| TOOL-07 — Load data and inspect per-file outcomes | inspected — partial | Opened /qapps/tools/Data/Load as John Doe. Visible controls included Import Data - Create Only, Import Data - Create or Update. | TOOL-B03; entry-TOOL-07.json |
+| TOOL-08 — Export exactly the intended records | exercised — partial | Verified the bounded EnumerationType export bytes in the snapshot ZIP. The separate EntityExport checks exercised a JSON filter and a restricted entity. | TOOL-B03 |
+| TOOL-09 — Retain and reload a disposable snapshot | exercised — partial | Exported the selected EnumerationType records to a ZIP, downloaded its single 19,207-byte XML file and submitted it for import. Job Runs showed the outcome. | TOOL-B03 |
+| TOOL-10 — Run, explain and recover a SQL query | exercised — partial | The original browser run exercised Explain, rejected SQL and History. A live TUI submitted SELECT 17 AS review_count and displayed 17. Scoped comparative and interrupted-query branches remain open. | B01: 04–09; TOOL-B03 |
+| TOOL-11 — Compare the entity model with the database | inspected — partial | Opened /qapps/tools/Schema as John Doe. Visible controls included Choose database, Check tables. | TOOL-B03; entry-TOOL-11.json |
+| TOOL-12 — Investigate database pressure without losing source context | inspected — partial | Opened /qapps/tools/Database/Queries as John Doe. Visible controls included Database, Choose database. | TOOL-B03; entry-TOOL-12.json |
+| TOOL-13 — Follow maintenance and connection operations | inspected — partial | Opened /qapps/tools/Database/Connections as John Doe. Visible controls included open_in_new New connection, Collapse External databases. | TOOL-B03; entry-TOOL-13.json |
+| TOOL-14 — Transform a file through an ETL mapping and repair errors | inspected — partial | Opened /qapps/tools/Etl/Mappings as John Doe. Visible controls included Find, Find. | TOOL-B03; entry-TOOL-14.json |
+| TOOL-15 — Discover and invoke a safe service | inspected — partial | Opened /qapps/tools/Service as John Doe. Visible controls included Next page, Last page. | TOOL-B03; entry-TOOL-15.json |
+| TOOL-16 — Start, stop and compare a short load run | exercised — partial | A holder ran ServiceCall, followed it, stopped it and compared it with a second run. Scoped refusal and remaining failure paths are open. | TOOL-B03 |
+| TOOL-17 — Reconcile helper access and cross-app continuation | exercised — partial | Consumed Dev AIDE edits through Grid and independently checked Entity Sync through filtered Grid row reads. Remaining steps and recovery branches are open. | TOOL-B03 |
 
 ### Findings register
 
@@ -605,6 +607,40 @@ See `runtime-cleanup.json` in the batch evidence directory.
 ### B02 — 2026-11-25, Example Grid and Record recheck
 
 Checkout 6d8bb49f8a7c, isolated dev runtime on port 18765, Chicago, demo ADMIN john.doe, Material light at measured 1280×720. Opened moqui.example.Example with 11 demo rows. EX_100 displayed 2026-10-19 04:00 and 05:30 in both Grid and Record. Double-clicking Example Date and leaving it untouched restored its formatted value with Save disabled. All ten searchboxes exposed distinct column names after reload. Exact ID filters for EX_100 and EX_101 narrowed the list; clearing restored all 11 rows. Back to Find restored the entity but cleared the active filter. Evidence is under `plans/ui-refinement-evidence/tools-20261125/`. No record edits, tests or application changes.
+
+### TOOL-B03 — November 25 continuation
+
+John Doe opened the generated RoundReviewAppItem in Material Grid. The two demo IDs and DEVA_SEED_01 were visible. After the Dev AIDE guided save and load, the seed row alone showed “Seed via original guided tab.” The live TUI opened the same entity. Filtered Grid reads on two independent databases verified the Entity Sync receiver was empty after the redirect and held one RR_SYNC_SAMPLE after the corrected retry. See `tool-grid.json`, `seed-final-grid.json`, `tui.txt` and `sync-corrected-receipt.json`.
+
+In a 120×40 TUI the SQL editor returned review_count 17, and the filtered schema opened Grid. The existing browser walks edited and pasted a range, undid, saved and exported it, carried an entity into Calc, and started, stopped and compared two load runs. See tui-writes.txt and walk-checks.txt. ETL service checks are in supporting-checks.txt.
+
+Standard created ReviewEnums and reopened its row. A separate EnumerationType snapshot downloaded as a ZIP with one 19,207-byte XML member. The import returned job 100058 and Job Runs listed the snapshot jobs. See view-readback.json, closeout-enumtypes.zip, snapshot-import.json and snapshot-job-runs.json. SqlServices initially lacked pg_stat_statements on the minimal conf. All four cases passed with the development datasource configuration (sql-final.txt).
+
+Local evidence is under `plans/ui-refinement-evidence/closeout-d10e22f/`.
+
+#### Remaining branches
+
+The ledger records the strongest observed outcome. The remaining steps, recovery paths and modes in each section 4 activity are deferred to the fixture and next check below. An explicitly blocked or failed result keeps that status.
+
+| Activity | Required setup and next observation |
+|---|---|
+| TOOL-01 | Switch between two available databases and verify a resumed artifact retains its source. |
+| TOOL-02 | Compare the saved grid change as a scoped reader and recover from a conflicting second writer. |
+| TOOL-03 | Use an actual uploaded file and a failed source read to test the remaining grid-to-sheet paths. |
+| TOOL-04 | Edit a related record and verify the original filtered selection survives a validation error. |
+| TOOL-05 | Open the saved view through Grid and export exactly the selected master and related fields. |
+| TOOL-06 | Index a bounded document definition into a local index and compare its stored fields. |
+| TOOL-07 | Load mixed-validity files and verify each failure, successful row and safe retry in Grid. |
+| TOOL-08 | Compare a scoped filtered database export with the selected fixture rows and denied fields. |
+| TOOL-09 | Read the reloaded fixture in Grid and repeat import with a deliberately invalid snapshot. |
+| TOOL-10 | Compare Explain with a live query under separate SQL and read-only grants. |
+| TOOL-11 | Use a disposable schema mismatch and compare the model with the physical table after correction. |
+| TOOL-12 | Create a bounded slow query and follow its identity from statements to the underlying activity. |
+| TOOL-13 | Use a registered external database to test connect, failure and recovery in the connection UI. |
+| TOOL-14 | Use a bounded input file and mapping, correct one bad source row and verify the output bytes. |
+| TOOL-15 | Invoke a harmless discoverable service with valid and invalid inputs and inspect its outputs under both grants. |
+| TOOL-16 | Repeat the same small load run without its grant and exercise interrupted-run recovery. |
+| TOOL-17 | Repeat the same entity handoff in the alternate mode with a scoped consumer. |
 
 ## 7. Decisions
 

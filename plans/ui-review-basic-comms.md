@@ -1,5 +1,7 @@
 # MR Moqui — UI review: BasicComms
 
+**Review update — 2026-11-25.** COM-B11 records the latest live evidence. The activity ledger identifies the branches still open.
+
 **Status — 2026-11-25.** [COM-B10](#com-b10--current-build-recheck-2026-11-25) reconciles the 37 historical findings against the two refinement records. B10 observed one new P2 in message printing and one P3 in empty-folder wording (COM-UI-038–039); both are fixed and checked 2026-11-25. The EML download, Bcc-only delivery, compact Send and recipient mention all worked on the current release.
 
 **Previous status — 2026-11-24.** All three P1 fixes passed focused regressions. Four independently reviewed batches
@@ -572,13 +574,13 @@ The [COM-B10 recheck](#com-b10--current-build-recheck-2026-11-25) supplements th
 | COM-08 — Share files and maintain room membership or bridge context | exercised — partial | B04 ordinary private-group owner/member, promotion/demotion, remove/re-add, last-owner succession and role restoration; populated All/Pictures, image viewer/Show in chat, curl upload/download and revoked/restored byte access. Two attachments on one event expose a limit=1 cursor defect. UI upload/progress/cancel, large/failed files, other media, three-person role competition, public/record/bridge/encrypted rooms and other modes pending. | COM-B03/B04; COM-UI-009/010 |
 | COM-09 — Recover encrypted chat and device trust | exercised — partial | B05 plain→encrypted presentation, two-user encrypted exchange, new-device missing-key state, rename, verification request/accept/cancel, stalled emoji comparison, backup recent-auth cancel/success, invalid-key refusal and successful second-device history recovery, verified-only exclusion, rotation/remove confirmations canceled. Actual revocation/start-over, verified completion/mismatch/QR, encrypted files/calls, outsider helpers and remaining modes pending. | COM-B02/B05; COM-UI-001/004/011–014 |
 | COM-10 — Set chat availability and external app access | exercised — partial | B05 save/reload notification defaults, preview/sound/receipt flags; bulk apply cancel/confirm with two-room result; room mute/unmute; DND incomplete-input refusal, overnight interval save/clear with zone. Preferences restored. Actual push/audio, new-room inheritance, direct-message exclusion comparison, read-marker wire privacy, DND job timing/presets, ChatApps/XMPP and other modes pending. | COM-B05; COM-UI-015 |
-| COM-11 — Answer and manage a direct media call | pending | All steps, modes and recovery branches pending. | — |
-| COM-12 — Dial and transfer using the selected identity | pending | All steps, modes and recovery branches pending. | — |
-| COM-13 — Invite and admit a bounded guest | pending | All steps, modes and recovery branches pending. | — |
-| COM-14 — Configure a phone and call handling then observe routing | pending | All steps, modes and recovery branches pending. | — |
-| COM-15 — Work a queue and resolve voicemail | pending | All steps, modes and recovery branches pending. | — |
-| COM-16 — Record with consent and inspect retained media | pending | All steps, modes and recovery branches pending. | — |
-| COM-17 — Recover host-only queued work and conflicts | pending | All steps, modes and recovery branches pending. | — |
+| COM-11 — Answer and manage a direct media call | exercised — partial | Both parties received audio and video on the direct path. Browser checks covered device transfer, waiting and hang-up. Physical-device and other recovery branches remain open. | COM-B11 |
+| COM-12 — Dial and transfer using the selected identity | inspected — partial | History reported that phone calls were unavailable on this fixture. Remaining steps and recovery branches are open. | COM-B11 |
+| COM-13 — Invite and admit a bounded guest | exercised — partial | Anonymous visitor waited, was admitted, exchanged media, left and got an unavailable page after revocation. Expiry, denial and restricted controls remain open. | COM-B11 |
+| COM-14 — Configure a phone and call handling then observe routing | inspected — partial | Opened /qapps/system/Voice/Phones as John Doe. Visible controls included Collapse section. | COM-B11; entry-COM-14.json |
+| COM-15 — Work a queue and resolve voicemail | inspected — partial | My queues explained the unassigned agent state. Remaining steps and recovery branches are open. | COM-B11 |
+| COM-16 — Record with consent and inspect retained media | inspected — partial | At 390×844 the Recordings screen identified its audience and displayed the empty state. Remaining steps and recovery branches are open. | COM-B11 |
+| COM-17 — Recover host-only queued work and conflicts | deferred | The browser and TUI fixtures have no native desktop offline store. Host queue reconciliation needs two desktop stores and an offline/reconnect cycle. | COM-B11 |
 | COM-18 — Reconcile private content, helpers and mode limits | exercised — partial | B09 owner attachment downloads matched source/captured hashes; ordinary B without account membership received Attachment not found (HTTP 500), no bytes. B08 group text-block visibility/unshare and outsider absence of the removed owner-only mailbox; temporary manager self-removal restored denial. B03 nonmember private-room refusal/recovery and author actions. B04 removed member lost the open Files pane/room list entry; stale permalink, files list and text/image byte requests refused; re-add restored access. B07 shared mail downgrade/leave/removal boundaries exercised. No-Comms identity, wider helper/byte matrix, encrypted/record/bridge boundaries, remaining variants/output modes pending. | COM-B03/B04/B07–B09; COM-UI-007/021 |
 
 ### Findings register
@@ -1729,6 +1731,41 @@ Mail Compose returned four distinct invalid-address errors across To, Cc and Bcc
 **Final accounting for the historical 37.** The ten proposal-origin entries (003, 004, 005, 006, 008, 015, 019, 022, 024, 029) retain their design dispositions. B10 supplies bounded UI evidence for each in the tables and notes above; design agreement is separate from proof that all implementations work. In particular, 015 has muted-room, overnight-DND and Activity evidence only, not native or job-timed delivery. For 022 the temporary mailbox member was blocked. For 029 Reply all preserved To/Cc and the original EML and attachment bytes matched; a fresh forward send remains open.
 
 Of the other 27, **13 original behaviors verified** (001, 002, 009, 010, 011, 012, 013, 014, 017, 018, 023, 028, 030), **10 partially verified** (007, 016, 020, 025, 026, 027, 034, 035, 036, 037) and **four unverified** (021, 031, 032, 033). For 028, the account’s Drafts explicitly labelled the saved B10 plain block “No recipients”, and Sent showed its Bcc recipient (20-account-draft-addresses.jpg). For 034, the keyboard disclosure was observed; touch and closed polls remain open. For 035, the desktop right-click path was observed; physical long-press and BOSS extension actions remain open. For 036, Voice and Video labels were observed; a group-ring audience and completed media call remain open. For 031/033 the runtime had no configured Android push device, and 032 requires a controlled transaction rollback. The two new B10 findings are outside the 37; both were fixed and checked 2026-11-25 (COM-UI-038–039 rows).
+
+### COM-B11 — November 25 continuation
+
+Caller and callee used separate local hostnames and synthetic camera/microphone inputs. Starting a direct call returned 100000. The caller entered joining, the callee remained idle, and neither measured inbound audio packets or decoded frames. This attempt does not establish a completed media call. History explained unavailable phone calling; My queues named the administrator action that assigns an agent. At 390×844 Recordings reported no recordings. The live TUI opened Calls History. See `direct-media.json`, `call-queues.json`, `call-recordings-phone.json` and `tui.txt`. B10’s original 37 dispositions continue to apply outside the branches evidenced here.
+
+With the media listener configured, calls.client.b answered the next call and selected Join. Both endpoints used the direct path. The callee received 310 audio packets and decoded 154 video frames, the caller 399 and 155. A separate anonymous guest waited, was admitted, exchanged audio/video and left. After the host revoked that exact link, the anonymous revisit reported “Link not available.” See direct-media-joined.json, media-history-after.json and guest-recheck.json. Call waiting, device handoff and a guest drawing on a shared board passed (calls-checks.txt). Mail actions, phone chat and encrypted-store recovery passed their focused browser checks (apps-checks.txt). The ring commit/rollback check passed with controlled push and socket consumers (rollback-checks.txt). COM-UI-032 still needs the corresponding mention rollback observation. Transfer, IVR, queue, recording and voicemail service scenarios passed (supporting-checks.txt). Physical phone, recorder file playback and host-only recovery remain separate walks.
+
+Against B10’s original-behavior list, 032 now has partial evidence from the ring transaction. Its mention transaction remains outstanding. Carry forward partial 007, 016, 020, 025, 026, 027, 034, 035, 036 and 037, plus unverified 021, 031 and 033. The ten design dispositions are unchanged. This yields 13 verified, 11 partial and three unverified across the 27 original behaviors.
+
+Local evidence is under `plans/ui-refinement-evidence/closeout-d10e22f/`.
+
+#### Remaining branches
+
+The ledger records the strongest observed outcome. The remaining steps, recovery paths and modes in each section 4 activity are deferred to the fixture and next check below. An explicitly blocked or failed result keeps that status.
+
+| Activity | Required setup and next observation |
+|---|---|
+| COM-01 | After an active mailbox changes, verify the selected account and unread state across two sessions. |
+| COM-02 | Use a local external mailbox to retry failed credentials and read a delivered message after correction. |
+| COM-03 | Apply the remaining thread actions and verify their result in the owning mailbox and original message bytes. |
+| COM-04 | Send one recovered draft through captured mail and verify recipients and exactly one delivery. |
+| COM-05 | Deliver after a rule, blocked-sender or address-policy change and verify the recipient's folder. |
+| COM-06 | Revoke the shared mailbox delegate during an open draft and verify both users' resulting access. |
+| COM-07 | With a local notification recipient, follow a mention to its original thread and verify rollback handling. |
+| COM-08 | Revoke a shared file or bridge participant and compare the authorised download with the refused retry. |
+| COM-09 | Repeat recovery and new-device trust on the applicable native client using a disposable backup. |
+| COM-10 | Verify availability and external-app credential revocation on its receiving client. |
+| COM-11 | Use a physical endpoint for permission loss, missed-call push and device handoff. |
+| COM-12 | Use registered local phone identities to exercise attended and blind transfer with receiver and History readback. |
+| COM-13 | Deny a waiting guest and retry with an expired link while the host remains in the meeting. |
+| COM-14 | Use a registered desk phone and a controlled incoming call to prove the actual routing destination. |
+| COM-15 | Use two assigned queue agents and a caller to verify offer, timeout and voicemail playback. |
+| COM-16 | Use a recording-enabled media node, consenting parties and retained media for authorised playback and refusal. |
+| COM-17 | Use an enabled desktop host and two offline stores to reconcile queued work and conflicting drafts. |
+| COM-18 | Repeat direct helper and alternate-mode access with private content and distinct account grants. |
 
 ## 7. Decisions
 
