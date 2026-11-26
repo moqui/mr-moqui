@@ -716,7 +716,16 @@ fn a_full_account_takes_no_more_mail_until_it_has_room() {
         ("emailAccountId", &sales),
         &[("quotaBytes", Value::I64(1))],
     );
-    assert!(full(&sales));
+    // found full in a transaction that then rolls back: the mark and its notice are kept together, in their own
+    let rolled = facade.default_transactions().unwrap().run(
+        moqui_core::transaction::TransactionAttribute::UseOrBegin,
+        None,
+        || {
+            assert!(full(&sales));
+            Err::<(), _>(moqui_lib::error::Error::new("the caller rolls back"))
+        },
+    );
+    assert!(rolled.is_err());
     assert!(!full(&support));
     assert!(
         marked(&sales) && !marked(&support),

@@ -113,29 +113,39 @@ fn over_quota_of(facade: &EntityFacade, account: &EntityValue) -> Result<bool, L
     if over == marked {
         return Ok(over);
     }
-    match mark_full(facade, &account_id, over) {
+    let address = field_text(account, "emailAddress");
+    match mark_full(facade, &account_id, over, || {
+        notify_full(&account_id, &address, used, quota)
+    }) {
         Ok(true) if over => {
             tracing::warn!(
                 account = %account_id,
                 "Email account {account_id} is over its mailbox quota ({used} of {quota} bytes): the SMTP listener \
                  and the edge node refuse its mail with 452 until it is under (quotaBytes, email-client mailbox-quota)"
             );
-            if let Err(err) = notify_full(&account_id, &field_text(account, "emailAddress"), used, quota) {
-                tracing::error!("Email account {account_id}: its users were not told it is full: {err}");
-            }
         }
         Ok(true) => {
             tracing::info!("Email account {account_id} is under its mailbox quota again ({used} of {quota} bytes)")
         }
         Ok(false) => {}
-        Err(err) => tracing::error!("Email account {account_id}: quotaFullDate could not be kept: {err}"),
+        Err(err) => tracing::error!(
+            "Email account {account_id}: quotaFullDate could not be kept, or its users told it is full (tried again at \
+             the next check): {err}"
+        ),
     }
     Ok(over)
 }
 
 /// Set (`full`) or clear `EmailAccount.quotaFullDate` of `account_id` in a transaction of its own: true when it changed,
-/// so a change is told once though several sessions find it.
-fn mark_full(facade: &EntityFacade, account_id: &str, full: bool) -> Result<bool, LibError> {
+/// so a change is told once though several sessions find it. A mark set runs `tell` in that same transaction, so the
+/// notice is stored and sent at its commit and the mark and the notice are kept or lost together: whatever transaction
+/// the caller is in, a notice that fails leaves the account unmarked, to be marked and told at the next check.
+fn mark_full(
+    facade: &EntityFacade,
+    account_id: &str,
+    full: bool,
+    tell: impl FnOnce() -> Result<(), LibError>,
+) -> Result<bool, LibError> {
     force_new(facade, || {
         let Some(mut row) = facade
             .find(ACCOUNT)?
@@ -154,11 +164,14 @@ fn mark_full(facade: &EntityFacade, account_id: &str, full: bool) -> Result<bool
             if full { stamp_millis(now_millis()) } else { Value::Null },
         );
         row.update(facade)?;
+        if full {
+            tell()?;
+        }
         Ok(true)
     })
 }
 
-/// Tell the users of `account_id` (its owner and members) that it is full. In the current context.
+/// Tell the users of `account_id` (its owner and members) that it is full. In the current context and transaction.
 fn notify_full(account_id: &str, address: &str, used: i64, quota: i64) -> Result<(), LibError> {
     let users = account_users(account_id)?;
     if users.is_empty() {
