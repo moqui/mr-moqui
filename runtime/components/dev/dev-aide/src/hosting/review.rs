@@ -566,12 +566,14 @@ pub fn issue_path(template: &str, repository_id: &str, id: &str) -> Option<(Stri
     let template = Some(template)
         .filter(|template| template.starts_with('/') && !template.starts_with("//") && template.contains("{id}"))
         .unwrap_or("/rest/s1/mantle/workEfforts/{id}");
-    Some((
-        template
-            .replace("{repositoryId}", &query_text(repository_id))
-            .replace("{id}", &query_text(id)),
-        by_number,
-    ))
+    // neither id walks the server's path (`.`, `..`)
+    let id = client::path_segment(id)?;
+    let path = if template.contains("{repositoryId}") {
+        template.replace("{repositoryId}", &client::path_segment(repository_id)?)
+    } else {
+        template.to_string()
+    };
+    Some((path.replace("{id}", &id), by_number))
 }
 
 /// `get#Issue`: an issue (a work item) of the hosted repository's server by its id: its title, status, type and text.

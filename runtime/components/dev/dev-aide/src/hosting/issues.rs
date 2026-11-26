@@ -23,7 +23,7 @@ use moqui_lib::error::Error as LibError;
 use moqui_lib::object::Value;
 use serde_json::{json, Value as Json};
 
-use super::client::{self, query_text, Server};
+use super::client::{self, Server};
 use super::review::{hosted, need_hosted, page_url, Hosted};
 use crate::roots::Root;
 use crate::tier::Tier;
@@ -42,11 +42,8 @@ pub fn issues_path(template: &str, repository_id: &str) -> Option<String> {
     if !template.starts_with('/') || template.starts_with("//") || !template.contains("{repositoryId}") {
         return None;
     }
-    let id = repository_id.trim();
-    if id.is_empty() {
-        return None;
-    }
-    Some(template.replace("{repositoryId}", &query_text(id)))
+    // the repository's id never walks the server's path (`.`, `..`)
+    Some(template.replace("{repositoryId}", &client::path_segment(repository_id)?))
 }
 
 /// One issue of a server's answer, as the task panel shows it: its id (the work item's), its number in the repository

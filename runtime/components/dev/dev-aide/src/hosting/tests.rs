@@ -589,6 +589,15 @@ fn an_issue_is_read_by_its_id_alone() {
         Some(("/rest/s1/mantle/workEfforts/12".to_string(), false))
     );
     assert!(issue_path(mantle, "my-site", "#12a").is_none());
+    // no id walks the server's path
+    assert!(issue_path(mantle, "my-site", "..").is_none());
+    assert!(issue_path(mantle, "my-site", ".").is_none());
+    assert!(issue_path(mantle, "..", "PROJ-12").is_none());
+    assert!(issue_path(mantle, "", "PROJ-12").is_none());
+    assert_eq!(
+        issue_path(mantle, "my-site", "a.b"),
+        Some(("/rest/s1/mantle/gitRepositories/my-site/issues/a.b".to_string(), false))
+    );
     assert!(issue_path("", "my-site", "../x").is_none());
     assert!(issue_path("", "my-site", "a/b").is_none());
     assert!(issue_path("", "my-site", "").is_none());
@@ -607,6 +616,8 @@ fn a_repository_s_issues_by_their_numbers_or_ids() {
     assert!(issues_path("https://elsewhere/{repositoryId}", "my-site").is_none());
     assert!(issues_path("//elsewhere/{repositoryId}", "my-site").is_none());
     assert!(issues_path("/rest/issues", "my-site").is_none());
+    assert!(issues_path("/rest/s1/mantle/gitRepositories/{repositoryId}/issues", "..").is_none());
+    assert!(issues_path("/rest/s1/mantle/gitRepositories/{repositoryId}/issues", ".").is_none());
     let server = server(json!({}));
     let read = read_issues(
         &json!({ "issueList": [
