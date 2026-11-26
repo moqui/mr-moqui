@@ -305,9 +305,10 @@
     };
 
     // "Open on the server" (21.3): a page of the hosted repository from the server's templates (hosted.pages: file,
-    // commit and branch, {repositoryPath} filled in and checked by the server to be its own pages), each value encoded
-    // as path parts, a line only as a number (with no line, the line's fragment goes); null when the server offers no
-    // such page, a value is missing or does not fit, or the result is not under the template's own address.
+    // commit and branch, {repositoryPath} and {repositoryId} filled in and checked by the server to be its own pages),
+    // each value encoded as path parts, a line only as a number (with no line, the line's fragment or query parameter
+    // goes); null when the server offers no such page, a value is missing or does not fit, or the result is not under
+    // the template's own address.
     pure.serverPage = (pages, kind, values) => {
         const template = pages && typeof pages[kind] === "string" ? pages[kind] : "";
         const prefix = template.split("{")[0];
@@ -316,7 +317,8 @@
         const path = (text) => String(text).split("/").map(encodeURIComponent).join("/");
         let url = template;
         const line = Math.floor(Number(given.line) || 0);
-        url = line > 0 ? url.split("{line}").join(String(line)) : url.replace(/#[^#]*\{line\}[^#]*$/, "");
+        url = line > 0 ? url.split("{line}").join(String(line))
+            : url.replace(/#[^#]*\{line\}[^#]*$/, "").replace(/([?&])[A-Za-z]+=\{line\}(&|$)/, (all, before, after) => after ? before : "");
         const fill = { ref: given.ref, file: given.file, branch: given.branch, commitId: given.commitId };
         if (fill.commitId != null && !/^[0-9a-f]{4,64}$/i.test(String(fill.commitId))) return null;
         for (const [key, value] of Object.entries(fill)) {

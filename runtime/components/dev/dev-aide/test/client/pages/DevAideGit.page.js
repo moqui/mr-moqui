@@ -100,6 +100,15 @@ test("Open on the server fills the server's page templates, each value as path p
     assert.equal(pure.serverPage(pages, "branch", { branch: "" }), null);
     assert.equal(pure.serverPage({ file: "javascript:alert(1)//{file}" }, "file", { file: "x" }), null);
     assert.equal(pure.serverPage(null, "file", { file: "x" }), null);
+    // IronStone Projects' Code pages: the values in the query, and with no line its parameter goes
+    const code = { file: "https://team.example.com/qapps/Projects/Code/RepositoryDetail/Files?repositoryId=site&ref={ref}&path={file}&line={line}",
+        branch: "https://team.example.com/qapps/Projects/Code/RepositoryDetail/Files?repositoryId=site&ref={branch}" };
+    assert.equal(pure.serverPage(code, "file", { ref: "main", file: "screen/A.xml", line: 7 }),
+        "https://team.example.com/qapps/Projects/Code/RepositoryDetail/Files?repositoryId=site&ref=main&path=screen/A.xml&line=7");
+    assert.equal(pure.serverPage(code, "file", { ref: "main", file: "screen/A.xml" }),
+        "https://team.example.com/qapps/Projects/Code/RepositoryDetail/Files?repositoryId=site&ref=main&path=screen/A.xml");
+    assert.equal(pure.serverPage(code, "branch", { branch: "feature/x" }),
+        "https://team.example.com/qapps/Projects/Code/RepositoryDetail/Files?repositoryId=site&ref=feature/x");
     assert.equal(pure.serverBranch("origin/feature/x", "origin"), "feature/x");
     assert.equal(pure.serverBranch("fork/feature", "origin"), "");
     assert.equal(pure.serverBranch(null, "origin"), "");

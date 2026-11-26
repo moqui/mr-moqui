@@ -104,7 +104,7 @@ credential helpers. The tabs of a git root:
 - **Conflicts**: a merge, cherry-pick, revert or stash that stops at conflicts shows a banner; a conflicted file opens
   ours, the result and theirs side by side, with Ours, Theirs and Both on each conflict, Mark resolved once no markers
   remain, and Abort.
-- **Settings** (a tab of the root): remotes (Open on host, Prune, Set URL, Remove, Add remote), the root's components,
+- **Settings** (a tab of the root): remotes (Open on the server, Prune, Set URL, Remove, Add remote), the root's components,
   where Publish pushes, and `.gitignore`. A root's **publish branch** (Settings › Roots, or per user the
   `DEV_AIDE_PUBLISH_BRANCH` preference an admin sets on System › User) makes Publish push to a branch of its own and
   open a merge request, optionally required.
@@ -341,7 +341,11 @@ fork, merge request settings, agreement), and the Workspace has:
   deleted when the run ends; nothing comes back to the tree, and the run's output is its log in the dialog. A run in
   the image needs `TERMINAL_HOST` and a root you may write that does not hold the runtime, has the conf's memory,
   process and time limits, and has no network on a shared dev server.
-- **Open on the server** for the current file at its line, a commit and a branch, where the server offers those pages.
+- **Open on the server** for the current file at its line, a commit and a branch, where the server offers those pages:
+  the pages of the application that keeps the repository (Smithy's), or for a repository the framework's hosting keeps
+  those an application has for it (IronStone Projects' Code, where mr-boss is loaded). The framework has no pages of
+  its own, so on a server with no such application the button is not shown. The same label opens a merge request, a
+  status and a remote on their server.
 - **The contributor agreement**: where it is on, Changes warns when the commit's author has not signed, and **Sign**
   commits the line in `AUTHORS.md` alone, as you.
 - **Issues** in the task panel: the hosted repository's open issues, the tasks of its linked projects first; Use in

@@ -19,7 +19,7 @@
  * as links, Re-run, Run locally: a job of the working tree's ci.xml in a terminal, or in its image where Docker or
  * Podman answers, its log followed here), the Sessions
  * tab (21.8: agents' sessions in worktrees, which are not loaded), the Settings tab (remotes, the hosted repository with Find on the server and Fork, the root's components,
- * its publish branch, Open on the hosting site), a
+ * its publish branch, Open on the server), a
  * compare of two refs, and the conflict view: ours, the result and theirs side by side, Accept ours, theirs or both on
  * each conflict, Mark resolved and Abort. Each component takes the Workspace (ws) for its transitions, its notes and its
  * refresh. Loaded on first use, as the visual views are; its pure parts are moqui.devAide.pure.
@@ -340,7 +340,7 @@
   <q-list dense><q-item v-for="remote in remotes" :key="remote.name" :data-remote="remote.name">
     <q-item-section><q-item-label>{{remote.name}}</q-item-label><q-item-label caption>{{remote.url}}</q-item-label></q-item-section>
     <q-item-section side><div class="row no-wrap">
-      <q-btn v-if="hostPage(remote.url)" dense flat no-caps size="sm" label="Open on host" :href="hostPage(remote.url)" target="_blank" type="a"></q-btn>
+      <q-btn v-if="hostPage(remote.url)" dense flat no-caps size="sm" label="Open on the server" :href="hostPage(remote.url)" target="_blank" type="a"></q-btn>
       <q-btn dense flat no-caps size="sm" label="Prune" :disable="!ws.canWrite" @click="prune(remote)"></q-btn>
       <q-btn dense flat no-caps size="sm" label="Set URL" :disable="ws.tier !== 'full'" @click="setUrl(remote)"></q-btn>
       <q-btn dense flat no-caps size="sm" label="Remove" :disable="ws.tier !== 'full'" @click="remove(remote)"></q-btn></div></q-item-section>
@@ -537,7 +537,7 @@
     <q-item-section><q-item-label>!{{item.mergeRequestNum}} {{item.title}}</q-item-label>
       <q-item-label caption>{{item.sourceRef}} → {{item.targetRef}} · {{item.author}} · {{item.state}}{{item.checkState ? ' · checks ' + item.checkState : ''}}</q-item-label></q-item-section>
     <q-item-section side><div class="row no-wrap">
-      <q-btn v-if="pageUrl(item.url)" dense flat no-caps size="sm" label="Open on server" :href="pageUrl(item.url)" target="_blank" rel="noopener noreferrer" type="a"></q-btn>
+      <q-btn v-if="pageUrl(item.url)" dense flat no-caps size="sm" label="Open on the server" :href="pageUrl(item.url)" target="_blank" rel="noopener noreferrer" type="a"></q-btn>
       <q-btn dense flat no-caps size="sm" label="Review" @click="openReview(item)" :data-review="item.mergeRequestNum"></q-btn>
       <q-btn dense flat no-caps size="sm" label="Check out" :disable="!ws.canWrite" @click="checkout(item)"></q-btn></div></q-item-section>
   </q-item></q-list>
@@ -725,7 +725,7 @@
   <div v-for="status in statuses" :key="status.context" class="row items-center no-wrap text-caption">
     <q-badge :color="pure.stateColor(status.state)" :label="status.state" class="q-mr-xs"></q-badge>{{status.context}}
     <span class="m-muted q-ml-xs ellipsis">{{status.description}}</span>
-    <q-btn v-if="pageUrl(status.url)" dense flat no-caps size="sm" label="Open" :href="pageUrl(status.url)" target="_blank" rel="noopener noreferrer" type="a"></q-btn></div>
+    <q-btn v-if="pageUrl(status.url)" dense flat no-caps size="sm" label="Open on the server" :href="pageUrl(status.url)" target="_blank" rel="noopener noreferrer" type="a"></q-btn></div>
   <div v-for="run in runs" :key="run.runNum" class="q-mt-sm">
     <div class="row items-center no-wrap text-caption text-weight-medium">#{{run.runNum}} {{run.pipelineName}}
       <q-badge :color="pure.stateColor(run.state)" :label="run.statusId" class="q-ml-xs"></q-badge><q-space></q-space>

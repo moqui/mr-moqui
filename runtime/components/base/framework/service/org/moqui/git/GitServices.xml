@@ -942,8 +942,10 @@ along with this software (see the LICENSE.md file). If not, see
         <description>The service git-server offer-service names: given what the framework offers (get#HostingOffer's
             offer) and the current user, the offer as the application has it, which replaces it: its REST
             (application: name, restBase), the pages of a repository it keeps (application.pages: file, commit and
-            branch, absolute URLs on this server's own address with {repositoryPath} and {ref}, {file}, {line},
-            {commitId} or {branch}, which a client fills: "Open on the server"), its task source (tasks: kind; path, the
+            branch, absolute URLs on this server's own address with {repositoryPath} or {repositoryId} and {ref},
+            {file}, {line}, {commitId} or {branch}, which a client fills: "Open on the server"), the same pages of a
+            repository this server's hosting keeps where the application shows those (pages, which the framework leaves
+            empty: IronStone Projects' Code), its task source (tasks: kind; path, the
             user's tasks; issuePath, a work item by {id}; issuesPath, a repository's open issues, and a new one by POST,
             by {repositoryId}; app, the app a work item opens in: name, title, taskPath and projectPath with {taskId} and
             {projectId}), whether forks are made and where (forks), its agreement check (agreement: path), and anything
