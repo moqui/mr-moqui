@@ -1038,9 +1038,9 @@
         <q-input dense outlined v-model="fixtureName" :label="t('Fixture name')" style="width: 11rem" for="DevRuleFixtureName"></q-input>
         <q-btn dense flat no-caps icon="sym_o_save" :label="t('Save as fixture')" :disable="!canEdit || !fixtureName" @click="saveFixture" id="DevRuleFixtureSave"></q-btn>
         <q-btn dense flat no-caps icon="sym_o_play_circle" :label="t('Run the trigger in sim')" :disable="!canEdit || rule.name === 'emeca'" :loading="ruleRun && ruleRun.running"
-            @click="runTrigger" id="DevRuleRunTrigger"><q-tooltip>{{ t('Runs the rule\'s trigger with the context in the sim and marks its actions') }}</q-tooltip></q-btn>
+            @click="runTrigger" id="DevRuleRunTrigger"><q-tooltip>{{ t('Runs the rule\\'s trigger with the context in the sim and marks its actions') }}</q-tooltip></q-btn>
         <q-btn dense flat no-caps icon="sym_o_note_add" :label="t('Save as spec')" :disable="!canEdit || !fixtureName || rule.name === 'emeca'" @click="saveRuleSpec" id="DevRuleSaveSpec">
-          <q-tooltip>{{ t('Runs the rule\'s trigger with the fixture in the sim, and writes a feature that runs it again and checks what it did') }}</q-tooltip></q-btn>
+          <q-tooltip>{{ t('Runs the rule\\'s trigger with the fixture in the sim, and writes a feature that runs it again and checks what it did') }}</q-tooltip></q-btn>
         <q-btn v-if="ruleSpec" dense flat no-caps icon="sym_o_play_arrow" :label="'Run spec ' + ruleSpec.name" :loading="ruleSpecRun && ruleSpecRun.running" @click="runRuleSpec" id="DevRuleRunSpec"></q-btn>
       </div>
       <div v-if="ruleRun && ruleRun.result" class="text-caption q-mt-xs" id="DevRuleRun">
