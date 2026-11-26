@@ -40,12 +40,17 @@ The assisted IDE of mr-moqui (`plans/design-dev-aide.md`), at `/qapps/dev` on a 
 - **Services** is the service writer: a service's settings and parameters (nested ones too: Add child in a Map or a
   List, Edit and Remove on each, as the terminal twin's), its actions in the logic composer (blocks as sentences, chips
   that edit an attribute, the palette, the generated JavaScript), its SECA rules, and Try in sim with the rows it would
-  write, Save as spec and Run spec (in the sim). In the terminal it is `Services/EditTui`: Try, the settings, the
-  parameters (nested ones too), the actions read only and the SECA rules (the service a new rule calls is searched by
-  name, as is the one a new button of the screen builder's twin calls), its edits staged in the user's edit buffer
-  until Save (below). **ECA Rules** lists the active rules of each kind with their files; a rules file opens in the ECA
-  view, where Try the condition runs a rule's condition against a context (a SECA's service's last Try, a record, or
-  for a gitECA rule a push from the push log).
+  write, Save as spec and Run spec (in the sim). A Try in sim runs the service as the unsaved service and script buffers
+  define it, and the composer then marks each block run (its count and the values it set on hover), not run, or failed;
+  Dev Assist's `try_service` does the same on a proposal's text. In the terminal it is `Services/EditTui`: Try, the
+  settings, the parameters (nested ones too), the actions read only and the SECA rules (the service a new rule calls is
+  searched by name, as is the one a new button of the screen builder's twin calls), its edits staged in the user's edit
+  buffer until Save (below). **ECA Rules** lists the active rules of each kind with their files; a rules file opens in
+  the ECA view, where Try the condition runs a rule's condition against a context (a SECA's service's last Try, a
+  record, or for a gitECA rule a push from the push log); Run the trigger in sim runs the rule's service call or entity
+  operation with it and marks the rule's actions; a context is saved as a named fixture (`test/fixtures/<name>.json`),
+  and Save as spec writes a feature that runs the rule's trigger with it (a gitECA rule's condition only: a spec replays
+  no push).
 - **Browser** (Artifacts › Browser) is an artifact in the center with what uses it and what it uses, by kind: a
   pan-and-zoom canvas in the browser, and in the terminal Miller columns (`BrowseTui.xml`, the `artifact-browser`
   component) where Enter re-centers on a row, Backspace and `]` walk the trail, `k`, `h` and `x` filter, and the

@@ -623,7 +623,9 @@ fn reload_eecas(factory: &ExecutionContextFactory, files: &mut [FileReload]) {
         );
         return;
     };
-    let count = moqui_core::entity::load_feed::reload_eca_rules(&facade);
+    // a site's first rules file makes its entity directory, which the model does not read from until a relink
+    let dirs = moqui_core::context::component_entity_dirs(factory);
+    let count = moqui_core::entity::load_feed::reload_eca_rules_with(&facade, &dirs);
     for at in changed {
         files[at].summary = format!("EECA rules reloaded: {count}");
     }

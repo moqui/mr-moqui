@@ -125,7 +125,8 @@
             const h = root.Vue.h;
             const label = this.label;
             const head = h("div", {
-                class: "m-dev-block-head row no-wrap items-center" + (this.selected ? " selected" : ""), tabindex: this.selected ? 0 : -1,
+                class: "m-dev-block-head row no-wrap items-center" + (this.selected ? " selected" : "") + (label.headClass ? " " + label.headClass : ""),
+                tabindex: this.selected ? 0 : -1, title: label.title || undefined,
                 "data-block": this.node.path.join("."), onClick: (event) => { event.stopPropagation(); this.tree.select(this.node); },
                 onDblclick: (event) => { event.stopPropagation(); this.tree.$emit("open", this.node); }
             }, [
@@ -144,7 +145,7 @@
         name: "mDevBlockTree",
         props: {
             nodes: Array, parentPath: { type: Array, default: () => [] }, selected: Array, readOnly: Boolean,
-            // (node) => { text, chips: [{ text, title, edit, warn }], badge, badgeClass }
+            // (node) => { text, chips: [{ text, title, edit, warn }], badge, badgeClass, headClass, title }
             labelFn: Function,
             // (node) => the children drawn as its blocks; the default all of them
             childrenFn: Function,
@@ -206,7 +207,11 @@
             ".m-dev-block-handle{cursor:grab;opacity:.45;font-size:10px;letter-spacing:-2px}.m-dev-block-name{font-weight:500}" +
             ".m-dev-block-chip{padding:0 5px;border-radius:8px;background:rgba(127,127,127,.14);font-family:ui-monospace,Menlo,monospace;font-size:11px;max-width:22rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}" +
             ".m-dev-block-chip.warn{background:rgba(229,115,0,.22)}.m-dev-block-word{opacity:.7}.m-dev-block-badge{margin-left:auto;font-size:10px;opacity:.8}" +
-            ".sortable-ghost>.m-dev-block-head{opacity:.4}";
+            ".sortable-ghost>.m-dev-block-head{opacity:.4}" +
+            // a Try's trace on the blocks (9.2): run, not run, failed
+            ".m-dev-block-head.m-dev-trace-run{box-shadow:inset 3px 0 0 var(--q-positive,#2e7d32)}.m-dev-block-head.m-dev-trace-not-run{opacity:.55}" +
+            ".m-dev-block-head.m-dev-trace-failed{box-shadow:inset 3px 0 0 var(--q-negative,#c62828);background:rgba(198,40,40,.1)}" +
+            ".m-dev-block-badge.m-dev-trace-run{color:var(--q-positive,#2e7d32)}.m-dev-block-badge.m-dev-trace-failed{color:var(--q-negative,#c62828);font-weight:600}";
         root.document.head.appendChild(style);
     }
 })(typeof window !== "undefined" ? window : globalThis);
