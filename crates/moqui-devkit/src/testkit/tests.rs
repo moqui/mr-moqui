@@ -708,6 +708,9 @@ feature("methods", {
         const left = {}; left.self = left
         const right = {}; right.self = right
         assert.deepEqual(left, right)
+        const shared = [1, 2]
+        assert.deepEqual({ a: shared, b: shared }, { a: [1, 2], b: [1, 2] })
+        assert.deepEqual([shared, shared], [[1, 2], [1, 2]])
         assert.match("abc", /b/)
         assert.doesNotMatch("abc", /z/)
         assert.throws(() => { throw new Error("nope 12") }, /nope/)
@@ -736,6 +739,9 @@ feature("methods", {
         "{}",
         shallow_failure.message
     );
+
+    let shared = run("feature('shared', { expect() { const one = [1]; assert.deepEqual([one, one], [[1], [2]]) } })");
+    assert_eq!(failure(&shared, 0).kind, "assertion");
 
     let pending = run("feature('pending', { expect() { assert.rejects(() => new Promise(() => {})) } })");
     let pending_failure = failure(&pending, 0);

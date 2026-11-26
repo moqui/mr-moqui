@@ -51,6 +51,7 @@ fn the_repository_shell_has_its_page_scripts_and_libraries() {
         "/js/WebrootSFrame.js",
         // the bundled Comms screens' libraries: the rich-text editor, and the crypto device's module
         "/libs/tiptap/tiptap.min.js",
+        "/libs/yjs/yjs.min.js",
         "/js/WebrootWhiteboard.js",
         "/js/WebrootInk.js",
         "/libs/excalidraw/editor.js",

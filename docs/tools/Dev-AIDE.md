@@ -369,12 +369,23 @@ With `dev-aide shared="true"`, one dev instance serves a team:
   stored for;
 - **presence**: a tab shows who else has the file open ("being edited by"), and a save by another user tells the open
   tabs, whose clean ones take the new text;
-- Save is single-writer by hash: a file saved by another since you opened it opens Compare.
+- Save is single-writer by hash: a file saved by another since you opened it opens Compare;
+- **co-editing**: the users with one file open that they may write edit it together, each seeing the others' carets
+  and selections by name and the "co-editing with" chip. The file's room is seeded from the file when its first editor
+  opens it, kept in memory only and dropped when the last tab closes; undo is your own edits only. Save is still each
+  user's, by hash: a save by one moves the others' base, so the next save of the shared text is no conflict. A room is
+  one server's: on a server with cluster peers nothing is co-edited. The bounds are `dev-aide@coedit-max-rooms` (files
+  a user co-edits at once, 20) and `dev-aide@coedit-max-total-bytes` (every room's state together, 64 MiB).
 
 ## Editor settings and keymaps
 
 Settings › **Editor** sets, for you only (the `DEV_AIDE_EDITOR` preference): the font size, the tab size (and indent;
-empty is CodeMirror's), wrap, white space shown and the keymap. Settings › **Editor keys** has a row for each of the
+empty is CodeMirror's), wrap, white space shown, the keymap (CodeMirror's, VS Code's or Vim, whose library loads when
+you pick it) and **Check script types**, off by default: a script file under a component's `script/` is checked by
+TypeScript in a worker of the browser against the project's `moqui types` declarations, as the function body it runs
+as, its problems in the editor and Problems (the compiler, 3.6 MB, loads on the first script tab). The shell, Groovy,
+properties, TOML, Dockerfile and nginx files are highlighted by a second bundle of languages, loaded when one opens.
+Settings › **Editor keys** has a row for each of the
 code editor's commands (find, toggle comment, completion, undo, redo, fold all, unfold all) with its default and your
 keys, in CodeMirror's form (`Mod-Shift-f`; Mod is Ctrl, or Cmd on a Mac); empty sets the default back, and a key another
 command has is refused. The Workspace's own keys (Go to file, Go to artifact, Search in files, Save) are the shell's key

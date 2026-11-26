@@ -107,12 +107,12 @@ test("a nested parameter added in its parent, edited and removed by its path of 
         [{ op: "insert", at: [0, 0, 2, 0], position: "before", xml: "<parameter name=\"inner\"/>" }]);
     assert.deepEqual(ops.addParameter(service, "in-parameters", { name: "x" }, "order.nothing"), []);
     assert.deepEqual(ops.removeParameter(service, "in-parameters", "order.items"), [{ op: "remove", at: [0, 0, 0, 1] }]);
-    // as JSON: the three operations share their element's path, which deepEqual takes for a cycle
+    // the three operations share their element's path (one array)
     const edited = ops.editParameter(service, "in-parameters", "order.items", { type: "List", required: true, description: "Its lines" });
-    assert.equal(JSON.stringify(edited), JSON.stringify([
+    assert.deepEqual(edited, [
         { op: "set-attribute", at: [0, 0, 0, 1], name: "type", value: "List" },
         { op: "set-attribute", at: [0, 0, 0, 1], name: "required", value: "true" },
-        { op: "insert", at: [0, 0, 0, 1], position: "last", xml: "<description>Its lines</description>" }]));
+        { op: "insert", at: [0, 0, 0, 1], position: "last", xml: "<description>Its lines</description>" }]);
     // a description goes first in a parameter that holds others
     assert.deepEqual(ops.editParameter(service, "in-parameters", "plain", { description: "Plain" }).pop(),
         { op: "insert", at: [0, 0, 2], position: "first", xml: "<description>Plain</description>" });

@@ -1,8 +1,9 @@
 // The editor settings (WorkspaceServices get#, store#EditorSettings and store#EditorKey, plans/design-dev-aide.md 5.1):
 // the user's DEV_AIDE_EDITOR preference, a UserPreferenceKey; the defaults with none; the font size, tab size, wrap,
-// white space and keymap stored, a size out of range and an unknown keymap refused; a command's keys rebound over the
-// keymap, keys another command has or not in CodeMirror's form refused, and empty for the default back. Settings shows
-// them in its one render (GroupServers.spec.js); m-code-editor applies them (WebrootCode.page.js, DevAide.page.js).
+// white space, keymap (default, vscode or vim) and type check stored, a size out of range and an unknown keymap
+// refused; a command's keys rebound over the keymap, keys another command has or not in CodeMirror's form refused, and
+// empty for the default back. Settings shows them in its one render (GroupServers.spec.js); m-code-editor applies them
+// (WebrootCode.page.js, DevAide.page.js).
 // Run: ./moq test dev-aide --spec EditorSettings
 const PREFERENCE = "DEV_AIDE_EDITOR"
 const call = (verb, parameters) => {
@@ -38,7 +39,7 @@ feature("the settings are the defaults with no preference, and what is stored af
     when() {
         const declared = ec.entity.find("moqui.basic.Enumeration").condition("enumId", PREFERENCE).disableAuthz().one()
         const before = call("get#EditorSettings")
-        const stored = call("store#EditorSettings", {fontSize: "16", tabSize: "2", wrap: "true", whitespace: "true", keymap: "default"})
+        const stored = call("store#EditorSettings", {fontSize: "16", tabSize: "2", wrap: "true", whitespace: "true", keymap: "vim", typeCheck: "true"})
         const tooBig = call("store#EditorSettings", {fontSize: "99"})
         const keymap = call("store#EditorSettings", {keymap: "emacs"})
         const after = call("get#EditorSettings")
@@ -52,7 +53,8 @@ feature("the settings are the defaults with no preference, and what is stored af
         before.out.settings.fontSize == 13
         before.out.settings.tabSize == null
         before.out.settings.keymap == "default"
-        before.out.keymaps.includes("default")
+        before.out.settings.typeCheck == false
+        before.out.keymaps.includes("default") && before.out.keymaps.includes("vscode") && before.out.keymaps.includes("vim")
         keysOf(before.out, "undo") == "Mod-z"
         // the Workspace's own commands are shell key map actions, not rows here
         keysOf(before.out, "gotoFile") == null
@@ -63,6 +65,8 @@ feature("the settings are the defaults with no preference, and what is stored af
         after.out.settings.tabSize == 2
         after.out.settings.wrap == true
         after.out.settings.whitespace == true
+        after.out.settings.keymap == "vim"
+        after.out.settings.typeCheck == true
         preference.fontSize == 16
         cleared.out.settings.tabSize == null
         cleared.out.settings.fontSize == 16

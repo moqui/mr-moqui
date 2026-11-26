@@ -766,7 +766,7 @@ pub(crate) fn save_text_with(
     if context.settings.shared {
         let user = moqui_core::user::current_user_id().ok().flatten().unwrap_or_default();
         let username = moqui_core::user::current_username().ok().flatten().unwrap_or_default();
-        crate::notify::announce_save(&context.facade, &user, &username, &root.id, &resolved.relative);
+        crate::notify::announce_save(&context.facade, &user, &username, &root.id, &resolved.relative, &hash);
     }
     Ok(out)
 }

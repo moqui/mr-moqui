@@ -8,8 +8,8 @@ feature("a mounted board merges local and remote edits and reconciles compacted 
             <body><div id="app"><m-whiteboard ref="board" wiki-page-id="BOARD" :socket-client="client"></m-whiteboard></div>
             <script src="/libs/vue/vue.global.prod.js"></script><script src="/libs/quasar/quasar.umd.prod.js"></script>
             <script src="/js/MoquiLib.js"></script><script src="/js/WebrootVue.qvt.js"></script>
-            <script src="/libs/tiptap/tiptap.min.js"></script><script>
-            const Y = Tiptap.Y, server = new Y.Doc();
+            <script src="/libs/yjs/yjs.min.js"></script><script>
+            const Y = Yjs.Y, server = new Y.Doc();
             const c = moqui.coedit;
             let deliver;
             const client = Vue.markRaw({
@@ -113,8 +113,34 @@ feature("a file board saves a readable scene and hands a declared element link b
         page.getByRole("button", {name:"hemp:story/1", exact:true}).click()
         assert.equal(page.evaluate(() => vm.link), "hemp:story/1")
         assert.equal(page.evaluate(() => JSON.parse(saved.scene).elements[0].link), "hemp:story/1")
-        assert.equal(page.evaluate(() => saved.preview.includes("<svg") && !window.Tiptap), true)
+        assert.equal(page.evaluate(() => saved.preview.includes("<svg") && !window.Yjs), true)
         assert.equal(page.evaluate(() => performance.getEntriesByType("resource").every(r =>
             !/^https?:/.test(r.name) || new URL(r.name).origin === location.origin)), true)
+    }
+})
+
+// A board's presence takes of a peer's awareness only its pointer (finite numbers, a tool), its button and its selected
+// ids, with the name the server gave it: nothing it sends sets the name, the color or an avatar's URL.
+feature("a peer's presence on a board is its pointer, button and selection only, named by the server", {
+    expect() {
+        const page = browser.newPage()
+        page.setContent(`<!doctype html><html><body><script src="/js/MoquiLib.js"></script><script src="/js/WebrootVue.qvt.js"></script>
+            <script src="/js/WebrootWhiteboard.js"></script></body></html>`)
+        page.waitFor(() => !!(window.moqui && moqui.whiteboard && moqui.whiteboard.component))
+        const shown = page.evaluate(() => {
+            const scenes = []
+            const evil = JSON.parse('{"user":{"color":"red;x","name":"Evil"},"cursor":{"pointer":{"x":1,"y":2,"tool":"laser"},"button":"down",' +
+                '"username":"Evil","avatarUrl":"https://evil.example/a.png","color":{"stroke":"url(x)"}},"selection":{"a":true,"b":"x","__proto__":{"c":true}}}')
+            const fake = { api: { updateScene: (data) => scenes.push(data) }, closed: false,
+                awareness: { clientID: 1, getStates: () => new Map([[2, evil], [3, {user: {color: "#123456"}, cursor: {pointer: {x: "1", y: 2}}}]]) },
+                provider: { peers: [{ awareness: 2, name: "Ann" }, { awareness: 3, name: "Bob" }] } }
+            moqui.whiteboard.component.methods.presence.call(fake)
+            const of = (id) => scenes[0].collaborators.get(id)
+            return JSON.stringify({ ann: of("2"), bob: of("3") })
+        })
+        const {ann, bob} = JSON.parse(shown)
+        assert.deepEqual(ann, { username: "Ann", color: { stroke: "#4267aa", background: "#4267aa" }, selectedElementIds: { a: true },
+            pointer: { x: 1, y: 2, tool: "laser" }, button: "down" })
+        assert.deepEqual(bob, { username: "Bob", color: { stroke: "#123456", background: "#123456" }, selectedElementIds: {}, button: "up" })
     }
 })
