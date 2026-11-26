@@ -138,7 +138,8 @@ first branch pushed) its default branch.
 - **A key for one service.** `create#UserScopedKey` makes a key of the current user that opens one service alone
   (`UserLoginKey.scope`): `gateway`, the LLM gateway; `git`, git over HTTP and the REST resources that declare
   `key-scope="git"` (the `git` resource and the `hosting` reads: `offer`, `repository`, `mergeRequests`, `agreement`);
-  `tasks`, the REST resources that declare `key-scope="tasks"` (Mantle's `my/tasks` and a repository's `issues`). Every
+  `tasks`, the REST resources that declare `key-scope="tasks"` (Mantle's `my/tasks` and a repository's `issues`: the
+  user's tasks read, a repository's issues read and filed, since a scope is a resource's, every method of it). Every
   other login (the web, any other REST resource, a socket) refuses it, and it is in the user's device list. A REST
   resource names the scopes it takes (`key-scope`, for it and the resources below it; `mr-rest-api.xsd`), so an
   application declares its own routes. A client that is let go ends what it held with `revoke#UserHeldKey` (the key

@@ -1398,7 +1398,7 @@ along with this software (see the LICENSE.md file). If not, see
         <description>A new key of the current user that opens one service alone (UserLoginKey.scope): gateway, the LLM
             gateway's /llm/v1; git, git over HTTP and the REST resources that declare key-scope git (the framework's git
             and hosting reads); tasks, the REST resources that declare key-scope tasks (Mantle's my/tasks and a
-            repository's issues). The web, every other REST resource and every other login refuse it. It is in the
+            repository's issues: reading the user's tasks, reading and filing a repository's issues). The web, every other REST resource and every other login refuse it. It is in the
             user's device list under deviceName (revoke#UserDeviceKey ends it) and good for
             login-key/@device-expire-hours. Shown only in the out parameters. A dev instance keeps one of each for its
             group server (plans/design-dev-aide.md 21.2, question 18), in place of the account's key.</description>

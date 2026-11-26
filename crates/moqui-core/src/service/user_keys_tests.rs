@@ -333,6 +333,8 @@ fn git_and_tasks_keys_open_only_the_resources_that_declare_them_and_end_only_the
     <resource name="gitRepositories"><id name="repositoryId"><resource name="issues" key-scope="tasks">
         <method type="get"><service name="a.B.get#E"/></method>
         <id name="issueId"><method type="get"><service name="a.B.get#F"/></method></id></resource></id></resource>
+    <resource name="docs"><id name="docPath" allow-extra-path="true" key-scope="tasks">
+        <method type="get"><service name="a.B.get#G"/></method></id></resource>
 </resource>"#,
     )
     .unwrap();
@@ -374,6 +376,9 @@ fn git_and_tasks_keys_open_only_the_resources_that_declare_them_and_end_only_the
         "/rest/s1/mantle/my/tasks",
         "/rest/s1/mantle/gitRepositories/R1/issues",
         "/rest/s1/mantle/gitRepositories/R1/issues/12",
+        // an id that takes the extra path, and the dispatcher's fallback to it
+        "/rest/s1/mantle/docs/a/b/c.md",
+        "/rest/s1/mantle/docs",
     ] {
         assert!(signs_in(&tasks, path), "the tasks key on {path}");
         assert!(!signs_in(&git, path), "the git key on {path}");

@@ -1065,6 +1065,11 @@ fn check_login_key(key: &str, session_user: Option<&str>, scopes: &[&str]) -> Re
     }
     if !key_scope.is_empty() {
         session::set_scoped_key(Some(hashed.clone()));
+        // a key for one service alone signs in its own request alone: a web session gets neither its login nor a cookie
+        // or token from it, so a later request by cookie is not the account's
+        if session_user.is_none() {
+            session::note_scoped_login();
+        }
     }
     // a device's key shows when it was last used, in the user's device list (plans/Mobile-Desktop.md, MD3)
     if !text_field(&row, "deviceName").is_empty() {

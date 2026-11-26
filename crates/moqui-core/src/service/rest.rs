@@ -158,6 +158,12 @@ pub fn key_scopes(names: &[String]) -> Arc<[String]> {
             None => return empty(),
         }
     }
+    // as the dispatcher: a resource with no method of its own is served by its id that takes the extra path
+    if node.methods.is_empty() {
+        if let Some(id) = node.id.as_deref().filter(|id| id.allow_extra_path) {
+            node = id;
+        }
+    }
     Arc::clone(&node.key_scopes)
 }
 

@@ -2240,6 +2240,9 @@ struct RequestSession {
     started: Option<StartedVisit>,
     /// The bind made the session for this request: the request brought no live session of its own.
     made: bool,
+    /// A key made for one service alone signed this request in ([`note_scoped_login`]): its login is the request's
+    /// alone, never the session's.
+    scoped_login: bool,
 }
 
 /// A `moqui.server.Visit` this request created, with the `moqui.server.Visitor` it created for it, if any.
@@ -2282,6 +2285,25 @@ pub fn decline_session() {
             request.declined = true;
         }
     });
+}
+
+/// A key made for one service alone (`UserLoginKey.scope`: a git access token, a git, tasks or gateway key) signed this
+/// web request in, with no session user before it: the request declines its session ([`decline_session`]), so its
+/// response carries no session cookie or token, and the login is taken off the session before the request ends
+/// ([`scoped_login_noted`]), so a cookie the client already held never becomes the account's session. Each request
+/// carries the key. Nothing outside a web request.
+pub fn note_scoped_login() {
+    REQUEST_SESSION.with(|slot| {
+        if let Some(request) = slot.borrow_mut().as_mut() {
+            request.scoped_login = true;
+            request.declined = true;
+        }
+    });
+}
+
+/// Whether a key made for one service alone signed this web request in ([`note_scoped_login`]).
+pub fn scoped_login_noted() -> bool {
+    REQUEST_SESSION.with(|slot| slot.borrow().as_ref().is_some_and(|request| request.scoped_login))
 }
 
 /// Whether a screen declined a session for this web request ([`decline_session`]).

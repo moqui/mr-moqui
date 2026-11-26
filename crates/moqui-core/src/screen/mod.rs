@@ -433,6 +433,13 @@ fn handle(
         scripts.fire("requestDestroyed", Value::Null);
     }
     scripts.run_actions_logged("after-request", parameters);
+    // a key for one service alone signed this request in: its login was the request's, and leaves the session as the
+    // request found it (it declined the session, so nothing of it was sent)
+    if user::session::scoped_login_noted() {
+        if let Err(err) = user::logout_local() {
+            tracing::error!("The login of a key for one service was not taken off the session: {err}");
+        }
+    }
     let committed = web::stream::committed();
     let choice = match decided.get() {
         Some(choice) => choice,
