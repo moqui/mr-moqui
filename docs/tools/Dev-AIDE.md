@@ -303,8 +303,9 @@ coding-agent skill (`runtime/components/base/framework/skill/moqui-coding-agent.
 **Tasks** (`dev/Tasks`, and the Workspace rail's Tasks) lists your open tasks from a task source: `mantle` (this
 instance's Mantle work efforts assigned to you, when Mantle is loaded) or another Moqui instance over REST (Another
 instance's tasks: a base URL, your user name and an access token there, kept encrypted); Tasks from and Open in pick
-the source and the task app (IronStone Projects and MarbleERP by the conf's `task-app` elements, and any
-`DevAideTaskApp` row). A task has Open (in the task app), Copy key, Use in commit, **Set current** (the root's commit
+the source and the task app (IronStone Projects and MarbleERP by the conf's `task-app` elements, those a group server
+offers, and those added in Settings › **Task apps**: a title, and a project's and a task's path on this server with
+`{projectId}` and `{taskId}`; the extend tier adds one, and who added it or the full tier removes it). A task has Open (in the task app), Copy key, Use in commit, **Set current** (the root's commit
 messages get its trailer) and **Branch** (`KEY-first-words`). Quick create makes a task on this instance through
 Mantle. A task key is one short line; one that is not is refused.
 
@@ -448,7 +449,8 @@ The `dev-aide` conf element (the component's `MoquiConf.xml`; Settings stores so
 | `local-run-limit` | 2 | Runs in the image a user may have going |
 | `local-run-copy-mb` | 1024 | The most the copy of a working tree may hold |
 
-Its `task-app` elements name the task apps' project and task paths. The preferences: `DEV_AIDE_EDITOR`,
+Its `task-app` elements name the task apps' project and task paths; Settings › Task apps adds more (`DevAideTaskApp`
+rows). The preferences: `DEV_AIDE_EDITOR`,
 `DEV_AIDE_UPSTREAM_EDITS`, `DEV_AIDE_PUBLISH_BRANCH` (an admin's, on System › User), `DEV_AIDE_TASK_SOURCE`,
 `DEV_AIDE_TASK_APP` and `DEV_AIDE_CURRENT_TASK.<root>`.
 
