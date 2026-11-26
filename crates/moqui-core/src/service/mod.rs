@@ -130,7 +130,7 @@ pub(crate) use rest::install;
 pub use rest::install as install_rest;
 pub(crate) use rest::openapi_document;
 pub use rest::reload_roots as reload_rest_roots;
-pub use rest::{resolve_service as resolve_rest_service, root_resource_infos, run};
+pub use rest::{key_scopes as rest_key_scopes, resolve_service as resolve_rest_service, root_resource_infos, run};
 pub use seca::run_seca_rules;
 pub use security_checks::security_checks_run;
 pub(crate) use security_checks::{

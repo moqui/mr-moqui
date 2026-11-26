@@ -300,6 +300,9 @@ pub(crate) struct Memory {
     /// The stored (hashed) key of a device's key this context's user signed in with, for this request only, as
     /// `login_key_kind`: where a re-authentication in the request is kept for the device's next ones.
     device_key: Option<String>,
+    /// The stored (hashed) key of a key made for one service alone (`UserLoginKey.scope`) this context's user signed in
+    /// with, for this request only, as `login_key_kind`: the one key such a request may end.
+    scoped_key: Option<String>,
 }
 
 /// The identity of the bound web session under a device's request, and what the device may open.
@@ -777,6 +780,7 @@ pub(crate) fn renew_after_logout() -> Result<(), Error> {
         session.authz = AuthzCache::default();
         session.login_key_kind = None;
         session.device_key = None;
+        session.scoped_key = None;
         session.dirty_columns.clear();
         session.dirty_json.clear();
     });
@@ -1570,6 +1574,7 @@ pub fn set_user(user_id: &str, username: &str) {
         session.authz = AuthzCache::default();
         session.login_key_kind = None;
         session.device_key = None;
+        session.scoped_key = None;
         mark_column(session, Column::UserId);
     });
 }
@@ -1582,6 +1587,17 @@ pub(crate) fn set_login_key_kind(kind: Option<super::login::LoginKeyKind>) {
 /// Note the stored key of the device's key the user just signed in with.
 pub(crate) fn set_device_key(hashed: Option<String>) {
     with_session(|session| session.device_key = hashed);
+}
+
+/// Note the stored key of the key made for one service alone the user just signed in with.
+pub(crate) fn set_scoped_key(hashed: Option<String>) {
+    with_session(|session| session.scoped_key = hashed);
+}
+
+/// The stored key of the key made for one service alone this context's user signed in with in this request; `None`
+/// for any other login.
+pub(crate) fn scoped_key() -> Option<String> {
+    with_session(|session| session.scoped_key.clone())
 }
 
 /// The stored key of the device's key this context's user signed in with in this request; `None` for any other login.
@@ -1624,6 +1640,7 @@ pub fn clear_login() {
         session.authz = AuthzCache::default();
         session.login_key_kind = None;
         session.device_key = None;
+        session.scoped_key = None;
         mark_column(session, Column::UserId);
     });
 }
@@ -1686,6 +1703,7 @@ pub struct Identity {
     reauth_password: Option<Json>,
     login_key_kind: Option<super::login::LoginKeyKind>,
     device_key: Option<String>,
+    scoped_key: Option<String>,
 }
 
 pub fn identity() -> Identity {
@@ -1704,6 +1722,7 @@ pub fn identity() -> Identity {
         reauth_password: session.attributes.get(super::login::REAUTH_PASSWORD).cloned(),
         login_key_kind: session.login_key_kind,
         device_key: session.device_key.clone(),
+        scoped_key: session.scoped_key.clone(),
     })
 }
 
@@ -1719,6 +1738,7 @@ pub fn restore_identity(identity: &Identity) {
         session.authz = identity.authz.clone();
         session.login_key_kind = identity.login_key_kind;
         session.device_key.clone_from(&identity.device_key);
+        session.scoped_key.clone_from(&identity.scoped_key);
         mark_column(session, Column::UserId);
         mark_column(session, Column::Locale);
         mark_column(session, Column::TimeZone);
@@ -2064,6 +2084,7 @@ fn install_thread(factory: &Arc<ExecutionContextFactory>, id: &str) -> Result<()
         session.attributes = live.attributes.clone();
         session.login_key_kind = None;
         session.device_key = None;
+        session.scoped_key = None;
         project_known(session);
         session.bound_id = Some(id.to_string());
         session.factory = Some(Arc::clone(factory));
@@ -2506,6 +2527,7 @@ fn clear_bind() {
         session.factory = None;
         session.login_key_kind = None;
         session.device_key = None;
+        session.scoped_key = None;
         session.dirty_columns.clear();
         session.dirty_json.clear();
     });
