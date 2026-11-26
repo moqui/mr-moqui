@@ -101,8 +101,9 @@ along with this software (see the LICENSE.md file). If not, see
             commit's), the file and the database (plans/design-dev-aide.md 12). Unchanged in the file: no write; changed
             or added with the database still the base's (or without the row): write; the database already the file's:
             applied; the database changed too: a conflict; removed from the file: a removal to choose, or a conflict when
-            the database changed it. The counts, and each record but the unchanged with the fields that differ; a password
-            or encrypted field, and every field of an entity whose records only ADMIN exports, is shown as (hidden).
+            the database changed it. The counts, and each record but the unchanged with the fields that differ. A password
+            or encrypted field is neither compared nor answered, and a record of an entity whose records export#Records
+            refuses the caller is never compared with the database: it only differs from its base (Take file writes it).
             Writes nothing.</description>
         <in-parameters>
             <parameter name="rootId" required="true"/>
@@ -113,26 +114,27 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="baseFrom"><description>baseline, commit or none</description></parameter>
             <parameter name="baseHash"/>
             <parameter name="fileHash"/>
-            <parameter name="counts" type="Map"><description>unchanged, write, applied, conflict, remove, gone, skip</description></parameter>
+            <parameter name="counts" type="Map"><description>unchanged, write, applied, conflict, remove, gone, skip, differs</description></parameter>
             <parameter name="records" type="List"><description>Maps: key, entity, pk, change (added, changed, removed),
-                action (write, applied, conflict, remove, skip), fields (name, base, file, db); at most 500</description></parameter>
+                action (write, applied, conflict, remove, skip, differs), fields (name, base, file, db); at most 500</description></parameter>
             <parameter name="truncated" type="Boolean"/>
             <parameter name="skipped" type="List"><description>The elements that did not read, with why</description></parameter>
         </out-parameters>
     </service>
     <service verb="load" noun="ChangedRecords" type="rust" location="dev_aide::data_load::load_changed_records" allow-remote="false">
-        <description>Of a data file the user may write, the plan of plan#DataLoad carried out in one transaction: the
-            writes, each conflict as choices settles it (file: Take file, which deletes a removed record; database: Keep
-            database), each removal chosen (file) deleted. A conflict the choices do not name refuses the load, as do
-            baseHash or fileHash when they are not the plan's. Once it committed the text is the file's baseline for the
-            next load; a retry finds what was written already applied. Audited.</description>
+        <description>Of a data file the user may write, as saved, the plan of plan#DataLoad carried out in one
+            transaction: the writes through the entity-auto store (store#[entity], with its status checks) in the file's
+            order, each conflict and differing record as choices settles it (file: Take file, which deletes a removed
+            record; database: Keep database), each removal chosen (file) deleted, the last first. A conflict the choices
+            do not name refuses the load, as do baseHash and fileHash (required, checked in the transaction) when they are
+            not the plan's. Once it committed the text is the file's baseline for the next load, unless an element or a
+            record of it was passed over; a retry finds what was written already applied. Audited.</description>
         <in-parameters>
             <parameter name="rootId" required="true"/>
             <parameter name="path" required="true"/>
-            <parameter name="text" allow-html="any"><description>The buffer; the file when empty</description></parameter>
             <parameter name="choices" type="Object"><description>A map, or its JSON text, of a record's key to file or database</description></parameter>
-            <parameter name="baseHash"/>
-            <parameter name="fileHash"/>
+            <parameter name="baseHash" required="true"/>
+            <parameter name="fileHash" required="true"/>
         </in-parameters>
         <out-parameters>
             <parameter name="written" type="Long"/>
@@ -142,6 +144,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="unchanged" type="Long"/>
             <parameter name="conflicts" type="Long"/>
             <parameter name="records" type="Long"><description>Written and deleted</description></parameter>
+            <parameter name="baselineMoved" type="Boolean"/>
+            <parameter name="baselineNote"><description>Why the baseline did not move</description></parameter>
             <parameter name="skipped" type="List"/>
             <parameter name="location"/>
         </out-parameters>

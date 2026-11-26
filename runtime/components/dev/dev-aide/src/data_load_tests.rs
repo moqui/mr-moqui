@@ -29,6 +29,7 @@ fn record(id: &str, fields: &[(&str, &str)]) -> Record {
         entity: ENTITY.to_string(),
         pk: vec![("enumId".to_string(), Value::string(id))],
         fields: values(fields),
+        blind: false,
     }
 }
 
@@ -281,4 +282,44 @@ fn choices_settle_the_conflicts_and_removals_and_none_is_settled_by_default() {
         keys(&resolve(&plan, &with_removal).unwrap().deletes),
         [key("R"), key("S")]
     );
+}
+
+#[test]
+fn a_record_the_caller_may_not_read_differs_from_its_base_only_and_is_written_only_when_chosen() {
+    let blind = |mut record: Record| {
+        record.blind = true;
+        record
+    };
+    let base = [
+        blind(record("A", &[("description", "One")])),
+        blind(record("R", &[("description", "Gone")])),
+    ];
+    let file = [
+        blind(record("A", &[("description", "Uno")])),
+        blind(record("S", &[("description", "Same")])),
+    ];
+    let mut read = Vec::new();
+    // the database has A as the file has it: a plan that compared would say applied, which would confirm a guess
+    let plan = plan(&base, &file, &mut |record| {
+        read.push(record.key());
+        Db::Present(values(&[("description", "Uno")]))
+    });
+    assert!(read.is_empty(), "the database is never read for them: {read:?}");
+    assert_eq!(
+        actions(&plan),
+        [
+            (key("A"), Change::Changed, Action::Differs),
+            (key("S"), Change::Added, Action::Differs),
+            (key("R"), Change::Removed, Action::Differs)
+        ]
+    );
+    assert!(plan.iter().all(|item| item.fields.is_empty()));
+    // kept unless chosen; Take file writes, or deletes the removed one
+    assert_eq!(resolve(&plan, &Choices::new()).unwrap().kept, 3);
+    let choices: Choices = [(key("A"), "file".to_string()), (key("R"), "file".to_string())]
+        .into_iter()
+        .collect();
+    let resolved = resolve(&plan, &choices).unwrap();
+    assert_eq!(resolved.writes.len(), 1);
+    assert_eq!(resolved.deletes[0].key, key("R"));
 }

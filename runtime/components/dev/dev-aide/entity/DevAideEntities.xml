@@ -71,6 +71,8 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="filePath" type="text-medium" is-pk="true"/>
         <field name="textHash" type="text-medium"><description>The text's SHA-256</description></field>
         <field name="baselineText" type="text-very-long"/>
+        <field name="timeZone" type="text-short"><description>The zone the load read the text's time stamps in: the next
+            plan reads the base and the file in it, so a user in another zone sees the same instants</description></field>
         <field name="loadedByUserId" type="id"/>
         <field name="loadedDate" type="date-time"/>
         <relationship type="one-nofk" title="LoadedBy" related="moqui.security.UserAccount">

@@ -55,7 +55,10 @@ pub(crate) fn register(registry: &mut NativeRegistry) -> Result<(), Error> {
 const MAX_EXPORT: i64 = 1000;
 
 /// `check#DataFile`: a data file's records (the buffer's `text`, or the file) against the database, as `checkData`
-/// reports them (12): each record not found and each field that differs.
+/// reports them (12): each record not found and each field that differs. It is a restricted check
+/// (`restrictSensitiveEntities`): an entity no generic read takes is refused, and a password or encrypted field is not
+/// compared; and of an entity whose records export#Records refuses the caller it says only which field differs, never
+/// the values (plans/Security-Review.md SEC-DEV-01).
 fn check_data_file(
     ec: &ExecutionContext,
     _service: &ServiceInfo<'_>,
@@ -72,21 +75,64 @@ fn check_data_file(
         &context.facade,
         &resolved.path.display().to_string(),
         &body,
-        &moqui_core::entity::load_feed::LoadOptions::default(),
+        &moqui_core::entity::load_feed::LoadOptions {
+            restrict_sensitive_entities: true,
+            ..moqui_core::entity::load_feed::LoadOptions::default()
+        },
     )?;
+    let mut refused: BTreeMap<String, bool> = BTreeMap::new();
+    let mut is_refused = |entity: &str| {
+        *refused
+            .entry(entity.to_string())
+            .or_insert_with(|| export_refused(&context, entity).is_some())
+    };
     let diffs: Vec<Json> = checked
         .diff_info
         .into_iter()
         .map(|row| moqui_json(&Value::Map(row)))
+        .map(|mut row| {
+            if is_refused(row["entity"].as_str().unwrap_or_default()) {
+                for key in ["value", "dbValue", "createValues"] {
+                    if let Some(map) = row.as_object_mut() {
+                        map.remove(key);
+                    }
+                }
+            }
+            row
+        })
+        .collect();
+    let messages: Vec<String> = checked
+        .messages
+        .into_iter()
+        .map(|message| match checked_entity(&message) {
+            Some((entity, field)) if is_refused(&entity) => match field {
+                Some(field) => format!("Field {entity}.{field} did not match (its values are not shown)"),
+                None => format!("Entity {entity}: a record was not found (its values are not shown)"),
+            },
+            _ => message,
+        })
         .collect();
     let mut out = Parameters::new();
-    out.insert("messages".into(), json_value(&checked.messages));
+    out.insert("messages".into(), json_value(&messages));
     out.insert("differences".into(), json_value(&diffs));
     out.insert(
         "fieldsChecked".into(),
         Value::I64(i64::try_from(checked.fields_checked).unwrap_or(i64::MAX)),
     );
     Ok(out)
+}
+
+/// The entity (and field) a data check's message is of: `Field <entity>.<field> did not match; ...` or `Entity
+/// <entity> record not found ...`.
+fn checked_entity(message: &str) -> Option<(String, Option<String>)> {
+    if let Some(rest) = message.strip_prefix("Field ") {
+        let (name, _) = rest.split_once(" did not match")?;
+        let (entity, field) = name.rsplit_once('.')?;
+        return Some((entity.to_string(), Some(field.to_string())));
+    }
+    let rest = message.strip_prefix("Entity ")?;
+    let (entity, _) = rest.split_once(" record not found")?;
+    Some((entity.to_string(), None))
 }
 
 /// Entities whose rows hold credentials, which only the full tier with `ADMIN` exports (get#Credentials and

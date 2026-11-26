@@ -679,7 +679,7 @@
                 this.loadPlan = { running: true };
                 this.ctx.post("planDataLoad", { rootId: this.ctx.rootId, path: this.tab.path }).then((answer) => {
                     const choices = {};
-                    for (const record of answer.records || []) if (record.action === "conflict" || record.action === "remove") choices[record.key] = "database";
+                    for (const record of answer.records || []) if (["conflict", "remove", "differs"].includes(record.action)) choices[record.key] = "database";
                     this.loadPlan = { counts: answer.counts || {}, records: answer.records || [], skipped: answer.skipped || [], truncated: !!answer.truncated,
                         baseFrom: answer.baseFrom, baseHash: answer.baseHash, fileHash: answer.fileHash, choices, loading: false };
                 }, (error) => { this.loadPlan = null; this.ctx.fail(error); });
@@ -696,7 +696,8 @@
                     if (answer.deleted) parts.push(answer.deleted + " deleted");
                     if (answer.kept) parts.push(answer.kept + " kept as the database has them");
                     if (answer.applied) parts.push(answer.applied + " already loaded");
-                    this.ctx.note("Loaded the changed records: " + parts.join(", "), "positive");
+                    this.ctx.note("Loaded the changed records: " + parts.join(", ") + (answer.baselineNote ? "; " + answer.baselineNote : ""),
+                        answer.baselineMoved === false ? "warning" : "positive");
                 }, (error) => { plan.loading = false; this.ctx.fail(error); });
             },
             startExport() { this.exporting = { entity: "", filter: "" }; },
@@ -785,6 +786,7 @@
           <q-chip dense square>{{loadPlan.counts.applied || 0}} already loaded</q-chip>
           <q-chip dense square>{{loadPlan.counts.unchanged || 0}} unchanged</q-chip>
           <q-chip v-if="loadPlan.counts.skip" dense square>{{loadPlan.counts.skip}} passed over</q-chip>
+          <q-chip v-if="loadPlan.counts.differs" dense square>{{loadPlan.counts.differs}} not compared</q-chip>
         </div>
         <div v-for="record in planRecords('conflict')" :key="record.key" class="q-mb-sm m-dev-load-conflict">
           <div class="row items-center no-wrap"><span class="text-weight-medium">{{record.entity}}</span><span class="q-ml-sm text-caption">{{planPk(record)}}</span>
@@ -801,6 +803,12 @@
           <q-btn-toggle v-model="loadPlan.choices[record.key]" dense no-caps unelevated size="sm" toggle-color="primary"
               :options="[{ label: 'Keep', value: 'database' }, { label: 'Delete', value: 'file' }]"></q-btn-toggle>
         </div>
+        <div v-for="record in planRecords('differs')" :key="record.key" class="row items-center no-wrap q-mb-xs">
+          <span class="text-weight-medium">{{record.entity}}</span><span class="q-ml-sm text-caption">{{planPk(record)}}</span>
+          <span class="q-ml-sm text-caption m-muted">{{record.change}} in the file; not compared with the database for you</span><q-space></q-space>
+          <q-btn-toggle v-model="loadPlan.choices[record.key]" dense no-caps unelevated size="sm" toggle-color="primary"
+              :options="[{ label: 'Keep database', value: 'database' }, { label: record.change === 'removed' ? 'Delete' : 'Take file', value: 'file' }]"></q-btn-toggle>
+        </div>
         <q-expansion-item v-if="planRecords('write').length" dense dense-toggle header-class="text-caption q-px-none" :label="planRecords('write').length + ' to write'">
           <div v-for="record in planRecords('write')" :key="record.key" class="text-caption">{{record.entity}} {{planPk(record)}}<span class="m-muted">{{record.fields.length ? ': ' + record.fields.map((field) => field.name).join(', ') : ''}}</span></div>
         </q-expansion-item>
@@ -808,7 +816,7 @@
         <div v-for="(why, i) in loadPlan.skipped" :key="'s' + i" class="text-caption text-warning">Passed over: {{why}}</div>
         <div class="row q-mt-sm"><q-space></q-space>
           <q-btn unelevated no-caps color="primary" :loading="loadPlan.loading" id="DevLoadPlanRun"
-              :disable="!ctx.canWrite || !((loadPlan.counts.write || 0) + (loadPlan.counts.conflict || 0) + (loadPlan.counts.remove || 0))"
+              :disable="!ctx.canWrite || !((loadPlan.counts.write || 0) + (loadPlan.counts.conflict || 0) + (loadPlan.counts.remove || 0) + (loadPlan.counts.differs || 0))"
               label="Load" @click="runLoad"></q-btn></div>
       </template>
     </div>

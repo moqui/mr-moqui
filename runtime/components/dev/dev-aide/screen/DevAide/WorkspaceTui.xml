@@ -151,6 +151,29 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response url="../Workspace"><parameter name="rootId"/><parameter name="path"/></default-response>
         <error-response url="../Workspace"><parameter name="rootId"/><parameter name="path"/></error-response>
     </transition>
+    <!-- Load the changed records (plans/design-dev-aide.md 12), three ways as the browser's: planned, then loaded with the
+        plan's hashes when nothing needs a choice; a conflict, or a record not compared for this user, is never settled
+        here by default, so the answer names them for the browser's data file view; a removal is kept -->
+    <transition name="loadChangedRecords">
+        <actions><script><![CDATA[
+            const plan = ec.service.sync().name('org.moqui.devaide.EntityServices.plan#DataLoad').parameters({rootId, path}).call() || {}
+            if (!ec.message.hasError()) {
+                const counts = plan.counts || {}
+                if (counts.conflict || counts.differs) {
+                    ec.message.addMessage((counts.conflict || 0) + ' ' + ec.l10n.localize('in conflict') + ', ' + (counts.differs || 0) + ' '
+                        + ec.l10n.localize('not compared') + ': ' + ec.l10n.localize('choose Keep database or Take file for each in the browser\'s data file view'), 'warning')
+                } else {
+                    const out = ec.service.sync().name('org.moqui.devaide.EntityServices.load#ChangedRecords')
+                        .parameters({rootId, path, baseHash: plan.baseHash, fileHash: plan.fileHash}).call() || {}
+                    if (!ec.message.hasError()) ec.message.addMessage(ec.l10n.localize('Loaded the changed records') + ': ' + out.written + ' '
+                        + ec.l10n.localize('written') + (counts.remove ? ', ' + counts.remove + ' ' + ec.l10n.localize('removed from the file kept') : '')
+                        + (out.baselineNote ? '; ' + out.baselineNote : ''), out.baselineMoved === false ? 'warning' : 'success')
+                }
+            }
+        ]]></script></actions>
+        <default-response url="../Workspace"><parameter name="rootId"/><parameter name="path"/></default-response>
+        <error-response url="../Workspace"><parameter name="rootId"/><parameter name="path"/></error-response>
+    </transition>
     <!-- Check: the file's problems as a save would find them, kept as a save's are -->
     <transition name="checkFile">
         <actions><script><![CDATA[
@@ -570,6 +593,8 @@ along with this software (see the LICENSE.md file). If not, see
                                 <link url="checkFile" link-type="hidden-form" text="Check" parameter-map="{rootId:rootId, path:path}"/>
                                 <link url="loadDataFile" link-type="hidden-form" text="Load this file" condition="isDataFile &amp;&amp; canWrite"
                                         confirmation="Load the records of ${path} into the database?" parameter-map="{rootId:rootId, path:path}"/>
+                                <link url="loadChangedRecords" link-type="hidden-form" text="Load the changed records" condition="isDataFile &amp;&amp; canWrite"
+                                        parameter-map="{rootId:rootId, path:path}"/>
                                 <!-- what uses the artifact the file defines, or for several each one's -->
                                 <link url="../Artifacts/Refs" text="References" condition="oneArtifactId" parameter-map="{artifactId:oneArtifactId}"/>
                                 <link url="../Artifacts/Browse" text="Browse" condition="oneArtifactId" parameter-map="{artifactId:oneArtifactId}"/>

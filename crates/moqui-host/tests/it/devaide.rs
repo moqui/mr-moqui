@@ -2664,11 +2664,23 @@ fn an_entity_save_relinks_and_adds_its_column() {
         ],
     )
     .unwrap();
+    let planned = call(
+        &factory,
+        "john.doe",
+        &format!("{ENTITY}plan#DataLoad"),
+        &[("rootId", "my-site"), ("path", "data/MySiteSeedData.xml")],
+    )
+    .unwrap();
     let loaded = call(
         &factory,
         "john.doe",
         &format!("{ENTITY}load#ChangedRecords"),
-        &[("rootId", "my-site"), ("path", "data/MySiteSeedData.xml")],
+        &[
+            ("rootId", "my-site"),
+            ("path", "data/MySiteSeedData.xml"),
+            ("baseHash", &text(&planned, "baseHash")),
+            ("fileHash", &text(&planned, "fileHash")),
+        ],
     )
     .unwrap();
     assert_eq!(text(&loaded, "written"), "2", "{loaded:?}");

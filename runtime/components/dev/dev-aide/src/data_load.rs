@@ -59,8 +59,12 @@ pub(crate) struct Record {
     /// The entity's full name.
     pub entity: String,
     pub pk: Vec<(String, Value)>,
-    /// The fields the element names, without the primary key and `lastUpdatedStamp`.
+    /// The fields the element names, without the primary key, `lastUpdatedStamp` and the fields a plan never compares
+    /// (a password or encrypted field).
     pub fields: BTreeMap<String, Value>,
+    /// Of an entity the caller may not read through Dev AIDE (export#Records' rule): compared with its base only, so
+    /// what a plan answers of it says nothing of the database.
+    pub blind: bool,
 }
 
 impl Record {
@@ -118,6 +122,9 @@ pub(crate) enum Action {
     Gone,
     /// No whole primary key, or the database could not be read: not compared or written (Load this file loads it).
     Skip,
+    /// A record of an entity the caller may not read, changed, added or removed in the file: written (or deleted)
+    /// only when chosen, never compared with the database.
+    Differs,
 }
 
 /// A field of a planned record on each side: absent where that side has no such record or field.
@@ -275,6 +282,11 @@ pub(crate) fn plan(base: &[Record], file: &[Record], db: &mut dyn FnMut(&Record)
             out.push(planned);
             continue;
         }
+        if now.blind || before.is_some_and(|before| before.blind) {
+            planned.action = Action::Differs;
+            out.push(planned);
+            continue;
+        }
         if !now.complete() {
             planned.action = Action::Skip;
             out.push(planned);
@@ -321,7 +333,9 @@ pub(crate) fn plan(base: &[Record], file: &[Record], db: &mut dyn FnMut(&Record)
             fields: Vec::new(),
             file_index: None,
         };
-        if before.complete() {
+        if before.blind {
+            planned.action = Action::Differs;
+        } else if before.complete() {
             let row = db(before);
             let names = || before.fields.keys().cloned().collect::<Vec<_>>();
             (planned.action, planned.fields) = match &row {
@@ -365,8 +379,11 @@ pub(crate) fn resolve<'a>(planned: &'a [Planned], choices: &Choices) -> Result<R
             (Action::Conflict, Some("file")) => resolved.writes.push(item),
             (Action::Conflict, Some("database")) => resolved.kept += 1,
             (Action::Conflict, _) => unresolved.push(item.key.clone()),
-            (Action::Remove, Some("file")) => resolved.deletes.push(item),
-            (Action::Remove, _) => resolved.kept += 1,
+            (Action::Remove | Action::Differs, Some("file")) if item.change == Change::Removed => {
+                resolved.deletes.push(item)
+            }
+            (Action::Differs, Some("file")) => resolved.writes.push(item),
+            (Action::Remove | Action::Differs, _) => resolved.kept += 1,
             (Action::Keep | Action::Applied | Action::Gone | Action::Skip, _) => {}
         }
     }
@@ -383,15 +400,78 @@ fn counts(planned: &[Planned]) -> Json {
     json!({
         "unchanged": count(Action::Keep), "write": count(Action::Write), "applied": count(Action::Applied),
         "conflict": count(Action::Conflict), "remove": count(Action::Remove), "gone": count(Action::Gone),
-        "skip": count(Action::Skip),
+        "skip": count(Action::Skip), "differs": count(Action::Differs),
     })
+}
+
+/// What a plan keeps from the caller (export#Records' rule): a password or encrypted field, never compared or
+/// answered, and every record of an entity the caller may not read through Dev AIDE, compared with its base only.
+struct Guard<'a> {
+    context: &'a Context,
+    entities: BTreeMap<String, (bool, moqui_core::entity::sensitive::GenericAccess)>,
+}
+
+impl<'a> Guard<'a> {
+    fn new(context: &'a Context) -> Self {
+        Self {
+            context,
+            entities: BTreeMap::new(),
+        }
+    }
+
+    fn entity(&mut self, entity: &str) -> &(bool, moqui_core::entity::sensitive::GenericAccess) {
+        let context = self.context;
+        self.entities.entry(entity.to_string()).or_insert_with(|| {
+            (
+                export_refused(context, entity).is_some(),
+                moqui_core::entity::sensitive::generic_access(&context.facade, entity),
+            )
+        })
+    }
+
+    /// The caller may not read the entity's records through Dev AIDE.
+    fn refused(&mut self, entity: &str) -> bool {
+        self.entity(entity).0
+    }
+
+    /// A field never compared or answered.
+    fn hidden(&mut self, entity: &str, name: &str) -> bool {
+        self.entity(entity).1.hidden(name)
+    }
+
+    /// `fields` without the hidden ones.
+    fn compared(&mut self, entity: &str, fields: BTreeMap<String, Value>) -> BTreeMap<String, Value> {
+        fields
+            .into_iter()
+            .filter(|(name, _)| !self.hidden(entity, name))
+            .collect()
+    }
+
+    fn planned(&mut self, item: &Planned) -> Json {
+        let fields: Vec<Json> = item
+            .fields
+            .iter()
+            .map(|sides| {
+                let shown = |value: &Option<Value>| value.as_ref().map_or(Json::Null, |value| json!(to_plain_string(value)));
+                json!({ "name": sides.name, "base": shown(&sides.base), "file": shown(&sides.file), "db": shown(&sides.db) })
+            })
+            .collect();
+        let pk: serde_json::Map<String, Json> = item
+            .pk
+            .iter()
+            .map(|(name, value)| (name.clone(), json!(to_plain_string(value))))
+            .collect();
+        json!({ "key": item.key, "entity": item.entity, "pk": pk, "change": item.change, "action": item.action,
+            "fields": fields })
+    }
 }
 
 /// The records of a data file's text: each top-level element read on its own as the data check reads it (its nested
 /// records after it, with the keys they take from it), so an element that does not read (an unknown entity, a bad
 /// value) is logged and passed over while the rest are compared. A service element is not a record. With each
-/// record, its value as a load writes it.
-fn records(facade: &EntityFacade, location: &str, body: &str, skipped: &mut Vec<String>) -> Vec<(Record, EntityValue)> {
+/// record, its value as a load writes it, the hidden fields kept there.
+fn records(guard: &mut Guard<'_>, location: &str, body: &str, skipped: &mut Vec<String>) -> Vec<(Record, EntityValue)> {
+    let facade = &guard.context.facade;
     let mut out = Vec::new();
     if body.trim().is_empty() {
         return out;
@@ -421,7 +501,11 @@ fn records(facade: &EntityFacade, location: &str, body: &str, skipped: &mut Vec<
         };
         for value in values {
             match record_of(facade, &value) {
-                Ok(record) => out.push((record, value)),
+                Ok(mut record) => {
+                    record.blind = guard.refused(&record.entity);
+                    record.fields = guard.compared(&record.entity, std::mem::take(&mut record.fields));
+                    out.push((record, value));
+                }
                 Err(err) => {
                     tracing::warn!(
                         "Load the changed records of {location}: a {} record is passed over: {err}",
@@ -457,30 +541,38 @@ fn record_of(facade: &EntityFacade, value: &EntityValue) -> Result<Record, LibEr
         })
         .map(|(name, value)| (name.to_string(), value.clone()))
         .collect();
-    Ok(Record { entity, pk, fields })
+    Ok(Record {
+        entity,
+        pk,
+        fields,
+        blind: false,
+    })
 }
 
-/// The row of `record` in the database. A read that fails is logged and the record is not compared.
-fn db_row(facade: &EntityFacade, record: &Record) -> Db {
+/// The row of `record` in the database, without the fields a plan never compares. A read that fails is logged and
+/// the record is not compared.
+fn db_row(guard: &mut Guard<'_>, record: &Record) -> Db {
     if !record.complete() {
         return Db::Unknown;
     }
-    let found = facade.find(&record.entity).and_then(|mut find| {
+    let found = guard.context.facade.find(&record.entity).and_then(|mut find| {
         for (name, value) in &record.pk {
             find = find.eq(name, value.clone());
         }
         find.one()
     });
     match found {
-        Ok(Some(row)) => Db::Present(
-            row.fields()
+        Ok(Some(row)) => {
+            let fields: BTreeMap<String, Value> = row
+                .fields()
                 .iter()
                 .filter(|(name, _)| {
                     !record.pk.iter().any(|(pk, _)| pk.as_str() == name.as_ref()) && name.as_ref() != "lastUpdatedStamp"
                 })
                 .map(|(name, value)| (name.to_string(), value.clone()))
-                .collect(),
-        ),
+                .collect();
+            Db::Present(guard.compared(&record.entity, fields))
+        }
         Ok(None) => Db::Absent,
         Err(err) => {
             tracing::warn!("Load the changed records: {} could not be read: {err}", record.key());
@@ -510,8 +602,26 @@ impl BaseFrom {
     }
 }
 
+/// The base of a file: its text as last loaded from this root (with the zone that load read its time stamps in), else
+/// as last committed.
+struct Base {
+    text: String,
+    from: BaseFrom,
+    zone: Option<String>,
+}
+
+/// The time zone a file's records are read in: the last load's, so a time stamp's text names the instant it named then,
+/// else the user's, as Load this file reads it.
+fn zone_of(base: &Base) -> String {
+    base.zone
+        .clone()
+        .filter(|zone| !zone.is_empty())
+        .or_else(|| moqui_core::l10n::time_zone().iana_name().map(str::to_string))
+        .unwrap_or_else(moqui_core::l10n::server_time_zone_name)
+}
+
 /// The file's text as last loaded from this root, else as last committed.
-fn base_of(context: &Context, root: &Root, relative: &str) -> (String, BaseFrom) {
+fn base_of(context: &Context, root: &Root, relative: &str) -> Base {
     let baseline = {
         let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
         context.facade.find(BASELINE_ENTITY).and_then(|find| {
@@ -522,10 +632,12 @@ fn base_of(context: &Context, root: &Root, relative: &str) -> (String, BaseFrom)
     };
     match baseline {
         Ok(Some(row)) => {
-            return (
-                row.get("baselineText").map(to_plain_string).unwrap_or_default(),
-                BaseFrom::Baseline,
-            )
+            let field = |name: &str| row.get(name).map(to_plain_string).unwrap_or_default();
+            return Base {
+                text: field("baselineText"),
+                from: BaseFrom::Baseline,
+                zone: Some(field("timeZone")),
+            };
         }
         Ok(None) => {}
         Err(err) => tracing::warn!("The data load baseline of {} {relative}: {err}", root.id),
@@ -535,16 +647,24 @@ fn base_of(context: &Context, root: &Root, relative: &str) -> (String, BaseFrom)
             .git()
             .read(&root.path, &["show", &format!("HEAD:{relative}")])
             .unwrap_or_default();
-        return (committed, BaseFrom::Commit);
+        return Base {
+            text: committed,
+            from: BaseFrom::Commit,
+            zone: None,
+        };
     }
-    (String::new(), BaseFrom::None)
+    Base {
+        text: String::new(),
+        from: BaseFrom::None,
+        zone: None,
+    }
 }
 
-/// Move the baseline of a file to `body`, the text a load just committed. A failure is logged: the next load then
-/// compares with the older base, and finds the records written as applied.
-fn store_baseline(context: &Context, root: &Root, relative: &str, body: &str) {
+/// Move the baseline of a file to `body`, the text a load just committed, in a transaction of its own (a failure
+/// leaves the service's, the audit row, as it is). A failure is answered to the user: the next load then compares with
+/// the older base, and finds the records written as applied.
+fn store_baseline(context: &Context, root: &Root, relative: &str, body: &str, zone: &str) -> Result<(), String> {
     let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
-    // its own transaction: a failure here leaves the service's (the audit row) as it is
     let stored = context.facade.default_transactions().and_then(|tx| {
         tx.run(TransactionAttribute::ForceNew, None, || {
             let mut row = context.facade.make_value(BASELINE_ENTITY)?;
@@ -552,139 +672,105 @@ fn store_baseline(context: &Context, root: &Root, relative: &str, body: &str) {
             row.set("filePath", Value::string(relative));
             row.set("textHash", Value::string(sha256(body.as_bytes())));
             row.set("baselineText", Value::string(body));
+            row.set("timeZone", Value::string(zone));
             let user = moqui_core::user::current_user_id().ok().flatten().unwrap_or_default();
             row.set("loadedByUserId", Value::string(user));
             row.set("loadedDate", moqui_core::user::now_value());
             row.create_or_update(&context.facade)
         })
     });
-    if let Err(err) = stored {
+    stored.map_err(|err| {
         tracing::error!("The data load baseline of {} {relative} was not moved: {err}", root.id);
-    }
+        err.to_string()
+    })
 }
 
 /// The three sides of a load: the root, the file's path, the base and the file's text and their records.
 struct Sides<'a> {
     root: &'a Root,
     relative: String,
+    path: std::path::PathBuf,
     location: String,
     base_text: String,
     base_from: BaseFrom,
+    /// The zone both sides' time stamps are read in ([`zone_of`]).
+    zone: String,
     file_text: String,
     base: Vec<Record>,
     file: Vec<(Record, EntityValue)>,
+    /// What of the file did not read, with why.
     skipped: Vec<String>,
 }
 
-fn sides<'a>(context: &'a Context, parameters: &Parameters) -> Result<Sides<'a>, LibError> {
+/// The sides of the file `path` of `rootId`: the buffer's `text` when `buffer` (a plan's preview), else the file.
+fn sides<'a>(
+    context: &'a Context,
+    guard: &mut Guard<'_>,
+    parameters: &Parameters,
+    buffer: bool,
+) -> Result<Sides<'a>, LibError> {
     let root = context.root(&text(parameters, "rootId"))?;
     let resolved = context.resolve(root, &text(parameters, "path"))?;
     let file_text = Some(text(parameters, "text"))
-        .filter(|body| !body.is_empty())
+        .filter(|body| buffer && !body.is_empty())
         .map_or_else(|| std::fs::read_to_string(&resolved.path), Ok)
         .map_err(|err| LibError::new(format!("{}: {err}", resolved.relative)))?;
-    let (base_text, base_from) = base_of(context, root, &resolved.relative);
+    let base = base_of(context, root, &resolved.relative);
+    let zone = zone_of(&base);
     let location = resolved.path.display().to_string();
     let mut skipped = Vec::new();
-    let base = records(&context.facade, &location, &base_text, &mut Vec::new())
-        .into_iter()
-        .map(|(record, _)| record)
-        .collect();
-    let file = records(&context.facade, &location, &file_text, &mut skipped);
+    let (base_records, file) = moqui_core::l10n::with_time_zone(&zone, || {
+        let base_records: Vec<Record> = records(guard, &location, &base.text, &mut Vec::new())
+            .into_iter()
+            .map(|(record, _)| record)
+            .collect();
+        (base_records, records(guard, &location, &file_text, &mut skipped))
+    });
     Ok(Sides {
         root,
         relative: resolved.relative,
+        path: resolved.path,
         location,
-        base_text,
-        base_from,
+        base_text: base.text,
+        base_from: base.from,
+        zone,
         file_text,
-        base,
+        base: base_records,
         file,
         skipped,
     })
 }
 
-/// How a value shows in a plan: never a password or encrypted field, and no field of an entity whose records only
-/// `ADMIN` at the full tier exports (the credential entities; export#Records' rule).
-struct Shown<'a> {
-    context: &'a Context,
-    entities: BTreeMap<String, (bool, moqui_core::entity::sensitive::GenericAccess)>,
-}
-
-impl Shown<'_> {
-    fn hidden(&mut self, entity: &str, name: &str) -> bool {
-        let context = self.context;
-        let (refused, access) = self.entities.entry(entity.to_string()).or_insert_with(|| {
-            (
-                export_refused(context, entity).is_some(),
-                moqui_core::entity::sensitive::generic_access(&context.facade, entity),
-            )
-        });
-        *refused || access.hidden(name)
-    }
-
-    fn value(&mut self, entity: &str, name: &str, value: Option<&Value>) -> Json {
-        match value {
-            None => Json::Null,
-            Some(value) if self.hidden(entity, name) => json!(if blank(value) { "" } else { "(hidden)" }),
-            Some(value) => json!(to_plain_string(value)),
-        }
-    }
-
-    fn planned(&mut self, item: &Planned) -> Json {
-        let fields: Vec<Json> = item
-            .fields
-            .iter()
-            .map(|sides| {
-                json!({
-                    "name": sides.name,
-                    "base": self.value(&item.entity, &sides.name, sides.base.as_ref()),
-                    "file": self.value(&item.entity, &sides.name, sides.file.as_ref()),
-                    "db": self.value(&item.entity, &sides.name, sides.db.as_ref()),
-                })
-            })
-            .collect();
-        let pk: serde_json::Map<String, Json> = item
-            .pk
-            .iter()
-            .map(|(name, value)| (name.clone(), json!(to_plain_string(value))))
-            .collect();
-        json!({ "key": item.key, "entity": item.entity, "pk": pk, "change": item.change, "action": item.action,
-            "fields": fields })
-    }
-}
-
 /// The plan's records a user reads (every one but those unchanged or gone), at most [`MAX_LISTED`].
-fn listed(context: &Context, planned: &[Planned]) -> Vec<Json> {
-    let mut shown = Shown {
-        context,
-        entities: BTreeMap::new(),
-    };
+fn listed(guard: &mut Guard<'_>, planned: &[Planned]) -> Vec<Json> {
     planned
         .iter()
         .filter(|item| !matches!(item.action, Action::Keep | Action::Gone))
         .take(MAX_LISTED)
-        .map(|item| shown.planned(item))
+        .map(|item| guard.planned(item))
         .collect()
 }
 
 /// `plan#DataLoad`: what Load the changed records would do with a data file (the buffer's `text`, or the file): the
-/// counts, and each record it writes, removes or finds in conflict with the fields that differ (12). Writes nothing.
+/// counts, and each record it writes, removes or finds in conflict with the fields that differ (12). A password or
+/// encrypted field is left out of the compare and the answer, and a record of an entity the caller may not read
+/// through Dev AIDE is answered only as differing from its base. Writes nothing.
 fn plan_data_load(
     ec: &ExecutionContext,
     _service: &ServiceInfo<'_>,
     parameters: &Parameters,
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::View)?;
-    let sides = sides(&context, parameters)?;
+    let mut guard = Guard::new(&context);
+    let sides = sides(&context, &mut guard, parameters, true)?;
     let file: Vec<Record> = sides.file.iter().map(|(record, _)| record.clone()).collect();
-    let planned = plan(&sides.base, &file, &mut |record| db_row(&context.facade, record));
+    let planned = plan(&sides.base, &file, &mut |record| db_row(&mut guard, record));
     let mut out = Parameters::new();
     out.insert("baseFrom".into(), Value::string(sides.base_from.name()));
     out.insert("baseHash".into(), Value::string(sha256(sides.base_text.as_bytes())));
     out.insert("fileHash".into(), Value::string(sha256(sides.file_text.as_bytes())));
     out.insert("counts".into(), json_value(&counts(&planned)));
-    out.insert("records".into(), json_value(&listed(&context, &planned)));
+    out.insert("records".into(), json_value(&listed(&mut guard, &planned)));
     out.insert(
         "truncated".into(),
         Value::Bool(
@@ -721,29 +807,44 @@ struct Loaded {
     applied: usize,
     unchanged: usize,
     conflicts: usize,
+    /// Records of the file not compared or written (no whole primary key, a read that failed).
+    passed_over: usize,
 }
 
-/// `load#ChangedRecords`: the plan of [`plan_data_load`] carried out in one transaction, the conflicts as `choices`
-/// settles them (each conflict needs one; a plan that now has a conflict the choices do not name is refused, so the
-/// user sees it first), and the removals chosen deleted. `baseHash` and `fileHash`, when given, are the plan's: a load
-/// since, or another text, is refused. Once it committed, the file's text is the baseline of the next load; audited.
+/// Write the file's record `value` as the data loader writes an XML record: the entity-auto store (`store#<entity>`,
+/// Java's `storeEntity`, with its status checks), as the user.
+fn store_record(value: &EntityValue) -> Result<(), LibError> {
+    let parameters = moqui_core::entity::string_map(value.fields());
+    moqui_core::service::call::sync_checked(
+        &format!("store#{}", value.entity_name()),
+        &parameters,
+        &moqui_core::service::call::CallOptions::default(),
+    )
+    .map(|_| ())
+    .map_err(|err| LibError::new(err.to_string()))
+}
+
+/// `load#ChangedRecords`: the plan of [`plan_data_load`] for the file as saved, carried out in one transaction: the
+/// writes through the entity-auto store in the file's order, each conflict and each differing record as `choices`
+/// settles them (a conflict needs one; a plan that now has a conflict the choices do not name is refused, so the user
+/// sees it first), and the removals chosen deleted, the file's last record first so a record goes before the one it
+/// names. `baseHash` and `fileHash` are the plan's, checked in the transaction: a load since, or another text, is
+/// refused. Once it committed, the file's text is the baseline of the next load, unless something of it was passed
+/// over (an element that did not read, a record not compared), whose change would be lost; audited.
 fn load_changed_records(
     ec: &ExecutionContext,
     _service: &ServiceInfo<'_>,
     parameters: &Parameters,
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::Extend)?;
-    let sides = sides(&context, parameters)?;
+    let mut guard = Guard::new(&context);
+    let sides = sides(&context, &mut guard, parameters, false)?;
     context.may_write(sides.root, &sides.relative)?;
-    for (name, have) in [("baseHash", &sides.base_text), ("fileHash", &sides.file_text)] {
-        let expected = text(parameters, name);
-        if !expected.is_empty() && expected != sha256(have.as_bytes()) {
-            return Err(LibError::new(if name == "baseHash" {
-                format!("{} was loaded since the plan was made: check it again", sides.relative)
-            } else {
-                format!("{} changed since the plan was made: check it again", sides.relative)
-            }));
-        }
+    let (base_hash, file_hash) = (text(parameters, "baseHash"), text(parameters, "fileHash"));
+    if base_hash.is_empty() || file_hash.is_empty() {
+        return Err(LibError::new(
+            "Load the changed records needs the plan's baseHash and fileHash",
+        ));
     }
     let choices = choices_of(parameters)?;
     let facade = &context.facade;
@@ -751,8 +852,22 @@ fn load_changed_records(
     let done = facade
         .default_transactions()?
         .run(TransactionAttribute::ForceNew, None, || {
-            // read and written in the one transaction
-            let planned = plan(&sides.base, &file, &mut |record| db_row(facade, record));
+            // the plan's sides as they are now, read in the transaction that writes
+            let base_now = base_of(&context, sides.root, &sides.relative).text;
+            if sha256(base_now.as_bytes()) != base_hash || base_hash != sha256(sides.base_text.as_bytes()) {
+                return Err(LibError::new(format!(
+                    "{} was loaded since the plan was made: check it again",
+                    sides.relative
+                )));
+            }
+            let file_now = std::fs::read_to_string(&sides.path).unwrap_or_default();
+            if sha256(file_now.as_bytes()) != file_hash || file_hash != sha256(sides.file_text.as_bytes()) {
+                return Err(LibError::new(format!(
+                    "{} changed since the plan was made: check it again",
+                    sides.relative
+                )));
+            }
+            let planned = plan(&sides.base, &file, &mut |record| db_row(&mut guard, record));
             let resolved = resolve(&planned, &choices).map_err(|unresolved| {
                 LibError::new(format!(
                     "{} conflict{} the plan did not show ({}): check it again",
@@ -765,11 +880,10 @@ fn load_changed_records(
                 let Some((_, value)) = item.file_index.and_then(|at| sides.file.get(at)) else {
                     continue;
                 };
-                value
-                    .create_or_update(facade)
-                    .map_err(|err| LibError::new(format!("{}: {err}", item.key)))?;
+                store_record(value).map_err(|err| LibError::new(format!("{}: {err}", item.key)))?;
             }
-            for item in &resolved.deletes {
+            // the base's last record first: a nested or later record goes before the one it names
+            for item in resolved.deletes.iter().rev() {
                 let mut value = facade.make_value(&item.entity)?;
                 for (name, key) in &item.pk {
                     value.set(name, key.clone());
@@ -786,6 +900,7 @@ fn load_changed_records(
                 applied: count(Action::Applied),
                 unchanged: count(Action::Keep),
                 conflicts: count(Action::Conflict),
+                passed_over: count(Action::Skip),
             })
         });
     audit::record(
@@ -799,13 +914,27 @@ fn load_changed_records(
             detail: Some(match &done {
                 Ok(loaded) => json!({ "threeWay": true, "baseFrom": sides.base_from.name(), "written": loaded.written,
                     "deleted": loaded.deleted, "kept": loaded.kept, "applied": loaded.applied,
-                    "conflicts": loaded.conflicts }),
+                    "conflicts": loaded.conflicts, "passedOver": loaded.passed_over + sides.skipped.len() }),
                 Err(err) => json!({ "threeWay": true, "error": err.to_string() }),
             }),
         },
     );
     let loaded = done.map_err(|err| LibError::new(err.to_string()))?;
-    store_baseline(&context, sides.root, &sides.relative, &sides.file_text);
+    // the baseline moves only over a file all of whose records were settled: a change passed over stays to load
+    let baseline = if loaded.passed_over > 0 || !sides.skipped.is_empty() {
+        Err(format!(
+            "{} record{} of the file were passed over, so the next load compares with the same base",
+            loaded.passed_over + sides.skipped.len(),
+            if loaded.passed_over + sides.skipped.len() == 1 {
+                ""
+            } else {
+                "s"
+            }
+        ))
+    } else {
+        store_baseline(&context, sides.root, &sides.relative, &sides.file_text, &sides.zone)
+            .map_err(|err| format!("the baseline was not moved ({err}): the next load compares with the same base"))
+    };
     let mut out = Parameters::new();
     let as_long = |count: usize| Value::I64(i64::try_from(count).unwrap_or(i64::MAX));
     out.insert("written".into(), as_long(loaded.written));
@@ -815,6 +944,8 @@ fn load_changed_records(
     out.insert("unchanged".into(), as_long(loaded.unchanged));
     out.insert("conflicts".into(), as_long(loaded.conflicts));
     out.insert("records".into(), as_long(loaded.written + loaded.deleted));
+    out.insert("baselineMoved".into(), Value::Bool(baseline.is_ok()));
+    out.insert("baselineNote".into(), baseline.err().map_or(Value::Null, Value::string));
     out.insert("skipped".into(), json_value(&sides.skipped));
     out.insert("location".into(), Value::string(&sides.location));
     Ok(out)
