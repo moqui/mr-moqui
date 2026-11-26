@@ -14,6 +14,7 @@
 
 use super::*;
 
+const MAX: u64 = 1 << 20;
 const TEXT: &str = "<a name=\"orderId\"/>\n<b name=\"OrderId\" other=\"orderId\"/>\n<c/>\n";
 
 #[test]
@@ -37,28 +38,28 @@ fn a_text_matches_ignoring_case_unless_asked_and_each_hit_has_its_line_before_an
 #[test]
 fn only_the_chosen_matches_are_replaced() {
     let replacer = Replacer::new("orderId", "salesOrderId", false, false).unwrap();
-    let (text, count) = replacer.replace(TEXT, &[0, 2].into_iter().collect());
+    let (text, count) = replacer.replace(TEXT, &[0, 2].into_iter().collect(), MAX).unwrap();
     assert_eq!(count, 2);
     assert_eq!(
         text,
         "<a name=\"salesOrderId\"/>\n<b name=\"OrderId\" other=\"salesOrderId\"/>\n<c/>\n"
     );
-    let (same, none) = replacer.replace(TEXT, &BTreeSet::new());
+    let (same, none) = replacer.replace(TEXT, &BTreeSet::new(), MAX).unwrap();
     assert_eq!((same.as_str(), none), (TEXT, 0));
     // a chosen index past the matches changes nothing
-    assert_eq!(replacer.replace(TEXT, &[9].into_iter().collect()).1, 0);
+    assert_eq!(replacer.replace(TEXT, &[9].into_iter().collect(), MAX).unwrap().1, 0);
 }
 
 #[test]
 fn a_regular_expression_expands_its_groups_and_a_text_does_not() {
     let regex = Replacer::new(r#"name="(\w+)""#, "name=\"${1}Ext\" was=\"$1\"", true, true).unwrap();
-    let (text, count) = regex.replace(TEXT, &[0, 1].into_iter().collect());
+    let (text, count) = regex.replace(TEXT, &[0, 1].into_iter().collect(), MAX).unwrap();
     assert_eq!(count, 2);
     assert!(text.starts_with("<a name=\"orderIdExt\" was=\"orderId\"/>\n<b name=\"OrderIdExt\" was=\"OrderId\" other"));
     // in a text, $1 is two characters, and a regular expression's characters are themselves
     let plain = Replacer::new("a.b", "$1", false, true).unwrap();
     assert_eq!(
-        plain.replace("a.b axb", &[0, 1].into_iter().collect()),
+        plain.replace("a.b axb", &[0, 1].into_iter().collect(), MAX).unwrap(),
         ("$1 axb".to_string(), 1)
     );
 }
@@ -85,4 +86,49 @@ fn nothing_to_find_a_bad_expression_and_one_that_matches_nothing_are_refused() {
     assert!(Replacer::new("a*", "x", true, true).unwrap_err().contains("empty"));
     // the same characters as a text are fine
     assert!(Replacer::new("a*", "x", false, true).is_ok());
+}
+
+#[test]
+fn a_group_number_ends_at_its_last_digit() {
+    assert_eq!(numbered_groups("$1a ${x} $$1 $ $12b"), "${1}a ${x} $$1 $ ${12}b");
+    let regex = Replacer::new(r"(\w+)=(\d)", "$1a=$2b", true, true).unwrap();
+    assert_eq!(
+        regex.replace("k=5", &[0].into_iter().collect(), MAX).unwrap().0,
+        "ka=5b"
+    );
+}
+
+#[test]
+fn an_empty_match_is_passed_over_in_the_preview_and_the_replace() {
+    // \b matches an empty text only between characters, so the refusal of an empty match does not catch it
+    let regex = Replacer::new(r"x|\b", "Y", true, true).unwrap();
+    let (hits, _) = regex.hits("ab x", 10);
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].column, 4);
+    assert_eq!(
+        regex.replace("ab x", &[0].into_iter().collect(), MAX).unwrap(),
+        ("ab Y".to_string(), 1)
+    );
+    assert!(!Replacer::new(r"\b", "Y", true, true).unwrap().finds("ab cd"));
+}
+
+#[test]
+fn the_query_the_replacement_and_the_result_are_bounded() {
+    assert!(Replacer::new(&"a".repeat(MAX_QUERY_BYTES + 1), "x", false, true)
+        .unwrap_err()
+        .contains("over"));
+    assert!(Replacer::new("a", &"x".repeat(MAX_REPLACEMENT_BYTES + 1), false, true)
+        .unwrap_err()
+        .contains("over"));
+    let big = Replacer::new("a", &"x".repeat(1000), false, true).unwrap();
+    let all: BTreeSet<usize> = (0..10).collect();
+    assert!(big
+        .replace("aaaaaaaaaa", &all, 5000)
+        .unwrap_err()
+        .contains("over 5000 bytes"));
+    // a long line is shown cut, with an ellipsis
+    let long = format!("{}orderId{}", "x".repeat(1000), "y".repeat(1000));
+    let (hits, _) = Replacer::new("orderId", "z", false, true).unwrap().hits(&long, 1);
+    assert_eq!(hits[0].text.chars().count(), SHOWN_CHARS + 1);
+    assert!(hits[0].text.ends_with('…') && hits[0].after.ends_with('…'));
 }

@@ -348,33 +348,45 @@ test("a commit names an issue by its number, else its key; Amend drops only that
     assert.equal(pure.withoutTrailer("Why\n\nTask: OTHER-1", "PROJ-12"), "Why\n\nTask: OTHER-1");
 });
 
-test("the editor settings: the editor's rebound keys to m-code-editor, the Workspace's own keys to the Workspace", () => {
-    const answer = { settings: { fontSize: 16, tabSize: 2, wrap: true, whitespace: false, keymap: "default", keys: { gotoFile: "Mod-e", find: "Alt-f" } },
+test("the editor settings: the code editor's rebound keys, and the Workspace's own commands as key map actions", () => {
+    const answer = { settings: { fontSize: 16, tabSize: null, wrap: true, whitespace: false, keymap: "default", keys: { find: "Alt-f" } },
         commands: [
-            { command: "gotoFile", scope: "workspace", defaultKeys: "Mod-p", keys: "Mod-e" },
-            { command: "gotoArtifact", scope: "workspace", defaultKeys: "Mod-Shift-o", keys: "Mod-Shift-o" },
-            { command: "save", scope: "editor", defaultKeys: "Mod-s", keys: "Alt-s" },
-            { command: "find", scope: "editor", defaultKeys: "Mod-f", keys: "Alt-f" },
-            { command: "undo", scope: "editor", defaultKeys: "Mod-z", keys: "Mod-z" }] };
-    const { settings, workspaceKeys } = pure.editorSettingsOf(answer);
-    assert.deepEqual(settings, { fontSize: 16, tabSize: 2, wrap: true, whitespace: false, keymap: "default", keys: { save: "Alt-s", find: "Alt-f" } });
-    // Save is the Workspace's too, for a visual view; a command the answer leaves out keeps its default
-    assert.deepEqual(workspaceKeys, { gotoFile: "Mod-e", gotoArtifact: "Mod-Shift-o", searchFiles: "Mod-Shift-f", save: "Alt-s" });
-    assert.deepEqual(pure.editorSettingsOf(null).workspaceKeys, pure.WORKSPACE_KEYS);
+            { command: "save", defaultKeys: "Mod-s", keys: "Alt-s" },
+            { command: "find", defaultKeys: "Mod-f", keys: "Alt-f" },
+            { command: "undo", defaultKeys: "Mod-z", keys: "Mod-z" }] };
+    assert.deepEqual(pure.editorSettingsOf(answer), { fontSize: 16, tabSize: null, wrap: true, whitespace: false, keymap: "default",
+        keys: { save: "Alt-s", find: "Alt-f" } });
+    assert.deepEqual(pure.editorSettingsOf(null), { keys: {} });
+    // Go to file, Go to artifact, Search in files and Save: shell actions, each run by a Workspace method
+    assert.deepEqual(pure.WORKSPACE_KEYS.map((command) => command.action + " " + command.keys),
+        ["devGotoFile Mod+P", "devGotoArtifact Mod+Shift+O", "devSearchFiles Mod+Shift+F", "devSave Mod+S"]);
+    const methods = moqui.devAide.components["m-dev-workspace"].methods;
+    for (const command of pure.WORKSPACE_KEYS) assert.equal(typeof methods[command.run], "function", command.run);
 });
 
-test("Replace sends the chosen matches with each file's hash, and refuses a file with unsaved changes in a tab", () => {
+test("Replace sends the chosen matches with each file's hash, and refuses a file with unsaved changes in any open buffer", () => {
     const hit = (index, chosen) => ({ index, line: index + 1, chosen });
     const preview = { files: [
         { path: "a.xml", hash: "ha", matches: [hit(0, true), hit(1, false), hit(2, true)] },
         { path: "b.xml", hash: "hb", matches: [hit(0, true)] },
         { path: "c.xml", hash: "hc", matches: [hit(0, false)] },
+        { path: "d.xml", hash: "hd", matches: [hit(0, true)] },
         { path: "up.xml", hash: "hu", refused: "upstream", matches: [hit(0, true)] }] };
-    const tabs = [{ path: "a.xml", text: "x", saved: "x" }, { path: "b.xml", text: "edited", saved: "x" }];
-    const request = pure.replaceRequest(preview, tabs);
+    // b.xml edited in its tab; d.xml edited as a companion of a.xml's view; another root's d.xml is not this one's
+    const tabs = [{ path: "a.xml", text: "x", saved: "x", companions: [{ rootId: "r", path: "d.xml", text: "edited", saved: "x" },
+        { rootId: "other", path: "a.xml", text: "edited", saved: "x" }] }, { path: "b.xml", text: "edited", saved: "x" }];
+    const request = pure.replaceRequest(preview, tabs, "r");
     assert.deepEqual(request.files, [{ path: "a.xml", hash: "ha", matches: [0, 2] }]);
     assert.equal(request.count, 2);
-    assert.deepEqual(request.refused.map((item) => item.path), ["b.xml"]);
+    assert.deepEqual(request.refused.map((item) => item.path), ["b.xml", "d.xml"]);
     assert.ok(request.refused[0].reason.includes("unsaved"));
-    assert.deepEqual(pure.replaceRequest(null, tabs), { files: [], refused: [], count: 0 });
+    assert.deepEqual(pure.replaceRequest(null, tabs, "r"), { files: [], refused: [], count: 0 });
+    assert.deepEqual(pure.openBuffers(tabs, "r").map((open) => open.rootId + ":" + open.path), ["r:a.xml", "r:d.xml", "other:a.xml", "r:b.xml"]);
+});
+
+test("a .qvue saves after its XML screen, and a companion's draft is not its file's tab's", () => {
+    const xml = { path: "screen/A/Board.xml", text: "x", saved: "" }, qvue = { path: "screen/A/Board.qvue", text: "y", saved: "" };
+    assert.deepEqual(pure.saveOrder([qvue, xml]).map((buffer) => buffer.path), ["screen/A/Board.xml", "screen/A/Board.qvue"]);
+    assert.notEqual(pure.draftKey("r", { path: "screen/A/Board.xml" }), pure.draftKey("r", { path: "screen/A/Board.xml", owner: "screen/A/Board.qvue" }));
+    assert.ok(pure.isDraftKey(pure.draftKey("r", { path: "a.xml", owner: "b.qvue" })));
 });

@@ -92,7 +92,9 @@ feature("Settings shows the group servers and the plan of one", {
         // the one render of Settings carries the editor's checks too (EditorSettings.spec.js has the rules): its form
         // and a row a command with its default keys
         page.output.includes("Show white space")
-        page.output.includes("Editor keys") && page.output.includes("Go to file") && page.output.includes("Mod-Shift-o")
+        page.output.includes("Editor keys") && page.output.includes("Comment the lines") && page.output.includes("Mod-/")
+        // the Workspace's own keys are the shell's, rebound by its KEYMAP preference
+        page.output.includes("devGotoFile")
     }
 })
 

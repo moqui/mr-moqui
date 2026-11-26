@@ -55,8 +55,9 @@ The assisted IDE of mr-moqui (`plans/design-dev-aide.md`), at `/qapps/dev` on a 
   has it now, with Mermaid diagrams (a click opens one in a zoom dialog) and a button that copies it; the entity modeler and service writer have a Doc tab,
   the screen builder a Doc panel. **Export docs** writes a tree of them into a repository (`autodoc/` by default), as
   `moqui autodoc` does ([docs/dev/Autodoc.md](../../../../docs/dev/Autodoc.md)).
-- **Settings** has the editor (font size, tab size, wrap, white space, the keymap, and a key for each command, the
-  `DEV_AIDE_EDITOR` preference), the site components, "Allow editing upstream components", the roots' labels,
+- **Settings** has the editor (font size, tab size, wrap, white space, the keymap, and a key for each of the code
+  editor's commands, the `DEV_AIDE_EDITOR` preference; the Workspace's Go to file, Go to artifact, Search in files and
+  Save are shell key map actions, rebound by the `KEYMAP` preference), the site components, "Allow editing upstream components", the roots' labels,
   read-only flags and publish branches, more directories, network git on a shared dev server, and the **group servers**
   ([plans/design-dev-aide.md](../../../../plans/design-dev-aide.md) §21): Connect signs in at a team's server (or
   moqui.org) as an installed app does, through one of its identity providers or its own login, with this instance's own

@@ -633,6 +633,32 @@ pub(crate) fn save_text(
     base_hash: &str,
     detail: Option<serde_json::Value>,
 ) -> Result<Parameters, LibError> {
+    save_text_with(context, root, resolved, content, base_hash, detail, Endings::File)
+}
+
+/// The line endings a save writes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Endings {
+    /// The file's: CRLF when most of its line breaks are, else LF (an editor's text has LF).
+    File,
+    /// The text's, as given: a replace in the file's own text, whose mixed endings stay mixed.
+    AsGiven,
+}
+
+/// [`save_text`], with the line endings of `endings`.
+///
+/// # Errors
+///
+/// As [`save_text`].
+pub(crate) fn save_text_with(
+    context: &Context,
+    root: &Root,
+    resolved: &confine::Resolved,
+    content: &str,
+    base_hash: &str,
+    detail: Option<serde_json::Value>,
+    endings: Endings,
+) -> Result<Parameters, LibError> {
     context.may_write(root, &resolved.relative)?;
     if content.len() as u64 > context.settings.max_edit_bytes {
         return Err(LibError::new(format!(
@@ -659,11 +685,16 @@ pub(crate) fn save_text(
         }
         None => (false, false),
     };
-    let normalized = content.replace("\r\n", "\n");
-    let body = if crlf_file {
-        normalized.replace('\n', "\r\n")
-    } else {
-        normalized
+    let body = match endings {
+        Endings::AsGiven => content.to_string(),
+        Endings::File => {
+            let normalized = content.replace("\r\n", "\n");
+            if crlf_file {
+                normalized.replace('\n', "\r\n")
+            } else {
+                normalized
+            }
+        }
     };
     let mut bytes = Vec::with_capacity(body.len() + 3);
     if bom {
@@ -963,8 +994,10 @@ fn find_files(
     Ok(out)
 }
 
-/// `search#Files`: lines matching `query` (text, or a regular expression with `regex`), at most 500, with `git grep`
-/// in a repository (its .gitignore respected) and a walk of the files in a plain root.
+/// `search#Files`: lines matching `query` (text, or a regular expression with `regex`), at most 500: a text with `git
+/// grep` in a repository (its .gitignore respected); a regular expression, and any query in a plain root, by Rust's
+/// regex over the root's files (what git tracks and the untracked ones it does not ignore), as Replace across files
+/// reads it, each file up to `max-edit-bytes`.
 fn search_files(
     ec: &ExecutionContext,
     _service: &ServiceInfo<'_>,
@@ -976,12 +1009,19 @@ fn search_files(
     if query.is_empty() {
         return Err(LibError::new("nothing to search for"));
     }
+    if query.len() > crate::replace::MAX_QUERY_BYTES {
+        return Err(LibError::new(format!(
+            "the text to find is over {} bytes",
+            crate::replace::MAX_QUERY_BYTES
+        )));
+    }
     let regex = flag(parameters, "regex");
     let case = flag(parameters, "caseSensitive");
     let filter = text(parameters, "pathFilter");
     const LIMIT: usize = 500;
     let mut results = Vec::new();
-    if root.kind == RootKind::Git {
+    // text through git grep; a regular expression by Rust's, as Replace across files reads it, so the two agree
+    if root.kind == RootKind::Git && !regex {
         let mut args = vec!["grep", "-n", "-I", "--no-color", "-z", "--untracked"];
         args.push(if regex { "-E" } else { "-F" });
         if !case {
@@ -1022,6 +1062,12 @@ fn search_files(
             let Ok(resolved) = context.resolve(root, &path) else {
                 continue;
             };
+            // a file an editor would not open to edit is not read
+            if std::fs::metadata(&resolved.path).map_or(true, |meta| {
+                !meta.is_file() || meta.len() > context.settings.max_edit_bytes
+            }) {
+                continue;
+            }
             let Ok(bytes) = std::fs::read(&resolved.path) else {
                 continue;
             };

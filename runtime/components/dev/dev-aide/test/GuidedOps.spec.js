@@ -399,6 +399,11 @@ feature("a parameter, a SECA rule and a Try's parameters as the service writer w
             position: "first",
             xml: "<description>Plain</description>"
         })
+        // the refusals the browser view makes too (DevAideService.page.js)
+        ops.parameterRefusal(nested, "in-parameters", {mode: "add", parent: "order", name: "items"}).includes("already")
+        ops.parameterRefusal(nested, "in-parameters", {mode: "add", parent: "order", name: "plain"}) == null
+        ops.parameterRefusal(nested, "in-parameters", {mode: "edit", path: "order", type: "String"}).includes("holds parameters")
+        ops.parameterRefusal(nested, "in-parameters", {mode: "edit", path: "extra", type: "String"}) == null
         ops.secaXml("create#Thing", "post-service", "thingId != null", "my.Svc.note#Thing") ==
             '<seca service="create#Thing" when="post-service"><condition><expression>thingId != null</expression></condition><actions><service-call name="my.Svc.note#Thing" in-map="context"/></actions></seca>'
     }

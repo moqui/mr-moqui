@@ -42,16 +42,20 @@ feature("the settings are the defaults with no preference, and what is stored af
         const tooBig = call("store#EditorSettings", {fontSize: "99"})
         const keymap = call("store#EditorSettings", {keymap: "emacs"})
         const after = call("get#EditorSettings")
-        return {declared, before, stored, tooBig, keymap, after, preference: JSON.parse(ec.user.getPreference(PREFERENCE) || "{}")}
+        // a size given empty is its default: CodeMirror's tab size and indent; one not given is kept
+        const cleared = call("store#EditorSettings", {tabSize: ""})
+        return {declared, before, stored, tooBig, keymap, after, cleared, preference: JSON.parse(ec.user.getPreference(PREFERENCE) || "{}")}
     },
-    then({declared, before, stored, tooBig, keymap, after, preference}) {
+    then({declared, before, stored, tooBig, keymap, after, cleared, preference}) {
         declared.enumTypeId == "UserPreferenceKey"
         before.errors == ""
         before.out.settings.fontSize == 13
-        before.out.settings.tabSize == 4
+        before.out.settings.tabSize == null
         before.out.settings.keymap == "default"
         before.out.keymaps.includes("default")
-        keysOf(before.out, "gotoFile") == "Mod-p"
+        keysOf(before.out, "undo") == "Mod-z"
+        // the Workspace's own commands are shell key map actions, not rows here
+        keysOf(before.out, "gotoFile") == null
         stored.errors == ""
         tooBig.errors.includes("fontSize is a whole number from 8 to 32")
         keymap.errors.includes("no keymap emacs")
@@ -60,33 +64,40 @@ feature("the settings are the defaults with no preference, and what is stored af
         after.out.settings.wrap == true
         after.out.settings.whitespace == true
         preference.fontSize == 16
+        cleared.out.settings.tabSize == null
+        cleared.out.settings.fontSize == 16
     }
 })
 
 feature("a command's keys rebound over the keymap; keys another has, or not a key, refused; empty sets the default back", {
     when() {
-        const rebound = call("store#EditorKey", {command: "gotoFile", keys: "Mod-e"})
-        const taken = call("store#EditorKey", {command: "save", keys: "Mod-e"})
+        const rebound = call("store#EditorKey", {command: "undo", keys: "Mod-e"})
+        // the same key written another way, or as it is pressed on the platform, is the same key
+        const taken = call("store#EditorKey", {command: "save", keys: "ctrl-E"})
         const notKeys = call("store#EditorKey", {command: "save", keys: "Mod-"})
         const unknown = call("store#EditorKey", {command: "nothing", keys: "Mod-q"})
         // the old key of the rebound command is free now
-        const freed = call("store#EditorKey", {command: "find", keys: "Mod-p"})
+        const freed = call("store#EditorKey", {command: "find", keys: "Mod-z"})
         const settings = call("get#EditorSettings")
-        const back = call("store#EditorKey", {command: "gotoFile", keys: ""})
+        // its default back is refused while another command has it, then taken once that one is back too
+        const held = call("store#EditorKey", {command: "undo", keys: ""})
+        call("store#EditorKey", {command: "find", keys: ""})
+        const back = call("store#EditorKey", {command: "undo", keys: ""})
         // the other settings are kept by a key's store
-        return {rebound, taken, notKeys, unknown, freed, settings, back}
+        return {rebound, taken, notKeys, unknown, freed, settings, held, back}
     },
-    then({rebound, taken, notKeys, unknown, freed, settings, back}) {
+    then({rebound, taken, notKeys, unknown, freed, settings, held, back}) {
         rebound.errors == ""
-        keysOf(rebound.out, "gotoFile") == "Mod-e"
-        taken.errors.includes("is the key of Go to file")
+        keysOf(rebound.out, "undo") == "Mod-e"
+        taken.errors.includes("is the key of Undo")
         notKeys.errors.includes("is not a key")
         unknown.errors.includes("no editor command nothing")
         freed.errors == ""
-        settings.out.settings.keys.gotoFile == "Mod-e"
-        settings.out.settings.keys.find == "Mod-p"
+        settings.out.settings.keys.undo == "Mod-e"
+        settings.out.settings.keys.find == "Mod-z"
         settings.out.settings.fontSize == 16
-        keysOf(back.out, "gotoFile") == "Mod-p"
-        back.out.settings.keys.gotoFile == null
+        held.errors.includes("is the key of Find in the file")
+        keysOf(back.out, "undo") == "Mod-z"
+        back.out.settings.keys.undo == null
     }
 })

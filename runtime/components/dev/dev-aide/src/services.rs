@@ -136,12 +136,69 @@ fn git_hosting(name: &str, parameters: &[(&str, Value)]) -> Result<Parameters, L
     out.map_err(|err| LibError::new(format!("the git hosting ({name}): {err}")))
 }
 
+/// What of a gitECA rule tells whether it runs on an event's context, as `GitRule::matches` (moqui-core
+/// `service::git_eca`) decides it past the event and the repository: its sources, its `ref-pattern` (the whole ref name,
+/// and only an event of a ref), its `ref-type` (branch, tag or other) and `default-branch-only`.
+pub(crate) struct GitRuleFilter {
+    pub ref_pattern: Option<moqui_lib::object::CompiledRegex>,
+    pub ref_type: Option<String>,
+    pub default_branch_only: bool,
+    pub sources: Vec<String>,
+}
+
+/// A rule's `source`, comma separated; empty is a push, a fetch and an import, as a rule without one runs on.
+pub(crate) fn sources_of(text: &str) -> Vec<String> {
+    let given: Vec<String> = text
+        .split(',')
+        .map(|source| source.trim().to_string())
+        .filter(|source| !source.is_empty())
+        .collect();
+    if given.is_empty() {
+        ["push", "fetch", "import"].map(str::to_string).to_vec()
+    } else {
+        given
+    }
+}
+
+impl GitRuleFilter {
+    /// Whether the rule runs on the event of `context` (its `source`, `refName` and `isDefaultBranch`).
+    pub(crate) fn takes(&self, context: &moqui_lib::object::ValueMap) -> bool {
+        let field = |name: &str| context.get(name).map(moqui_lib::object::to_plain_string);
+        let source = field("source").unwrap_or_default();
+        if !self.sources.contains(&source) {
+            return false;
+        }
+        let ref_name = field("refName").filter(|name| !name.is_empty());
+        if self.default_branch_only && field("isDefaultBranch").as_deref() != Some("true") {
+            return false;
+        }
+        let name = ref_name.as_deref().unwrap_or_default();
+        if let Some(ref_type) = &self.ref_type {
+            let kind = if name.starts_with("refs/heads/") {
+                "branch"
+            } else if name.starts_with("refs/tags/") {
+                "tag"
+            } else {
+                "other"
+            };
+            if ref_type != kind {
+                return false;
+            }
+        }
+        !self
+            .ref_pattern
+            .as_ref()
+            .is_some_and(|pattern| ref_name.is_none() || !pattern.is_full_match(name))
+    }
+}
+
 /// `get#PushContexts`: what a gitECA rule's condition is tried against (10's "later": a rule against a push from the
 /// push log): the hosted repositories the user may see whose id the rule's `repository-pattern` takes, the latest
 /// changes of the one chosen (`find#GitUpdates`, 20 a page), and with `updateId` the contexts the rule's `event` had
-/// from that change (`get#GitUpdateEventContexts`, built as the events build them), each marked whether the rule's
-/// `ref-pattern` takes its ref. Run as the user, so a repository's rights apply (the contexts are for who may push
-/// there). The extend tier, as `eval#Condition`.
+/// from that change (`get#GitUpdateEventContexts`, built as the events build them), each marked whether the rule
+/// runs on it ([`GitRuleFilter`]: its sources, ref-pattern, ref-type, default-branch-only), and `truncated` when the
+/// replay left some out. Run as the user, so a repository's rights apply (the contexts are for who may push there).
+/// The extend tier, as `eval#Condition`.
 fn get_push_contexts(
     ec: &ExecutionContext,
     _service: &ServiceInfo<'_>,
@@ -158,7 +215,12 @@ fn get_push_contexts(
             .map_err(|err| LibError::new(format!("{name} {pattern}: {}", err.message())))
     };
     let repository_pattern = compile("repositoryPattern")?;
-    let ref_pattern = compile("refPattern")?;
+    let rule = GitRuleFilter {
+        ref_pattern: compile("refPattern")?,
+        ref_type: Some(text(parameters, "refType")).filter(|kind| !kind.trim().is_empty()),
+        default_branch_only: flag(parameters, "defaultBranchOnly"),
+        sources: sources_of(&text(parameters, "source")),
+    };
     let listed = git_hosting("find#GitRepositories", &[("pageNoLimit", Value::Bool(true))])?;
     let repositories: Vec<String> = match listed.get("repositoryList") {
         Some(Value::List(rows)) => rows
@@ -230,14 +292,10 @@ fn get_push_contexts(
                     Value::Map(row) => row.clone(),
                     _ => Default::default(),
                 };
-                let ref_name = match row.get("context") {
-                    Some(Value::Map(context)) => context.get("refName").map(moqui_lib::object::to_plain_string),
-                    _ => None,
+                let matches = match row.get("context") {
+                    Some(Value::Map(context)) => rule.takes(context),
+                    _ => false,
                 };
-                // as a rule matches: a ref-pattern takes only an event of a ref, by its whole name
-                let matches = ref_pattern
-                    .as_ref()
-                    .is_none_or(|pattern| ref_name.as_deref().is_some_and(|name| pattern.is_full_match(name)));
                 row.insert("matches".into(), Value::Bool(matches));
                 Value::Map(row)
             })
@@ -245,6 +303,10 @@ fn get_push_contexts(
         _ => Vec::new(),
     };
     out.insert("contexts".into(), Value::List(contexts));
+    out.insert(
+        "truncated".into(),
+        Value::Bool(matches!(answer.get("truncated"), Some(Value::Bool(true)))),
+    );
     Ok(out)
 }
 
@@ -945,5 +1007,61 @@ mod tests {
             snippet_actions("javascript", "result = 1", &serde_json::Map::new()),
             "<actions><script><![CDATA[result = 1]]></script>".to_string() + RESULT + "</actions>"
         );
+    }
+
+    fn context(pairs: &[(&str, Value)]) -> moqui_lib::object::ValueMap {
+        pairs
+            .iter()
+            .map(|(key, value)| ((*key).to_string(), value.clone()))
+            .collect()
+    }
+
+    fn filter(
+        ref_pattern: Option<&str>,
+        ref_type: Option<&str>,
+        default_branch_only: bool,
+        source: &str,
+    ) -> GitRuleFilter {
+        GitRuleFilter {
+            ref_pattern: ref_pattern.map(|pattern| moqui_lib::object::CompiledRegex::new(pattern).unwrap()),
+            ref_type: ref_type.map(str::to_string),
+            default_branch_only,
+            sources: sources_of(source),
+        }
+    }
+
+    #[test]
+    fn a_context_is_taken_as_a_git_rule_takes_its_event() {
+        let main = context(&[
+            ("source", Value::string("push")),
+            ("refName", Value::string("refs/heads/main")),
+            ("isDefaultBranch", Value::Bool(true)),
+        ]);
+        let tag = context(&[
+            ("source", Value::string("push")),
+            ("refName", Value::string("refs/tags/v1")),
+            ("isDefaultBranch", Value::Bool(false)),
+        ]);
+        let after = context(&[("source", Value::string("push"))]);
+        let write = context(&[
+            ("source", Value::string("write")),
+            ("refName", Value::string("refs/heads/main")),
+        ]);
+        // no narrowing: every push, fetch and import, not a write unless asked
+        assert!(filter(None, None, false, "").takes(&main) && filter(None, None, false, "").takes(&after));
+        assert!(!filter(None, None, false, "").takes(&write));
+        assert!(filter(None, None, false, "push, write").takes(&write));
+        // the ref pattern, by the whole name, and never an event of no ref
+        assert!(filter(Some("refs/heads/.*"), None, false, "").takes(&main));
+        assert!(!filter(Some("refs/heads/.*"), None, false, "").takes(&tag));
+        assert!(!filter(Some("refs/heads"), None, false, "").takes(&main));
+        assert!(!filter(Some(".*"), None, false, "").takes(&after));
+        // the ref type and the default branch
+        assert!(filter(None, Some("tag"), false, "").takes(&tag));
+        assert!(!filter(None, Some("branch"), false, "").takes(&tag));
+        assert!(filter(None, Some("other"), false, "").takes(&after));
+        assert!(filter(None, None, true, "").takes(&main));
+        assert!(!filter(None, None, true, "").takes(&tag));
+        assert!(!filter(None, None, true, "").takes(&after));
     }
 }

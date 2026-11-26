@@ -2,7 +2,8 @@
 // (test/GuidedFixture.js): the preview lists each file's matches with their lines before and after and its hash; the
 // matches chosen are written through the save pipeline (audited), the others kept; a file changed since its preview is
 // refused by its hash while the others are still written; and with the upstream lock on every file of the root is
-// refused, as Save refuses it. The client's rule for open tabs is DevAide.page.js's.
+// refused, as Save refuses it; a regular expression (a syntax git grep has not) replaces with its groups and leaves a
+// file's mixed line endings as they were. The client's rule for open tabs is DevAide.page.js's.
 // Run: ./moq test dev-aide --spec ReplaceFiles
 const fixture = () => ec.resource.script("component://dev-aide/test/GuidedFixture.js")
 const ROOT = "dev-aide-replace-spec"
@@ -11,7 +12,9 @@ const service = (verb, noun) =>
 const FILES = {
     "service/a/Orders.xml": "<services>\n" + service("get", "Order") + service("put", "Order") + "</services>\n",
     "service/a/Items.xml": "<services>\n" + service("get", "Item") + "</services>\n",
-    "service/a/Other.xml": "<services/>\n"
+    "service/a/Other.xml": "<services/>\n",
+    // mixed line endings, and a regular expression's own groups
+    "service/a/Mixed.xml": "<services>\r\n    <m code=\"k5\"/>\n    <m code=\"k6\"/>\r\n</services>\n"
 }
 const replace = parameters => {
     try {
@@ -111,5 +114,24 @@ feature("with the upstream lock on, each file is refused in the preview and in t
         applied.out.refused[0].reason.includes("upstream")
         text == before
         bad.errors.includes("empty")
+    }
+})
+
+feature("a regular expression replaces with its groups, $1a as group 1 then a, and mixed line endings stay as they were", {
+    when() {
+        const f = fixture()
+        const query = {query: 'code="(?<letter>[a-z])(\\d)"', regex: true, caseSensitive: true, replacement: 'code="${letter}$2a"', pathFilter: "Mixed"}
+        const preview = replace(query)
+        const file = (preview.out.files || [])[0]
+        const applied = replace(Object.assign({files: JSON.stringify([{path: file.path, hash: file.hash, matches: [1]}])}, query))
+        return {preview, applied, text: f.read(ROOT, "service/a/Mixed.xml")}
+    },
+    then({preview, applied, text}) {
+        preview.errors == ""
+        preview.out.files.length == 1
+        preview.out.files[0].matches.length == 2
+        preview.out.files[0].matches[1].after.includes('code="k6a"')
+        applied.out.replaced[0].count == 1
+        text == "<services>\r\n    <m code=\"k5\"/>\n    <m code=\"k6a\"/>\r\n</services>\n"
     }
 })

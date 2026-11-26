@@ -119,12 +119,24 @@ test("a nested parameter added in its parent, edited and removed by its path of 
     assert.deepEqual(ops.editParameter(service, "in-parameters", "order", { type: "Map", description: "" }).pop(), { op: "remove", at: [0, 0, 0, 0] });
 });
 
+test("an Add of a name there already, and an Edit of a holder of parameters to a type that holds none, are refused", () => {
+    const service = nested();
+    assert.ok(ops.parameterRefusal(service, "in-parameters", { mode: "add", parent: "order", name: "items" }).includes("already"));
+    assert.ok(ops.parameterRefusal(service, "in-parameters", { mode: "add", parent: "", name: "plain" }).includes("already"));
+    assert.equal(ops.parameterRefusal(service, "in-parameters", { mode: "add", parent: "order", name: "plain" }), null);
+    assert.ok(ops.parameterRefusal(service, "in-parameters", { mode: "edit", path: "order", type: "String" }).includes("holds parameters"));
+    assert.equal(ops.parameterRefusal(service, "in-parameters", { mode: "edit", path: "order", type: "List" }), null);
+    // an empty Map may become anything
+    assert.equal(ops.parameterRefusal(service, "in-parameters", { mode: "edit", path: "extra", type: "String" }), null);
+});
+
 test("the parameter rows: the buffer's, nested by path, then the definition's implied ones", () => {
     const defined = [
-        { name: "order", type: "Map", required: "false", checks: ["MatchesRegexp"], implied: false, children: [{ name: "items", type: "List", children: [] }] },
+        { name: "order", type: "Map", required: "false", checks: ["MatchesRegexp"], implied: false,
+            children: [{ name: "items", type: "List", children: [] }, { name: "fromAuto", children: [] }] },
         { name: "partyId", type: "String", required: "true", checks: [], implied: true, children: [{ name: "inner", children: [] }] }];
     const rows = ops.parameterRows(nested(), "in-parameters", defined);
-    assert.deepEqual(rows.map((row) => row.path), ["order", "order.items", "extra", "plain", "partyId", "partyId.inner"]);
+    assert.deepEqual(rows.map((row) => row.path), ["order", "order.items", "order.fromAuto", "extra", "plain", "partyId", "partyId.inner"]);
     const byPath = Object.fromEntries(rows.map((row) => [row.path, row]));
     assert.equal(byPath.order.checks, 1);
     assert.equal(byPath.order.description, "The order");
@@ -132,15 +144,19 @@ test("the parameter rows: the buffer's, nested by path, then the definition's im
     assert.deepEqual([byPath["order.items"].depth, byPath["order.items"].parentPath], [1, "order"]);
     // what the definition implies is not the buffer's to edit, nor are its children
     assert.ok(!byPath.partyId.editable && !byPath["partyId.inner"].editable && byPath.partyId.required);
+    // what the definition adds inside one's own Map (its auto-parameters) shows in it, not to be edited
+    assert.ok(byPath["order.fromAuto"].implied && !byPath["order.fromAuto"].editable && byPath["order.fromAuto"].depth === 1);
     // with no service element in the buffer, the definition's
     assert.deepEqual(ops.parameterRows(null, "in-parameters", defined).map((row) => row.path + (row.editable ? "" : " (auto)")),
-        ["order", "order.items", "partyId (auto)", "partyId.inner (auto)"]);
+        ["order", "order.items", "order.fromAuto", "partyId (auto)", "partyId.inner (auto)"]);
 });
 
 test("a gitECA rule asks for the pushes its patterns take, and a change of the push log reads in a line", () => {
     const rule = el("giteca", [0], [["event", "commit"], ["repository-pattern", "app.*"], ["ref-pattern", "refs/heads/.*"]]);
-    assert.deepEqual(ops.pushQuery(rule), { repositoryPattern: "app.*", refPattern: "refs/heads/.*", event: "commit" });
-    assert.deepEqual(ops.pushQuery(el("giteca", [0])), { repositoryPattern: "", refPattern: "", event: "post-receive" });
+    assert.deepEqual(ops.pushQuery(rule), { repositoryPattern: "app.*", refPattern: "refs/heads/.*", refType: "", defaultBranchOnly: false, source: "",
+        event: "commit" });
+    assert.deepEqual(ops.pushQuery(el("giteca", [0], [["ref-type", "tag"], ["default-branch-only", "true"], ["source", "push,write"]])),
+        { repositoryPattern: "", refPattern: "", refType: "tag", defaultBranchOnly: true, source: "push,write", event: "post-receive" });
     const update = { updateId: "U1", updateDate: "2026-11-25T10:20:30", username: "jane", ecaStatus: "done",
         refList: [{ shortName: "main", result: "ok" }, { shortName: "v1", result: "refused" }] };
     assert.equal(ops.updateLabel(update), "2026-11-25 10:20 · jane · main, v1 (refused) · done");

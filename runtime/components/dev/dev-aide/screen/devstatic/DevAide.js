@@ -90,6 +90,9 @@
 
     // A storage key of a root's state in the browser.
     pure.storageKey = (rootId, what) => "moqui.devAide." + what + "." + rootId;
+    // The key of a buffer's draft: a tab's by its path; a view's companion buffer by its path in its tab's (`owner`), so
+    // a companion and a tab of the same file keep drafts of their own.
+    pure.draftKey = (rootId, buffer) => pure.storageKey(rootId, "draft:" + buffer.path + (buffer.owner ? "|in:" + buffer.owner : ""));
     // The name under the cursor for go to definition: the attribute value around `column` (0-based) of a line, else
     // the word of name characters there (letters, digits, . _ # : / -).
     pure.valueAt = (text, column) => {
@@ -234,10 +237,12 @@
         for (const spec of specs || []) if ((spec.roots || []).indexOf(element) >= 0) offered.push({ name: spec.name, label: spec.label });
         return offered;
     };
-    // The order Save all writes files in (5.7, 6.2): entities, then services, then ECA rules, then screens, then data and
-    // the rest, so a screen never loads before its field.
+    // The order Save all writes files in (5.7, 6.2): entities, then services, then ECA rules, then screens (a .qvue after
+    // the XML screens, so its reload is checked against its XML as saved), then data and the rest, so a screen never
+    // loads before its field.
     pure.kindRank = (path) => {
         const text = String(path || "");
+        if (/\.qvue$/i.test(text)) return 3.5;
         if (/(^|\/)entity\//.test(text) && !/\.eecas\.xml$/.test(text)) return 0;
         if (/\.secas\.xml$|\.eecas\.xml$|\.emecas\.xml$|\.gitecas\.xml$/.test(text)) return 2;
         if (/(^|\/)service\//.test(text)) return 1;
@@ -323,27 +328,40 @@
         if (last && last === trailer) lines.pop();
         return lines.join("\n").replace(/\n+$/, "");
     };
-    // The editor settings (get#EditorSettings, the DEV_AIDE_EDITOR preference, 5.1) as the Workspace uses them: what
-    // m-code-editor takes (moqui.codeEditor.setSettings, with the keys of the editor's commands a user rebound) and the
-    // keys of the Workspace's own commands and of Save in a visual view, their defaults where none came.
-    pure.WORKSPACE_KEYS = Object.freeze({ gotoFile: "Mod-p", gotoArtifact: "Mod-Shift-o", searchFiles: "Mod-Shift-f", save: "Mod-s" });
+    // The editor settings (get#EditorSettings, the DEV_AIDE_EDITOR preference, 5.1) as m-code-editor takes them
+    // (moqui.codeEditor.setSettings): the keys of the commands a user rebound, over CodeMirror's.
     pure.editorSettingsOf = (answer) => {
         const settings = Object.assign({}, (answer && answer.settings) || {});
-        const editorKeys = {};
-        const workspaceKeys = Object.assign({}, pure.WORKSPACE_KEYS);
-        for (const row of (answer && answer.commands) || []) {
-            if (!row.keys) continue;
-            if (Object.prototype.hasOwnProperty.call(workspaceKeys, row.command)) workspaceKeys[row.command] = row.keys;
-            if (row.scope === "editor" && row.keys !== row.defaultKeys) editorKeys[row.command] = row.keys;
-        }
-        settings.keys = editorKeys;
-        return { settings, workspaceKeys };
+        const keys = {};
+        for (const row of (answer && answer.commands) || []) if (row.keys && row.keys !== row.defaultKeys) keys[row.command] = row.keys;
+        settings.keys = keys;
+        return settings;
     };
-    // What Replace sends of a preview (replace#Files, 4.3): each file's chosen matches with the hash its preview read.
-    // A file the user may not write is left out, and one open in a tab with unsaved changes is refused here (the tab
-    // would lose its edit or the replace): save or close it, then preview again.
-    pure.replaceRequest = (preview, tabs) => {
-        const dirty = new Set((tabs || []).filter((tab) => pure.isDirty(tab)).map((tab) => tab.path));
+    // The Workspace's own commands as shell key map actions (moqui.keymap, scope "dev-aide"): the shell's KEYMAP
+    // preference rebinds them by their action ({"dev-aide": {"devGotoFile": "Mod+E"}}) and its ? overlay lists them.
+    pure.WORKSPACE_KEYS = Object.freeze([
+        { action: "devGotoFile", keys: "Mod+P", label: "Go to file", run: "openGoto" },
+        { action: "devGotoArtifact", keys: "Mod+Shift+O", label: "Go to artifact", run: "openArtifactGoto" },
+        { action: "devSearchFiles", keys: "Mod+Shift+F", label: "Search in files", run: "showSearch" },
+        { action: "devSave", keys: "Mod+S", label: "Save", run: "saveCurrent" }
+    ]);
+    // The open buffers of the Workspace by root: each tab of `rootId`, and each companion buffer of a tab's view, in
+    // whatever root it is.
+    pure.openBuffers = (tabs, rootId) => {
+        const out = [];
+        for (const tab of tabs || []) {
+            out.push({ rootId, path: tab.path, buffer: tab });
+            for (const buffer of tab.companions || []) out.push({ rootId: buffer.rootId || rootId, path: buffer.path, buffer });
+        }
+        return out;
+    };
+    // What Replace sends of a preview (replace#Files, 4.3) of `rootId`: each file's chosen matches with the hash its
+    // preview read. A file the user may not write is left out, and one open with unsaved changes, in a tab or as a view's
+    // companion buffer, is refused here (the buffer would lose its edit or the replace): save or close it, then preview
+    // again.
+    pure.replaceRequest = (preview, tabs, rootId) => {
+        const dirty = new Set(pure.openBuffers(tabs, rootId).filter((open) => open.rootId === rootId && pure.isDirty(open.buffer))
+            .map((open) => open.path));
         const files = [];
         const refused = [];
         for (const file of (preview && preview.files) || []) {
@@ -455,7 +473,7 @@
                 tabs: [], active: null, cursor: { line: 1, column: 1 }, lastReload: "", restartNeeded: false,
                 search: { query: "", regex: false, caseSensitive: false, pathFilter: "", results: [], running: false, truncated: false },
                 // Replace across files (4.3): the replacement, the preview with what is chosen, and the last result
-                replace: { open: false, text: "", preview: null, running: false, result: null }, workspaceKeys: null,
+                replace: { open: false, text: "", preview: null, running: false, result: null },
                 diff: null, commitForm: { summary: "", body: "", amend: false, signOff: false, skipHooks: false, task: "" },
                 log: [], commitDetail: null, goto: { open: false, filter: "", files: [], loading: false, error: "" }, busy: "", schemas: {},
                 refs: { title: "", items: [], loading: false }, artifactGoto: { open: false, text: "", results: [], loading: false, error: "" },
@@ -531,6 +549,7 @@
             this.onResize = () => { this.narrow = root.innerWidth < 1024; };
             root.addEventListener("resize", this.onResize);
             this.loadEditorSettings();
+            this.keysOff = this.registerKeys();
             this.loadRoots();
             const assist = moqui.assist;
             if (assist) {
@@ -573,6 +592,10 @@
             if (this.shared && this.rootId) this.post("presence", { rootId: this.rootId, paths: [] }).catch(() => {});
             root.removeEventListener("resize", this.onResize);
             if (this.restoreDrawer) this.restoreDrawer();
+            this.unmounted = true;
+            if (this.keysOff) this.keysOff();
+            // the editor settings are the Workspace's: the next page's editors have CodeMirror's
+            this.setEditorSettings(null);
             const assist = moqui.assist;
             if (assist) {
                 if (assist.editorState) assist.editorState = null;
@@ -635,7 +658,7 @@
                 const written = this.draftsWritten || new Map();
                 const pending = this.draftsPending || (this.draftsPending = new Map());
                 const keep = (rootId, buffer) => {
-                    const key = pure.storageKey(rootId, "draft:" + buffer.path);
+                    const key = pure.draftKey(rootId, buffer);
                     if (this.draftsOffered && this.draftsOffered.has(key)) return;
                     const text = buffer.text !== buffer.saved ? buffer.text : null;
                     if ((written.has(key) && written.get(key) === text) || (pending.has(key) && pending.get(key) === text)) return;
@@ -657,7 +680,7 @@
             rememberLocally() {
                 if (!this.rootId) return;
                 const keep = (rootId, buffer) => {
-                    const key = pure.storageKey(rootId, "draft:" + buffer.path);
+                    const key = pure.draftKey(rootId, buffer);
                     // a draft offered back waits for the user's answer, as remember leaves it
                     if (this.draftsOffered && this.draftsOffered.has(key)) return;
                     if (buffer.text !== buffer.saved) drafts.setNow(key, { base: buffer.base, text: buffer.text });
@@ -670,7 +693,7 @@
             },
             // The unsaved text an earlier visit left of `buffer`, offered back.
             offerDraft(buffer, rootId) {
-                const key = pure.storageKey(rootId, "draft:" + buffer.path);
+                const key = pure.draftKey(rootId, buffer);
                 this.draftsOffered.add(key);
                 return drafts.get(key).then((draft) => {
                     if (!draft || typeof draft.text !== "string" || draft.text === buffer.text || buffer.readOnly) { this.draftsOffered.delete(key); return; }
@@ -865,7 +888,7 @@
                 const read = this.get("file", { rootId, path, missingOk: true }).then((file) => {
                     const missing = !!file.missing;
                     const text = missing ? (initialText || "") : (file.text || "");
-                    tab.companions.push({ rootId, path, text, saved: missing ? "" : text, base: missing ? "" : file.hash, missing,
+                    tab.companions.push({ rootId, path, owner: tab.path, text, saved: missing ? "" : text, base: missing ? "" : file.hash, missing,
                         readOnly: !!file.readOnly, readOnlyReason: file.readOnlyReason || "", outline: null, undo: [], redo: [] });
                     const buffer = tab.companions[tab.companions.length - 1];
                     this.offerDraft(buffer, rootId);
@@ -1084,9 +1107,17 @@
                 }, (error) => { replace.running = false; this.fail(error); });
             },
             chooseFile(file, chosen) { for (const hit of file.matches) hit.chosen = chosen; },
+            // A view's companion buffer read again from its file, when it has no unsaved text.
+            reloadCompanion(buffer) {
+                return this.get("file", { rootId: buffer.rootId, path: buffer.path, missingOk: true }).then((file) => {
+                    if (pure.isDirty(buffer) || file.missing) return;
+                    buffer.text = file.text || ""; buffer.saved = buffer.text; buffer.base = file.hash;
+                    return this.post("outline", { text: buffer.text }).then((answer) => { buffer.outline = answer.outline || null; }, () => {});
+                }, () => {});
+            },
             applyReplace() {
                 const replace = this.replace;
-                const request = pure.replaceRequest(replace.preview, this.tabs);
+                const request = pure.replaceRequest(replace.preview, this.tabs, this.rootId);
                 if (!request.files.length) {
                     replace.result = { replaced: [], refused: request.refused };
                     this.note(moqui.l10n.localize("Nothing chosen to replace"), "warning");
@@ -1098,10 +1129,12 @@
                     this.post("replaceFiles", Object.assign({}, replace.preview.query, { files: JSON.stringify(request.files) })).then((answer) => {
                         replace.running = false; replace.preview = null;
                         replace.result = { replaced: answer.replaced || [], refused: request.refused.concat(answer.refused || []) };
-                        // a replaced file's open tab has no unsaved text (those were refused): it reads the file again
-                        for (const done of replace.result.replaced) {
-                            const tab = this.tabs.find((item) => item.path === done.path);
-                            if (tab && !pure.isDirty(tab)) this.reloadTab(tab);
+                        // a replaced file's open buffers have no unsaved text (those were refused): each reads the file again
+                        const replaced = new Set(replace.result.replaced.map((done) => done.path));
+                        for (const open of pure.openBuffers(this.tabs, this.rootId)) {
+                            if (open.rootId !== this.rootId || !replaced.has(open.path) || pure.isDirty(open.buffer)) continue;
+                            if (this.tabs.indexOf(open.buffer) >= 0) this.reloadTab(open.buffer);
+                            else this.reloadCompanion(open.buffer);
                         }
                         this.treeKey++; this.refreshStatus();
                     }, (error) => { replace.running = false; this.fail(error); });
@@ -1609,27 +1642,30 @@
             },
             isDirtyAll(tab) { return pure.isDirtyAll(tab); },
             trailerOf(key) { return pure.trailerOf(key); },
-            // The user's editor settings (DEV_AIDE_EDITOR): to every m-code-editor of the page, and the keys of the
-            // Workspace's own commands.
+            // The user's editor settings (DEV_AIDE_EDITOR) to the editors of this page, as long as it is here: an app page
+            // opened after it in the same window has CodeMirror's (setSettings(null) as the Workspace goes).
             loadEditorSettings() {
                 return this.get("editorSettings").then((answer) => {
-                    const { settings, workspaceKeys } = pure.editorSettingsOf(answer);
-                    this.workspaceKeys = workspaceKeys;
-                    const codeEditor = moqui.codeEditor || (moqui.codeEditor = {});
-                    if (codeEditor.setSettings) codeEditor.setSettings(settings);
-                    else codeEditor.settings = settings;
+                    if (this.unmounted) return;
+                    this.setEditorSettings(pure.editorSettingsOf(answer));
                 }, () => { /* the defaults */ });
             },
-            // Whether a keydown is the keys of a Workspace command (Mod is Cmd on a Mac)
-            isKey(event, command) {
-                const keys = (this.workspaceKeys || pure.WORKSPACE_KEYS)[command];
-                const codeEditor = moqui.codeEditor;
-                const mac = !!(moqui.keymap && moqui.keymap.isMac);
-                return !!(keys && codeEditor && codeEditor.keyMatches && codeEditor.keyMatches(event, keys, mac));
+            setEditorSettings(settings) {
+                const codeEditor = moqui.codeEditor || (moqui.codeEditor = {});
+                if (codeEditor.setSettings) codeEditor.setSettings(settings);
+                else codeEditor.settings = settings;
             },
-            // Mod+Z, Mod+Shift+Z and Save's keys (Mod+S) in a visual view: the buffer's undo and redo, and Save
+            // The Workspace's own commands as key map actions, while it is on the page.
+            registerKeys() {
+                const keymap = moqui.keymap;
+                if (!keymap || !keymap.registerScope) return null;
+                return keymap.registerScope("dev-aide", pure.WORKSPACE_KEYS.map((command) => ({ keys: command.keys, action: command.action,
+                    label: moqui.l10n.localize(command.label), run: () => { this[command.run](); return true; } })));
+            },
+            showSearch() { this.tab = "code"; this.rail = "search"; },
+            saveCurrent() { if (this.current) this.save(this.current); },
+            // Mod+Z and Mod+Shift+Z in a visual view: the buffer's undo and redo (Save is the key map's devSave)
             onViewKey(event, tab) {
-                if (this.isKey(event, "save")) { event.preventDefault(); this.save(tab); return; }
                 const mod = event.ctrlKey || event.metaKey;
                 if (!mod) return;
                 const target = event.target;
@@ -1638,16 +1674,10 @@
                 const key = event.key.toLowerCase();
                 if (key === "z") { event.preventDefault(); if (event.shiftKey) this.redo(tab); else this.undo(tab); }
                 else if (key === "y") { event.preventDefault(); this.redo(tab); }
-            },
-            // Go to artifact, Go to file and Search in files, by the keys the user set (Mod+Shift+O, Mod+P, Mod+Shift+F)
-            onKey(event) {
-                if (this.isKey(event, "gotoArtifact")) { event.preventDefault(); this.openArtifactGoto(); }
-                else if (this.isKey(event, "gotoFile")) { event.preventDefault(); this.openGoto(); }
-                else if (this.isKey(event, "searchFiles")) { event.preventDefault(); this.tab = "code"; this.rail = "search"; }
             }
         },
         template: `
-<div class="m-dev-workspace column no-wrap" :class="{ 'm-dev-guided': guided }" id="DevWorkspace" tabindex="-1" @keydown="onKey">
+<div class="m-dev-workspace column no-wrap" :class="{ 'm-dev-guided': guided }" id="DevWorkspace" tabindex="-1">
   <div v-if="guided" class="row items-center no-wrap q-gutter-x-sm q-px-sm q-py-xs" id="DevGuidedBar">
     <q-icon :name="root && root.upstream ? 'sym_o_lock' : 'sym_o_folder'" size="18px"><q-tooltip v-if="root && root.upstream" max-width="24rem">{{upstreamHint}}</q-tooltip></q-icon>
     <span class="text-subtitle2 ellipsis">{{current ? current.path.split('/').pop() : ''}}</span>

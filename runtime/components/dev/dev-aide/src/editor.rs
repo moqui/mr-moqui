@@ -13,12 +13,13 @@
  */
 
 //! The editor settings (plans/design-dev-aide.md 5.1, 16): the user's `DEV_AIDE_EDITOR` preference, JSON of the font
-//! size, the tab size, wrap, white space shown, the keymap, and the keys of the commands a user rebound. The Workspace
-//! hands them to `m-code-editor` (`moqui.codeEditor.setSettings`, `WebrootCode.js`), which applies the keys over its
-//! default keymap, and binds its own commands (Go to file, Go to artifact, Search in files) by them; dev/Settings has
-//! the form. Settings › Editor writes them through `store#EditorSettings` and `store#EditorKey`.
+//! size, the tab size (none: CodeMirror's), wrap, white space shown, the keymap, and the keys of the code editor's
+//! commands a user rebound. The Workspace hands them to the dev-aide's `m-code-editor`s
+//! (`moqui.codeEditor.setSettings`, `WebrootCode.js`), which apply the keys over CodeMirror's keymap. The Workspace's
+//! own commands (Go to file, Go to artifact, Search in files, Save in a visual view) are shell key map actions
+//! (`moqui.keymap`), rebound by the shell's `KEYMAP` preference (§3.5). dev/Settings has the form.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use moqui_core::context::{Error, ExecutionContext};
 use moqui_core::native::{NativeRegistry, Parameters, ServiceInfo};
@@ -45,84 +46,28 @@ pub const EDITOR: &str = "DEV_AIDE_EDITOR";
 /// (Vim) is added here and there with the library.
 pub(crate) const KEYMAPS: &[&str] = &["default"];
 
-/// A command a key row rebinds.
+/// A command of the code editor a key row rebinds (`moqui.codeEditor.COMMANDS`).
 pub(crate) struct Command {
     pub name: &'static str,
     pub label: &'static str,
-    /// `workspace`: the Workspace binds it (its `onKey`); `editor`: `m-code-editor` (`moqui.codeEditor.COMMANDS`).
-    pub scope: &'static str,
     /// Its keys when the user has not rebound it, in CodeMirror's form.
     pub keys: &'static str,
 }
 
-/// The commands a user rebinds, with their default keys: the Workspace's, then the editor's (CodeMirror's defaults).
+const fn command_of(name: &'static str, label: &'static str, keys: &'static str) -> Command {
+    Command { name, label, keys }
+}
+
+/// The commands a user rebinds, with their default keys (CodeMirror's).
 pub(crate) const COMMANDS: &[Command] = &[
-    Command {
-        name: "gotoFile",
-        label: "Go to file",
-        scope: "workspace",
-        keys: "Mod-p",
-    },
-    Command {
-        name: "gotoArtifact",
-        label: "Go to artifact",
-        scope: "workspace",
-        keys: "Mod-Shift-o",
-    },
-    Command {
-        name: "searchFiles",
-        label: "Search in files",
-        scope: "workspace",
-        keys: "Mod-Shift-f",
-    },
-    Command {
-        name: "save",
-        label: "Save",
-        scope: "editor",
-        keys: "Mod-s",
-    },
-    Command {
-        name: "find",
-        label: "Find in the file",
-        scope: "editor",
-        keys: "Mod-f",
-    },
-    Command {
-        name: "toggleComment",
-        label: "Comment the lines",
-        scope: "editor",
-        keys: "Mod-/",
-    },
-    Command {
-        name: "completion",
-        label: "Complete",
-        scope: "editor",
-        keys: "Ctrl-Space",
-    },
-    Command {
-        name: "undo",
-        label: "Undo",
-        scope: "editor",
-        keys: "Mod-z",
-    },
-    Command {
-        name: "redo",
-        label: "Redo",
-        scope: "editor",
-        keys: "Mod-y",
-    },
-    Command {
-        name: "foldAll",
-        label: "Fold all",
-        scope: "editor",
-        keys: "Ctrl-Alt-[",
-    },
-    Command {
-        name: "unfoldAll",
-        label: "Unfold all",
-        scope: "editor",
-        keys: "Ctrl-Alt-]",
-    },
+    command_of("save", "Save", "Mod-s"),
+    command_of("find", "Find in the file", "Mod-f"),
+    command_of("toggleComment", "Comment the lines", "Mod-/"),
+    command_of("completion", "Complete", "Ctrl-Space"),
+    command_of("undo", "Undo", "Mod-z"),
+    command_of("redo", "Redo", "Mod-y"),
+    command_of("foldAll", "Fold all", "Ctrl-Alt-["),
+    command_of("unfoldAll", "Unfold all", "Ctrl-Alt-]"),
 ];
 
 /// A user's editor settings, as the preference holds them.
@@ -130,7 +75,8 @@ pub(crate) const COMMANDS: &[Command] = &[
 #[serde(rename_all = "camelCase", default)]
 pub(crate) struct EditorSettings {
     pub font_size: u32,
-    pub tab_size: u32,
+    /// The tab size and the indent unit (that many spaces); none for CodeMirror's (a tab of 4, an indent of 2).
+    pub tab_size: Option<u32>,
     pub wrap: bool,
     pub whitespace: bool,
     pub keymap: String,
@@ -141,8 +87,8 @@ pub(crate) struct EditorSettings {
 impl Default for EditorSettings {
     fn default() -> Self {
         Self {
-            font_size: 13,
-            tab_size: 4,
+            font_size: DEFAULT_FONT_SIZE,
+            tab_size: None,
             wrap: false,
             whitespace: false,
             keymap: "default".into(),
@@ -151,28 +97,65 @@ impl Default for EditorSettings {
     }
 }
 
+pub(crate) const DEFAULT_FONT_SIZE: u32 = 13;
 pub(crate) const FONT_SIZES: std::ops::RangeInclusive<u32> = 8..=32;
 pub(crate) const TAB_SIZES: std::ops::RangeInclusive<u32> = 1..=8;
+/// The longest keys taken.
+pub(crate) const MAX_KEYS_LEN: usize = 64;
 
-/// Whether `keys` is a key in CodeMirror's form: modifiers (Mod, Ctrl, Alt, Shift, Meta, Cmd, in any case) joined by
-/// `-`, then one key (`Mod-Shift-f`, `Ctrl-Space`, `F2`, `Mod--`).
-pub(crate) fn valid_keys(keys: &str) -> bool {
+const MODIFIERS: [&str; 7] = ["mod", "ctrl", "control", "alt", "shift", "meta", "cmd"];
+
+/// The modifiers and the key of `keys` in CodeMirror's form (`Mod-Shift-f`, `Ctrl-Space`, `F2`, `Mod--`), or `None`
+/// when it is not one: modifiers (Mod, Ctrl, Alt, Shift, Meta, Cmd, in any case) joined by `-`, then one key, in at
+/// most [`MAX_KEYS_LEN`] characters.
+fn parts(keys: &str) -> Option<(Vec<String>, &str)> {
+    if keys.len() > MAX_KEYS_LEN {
+        return None;
+    }
     let (modifiers, key) = match keys.strip_suffix("--") {
         Some(rest) => (rest, "-"),
-        None => match keys.rsplit_once('-') {
-            Some((modifiers, key)) => (modifiers, key),
-            None => ("", keys),
-        },
+        None => keys.rsplit_once('-').unwrap_or(("", keys)),
     };
-    !key.is_empty()
-        && !key.chars().any(char::is_whitespace)
-        && (modifiers.is_empty()
-            || modifiers.split('-').all(|part| {
-                matches!(
-                    part.to_ascii_lowercase().as_str(),
-                    "mod" | "ctrl" | "control" | "alt" | "shift" | "meta" | "cmd"
-                )
-            }))
+    if key.is_empty() || key.chars().any(char::is_whitespace) {
+        return None;
+    }
+    let modifiers: Vec<String> = if modifiers.is_empty() {
+        Vec::new()
+    } else {
+        modifiers.split('-').map(str::to_ascii_lowercase).collect()
+    };
+    modifiers
+        .iter()
+        .all(|part| MODIFIERS.contains(&part.as_str()))
+        .then_some((modifiers, key))
+}
+
+pub(crate) fn valid_keys(keys: &str) -> bool {
+    parts(keys).is_some()
+}
+
+/// The keys as they are pressed on a Mac (`mac`, where Mod is Cmd) or elsewhere (Mod is Ctrl): the modifiers in one
+/// order and the key in lower case, so two ways of writing one key are the same.
+fn pressed(keys: &str, mac: bool) -> Option<String> {
+    let (modifiers, key) = parts(keys)?;
+    let held: BTreeSet<&str> = modifiers
+        .iter()
+        .map(|part| match part.as_str() {
+            "mod" if mac => "meta",
+            "mod" | "control" => "ctrl",
+            "cmd" => "meta",
+            other => other,
+        })
+        .collect();
+    let held: Vec<&str> = held.into_iter().collect();
+    Some(format!("{}-{}", held.join("-"), key.to_ascii_lowercase()))
+}
+
+/// Whether two keys are the same key on a Mac or elsewhere.
+fn same_keys(a: &str, b: &str) -> bool {
+    [true, false]
+        .into_iter()
+        .any(|mac| matches!((pressed(a, mac), pressed(b, mac)), (Some(a), Some(b)) if a == b))
 }
 
 fn command(name: &str) -> Option<&'static Command> {
@@ -193,23 +176,20 @@ impl EditorSettings {
                 return Self::default();
             }
         };
-        let defaults = Self::default();
         if !FONT_SIZES.contains(&settings.font_size) {
-            settings.font_size = defaults.font_size;
+            settings.font_size = DEFAULT_FONT_SIZE;
         }
-        if !TAB_SIZES.contains(&settings.tab_size) {
-            settings.tab_size = defaults.tab_size;
-        }
+        settings.tab_size = settings.tab_size.filter(|size| TAB_SIZES.contains(size));
         if !KEYMAPS.contains(&settings.keymap.as_str()) {
-            settings.keymap = defaults.keymap;
+            settings.keymap = Self::default().keymap;
         }
-        settings
-            .keys
-            .retain(|name, keys| command(name).is_some_and(|command| command.keys != keys) && valid_keys(keys));
+        settings.keys.retain(|name, keys| {
+            command(name).is_some_and(|command| !same_keys(command.keys, keys)) && valid_keys(keys)
+        });
         settings
     }
 
-    /// The keys `name` runs on: the user's, else its default.
+    /// The keys `command` runs on: the user's, else its default.
     pub(crate) fn keys_of(&self, command: &Command) -> String {
         self.keys
             .get(command.name)
@@ -218,33 +198,36 @@ impl EditorSettings {
     }
 
     /// `keys` for the command `name`, or its default when empty; refused for an unknown command, keys not in
-    /// CodeMirror's form, or keys another command runs on.
+    /// CodeMirror's form, or keys another command runs on (on a Mac, where Mod is Cmd, or elsewhere, where it is Ctrl),
+    /// its default keys too.
     pub(crate) fn rebind(&mut self, name: &str, keys: &str) -> Result<(), String> {
         let Some(target) = command(name) else {
             return Err(format!("there is no editor command {name}"));
         };
         let keys = keys.trim();
-        if keys.is_empty() || keys == target.keys {
-            self.keys.remove(name);
-            return Ok(());
-        }
-        if !valid_keys(keys) {
+        let default = keys.is_empty() || same_keys(keys, target.keys);
+        let keys = if default { target.keys } else { keys };
+        if !default && !valid_keys(keys) {
             return Err(format!(
-                "{keys} is not a key as the editor writes one: modifiers (Mod, Ctrl, Alt, Shift) and a key joined by -, such as Mod-Shift-f"
+                "{} is not a key as the editor writes one: modifiers (Mod, Ctrl, Alt, Shift) and a key joined by -, such as Mod-Shift-f",
+                keys.chars().take(MAX_KEYS_LEN).collect::<String>()
             ));
         }
-        let same = |a: &str, b: &str| a.eq_ignore_ascii_case(b);
         if let Some(other) = COMMANDS
             .iter()
-            .find(|other| other.name != name && same(&self.keys_of(other), keys))
+            .find(|other| other.name != name && same_keys(&self.keys_of(other), keys))
         {
             return Err(format!("{keys} is the key of {}: rebind that first", other.label));
         }
-        self.keys.insert(name.to_string(), keys.to_string());
+        if default {
+            self.keys.remove(name);
+        } else {
+            self.keys.insert(name.to_string(), keys.to_string());
+        }
         Ok(())
     }
 
-    /// The settings and each command's row (its name, label, scope, default keys and keys now), as the services answer.
+    /// The settings and each command's row (its name, label, default keys and keys now), as the services answer.
     fn answer(&self) -> Parameters {
         let commands: Vec<serde_json::Value> = COMMANDS
             .iter()
@@ -252,7 +235,6 @@ impl EditorSettings {
                 serde_json::json!({
                     "command": command.name,
                     "label": command.label,
-                    "scope": command.scope,
                     "defaultKeys": command.keys,
                     "keys": self.keys_of(command),
                 })
@@ -288,7 +270,32 @@ fn get_editor_settings(
     Ok(current().answer())
 }
 
-/// `store#EditorSettings`: the font size, tab size, wrap, white space and keymap, the keys kept; refused out of range.
+/// A size of `name`: `None` when not given (kept), `Some(None)` when given empty (the default), else the number,
+/// refused out of `range`.
+fn size_of(
+    parameters: &Parameters,
+    name: &str,
+    range: &std::ops::RangeInclusive<u32>,
+) -> Result<Option<Option<u32>>, LibError> {
+    if !parameters.contains_key(name) {
+        return Ok(None);
+    }
+    let raw = text(parameters, name);
+    if raw.trim().is_empty() {
+        return Ok(Some(None));
+    }
+    match raw.trim().parse::<u32>() {
+        Ok(value) if range.contains(&value) => Ok(Some(Some(value))),
+        _ => Err(LibError::new(format!(
+            "{name} is a whole number from {} to {}",
+            range.start(),
+            range.end()
+        ))),
+    }
+}
+
+/// `store#EditorSettings`: the font size, tab size, wrap, white space and keymap given (one given empty is its
+/// default), the keys kept; refused out of range.
 fn store_editor_settings(
     _ec: &ExecutionContext,
     _service: &ServiceInfo<'_>,
@@ -296,24 +303,10 @@ fn store_editor_settings(
 ) -> Result<Parameters, LibError> {
     tier::require(Tier::View)?;
     let mut settings = current();
-    let number = |name: &str, range: &std::ops::RangeInclusive<u32>| -> Result<Option<u32>, LibError> {
-        let raw = text(parameters, name);
-        if raw.trim().is_empty() {
-            return Ok(None);
-        }
-        match raw.trim().parse::<u32>() {
-            Ok(value) if range.contains(&value) => Ok(Some(value)),
-            _ => Err(LibError::new(format!(
-                "{name} is a whole number from {} to {}",
-                range.start(),
-                range.end()
-            ))),
-        }
-    };
-    if let Some(size) = number("fontSize", &FONT_SIZES)? {
-        settings.font_size = size;
+    if let Some(size) = size_of(parameters, "fontSize", &FONT_SIZES)? {
+        settings.font_size = size.unwrap_or(DEFAULT_FONT_SIZE);
     }
-    if let Some(size) = number("tabSize", &TAB_SIZES)? {
+    if let Some(size) = size_of(parameters, "tabSize", &TAB_SIZES)? {
         settings.tab_size = size;
     }
     let flag = |name: &str| {
@@ -331,7 +324,8 @@ fn store_editor_settings(
     if !keymap.is_empty() {
         if !KEYMAPS.contains(&keymap.as_str()) {
             return Err(LibError::new(format!(
-                "there is no keymap {keymap}: {}",
+                "there is no keymap {}: {}",
+                keymap.chars().take(MAX_KEYS_LEN).collect::<String>(),
                 KEYMAPS.join(", ")
             )));
         }

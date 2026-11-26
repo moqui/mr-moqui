@@ -241,6 +241,18 @@
     };
     // The parameter types that hold parameters of their own.
     ops.HOLDER_TYPES = ["Map", "List", "Set", "Collection", "Node"];
+    // Why an Add or an Edit of a parameter is refused, or null: an Add of a name its parent (or the top) has already, an
+    // Edit that makes a parameter holding others a type that holds none (remove them first). The terminal twin's too.
+    ops.parameterRefusal = (service, which, change) => {
+        const path = [change.parent, change.name].filter((part) => part).join(".");
+        if (change.mode === "add") {
+            return ops.parameterNode(service, which, path) ? "There is a parameter " + change.name + (change.parent ? " in " + change.parent : "") + " already" : null;
+        }
+        const node = ops.parameterNode(service, which, change.path || path);
+        const holds = ops.HOLDER_TYPES.indexOf(String(change.type || "String").split(".").pop()) >= 0;
+        return node && !holds && children(node, ["parameter", "auto-parameters"]).length
+            ? (change.path || path) + " holds parameters: remove them first, or keep a type that holds them" : null;
+    };
     // A service's parameters as the view's rows: the buffer's own (its service element's, children flattened with their
     // depth), each with the definition's checks by its path, then those the definition implies (auto-parameters, an
     // interface) after them; the definition's alone when the buffer has no such service. Each row has its parent's path
@@ -274,15 +286,20 @@
                     const description = children(child, ["description"])[0];
                     push({ name, type: attrOf(child, "type"), required: attrOf(child, "required"), defaultValue: attrOf(child, "default-value"),
                         description: description ? description.text : "" }, parents, false);
-                    walk(child, parents.concat([name]));
+                    const inside = parents.concat([name]);
+                    walk(child, inside);
+                    // what the definition adds inside it (its auto-parameters): shown there, not to be edited
+                    const declared = new Set(children(child, ["parameter"]).map((nested) => attrOf(nested, "name")));
+                    const known = byPath.get(inside.join("."));
+                    for (const nested of (known && known.children) || []) if (!declared.has(nested.name)) implied(nested, inside);
                 }
             };
-            if (holder) walk(holder, []);
-            const own = new Set(rows.filter((row) => !row.parentPath).map((row) => row.name));
             const implied = (parameter, parents) => {
                 push(parameter, parents, true);
                 for (const child of parameter.children || []) implied(child, parents.concat([parameter.name]));
             };
+            if (holder) walk(holder, []);
+            const own = new Set(rows.filter((row) => !row.parentPath).map((row) => row.name));
             for (const parameter of defined || []) if (parameter.implied && !own.has(parameter.name)) implied(parameter, []);
             return rows;
         }
@@ -311,6 +328,7 @@
         "xsi:noNamespaceSchemaLocation=\"http://moqui.org/xsd/mr-service-eca.xsd\">\n</secas>\n";
     // What get#PushContexts takes of a gitECA rule: its patterns and event.
     ops.pushQuery = (rule) => ({ repositoryPattern: attrOf(rule, "repository-pattern") || "", refPattern: attrOf(rule, "ref-pattern") || "",
+        refType: attrOf(rule, "ref-type") || "", defaultBranchOnly: attrOf(rule, "default-branch-only") === "true", source: attrOf(rule, "source") || "",
         event: attrOf(rule, "event") || "post-receive" });
     // A change of the push log (find#GitUpdates' row) in a line: when, who, its refs and how its rules ran.
     ops.updateLabel = (update) => {
@@ -511,6 +529,8 @@
             addParameter() {
                 const add = this.adding;
                 if (!this.serviceNode) { this.adding = null; return; }
+                const refusal = ops.parameterRefusal(this.serviceNode, add.which, add);
+                if (refusal) { this.ctx.note(refusal, "warning"); return; }
                 if (add.mode === "edit") {
                     this.adding = null;
                     this.apply(ops.editParameter(this.serviceNode, add.which, add.path, add));
@@ -771,7 +791,7 @@
             addRule() {
                 const kind = this.outline.name === "eecas" ? "<eeca entity=\"\" on-create=\"true\"><actions></actions></eeca>"
                     : this.outline.name === "emecas" ? "<emeca><actions></actions></emeca>"
-                        : this.outline.name === "gitecas" ? "<giteca event=\"push\"><actions></actions></giteca>" : ops.secaXml("", "post-service");
+                        : this.outline.name === "gitecas" ? "<giteca event=\"post-receive\"><actions></actions></giteca>" : ops.secaXml("", "post-service");
                 this.apply(ops.addRule(this.outline, kind));
             },
             // the condition against a context: a SECA's service's last Try (its parameters and out), for a gitECA rule a
@@ -806,6 +826,7 @@
                     push.updates = answer.updates || [];
                     push.updateId = updateId || "";
                     push.contexts = answer.contexts || [];
+                    push.truncated = !!answer.truncated;
                     if (push.contexts.length) this.useContext(push.contexts.find((context) => context.matches) || push.contexts[0]);
                 }, (error) => { push.loading = false; this.ctx.fail(error); });
             },
@@ -858,9 +879,10 @@
         <div v-if="push.loaded && !push.repositories.length" class="text-caption m-muted">{{ t('No hosted repository you may see matches the rule.') }}</div>
         <div v-if="push.contexts.length" class="row q-gutter-xs q-mt-xs" id="DevTryPushContexts">
           <q-chip v-for="(context, i) in push.contexts" :key="i" dense square clickable @click="useContext(context)" :outline="!context.matches"
-              :title="context.matches ? '' : t('The rule\\'s ref-pattern does not take this ref')">{{context.label}}</q-chip>
+              :title="context.matches ? '' : t('The rule does not run on this one (its source, ref-pattern, ref-type or default branch)')">{{context.label}}</q-chip>
         </div>
-        <div v-else-if="push.updateId && !push.loading" class="text-caption m-muted">{{ t('That change has no context for this rule\\'s event.') }}</div>
+        <div v-if="push.truncated" class="text-caption m-muted" id="DevTryPushTruncated">{{ t('Some were left out: past the limits, or commits you do not read') }}</div>
+        <div v-else-if="push.updateId && !push.loading && !push.contexts.length" class="text-caption m-muted">{{ t('That change has no context for this rule\\'s event.') }}</div>
       </div>
       <q-input dense outlined type="textarea" autogrow v-model="tryContext" :label="gitRule ? t('Against (JSON: a push, or any context)') : t('Against (JSON: the service\\'s last Try, or a record)')" class="m-dev-mono"></q-input>
       <q-btn dense flat no-caps icon="sym_o_science" label="Try in sim" @click="tryCondition" id="DevTryConditionRun"></q-btn>

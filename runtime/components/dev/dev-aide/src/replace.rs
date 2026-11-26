@@ -13,13 +13,16 @@
  */
 
 //! Replace across files (plans/design-dev-aide.md 4.3): `replace#Files` of the Workspace. With no `files` it is the
-//! preview: each file of the root a search finds (`git grep` in a repository, as Search in files; a walk of a plain
-//! root), its matches with their lines before and after, its hash, and why it may not be written when the user may not
-//! (an upstream file while the lock is on, a read-only root: Save's rule). With `files` (each path, the hash the
-//! preview read and the matches chosen) it replaces those matches of each file through the save pipeline
-//! (`workspace::save_text`: confined, audited, reloaded), each file on its own: one whose text changed since the preview
-//! (its hash), or that may not be written, is refused and named, and the others are still written. Open tabs are the
-//! client's: the Workspace leaves out a file with unsaved changes in a tab and reads the others again after.
+//! preview: each file of the root (what git tracks and the untracked files it does not ignore, or a walk of a plain
+//! root) that the query matches, with Rust's regular expressions alone so the preview and the replace read the query
+//! one way; its matches with their lines before and after, its hash, and why it may not be written when the user may
+//! not (an upstream file while the lock is on, a read-only root: Save's rule). A file over `max-edit-bytes` is not
+//! read, as an editor does not open it to edit. With `files` (each path, the hash the preview read and the matches
+//! chosen) it replaces those matches of each file through the save pipeline (`workspace::save_text_with`: confined,
+//! audited, reloaded), its line endings as they were, each file on its own: one whose text changed since the preview
+//! (its hash), that may not be written, or whose result would be over `max-edit-bytes`, is refused and named, and the
+//! others are still written. Open tabs are the client's: the Workspace leaves out a file with unsaved changes in a
+//! tab and reads the others again after.
 
 use std::collections::BTreeSet;
 
@@ -31,10 +34,9 @@ use regex::{Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::git;
-use crate::roots::{Root, RootKind};
+use crate::roots::Root;
 use crate::tier::Tier;
-use crate::workspace::{self, decode, flag, json_value, sha256, text, Context};
+use crate::workspace::{self, decode, flag, json_value, sha256, text, Context, Endings};
 
 pub(crate) fn register(registry: &mut NativeRegistry) -> Result<(), Error> {
     registry.service_function(moqui_core::service_location!(replace_files), replace_files)
@@ -45,6 +47,13 @@ const MAX_FILES: usize = 200;
 /// The most matches a preview lists in all, and in one file.
 const MAX_MATCHES: usize = 2000;
 const MAX_FILE_MATCHES: usize = 200;
+/// The most files of a root a preview looks in.
+const MAX_SCANNED: usize = 20_000;
+/// The longest query and replacement taken, in bytes.
+pub(crate) const MAX_QUERY_BYTES: usize = 4 * 1024;
+pub(crate) const MAX_REPLACEMENT_BYTES: usize = 64 * 1024;
+/// The most characters of a line a preview shows, before and after.
+pub(crate) const SHOWN_CHARS: usize = 400;
 
 /// What to find and what to put in its place.
 #[derive(Debug)]
@@ -55,12 +64,56 @@ pub(crate) struct Replacer {
     replacement: String,
 }
 
+/// A replacement's `$1` as `${1}`, so the group's number ends at its last digit (`$1a` is group 1, then `a`) where
+/// the regex crate reads `$1a` as a group named `1a`; `$$` and `${...}` are left as they are.
+pub(crate) fn numbered_groups(replacement: &str) -> String {
+    let mut out = String::with_capacity(replacement.len());
+    let mut chars = replacement.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch != '$' {
+            out.push(ch);
+            continue;
+        }
+        match chars.peek() {
+            Some('$') => {
+                out.push_str("$$");
+                chars.next();
+            }
+            Some(digit) if digit.is_ascii_digit() => {
+                out.push_str("${");
+                while let Some(digit) = chars.peek().copied().filter(char::is_ascii_digit) {
+                    out.push(digit);
+                    chars.next();
+                }
+                out.push('}');
+            }
+            _ => out.push('$'),
+        }
+    }
+    out
+}
+
+/// At most `most` characters of `text`, with an ellipsis when it had more.
+fn shown(text: &str, most: usize) -> String {
+    match text.char_indices().nth(most) {
+        Some((at, _)) => format!("{}…", &text[..at]),
+        None => text.to_string(),
+    }
+}
+
 impl Replacer {
     /// `query` as text or, with `regex`, a regular expression, ignoring case unless `case_sensitive`. Refused when it
-    /// does not parse or matches an empty text (it would put the replacement between every two characters).
+    /// or the replacement is too long, it does not parse, or it matches an empty text (it would put the replacement
+    /// between every two characters); an empty match it has anyway (at `\b`) is passed over.
     pub(crate) fn new(query: &str, replacement: &str, regex: bool, case_sensitive: bool) -> Result<Self, String> {
         if query.is_empty() {
             return Err("nothing to replace".into());
+        }
+        if query.len() > MAX_QUERY_BYTES {
+            return Err(format!("the text to find is over {MAX_QUERY_BYTES} bytes"));
+        }
+        if replacement.len() > MAX_REPLACEMENT_BYTES {
+            return Err(format!("the replacement is over {MAX_REPLACEMENT_BYTES} bytes"));
         }
         let pattern = if regex { query.to_string() } else { regex::escape(query) };
         let compiled = RegexBuilder::new(&pattern)
@@ -77,8 +130,24 @@ impl Replacer {
         Ok(Self {
             regex: compiled,
             expand: regex,
-            replacement: replacement.to_string(),
+            replacement: if regex {
+                numbered_groups(replacement)
+            } else {
+                replacement.to_string()
+            },
         })
+    }
+
+    /// Whether the query matches somewhere in `text` (an empty match is no match).
+    pub(crate) fn finds(&self, text: &str) -> bool {
+        self.matches(text).next().is_some()
+    }
+
+    /// The matches of `text` in order, empty ones passed over: what a preview's indexes count.
+    fn matches<'t>(&'t self, text: &'t str) -> impl Iterator<Item = regex::Captures<'t>> + 't {
+        self.regex
+            .captures_iter(text)
+            .filter(|captures| captures.get(0).is_some_and(|found| !found.is_empty()))
     }
 
     /// The replacement of one match.
@@ -92,12 +161,13 @@ impl Replacer {
         }
     }
 
-    /// The matches of `text`, in order, at most `limit`, and whether there were more.
+    /// The matches of `text`, in order, at most `limit`, and whether there were more; each line shown is at most
+    /// [`SHOWN_CHARS`] characters.
     pub(crate) fn hits(&self, text: &str, limit: usize) -> (Vec<Hit>, bool) {
         let mut hits = Vec::new();
         // the line of the last match, counted on from there
         let (mut counted_to, mut line) = (0, 1);
-        for captures in self.regex.captures_iter(text) {
+        for captures in self.matches(text) {
             if hits.len() >= limit {
                 return (hits, true);
             }
@@ -114,28 +184,35 @@ impl Replacer {
             } else {
                 ""
             };
+            let before = &text[line_start..found.start()];
+            let replaced = self.replacement_of(&captures);
             hits.push(Hit {
                 index: hits.len(),
                 line,
-                column: text[line_start..found.start()].chars().count() + 1,
-                text: text[line_start..line_end].trim_end_matches('\r').to_string(),
-                after: format!(
-                    "{}{}{}",
-                    &text[line_start..found.start()],
-                    self.replacement_of(&captures),
-                    tail.trim_end_matches('\r')
+                column: before.chars().count() + 1,
+                text: shown(text[line_start..line_end].trim_end_matches('\r'), SHOWN_CHARS),
+                after: shown(
+                    &format!("{before}{replaced}{}", tail.trim_end_matches('\r')),
+                    SHOWN_CHARS,
                 ),
             });
         }
         (hits, false)
     }
 
-    /// `text` with the matches whose index is in `chosen` replaced, and how many were.
-    pub(crate) fn replace(&self, text: &str, chosen: &BTreeSet<usize>) -> (String, usize) {
+    /// `text` with the matches whose index is in `chosen` replaced, and how many were; refused once the text would be
+    /// over `max_bytes`.
+    pub(crate) fn replace(
+        &self,
+        text: &str,
+        chosen: &BTreeSet<usize>,
+        max_bytes: u64,
+    ) -> Result<(String, usize), String> {
+        let too_long = || format!("the text would be over {max_bytes} bytes");
         let mut out = String::with_capacity(text.len());
         let mut last = 0;
         let mut count = 0;
-        for (index, captures) in self.regex.captures_iter(text).enumerate() {
+        for (index, captures) in self.matches(text).enumerate() {
             let Some(found) = captures.get(0) else { continue };
             if !chosen.contains(&index) {
                 continue;
@@ -144,9 +221,15 @@ impl Replacer {
             out.push_str(&self.replacement_of(&captures));
             last = found.end();
             count += 1;
+            if out.len() as u64 > max_bytes {
+                return Err(too_long());
+            }
         }
         out.push_str(&text[last..]);
-        (out, count)
+        if out.len() as u64 > max_bytes {
+            return Err(too_long());
+        }
+        Ok((out, count))
     }
 }
 
@@ -168,43 +251,14 @@ struct Chosen {
     matches: Vec<usize>,
 }
 
-/// The files of `root` a search for `query` finds, as Search in files finds them: `git grep -l` in a repository, every
-/// file whose path has `path_filter` in a plain root.
-fn candidates(
-    context: &Context,
-    root: &Root,
-    query: &str,
-    regex: bool,
-    case: bool,
-    filter: &str,
-) -> Result<Vec<String>, LibError> {
-    if root.kind != RootKind::Git {
-        let filter = filter.trim_matches('*');
-        return Ok(workspace::root_files(context, root, 20_000)
-            .into_iter()
-            .filter(|path| filter.is_empty() || path.contains(filter))
-            .collect());
-    }
-    let mut args = vec!["grep", "-l", "-I", "--no-color", "-z", "--untracked"];
-    args.push(if regex { "-E" } else { "-F" });
-    if !case {
-        args.push("-i");
-    }
-    args.extend(["-e", query, "--"]);
-    if !filter.is_empty() {
-        args.push(filter);
-    }
-    let output = context.git().run(&root.path, git::Mode::Read, &args, &[], None)?;
-    // exit 1 is "no match"
-    if output.code != Some(0) && output.code != Some(1) {
-        return Err(LibError::new(format!("git grep: {}", output.stderr.trim())));
-    }
-    Ok(output
-        .stdout
-        .split('\0')
-        .filter(|path| !path.is_empty())
-        .map(str::to_string)
-        .collect())
+/// The files of `root` a preview looks in: what git tracks and the untracked files it does not ignore (a walk of a
+/// plain root), at most [`MAX_SCANNED`], each whose path has `filter`.
+pub(crate) fn candidates(context: &Context, root: &Root, filter: &str) -> Vec<String> {
+    let filter = filter.trim_matches('*');
+    workspace::root_files(context, root, MAX_SCANNED)
+        .into_iter()
+        .filter(|path| filter.is_empty() || path.contains(filter))
+        .collect()
 }
 
 /// `replace#Files`: the preview of a replace across a root's files, or with `files` the replace of the matches chosen
@@ -233,32 +287,16 @@ pub(crate) fn replace_files(
         ),
     };
     match chosen {
-        None => preview(
-            &context,
-            root,
-            &replacer,
-            &query,
-            regex,
-            case,
-            &text(parameters, "pathFilter"),
-        ),
+        None => Ok(preview(&context, root, &replacer, &text(parameters, "pathFilter"))),
         Some(files) => apply(&context, root, &replacer, &query, regex, &files),
     }
 }
 
-fn preview(
-    context: &Context,
-    root: &Root,
-    replacer: &Replacer,
-    query: &str,
-    regex: bool,
-    case: bool,
-    filter: &str,
-) -> Result<Parameters, LibError> {
+fn preview(context: &Context, root: &Root, replacer: &Replacer, filter: &str) -> Parameters {
     let mut files = Vec::new();
     let mut total = 0;
     let mut truncated = false;
-    for path in candidates(context, root, query, regex, case, filter)? {
+    for path in candidates(context, root, filter) {
         if files.len() >= MAX_FILES || total >= MAX_MATCHES {
             truncated = true;
             break;
@@ -267,12 +305,21 @@ fn preview(
         let Ok(resolved) = context.resolve(root, &path) else {
             continue;
         };
+        // a file an editor would not open to edit is not read
+        if std::fs::metadata(&resolved.path).map_or(true, |meta| {
+            !meta.is_file() || meta.len() > context.settings.max_edit_bytes
+        }) {
+            continue;
+        }
         let Ok(bytes) = std::fs::read(&resolved.path) else {
             continue;
         };
         let Some((body, _)) = decode(&bytes) else {
             continue;
         };
+        if !replacer.finds(&body) {
+            continue;
+        }
         let (hits, more) = replacer.hits(&body, MAX_FILE_MATCHES.min(MAX_MATCHES - total));
         if hits.is_empty() {
             continue;
@@ -297,7 +344,7 @@ fn preview(
         Value::I64(i64::try_from(total).unwrap_or(i64::MAX)),
     );
     out.insert("truncated".into(), Value::Bool(truncated));
-    Ok(out)
+    out
 }
 
 fn apply(
@@ -353,13 +400,22 @@ fn apply_one(
         return Err("it changed since the preview: preview again".into());
     }
     let (body, _) = decode(&bytes).ok_or("a binary file is not replaced in")?;
-    let (text, count) = replacer.replace(&body, &chosen);
+    let (text, count) = replacer.replace(&body, &chosen, context.settings.max_edit_bytes)?;
     if count == 0 {
         return Ok(None);
     }
     let detail = json!({ "replace": { "query": query, "regex": regex, "count": count } });
-    let out = workspace::save_text(context, root, &resolved, &text, &file.hash, Some(detail))
-        .map_err(|err| err.message().to_string())?;
+    // the line endings as the file has them, mixed ones too: the replace changes only what it matched
+    let out = workspace::save_text_with(
+        context,
+        root,
+        &resolved,
+        &text,
+        &file.hash,
+        Some(detail),
+        Endings::AsGiven,
+    )
+    .map_err(|err| err.message().to_string())?;
     if matches!(out.get("conflict"), Some(Value::Bool(true))) {
         return Err("it changed since the preview: preview again".into());
     }
