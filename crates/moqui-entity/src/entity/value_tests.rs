@@ -187,3 +187,38 @@ fn a_transaction_cache_holds_each_row() {
     .unwrap();
     assert_eq!(facade.find(TEST).unwrap().count().unwrap(), 3);
 }
+
+/// With dummy foreign keys each row is created on its own, so a row whose related row is an earlier row of the call
+/// finds it there: no dummy is made for it, and it is not written twice.
+#[test]
+fn with_dummy_foreign_keys_a_row_finds_an_earlier_row_of_the_call() {
+    let facade = crate::testing::open();
+    facade.set_disable_fk_create(false);
+    let _scope = crate::entity::fk_scope(true, false);
+    let entity = "moqui.basic.StatusType";
+    let status_type = |id: &str, parent: Option<&str>| {
+        let mut row = facade.make_value(entity).unwrap();
+        row.set("statusTypeId", Value::string(id));
+        row.set("description", Value::string(format!("type {id}")));
+        if let Some(parent) = parent {
+            row.set("parentTypeId", Value::string(parent));
+        }
+        row
+    };
+    let rows = vec![
+        status_type("ST_PARENT", None),
+        status_type("ST_CHILD", Some("ST_PARENT")),
+    ];
+    facade.create_values(entity, rows).unwrap();
+    let parents = facade
+        .find(entity)
+        .unwrap()
+        .eq("statusTypeId", Value::string("ST_PARENT"))
+        .list()
+        .unwrap();
+    assert_eq!(parents.len(), 1, "{parents:?}");
+    assert_eq!(
+        parents.get(0).unwrap().get("description"),
+        Some(&Value::string("type ST_PARENT"))
+    );
+}

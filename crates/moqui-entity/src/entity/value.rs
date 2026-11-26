@@ -1312,19 +1312,23 @@ impl EntityFacade {
 
     /// Insert `rows`, each a value of `entity_name`, as [`Self::create_value`] inserts each, in as few statements as
     /// the bind limits allow: `INSERT ... VALUES (...), (...)` of up to [`CREATE_ROWS`] rows and [`CREATE_BINDS`]
-    /// values, one row to a statement where the database takes no more ([`moqui_db::sql::supports_insert_rows`]). Each
-    /// row is prepared as a create prepares it: its field defaults, its fields converted to their types, its primary
-    /// key required, its foreign keys checked, its encrypted fields sealed and its audit written; after the statements
-    /// the rows are noted for the data feed and cleared from the caches, one cluster invalidation carrying their keys.
-    /// A statement binds every column a row of it or of a statement before it sets, null where a row sets none, as
-    /// the transaction cache's batch writes a created row. The authorization check and the artifact hit, the table
-    /// check and the entity-changed notice are once for the call. Where a row needs a write of its own, each row is
-    /// created by [`Self::create_value`]: an entity ECA rule on create runs, or a sim or a transaction cache would
-    /// hold the writes.
+    /// values, one row to a statement where the database takes no more ([`moqui_db::sql::supports_insert_rows`]). The
+    /// entity is named by its full name from the start, as a create names it, for its ECA rules, its authorization,
+    /// the data feed and the caches.
     ///
-    /// The rows are taken from `rows` a statement's worth at a time, prepared and sent, so in a pipelined transaction
-    /// ([`super::exec::PipelineWrites`]), where a statement goes out without waiting for its result, the database
-    /// inserts one statement's rows while the next are made and prepared.
+    /// The rows are taken from `rows` a statement's worth at a time. Each is checked first, as a create checks its row
+    /// before its write: its field defaults filled, its fields converted to their types, its primary key required and
+    /// its foreign keys checked. Then, in the entity's `create` frame, which authorizes the write and counts it once a
+    /// statement, each is sealed (its encrypted fields) and audited, the statement sent, and the rows noted for the
+    /// data feed and cleared from the caches, one cluster invalidation carrying their keys. So no audit row is written
+    /// for a row of a statement that fails its checks. A statement binds every column a row of it or of a statement
+    /// before it sets, null where a row sets none, as the transaction cache's batch writes a created row. In a
+    /// pipelined transaction ([`super::exec::PipelineWrites`]), where a statement goes out without waiting for its
+    /// result, the database inserts one statement's rows while the next are made and checked.
+    ///
+    /// Where a row needs a write of its own, each row is created by [`Self::create_value`]: an entity ECA rule on
+    /// create runs, dummy foreign keys are on (a row's missing related row, its own parent among them, is made first),
+    /// or a sim or a transaction cache would hold the writes.
     ///
     /// # Errors
     ///
@@ -1335,6 +1339,7 @@ impl EntityFacade {
             return Ok(());
         }
         let full_name = self.with_entity(entity_name, |entity, _, _| Ok(entity.full_name.clone()))?;
+        let entity_name = full_name.as_str();
         let of_entity = |row: EntityValue| {
             if *row.entity_name == *full_name {
                 Ok(row)
@@ -1347,7 +1352,10 @@ impl EntityFacade {
         };
         self.reject_view(entity_name, "create")?;
         let rules = load_feed::match_rules_with(self, entity_name, "create");
-        if (crate::hooks::entered() && !rules.is_empty()) || !cache::writes_direct(self, entity_name, "create")? {
+        if (crate::hooks::entered() && !rules.is_empty())
+            || fk::dummy_fks(self)
+            || !cache::writes_direct(self, entity_name, "create")?
+        {
             for row in rows {
                 self.create_value(&of_entity(row)?)?;
             }
@@ -1355,7 +1363,6 @@ impl EntityFacade {
         }
         // Declared first, so it drops last: the authorization cache is invalidated after the writes.
         let _note = WriteNote(self, entity_name);
-        let _artifact = EntityArtifact::push(self, entity_name, "create", "create")?;
         let tx = self.transactions_for(entity_name)?;
         let (defaults, fields, per_statement, dialect_name) =
             self.with_group(entity_name, |entity, dialect, _, _| {
@@ -1373,14 +1380,11 @@ impl EntityFacade {
         let mut stack = HashSet::from([full_name.clone()]);
         // the fields a row so far set, which every statement from then on binds
         let mut bound_fields = vec![false; fields.len()];
-        let mut plain: Vec<Arc<FieldMap>> = Vec::new();
         // the stamp a create sets, the same for every row of a transaction
         let stamp = self.write_stamp(entity_name);
         loop {
-            let first = plain.len();
-            // a row's fields as sealed where sealing changed them, else none: the row binds its plain fields
-            let mut sealed: Vec<Option<FieldMap>> = Vec::with_capacity(per_statement);
-            // the statement's rows prepared under one look-up of the entity
+            // the statement's rows checked, under one look-up of the entity
+            let mut checked: Vec<FieldMap> = Vec::with_capacity(per_statement);
             self.with_entity(entity_name, |entity, _, _| {
                 for row in rows.by_ref().take(per_statement) {
                     let fields = of_entity(row)?.into_fields();
@@ -1392,6 +1396,19 @@ impl EntityFacade {
                     let values = convert_fields(entity, owned, Some(|| stamp.clone()));
                     pk_values(entity, &values)?;
                     fk::enforce(self, entity_name, &values, &mut stack)?;
+                    checked.push(values);
+                }
+                Ok(())
+            })?;
+            if checked.is_empty() {
+                break;
+            }
+            let _artifact = EntityArtifact::push(self, entity_name, "create", "create")?;
+            // a row's fields as sealed where sealing changed them, else none: the row binds its plain fields
+            let mut sealed: Vec<Option<FieldMap>> = Vec::with_capacity(checked.len());
+            let mut plain: Vec<Arc<FieldMap>> = Vec::with_capacity(checked.len());
+            self.with_entity(entity_name, |entity, _, _| {
+                for values in checked {
                     sealed.push(
                         match field_rw::before_write_shared(self, entity, "create", Cow::Borrowed(&values), None)? {
                             Cow::Owned(changed) => Some(changed),
@@ -1402,10 +1419,7 @@ impl EntityFacade {
                 }
                 Ok(())
             })?;
-            if sealed.is_empty() {
-                break;
-            }
-            let bound = |at: usize| sealed[at].as_ref().unwrap_or(&plain[first + at]);
+            let bound = |at: usize| sealed[at].as_ref().unwrap_or(&plain[at]);
             for (name, set) in fields.iter().zip(bound_fields.iter_mut()) {
                 *set = *set
                     || (0..sealed.len()).any(|at| bound(at).get(name.as_str()).is_some_and(|value| !value.is_null()));
@@ -1441,25 +1455,25 @@ impl EntityFacade {
                     execute_tx(&tx, &sql, &params)?;
                 }
             }
-        }
-        if tx.lock_track_enabled() {
-            for values in &plain {
-                if let Ok(keys) = self.with_entity(entity_name, |entity, _, _| pk_values(entity, values)) {
-                    let pk = keys
-                        .iter()
-                        .map(|(name, value)| format!("{name}={}", moqui_lib::object::to_plain_string(value)))
-                        .collect::<Vec<_>>()
-                        .join(",");
-                    tx.note_entity_lock(entity_name, &pk);
+            if tx.lock_track_enabled() {
+                for values in &plain {
+                    if let Ok(keys) = self.with_entity(entity_name, |entity, _, _| pk_values(entity, values)) {
+                        let pk = keys
+                            .iter()
+                            .map(|(name, value)| format!("{name}={}", moqui_lib::object::to_plain_string(value)))
+                            .collect::<Vec<_>>()
+                            .join(",");
+                        tx.note_entity_lock(entity_name, &pk);
+                    }
                 }
             }
+            load_feed::note_creates(self, entity_name, &plain);
+            // As Java's `EntityCache`, a cache clear or cluster publish that fails is logged; the writes already ran.
+            if let Err(err) = cache::on_create_rows(self, entity_name, &plain) {
+                tracing::error!(error = %err, "Could not clear or publish the cache for the creates of {entity_name}");
+            }
+            after_statement(self, &tx, true);
         }
-        load_feed::note_creates(self, entity_name, &plain);
-        // As Java's `EntityCache`, a cache clear or cluster publish that fails is logged; the writes already ran.
-        if let Err(err) = cache::on_create_rows(self, entity_name, &plain) {
-            tracing::error!(error = %err, "Could not clear or publish the cache for the creates of {entity_name}");
-        }
-        after_statement(self, &tx, true);
         Ok(())
     }
 
