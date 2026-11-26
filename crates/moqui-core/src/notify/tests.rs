@@ -180,43 +180,98 @@ fn recipients_dedup_group_explicit_terminated_and_all() {
     assert_eq!(select_count(&sqls, "user_account"), 1, "{sqls:?}");
 }
 
+/// COM-UI-032: a send inside a transaction writes, publishes and mails nothing until it commits, and nothing at all when
+/// it rolls back; at the commit each recipient gets the message once. The id is the caller's at once. With no
+/// transaction in place the send delivers in the call, as before.
 #[test]
-fn persist_survives_caller_rollback() {
+fn a_send_in_a_transaction_waits_for_its_commit() {
     let (ctx, facade) = open();
     let _entered = ctx.enter();
     let _authz = ctx.disable_authz();
-    account(&facade, "alice", None, None);
+    // the socket bus drops a message id it has seen, and the parallel tests' databases sequence the same ids
+    facade.temp_set_sequenced_id_primary(MESSAGE, 3_300_000, 10);
+    for user in ["alice", "bob"] {
+        account(&facade, user, None, None);
+    }
+    let label = unique("waits");
+    let (sub, seen) = kept(&label);
+    let send = || {
+        let mut body = IndexMap::default();
+        body.insert("note".to_string(), Value::string("kept-body"));
+        let mut note = NotificationMessage::new();
+        note.topic("PersistTopic")
+            .user_ids(["alice", "bob"])
+            .persist(true)
+            .title(&label)
+            .message_map(body)
+            .send()
+            .unwrap();
+        assert_eq!(note.notify_user_ids(), ["alice", "bob"].as_slice());
+        note.notification_message_id().expect("the id at once").to_string()
+    };
+    let users_of = |id: &str| {
+        let rows = facade
+            .find(MESSAGE_USER)
+            .unwrap()
+            .eq("notificationMessageId", Value::string(id))
+            .list()
+            .unwrap();
+        let mut users: Vec<String> = rows.values().iter().map(|row| text(row, "userId")).collect();
+        users.sort();
+        users
+    };
+    let message_of = |id: &str| {
+        facade
+            .find(MESSAGE)
+            .unwrap()
+            .eq("notificationMessageId", Value::string(id))
+            .one()
+            .unwrap()
+    };
+
+    // rolled back: no rows, no socket message
     facade.begin(MESSAGE, None).unwrap();
-    let mut body = IndexMap::default();
-    body.insert("note".to_string(), Value::string("kept-body"));
-    let mut note = NotificationMessage::new();
-    note.topic("PersistTopic")
-        .user_id("alice")
-        .persist(true)
-        .title("kept")
-        .message_map(body)
-        .send()
-        .unwrap();
-    let id = note.notification_message_id().unwrap().to_string();
+    let dropped = send();
+    assert!(message_of(&dropped).is_none(), "no row before the commit");
+    assert!(lock(&seen).is_empty(), "no socket message before the commit");
     facade.rollback(MESSAGE).unwrap();
-    let row = facade
-        .find(MESSAGE)
-        .unwrap()
-        .eq("notificationMessageId", Value::string(&id))
-        .one()
-        .unwrap()
-        .expect("persisted row");
-    assert_eq!(text(&row, "titleText"), "kept");
+    assert!(message_of(&dropped).is_none());
+    assert!(users_of(&dropped).is_empty());
+    assert!(lock(&seen).is_empty(), "nothing published for a rollback");
+
+    // committed: one message, a row for each recipient, one socket message for both
+    facade.begin(MESSAGE, None).unwrap();
+    let id = send();
+    assert!(lock(&seen).is_empty(), "no socket message before the commit");
+    facade.commit(MESSAGE).unwrap();
+    let row = message_of(&id).expect("persisted at the commit");
+    assert_eq!(text(&row, "titleText"), label);
     assert!(text(&row, "messageJson").contains("kept-body"));
     assert!(row.get("sentDate").is_some_and(|value| !value.is_null()));
-    let users = facade
-        .find(MESSAGE_USER)
-        .unwrap()
-        .eq("notificationMessageId", Value::string(&id))
-        .list()
-        .unwrap();
-    assert_eq!(users.len(), 1);
-    assert_eq!(text(&users.values()[0], "userId"), "alice");
+    assert_eq!(users_of(&id), ["alice", "bob"]);
+    {
+        let got = lock(&seen);
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert_eq!(
+            got[0]
+                .body
+                .get("notificationMessageId")
+                .and_then(|value| value.as_str()),
+            Some(id.as_str())
+        );
+        assert_eq!(
+            got[0].body.get(super::ROUTE_USER_IDS),
+            Some(&serde_json::json!(["alice", "bob"]))
+        );
+    }
+
+    // no transaction: written and published in the call
+    let now = send();
+    assert!(message_of(&now).is_some());
+    assert_eq!(users_of(&now), ["alice", "bob"]);
+    assert_eq!(lock(&seen).len(), 2);
+    drop(sub);
+
     mark_sent("", "alice").unwrap();
     mark_sent(&id, "alice").unwrap();
     let sent = facade
@@ -300,7 +355,12 @@ fn a_callers_link_is_not_expanded() {
     assert_eq!(given.link_text(), Some("/apps/x?q=${label}"));
     assert_eq!(given.title_text(), Some("Hello L1"));
     let mut topic = NotificationMessage::new();
-    topic.topic("LinkTopic").message_map(message()).persist(false).send().unwrap();
+    topic
+        .topic("LinkTopic")
+        .message_map(message())
+        .persist(false)
+        .send()
+        .unwrap();
     assert_eq!(topic.link_text(), Some("go/L1"));
 }
 
