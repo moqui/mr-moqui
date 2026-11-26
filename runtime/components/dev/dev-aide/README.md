@@ -3,8 +3,13 @@
 The assisted IDE of mr-moqui (`plans/design-dev-aide.md`), at `/qapps/dev` on a dev instance:
 
 - **Home** has the site's unpublished changes with Publish, each repository and directory with its branch and changes,
-  the reload log, the restart a change needs, "No site component yet. Create one", and New component, which makes an
-  app from the component template (`runtime/components/dev/template`) as `./moq component-create` does.
+  the reload log, the restart a change needs (with Rebuild for a Rust change where the runtime has `moq`: `./moq build`
+  in a host session of the Terminal, the banner offering Restart once it ends with 0), "No site component yet. Create
+  one", and New component, which makes an app, data only, native, theme, skill pack or dev tool component from the
+  component template (`runtime/components/dev/template`) as `./moq component-create` does, with an optional git remote.
+- **Customizations** (Artifacts › Customizations) is every extension the site components make with its state, and the
+  DbForms that change a screen form, each with Convert: the review of the site's `screen-extend` it writes and the rows
+  that go, and Accept, which writes the file and deletes the DbForm in one step (one way only).
 - **Workspace** is the IDE: the roots (the repositories and directories of the loaded components), the file tree with
   git status, files in the CodeMirror editor with schema completion and checks, Save that reloads what the file defines,
   Changes (stage, unstage, discard, commit with the task trailer), Commits, Fetch, Pull, Push and Publish. In the

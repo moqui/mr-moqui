@@ -95,6 +95,21 @@ test("Save all writes entities, services, rules, screens, then the rest", () => 
     assert.equal(pure.isDirtyAll({ text: "a", saved: "a", companions: [] }), false);
 });
 
+test("the restart banner follows a rebuild and offers Rebuild only where it can run", () => {
+    const needed = { needed: true, available: true, state: "" };
+    assert.equal(pure.rebuildNote(needed), "A Rust change needs a rebuild first.");
+    assert.equal(pure.rebuildOffered(needed), true);
+    assert.equal(pure.rebuildNote({ needed: true, available: false }), "A Rust change needs a rebuild first: ./moq build.");
+    assert.equal(pure.rebuildOffered({ needed: true, available: false }), false);
+    assert.equal(pure.rebuildOffered({ ...needed, state: "running" }), false);
+    assert.equal(pure.rebuildNote({ ...needed, state: "running" }), "Building in the Terminal (./moq build)…");
+    assert.equal(pure.rebuildNote({ ...needed, state: "succeeded" }), "The build succeeded: restart to run it.");
+    assert.equal(pure.rebuildNote({ ...needed, state: "failed", exitStatus: 101 }),
+        "The build failed (status 101): its output is in the Terminal.");
+    assert.equal(pure.rebuildOffered({ ...needed, state: "failed" }), true);
+    assert.equal(pure.rebuildNote({ needed: false }), "");
+});
+
 test("a selection follows to its element in the outline an edit answers", () => {
     const before = { name: "widgets", path: [], children: [{ name: "container-dialog", path: [0], attrs: [["button-text", "New item"]] }] };
     const after = { name: "widgets", path: [], children: [{ name: "container-dialog", path: [0], attrs: [["button-text", "Add item"]] }] };

@@ -483,22 +483,114 @@ component_template_names() {
     done
 }
 
-# The files a part leaves out of a new component, by their template paths: --rest has no screens, --screens no REST API.
+# The files an App component of the part $1 leaves out, by their template paths: --rest has no screens, --screens no
+# REST API, and none has the template's other kinds (kinds/).
 template_part_files() {
     case $1 in
         rest) printf '%s\n' screen MoquiConf.xml data/@Class@SecurityData.xml test/@Class@Screens.spec.js \
             test/acceptance ;;
         screens) printf '%s\n' service/@component@.rest.xml data/@Class@ApiSecurityData.xml test/@Class@Api.spec.js ;;
     esac
+    printf '%s\n' kinds
+}
+
+# The kinds of component the template makes besides an App, each a template of its own in kinds/<kind>.
+TEMPLATE_KINDS="data native theme skills dev-tool"
+
+# Whether $1 is a remote URL a new repository may start with as origin, as the Dev AIDE checks it
+# (dev-aide src/vcs.rs checked_remote, REMOTE_FORMS: the same expressions, and a dev-aide test runs both over the same
+# inputs): trimmed, an https URL with no user part (http only to 127.0.0.1 or [::1]), ssh:// or git:// with an optional
+# user, or the scp-like user@host:path; a host a dotted name or an IPv4 address, nothing first a '-', no '%', '?', '#',
+# whitespace or backslash, and no '::' outside [::1] (git's <transport>::<address>).
+TEMPLATE_REMOTE_FORMS=(
+    '^https://([A-Za-z0-9][A-Za-z0-9-]*(\.[A-Za-z0-9-]+)+|\[::1\])(:[0-9]+)?/[A-Za-z0-9._~+][A-Za-z0-9._~/:@+-]*$'
+    '^http://(127\.0\.0\.1|\[::1\])(:[0-9]+)?/[A-Za-z0-9._~+][A-Za-z0-9._~/:@+-]*$'
+    '^(ssh|git)://([A-Za-z0-9_][A-Za-z0-9._-]*@)?([A-Za-z0-9][A-Za-z0-9-]*(\.[A-Za-z0-9-]+)+|\[::1\])(:[0-9]+)?/[A-Za-z0-9._~+][A-Za-z0-9._~/:@+-]*$'
+    '^([A-Za-z0-9_][A-Za-z0-9._-]*@)?[A-Za-z0-9][A-Za-z0-9-]*(\.[A-Za-z0-9-]+)+:[A-Za-z0-9._~/+][A-Za-z0-9._~/:@+-]*$'
+)
+template_remote() {
+    local url=$1 form LC_ALL=C
+    url=${url#"${url%%[![:space:]]*}"}
+    url=${url%"${url##*[![:space:]]}"}
+    local outside=${url//\[::1\]/}
+    case $outside in *::*) return 1 ;; esac
+    for form in "${TEMPLATE_REMOTE_FORMS[@]}"; do
+        if [[ $url =~ $form ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# The component directories of every set, the component template left out.
+template_component_dirs() {
+    local dir
+    for dir in "$RUNTIME_DIR"/components/*/*/; do
+        if [ "$(basename "$dir")" != template ] && [ -f "${dir}component.xml" ]; then printf '%s\n' "${dir%/}"; fi
+    done
+}
+
+# The first segments of the components' service and entity packages, lower case (dev-aide src/template.rs
+# taken_packages): each service/<segment>/ directory, and each package="<segment>... of a top-level entity/*.xml.
+template_taken_packages() {
+    local dir sub file
+    while IFS= read -r dir; do
+        for sub in "$dir"/service/*/; do
+            if [ -d "$sub" ]; then basename "$sub"; fi
+        done
+        for file in "$dir"/entity/*.xml; do
+            if [ -f "$file" ]; then grep -o 'package="[^".]*' "$file" | sed 's/^package="//' || true; fi
+        done
+    done < <(template_component_dirs)
+}
+
+# The first names of the webroot's paths, lower case (dev-aide src/template.rs webroot_names): the files and directories
+# of webroot/screen/webroot/ (a name up to its first '.'), and the subscreens-item names of webroot.xml and of each
+# component's MoquiConf.xml that mounts under it.
+template_webroot_names() {
+    local screen=$RUNTIME_DIR/components/base/webroot/screen file name dir
+    for file in "$screen"/webroot/*; do
+        [ -e "$file" ] || continue
+        name=$(basename "$file")
+        printf '%s\n' "${name%%.*}"
+    done
+    {
+        if [ -f "$screen/webroot.xml" ]; then cat "$screen/webroot.xml"; fi
+        while IFS= read -r dir; do
+            if grep -s 'component://webroot/screen/webroot.xml"' "$dir/MoquiConf.xml" >/dev/null; then cat "$dir/MoquiConf.xml"; fi
+        done < <(template_component_dirs)
+    } | { grep -o 'subscreens-item name="[^"]*"' || true; } | sed 's/^subscreens-item name="//; s/"$//'
+}
+
+# Why $1 may not be a new component of the kind $2, if it may not (dev-aide src/template.rs name_refusal): its package
+# is another component's, or a theme's name is a webroot path.
+template_name_refusal() {
+    local name=$1 kind=$2 package lower taken webroot
+    package=$(name_package "$name")
+    lower=$(printf '%s' "$name" | tr 'A-Z' 'a-z')
+    # whole lists first: a grep -q that ends a pipe early would fail it under pipefail
+    taken=$(template_taken_packages | tr 'A-Z' 'a-z')
+    webroot=$(template_webroot_names | tr 'A-Z' 'a-z')
+    if printf '%s\n' "$taken" | grep -xF -- "$package" >/dev/null; then
+        printf '%s\n' "$name would put its services and entities in the package $package, which another component's are in"
+    elif [ "$kind" = theme ] && printf '%s\n' "$webroot" | grep -xF -- "$lower" >/dev/null; then
+        printf '%s\n' "a theme is served at /$name/, a path the webroot has already"
+    fi
 }
 
 task_component_create() {
-    local name='' from=template part='' remote='' no_git='' group='' template target file dir base new branch
+    local name='' from=template part='' kind=app remote='' no_git='' group='' template source target file dir base new
+    local branch set=''
     local component_base=$RUNTIME_DIR/$ADDON_SET
     while [ $# -gt 0 ]; do
         case $1 in
-            --dev) component_base=$RUNTIME_DIR/$DEV_SET ;;
-            --test) component_base=$RUNTIME_DIR/$TEST_SET ;;
+            --dev) component_base=$RUNTIME_DIR/$DEV_SET set=dev ;;
+            --test) component_base=$RUNTIME_DIR/$TEST_SET set=test ;;
+            --kind)
+                [ $# -ge 2 ] || die "--kind needs a kind: app or one of $TEMPLATE_KINDS"
+                kind=$2
+                shift
+                ;;
             --from)
                 [ $# -ge 2 ] || die "--from needs a template name"
                 from=$2
@@ -528,21 +620,43 @@ task_component_create() {
     [ -n "$name" ] || die "component-create needs a component name"
     template_name "$name" || die "component name '$name' starts with a letter and has letters, digits, '-' and '_'"
     [ -z "$remote" ] || [ -z "$no_git" ] || die "--git-remote and --no-git do not go together"
+    [ -z "$remote" ] || template_remote "$remote" \
+        || die "--git-remote $remote: https://host/path with no user part, ssh://, git:// or user@host:path"
     template=$(component_template "$from") \
         || die "no template $from in runtime/components/dev or runtime/components/addon (a component.xml named @component@)"
+    case " app $TEMPLATE_KINDS " in
+        *" $kind "*) ;;
+        *) die "--kind $kind: app or one of $TEMPLATE_KINDS" ;;
+    esac
+    source=$template
+    if [ "$kind" != app ]; then
+        [ -z "$part" ] || die "--rest and --screens are an App's parts, not a $kind component's"
+        source=$template/kinds/$kind
+        [ -f "$source/component.xml" ] || die "the template $from has no $kind kind ($(rel "$source"))"
+    fi
+    # A dev tool loads only on a dev instance: in runtime/components/dev wherever it is asked for.
+    if [ "$kind" = dev-tool ]; then
+        [ "$set" != test ] || die "a dev tool goes in runtime/components/dev, not runtime/components/test"
+        component_base=$RUNTIME_DIR/$DEV_SET
+    fi
     target=$component_base/$name
     [ ! -e "$target" ] || die "$(rel "$target") already exists"
+    local refusal
+    refusal=$(template_name_refusal "$name" "$kind")
+    [ -z "$refusal" ] || die "$refusal"
     # The template's contents, so a template reached through a link is copied and not the link.
     run_cmd mkdir -p "$target"
-    run_cmd cp -R "$template/." "$target" || die "could not copy $(rel "$template") to $(rel "$target")"
+    run_cmd cp -R "$source/." "$target" || die "could not copy $(rel "$source") to $(rel "$target")"
     if dry_run; then
         info "(dry run: filling in the placeholders in $(rel "$target") is skipped)"
         return 0
     fi
     rm -rf "$target/.git"
-    while IFS= read -r file; do
-        rm -rf "${target:?}/$file"
-    done < <(template_part_files "$part")
+    if [ "$kind" = app ]; then
+        while IFS= read -r file; do
+            rm -rf "${target:?}/$file"
+        done < <(template_part_files "$part")
+    fi
 
     local title class package id
     title=$(name_title "$name")
@@ -566,9 +680,11 @@ task_component_create() {
     sed 's/ disabled="true"//' "$target/component.xml" >"$target/component.xml.moq-tmp" \
         && cat "$target/component.xml.moq-tmp" >"$target/component.xml"
     rm -f "$target/component.xml.moq-tmp"
-    case $part in
-        rest) info "REST API only: no screens" ;;
-        screens) info "Screens only: no REST API" ;;
+    case $kind:$part in
+        app:rest) info "REST API only: no screens" ;;
+        app:screens) info "Screens only: no REST API" ;;
+        native:*) info "Native: ./moq build links its crate into the binary" ;;
+        dev-tool:*) info "Dev tool: in runtime/components/dev, loaded only on a dev instance" ;;
     esac
 
     branch=master
@@ -579,13 +695,14 @@ task_component_create() {
         fi
         branch=$(git -C "$target" symbolic-ref --short HEAD 2>/dev/null || echo master)
         if [ -n "$remote" ]; then
-            git -C "$target" remote add origin "$remote"
+            git -C "$target" remote add -- origin "$remote" || warn "could not add the remote $remote"
         fi
     fi
     if [ -n "$group" ]; then
         add_to_myaddons "$name" "$group" "$branch"
     fi
-    info "Created $(rel "$target") from $from"
+    info "Created $(rel "$target") from $from${kind:+ ($kind)}"
+    [ "$kind" != native ] || info "Then: ./moq build, and restart"
     if [ -z "$no_git" ]; then
         info "Next: cd $(rel "$target") && git commit -m 'Initial commit'${remote:+ && git push -u origin $branch}"
     fi
@@ -702,21 +819,39 @@ EOF
 help_component_create() {
     cat <<EOF
 Creates runtime/components/addon/<name> from the component template, runtime/components/dev/template:
-copies it, fills in the placeholders in its file names and contents, and takes out the
-template's disabled="true". For the name my-shop the placeholders are @component@ my-shop,
-@Title@ My Shop, @Class@ MyShop, @package@ myshop and @ID@ MY_SHOP. A name starts with a letter
-and has letters, digits, '-' and '_'. The new component loads at the next start.
+copies it (or, for another kind than an App, its kinds/<kind>), fills in the placeholders in its
+file names and contents, and takes out the template's disabled="true". For the name my-shop the
+placeholders are @component@ my-shop, @Title@ My Shop, @Class@ MyShop, @package@ myshop and
+@ID@ MY_SHOP. A name starts with a letter and has letters, digits, '-' and '_'. The new component
+loads at the next start; a native one after ./moq build. A name whose package another component's
+services or entities are in (org, moqui, mantle), or a theme named as a webroot path (css, apps,
+...), is refused. The rules are in runtime/components/dev/README.md.
   ./moq component-create my-shop
   ./moq component-create my-api --rest --git-remote git@github.com:me/my-api.git --myaddons me
+  ./moq component-create my-rates --kind native
+  ./moq component-create my-mocks --kind dev-tool
+
+Kinds (--kind):
+  app                  Entities, services, a REST API, screens, security and demo data, specs (the default)
+  data                 Data files only: seed and demo data, no screens, services or code
+  native               A Rust crate (Cargo.toml, src/ with submit_component!) that ./moq build links, and
+                       the type="rust" service it implements
+  theme                A theme of the /qapps shell: a ScreenTheme on the Default theme, its style sheet and
+                       color scheme
+  skills               A skill pack: skills and suggested prompts for the agents, no code
+  dev-tool             Mock services and a test data screen, in runtime/components/dev with purpose="dev"
 
 Options:
       --dev            Create it in runtime/components/dev, loaded only when instance@purpose is dev
       --test           Create it in runtime/components/test, loaded on a dev or test instance only
       --from NAME      Another template, in runtime/components/dev or runtime/components/addon (a component.xml
                        named @component@)
-      --rest           REST API only: no screen/, MoquiConf.xml, or screen security data and spec
-      --screens        Screens only: no REST API (service/<name>.rest.xml) or its security data and spec
-      --git-remote URL git init, git add ., and add this remote as origin
+      --kind KIND      The kind of component (above); app by default
+      --rest           An App with its REST API only: no screen/, MoquiConf.xml, or screen security data and spec
+      --screens        An App with its screens only: no REST API (service/<name>.rest.xml) or its security data
+                       and spec
+      --git-remote URL git init, git add ., and add this remote as origin: https://host/path with no user
+                       part, ssh://, git:// or user@host:path (a dotted host or an IPv4 address)
       --no-git         Do not git init
       --myaddons GROUP Add the component to myaddons.xml with this git group (creating the file if needed)
 EOF

@@ -113,54 +113,268 @@ fn parts_by_name() {
 }
 
 #[test]
+fn kinds_by_name() {
+    assert_eq!(Kind::of("", ""), Some(Kind::App(Part::All)));
+    assert_eq!(Kind::of("app", "rest"), Some(Kind::App(Part::Rest)));
+    assert_eq!(Kind::of("screens", ""), Some(Kind::App(Part::Screens)));
+    assert_eq!(Kind::of("rest", "screens"), None);
+    assert_eq!(Kind::of("data", ""), Some(Kind::Data));
+    assert_eq!(Kind::of("native", "all"), Some(Kind::Native));
+    assert_eq!(Kind::of("native", "rest"), None);
+    assert_eq!(Kind::of("theme", ""), Some(Kind::Theme));
+    assert_eq!(Kind::of("skills", ""), Some(Kind::Skills));
+    assert_eq!(Kind::of("dev-tool", ""), Some(Kind::DevTool));
+    assert_eq!(Kind::of("plugin", ""), None);
+    for kind in Kind::OTHERS {
+        assert_eq!(Kind::of(kind.name(), ""), Some(kind));
+    }
+    assert!(Kind::DevTool.dev_only());
+    assert!(!Kind::Native.dev_only());
+}
+
+#[test]
 fn what_a_part_leaves_out_is_in_the_template() {
     for part in [Part::Rest, Part::Screens] {
         for path in part.left_out() {
             assert!(component_template().join(path).exists(), "{path} of {part:?}");
         }
     }
+    for kind in Kind::OTHERS {
+        let source = kind.source(&component_template());
+        assert!(source.join("component.xml").is_file(), "{kind:?}");
+        assert!(source.join("README.md").is_file(), "{kind:?}");
+    }
+}
+
+/// The paths and texts of a component of `name` and `kind` made in `scratch`, each placeholder filled in, without the
+/// template's `disabled`, and the template left a template.
+fn made(scratch: &Scratch, name: &str, kind: Kind) -> BTreeMap<String, String> {
+    let target = scratch.0.join(format!("{name}-{}", kind.name()));
+    create(&component_template(), &target, name, kind).unwrap();
+    let files = tree(&target);
+    for (path, text) in &files {
+        assert!(!path.contains('@'), "{path} of {kind:?}");
+        for placeholder in ["@component@", "@Title@", "@Class@", "@package@", "@ID@"] {
+            assert!(!text.contains(placeholder), "{placeholder} in {path} of {kind:?}");
+        }
+    }
+    assert!(!files["component.xml"].contains("disabled"), "{kind:?}");
+    assert!(
+        files["component.xml"].contains(&format!(r#"name="{name}" version="1.0.0""#)),
+        "{kind:?}"
+    );
+    assert!(
+        std::fs::read_to_string(kind.source(&component_template()).join("component.xml"))
+            .unwrap()
+            .contains(r#"name="@component@""#)
+    );
+    files
 }
 
 #[test]
 fn a_component_from_the_template_has_every_placeholder_filled_in() {
     let scratch = Scratch::new("create");
-    let target = scratch.0.join("my-shop");
-    create(&component_template(), &target, "my-shop", Part::All).unwrap();
-    let files = tree(&target);
-    assert_eq!(files.len(), tree(&component_template()).len());
-    for (path, text) in &files {
-        assert!(!path.contains('@'), "{path}");
-        for placeholder in ["@component@", "@Title@", "@Class@", "@package@", "@ID@"] {
-            assert!(!text.contains(placeholder), "{placeholder} in {path}");
-        }
-    }
+    let files = made(&scratch, "my-shop", Kind::App(Part::All));
+    let template_files = tree(&component_template())
+        .into_keys()
+        .filter(|path| !path.starts_with(&format!("{KINDS_DIR}/")))
+        .count();
+    assert_eq!(files.len(), template_files);
     assert!(files.contains_key("service/myshop/MyShopServices.xml"));
     assert!(files.contains_key("screen/MyShop/FindItem.xml"));
     assert!(files["component.xml"].contains(r#"name="my-shop" version="1.0.0"/>"#));
-    assert!(!files["component.xml"].contains("disabled"));
     assert!(files["entity/MyShopEntities.xml"].contains(r#"entity-name="MyShopItem" package="myshop""#));
-    // the template stays a template
-    assert!(std::fs::read_to_string(component_template().join("component.xml"))
-        .unwrap()
-        .contains(r#"name="@component@""#));
+    assert!(!files.keys().any(|path| path.starts_with("kinds")));
+}
+
+#[test]
+fn each_kind_has_its_own_files() {
+    let scratch = Scratch::new("kinds");
+    let data = made(&scratch, "my-data", Kind::Data);
+    assert!(data.contains_key("data/10-seed/MyDataSeedData.xml"));
+    assert!(data.contains_key("data/30-demo/MyDataDemoData.xml"));
+    assert!(!data
+        .keys()
+        .any(|path| path.starts_with("screen") || path.starts_with("service")));
+
+    let native = made(&scratch, "my-rates", Kind::Native);
+    assert!(native["Cargo.toml"].contains(r#"name = "my-rates""#));
+    assert!(native["src/lib.rs"].contains(r#"NativeComponent { name: "my-rates", register }"#));
+    assert!(native["src/lib.rs"].contains(r#""myrates::echo""#));
+    assert!(native["service/myrates/MyRatesServices.xml"].contains(r#"type="rust" location="myrates::echo""#));
+    assert!(native.contains_key(".gitignore"));
+
+    let theme = made(&scratch, "my-look", Kind::Theme);
+    let theme_data = &theme["data/MyLookThemeData.xml"];
+    assert!(theme_data.contains(r#"screenThemeId="MY_LOOK_QUASAR" screenThemeTypeEnumId="STT_INTERNAL_QUASAR" parentScreenThemeId="DEFAULT_QUASAR""#));
+    assert!(theme_data.contains(r#"resourceValue="/my-look/MyLook.css""#));
+    assert!(theme.contains_key("screen/my-look/MyLook.css"));
+    assert!(theme["MoquiConf.xml"].contains(r#"location="component://my-look/screen/my-look.xml""#));
+
+    let skills = made(&scratch, "my-skills", Kind::Skills);
+    assert!(skills["skill/myskills.md"].starts_with("---\nname: myskills\n"));
+    assert!(skills["test/skill-retrieval.json"].contains(r#""expect": ["myskills"]"#));
+    assert!(!skills
+        .keys()
+        .any(|path| path.ends_with(".rs") || path.starts_with("service")));
+
+    let tool = made(&scratch, "my-mocks", Kind::DevTool);
+    assert!(tool["component.xml"].contains(r#"purpose="dev""#));
+    assert!(tool.contains_key("service/mymocks/MyMocksMockServices.xml"));
+    assert!(tool["data/MyMocksTestData.xml"].contains(r#"type="mymocks-test""#));
 }
 
 #[test]
 fn a_part_leaves_out_the_other() {
     let scratch = Scratch::new("parts");
     let rest = scratch.0.join("my-api");
-    create(&component_template(), &rest, "my-api", Part::Rest).unwrap();
+    create(&component_template(), &rest, "my-api", Kind::App(Part::Rest)).unwrap();
     assert!(!rest.join("screen").exists());
     assert!(!rest.join("MoquiConf.xml").exists());
     assert!(rest.join("service/my-api.rest.xml").is_file());
     let screens = scratch.0.join("my-ui");
-    create(&component_template(), &screens, "my-ui", Part::Screens).unwrap();
+    create(&component_template(), &screens, "my-ui", Kind::App(Part::Screens)).unwrap();
     assert!(!screens.join("service/my-ui.rest.xml").exists());
     assert!(!screens.join("data/MyUiApiSecurityData.xml").exists());
     assert!(screens.join("screen/MyUi.xml").is_file());
 }
 
-/// `./moq component-create` and the Dev AIDE make the same component, file for file, for each part.
+/// Remote URLs a new repository takes, both ways.
+const GOOD_REMOTES: &[&str] = &[
+    "https://github.com/me/my-shop.git",
+    " https://git.example.com:8443/a/b.git ",
+    "http://127.0.0.1:3000/me/x.git",
+    "http://[::1]:3000/x.git",
+    "https://[::1]/x",
+    "https://github.com/x@y",
+    "https://xn--nxasmq6b.com/x",
+    "ssh://git@github.com/me/x.git",
+    "ssh://[::1]/x",
+    "git://git.example.com/x.git",
+    "git@github.com:me/my-shop.git",
+    "host.example.com:repos/x.git",
+    "a.b:c",
+    "1.2.3.4:x",
+];
+
+/// Remote URLs refused both ways: a credential, a local path or file:, a transport (`::`), an option or an option-like
+/// host or user, an encoded or a query or fragment part, a host with no dot (a one-letter one is a Windows drive).
+const BAD_REMOTES: &[&str] = &[
+    "",
+    "https://ann@github.com/me/x.git",
+    "https://ann:token@github.com/me/x.git",
+    "http://git.example.com/x.git",
+    "http://127.0.0.2/x.git",
+    "http://localhost/x.git",
+    "http://127.0.0.1.evil.com/x",
+    "HTTPS://github.com/me/x.git",
+    "https://github.com?@evil/x",
+    "https://github.com#@evil/x",
+    "https://ex%41mple.com/x",
+    "https://%2d/x",
+    "https://github.com/a%0ab",
+    "https:///x",
+    "https://:443/x",
+    "https://host/a b",
+    "ssh://ann:secret@host.example.com/x.git",
+    "ssh://user:@host.example.com/x",
+    "ssh://-oProxyCommand=touch%20x/y",
+    "ssh://-oProxyCommand=x@host.example.com/y",
+    "ssh://host.example.com/-x",
+    "ssh://@host.example.com/x",
+    "ssh:///x",
+    "ssh://ann@host/x",
+    "git://-x.example.com/y",
+    "file:///srv/x.git",
+    "file:foo",
+    "ext:foo",
+    "/srv/repos/x.git",
+    "../x.git",
+    "C:/repos/x.git",
+    "ab:/c",
+    "ab:c@d",
+    "ab@:c",
+    "user@ho_st.example.com:x",
+    "-a:b",
+    "-user@host.example.com:x",
+    ".user@host.example.com:x",
+    "host.example.com:-x",
+    "ext::sh -c touch% /tmp/pwned",
+    "fd::17",
+    "host.example.com:a::b",
+    "--upload-pack=touch /tmp/x",
+    "-oProxyCommand=x:y",
+    "@host.example.com:x",
+    "git@host.example.com:",
+    "https://github.com/me/x.git\nfoo",
+    r"https://github.com/me/x.git\nfoo",
+    "https://github.com\\me",
+    "a b:c",
+];
+
+#[test]
+fn a_remote_is_a_network_url_with_no_credential() {
+    use crate::vcs::checked_remote;
+    for good in GOOD_REMOTES {
+        assert!(checked_remote(good).is_ok(), "{good}");
+    }
+    for bad in BAD_REMOTES {
+        assert!(checked_remote(bad).is_err(), "{bad}");
+    }
+}
+
+/// moq's `template_remote` has the Dev AIDE's forms, word for word, and gives each URL of both tables the same verdict.
+#[cfg(unix)]
+#[test]
+fn moq_checks_a_remote_as_the_dev_aide_does() {
+    let components = std::fs::read_to_string(repo().join("scripts/moq/components.sh")).unwrap();
+    let start = components.find("TEMPLATE_REMOTE_FORMS=(\n").unwrap() + "TEMPLATE_REMOTE_FORMS=(\n".len();
+    let forms: Vec<&str> = components[start..]
+        .lines()
+        .take_while(|line| line.trim() != ")")
+        .map(|line| line.trim().trim_matches('\''))
+        .collect();
+    assert_eq!(forms, crate::vcs::REMOTE_FORMS);
+    if std::process::Command::new("bash").arg("--version").output().is_err() {
+        eprintln!("skipped: no bash");
+        return;
+    }
+    // one bash run: each URL a line of 0 (taken) or 1, from a file of NUL-separated URLs
+    let scratch = Scratch::new("remotes");
+    let urls: Vec<&str> = GOOD_REMOTES.iter().chain(BAD_REMOTES).copied().collect();
+    let input = scratch.0.join("urls");
+    std::fs::write(&input, urls.join("\0") + "\0").unwrap();
+    let script = format!(
+        "source {}; while IFS= read -r -d '' url; do template_remote \"$url\"; echo $?; done < {}",
+        repo().join("scripts/moq/components.sh").display(),
+        input.display()
+    );
+    let output = std::process::Command::new("bash")
+        .args(["-c", &script])
+        .output()
+        .unwrap();
+    let verdicts: Vec<String> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::to_string)
+        .collect();
+    assert_eq!(
+        verdicts.len(),
+        urls.len(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    for (url, verdict) in urls.iter().zip(&verdicts) {
+        let rust = if crate::vcs::checked_remote(url).is_ok() {
+            "0"
+        } else {
+            "1"
+        };
+        assert_eq!(verdict, rust, "moq and the Dev AIDE differ on {url:?}");
+    }
+}
+
+/// `./moq component-create` and the Dev AIDE make the same component, file for file, for each kind and App part, a dev
+/// tool in `runtime/components/dev` either way; and moq's `--git-remote` takes the URLs the Dev AIDE takes.
 /// Unix only: it runs `moq` through bash and links the template, which this test does not do on Windows.
 #[cfg(unix)]
 #[test]
@@ -173,25 +387,172 @@ fn moq_makes_the_same_component() {
     let runtime = scratch.0.join("runtime");
     std::fs::create_dir_all(runtime.join("components/dev")).unwrap();
     std::os::unix::fs::symlink(component_template(), runtime.join("components/dev/template")).unwrap();
-    for (name, part, flag) in [
-        ("my-shop", Part::All, None),
-        ("my_api", Part::Rest, Some("--rest")),
-        ("ui", Part::Screens, Some("--screens")),
+    let moq = |args: &[&str]| {
+        std::process::Command::new("bash")
+            .arg(repo().join("moq"))
+            .arg("component-create")
+            .args(args)
+            .env("MOQUI_RUNTIME", &runtime)
+            .output()
+            .unwrap()
+    };
+    let mut cases: Vec<(String, Kind, Vec<&str>)> = vec![
+        ("my-shop".into(), Kind::App(Part::All), vec![]),
+        ("my_api".into(), Kind::App(Part::Rest), vec!["--rest"]),
+        ("ui".into(), Kind::App(Part::Screens), vec!["--screens"]),
+    ];
+    for kind in Kind::OTHERS {
+        cases.push((format!("my-{}", kind.name()), kind, vec!["--kind", kind.name()]));
+    }
+    for (name, kind, flags) in &cases {
+        let mut args = vec![name.as_str(), "--no-git"];
+        args.extend(flags);
+        let output = moq(&args);
+        assert!(
+            output.status.success(),
+            "{name}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let ours = scratch.0.join(format!("ours-{name}"));
+        create(&component_template(), &ours, name, *kind).unwrap();
+        let set = if kind.dev_only() {
+            "components/dev"
+        } else {
+            "components/addon"
+        };
+        assert_eq!(tree(&runtime.join(set).join(name)), tree(&ours), "{name}");
+    }
+    // the parts are an App's, and a dev tool is never a test component
+    assert!(!moq(&["bad-kind", "--no-git", "--kind", "native", "--rest"])
+        .status
+        .success());
+    assert!(!moq(&["bad-set", "--no-git", "--kind", "dev-tool", "--test"])
+        .status
+        .success());
+    assert!(!moq(&["bad-kind2", "--no-git", "--kind", "plugin"]).status.success());
+    // the same remotes refused both ways, before anything is made (with --no-git a remote is refused on its own)
+    for bad in [
+        "https://ann:token@github.com/me/x.git",
+        "ext::sh -c x",
+        "file:///srv/x.git",
+        "C:/x.git",
     ] {
+        assert!(crate::vcs::checked_remote(bad).is_err(), "{bad}");
+        let output = moq(&["bad-remote", "--git-remote", bad]);
+        assert!(!output.status.success(), "{bad}");
+        assert!(!runtime.join("components/addon/bad-remote").exists(), "{bad}");
+    }
+    // a good one starts the repository with it as origin (git isolated from the desktop: no config, no prompt)
+    if std::process::Command::new("git").arg("--version").output().is_err() {
+        eprintln!("skipped the remote: no git");
+        return;
+    }
+    let git_env = [
+        ("HOME", scratch.0.display().to_string()),
+        ("GIT_CONFIG_GLOBAL", "/dev/null".to_string()),
+        ("GIT_CONFIG_NOSYSTEM", "1".to_string()),
+        ("GIT_TERMINAL_PROMPT", "0".to_string()),
+        ("GIT_ASKPASS", "false".to_string()),
+        ("SSH_ASKPASS", "false".to_string()),
+    ];
+    let remote = "git@git.example.com:me/with-remote.git";
+    let output = std::process::Command::new("bash")
+        .arg(repo().join("moq"))
+        .args([
+            "component-create",
+            "with-remote",
+            "--kind",
+            "data",
+            "--git-remote",
+            remote,
+        ])
+        .env("MOQUI_RUNTIME", &runtime)
+        .env_remove("XDG_CONFIG_HOME")
+        .envs(git_env.clone())
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let origin = std::process::Command::new("git")
+        .arg("-C")
+        .arg(runtime.join("components/addon/with-remote"))
+        .args(["config", "remote.origin.url"])
+        .env_remove("XDG_CONFIG_HOME")
+        .envs(git_env)
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&origin.stdout).trim(), remote);
+}
+
+/// A name whose package another component's services or entities are in, or a theme's name on a webroot path, is
+/// refused, the same by the Dev AIDE and by moq; any other name is taken.
+#[cfg(unix)]
+#[test]
+fn a_name_another_component_has_is_refused_both_ways() {
+    let scratch = Scratch::new("names");
+    let runtime = scratch.0.join("runtime");
+    let components = runtime.join("components");
+    let write = |path: &str, text: &str| {
+        let path = components.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    };
+    write("base/framework/component.xml", r#"<component name="moqui-framework"/>"#);
+    write("base/framework/service/org/moqui/X.xml", "<services/>");
+    write("base/webroot/component.xml", r#"<component name="webroot"/>"#);
+    write(
+        "base/webroot/screen/webroot.xml",
+        r#"<screen><subscreens><subscreens-item name="rest"/></subscreens></screen>"#,
+    );
+    write("base/webroot/screen/webroot/css/a.css", "");
+    write("base/webroot/screen/webroot/Login.xml", "<screen/>");
+    write("addon/shop/component.xml", r#"<component name="shop"/>"#);
+    write(
+        "addon/shop/entity/ShopEntities.xml",
+        r#"<entities><entity entity-name="A" package="mantle.shop"/></entities>"#,
+    );
+    write(
+        "dev/tool/MoquiConf.xml",
+        r#"<moqui-conf><screen-facade><screen location="component://webroot/screen/webroot.xml"><subscreens-item name="devstatic"/></screen></screen-facade></moqui-conf>"#,
+    );
+    write("dev/tool/component.xml", r#"<component name="tool"/>"#);
+    std::os::unix::fs::symlink(component_template(), components.join("dev/template")).unwrap();
+    assert!(taken_packages(&components).contains("org") && taken_packages(&components).contains("mantle"));
+    let bash = std::process::Command::new("bash").arg("--version").output().is_ok();
+    for (name, kind, refused) in [
+        ("org", Kind::Data, true),
+        ("Mantle", Kind::App(Part::All), true),
+        ("css", Kind::Theme, true),
+        ("login", Kind::Theme, true),
+        ("rest", Kind::Theme, true),
+        ("devstatic", Kind::Theme, true),
+        ("css", Kind::Data, false),
+        ("my-look", Kind::Theme, false),
+        ("my-shop", Kind::App(Part::All), false),
+    ] {
+        assert_eq!(
+            name_refusal(&components, name, kind).is_some(),
+            refused,
+            "{name} {kind:?}"
+        );
+        if !bash {
+            continue;
+        }
         let output = std::process::Command::new("bash")
             .arg(repo().join("moq"))
             .args(["component-create", name, "--no-git"])
-            .args(flag)
+            .args(match kind {
+                Kind::App(_) => vec![],
+                other => vec!["--kind", other.name()],
+            })
             .env("MOQUI_RUNTIME", &runtime)
             .output()
             .unwrap();
-        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-        let ours = scratch.0.join(format!("ours-{name}"));
-        create(&component_template(), &ours, name, part).unwrap();
         assert_eq!(
-            tree(&runtime.join("components/addon").join(name)),
-            tree(&ours),
-            "{name}"
+            !output.status.success(),
+            refused,
+            "moq: {name} {kind:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
         );
+        let _ = std::fs::remove_dir_all(components.join("addon").join(name));
     }
 }

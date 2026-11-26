@@ -1363,6 +1363,7 @@ fn create_site_component(
     if let Some(refusal) = site_dependency_refusal(&context.factory.components(), &depends) {
         return Err(LibError::new(refusal));
     }
+    let remote = remote_of(parameters)?;
     let target =
         moqui_core::context::layout::set_dir(context.factory.runtime_dir(), moqui_core::context::layout::Set::Addon)
             .join(&name);
@@ -1391,15 +1392,7 @@ fn create_site_component(
         },
         &|file_name: &str| file_name.replace("Site", &class),
     )?;
-    let git = context.git();
-    if git.available() {
-        if let Err(err) = git
-            .run(&target, git::Mode::Write, &["init", "-q"], &[], None)
-            .and_then(|output| output.checked("init"))
-        {
-            tracing::warn!("git init in {}: {err}", target.display());
-        }
-    }
+    let remote_added = init_repository(&context, &target, remote.as_deref());
     if context.settings.site_components.is_empty() {
         let mut row = context.facade.make_value(crate::settings::SETTING)?;
         row.set("settingName", Value::string("siteComponents"));
@@ -1412,7 +1405,8 @@ fn create_site_component(
             action: "DAA_CREATE",
             root: "component",
             path: &name,
-            detail: Some(serde_json::json!({ "template": "site" })),
+            detail: Some(serde_json::json!({ "template": "site",
+                "remote": remote_added.then_some(remote.as_deref()).flatten() })),
             ..Write::default()
         },
     );
@@ -1426,12 +1420,15 @@ fn create_site_component(
     let mut out = Parameters::new();
     out.insert("location".into(), Value::string(target.display().to_string()));
     out.insert("restart".into(), Value::Bool(true));
+    out.insert("remoteAdded".into(), Value::Bool(remote_added));
     Ok(out)
 }
 
 /// `create#Component`: a component from the component template, `runtime/components/dev/template` (its README), in
-/// runtime/components/addon/<name>, or runtime/components/dev/<name> with `dev`, with a git repository of its own; its screens
-/// and REST API, or one of them (`part`). `./moq component-create` makes the same. It loads after a restart.
+/// runtime/components/addon/<name>, or runtime/components/dev/<name> with `dev` (always for a dev tool), with a git
+/// repository of its own and an optional `origin`: an App with its screens and REST API, or one of them (`part`), or
+/// another kind (`kind`: data, native, theme, skills, dev-tool). `./moq component-create` makes the same. It loads after
+/// a restart, a native one after a rebuild first.
 fn create_component(
     ec: &ExecutionContext,
     _service: &ServiceInfo<'_>,
@@ -1445,12 +1442,31 @@ fn create_component(
             "a component name starts with a letter and has letters, digits, - and _",
         ));
     }
-    let part = template::Part::of(&text(parameters, "part"))
-        .ok_or_else(|| LibError::new("the part is all, screens or rest"))?;
+    let kind = template::Kind::of(&text(parameters, "kind"), &text(parameters, "part")).ok_or_else(|| {
+        LibError::new("the kind is app (with the part all, screens or rest), data, native, theme, skills or dev-tool")
+    })?;
+    let remote = remote_of(parameters)?;
     let runtime = context.factory.runtime_dir();
-    let target = moqui_core::context::layout::set_dir(runtime, placed_set(parameters)).join(&name);
+    // a dev tool loads only on dev instances: in runtime/components/dev wherever it was asked for
+    let set = if kind.dev_only() {
+        if flag(parameters, "test") {
+            return Err(LibError::new(
+                "a dev tool goes in runtime/components/dev, not the test set",
+            ));
+        }
+        moqui_core::context::layout::Set::Dev
+    } else {
+        placed_set(parameters)
+    };
+    let target = moqui_core::context::layout::set_dir(runtime, set).join(&name);
     if target.exists() {
         return Err(LibError::new(format!("{} is there already", target.display())));
+    }
+    // its package another component's, or a theme on a webroot path: moq's template_name_refusal refuses the same
+    if let Some(components) = target.parent().and_then(Path::parent) {
+        if let Some(why) = template::name_refusal(components, &name, kind) {
+            return Err(LibError::new(why));
+        }
     }
     let source = moqui_core::context::layout::set_dir(runtime, moqui_core::context::layout::Set::Dev).join("template");
     if !source.join("component.xml").is_file() {
@@ -1459,41 +1475,99 @@ fn create_component(
             source.display()
         )));
     }
-    if let Err(err) = template::create(&source, &target, &name, part) {
+    if let Err(err) = template::create(&source, &target, &name, kind) {
         // a component half made would load at the next start
         let _ = std::fs::remove_dir_all(&target);
         return Err(err);
     }
-    let git = context.git();
-    if git.available() {
-        if let Err(err) = git
-            .run(&target, git::Mode::Write, &["init", "-q"], &[], None)
-            .and_then(|output| output.checked("init"))
-        {
-            tracing::warn!("git init in {}: {err}", target.display());
-        }
-    }
+    let remote_added = init_repository(&context, &target, remote.as_deref());
+    let part = match kind {
+        template::Kind::App(part) => part.name(),
+        _ => "",
+    };
     audit::record(
         &context.facade,
         &Write {
             action: "DAA_CREATE",
-            root: placed_set(parameters).dir_name(),
+            root: set.dir_name(),
             path: &name,
-            detail: Some(serde_json::json!({ "template": "template", "part": part.name() })),
+            detail: Some(
+                serde_json::json!({ "template": "template", "kind": kind.name(), "part": part,
+                "remote": remote_added.then_some(remote.as_deref()).flatten() }),
+            ),
             ..Write::default()
         },
     );
-    // no reload sees a new component: the report tells Home a restart is needed
-    moqui_devkit::note_restart(
-        &context.factory,
-        &target.join("component.xml"),
-        Some(&name),
-        "new component: it loads after a restart",
-    );
+    // no reload sees a new component: the report tells Home a restart is needed, and a crate a rebuild first
+    if kind == template::Kind::Native {
+        moqui_devkit::note_rebuild(
+            &context.factory,
+            &target.join("Cargo.toml"),
+            Some(&name),
+            "new native component: it loads after a rebuild (./moq build) and a restart",
+        );
+    } else {
+        moqui_devkit::note_restart(
+            &context.factory,
+            &target.join("component.xml"),
+            Some(&name),
+            "new component: it loads after a restart",
+        );
+    }
     let mut out = Parameters::new();
     out.insert("location".into(), Value::string(target.display().to_string()));
     out.insert("restart".into(), Value::Bool(true));
+    out.insert("rebuild".into(), Value::Bool(kind == template::Kind::Native));
+    out.insert("remoteAdded".into(), Value::Bool(remote_added));
     Ok(out)
+}
+
+/// The `gitRemote` a new component's repository starts with, checked ([`crate::vcs::checked_remote`]); none when empty.
+fn remote_of(parameters: &Parameters) -> Result<Option<String>, LibError> {
+    let remote = text(parameters, "gitRemote");
+    if remote.trim().is_empty() {
+        Ok(None)
+    } else {
+        crate::vcs::checked_remote(&remote).map(Some)
+    }
+}
+
+/// A git repository in a new component's `target`, with `remote` as its `origin`; whether the remote was added. A
+/// failure is logged and the component stays, as a component without a repository is still a component.
+fn init_repository(context: &Context, target: &Path, remote: Option<&str>) -> bool {
+    let git = context.git();
+    if !git.available() {
+        if remote.is_some() {
+            tracing::warn!("{}: no git, so no repository and no remote", target.display());
+        }
+        return false;
+    }
+    if let Err(err) = git
+        .run(target, git::Mode::Write, &["init", "-q"], &[], None)
+        .and_then(|output| output.checked("init"))
+    {
+        tracing::warn!("git init in {}: {err}", target.display());
+        return false;
+    }
+    let Some(remote) = remote else {
+        return false;
+    };
+    match git
+        .run(
+            target,
+            git::Mode::Write,
+            &["remote", "add", "--", "origin", remote],
+            &[],
+            None,
+        )
+        .and_then(|output| output.checked("remote add"))
+    {
+        Ok(_) => true,
+        Err(err) => {
+            tracing::warn!("git remote add origin in {}: {err}", target.display());
+            false
+        }
+    }
 }
 
 #[cfg(test)]

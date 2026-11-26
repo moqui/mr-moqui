@@ -187,23 +187,29 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters>
             <parameter name="componentName" required="true"/>
             <parameter name="dependsOn"/>
+            <parameter name="gitRemote"><description>The remote URL the repository starts with as origin (https with no user part, ssh, git, or user@host:path)</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="location"/>
             <parameter name="restart" type="Boolean"/>
+            <parameter name="remoteAdded" type="Boolean"/>
         </out-parameters>
     </service>
     <service verb="create" noun="Component" type="rust" location="dev_aide::workspace::create_component" allow-remote="false">
-        <description>A component from the component template (runtime/components/dev/template), in runtime/components/addon, runtime/components/dev with dev, or runtime/components/test with test, with a git repository; its screens and REST API, or one of them. ./moq component-create makes the same. It loads after a restart.</description>
+        <description>A component from the component template (runtime/components/dev/template), in runtime/components/addon, runtime/components/dev with dev (a dev tool always), or runtime/components/test with test, with a git repository and an optional origin; an App with its screens and REST API, or one of them, or another kind. ./moq component-create makes the same. It loads after a restart, a native one after a rebuild too.</description>
         <in-parameters>
             <parameter name="componentName" required="true"/>
-            <parameter name="part" default-value="all"><description>all, screens (no REST API) or rest (no screens)</description></parameter>
+            <parameter name="kind"><description>app (the default, with part), data, native, theme, skills or dev-tool; or all, screens or rest for an App of that part</description></parameter>
+            <parameter name="part"><description>An App's: all (the default), screens (no REST API) or rest (no screens)</description></parameter>
+            <parameter name="gitRemote"><description>The remote URL the repository starts with as origin (https with no user part, ssh, git, or user@host:path)</description></parameter>
             <parameter name="dev" type="Boolean"><description>In runtime/components/dev, loaded only on a dev instance</description></parameter>
             <parameter name="test" type="Boolean"><description>In runtime/components/test, loaded on a dev or test instance only</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="location"/>
             <parameter name="restart" type="Boolean"/>
+            <parameter name="rebuild" type="Boolean"><description>A native component: ./moq build before the restart</description></parameter>
+            <parameter name="remoteAdded" type="Boolean"/>
         </out-parameters>
     </service>
     <service verb="set" noun="Presence" type="rust" location="dev_aide::workspace::set_presence" allow-remote="false">

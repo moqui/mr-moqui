@@ -27,6 +27,7 @@ mod browser;
 mod buffers;
 mod changeset;
 pub mod confine;
+mod dbform;
 mod docs;
 mod entities;
 pub mod git;
@@ -35,6 +36,7 @@ mod libraries;
 mod local_run;
 mod notify;
 mod patch;
+mod rebuild;
 mod repo;
 mod repos;
 pub mod roots;
@@ -63,6 +65,7 @@ fn register(registry: &mut NativeRegistry) -> Result<(), Error> {
     artifacts::register(registry)?;
     browser::register(registry)?;
     changeset::register(registry)?;
+    dbform::register(registry)?;
     docs::register(registry)?;
     entities::register(registry)?;
     screens::register(registry)?;
@@ -73,5 +76,6 @@ fn register(registry: &mut NativeRegistry) -> Result<(), Error> {
     hosting::register(registry)?;
     worktree::register(registry)?;
     local_run::register(registry)?;
+    rebuild::register(registry)?;
     tasks::register(registry)
 }
