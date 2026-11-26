@@ -29,6 +29,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use moqui_core::context::framework_thread;
 use moqui_core::context::ExecutionContextFactory;
 use moqui_core::entity::{EntityFacade, EntityValue};
 use moqui_lib::error::Error as LibError;
@@ -514,7 +515,7 @@ pub fn wait_then_run(
     let user = moqui_core::user::current_user_id().ok().flatten();
     let name: String = thread_name.chars().take(60).collect();
     let start = move || {
-        std::thread::Builder::new().name(name).spawn(move || {
+        std::thread::Builder::new().name(name).spawn(framework_thread(move || {
             let context = factory.new_context();
             let _entered = context.enter();
             let Some(facade) = factory.entity() else {
@@ -567,7 +568,7 @@ pub fn wait_then_run(
             if let Err(err) = finish(&facade, &waiting_action, status, &report) {
                 tracing::error!("Instances: the waiting action {waiting_action} was not updated: {err}");
             }
-        })?;
+        }))?;
         Ok(())
     };
     start_after_commit(&here, action_id, start)

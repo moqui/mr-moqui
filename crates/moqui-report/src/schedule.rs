@@ -1033,13 +1033,13 @@ impl ReportLease {
         let expected_owner = owner.to_string();
         let expected_definition = definition.to_string();
         let failed = std::sync::Arc::clone(&lost);
-        let worker=std::thread::Builder::new().name("report-lease".into()).spawn(move||{
+        let worker=std::thread::Builder::new().name("report-lease".into()).spawn(moqui_core::context::framework_thread(move||{
             let _suppressed=moqui_core::telemetry::suppress();
             while matches!(receiver.recv_timeout(std::time::Duration::from_secs(30)),Err(std::sync::mpsc::RecvTimeoutError::Timeout)){
                 let result=weak.upgrade().ok_or_else(||fail("report factory stopped")).and_then(|factory|renew_lease(&factory,&schedule_id,&run_id,&expected_owner,&expected_definition,scheduled));
                 if let Err(error)=result{failed.store(true,std::sync::atomic::Ordering::Release);tracing::error!(schedule=%schedule_id,%error,"report lease renewal failed; further delivery is blocked");break;}
             }
-        });
+        }));
         let worker = match worker {
             Ok(worker) => Some(worker),
             Err(error) => {

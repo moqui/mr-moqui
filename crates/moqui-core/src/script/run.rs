@@ -116,6 +116,9 @@ pub fn declare_thread_stack(size: usize) {
 
 /// Spawn a thread named `name` that runs scripts, with `size` bytes of stack declared to the engine
 /// ([`declare_thread_stack`]).
+///
+/// Not marked with [`crate::context::framework_thread`]: the spec runner's threads own their inline queue, as a test's
+/// thread does, and the pool and request workers it starts run only under the threaded executor.
 pub fn spawn_script_thread<T: Send + 'static>(
     name: String,
     size: usize,

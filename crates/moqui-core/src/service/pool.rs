@@ -17,7 +17,8 @@
 //! [`ServicePools::inline`] is the executor with no threads (`plans/archive/Wasm.md`). Async calls and
 //! `run_job_now` queue on the guard and run on the calling thread at a drain point:
 //! [`ExecutionContextFactory::run_pending`], or when the outermost execution context on the thread
-//! exits with no transaction in place. `callFuture()` runs at once, in a fresh context, under a new
+//! exits with no transaction in place, except on a thread started with
+//! [`crate::context::framework_thread`]. `callFuture()` runs at once, in a fresh context, under a new
 //! transaction. That new transaction suspends the caller's, so it needs a second connection: on a
 //! single-writer database (SQLite) a callee that writes while the caller holds a write
 //! transaction fails instead of waiting. The queue has no cap, so nothing spills to a one-shot job.
@@ -454,7 +455,9 @@ impl ServicePools {
     /// while draining runs in the same pass. Returns how many ran.
     ///
     /// Runs nothing while a transaction is in place on this thread, or when this thread is already
-    /// draining. A failure is logged, as on a worker, and does not stop the rest.
+    /// draining. A frame suspended under a force-new counts as in place (`thread_in_transaction`), so the
+    /// after-commit hooks of the inner transaction, which run before the outer frame resumes, drain
+    /// nothing. A failure is logged, as on a worker, and does not stop the rest.
     pub fn run_pending(&self) -> usize {
         let Some(inline) = &self.inline else {
             return 0;

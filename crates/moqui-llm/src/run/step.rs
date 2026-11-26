@@ -55,6 +55,7 @@ use crate::tools::{self, caps, AgentTool, Classification, Offered, ToolInput, To
 use crate::usage::CallSource;
 use crate::window;
 use crate::{int_of, text_of};
+use moqui_core::context::framework_thread;
 use moqui_core::context::{AgentOrigin, ExecutionContext, ExecutionContextFactory};
 use moqui_core::entity::{fence, EntityFacade, EntityValue};
 
@@ -2539,7 +2540,7 @@ impl Turn {
                     let mut sink = this.sink.detached();
                     let mut budget = this.budget.clone();
                     let args = args.clone();
-                    scope.spawn(move || {
+                    scope.spawn(framework_thread(move || {
                         let context = this.factory.new_context();
                         let _entered = context.enter();
                         let outcome = match login(&this.user) {
@@ -2574,7 +2575,7 @@ impl Turn {
                         };
                         moqui_core::entity::fence::clear();
                         (outcome, sink, budget)
-                    })
+                    }))
                 })
                 .collect();
             handles

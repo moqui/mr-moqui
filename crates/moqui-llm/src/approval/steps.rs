@@ -29,6 +29,7 @@ use serde_json::{json, Value as Json};
 
 use super::preview::{compared_to, key_json, production_row, LeaveSim, MAX_ROWS};
 use crate::run;
+use moqui_core::context::framework_thread;
 use moqui_core::context::{ExecutionContext, ExecutionContextFactory};
 use moqui_core::entity::cache::{self, SimChange};
 use moqui_core::entity::{fence, sim_step, EntityFacade};
@@ -84,10 +85,13 @@ pub struct StepsRequest<'a> {
 /// authorization disabled) with none.
 pub fn run(factory: &Arc<ExecutionContextFactory>, request: &StepsRequest<'_>) -> StepsRun {
     std::thread::scope(|scope| {
-        scope.spawn(|| in_sim(factory, request)).join().unwrap_or_else(|_| {
-            tracing::error!("the sim run of {} failed unexpectedly", request.label);
-            StepsRun::default()
-        })
+        scope
+            .spawn(framework_thread(|| in_sim(factory, request)))
+            .join()
+            .unwrap_or_else(|_| {
+                tracing::error!("the sim run of {} failed unexpectedly", request.label);
+                StepsRun::default()
+            })
     })
 }
 
