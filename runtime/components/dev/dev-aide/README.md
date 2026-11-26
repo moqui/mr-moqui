@@ -17,14 +17,16 @@ The assisted IDE of mr-moqui (`plans/design-dev-aide.md`), at `/qapps/dev` on a 
   terminal (`moqui tui`) it is a simpler form, `WorkspaceTui.xml`: the tree, Go to file and Search, one file in the
   `code` editor with Save and its problems (and References and Browse for the artifacts it defines), Changes with the commit form, Commits with Cherry-pick and Revert, and a Git
   menu; branches, tags, stashes, merge requests, review and blame open in the browser. A hosted root (Repositories ›
-  Add hosted root) is a repository of this server's git hosting at a branch, with no working tree: each Save is a
-  commit there as you, which its rights and branch rules allow or refuse, and nothing of it is loaded or run.
+  Add hosted root) is a repository of this server's git hosting at a branch, with no working tree: each Save (its
+  message asked), new file or folder, move and delete is a commit there as you, which its rights and branch rules allow
+  or refuse, and nothing of it is loaded or run.
 - **Entities** is the entity modeler: an entity as the server merged it, with each field's origin, its edits going to the
   site's `extend-entity` when it is upstream; Add field by kind (Picklist and Status write their seed records too), the
   relationships, the incoming ones, indexes, a view entity's members and aliases, the table against the fields, and for
   the full tier the changes the table check never makes, behind a typed confirm. Saving relinks the model and adds the
   columns, no restart. A data file's records show as tables, with Load this file and Load the changed records, which
-  compares each record with the text last loaded and the database and shows the conflicts before it writes.
+  compares each record with the text last loaded and the database and shows the conflicts before it writes (in the
+  terminal, from the file's menu, when nothing needs a choice).
 - **Screens** is the screen builder: the screen tree as the screen facade mounts it, and a screen on the design canvas,
   its real render in a frame from the unsaved buffers with each widget stamped with its source, an upstream screen in
   extension mode (every edit into the site's `screen-extend`), Add column and Add field (placed by `after=` in the layout
