@@ -38,6 +38,7 @@ const viewOnlyAuthz = [
     "TOOLS_APP_ADMIN", "SYSTEM_APP_ADMIN", "MOQUI_API_ADMIN", "EntitySyncServicesADMIN", "SystemMessageServicesADMIN",
     "ResourceCommandServicesADMIN",
     "GitRepositoriesADMIN", "REPORT_GIT_SYNC_ADMIN", "REPORT_CONTACT_ADMIN", "TOOLS_DATABASE_LOAD_ADMIN", "AIDE_PROJECTS_ADMIN",
+    "MAPS_ADMIN_ADMIN",
 ]
 // ended for ADMIN (data/DemoSecurityData.xml)
 const endedPermissions = [
@@ -57,6 +58,8 @@ const allowedAuthz = [
     "REPORT_ALERT_EVALUATION_ADMIN", "REPORT_BUSINESS_ADMIN", "REPORT_DATASETS_ADMIN", "REPORT_DELIVERY_ADMIN", "REPORT_SHARE_ADMIN",
     // adding fields to the business reports' documents, as REPORT_BUSINESS_ADMIN edits them (SEC-TLS-92)
     "REPORT_WIDEN_ADMIN",
+    // the Maps app and its own saved views and preferences; its Configuration is view-only above
+    "MAPS_APP_ADMIN", "MAPS_APP_SVC_ADMIN",
 ]
 const allowedPermissions = [
     "ADMIN_ACCESS_VIEW", "ADMIN_AUDIT_VIEW", "ADMIN_BACKUP_VIEW", "ADMIN_CONNECTION_VIEW", "ADMIN_IDENTITY_VIEW",
