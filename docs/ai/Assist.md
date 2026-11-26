@@ -303,6 +303,13 @@ fixes its tier), `contextVersion` (the tab's page version), `state` (the page).
 `runId` (required). Stops a run of the user's (Stop in the drawer): a run waiting or not yet working ends Canceled at
 once; one working stops at its next check, and the text streamed so far is kept. `{"runId", "state", "statusId"}`.
 
+### `POST archive`
+
+`conversationId` (required), `archived` (true by default; false restores). The user's own conversation is archived
+(`AgcArchived`) or restored (`AgcActive`); History marks an archived one and offers Restore. Archiving is refused with
+409 while a run of the conversation is active. What hears a conversation's end acts then: the Dev AIDE ends the
+session's worktree (plans/design-dev-aide.md 21.8). `{"conversationId", "statusId"}`.
+
 ### `POST retry`
 
 Runs the conversation's last user message again after its run failed or was stopped: `conversationId`,

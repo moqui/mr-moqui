@@ -488,6 +488,50 @@ pub(super) fn follow(caller: &Caller, params: &Params) -> Answer {
     }))
 }
 
+/// The statuses of a conversation that is on, and one the user put away (`AgentConversation`, AgentTypeData.xml).
+const ACTIVE: &str = "AgcActive";
+const ARCHIVED: &str = "AgcArchived";
+
+/// `POST archive`: the user's own conversation (`conversationId`) archived, or with `archived` false restored. An
+/// archived conversation stays in the list, marked; what hears its end does so then (the Dev AIDE ends its session's
+/// worktree). 409 while a run of it is active. `{"conversationId", "statusId"}`.
+pub(super) fn archive(caller: &Caller, params: &Params) -> Answer {
+    let conversation_id = params.required("conversationId")?;
+    let row = caller.conversation(&conversation_id)?;
+    let archived = params.flag("archived").unwrap_or(true);
+    if archived {
+        if let Some(active) = text_of(&row, "activeRunId") {
+            let running = caller.run(&active).is_ok_and(|run| !run.state.is_terminal());
+            if running {
+                return Err(DrawerError::conflict(
+                    "a run of this conversation is active: stop it first",
+                ));
+            }
+        }
+    }
+    let status = if archived { ARCHIVED } else { ACTIVE };
+    let facade = &caller.facade;
+    quietly(|| {
+        in_tx(facade, || {
+            let Some(mut row) = facade
+                .find(run::CONVERSATION)?
+                .eq("conversationId", Value::string(&conversation_id))
+                .for_update(true)
+                .disable_authz()
+                .one()?
+            else {
+                return Ok(());
+            };
+            if text_of(&row, "statusId").as_deref() != Some(status) {
+                row.set("statusId", Value::string(status));
+                row.update(facade)?;
+            }
+            Ok(())
+        })
+    })?;
+    Ok(json!({"conversationId": conversation_id, "statusId": status}))
+}
+
 /// `POST context`: the user navigated (or changed the page) in a tab. From the follow owner (or any tab when none
 /// follows, which then does), the page version is raised and the page syncs into the conversation's screen, so the
 /// agent goes on from where the user went; from another tab it changes nothing (`applied` false).

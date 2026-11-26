@@ -356,6 +356,26 @@ fn the_drawer_calls_over_http_on_postgres() {
     let (_, list) = ann.get("conversations", "");
     assert!(!list.to_string().contains(&conversation_id), "{list}");
 
+    // History's Archive: the user's own conversation archived, shown so, and restored; another user's is not theirs
+    let (status, put_away) = john.post("archive", &json!({"conversationId": conversation_id}));
+    assert_eq!(
+        (status, put_away["statusId"].as_str()),
+        (200, Some("AgcArchived")),
+        "{put_away}"
+    );
+    let (_, list) = john.get("conversations", "search=hello");
+    assert_eq!(list["conversations"][0]["statusId"], "AgcArchived", "{list}");
+    let (status, _) = ann.post(
+        "archive",
+        &json!({"conversationId": conversation_id, "archived": false}),
+    );
+    assert_eq!(status, 404);
+    let (status, back) = john.post(
+        "archive",
+        &json!({"conversationId": conversation_id, "archived": false}),
+    );
+    assert_eq!((status, back["statusId"].as_str()), (200, Some("AgcActive")), "{back}");
+
     // feedback on the assistant's message; not on another user's
     let (status, kept) = john.post(
         "feedback",
