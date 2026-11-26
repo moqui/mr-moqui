@@ -314,9 +314,26 @@ fn text_collection(value: &Value, java_type: &str) -> Option<Value> {
     Some(Value::List(items))
 }
 
-/// A service's in-parameters with `auto-parameters` expanded, kept with the entity facade they were expanded from.
+/// A service's in-parameters with `auto-parameters` expanded, kept with the entity facade they were expanded from; and
+/// the declared ones merged by name, kept for a reader where they cannot be expanded ([`merged_fallback`]).
 #[derive(Default)]
-pub struct ExpandedParams(Mutex<Option<Expanded>>);
+pub struct ExpandedParams(Mutex<Option<Expanded>>, Mutex<Option<Arc<[ParamDef]>>>);
+
+/// `params` merged by name ([`merge_param`]), the `auto-parameters` left out: what a reader of the parameters gets
+/// where they cannot be expanded (no entity facade).
+pub(crate) fn merged_declared(params: &[ParamDef]) -> Vec<ParamDef> {
+    let mut out = Vec::new();
+    for param in params.iter().filter(|param| !param.name.is_empty()) {
+        merge_param(&mut out, param.clone());
+    }
+    out
+}
+
+/// [`merged_declared`] of `params`, kept in `kept`: the declared list does not change, so it is made once.
+pub(crate) fn merged_fallback(params: &[ParamDef], kept: &ExpandedParams) -> Arc<[ParamDef]> {
+    let mut fallback = lock(&kept.1);
+    Arc::clone(fallback.get_or_insert_with(|| merged_declared(params).into()))
+}
 
 struct Expanded {
     /// The facade's model the parameters were expanded from, or None when no parameter reads one.

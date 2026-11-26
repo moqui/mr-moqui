@@ -1364,6 +1364,45 @@ fn implements_chains_keep_the_merge_and_the_implemented_noun() {
     assert!(auto.classes.contains(&"required"), "{:?}", auto.classes);
 }
 
+/// A service's own parameter over an implemented service whose auto-parameters cover it wins, as Java merges the
+/// service's parameters onto the implemented service's merged ones: S's `required="false"` stays though T's auto field
+/// says required.
+#[test]
+fn an_own_parameter_wins_over_an_implemented_services_auto_field() {
+    let path = write_fixture(
+        "merge-override",
+        r#"<services>
+                <service verb="define" noun="Medium" type="interface">
+                    <in-parameters><parameter name="testMedium"/></in-parameters>
+                </service>
+                <service verb="shape" noun="Medium" type="interface">
+                    <implements service="define#Medium"/>
+                    <in-parameters><auto-parameters entity-name="moqui.test.TestEntity" include="nonpk" required="true"/></in-parameters>
+                </service>
+                <service verb="save" noun="Medium">
+                    <implements service="shape#Medium"/>
+                    <in-parameters><parameter name="testMedium" required="false"/></in-parameters>
+                    <actions><set field="x" value="1"/></actions>
+                </service>
+            </services>"#,
+    );
+    let (facade, ctx) = seeded_context(&[]);
+    let _entered = ctx.enter();
+    let failures = crate::service::lint(std::slice::from_ref(&path)).unwrap();
+    assert!(failures.is_empty(), "{failures:?}");
+    let def = crate::service::define::find("save#Medium").expect("registered");
+    let declared = super::validate::declared_in(&def, Some(&facade)).unwrap();
+    let medium: Vec<super::super::define::Required> = declared
+        .iter()
+        .filter(|param| param.name == "testMedium")
+        .map(|param| param.required)
+        .collect();
+    assert_eq!(medium, [super::super::define::Required::False]);
+    // an auto field it does not write keeps the implemented required
+    let stamp = declared.iter().find(|param| param.name == "testDateTime").unwrap();
+    assert_eq!(stamp.required, super::super::define::Required::True);
+}
+
 /// Java's `ServiceDefinition` merge: the implemented service's parameters first, then the service's own merged
 /// into them by name, and an `auto-parameters` field and a parameter of the same name are one parameter, whose
 /// attributes the later one sets. An empty `default-value` is no default. A `<description>` of the later one

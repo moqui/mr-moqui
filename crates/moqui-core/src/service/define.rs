@@ -500,24 +500,18 @@ impl ClientRule {
 #[must_use]
 pub fn merged_in_params(def: &ServiceDef) -> Arc<[ParamDef]> {
     let facade = super::validate::current_facade();
-    super::validate::declared_in(def, facade.as_ref()).unwrap_or_else(|_| merged_declared(&def.in_params).into())
+    super::validate::declared_in(def, facade.as_ref())
+        .unwrap_or_else(|_| super::validate::merged_fallback(&def.in_params, &def.expanded_in))
 }
 
-/// [`merged_in_params`] of the out-parameters.
+/// [`merged_in_params`] of the out-parameters, kept on the definition as they are.
 #[must_use]
-pub fn merged_out_params(def: &ServiceDef) -> Vec<ParamDef> {
-    let facade = super::validate::current_facade();
-    super::validate::expand_params(def, &def.out_params, facade.as_ref())
-        .unwrap_or_else(|_| merged_declared(&def.out_params))
-}
-
-/// `params` merged by name ([`merge_param`]), the `auto-parameters` left out.
-fn merged_declared(params: &[ParamDef]) -> Vec<ParamDef> {
-    let mut out = Vec::new();
-    for param in params.iter().filter(|param| !param.name.is_empty()) {
-        merge_param(&mut out, param.clone());
+pub fn merged_out_params(def: &ServiceDef) -> Arc<[ParamDef]> {
+    match super::validate::expanded_out(def) {
+        super::validate::OutParams::Expanded(params) => params,
+        // none to expand, or not expanded (no facade): merged by name
+        super::validate::OutParams::Declared(params) => super::validate::merged_fallback(params, &def.expanded_out),
     }
-    out
 }
 
 /// `FormInstance.getFieldValidationJsRules` for a service parameter: each rule the browser checks with its message,
@@ -1989,9 +1983,11 @@ fn resolve_one(
 /// A service's own parameters `own` merged by name into the implemented ones in `dest`, in the order written, as Java's
 /// `ServiceDefinition` merges them: up to its first `auto-parameters`, each merges now; from there on each is added
 /// after it as written, so that the expansion at the call (`validate::expand_params`) merges the auto fields first and a
-/// parameter written after them last, its attributes winning over a field's of its name.
+/// parameter written after them last, its attributes winning over a field's of its name. When the implemented ones hold
+/// an `auto-parameters` themselves (an implemented service's own, not yet expanded), every own parameter is added after
+/// them: Java merges the service's parameters onto the implemented service's merged ones, auto fields and all.
 fn merge_own(dest: &mut Vec<ParamDef>, own: Vec<ParamDef>) {
-    let mut after_auto = false;
+    let mut after_auto = dest.iter().any(|param| param.name.is_empty() && param.auto.is_some());
     for param in own {
         after_auto |= param.name.is_empty() && param.auto.is_some();
         if after_auto {
