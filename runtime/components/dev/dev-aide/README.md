@@ -16,12 +16,17 @@ The assisted IDE of mr-moqui (`plans/design-dev-aide.md`), at `/qapps/dev` on a 
   (stage, unstage, discard, commit with the task trailer), Commits, Fetch, Pull, Push and Publish. In the
   terminal (`moqui tui`) it is a simpler form, `WorkspaceTui.xml`: the tree, Go to file and Search, one file in the
   `code` editor with Save and its problems (and References and Browse for the artifacts it defines), Changes with the commit form, Commits with Cherry-pick and Revert, and a Git
-  menu; branches, tags, stashes, merge requests, review and blame open in the browser.
+  menu; branches, tags, stashes, merge requests, review and blame open in the browser. A hosted root (Repositories ›
+  Add hosted root) is a repository of this server's git hosting at a branch, with no working tree: each Save (its
+  message asked), new file or folder, move and delete is a commit there as you, which its rights and branch rules allow
+  or refuse, and nothing of it is loaded or run.
 - **Entities** is the entity modeler: an entity as the server merged it, with each field's origin, its edits going to the
   site's `extend-entity` when it is upstream; Add field by kind (Picklist and Status write their seed records too), the
   relationships, the incoming ones, indexes, a view entity's members and aliases, the table against the fields, and for
   the full tier the changes the table check never makes, behind a typed confirm. Saving relinks the model and adds the
-  columns, no restart. A data file's records show as tables, with Load this file.
+  columns, no restart. A data file's records show as tables, with Load this file and Load the changed records, which
+  compares each record with the text last loaded and the database and shows the conflicts before it writes (in the
+  terminal, from the file's menu, when nothing needs a choice).
 - **Screens** is the screen builder: the screen tree as the screen facade mounts it, and a screen on the design canvas,
   its real render in a frame from the unsaved buffers with each widget stamped with its source, an upstream screen in
   extension mode (every edit into the site's `screen-extend`), Add column and Add field (placed by `after=` in the layout
@@ -35,12 +40,17 @@ The assisted IDE of mr-moqui (`plans/design-dev-aide.md`), at `/qapps/dev` on a 
 - **Services** is the service writer: a service's settings and parameters (nested ones too: Add child in a Map or a
   List, Edit and Remove on each, as the terminal twin's), its actions in the logic composer (blocks as sentences, chips
   that edit an attribute, the palette, the generated JavaScript), its SECA rules, and Try in sim with the rows it would
-  write, Save as spec and Run spec (in the sim). In the terminal it is `Services/EditTui`: Try, the settings, the
-  parameters (nested ones too), the actions read only and the SECA rules (the service a new rule calls is searched by
-  name, as is the one a new button of the screen builder's twin calls), its edits staged in the user's edit buffer
-  until Save (below). **ECA Rules** lists the active rules of each kind with their files; a rules file opens in the ECA
-  view, where Try the condition runs a rule's condition against a context (a SECA's service's last Try, a record, or
-  for a gitECA rule a push from the push log).
+  write, Save as spec and Run spec (in the sim). A Try in sim runs the service as the unsaved service and script buffers
+  define it, and the composer then marks each block run (its count and the values it set on hover), not run, or failed;
+  Dev Assist's `try_service` does the same on a proposal's text. In the terminal it is `Services/EditTui`: Try, the
+  settings, the parameters (nested ones too), the actions read only and the SECA rules (the service a new rule calls is
+  searched by name, as is the one a new button of the screen builder's twin calls), its edits staged in the user's edit
+  buffer until Save (below). **ECA Rules** lists the active rules of each kind with their files; a rules file opens in
+  the ECA view, where Try the condition runs a rule's condition against a context (a SECA's service's last Try, a
+  record, or for a gitECA rule a push from the push log); Run the trigger in sim runs the rule's service call or entity
+  operation with it and marks the rule's actions; a context is saved as a named fixture (`test/fixtures/<name>.json`),
+  and Save as spec writes a feature that runs the rule's trigger with it (a gitECA rule's condition only: a spec replays
+  no push).
 - **Browser** (Artifacts › Browser) is an artifact in the center with what uses it and what it uses, by kind: a
   pan-and-zoom canvas in the browser, and in the terminal Miller columns (`BrowseTui.xml`, the `artifact-browser`
   component) where Enter re-centers on a row, Backspace and `]` walk the trail, `k`, `h` and `x` filter, and the
@@ -65,12 +75,14 @@ The assisted IDE of mr-moqui (`plans/design-dev-aide.md`), at `/qapps/dev` on a 
   Save are shell key map actions, rebound by the `KEYMAP` preference), the site components, "Allow editing upstream components", the roots' labels,
   read-only flags and publish branches, more directories, network git on a shared dev server, and the **group servers**
   ([plans/design-dev-aide.md](../../../../plans/design-dev-aide.md) §21): Connect signs in at a team's server (or
-  moqui.org) as an installed app does, with this instance's own address as the redirect, or takes a pasted token, and
-  then sets what you confirm: the `myaddons.xml` repository, the task source, the LLM gateway's `.env` lines (with a
-  key for the gateway alone) and git's credential; Remove takes back only what it set. The Workspace then knows each
+  moqui.org) as an installed app does, with this instance's own address as the redirect, and keeps a key for each of
+  git, tasks and the gateway in place of the account's; or it takes a pasted token. It then sets what you confirm: the
+  `myaddons.xml` repository, the task source, the LLM gateway's `.env` lines (with the gateway's key) and git's
+  credential; Remove takes back only what it set and ends the keys. The Workspace then knows each
   working tree's hosted repository: a Merge requests tab (Check out, New, Review with the server's threads: reply,
   resolve, a comment on a line, a review), open threads in the editor's gutter, check chips on Commits and Branches
-  (the runs, a job's log, failed tests as links, Re-run), the contributor agreement's warning and Sign, Propose (push
+  (the runs, a job's log, failed tests as links, Re-run), Open on the server for a file, a commit and a branch where
+  the server offers their pages, the contributor agreement's warning and Sign, Propose (push
   to review) for a repository you may only view, Fork where the server makes forks, and Push or Publish that opens a
   merge request. None of Dev AIDE's own writes (a file, a git command that changes a repository, a call of a group
   server) runs under an agent's fence or in a sim: `try_service` refuses its write services, and the writes refuse
@@ -78,9 +90,11 @@ The assisted IDE of mr-moqui (`plans/design-dev-aide.md`), at `/qapps/dev` on a 
   an issue) as untrusted data, opens a merge request or comments only by your approval, never approves, merges,
   re-runs, resolves or signs, and is refused the diff of a merge request whose authors have not signed. A commit's
   checks have **Run locally**: a job of the working tree's `ci.xml` in a host session of the Terminal, its steps and
-  variables but not its image or secrets. The **Sessions** tab makes a worktree of a root for an Assist session
+  variables but not its image or secrets, or, where Docker or Podman answers, in the job's image on a copy of the
+  working tree's files that is deleted after, its log in the dialog. The **Sessions** tab makes a worktree of a root for an Assist session
   (`runtime/worktrees`, a branch of its own), where that session's file and git tools work; a worktree is not loaded,
-  so its changes are checked and committed there, not run live. The server's REST decides, as you there: the framework's
+  so its changes are checked and committed there, not run live; when its conversation ends, a clean one is removed and
+  one with changes is kept, with a notice. The server's REST decides, as you there: the framework's
   ([Git-Hosting](../../../../docs/interfaces/Git-Hosting.md#rest)), or the REST of the application that keeps the
   repository (Smithy). Steps: [Run-Deploy](../../../../docs/Run-Deploy.md#dev-instances-with-a-dev-group-server).
 
@@ -100,7 +114,7 @@ Its Rust crate is linked into the Maximal package (the default) and Debug, and i
 (the `devtools` feature). In another package the screens load and the services say they are not built in.
 
 - **Tests** ([the two suites](../../../../docs/Build-Test.md#the-two-suites)): the regression suite is `./moq test
-  dev-aide` (the screens, the Workspace's terminal form on a scratch root, the docs, the terminal's guided editors against a throw-away root), `cargo test -p dev-aide` (confinement, the git parsers, the Browser's sections, the edit buffers),
+  dev-aide` (the screens, the Workspace's terminal form on a scratch root, the docs, the terminal's guided editors against a throw-away root, the three-way data load, a hosted root on a scratch repository), `cargo test -p dev-aide` (confinement, the git parsers, the Browser's sections, the edit buffers),
   `moqui test-client runtime/components/dev/dev-aide --offline` (the client), `cargo test -p moqui-host --test it devaide` (saves, the lock and tiers, git and Publish on scratch
   repositories, an entity save's relink, a docs export; `devaide_group`: the instance as its own group server, Connect
   through the app sign-in, merge requests, push to review, check out, review threads, statuses, the agreement and

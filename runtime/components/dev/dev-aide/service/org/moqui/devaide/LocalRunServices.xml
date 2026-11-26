@@ -14,17 +14,21 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- Run locally (plans/design-dev-aide.md 21.5, question 20), implemented in the dev-aide crate (src/local_run.rs):
     one job of the working tree's ci.xml, its script steps and its variables, run in a host session of the Terminal on
-    this machine, not in the job's image, with none of its secrets. And Rebuild (6.5, src/rebuild.rs): ./moq build in a
-    host session of the Terminal, which the restart banner follows. -->
+    this machine, not in the job's image, with none of its secrets; or, where Docker or Podman answers here, in a
+    container of the job's image through the CI driver (moqui_git::ci::driver::docker::start_local), on a copy of the
+    working tree, its log followed by get#LocalRun. And Rebuild (6.5, src/rebuild.rs): ./moq build in a host session of
+    the Terminal, which the restart banner follows. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
     <service verb="get" noun="LocalJobs" type="rust" location="dev_aide::local_run::get_local_jobs" allow-remote="false" read-only="true">
         <description>The jobs of the working tree's ci.xml (or why there are none: no file, an error with its line):
             each pipeline, job, image, its matrix combinations (matrixKeys, and combinations: each with its steps,
             variables, the script it runs whole and that script's digest), and the secrets it asks for, which a local
-            run does not have.</description>
+            run does not have; each combination with imageScript and imageDigest too, the script a run in the image
+            runs. container: whether Docker or Podman answers here (available, engine, socket, note).</description>
         <in-parameters><parameter name="rootId" required="true"/></in-parameters>
         <out-parameters>
             <parameter name="jobs" type="List"/>
+            <parameter name="container" type="Map"/>
             <parameter name="error"/>
             <parameter name="note"/>
         </out-parameters>
@@ -35,12 +39,22 @@ along with this software (see the LICENSE.md file). If not, see
             the job runs them (sh -c each, stopping at one that fails unless continue-on-error), with its variables and
             CI's own, and its secrets' variables unset, only when the script is the one get#LocalJobs showed (its digest).
             The script is the server user's alone (0600 in a 0700 directory) and removes itself when it ends; it is
-            typed into the server user's shell. Not the job's image. From a session only.</description>
+            typed into the server user's shell. Not the job's image. From a session only. With where image: the same
+            steps in a container of the job's image (its image pulled when the engine does not have it), kept in as a
+            CI job's container is (no privilege or capability, a read-only root, an init, a user that is not root, the
+            dev-aide conf's local-run-memory-mb and local-run-pids), on a copy of the working tree's files (no .git,
+            links as links, at most local-run-copy-mb) mounted at the working directory and deleted when the run ends:
+            nothing comes back to the tree; no network on a shared dev server. It needs TERMINAL_HOST, a
+            root the tier may write that does not hold the runtime, and fewer than local-run-limit runs of the user's
+            going; one past local-run-timeout-minutes is stopped. The user's earlier ended runs are removed. Out runId,
+            which get#LocalRun follows.</description>
         <in-parameters>
             <parameter name="rootId" required="true"/>
             <parameter name="pipeline" required="true"/>
             <parameter name="job" required="true"/>
             <parameter name="matrixKey"/>
+            <parameter name="where" default-value="host"><description>host (a terminal) or image (a container of the
+                job's image)</description></parameter>
             <parameter name="digest" required="true"><description>The digest of the script get#LocalJobs showed: a
                 script rebuilt to something else (ci.xml changed since) is refused</description></parameter>
         </in-parameters>
@@ -49,7 +63,29 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="script"/>
             <parameter name="note"/>
             <parameter name="reasonCode"/>
+            <parameter name="runId"/>
+            <parameter name="engine"/>
         </out-parameters>
+    </service>
+    <service verb="get" noun="LocalRun" type="rust" location="dev_aide::local_run::get_local_run" allow-remote="false" read-only="true">
+        <description>A run in the job's image (runId) of the current user's: state (starting while its image is pulled
+            and its container made, running, exited, failed with error, or missing), exitCode once it ended, and log, its
+            last 2000 lines, timedOut when it was stopped past its time. Another user's run, or another server's
+            container, is refused.</description>
+        <in-parameters><parameter name="runId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="state"/>
+            <parameter name="exitCode" type="Integer"/>
+            <parameter name="log"/>
+            <parameter name="error"/>
+            <parameter name="timedOut" type="Boolean"/>
+        </out-parameters>
+    </service>
+    <service verb="stop" noun="LocalRun" type="rust" location="dev_aide::local_run::stop_local_run" allow-remote="false">
+        <description>A run in the job's image of the current user's removed, running or not; one still being made is
+            stopped and removed once it is.</description>
+        <in-parameters><parameter name="runId" required="true"/></in-parameters>
+        <out-parameters><parameter name="removed" type="Boolean"/></out-parameters>
     </service>
 
     <!-- Rebuild from the app (plans/design-dev-aide.md 6.5), src/rebuild.rs. -->

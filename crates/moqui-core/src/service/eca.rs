@@ -149,7 +149,9 @@ pub fn run_matched_eca(
         if !condition_allows(&rule.condition).map_err(to_lib).map_err(in_rule)? {
             continue;
         }
-        run_stored_actions(&rule.actions).map_err(to_lib).map_err(in_rule)?;
+        run_stored_actions(&rule.actions, rule.actions_source.as_ref())
+            .map_err(to_lib)
+            .map_err(in_rule)?;
         if before {
             // Fields set on `entityValue` are fields of the write, as the Java value is the one written.
             let shared = lock(&cell);

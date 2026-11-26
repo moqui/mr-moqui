@@ -39,6 +39,11 @@ and `source` tools say `side: site` or `side: upstream` for each artifact and fi
 Name a file as `component://<component>/<path>`. Each file is checked before the card shows; a problem comes back with
 its rule and skill section and nothing is proposed.
 
+To see what a service change does before or after you propose it, `try_service` it on the proposed text: `files`
+takes the same list as `propose_edit` (nothing is proposed), and `changeSet` takes the approval id of a change set you
+proposed. It runs in the sim only: the service, and the services it calls, as the proposed service and script files
+define them, and nothing is kept.
+
 ## Reloading
 A service, SECA, EECA, screen, screen-extend, REST or skill file is live a moment after it is saved. So is an entity
 file: the entity model is linked again and the table check adds the new tables and columns (the reload report lists the

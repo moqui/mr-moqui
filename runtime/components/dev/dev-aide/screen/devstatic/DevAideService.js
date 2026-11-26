@@ -12,8 +12,11 @@
  * attribute, the palette by the XSD's groups with snippets, the names known before each block marking an unknown one in
  * an expression, a service-call's in-parameters to add, a script's popup editor, and the generated JavaScript.
  * m-dev-eca-view is the view of an ECA file: its rules, a rule's attributes, its condition and its actions in the
- * composer, Add, Remove and Move, and Try the condition against a context (for a gitECA rule, a push of the push log).
- * Every edit is an operation of the lossless XML layer on a buffer.
+ * composer, Add, Remove and Move, Try the condition against a context (for a gitECA rule, a push of the push log),
+ * the contexts saved as named fixtures, and Save as spec and Run spec on a rule. A Try in sim runs over the Workspace's
+ * unsaved service and script buffers (F14) and traces the actions, and the composer marks its blocks as run (with the
+ * count and the values set on hover), not run, or failed. Every edit is an operation of the lossless XML layer on a
+ * buffer.
  *
  * The pure parts are moqui.devAide.serviceOps, which test/client/pages/DevAideService.page.js runs.
  */
@@ -338,14 +341,82 @@
         return [when, update.username || update.userId || update.source, refs.join(", ") || "no refs", update.ecaStatus].filter((part) => part).join(" · ");
     };
 
+    // ---- pure: a Try over the unsaved buffers, and its trace on the composer's blocks (9.2, 9.4, F14) ----
+
+    // The unsaved buffers a Try in sim runs over: the service files and the scripts, at most 20.
+    ops.tryFiles = (buffers) => (buffers || []).filter((buffer) => {
+        const path = String(buffer.path || "").replace(/\\/g, "/");
+        return /\.js$/.test(path) || (/(^|\/)service\/.+\.xml$/.test(path) && !/\.(secas|emecas|gitecas|rest)\.xml$/.test(path));
+    }).slice(0, 20).map((buffer) => ({ rootId: buffer.rootId, path: buffer.path, text: buffer.text }));
+    // The block of a Try's trace that is the actions element at `line` of the file `path` of root `rootId`.
+    ops.traceBlock = (trace, rootId, path, line) => ((trace && trace.blocks) || []).find((block) =>
+        block.rootId === rootId && block.path === path && Number(block.line) === Number(line)) || null;
+    // The elements a trace does not count, read by the statement they are in; and the branches of an if.
+    const UNTRACED = new Set(["econdition", "econditions", "econdition-object", "date-filter", "having-econditions", "field-map", "order-by",
+        "select-field", "search-form-inputs", "default-parameters", "limit-range", "limit-view", "use-iterator", "condition", "compare",
+        "expression", "and", "or", "not", "description"]);
+    const BRANCHES = new Set(["then", "else", "else-if"]);
+    // Each element's mark under `actions` by its path below it ("1.0"): run with its count and the values it set,
+    // failed with why, or not run. An element the trace does not count goes as the statement it is in; a branch is run
+    // when something in it ran.
+    ops.traceMarks = (actions, block) => {
+        const marks = new Map();
+        if (!actions || !block) return marks;
+        const base = actions.path.length;
+        const elements = block.elements || {};
+        const visit = (node, around) => {
+            const key = node.path.slice(base).join(".");
+            const entry = elements[key];
+            let mark = entry ? { state: entry.failed ? "failed" : "run", count: entry.count, values: entry.values || {}, failed: entry.failed || "" }
+                : UNTRACED.has(node.name) ? { state: around === "not-run" ? "not-run" : "run" } : null;
+            let inside = false;
+            for (const kid of children(node)) {
+                const state = visit(kid, mark ? mark.state : "not-run");
+                if (state !== "not-run" && !UNTRACED.has(kid.name)) inside = true;
+            }
+            if (!mark) mark = { state: BRANCHES.has(node.name) && inside ? "run" : "not-run" };
+            marks.set(key, mark);
+            return mark.state;
+        };
+        for (const kid of children(actions)) visit(kid, "run");
+        return marks;
+    };
+    // What a mark says on hover.
+    ops.traceTitle = (mark) => {
+        if (!mark) return "";
+        if (mark.state === "not-run") return "Not run in the last Try";
+        const lines = [mark.count ? "Ran " + mark.count + (mark.count === 1 ? " time" : " times") : "Ran"];
+        for (const [name, value] of Object.entries(mark.values || {})) lines.push(name + " = " + value);
+        if (mark.failed) lines.push("Failed: " + mark.failed);
+        return lines.join("\n");
+    };
+    // A block's label with its mark: the run state as its class, the count or "failed" as its badge, the rest on hover.
+    ops.markLabel = (label, mark) => {
+        if (!mark) return label;
+        label.headClass = "m-dev-trace-" + mark.state;
+        label.title = ops.traceTitle(mark);
+        if (mark.state === "failed") { label.badge = "failed"; label.badgeClass = "m-dev-trace-failed"; }
+        else if (mark.count) { label.badge = "×" + mark.count; label.badgeClass = "m-dev-trace-run"; }
+        return label;
+    };
+    // What Save as spec on a rule (10) sends of it: its kind, its service or entity, an EECA rule's operation (its first
+    // event), and the condition the Try took.
+    ops.ruleSpecQuery = (rule, condition) => ({
+        kind: rule.name, target: attrOf(rule, "service") || attrOf(rule, "entity") || "",
+        operation: ["create", "update", "delete"].find((event) => attrOf(rule, "on-" + event) === "true") || "",
+        condition: condition || ""
+    });
+
     // ---- the composer ----
 
     const composer = {
         name: "mDevComposer",
-        props: { ctx: Object, actions: Object, readOnly: Boolean, inParameters: Array, apply: Function, text: String },
+        props: { ctx: Object, actions: Object, readOnly: Boolean, inParameters: Array, apply: Function, text: String, trace: Object },
         data() { return { selected: null, chipEdit: null, scriptEdit: null, generated: null, called: {}, paletteFor: null }; },
         computed: {
             known() { return ops.knownBefore(this.actions, this.inParameters); },
+            // the last Try's trace of these actions on their blocks
+            marks() { return this.trace ? ops.traceMarks(this.actions, this.trace) : null; },
             nodes() { return this.actions ? ops.blockChildren(this.actions) : []; },
             selectedNode() { return this.selected ? this.nodeAt(this.selected) : null; },
             calledService() {
@@ -365,7 +436,8 @@
         methods: {
             labelFn(node) {
                 const known = this.known.get(node.path.join(".")) || new Set();
-                return ops.sentence(node, known);
+                const label = ops.sentence(node, known);
+                return this.marks ? ops.markLabel(label, this.marks.get(node.path.slice(this.actions.path.length).join("."))) : label;
             },
             containerFn(node) { return ops.CONTAINERS.indexOf(node.name) >= 0; },
             childrenFn(node) { return ops.blockChildren(node); },
@@ -483,7 +555,14 @@
             // the rows of the Parameters tab, from the buffer (so an unsaved edit shows) with the definition's implied ones
             paramRows() { return { "in-parameters": this.parameterRows("in-parameters"), "out-parameters": this.parameterRows("out-parameters") }; },
             canEdit() { return this.ctx.canWrite; },
-            storageKey() { return "moqui.devAide.try." + this.name; }
+            storageKey() { return "moqui.devAide.try." + this.name; },
+            // the last Try's trace of this service's actions, for the composer's marks
+            composerTrace() {
+                const result = this.result;
+                if (!result || !result.trace || !this.actionsNode) return null;
+                return ops.traceBlock(result.trace, this.ctx.rootId, this.tab.path, this.actionsNode.line);
+            },
+            failedAt() { return this.result && this.result.trace ? this.result.trace.failed : null; }
         },
         mounted() {
             this.pick();
@@ -504,11 +583,14 @@
                 const name = asked || (first ? this.prefixOf() + "." + first.name : "");
                 if (name && name !== this.name) this.load(name);
             },
+            // the unsaved service and script buffers, which a Try in sim runs over and the view reads (F14)
+            overFiles() { return ops.tryFiles(this.ctx.dirtyBuffers ? this.ctx.dirtyBuffers() : []); },
             load(name) {
                 this.name = name;
                 this.values = devAide.store.get(this.storageKey) || {};
-                return this.ctx.get("serviceView", { serviceName: name }).then((answer) => { this.view = answer.view; this.error = ""; },
-                    (error) => { this.error = pure.errorText(error); });
+                const files = this.overFiles();
+                const asked = files.length ? this.ctx.post("serviceView", { serviceName: name, files: JSON.stringify(files) }) : this.ctx.get("serviceView", { serviceName: name });
+                return asked.then((answer) => { this.view = answer.view; this.error = ""; }, (error) => { this.error = pure.errorText(error); });
             },
             pickService(entry) { this.load(this.prefixOf() + "." + entry); },
             apply(list) { return this.ctx.apply(list).catch((error) => this.ctx.fail(error)); },
@@ -575,7 +657,10 @@
                 this.remember();
                 this.trying = true;
                 const parameters = ops.tryParameters(this.values, this.inParameters);
-                this.ctx.post("tryService", { serviceName: this.name, parameters: JSON.stringify(parameters), real, confirm: real }).then((answer) => {
+                const asked = { serviceName: this.name, parameters: JSON.stringify(parameters), real, confirm: real };
+                // over the unsaved buffers, and traced: the extend tier's, as a snippet is
+                if (!real && this.ctx.tier !== "view") Object.assign(asked, { files: JSON.stringify(this.overFiles()), trace: true });
+                this.ctx.post("tryService", asked).then((answer) => {
                     this.trying = false;
                     this.result = Object.assign({ parameters }, answer.result || {});
                     // the last Try, which a rule's condition is tried against (10)
@@ -646,7 +731,7 @@
     <q-separator class="q-mb-sm"></q-separator>
     <div v-show="section === 'implementation'">
       <template v-if="service.kind === 'inline'">
-        <m-dev-composer :ctx="ctx" :actions="actionsNode" :read-only="!canEdit" :in-parameters="inParameters.map(p => p.name)" :apply="apply" :text="tab.text"></m-dev-composer>
+        <m-dev-composer :ctx="ctx" :actions="actionsNode" :read-only="!canEdit" :in-parameters="inParameters.map(p => p.name)" :apply="apply" :text="tab.text" :trace="composerTrace"></m-dev-composer>
       </template>
       <div v-else-if="service.kind === 'script'"><q-btn dense flat no-caps icon="sym_o_javascript" :label="'Open ' + service.location" @click="openScript"></q-btn></div>
       <div v-else-if="service.kind === 'entity-auto'" class="text-caption">Entity-auto: {{service.verb}} of {{service.noun}}.</div>
@@ -684,7 +769,11 @@
       </div>
       <div v-if="result" class="q-mt-sm" id="DevTryResult">
         <div class="text-caption">{{result.sim ? 'In sim, nothing kept' : 'For real'}} · {{result.millis}} ms</div>
+        <div v-if="result.overlay" class="text-caption m-muted" id="DevTryOverlay">{{ t('Ran as the unsaved text defines it:') }} {{(result.overlay.services || []).concat(result.overlay.scripts || []).join(', ')}}</div>
         <div v-if="result.failed" class="text-negative">{{result.failed}}</div>
+        <div v-if="failedAt" class="text-caption text-negative" id="DevTryFailedAt">{{ t('Failed at') }} {{failedAt.path || failedAt.file || ''}}{{failedAt.line ? ':' + failedAt.line : ''}}
+          ({{ t('block') }} {{failedAt.element}} {{ t('of its actions') }}): {{failedAt.message}}
+          <q-btn dense flat no-caps size="sm" :label="t('Show in the composer')" @click="section = 'implementation'"></q-btn></div>
         <div v-for="(text, i) in (result.messages || [])" :key="'m' + i" class="text-caption">{{text}}</div>
         <div v-for="(text, i) in (result.errors || [])" :key="'e' + i" class="text-caption text-negative">{{text}}</div>
         <pre v-if="result.out" class="m-dev-mono q-ma-none">{{json(result.out)}}</pre>
@@ -744,7 +833,8 @@
         name: "mDevEcaView",
         props: { ctx: { type: Object, required: true }, tab: { type: Object, required: true }, outline: Object },
         data() {
-            return { selected: null, schema: null, tryContext: "", conditionResult: null,
+            return { selected: null, schema: null, tryContext: "", conditionResult: null, fixtures: [], fixtureName: "", ruleSpec: null, ruleSpecRun: null,
+                ruleRun: null,
                 push: { repositories: [], repositoryId: "", updates: [], updateId: "", contexts: [], loading: false, loaded: false } };
         },
         computed: {
@@ -754,17 +844,26 @@
             actions() { return this.rule ? children(this.rule, ["actions"])[0] || null : null; },
             conditionNode() { const condition = this.rule ? children(this.rule, ["condition"])[0] : null; return condition ? children(condition)[0] || null : null; },
             spec() { return this.rule && this.schema ? (this.schema.elements || []).find((element) => element.name === this.rule.name) || null : null; },
-            canEdit() { return this.ctx.canWrite; }
+            canEdit() { return this.ctx.canWrite; },
+            // the last run of the rule's trigger, traced, on its actions' blocks
+            ruleTrace() {
+                const run = this.ruleRun && this.ruleRun.result;
+                return run && run.trace && this.actions ? ops.traceBlock(run.trace, this.ctx.rootId, this.tab.path, this.actions.line) : null;
+            }
         },
         watch: {
             // another rule: its own pushes, by its patterns and event
-            selected() { this.push = { repositories: [], repositoryId: "", updates: [], updateId: "", contexts: [], loading: false, loaded: false }; }
+            selected() {
+                this.push = { repositories: [], repositoryId: "", updates: [], updateId: "", contexts: [], loading: false, loaded: false };
+                this.ruleSpec = null; this.ruleSpecRun = null; this.ruleRun = null;
+            }
         },
         mounted() {
             this.ctx.schema(this.outline ? this.outline.name : "secas").then((digest) => { this.schema = digest; });
             const line = Number(this.tab.line) || 0;
             const at = line ? this.rules.find((node) => node.line === line) : null;
             if (at) this.selected = at.path;
+            this.loadFixtures();
         },
         methods: {
             labelOf(rule) {
@@ -801,10 +900,55 @@
                 const last = devAide.store.get("moqui.devAide.tryResult." + service);
                 return JSON.stringify(last ? Object.assign({}, last.parameters || {}, last.out || {}) : {}, null, 1);
             },
-            tryCondition() {
+            conditionText() {
                 const node = this.conditionNode;
                 const text = this.tab.text || "";
-                const condition = !node ? "" : node.name === "expression" ? node.text || "" : text.slice(node.from16, node.to16);
+                return !node ? "" : node.name === "expression" ? node.text || "" : text.slice(node.from16, node.to16);
+            },
+            // ---- the contexts as named fixtures, and Save as spec on a rule (10) ----
+            loadFixtures() {
+                return this.ctx.get("ruleFixtures", { rootId: this.ctx.rootId, path: this.tab.path }).then((answer) => { this.fixtures = answer.fixtures || []; },
+                    () => { this.fixtures = []; });
+            },
+            useFixture(name) {
+                const fixture = this.fixtures.find((item) => item.name === name);
+                if (!fixture || !fixture.context) return;
+                this.fixtureName = fixture.name;
+                this.tryContext = JSON.stringify(fixture.context, null, 1);
+            },
+            saveFixture() {
+                this.ctx.post("ruleFixture", { rootId: this.ctx.rootId, path: this.tab.path, name: this.fixtureName, context: this.tryContext || "{}" }).then((answer) => {
+                    this.ctx.note("Saved the fixture " + ((answer.fixture && answer.fixture.path) || this.fixtureName));
+                    this.loadFixtures();
+                }, (error) => this.ctx.fail(error));
+            },
+            saveRuleSpec() {
+                if (pure.isDirty(this.tab)) { this.ctx.note(this.t("Save the rules file first: Save as spec runs the rules the server has"), "warning"); return; }
+                const asked = Object.assign(ops.ruleSpecQuery(this.rule, this.conditionText()),
+                    { rootId: this.ctx.rootId, path: this.tab.path, fixture: this.fixtureName, context: this.tryContext || "{}" });
+                this.ruleSpecRun = null;
+                this.ctx.post("ruleSpec", asked).then((answer) => {
+                    this.ruleSpec = { rootId: answer.rootId, path: answer.path, name: answer.spec, note: answer.note || "" };
+                    this.ctx.note("Saved as a feature of " + answer.path);
+                    this.loadFixtures();
+                }, (error) => this.ctx.fail(error));
+            },
+            // the rule's trigger in the sim with the context, traced: its messages and rows, and its actions marked
+            runTrigger() {
+                if (pure.isDirty(this.tab)) { this.ctx.note(this.t("Save the rules file first: the trigger runs the rules the server has"), "warning"); return; }
+                this.ruleRun = { running: true };
+                this.ctx.post("tryRule", Object.assign(ops.ruleSpecQuery(this.rule, this.conditionText()), { context: this.tryContext || "{}" }))
+                    .then((answer) => { this.ruleRun = { result: answer.result || {}, note: answer.note || "" }; },
+                        (error) => { this.ruleRun = null; this.ctx.fail(error); });
+            },
+            runRuleSpec() {
+                const spec = this.ruleSpec;
+                this.ruleSpecRun = { running: true };
+                this.ctx.post("runSpec", { rootId: spec.rootId, path: spec.path }).then((answer) => { this.ruleSpecRun = answer; },
+                    (error) => { this.ruleSpecRun = null; this.ctx.fail(error); });
+            },
+            tryCondition() {
+                const condition = this.conditionText();
                 if (!this.tryContext) this.tryContext = this.defaultContext();
                 this.conditionResult = { running: true };
                 this.ctx.post("evalCondition", { condition, against: this.tryContext }).then((answer) => {
@@ -888,8 +1032,31 @@
       <q-btn dense flat no-caps icon="sym_o_science" label="Try in sim" @click="tryCondition" id="DevTryConditionRun"></q-btn>
       <span v-if="conditionResult && !conditionResult.running" :class="conditionResult.holds ? 'text-positive' : 'text-warning'" id="DevConditionResult">
         {{conditionResult.holds ? 'It holds: the rule runs' : 'It does not hold: the rule does not run'}}{{conditionResult.result.failed ? ' (' + conditionResult.result.failed + ')' : ''}}</span>
+      <div class="row items-center q-gutter-x-sm q-mt-xs" id="DevRuleFixtures">
+        <q-select dense outlined options-dense style="min-width: 10rem" :model-value="null" :options="fixtures.filter(f => f.context).map(f => f.name)"
+            :label="t('A saved fixture')" @update:model-value="useFixture" id="DevRuleFixturePick"></q-select>
+        <q-input dense outlined v-model="fixtureName" :label="t('Fixture name')" style="width: 11rem" for="DevRuleFixtureName"></q-input>
+        <q-btn dense flat no-caps icon="sym_o_save" :label="t('Save as fixture')" :disable="!canEdit || !fixtureName" @click="saveFixture" id="DevRuleFixtureSave"></q-btn>
+        <q-btn dense flat no-caps icon="sym_o_play_circle" :label="t('Run the trigger in sim')" :disable="!canEdit || rule.name === 'emeca'" :loading="ruleRun && ruleRun.running"
+            @click="runTrigger" id="DevRuleRunTrigger"><q-tooltip>{{ t('Runs the rule\'s trigger with the context in the sim and marks its actions') }}</q-tooltip></q-btn>
+        <q-btn dense flat no-caps icon="sym_o_note_add" :label="t('Save as spec')" :disable="!canEdit || !fixtureName || rule.name === 'emeca'" @click="saveRuleSpec" id="DevRuleSaveSpec">
+          <q-tooltip>{{ t('Runs the rule\'s trigger with the fixture in the sim, and writes a feature that runs it again and checks what it did') }}</q-tooltip></q-btn>
+        <q-btn v-if="ruleSpec" dense flat no-caps icon="sym_o_play_arrow" :label="'Run spec ' + ruleSpec.name" :loading="ruleSpecRun && ruleSpecRun.running" @click="runRuleSpec" id="DevRuleRunSpec"></q-btn>
+      </div>
+      <div v-if="ruleRun && ruleRun.result" class="text-caption q-mt-xs" id="DevRuleRun">
+        <span v-if="ruleRun.result.failed" class="text-negative">{{ruleRun.result.failed}}</span>
+        <span v-else>{{ t('In sim, nothing kept') }} · {{(ruleRun.result.messages || []).length}} {{ t('messages') }} · {{(ruleRun.result.rows || []).length}} {{ t('rows') }}</span>
+        <div v-for="(text, i) in (ruleRun.result.messages || [])" :key="i">{{text}}</div>
+        <div v-if="ruleRun.note" class="m-muted">{{ruleRun.note}}</div>
+      </div>
+      <div v-if="ruleSpec && ruleSpec.note" class="text-caption m-muted" id="DevRuleSpecNote">{{ruleSpec.note}}</div>
+      <div v-if="ruleSpecRun && !ruleSpecRun.running" class="q-mt-xs" id="DevRuleSpecRun">
+        <div :class="ruleSpecRun.passed ? 'text-positive' : 'text-negative'">{{ruleSpecRun.passed ? 'The spec passed (run in sim)' : 'The spec failed'}}</div>
+        <div v-if="ruleSpecRun.setupFailure" class="text-caption text-negative">{{ruleSpecRun.setupFailure}}</div>
+        <div v-for="item in ruleSpecRun.cases" :key="item.name" class="text-caption">{{item.outcome}} · {{item.name}}<span v-if="item.message" class="text-negative"> · {{item.message}}</span></div>
+      </div>
     </q-expansion-item>
-    <m-dev-composer :ctx="ctx" :actions="actions" :read-only="!canEdit" :in-parameters="[]" :apply="apply" :text="tab.text"></m-dev-composer>
+    <m-dev-composer :ctx="ctx" :actions="actions" :read-only="!canEdit" :in-parameters="[]" :apply="apply" :text="tab.text" :trace="ruleTrace"></m-dev-composer>
   </div>
 </div>`
     };

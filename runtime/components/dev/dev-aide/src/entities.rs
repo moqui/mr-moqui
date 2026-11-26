@@ -47,10 +47,6 @@ pub(crate) fn register(registry: &mut NativeRegistry) -> Result<(), Error> {
     registry.service_function(moqui_core::service_location!(load_seed_file), load_seed_file)?;
     registry.service_function(moqui_core::service_location!(check_data_file), check_data_file)?;
     registry.service_function(moqui_core::service_location!(export_records), export_records)?;
-    registry.service_function(
-        moqui_core::service_location!(load_changed_records),
-        load_changed_records,
-    )?;
     registry.service_function(moqui_core::service_location!(get_view_sql), get_view_sql)?;
     registry.service_function(moqui_core::service_location!(list_data_files), list_data_files)
 }
@@ -59,7 +55,11 @@ pub(crate) fn register(registry: &mut NativeRegistry) -> Result<(), Error> {
 const MAX_EXPORT: i64 = 1000;
 
 /// `check#DataFile`: a data file's records (the buffer's `text`, or the file) against the database, as `checkData`
-/// reports them (12): each record not found and each field that differs.
+/// reports them (12): each record not found and each field that differs. It is a restricted check
+/// (`restrictSensitiveEntities`): an entity no generic read takes is refused, and a password or encrypted field is not
+/// compared. An element with a record of an entity whose records export#Records refuses the caller is not checked at
+/// all, so nothing of the answer (a message, a row, the count of fields compared) depends on that entity's rows: one
+/// line names it (plans/Security-Review.md SEC-DEV-01).
 fn check_data_file(
     ec: &ExecutionContext,
     _service: &ServiceInfo<'_>,
@@ -72,25 +72,88 @@ fn check_data_file(
         .filter(|body| !body.is_empty())
         .map_or_else(|| std::fs::read_to_string(&resolved.path), Ok)
         .map_err(|err| LibError::new(format!("{}: {err}", resolved.relative)))?;
+    let location = resolved.path.display().to_string();
+    let (checked_text, unchecked) = without_refused(&context, &location, &body);
     let checked = moqui_core::entity::load_feed::check_entity_xml_text(
         &context.facade,
-        &resolved.path.display().to_string(),
-        &body,
-        &moqui_core::entity::load_feed::LoadOptions::default(),
+        &location,
+        &checked_text,
+        &moqui_core::entity::load_feed::LoadOptions {
+            restrict_sensitive_entities: true,
+            ..moqui_core::entity::load_feed::LoadOptions::default()
+        },
     )?;
     let diffs: Vec<Json> = checked
         .diff_info
         .into_iter()
         .map(|row| moqui_json(&Value::Map(row)))
         .collect();
+    let mut messages = checked.messages;
+    messages.extend(
+        unchecked
+            .iter()
+            .map(|entity| format!("Entity {entity}: not checked for you")),
+    );
     let mut out = Parameters::new();
-    out.insert("messages".into(), json_value(&checked.messages));
+    out.insert("messages".into(), json_value(&messages));
     out.insert("differences".into(), json_value(&diffs));
     out.insert(
         "fieldsChecked".into(),
         Value::I64(i64::try_from(checked.fields_checked).unwrap_or(i64::MAX)),
     );
     Ok(out)
+}
+
+/// A data file's text without its top-level elements that hold a record of an entity `export_refused` refuses the
+/// caller, and those entities (full names). An element that does not read is kept, for the check to report.
+fn without_refused(context: &Context, location: &str, body: &str) -> (String, std::collections::BTreeSet<String>) {
+    let mut unchecked = std::collections::BTreeSet::new();
+    let Ok(doc) = moqui_lib::xml_edit::Doc::parse(body) else {
+        return (body.to_string(), unchecked);
+    };
+    let Some(root) = doc.root() else {
+        return (body.to_string(), unchecked);
+    };
+    let mut kept = Vec::new();
+    for element in doc.elements(root) {
+        let element_text = doc.slice(&doc.nodes[element].span);
+        let wrapped = format!("<entity-facade-xml>\n{element_text}\n</entity-facade-xml>\n");
+        let listed = moqui_core::entity::load_feed::list_with(|| {
+            moqui_core::entity::load_feed::load_entity_xml_text(
+                &context.facade,
+                location,
+                &wrapped,
+                &moqui_core::entity::load_feed::LoadOptions::default(),
+            )
+        });
+        let refused: Vec<String> = match listed {
+            Ok((_, result)) => result
+                .values
+                .iter()
+                .map(|value| value.entity_name().to_string())
+                .filter(|entity| export_refused(context, entity).is_some())
+                .map(|entity| full_name_of(context, &entity))
+                .collect(),
+            Err(_) => Vec::new(),
+        };
+        if refused.is_empty() {
+            kept.push(element_text.to_string());
+        } else {
+            unchecked.extend(refused);
+        }
+    }
+    (
+        format!("<entity-facade-xml>\n{}\n</entity-facade-xml>\n", kept.join("\n")),
+        unchecked,
+    )
+}
+
+/// An entity's full name, or `name` when the model does not know it.
+fn full_name_of(context: &Context, name: &str) -> String {
+    info::definition_info(&context.facade, name)
+        .and_then(|detail| detail.get("fullEntityName").map(moqui_lib::object::to_plain_string))
+        .filter(|full| !full.is_empty())
+        .unwrap_or_else(|| name.to_string())
 }
 
 /// Entities whose rows hold credentials, which only the full tier with `ADMIN` exports (get#Credentials and
@@ -106,7 +169,7 @@ const CREDENTIAL_ENTITIES: &[&str] = &[
 /// `moqui.security` entity, Dev AIDE's credential entities, or an entity with an encrypted field
 /// (plans/Security-Review-Medium.md SEC-DEV-01). The text never holds a password or encrypted field for anyone: the
 /// data writer leaves them out without a full backup.
-fn export_refused(context: &Context, name: &str) -> Option<String> {
+pub(crate) fn export_refused(context: &Context, name: &str) -> Option<String> {
     let full_name = info::definition_info(&context.facade, name)
         .and_then(|detail| detail.get("fullEntityName").map(moqui_lib::object::to_plain_string))
         .filter(|full| !full.is_empty())
@@ -196,83 +259,6 @@ fn export_records(
     let mut out = Parameters::new();
     out.insert("records".into(), Value::string(records));
     out.insert("count".into(), Value::I64(i64::try_from(written).unwrap_or(i64::MAX)));
-    Ok(out)
-}
-
-/// The top-level elements of a data file's text, each with its whitespace made one space, for comparing records.
-fn records_of(text: &str) -> Vec<String> {
-    let Ok(doc) = moqui_lib::xml_edit::Doc::parse(text) else {
-        return Vec::new();
-    };
-    let Some(root) = doc.root() else {
-        return Vec::new();
-    };
-    doc.elements(root)
-        .map(|element| {
-            doc.slice(&doc.nodes[element].span)
-                .split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" ")
-        })
-        .collect()
-}
-
-/// The records of `now` that `before` does not have as they are: those added or changed.
-fn changed_records(before: &str, now: &str) -> Vec<String> {
-    let had: std::collections::HashSet<String> = records_of(before).into_iter().collect();
-    records_of(now)
-        .into_iter()
-        .filter(|record| !had.contains(record))
-        .collect()
-}
-
-/// `load#ChangedRecords`: of a data file, only the records added or changed since its last commit, loaded (12).
-fn load_changed_records(
-    ec: &ExecutionContext,
-    _service: &ServiceInfo<'_>,
-    parameters: &Parameters,
-) -> Result<Parameters, LibError> {
-    let context = Context::of(ec, Tier::Extend)?;
-    let root = context.root(&text(parameters, "rootId"))?;
-    let resolved = context.resolve(root, &text(parameters, "path"))?;
-    context.may_write(root, &resolved.relative)?;
-    let now = std::fs::read_to_string(&resolved.path)
-        .map_err(|err| LibError::new(format!("{}: {err}", resolved.relative)))?;
-    let committed = context
-        .git()
-        .read(&root.path, &["show", &format!("HEAD:{}", resolved.relative)])
-        .unwrap_or_default();
-    let changed = changed_records(&committed, &now);
-    let mut out = Parameters::new();
-    out.insert("changed".into(), Value::I64(i64::try_from(changed.len()).unwrap_or(0)));
-    if changed.is_empty() {
-        out.insert("records".into(), Value::I64(0));
-        return Ok(out);
-    }
-    let document = format!("<entity-facade-xml>\n{}\n</entity-facade-xml>\n", changed.join("\n"));
-    let loaded = moqui_core::entity::load_feed::load_entity_xml_text(
-        &context.facade,
-        &resolved.path.display().to_string(),
-        &document,
-        &moqui_core::entity::load_feed::LoadOptions::default(),
-    );
-    audit::record(
-        &context.facade,
-        &Write {
-            action: "DAA_LOAD",
-            root: &root.id,
-            path: &resolved.relative,
-            detail: Some(
-                json!({ "changed": changed.len(), "records": loaded.as_ref().map(|result| result.records).ok(),
-                "error": loaded.as_ref().err().map(ToString::to_string) }),
-            ),
-            ..Write::default()
-        },
-    );
-    out.insert(
-        "records".into(),
-        Value::I64(i64::try_from(loaded?.records).unwrap_or(i64::MAX)),
-    );
     Ok(out)
 }
 
@@ -759,17 +745,6 @@ mod tests {
             kind("<entity-facade-xml type=\u{201c}seed\u{201c}>").as_deref(),
             Some("seed")
         );
-    }
-
-    #[test]
-    fn the_changed_records_are_those_added_or_changed() {
-        let before = "<entity-facade-xml>\n    <a id=\"1\" x=\"one\"/>\n    <a id=\"2\"\n       x=\"two\"/>\n</entity-facade-xml>";
-        let now = "<entity-facade-xml>\n    <a id=\"1\" x=\"uno\"/>\n    <a id=\"2\" x=\"two\"/>\n    <!-- new -->\n    <a id=\"3\"/>\n</entity-facade-xml>";
-        assert_eq!(
-            super::changed_records(before, now),
-            ["<a id=\"1\" x=\"uno\"/>", "<a id=\"3\"/>"]
-        );
-        assert_eq!(super::changed_records("", "<x><a/></x>"), ["<a/>"]);
     }
 
     /// The entity view's operations (test/vectors/entity-view-vectors.json): each vector's outline is the one this layer

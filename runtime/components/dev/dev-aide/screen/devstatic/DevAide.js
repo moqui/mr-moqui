@@ -304,6 +304,35 @@
         return (at >= 0 ? text.slice(0, at + 4) : text.replace(/\/[^/]*$/, "")) + "/Workspace";
     };
 
+    // "Open on the server" (21.3): a page of the hosted repository from the server's templates (hosted.pages: file,
+    // commit and branch, {repositoryPath} filled in and checked by the server to be its own pages), each value encoded
+    // as path parts, a line only as a number (with no line, the line's fragment goes); null when the server offers no
+    // such page, a value is missing or does not fit, or the result is not under the template's own address.
+    pure.serverPage = (pages, kind, values) => {
+        const template = pages && typeof pages[kind] === "string" ? pages[kind] : "";
+        const prefix = template.split("{")[0];
+        if (!/^https?:\/\/[^/?#]+\//i.test(prefix)) return null;
+        const given = values || {};
+        const path = (text) => String(text).split("/").map(encodeURIComponent).join("/");
+        let url = template;
+        const line = Math.floor(Number(given.line) || 0);
+        url = line > 0 ? url.split("{line}").join(String(line)) : url.replace(/#[^#]*\{line\}[^#]*$/, "");
+        const fill = { ref: given.ref, file: given.file, branch: given.branch, commitId: given.commitId };
+        if (fill.commitId != null && !/^[0-9a-f]{4,64}$/i.test(String(fill.commitId))) return null;
+        for (const [key, value] of Object.entries(fill)) {
+            const mark = "{" + key + "}";
+            if (!url.includes(mark)) continue;
+            if (value == null || value === "") return null;
+            url = url.split(mark).join(path(value));
+        }
+        return /\{[A-Za-z]+\}/.test(url) || !url.startsWith(prefix) ? null : url;
+    };
+    // The branch of the hosted remote that `upstream` names (origin/x for the remote origin: x), else "".
+    pure.serverBranch = (upstream, remote) => {
+        const text = String(upstream || "");
+        return remote && text.startsWith(remote + "/") ? text.slice(remote.length + 1) : "";
+    };
+
     // ---- the browser ----
 
     const store = {
@@ -514,7 +543,9 @@
                 advanced: !!store.get("advanced"), progress: null, hunks: null, conflictPath: null, gitLoaded: false,
                 // the checks of the commits shown (21.5), the commit whose checks are open, and the agreement (21.7)
                 logStates: {}, checksCommit: null, agreement: null,
-                logPage: 0, logMore: false, logPath: "", tree: null
+                logPage: 0, logMore: false, logPath: "", tree: null,
+                // a hosted root (4.10): whether the user may commit to its branch, and why not
+                hostedInfo: null
             };
         },
         computed: {
@@ -522,6 +553,14 @@
             // the repository a connected group server hosts for this root's remote (21.3), and whether the user may push there
             hosted() { return (this.root && this.root.hosted && this.root.hosted.repository) || null; },
             mayPush() { const access = this.hosted && this.hosted.access; return !access || !!(access.canCreate || access.canUpdate); },
+            // "Open on the server" (21.3): the current file at its line on the branch the server has, and the open commit
+            fileOnServer() {
+                const hosted = this.hosted, tab = this.current;
+                if (!hosted || !tab) return null;
+                const ref = pure.serverBranch(this.status && this.status.upstream, this.root.hosted.remote) || hosted.defaultBranch;
+                return pure.serverPage(hosted.pages, "file", { ref, file: tab.path, line: this.cursor && this.cursor.line });
+            },
+            commitOnServer() { return this.hosted && this.commitDetail ? pure.serverPage(this.hosted.pages, "commit", { commitId: this.commitDetail.id }) : null; },
             isGit() { return !!(this.root && this.root.kind === "git" && this.gitAvailable); },
             current() { return this.tabs.find((tab) => tab.path === this.active) || null; },
             groups() { return pure.groupChanges(this.status && this.status.entries); },
@@ -678,6 +717,9 @@
                     this.active = kept.active || null;
                 }
                 this.refreshStatus();
+                this.hostedInfo = null;
+                const picked = this.roots.find((item) => item.id === id);
+                if (picked && picked.kind === "hosted") this.get("hostedRoot", { rootId: id }).then((answer) => { if (this.rootId === id) this.hostedInfo = answer; }, () => {});
             },
             remember() {
                 if (!this.rootId) return;
@@ -854,6 +896,9 @@
                     apply: (ops, buffer) => vm.applyOps(tab, ops, buffer),
                     undo: () => vm.undo(tab), redo: () => vm.redo(tab),
                     outlineOf: (text) => vm.post("outline", { text }).then((answer) => answer.outline || null),
+                    // the unsaved buffers (the tabs and their views' companions): what a Try in sim runs over (F14)
+                    dirtyBuffers: () => pure.openBuffers(vm.tabs, vm.rootId).filter((open) => pure.isDirty(open.buffer) || open.buffer.missing)
+                        .map((open) => ({ rootId: open.rootId, path: open.path, text: open.buffer.text })),
                     companion: (rootId, path, initialText) => vm.companion(tab, rootId, path, initialText),
                     save: () => vm.save(tab), onSaved: (hook) => {
                         vm.saveHooks.set(tab, hook);
@@ -989,11 +1034,18 @@
                     return answer;
                 });
             },
-            saveTab(tab, inAll) {
+            saveTab(tab, inAll, message) {
                 if (!tab || tab.readOnly || (tab.saving && !inAll)) return Promise.resolve();
                 if (tab.text === tab.saved) return Promise.resolve();
+                // a hosted root (4.10): each Save is a commit, its message asked first ("Edit <path>" as given)
+                if (this.root && this.root.kind === "hosted" && message === undefined) {
+                    return new Promise((resolve) => this.$q.dialog({ title: "Commit to " + this.root.hostedBranch.branch,
+                        prompt: { model: "Edit " + tab.path, type: "text" }, cancel: true, persistent: true })
+                        .onOk((given) => resolve(this.saveTab(tab, inAll, String(given || "").trim())))
+                        .onCancel(() => (inAll ? resolve(Promise.reject({ errors: "The commit was cancelled" })) : resolve())));
+                }
                 tab.saving = true;
-                return this.post("save", { rootId: this.rootId, path: tab.path, text: tab.text, baseHash: tab.base }).then((answer) => {
+                return this.post("save", { rootId: this.rootId, path: tab.path, text: tab.text, baseHash: tab.base, message: message || "" }).then((answer) => {
                     tab.saving = inAll;
                     if (answer.conflict) {
                         tab.conflict = { diskText: answer.diskText || "", diskHash: answer.diskHash };
@@ -1773,7 +1825,9 @@
       <span class="text-caption" id="DevChangeCount">{{changeCount}} changed</span>
     </template>
     <span v-else-if="isGit" class="text-caption m-muted" role="status">Loading repository status…</span>
+    <q-chip v-else-if="root && root.kind === 'hosted'" dense square icon="sym_o_cloud" id="DevHostedChip">{{root.hostedBranch.repositoryId}} · {{root.hostedBranch.branch}} · no working tree</q-chip>
     <q-chip v-else-if="root" dense square icon="sym_o_folder_off" id="DevNotGit">{{root.label}} · {{root.kind === 'git' ? 'Git is unavailable' : 'Not a git repository'}}</q-chip>
+    <q-chip v-if="hostedInfo && !hostedInfo.canCommit" dense square icon="sym_o_lock" color="orange-3" id="DevHostedRefusal">Saves refused<q-tooltip max-width="24rem">{{hostedInfo.refusal}}</q-tooltip></q-chip>
     <q-space></q-space>
     <q-btn dense flat no-caps label="Fetch" :disable="!isGit || !canWrite" :loading="busy === 'fetch'" @click="network('fetch')"><q-tooltip v-if="!isGit">Not a git repository</q-tooltip></q-btn>
     <q-btn dense flat no-caps label="Pull" :disable="!isGit || !canWrite" :loading="busy === 'pull'" @click="network('pull')"></q-btn>
@@ -1785,6 +1839,8 @@
   </div>
   <q-banner v-if="root && root.worktreeOf" dense class="bg-blue-1 text-black" id="DevWorktreeBanner">A worktree of {{(roots.find((item) => item.id === root.worktreeOf) || {}).label || root.worktreeOf}}
     for an Assist session: not loaded, so the server keeps running the main tree. Check and commit here; a session that needs to run what it changes works in the main tree.</q-banner>
+  <q-banner v-if="root && root.kind === 'hosted'" dense class="bg-blue-1 text-black" id="DevHostedBanner">{{root.hostedBranch.repositoryId}} at {{root.hostedBranch.branch}}, hosted on this server:
+    not loaded or run. Each Save is a commit to {{root.hostedBranch.branch}} as you{{hostedInfo && hostedInfo.refusal ? '; ' + hostedInfo.refusal : ''}}.</q-banner>
   <q-banner v-if="restartNeeded" dense class="bg-amber-2 text-black" id="DevRestartBanner">{{ t('A change needs a restart to apply') }}.
     <span v-if="rebuildNote()"> {{ rebuildNote() }}</span>
     <template v-slot:action><q-btn v-if="rebuildOffered()" dense flat no-caps label="Rebuild" @click="rebuildNow" id="DevRebuild"></q-btn><q-btn v-if="rebuild.state !== 'running'" dense flat no-caps label="Restart" @click="restart"></q-btn><q-btn dense flat no-caps label="Later" @click="restartNeeded = false"></q-btn></template>
@@ -1850,7 +1906,7 @@
           <q-checkbox dense size="xs" v-model="search.regex" label=".*"></q-checkbox>
           <q-checkbox dense size="xs" v-model="search.caseSensitive" label="Aa" class="q-ml-sm"></q-checkbox>
           <q-input dense borderless v-model="search.pathFilter" placeholder="in path" class="q-ml-sm col"></q-input>
-          <q-btn v-if="canWrite" dense flat round size="sm" icon="sym_o_find_replace" :color="replace.open ? 'primary' : undefined" :aria-label="t('Replace')"
+          <q-btn v-if="canWrite && !(root && root.kind === 'hosted')" dense flat round size="sm" icon="sym_o_find_replace" :color="replace.open ? 'primary' : undefined" :aria-label="t('Replace')"
               @click="replace.open = !replace.open; replace.preview = null" id="DevReplaceToggle"><q-tooltip>{{ t('Replace across files') }}</q-tooltip></q-btn>
         </div>
         <div v-if="replace.open && canWrite" class="row items-center no-wrap q-gutter-x-xs" id="DevReplace">
@@ -1954,6 +2010,8 @@
             <q-item clickable v-close-popup @click="diffCurrent"><q-item-section>Diff</q-item-section></q-item>
             <q-item clickable v-close-popup @click="history(current.path)"><q-item-section>History</q-item-section></q-item>
             <q-item clickable v-close-popup @click="toggleBlame"><q-item-section>{{current.blame ? 'Hide blame' : 'Blame'}}</q-item-section></q-item>
+            <q-item v-if="fileOnServer" clickable v-close-popup tag="a" :href="fileOnServer" target="_blank" rel="noopener noreferrer" id="DevFileOnServer">
+              <q-item-section>Open on the server</q-item-section></q-item>
             <q-item clickable v-close-popup :disable="!canWrite" @click="stageCurrent"><q-item-section>Stage</q-item-section></q-item>
             <q-item clickable v-close-popup :disable="!canWrite" @click="discardCurrent"><q-item-section>Discard</q-item-section></q-item>
             <q-item clickable v-close-popup :disable="!canWrite" @click="tab = 'changes'"><q-item-section>Commit…</q-item-section></q-item>
@@ -2108,6 +2166,8 @@
         <span class="text-caption m-dev-mono">{{String(commitDetail.id).slice(0, 12)}}</span><q-space></q-space>
         <q-btn dense flat no-caps size="sm" label="Copy id" @click="copyId"></q-btn>
         <q-btn dense flat no-caps size="sm" label="Browse files" @click="browseTree('')"></q-btn>
+        <q-btn v-if="commitOnServer" dense flat no-caps size="sm" label="Open on the server" type="a" :href="commitOnServer" target="_blank"
+            rel="noopener noreferrer" id="DevCommitOnServer"></q-btn>
         <q-btn dense flat no-caps size="sm" label="Branch here" :disable="!canWrite" @click="newBranch(commitDetail.id)"></q-btn>
         <q-btn v-if="advanced" dense flat no-caps size="sm" label="Tag here" :disable="tier !== 'full'" @click="tagHere"></q-btn>
         <q-btn dense flat no-caps size="sm" :label="t('Cherry-pick')" :disable="tier !== 'full'" @click="replay('cherry-pick')"></q-btn>
