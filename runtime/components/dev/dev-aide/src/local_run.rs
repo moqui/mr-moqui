@@ -264,6 +264,10 @@ pub fn script_in(job: &LocalJob, dir: &Path, place: Place) -> String {
         "if [ \"$moqui_status\" -eq 0 ]; then printf '\\n%s\\n' '== The job succeeded'; \
          else printf '\\n%s\\n' \"== The job failed ($moqui_status)\"; fi\n",
     );
+    // a container's exit code is the job's
+    if place == Place::Image {
+        out.push_str("exit \"$moqui_status\"\n");
+    }
     out
 }
 
@@ -306,7 +310,8 @@ fn get_local_jobs(
         }),
     );
     let workdir = Hardening::from_conf().workdir;
-    let combination = |job: &LocalJob, dir: &Path| combination(job, dir, Path::new(&workdir));
+    let limit = ImageLimits::of(&context.settings).timeout.as_secs();
+    let combination = |job: &LocalJob, dir: &Path| combination(job, dir, Path::new(&workdir), limit);
     match read_jobs(&root.path) {
         Ok(jobs) => {
             // one entry a job, with its combinations
@@ -349,9 +354,9 @@ fn get_local_jobs(
 
 /// A combination as the page shows it before it runs: the job, the script it runs whole on this machine and in its
 /// image (in `workdir`), and each script's digest, which `start#LocalRun` holds the script to.
-fn combination(job: &LocalJob, dir: &Path, workdir: &Path) -> serde_json::Value {
+fn combination(job: &LocalJob, dir: &Path, workdir: &Path, limit_secs: u64) -> serde_json::Value {
     let text = script(job, dir);
-    let in_image = script_in(job, workdir, Place::Image);
+    let in_image = with_time_limit(&script_in(job, workdir, Place::Image), limit_secs);
     let mut value = serde_json::to_value(job).unwrap_or_default();
     value["digest"] = json!(digest(&text));
     value["script"] = json!(text);
@@ -706,15 +711,96 @@ pub fn image_refusal(
     })
 }
 
+/// `script` with a time limit of its own: a watchdog that ends every process of the container's user after `secs`, so
+/// a run in the image stops by itself whatever becomes of the server that started it.
+#[must_use]
+pub fn with_time_limit(script: &str, secs: u64) -> String {
+    let (first, rest) = script.split_once('\n').unwrap_or((script, ""));
+    format!(
+        "{first}\n( sleep {secs}; printf '\\n%s\\n' '== Stopped: the run went past its time ({secs} seconds)'; \
+         kill -TERM -1 ) &\n{rest}"
+    )
+}
+
+/// The paths under a working tree that a run in its image gets read only over themselves: what git reads to run a
+/// hook or a command there (`core.fsmonitor`, a hook, a worktree's link), so a step plants nothing the Dev AIDE's next
+/// git command runs on the host. Each `.git` (a directory or a file) found under the tree without following a link,
+/// each submodule's path (`gitlinks`, from `git ls-files -s`: an uninitialized one is an empty directory a step could
+/// make a repository of), and each nested root's `.git`; relative to the tree, sorted. Refused (the tree is not mounted)
+/// when the tree has more than [`MAX_SCANNED`] entries to look through.
+///
+/// # Errors
+///
+/// The refusal, when the tree is too big to look through, or a directory cannot be read.
+pub fn git_paths(tree: &Path, gitlinks: &[String], nested_roots: &[PathBuf]) -> Result<Vec<String>, String> {
+    let mut found: Vec<String> = Vec::new();
+    let mut pending: Vec<PathBuf> = vec![tree.to_path_buf()];
+    let mut scanned = 0usize;
+    while let Some(dir) = pending.pop() {
+        let entries = std::fs::read_dir(&dir).map_err(|err| format!("{}: {err}", dir.display()))?;
+        for entry in entries {
+            let entry = entry.map_err(|err| format!("{}: {err}", dir.display()))?;
+            scanned += 1;
+            if scanned > MAX_SCANNED {
+                return Err(format!(
+                    "the working tree has more than {MAX_SCANNED} files and directories to look through for a .git: run it \
+                     in a terminal"
+                ));
+            }
+            let path = entry.path();
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            if entry.file_name() == ".git" {
+                if let Ok(relative) = path.strip_prefix(tree) {
+                    found.push(relative.display().to_string());
+                }
+            } else if kind.is_dir() && !kind.is_symlink() {
+                pending.push(path);
+            }
+        }
+    }
+    for link in gitlinks {
+        let plain = !link.is_empty()
+            && link
+                .split('/')
+                .all(|part| !part.is_empty() && part != "." && part != "..");
+        if plain {
+            found.push(link.clone());
+        }
+    }
+    for nested in nested_roots {
+        if let Ok(relative) = nested.strip_prefix(tree) {
+            if !relative.as_os_str().is_empty() && std::fs::symlink_metadata(nested.join(".git")).is_ok() {
+                found.push(relative.join(".git").display().to_string());
+            }
+        }
+    }
+    found.sort();
+    found.dedup();
+    Ok(found)
+}
+
+/// The most entries [`git_paths`] looks through.
+pub const MAX_SCANNED: usize = 200_000;
+
+/// The submodules of the repository at `tree`: the paths of its gitlinks (mode 160000 in `git ls-files -s`).
+#[must_use]
+pub fn gitlinks_of(ls_files: &str) -> Vec<String> {
+    ls_files
+        .split('\0')
+        .filter_map(|entry| {
+            let (meta, path) = entry.split_once('\t')?;
+            meta.starts_with("160000 ").then(|| path.to_string())
+        })
+        .collect()
+}
+
 /// The permission a program on this machine needs, a run in the image as the Terminal's host session.
 pub const HOST_PERMISSION: &str = "TERMINAL_HOST";
 
-/// How many runs in the image `user` has that have not ended: being made here, or running on the engine.
-fn live_runs(host: &DockerHost, user: &str) -> usize {
-    let starting = moqui_lib::sync::lock(starts())
-        .values()
-        .filter(|start| start.user == user && start.phase == Phase::Starting)
-        .count();
+/// How many runs in the image `user` has running on the engine.
+fn running_runs(host: &DockerHost, user: &str) -> usize {
     let labels = [
         format!(
             "{}={}",
@@ -737,7 +823,7 @@ fn live_runs(host: &DockerHost, user: &str) -> usize {
                 .count()
         })
         .unwrap_or(0);
-    starting + running
+    running
 }
 
 /// Start `job` in its image: refused unless the script is the one the page showed, the user may run a program here,
@@ -753,7 +839,11 @@ fn start_in_image(
     seen: &str,
 ) -> Result<Parameters, LibError> {
     let hardening = Hardening::from_conf();
-    let body = script_in(job, Path::new(&hardening.workdir), Place::Image);
+    let limits = ImageLimits::of(&context.settings);
+    let body = with_time_limit(
+        &script_in(job, Path::new(&hardening.workdir), Place::Image),
+        limits.timeout.as_secs(),
+    );
     if let Some(why) = digest_refusal(&body, seen) {
         return Err(LibError::new(why));
     }
@@ -770,20 +860,27 @@ fn start_in_image(
     if job.image.trim().is_empty() {
         return Err(LibError::new(format!("{}/{} names no image", job.pipeline, job.job)));
     }
+    // every .git under the tree, each submodule and each nested root's, read only in the container
+    let gitlinks = context
+        .git()
+        .read(&root.path, &["ls-files", "-s", "-z"])
+        .map(|out| gitlinks_of(&out))
+        .unwrap_or_default();
+    let nested: Vec<PathBuf> = context
+        .roots
+        .iter()
+        .filter(|other| other.path != root.path && crate::confine::inside(&other.path, &root.path))
+        .map(|other| other.path.clone())
+        .collect();
+    let read_only = git_paths(&root.path, &gitlinks, &nested).map_err(LibError::new)?;
     let engine = local_engine_for(Some(&root.path))
         .ok_or_else(|| LibError::new("Neither Docker nor Podman answers on this machine: run it in a terminal"))?;
     let user = moqui_core::user::current_user_id().ok().flatten().unwrap_or_default();
     clear_ended(&engine.host, &user);
-    let limits = ImageLimits::of(&context.settings);
-    if live_runs(&engine.host, &user) >= limits.per_user {
-        return Err(LibError::new(format!(
-            "You have {} runs in an image going, which is the most at once: remove one first",
-            limits.per_user
-        )));
-    }
+    let running = running_runs(&engine.host, &user);
     let tag = moqui_core::user::random_string(12)?.to_ascii_lowercase();
     let name = format!("{NAME_PREFIX}{}-{tag}", moqui_git::ci::driver::server_name_part());
-    let run = image_run(
+    let mut run = image_run(
         job,
         &root.path,
         &user,
@@ -793,14 +890,30 @@ fn start_in_image(
         &limits,
         context.settings.shared,
     );
-    moqui_lib::sync::lock(starts()).insert(
-        name.clone(),
-        Start {
-            user: user.clone(),
-            phase: Phase::Starting,
-            cancelled: false,
-        },
-    );
+    run.read_only = read_only;
+    run.command[2] = body;
+    {
+        // counted and kept under one lock: two starts at once do not both pass the limit
+        let mut starts = moqui_lib::sync::lock(starts());
+        let starting = starts
+            .values()
+            .filter(|start| start.user == user && start.phase == Phase::Starting)
+            .count();
+        if starting + running >= limits.per_user {
+            return Err(LibError::new(format!(
+                "You have {} runs in an image going, which is the most at once: remove one first",
+                limits.per_user
+            )));
+        }
+        starts.insert(
+            name.clone(),
+            Start {
+                user: user.clone(),
+                phase: Phase::Starting,
+                cancelled: false,
+            },
+        );
+    }
     let socket = engine.socket.clone();
     let thread_name = name.clone();
     std::thread::Builder::new()
@@ -822,7 +935,8 @@ fn start_in_image(
 }
 
 /// The thread of a run in the image: make and start its container, then follow it until it ends, Remove asks for it
-/// to stop (it is removed), or it runs past `timeout` (it is stopped, and its log kept).
+/// to stop (it is removed), or it runs past `timeout` (it is stopped, and its log kept). The container's own watchdog
+/// ([`with_time_limit`]) stops it at the same time if this server is gone.
 fn follow(socket: &Path, name: &str, run: &LocalRun, hardening: &Hardening, timeout: std::time::Duration) {
     let host = DockerHost::unix(socket);
     let id = match moqui_git::ci::driver::docker::start_local(&host, run, hardening) {
@@ -837,8 +951,11 @@ fn follow(socket: &Path, name: &str, run: &LocalRun, hardening: &Hardening, time
     let mut cancelled = set_phase(name, Phase::Running);
     loop {
         if cancelled {
+            // Remove may have taken it already: only one still there is worth a word
             if let Err(err) = host.remove(&id) {
-                tracing::warn!("Dev AIDE: the local run {name}, removed while it started, was not removed: {err}");
+                if host.inspect(&id).ok().flatten().is_some() {
+                    tracing::warn!("Dev AIDE: the local run {name}, removed while it started, was not removed: {err}");
+                }
             }
             moqui_lib::sync::lock(starts()).remove(name);
             return;

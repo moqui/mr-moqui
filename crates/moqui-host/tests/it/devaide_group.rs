@@ -620,6 +620,17 @@ fn a_dev_instance_connects_to_its_group_server_and_opens_merge_requests() {
     }
     let (_, first, _) = exchange(address, &http_request("GET", "/Login", &[], ""));
     let brought = merge_cookies("", &first);
+    assert!(!brought.is_empty(), "an anonymous session's cookie: {first:?}");
+    // the anonymous session as its cookie finds it: the cookies after a page, and a new token if one was sent
+    let session_of = |jar: &str| {
+        let (_, answer, _) = exchange(address, &http_request("GET", "/Login", &[("Cookie", jar)], ""));
+        (
+            merge_cookies(jar, &answer),
+            header(&answer, "moquiSessionToken").to_string(),
+        )
+    };
+    session_of(&brought);
+    let anonymous_before = session_of(&brought);
     for (what, key, path) in [
         ("the tasks key", tasks_key.as_str(), tasks_path),
         ("the git key", app_key.as_str(), git_path),
@@ -646,6 +657,38 @@ fn a_dev_instance_connects_to_its_group_server_and_opens_merge_requests() {
                 &http_request("GET", "/rest/s1/mantle/my/noticeCounts", &[("Cookie", &jar)], ""),
             );
             assert_eq!(later, 401, "{what}: the cookie after it is no session of the account");
+        }
+    }
+    // the anonymous session the client held is the same one after them, with its cookie and token
+    assert_eq!(
+        session_of(&brought),
+        anonymous_before,
+        "the held anonymous session as it was"
+    );
+    // no login of a key names a Visit that is not there
+    {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        let facade = factory.entity().unwrap();
+        let history = facade
+            .find("moqui.security.UserLoginHistory")
+            .unwrap()
+            .eq("userId", Value::string("EX_JOHN_DOE"))
+            .list()
+            .unwrap();
+        for row in history.iter() {
+            let visit = row.get("visitId").map(to_plain_string).unwrap_or_default();
+            if visit.is_empty() {
+                continue;
+            }
+            let found = facade
+                .find("moqui.server.Visit")
+                .unwrap()
+                .eq("visitId", Value::string(&visit))
+                .count()
+                .unwrap();
+            assert_eq!(found, 1, "the login history names Visit {visit}, which is gone");
         }
     }
     assert!(
@@ -1568,14 +1611,10 @@ fn a_dev_instance_connects_to_its_group_server_and_opens_merge_requests() {
             .update_all([("statusId".to_string(), Value::string("AgrCompleted"))])
             .unwrap();
     }
-    call(
-        &factory,
-        "john.doe",
-        &format!("{WT}end#ConversationWorktrees"),
-        &[("conversationId", "CONV3")],
-    )
-    .unwrap();
-    // the rule's end, heard after the run ended, and this one tell its user once between them
+    // the sweep job ends it once its run has ended
+    let swept = call(&factory, "john.doe", &format!("{WT}sweep#ConversationWorktrees"), &[]).unwrap();
+    assert!(text(&swept, "conversationCount") != "0", "{swept:?}");
+    // the rule's end, if it was heard after the run ended, and the sweep tell its user once between them
     assert!(
         waited(&|| told() == 2),
         "its run ended: kept with its changes, its user told"

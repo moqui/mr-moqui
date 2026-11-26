@@ -15,8 +15,8 @@
 use std::path::Path;
 
 use super::{
-    digest, digest_refusal, engine_sockets, image_refusal, image_run, jobs_of, pick, quoted, script, script_in,
-    valid_run_name, ImageLimits, Place, LABEL_ROOT, LABEL_USER,
+    digest, digest_refusal, engine_sockets, git_paths, gitlinks_of, image_refusal, image_run, jobs_of, pick, quoted,
+    script, script_in, valid_run_name, with_time_limit, ImageLimits, Place, LABEL_ROOT, LABEL_USER,
 };
 
 const LIMITS: ImageLimits = ImageLimits {
@@ -228,6 +228,7 @@ fn in_a_real_engine_a_job_runs_in_its_image_on_the_mounted_tree() {
             <step name="Write" run="echo made-in-$MODE > made.txt"/>
             <step name="Show" run="cat made.txt; echo key=${{DEPLOY_KEY:-unset}}; id -u"/>
             <step name="Hook" run="echo x > .git/hooks/post-checkout &amp;&amp; echo hook-written || echo hook-refused"/>
+            <step name="Nested" run="echo fsmonitor >> component/.git/config &amp;&amp; echo nested-written || echo nested-refused"/>
         </job></pipeline></ci>"#
     );
     let jobs = jobs_of(&ci).unwrap();
@@ -238,6 +239,9 @@ fn in_a_real_engine_a_job_runs_in_its_image_on_the_mounted_tree() {
     let hardening = moqui_git::ci::driver::docker::Hardening::default();
     let name = format!("moqui-devaide-test-{}", std::process::id());
     std::fs::create_dir_all(tree.join(".git/hooks")).unwrap();
+    // a nested repository's .git, as a component's inside a site's
+    std::fs::create_dir_all(tree.join("component/.git")).unwrap();
+    std::fs::write(tree.join("component/.git/config"), "[core]\n").unwrap();
     let run = image_run(
         job,
         &tree,
@@ -248,6 +252,9 @@ fn in_a_real_engine_a_job_runs_in_its_image_on_the_mounted_tree() {
         &LIMITS,
         false,
     );
+    let mut run = run;
+    run.read_only = git_paths(&tree, &[], &[]).unwrap();
+    assert_eq!(run.read_only, [".git", "component/.git"]);
     let id = moqui_git::ci::driver::docker::start_local(&host, &run, &hardening).unwrap();
     let started = std::time::Instant::now();
     let info = loop {
@@ -273,6 +280,10 @@ fn in_a_real_engine_a_job_runs_in_its_image_on_the_mounted_tree() {
         "{log}"
     );
     assert!(log.contains("hook-refused"), "the tree's .git is read only: {log}");
+    assert!(
+        log.contains("nested-refused"),
+        "a nested repository's .git is read only: {log}"
+    );
     assert!(!log.lines().any(|line| line.trim() == "0"), "not root: {log}");
 }
 
@@ -326,4 +337,48 @@ fn a_run_in_the_image_is_refused_a_tree_it_may_not_write() {
     );
     assert!(plain.read_only.is_empty());
     let _ = std::fs::remove_dir_all(&base);
+}
+
+/// Every .git under a tree (a nested repository's, a submodule's file, one in a dependency's directory), each
+/// submodule's path and each nested root's .git are read only in the image; a link out of the tree is not followed.
+#[test]
+fn every_git_a_tree_holds_is_found() {
+    let base = std::env::temp_dir().join(format!("dev-aide-git-paths-{}", std::process::id()));
+    let tree = base.join("site");
+    let outside = base.join("outside");
+    for dir in [
+        tree.join(".git/hooks"),
+        tree.join("component/.git"),
+        tree.join("deps/lib/.git"),
+        tree.join("module"),
+        outside.join(".git"),
+    ] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    std::fs::create_dir_all(tree.join("sub")).unwrap();
+    std::fs::write(tree.join("sub/.git"), "gitdir: ../.git/modules/sub\n").unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&outside, tree.join("linked")).unwrap();
+    let found = git_paths(&tree, &["module".into(), "../escape".into()], &[tree.join("component")]).unwrap();
+    assert_eq!(found, [".git", "component/.git", "deps/lib/.git", "module", "sub/.git"]);
+    let _ = std::fs::remove_dir_all(&base);
+
+    let listed = ["100644 aa 0\tREADME.md", "160000 bb 0\tmodule", "160000 cc 0\tlibs/two", ""].join("\0");
+    assert_eq!(gitlinks_of(&listed), ["module", "libs/two"]);
+}
+
+/// A run in the image has a time limit of its own, so it stops whatever becomes of the server that started it.
+#[test]
+fn a_run_in_the_image_stops_itself_past_its_time() {
+    let jobs = jobs_of(CI).unwrap();
+    let unit = pick(&jobs, "check", "unit", "").unwrap();
+    let text = with_time_limit(&script_in(unit, Path::new("/workspace"), Place::Image), 3600);
+    let mut lines = text.lines();
+    assert_eq!(lines.next(), Some("#!/bin/sh"));
+    let watchdog = lines.next().unwrap();
+    assert!(
+        watchdog.starts_with("( sleep 3600;") && watchdog.ends_with("kill -TERM -1 ) &"),
+        "{watchdog}"
+    );
+    assert!(text.ends_with("exit \"$moqui_status\"\n"), "{text}");
 }

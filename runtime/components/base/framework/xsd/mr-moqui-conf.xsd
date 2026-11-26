@@ -3426,6 +3426,15 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="git-write-timeout" type="xs:string" default="120"><xs:annotation><xs:documentation>Seconds a write (which may run hooks) may take.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="max-edit-bytes" type="xs:string" default="2097152"><xs:annotation><xs:documentation>A
                 text over this many bytes opens read only.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="local-run-memory-mb" type="xs:string" default="4096"><xs:annotation><xs:documentation>Run
+                locally in a job's image: the memory of its container, in MB.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="local-run-pids" type="xs:string" default="1024"><xs:annotation><xs:documentation>The
+                processes a run in a job's image may have.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="local-run-timeout-minutes" type="xs:string" default="60"><xs:annotation><xs:documentation>A
+                run in a job's image is stopped after this many minutes, by its own watchdog and by the Dev AIDE that
+                follows it.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="local-run-limit" type="xs:string" default="2"><xs:annotation><xs:documentation>The runs in
+                a job's image a user may have going at once.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
 

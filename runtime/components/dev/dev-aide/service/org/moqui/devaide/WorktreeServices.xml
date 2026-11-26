@@ -64,17 +64,21 @@ along with this software (see the LICENSE.md file). If not, see
             ended it commits (entity/DevAide.eecas.xml): each clean one removed as remove#Worktree removes it (its branch
             stays), each with uncommitted changes kept and its user told once (a DevAideWorktreeKept notification). A
             conversation that is there and not archived ends nothing, and its worktrees' notice is cleared, so a later end
-            tells again. While a run of the conversation is still at work its worktrees stay and the service asks again a
-            minute later (at most an hour: attempt). Only a worktree under the runtime's worktrees directory is
-            removed.</description>
-        <in-parameters>
-            <parameter name="conversationId" required="true"/>
-            <parameter name="attempt" type="Integer"/>
-        </in-parameters>
+            tells again. While a run of the conversation is still at work its worktrees stay (waitingForRun), and
+            sweep#ConversationWorktrees ends them once it has ended. Only a worktree under the runtime's worktrees
+            directory is removed.</description>
+        <in-parameters><parameter name="conversationId" required="true"/></in-parameters>
         <out-parameters>
             <parameter name="waitingForRun" type="Boolean"/>
             <parameter name="removedRootIds" type="List"/>
             <parameter name="keptRootIds" type="List"/>
         </out-parameters>
+    </service>
+    <service verb="sweep" noun="ConversationWorktrees" type="rust" location="dev_aide::worktree::sweep_conversation_worktrees"
+            authenticate="false" allow-remote="false">
+        <description>The ServiceJob of DevAideJobData.xml: every session's worktree whose conversation ended while a run
+            of it was still at work, or while this server was down, ended as end#ConversationWorktrees ends it. One
+            conversation that fails is logged and the others go on.</description>
+        <out-parameters><parameter name="conversationCount" type="Integer"/></out-parameters>
     </service>
 </services>

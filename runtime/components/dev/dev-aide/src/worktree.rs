@@ -55,6 +55,10 @@ pub(crate) fn register(registry: &mut NativeRegistry) -> Result<(), Error> {
     registry.service_function(
         moqui_core::service_location!(end_conversation_worktrees),
         end_conversation_worktrees,
+    )?;
+    registry.service_function(
+        moqui_core::service_location!(sweep_conversation_worktrees),
+        sweep_conversation_worktrees,
     )
 }
 
@@ -415,33 +419,69 @@ fn tell_kept(root: &Root, main: &Root, changes: usize) {
 }
 
 /// `end#ConversationWorktrees`: the worktrees of a conversation that ended (`AgcArchived`, or deleted), after the write
-/// that ended it commits (`DevAide.eecas.xml`): each clean one removed as `remove#Worktree` removes it (its branch
-/// stays), each with uncommitted changes kept and its user told once. A conversation that is there and has not ended
-/// ends nothing, and its worktrees' end notice is cleared (restored, a later end tells again). While a run of the
-/// conversation is still at work its worktrees stay and it is asked again later. One worktree that fails is logged,
-/// and the others go on.
+/// that ended it commits (`DevAide.eecas.xml`): [`end_for`].
 fn end_conversation_worktrees(
     ec: &ExecutionContext,
     _service: &ServiceInfo<'_>,
     parameters: &Parameters,
 ) -> Result<Parameters, LibError> {
     let conversation = text(parameters, "conversationId");
-    let mut out = Parameters::new();
     if conversation.is_empty() {
-        return Ok(out);
+        return Ok(Parameters::new());
     }
     let context = Context::of_rule(ec)?;
     let _authz = ec.disable_authz();
+    end_for(&context, &conversation)
+}
+
+/// `sweep#ConversationWorktrees` (a ServiceJob, `data/DevAideJobData.xml`): every session's worktree whose
+/// conversation ended while a run of it was still at work, or while this server was down, ended as [`end_for`] ends
+/// it. A conversation that fails is logged, and the others go on. Out: `conversationCount`.
+fn sweep_conversation_worktrees(
+    ec: &ExecutionContext,
+    _service: &ServiceInfo<'_>,
+    _parameters: &Parameters,
+) -> Result<Parameters, LibError> {
+    let context = Context::of_rule(ec)?;
+    let _authz = ec.disable_authz();
+    let mut conversations: Vec<String> = context
+        .roots
+        .iter()
+        .filter(|root| root.worktree_of.is_some())
+        .filter_map(|root| root.conversation_id.clone())
+        .collect();
+    conversations.sort();
+    conversations.dedup();
+    for conversation in &conversations {
+        if let Err(err) = end_for(&context, conversation) {
+            tracing::error!("Dev AIDE: the worktrees of conversation {conversation} were not swept: {err}");
+        }
+    }
+    let mut out = Parameters::new();
+    out.insert(
+        "conversationCount".into(),
+        Value::I64(i64::try_from(conversations.len()).unwrap_or(0)),
+    );
+    Ok(out)
+}
+
+/// The worktrees of `conversation`, when it ended (archived, or deleted): each clean one removed as `remove#Worktree`
+/// removes it (its branch stays), each with uncommitted changes kept and its user told once. A conversation that is
+/// there and has not ended ends nothing, and its worktrees' end notice is cleared (restored, a later end tells again).
+/// While a run of it is still at work its worktrees stay (`waitingForRun`): the sweep job ends them once the run has
+/// ended. One worktree that fails is logged, and the others go on.
+fn end_for(context: &Context, conversation: &str) -> Result<Parameters, LibError> {
+    let mut out = Parameters::new();
     let ended = context
         .facade
         .find(CONVERSATION)?
-        .eq("conversationId", Value::string(&conversation))
+        .eq("conversationId", Value::string(conversation))
         .one()?
         .is_none_or(|row| row.get("statusId").map(moqui_lib::object::to_plain_string).as_deref() == Some(ARCHIVED));
     let worktrees: Vec<&Root> = context
         .roots
         .iter()
-        .filter(|root| root.worktree_of.is_some() && root.conversation_id.as_deref() == Some(conversation.as_str()))
+        .filter(|root| root.worktree_of.is_some() && root.conversation_id.as_deref() == Some(conversation))
         .collect();
     if !ended {
         // restored: a later end tells its user again
@@ -459,17 +499,15 @@ fn end_conversation_worktrees(
         }
         return Ok(out);
     }
-    // a run still at work in the session keeps its worktree until it ends: asked again later
-    if !worktrees.is_empty() && run_active(&context.facade, &conversation)? {
-        let attempt = text(parameters, "attempt").parse::<u32>().unwrap_or(0);
-        retry_later(ec, &conversation, attempt);
+    // a run still at work in the session keeps its worktree until it ends: the sweep job asks again
+    if !worktrees.is_empty() && run_active(&context.facade, conversation)? {
         out.insert("waitingForRun".into(), Value::Bool(true));
         return Ok(out);
     }
     let mut removed = Vec::new();
     let mut kept = Vec::new();
     for root in worktrees {
-        match end_one(&context, root) {
+        match end_one(context, root) {
             Ok(true) => removed.push(Value::string(&root.id)),
             Ok(false) => kept.push(Value::string(&root.id)),
             Err(err) => {
@@ -495,9 +533,6 @@ fn told() -> &'static std::sync::Mutex<std::collections::BTreeSet<String>> {
 
 /// The states of a run still at work (`AgentRun` status: submitted, working, or paused for its user).
 const ACTIVE_RUN: [&str; 4] = ["AgrSubmitted", "AgrWorking", "AgrInputRequired", "AgrAuthRequired"];
-/// How long to wait before asking again for a conversation whose run is still at work, and how many times.
-const RETRY_SECONDS: u64 = 60;
-const RETRIES: u32 = 60;
 
 /// Whether a run of `conversation` is still at work.
 fn run_active(facade: &moqui_core::entity::EntityFacade, conversation: &str) -> Result<bool, LibError> {
@@ -510,40 +545,6 @@ fn run_active(facade: &moqui_core::entity::EntityFacade, conversation: &str) -> 
         ))
         .count()?;
     Ok(active > 0)
-}
-
-/// Ask `end#ConversationWorktrees` again for `conversation` in [`RETRY_SECONDS`], on a thread of its own, at most
-/// [`RETRIES`] times; after that the worktree stays, as the Sessions tab shows it.
-fn retry_later(ec: &ExecutionContext, conversation: &str, attempt: u32) {
-    if attempt >= RETRIES {
-        tracing::warn!("Dev AIDE: the run of ended conversation {conversation} is still at work: its worktree stays");
-        return;
-    }
-    let factory = std::sync::Arc::clone(ec.factory());
-    let id = conversation.to_string();
-    let spawned = std::thread::Builder::new()
-        .name("dev-aide-worktree-end".into())
-        .spawn(move || {
-            std::thread::sleep(std::time::Duration::from_secs(RETRY_SECONDS));
-            let context = factory.new_context();
-            let _entered = context.enter();
-            let _authz = context.disable_authz();
-            let parameters: Parameters = [
-                ("conversationId".to_string(), Value::string(&id)),
-                ("attempt".to_string(), Value::string((attempt + 1).to_string())),
-            ]
-            .into_iter()
-            .collect();
-            if let Err(err) = moqui_core::service::sync(
-                "org.moqui.devaide.WorktreeServices.end#ConversationWorktrees",
-                &parameters,
-            ) {
-                tracing::error!("Dev AIDE: the worktrees of conversation {id} were not ended: {err}");
-            }
-        });
-    if let Err(err) = spawned {
-        tracing::error!("Dev AIDE: the worktrees of conversation {conversation} will not be asked again: {err}");
-    }
 }
 
 /// End one worktree of a conversation that ended: whether it was removed.
