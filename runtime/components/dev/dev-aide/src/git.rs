@@ -534,15 +534,49 @@ pub fn parse_remotes(out: &str) -> Vec<(String, String)> {
     remotes
 }
 
-/// A commit message with a task trailer (`Task: PROJ-12`) after a blank line, unless the message has it already.
+/// Whether a task's key may name it in a commit: one short line (at most 100 bytes, no control character), so a key
+/// from a server or a request never adds lines of its own (a forged `Signed-off-by:`) to the message.
+#[must_use]
+pub fn task_key_valid(key: &str) -> bool {
+    !key.trim().is_empty() && key.len() <= 100 && !key.chars().any(char::is_control)
+}
+
+/// The trailer line of a task: `Task: PROJ-12` for a work item's key; `Fixes #12` for an issue of the repository by its
+/// number (plans/design-dev-aide.md 21.6), which closes it when the commit reaches the default branch; a line that is a
+/// closing keyword already (`Fixes PROJ-12`, `Closes #3`, `Resolves ...`) as it is.
+#[must_use]
+pub fn trailer_line(task: &str) -> String {
+    let task = task.trim();
+    let number = task
+        .strip_prefix('#')
+        .filter(|number| !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit()));
+    if number.is_some() {
+        return format!("Fixes {task}");
+    }
+    let keyword = ["Fixes ", "Closes ", "Resolves "]
+        .iter()
+        .any(|keyword| task.starts_with(keyword) && task.len() > keyword.len());
+    if keyword {
+        task.to_string()
+    } else {
+        format!("Task: {task}")
+    }
+}
+
+/// A commit message with a task's trailer ([`trailer_line`]) after a blank line, unless the message has it already.
 #[must_use]
 pub fn with_trailer(message: &str, task: Option<&str>) -> String {
     let message = message.trim_end();
     match task.map(str::trim).filter(|task| !task.is_empty()) {
-        Some(task) if !message.lines().any(|line| line.trim() == format!("Task: {task}")) => {
-            format!("{message}\n\nTask: {task}\n")
+        Some(task) => {
+            let line = trailer_line(task);
+            if message.lines().any(|have| have.trim() == line) {
+                format!("{message}\n")
+            } else {
+                format!("{message}\n\n{line}\n")
+            }
         }
-        _ => format!("{message}\n"),
+        None => format!("{message}\n"),
     }
 }
 
@@ -702,5 +736,17 @@ mod tests {
             "Add\n\nTask: PROJ-12\n"
         );
         assert_eq!(with_trailer("Add  \n", None), "Add\n");
+        // an issue by its number closes it; a closing keyword stays as written
+        assert_eq!(
+            with_trailer("Fix the total", Some("#12")),
+            "Fix the total\n\nFixes #12\n"
+        );
+        assert_eq!(with_trailer("Fix\n\nFixes #12", Some("#12")), "Fix\n\nFixes #12\n");
+        assert_eq!(with_trailer("Fix", Some("Closes PROJ-3")), "Fix\n\nCloses PROJ-3\n");
+        assert_eq!(with_trailer("Fix", Some("#12a")), "Fix\n\nTask: #12a\n");
+        // a key is one short line: a newline would add a trailer of its own
+        assert!(task_key_valid("PROJ-12") && task_key_valid("#12"));
+        assert!(!task_key_valid("PROJ-12\nSigned-off-by: Someone <x@example.com>"));
+        assert!(!task_key_valid("A\rB") && !task_key_valid(&"x".repeat(101)) && !task_key_valid(" "));
     }
 }

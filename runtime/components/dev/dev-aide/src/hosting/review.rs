@@ -128,6 +128,9 @@ pub(crate) struct Opening {
     pub description: String,
     /// The fork the source branch is in, when it is not the repository's own.
     pub source_repository: String,
+    /// The remote the source branch is pushed to, when it is not the branch's own (`branch.<name>.pushRemote`, then
+    /// `.remote`): a fork's remote names the fork the merge request comes from.
+    pub source_remote: String,
 }
 
 pub(crate) fn create_call(via: &Via, repositories: &str, repository_id: &str, opening: &Opening) -> Call {
@@ -541,10 +544,13 @@ fn get_merge_request(
     Ok(out)
 }
 
-/// The REST path of an issue (a work item) on a group server: the offer's `tasks.issuePath` with `{id}`, else
-/// Mantle's work effort (`/rest/s1/mantle/workEfforts/{id}`). `None` for an id that is not one.
+/// The REST path of an issue (a work item) on a group server, and whether it names the issue by its number: the offer's
+/// `tasks.issuePath` with `{repositoryId}` and `{id}` (Mantle's `gitRepositories/{repositoryId}/issues/{id}`), else
+/// Mantle's work effort (`/rest/s1/mantle/workEfforts/{id}`). A key `#12` is the repository's issue 12, asked with
+/// `byNumber`; any other is the work item's id. `None` for an id that is not one.
 #[must_use]
-pub fn issue_path(template: &str, id: &str) -> Option<String> {
+pub fn issue_path(template: &str, repository_id: &str, id: &str) -> Option<(String, bool)> {
+    let by_number = id.trim().starts_with('#');
     let id = id.trim().trim_start_matches('#');
     if id.is_empty()
         || id.len() > 60
@@ -554,10 +560,20 @@ pub fn issue_path(template: &str, id: &str) -> Option<String> {
     {
         return None;
     }
+    if by_number && !id.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
     let template = Some(template)
-        .filter(|template| template.starts_with('/') && template.contains("{id}"))
+        .filter(|template| template.starts_with('/') && !template.starts_with("//") && template.contains("{id}"))
         .unwrap_or("/rest/s1/mantle/workEfforts/{id}");
-    Some(template.replace("{id}", &query_text(id)))
+    // neither id walks the server's path (`.`, `..`)
+    let id = client::path_segment(id)?;
+    let path = if template.contains("{repositoryId}") {
+        template.replace("{repositoryId}", &client::path_segment(repository_id)?)
+    } else {
+        template.to_string()
+    };
+    Some((path.replace("{id}", &id), by_number))
 }
 
 /// `get#Issue`: an issue (a work item) of the hosted repository's server by its id: its title, status, type and text.
@@ -571,10 +587,18 @@ fn get_issue(
     let root = git_root(&context, parameters)?;
     let hosted = need_hosted(&context, root)?;
     let id = text(parameters, "issueId");
-    let path = issue_path(&hosted.server.offered("tasks.issuePath"), &id)
+    let (path, by_number) = issue_path(&hosted.server.offered("tasks.issuePath"), &hosted.id(), &id)
         .ok_or_else(|| LibError::new(format!("{id} is not an issue's id")))?;
-    let answer = hosted.server.get(&path, &[])?;
+    let answer = hosted
+        .server
+        .get(&path, &[("byNumber", if by_number { "true" } else { "" })])?;
+    // Mantle's get#RepositoryIssue answers it as issue; a work effort's REST, as itself
     let item = client::result_of(&answer);
+    let item = if item["issue"].is_object() {
+        &item["issue"]
+    } else {
+        item
+    };
     let pick = |keys: &[&str]| -> Json {
         keys.iter()
             .map(|key| &item[*key])
@@ -584,6 +608,7 @@ fn get_issue(
     };
     let issue = json!({
         "issueId": pick(&["workEffortId", "issueId", "number", "id"]),
+        "number": pick(&["issueNumber", "number"]),
         "title": pick(&["workEffortName", "title", "name"]),
         "status": pick(&["statusId", "state", "status"]),
         "type": pick(&["workEffortTypeEnumId", "type"]),
@@ -595,10 +620,71 @@ fn get_issue(
     Ok(out)
 }
 
-/// Open a merge request on the hosted repository of `root`: the framework's, or the application's that keeps it.
+/// The remote a branch is pushed to by its own config: `branch.<name>.pushRemote`, else `branch.<name>.remote`; empty
+/// when it has none.
+fn branch_remote(context: &Context, root: &Root, branch: &str) -> String {
+    ["pushRemote", "remote"]
+        .iter()
+        .map(|key| {
+            context
+                .git()
+                .read(&root.path, &["config", "--get", &format!("branch.{branch}.{key}")])
+                .unwrap_or_default()
+                .trim()
+                .to_string()
+        })
+        .find(|remote| !remote.is_empty())
+        .unwrap_or_default()
+}
+
+/// The repository of a merge request's source branch when it is on another remote than the hosted repository's (a
+/// fork, 21.4): that remote's URL resolved on the same server. Empty for the hosted repository itself; an error for a
+/// remote the server has no repository at, since the server would look for the branch in the wrong place.
+fn source_repository(context: &Context, root: &Root, hosted: &Hosted, opening: &Opening) -> Result<String, LibError> {
+    let remote = Some(opening.source_remote.trim().to_string())
+        .filter(|remote| !remote.is_empty())
+        .unwrap_or_else(|| branch_remote(context, root, &opening.source));
+    if remote.is_empty() || remote == hosted.remote {
+        return Ok(String::new());
+    }
+    let url = remotes(context, root)
+        .into_iter()
+        .find(|(name, _)| *name == remote)
+        .map(|(_, url)| url)
+        .ok_or_else(|| LibError::new(format!("{} has no remote {remote}", root.label)))?;
+    if !hosted.server.matches_remote(&url) {
+        return Err(LibError::new(format!(
+            "{} is pushed to {remote}, which is not on {}: push it there to open a merge request",
+            opening.source, hosted.server.base
+        )));
+    }
+    let asked = crate::vcs::without_userinfo(&url);
+    let answer = hosted.server.get(
+        &format!("{}/repository", hosted.server.rest_path("hosting")),
+        &[("url", asked.as_str())],
+    )?;
+    let id = answer["repository"]["repositoryId"].as_str().unwrap_or("");
+    if answer["found"].as_bool() != Some(true) || id.is_empty() {
+        return Err(LibError::new(format!(
+            "{} has no repository at {remote} ({asked}) you may see",
+            hosted.server.base
+        )));
+    }
+    Ok(if id == hosted.id() {
+        String::new()
+    } else {
+        id.to_string()
+    })
+}
+
+/// Open a merge request on the hosted repository of `root`: the framework's, or the application's that keeps it. A
+/// source branch pushed to a fork's remote comes from that fork ([`source_repository`]).
 pub(crate) fn open(context: &Context, root: &Root, opening: &Opening) -> Result<Json, LibError> {
     let hosted = need_hosted(context, root)?;
     let mut opening = opening.clone();
+    if opening.source_repository.is_empty() {
+        opening.source_repository = source_repository(context, root, &hosted, &opening)?;
+    }
     if opening.target.is_empty() {
         opening.target = hosted.repository["defaultBranch"]
             .as_str()
@@ -623,10 +709,12 @@ pub(crate) fn open(context: &Context, root: &Root, opening: &Opening) -> Result<
         context,
         root,
         "merge-request",
-        json!({ "server": hosted.server.base, "repository": hosted.id(), "source": opening.source, "target": opening.target }),
+        json!({ "server": hosted.server.base, "repository": hosted.id(), "source": opening.source, "target": opening.target,
+            "sourceRepository": opening.source_repository }),
     );
     Ok(json!({
         "mergeRequestNum": made["mergeRequestNum"], "repositoryId": hosted.id(), "target": opening.target,
+        "sourceRepositoryId": if opening.source_repository.is_empty() { Json::Null } else { json!(opening.source_repository) },
         "url": page_url(&hosted.server, &made["url"]),
     }))
 }
@@ -666,6 +754,7 @@ fn open_merge_request(
             title,
             description: text(parameters, "description"),
             source_repository: text(parameters, "sourceRepositoryId"),
+            source_remote: text(parameters, "sourceRemote"),
         },
     )?;
     let mut out = Parameters::new();
