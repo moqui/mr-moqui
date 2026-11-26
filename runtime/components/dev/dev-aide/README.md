@@ -16,8 +16,9 @@ The assisted IDE of mr-moqui (`plans/design-dev-aide.md`), at `/qapps/dev` on a 
   (stage, unstage, discard, commit with the task trailer), Commits, Fetch, Pull, Push and Publish. The editor's
   settings (Settings › Editor) pick CodeMirror's, VS Code's or Vim's keys, and turn on a TypeScript check of server
   scripts (a worker of the browser over the project's `moqui types` declarations, off by default). On a shared dev
-  server (`dev-aide shared="true"`) the users with one file open edit it together, each seeing the others' carets and
-  selections by name, the file a writer may save seeded into its room and Save still each user's own, by hash. In the
+  server of one instance (`dev-aide shared="true"`; a server with cluster peers co-edits nothing) the users with one
+  file open edit it together, each seeing the others' carets and selections by name, the file a writer may save seeded
+  into its room and Save still each user's own, by hash. In the
   terminal (`moqui tui`) it is a simpler form, `WorkspaceTui.xml`: the tree, Go to file and Search, one file in the
   `code` editor with Save and its problems (and References and Browse for the artifacts it defines), Changes with the commit form, Commits with Cherry-pick and Revert, and a Git
   menu; branches, tags, stashes, merge requests, review and blame open in the browser. A hosted root (Repositories ›

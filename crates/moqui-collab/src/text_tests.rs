@@ -23,7 +23,7 @@ use moqui_lib::sync::lock;
 use yrs::updates::decoder::Decode;
 use yrs::{Doc, GetString, ReadTxn, Text, Transact, Update};
 
-use super::{TextAccess, ACCESS_FOR_TEST, TEXT_NAME};
+use super::{TextAccess, ACCESS_FOR_TEST, ON_ACCESS_FOR_TEST, TEXT_NAME};
 use crate::{Event, Joined};
 
 /// The text rooms and the stood-in answers are the process's: these tests take turns.
@@ -39,6 +39,7 @@ fn writer(text: &str) -> Result<TextAccess, u16> {
         text: Some(text.to_string()),
         max_bytes: 64,
         max_rooms: 2,
+        max_total_bytes: 1 << 20,
     })
 }
 
@@ -49,6 +50,7 @@ fn not_a_writer() -> Result<TextAccess, u16> {
         text: None,
         max_bytes: 64,
         max_rooms: 2,
+        max_total_bytes: 1 << 20,
     })
 }
 
@@ -235,5 +237,54 @@ fn a_writer_who_lost_the_right_is_dropped_and_a_stale_answer_takes_no_update() {
     crate::leave_as(&key, Some("ann"));
     crate::leave_as(&key, Some("bob"));
     assert!(super::room_of(&key).is_none());
+    *lock(&ACCESS_FOR_TEST) = None;
+}
+
+#[test]
+fn a_room_closed_while_a_join_asks_is_seeded_again_from_the_file_never_from_no_text() {
+    let _serial = serial();
+    let key = super::key_of("site", "service/Race.xml");
+    answers(&[("ann", writer("<services/>\n")), ("bob", writer("<services/>\n"))]);
+    crate::join(&key, "ann", &[]).unwrap();
+    // bob finds the room, so his answer has no text; while it is asked, ann's last client leaves and the room goes
+    let gone = key.clone();
+    *lock(&ON_ACCESS_FOR_TEST) = Some(Box::new(move || crate::leave_as(&gone, Some("ann"))));
+    let bob = client(&crate::join(&key, "bob", &[]).unwrap());
+    assert!(lock(&ON_ACCESS_FOR_TEST).is_none(), "the leave ran during bob's join");
+    assert_eq!(
+        text_of(&bob),
+        "<services/>\n",
+        "seeded from the file's text read again, not from none"
+    );
+    assert_eq!(crate::snapshot(&key).unwrap(), "<services/>\n");
+    crate::leave_as(&key, Some("bob"));
+    assert!(super::room_of(&key).is_none());
+    *lock(&ACCESS_FOR_TEST) = None;
+}
+
+#[test]
+fn every_rooms_bytes_together_are_bounded() {
+    let _serial = serial();
+    let first = super::key_of("site", "total/one.txt");
+    let second = super::key_of("site", "total/two.txt");
+    let bound = super::total_bytes() + 60;
+    let small = |text: &str| {
+        Ok(TextAccess {
+            max_total_bytes: bound,
+            ..writer(text).unwrap()
+        })
+    };
+    *lock(&ACCESS_FOR_TEST) = Some(HashMap::from([("ann".to_string(), small(&"a".repeat(30)))]));
+    let ann = client(&crate::join(&first, "ann", &[]).unwrap());
+    // a second room over the server's total is refused, and is no room
+    assert_eq!(crate::join(&second, "ann", &[]).unwrap_err().code, 503);
+    assert!(super::room_of(&second).is_none());
+    // an update over the total is refused too
+    let edit = type_at(&ann, 0, &"b".repeat(40));
+    assert_eq!(crate::apply(&first, "ann", &edit).unwrap_err().code, 413);
+    // the room's bytes leave the total with it
+    let before = super::total_bytes();
+    crate::leave_as(&first, Some("ann"));
+    assert!(super::total_bytes() < before);
     *lock(&ACCESS_FOR_TEST) = None;
 }

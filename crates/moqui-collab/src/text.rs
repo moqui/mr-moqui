@@ -17,7 +17,9 @@
 //! socket protocol of the wiki's documents (moqui-host `notws/collab.rs`). The key is `DevFile:<rootId>:<path>`.
 //!
 //! Unlike a wiki page's document it is never stored: the room is seeded from the file's text when its first editor
-//! joins and dropped when its last one leaves. Save stays the editor's: the dev-aide's save pipeline writes the text
+//! joins and dropped when its last one leaves. It is one server's: its frames do not go to the cluster's other
+//! servers (each would seed a room of its own), and the host refuses a join while the server has cluster peers, so
+//! co-editing is for a shared dev server of one instance. Save stays the editor's: the dev-aide's save pipeline writes the text
 //! the user sends, by the hash of the file they read, so one save wins and the other is a conflict, as without
 //! co-editing.
 //!
@@ -25,7 +27,9 @@
 //! write the file (the tier, the upstream lock, a read-only root), the path confined as a read's is; with the file's
 //! text when the room is new, and the bounds: the most bytes of a document ([`TextAccess::max_bytes`], the dev-aide's
 //! `max-edit-bytes`; its state, with the edits' history, at most [`STATE_FACTOR`] times that, and one update at most
-//! that) and the most files a user co-edits at once ([`TextAccess::max_rooms`]). A member's answer is asked again by
+//! that), the most files a user co-edits at once ([`TextAccess::max_rooms`], counted and joined under one lock) and the
+//! most bytes of every room's state together ([`TextAccess::max_total_bytes`], the dev-aide's
+//! `coedit-max-total-bytes`). A member's answer is asked again by
 //! the [`tick`] every minute (`ACCESS_RECHECK`); one who may no longer write the file is dropped ([`Event::Revoked`]),
 //! and one whose answer could not be renewed for three minutes (`ACCESS_STALE`) has their updates refused. Each room
 //! stands alone: a failed check or update is logged and the others go on.
@@ -52,6 +56,8 @@ pub const ACCESS_SERVICE: &str = "org.moqui.devaide.WorkspaceServices.get#Coedit
 pub const STATE_FACTOR: usize = 4;
 /// The most files a user co-edits at once when the dev-aide gives no number.
 const DEFAULT_MAX_ROOMS: usize = 20;
+/// The most bytes of every room's state together when the dev-aide gives no number.
+const DEFAULT_MAX_TOTAL_BYTES: usize = 64 * 1024 * 1024;
 
 /// Whether `key` names a co-edited file.
 #[must_use]
@@ -94,18 +100,30 @@ pub struct TextAccess {
     pub text: Option<String>,
     pub max_bytes: usize,
     pub max_rooms: usize,
+    /// The most bytes of every text room's state on the server together.
+    pub max_total_bytes: usize,
 }
 
 /// What [`access`] answers in a test in place of the dev-aide's, by user: `Err` a failed check of that code.
 #[cfg(test)]
 pub(crate) static ACCESS_FOR_TEST: Mutex<Option<HashMap<String, Result<TextAccess, u16>>>> = Mutex::new(None);
+/// Run once by the next [`access`] in a test, before it answers: what another thread does meanwhile.
+#[cfg(test)]
+pub(crate) static ON_ACCESS_FOR_TEST: Mutex<Option<Box<dyn FnOnce() + Send>>> = Mutex::new(None);
 
 /// The dev-aide's answer for `user_id` and the file, with its text when `with_text`.
 fn access(root_id: &str, path: &str, user_id: &str, with_text: bool) -> Result<TextAccess, Refusal> {
     #[cfg(test)]
+    if let Some(meanwhile) = lock(&ON_ACCESS_FOR_TEST).take() {
+        meanwhile();
+    }
+    #[cfg(test)]
     if let Some(answers) = &*lock(&ACCESS_FOR_TEST) {
         return match answers.get(user_id) {
-            Some(Ok(answer)) => Ok(answer.clone()),
+            Some(Ok(answer)) => Ok(TextAccess {
+                text: answer.text.clone().filter(|_| with_text),
+                ..answer.clone()
+            }),
             Some(Err(code)) => Err(Refusal::new(*code, "the access check failed")),
             None => Err(Refusal::new(403, "not a writer of the file")),
         };
@@ -136,6 +154,7 @@ fn access(root_id: &str, path: &str, user_id: &str, with_text: bool) -> Result<T
             .map(moqui_lib::object::to_plain_string),
         max_bytes: number("maxBytes", 2 * 1024 * 1024),
         max_rooms: number("maxRooms", DEFAULT_MAX_ROOMS),
+        max_total_bytes: number("maxTotalBytes", DEFAULT_MAX_TOTAL_BYTES),
     })
 }
 
@@ -157,6 +176,7 @@ struct TextRoom {
     /// [`STATE_FACTOR`].
     state_bytes: usize,
     max_bytes: usize,
+    max_total_bytes: usize,
     /// Taken out of the rooms: a join that found it before then seeds it again.
     closed: bool,
 }
@@ -168,6 +188,23 @@ fn rooms() -> &'static Mutex<HashMap<String, Arc<Mutex<TextRoom>>>> {
 
 fn room_of(key: &str) -> Option<Arc<Mutex<TextRoom>>> {
     lock(rooms()).get(key).cloned()
+}
+
+/// The bytes of every open room's state together, which [`TextAccess::max_total_bytes`] bounds.
+static TOTAL_BYTES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+fn total_bytes() -> usize {
+    TOTAL_BYTES.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Take `room` out of the rooms (`all`, locked) and its bytes out of the total.
+fn close(all: &mut HashMap<String, Arc<Mutex<TextRoom>>>, key: &str, room: &mut TextRoom) {
+    if room.closed {
+        return;
+    }
+    room.closed = true;
+    all.remove(key);
+    TOTAL_BYTES.fetch_sub(room.state_bytes, std::sync::atomic::Ordering::SeqCst);
 }
 
 /// The keys of the files co-edited on this server.
@@ -187,17 +224,20 @@ fn rooms_of(user_id: &str, except: &str) -> usize {
         .count()
 }
 
-/// The room of `key`, seeded from `seed` (the file's text) when there is none.
+/// The room of `key`, seeded from `seed` (the file's text) when there is none; `None` when there is none and no seed,
+/// for the caller to read the file and ask again: a room is never seeded from a text that was not read.
 fn room_seeded(
     key: &str,
     root_id: &str,
     path: &str,
-    seed: &str,
-    max_bytes: usize,
-) -> Result<Arc<Mutex<TextRoom>>, Refusal> {
+    seed: Option<&str>,
+    bounds: (usize, usize),
+) -> Result<Option<Arc<Mutex<TextRoom>>>, Refusal> {
+    let (max_bytes, max_total_bytes) = bounds;
     if let Some(room) = room_of(key) {
-        return Ok(room);
+        return Ok(Some(room));
     }
+    let Some(seed) = seed else { return Ok(None) };
     if seed.len() > max_bytes {
         return Err(Refusal::new(413, format!("the file is larger than {max_bytes} bytes")));
     }
@@ -216,10 +256,23 @@ fn room_seeded(
         grants: HashMap::new(),
         state_bytes,
         max_bytes,
+        max_total_bytes,
         closed: false,
     }));
+    let mut all = lock(rooms());
     // another join may have seeded it meanwhile: keep the first
-    Ok(Arc::clone(lock(rooms()).entry(key.to_string()).or_insert(room)))
+    if let Some(first) = all.get(key) {
+        return Ok(Some(Arc::clone(first)));
+    }
+    if total_bytes().saturating_add(state_bytes) > max_total_bytes {
+        return Err(Refusal::new(
+            503,
+            "the server co-edits as many bytes of files as it may: try again later",
+        ));
+    }
+    TOTAL_BYTES.fetch_add(state_bytes, std::sync::atomic::Ordering::SeqCst);
+    all.insert(key.to_string(), Arc::clone(&room));
+    Ok(Some(room))
 }
 
 /// A client of `user_id` joins the file: the dev-aide's answer, the room (seeded from the file when new), the update the
@@ -249,30 +302,74 @@ pub(crate) fn join(key: &str, user_id: &str, client_state_vector: &[u8]) -> Resu
         StateVector::decode_v1(client_state_vector)
             .map_err(|err| Refusal::new(400, format!("not a Yjs state vector: {err}")))?
     };
-    // a room the last leave closed between the lookup and the lock is seeded again, with the file's text read now
+    // the room, or a new one seeded from the file's text; a room the last leave closed between the lookup and the join,
+    // or one gone before a text was read, is seeded again from the file's text read now, never from no text
+    let mut seed = answer.text.take();
+    let mut tries = 0;
     let room = loop {
-        if room_of(key).is_none() && answer.text.is_none() {
-            answer = access(root_id, path, user_id, true)?;
+        let found = room_seeded(
+            key,
+            root_id,
+            path,
+            seed.take().as_deref(),
+            (answer.max_bytes, answer.max_total_bytes),
+        )?;
+        if let Some(room) = found {
+            // the rooms of the user counted and the user put in this one under one lock, so two joins at once do not
+            // both pass the bound
+            let mut all = lock(rooms());
+            let others = all
+                .iter()
+                .filter(|(other, room)| other.as_str() != key && lock(room).grants.contains_key(user_id))
+                .count();
+            let mut held = lock(&room);
+            if !held.closed {
+                if others >= answer.max_rooms {
+                    if held.members == 0 {
+                        close(&mut all, key, &mut held);
+                    }
+                    return Err(Refusal::new(
+                        429,
+                        format!("you co-edit {} files already: close one first", answer.max_rooms),
+                    ));
+                }
+                held.members += 1;
+                let now = Instant::now();
+                let grant = held.grants.entry(user_id.to_string()).or_insert(Grant {
+                    checked: now,
+                    retry_at: now,
+                    failures: 0,
+                    clients: 0,
+                });
+                grant.clients += 1;
+                grant.checked = now;
+                grant.retry_at = now;
+                grant.failures = 0;
+                drop(held);
+                drop(all);
+                break room;
+            }
         }
-        let seed = answer.text.take().unwrap_or_default();
-        let room = room_seeded(key, root_id, path, &seed, answer.max_bytes)?;
-        if !lock(&room).closed {
-            break room;
+        tries += 1;
+        if tries > 3 {
+            return Err(Refusal::new(
+                503,
+                "the file's room closed as it was joined: join it again",
+            ));
         }
+        let mut fresh = access(root_id, path, user_id, true)?;
+        if !fresh.can_edit {
+            return Err(Refusal::new(403, "you may not change this file"));
+        }
+        seed = Some(
+            fresh
+                .text
+                .take()
+                .ok_or_else(|| Refusal::new(500, "the dev-aide answered no text of the file"))?,
+        );
+        answer = fresh;
     };
-    let mut room = lock(&room);
-    room.members += 1;
-    let now = Instant::now();
-    let grant = room.grants.entry(user_id.to_string()).or_insert(Grant {
-        checked: now,
-        retry_at: now,
-        failures: 0,
-        clients: 0,
-    });
-    grant.clients += 1;
-    grant.checked = now;
-    grant.retry_at = now;
-    grant.failures = 0;
+    let room = lock(&room);
     let txn = room.doc.transact();
     let update = txn.encode_state_as_update_v1(&vector);
     let state_vector = txn.state_vector().encode_v1();
@@ -314,6 +411,12 @@ pub(crate) fn apply(key: &str, user_id: &str, update: &[u8]) -> Result<(), Refus
             format!("the co-edited file is larger than {max} bytes: save it and open it again"),
         ));
     }
+    if total_bytes().saturating_add(update.len()) > room.max_total_bytes {
+        return Err(Refusal::new(
+            413,
+            "the server co-edits as many bytes of files as it may: save the file and open it again",
+        ));
+    }
     let size = update.len();
     let update = Update::decode_v1(update).map_err(|err| Refusal::new(400, format!("not a Yjs update: {err}")))?;
     room.doc
@@ -321,21 +424,15 @@ pub(crate) fn apply(key: &str, user_id: &str, update: &[u8]) -> Result<(), Refus
         .apply_update(update)
         .map_err(|err| Refusal::new(400, format!("the update was not applied: {err}")))?;
     room.state_bytes = room.state_bytes.saturating_add(size);
+    TOTAL_BYTES.fetch_add(size, std::sync::atomic::Ordering::SeqCst);
     Ok(())
 }
 
 /// An update another server applied: into this server's room, when it has the file open.
-pub(crate) fn apply_remote(key: &str, update: &[u8]) {
-    let Some(room) = room_of(key) else { return };
-    let room = lock(&room);
-    match Update::decode_v1(update) {
-        Ok(update) => {
-            if let Err(err) = room.doc.transact_mut().apply_update(update) {
-                tracing::warn!("co-edited {key}: an update from another server was not applied: {err}");
-            }
-        }
-        Err(err) => tracing::warn!("co-edited {key}: an update from another server is not a Yjs update: {err}"),
-    }
+/// Not applied: a co-edited file's room is this server's alone, and another server's room of the file was seeded apart
+/// from it, so its update would only wait in this document as pending state that never integrates.
+pub(crate) fn apply_remote(key: &str, _update: &[u8]) {
+    tracing::debug!("co-edited {key}: an update from another server is not applied: a file's room is one server's");
 }
 
 /// A client of `user_id` left: the room counts one member fewer, the user's answer goes with their last client, and the
@@ -354,9 +451,8 @@ pub(crate) fn leave(key: &str, user_id: Option<&str>) {
         }
     }
     room.members = room.members.saturating_sub(1);
-    if room.members == 0 && !room.closed {
-        room.closed = true;
-        all.remove(key);
+    if room.members == 0 {
+        close(&mut all, key, &mut room);
     }
 }
 

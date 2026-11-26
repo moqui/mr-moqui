@@ -52,6 +52,7 @@ feature("a writer co-edits a file only on a shared server, with its text in LF a
         shared.out.text == "<services>\n    <service verb=\"get\" noun=\"Thing\"/>\n</services>\n"
         shared.out.maxBytes == 2097152
         shared.out.maxRooms == 20
+        shared.out.maxTotalBytes == 67108864
         noText.out.canEdit == true
         noText.out.text == null
     }

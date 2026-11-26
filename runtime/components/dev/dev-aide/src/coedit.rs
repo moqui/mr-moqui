@@ -18,7 +18,8 @@
 //! read-only root: [`Context::may_write`]), the path confined as a read's is, and only the path as the Workspace names
 //! it (one room per file); a hosted root's files, a binary file and one over `max-edit-bytes` are not co-edited. The
 //! answer has the file's text when the room is new, the most bytes of the document (`max-edit-bytes`) and the most
-//! files a user co-edits at once (`dev-aide@coedit-max-rooms`); its line endings are LF, as the editor's are. Save stays
+//! files a user co-edits at once (`dev-aide@coedit-max-rooms`) and the most bytes of every file's room on the server
+//! together (`dev-aide@coedit-max-total-bytes`); its line endings are LF, as the editor's are. Save stays
 //! the editor's own (`save#File`, by the hash of the file the user read).
 
 use moqui_core::context::{Error, ExecutionContext};
@@ -35,6 +36,8 @@ pub(crate) fn register(registry: &mut NativeRegistry) -> Result<(), Error> {
 
 /// The most files a user co-edits at once when the conf gives no number.
 const DEFAULT_MAX_ROOMS: i64 = 20;
+/// The most bytes of every file's room together when the conf gives no number.
+const DEFAULT_MAX_TOTAL_BYTES: i64 = 64 * 1024 * 1024;
 
 /// `get#CoeditAccess`: whether `userId` may co-edit `path` of `rootId`, and why not; the bounds; with `withText` the
 /// file's text. Asked by a room (a context with no user) or for the current user, never for another user.
@@ -67,14 +70,22 @@ fn get_coedit_access(
 /// The answer as the current user: `canEdit`, `reason` when not, the bounds, and the text when asked.
 fn answer(ec: &ExecutionContext, root_id: &str, path: &str, with_text: bool) -> Parameters {
     let mut out = Parameters::new();
-    let max_rooms = ec
-        .factory()
-        .conf_setting("dev-aide", "coedit-max-rooms")
-        .parse::<i64>()
-        .ok()
-        .filter(|max| *max > 0)
-        .unwrap_or(DEFAULT_MAX_ROOMS);
-    out.insert("maxRooms".into(), Value::I64(max_rooms));
+    let number = |name: &str, default: i64| {
+        ec.factory()
+            .conf_setting("dev-aide", name)
+            .parse::<i64>()
+            .ok()
+            .filter(|max| *max > 0)
+            .unwrap_or(default)
+    };
+    out.insert(
+        "maxRooms".into(),
+        Value::I64(number("coedit-max-rooms", DEFAULT_MAX_ROOMS)),
+    );
+    out.insert(
+        "maxTotalBytes".into(),
+        Value::I64(number("coedit-max-total-bytes", DEFAULT_MAX_TOTAL_BYTES)),
+    );
     match readable(ec, root_id, path) {
         Ok((max_bytes, file_text)) => {
             out.insert("maxBytes".into(), Value::I64(max_bytes));
