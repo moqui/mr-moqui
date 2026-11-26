@@ -48,9 +48,10 @@ mod cluster {
         adopted: bool,
     }
 
-    /// The file beside `postmaster.pid` that names the process owning the postmaster: the one that started it, or took
-    /// over one whose owner was gone. A postmaster outlives a node that was killed, and the next node takes it over
-    /// rather than leaving it running for good (plans/Mobile-Desktop.md, configuration 1).
+    /// The file beside `postmaster.pid` that names the process owning the postmaster, and the image of it ([`Owner`]):
+    /// the one that started it, or took over one whose owner was gone. A postmaster outlives a node that was killed,
+    /// and the next node takes it over rather than leaving it running for good (plans/Mobile-Desktop.md, configuration
+    /// 1); so does the image a restart's exec starts in the same process.
     const OWNER_FILE: &str = "moqui-owner.pid";
 
     struct PostmasterLock {
@@ -700,13 +701,18 @@ mod cluster {
             )));
         }
         let (mut cluster, driver) = launch(dir, data_dir, options, Some(lock.port))?;
-        let owner = owner_pid(data_dir);
-        if takes_over(owner, std::process::id(), process_live) {
+        let owner = owner_of(data_dir);
+        if takes_over(owner.as_ref(), std::process::id(), image_token(), process_live) {
             tracing::warn!(
-                "Postmaster {} of {} was started by process {}, which is gone; this process takes it over and stops it",
+                "Postmaster {} of {} was started by process {} (image {}), which is gone; this process takes it over \
+                 and stops it",
                 lock.pid,
                 data_dir.display(),
-                owner.unwrap_or(0)
+                owner.as_ref().map_or(0, |owner| owner.pid),
+                owner
+                    .as_ref()
+                    .and_then(|owner| owner.image.as_deref())
+                    .unwrap_or("unknown")
             );
             cluster.adopted = false;
             write_owner(&cluster.data_dir);
@@ -714,27 +720,63 @@ mod cluster {
         Ok((cluster, driver))
     }
 
-    /// Whether a live postmaster whose owner file names `owner` is taken over by process `me`: only when that owner is
-    /// gone. A postmaster with no owner file, or whose owner still runs, is only adopted and keeps running: a server
-    /// whose cluster `save-db` reaches, and a second handle in the owner's own process (a backup run in the server).
-    pub(crate) fn takes_over(owner: Option<u32>, me: u32, live: impl Fn(u32) -> bool) -> bool {
-        owner.is_some_and(|owner| owner != me && !live(owner))
+    /// What the owner file records: the process that owns the postmaster, and the image of it that does. An exec (a
+    /// restart from the app, `run_again` in the host) keeps the process id and starts a new image, which must take the
+    /// postmaster over to stop it, so the id alone does not name the owner.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub(crate) struct Owner {
+        pub pid: u32,
+        /// [`image_token`] of the image that wrote the file; none in a file of an older build.
+        pub image: Option<String>,
     }
 
-    /// The owner process named in `data_dir`'s owner file, if there is one that reads.
+    /// A value this image of the process makes once, when it first names an owner, and an exec does not keep: the time
+    /// it was made, in nanoseconds. Two images of one process never make it in the same nanosecond.
+    pub(crate) fn image_token() -> &'static str {
+        static TOKEN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+        TOKEN.get_or_init(|| {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |since| since.as_nanos());
+            format!("{nanos:x}")
+        })
+    }
+
+    /// Whether a live postmaster whose owner file names `owner` is taken over by process `me` in its image `my_image`:
+    /// only when that owner is gone, another process that no longer runs or an earlier image of this one (replaced by
+    /// exec, so it can stop nothing). A postmaster with no owner file, or whose owner still runs, is only adopted and
+    /// keeps running: a server whose cluster `save-db` reaches, and a second handle in the owner's own image (a backup
+    /// run in the server).
+    pub(crate) fn takes_over(owner: Option<&Owner>, me: u32, my_image: &str, live: impl Fn(u32) -> bool) -> bool {
+        match owner {
+            None => false,
+            Some(owner) if owner.pid != me => !live(owner.pid),
+            Some(owner) => owner.image.as_deref() != Some(my_image),
+        }
+    }
+
+    /// The owner named in `data_dir`'s owner file (`<pid> <image>`, or `<pid>` from an older build), if it reads.
+    pub(crate) fn owner_of(data_dir: &Path) -> Option<Owner> {
+        let text = std::fs::read_to_string(data_dir.join(OWNER_FILE)).ok()?;
+        let mut fields = text.split_whitespace();
+        let pid = fields.next()?.parse().ok()?;
+        Some(Owner {
+            pid,
+            image: fields.next().map(str::to_string),
+        })
+    }
+
+    /// The owner process named in `data_dir`'s owner file.
+    #[cfg(test)]
     pub(crate) fn owner_pid(data_dir: &Path) -> Option<u32> {
-        std::fs::read_to_string(data_dir.join(OWNER_FILE))
-            .ok()?
-            .trim()
-            .parse()
-            .ok()
+        owner_of(data_dir).map(|owner| owner.pid)
     }
 
-    /// Name this process the owner of the postmaster of `data_dir`. Without the file a postmaster this process leaves
-    /// behind is only adopted by the next start, so a failure is logged and the start goes on.
+    /// Name this image of this process the owner of the postmaster of `data_dir`. Without the file a postmaster this
+    /// process leaves behind is only adopted by the next start, so a failure is logged and the start goes on.
     pub(crate) fn write_owner(data_dir: &Path) {
         let path = data_dir.join(OWNER_FILE);
-        if let Err(err) = std::fs::write(&path, format!("{}\n", std::process::id())) {
+        if let Err(err) = std::fs::write(&path, format!("{} {}\n", std::process::id(), image_token())) {
             tracing::error!("could not write {}: {err}", path.display());
         }
     }

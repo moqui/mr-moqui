@@ -1695,6 +1695,9 @@ fn serve_thread(
     ready_tx: std::sync::mpsc::Sender<Result<http::ListenReport, String>>,
 ) -> Result<(), moqui_lib::error::Error> {
     let mut ready = Ready { tx: Some(ready_tx) };
+    // booting: a signal from here until the listener serves ends the process (the operator socket's handler)
+    #[cfg(unix)]
+    operator::set_serving(false);
     let process = match boot_server(&runtime_dir, &framework_dir, &cluster_dir, &bind) {
         Ok(process) => process,
         Err(err) => {
@@ -1821,8 +1824,9 @@ fn serve_thread(
         stop,
         sender,
     ));
-    #[cfg(unix)]
-    operator::set_serving(false);
+    // still serving for the operator socket's signal handler, which must not end the process now: the signal that
+    // stopped the listener (or a restart's, or a seal's stop) is shutting the server down, and its embedded Postgres
+    // stops with it. Ending here would leave the postmaster running. The next boot sets it back.
     tracing::info!("HTTP listener stopped, shutting down");
     if let Some(factory) = process.factory.as_ref() {
         moqui_core::web::servlet::stopping(factory);

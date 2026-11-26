@@ -23,7 +23,8 @@
 //! its group. With neither, the server binds `seal@socket` (default `db/operator.sock` in the runtime) itself, mode
 //! 0600: a development setup, and no protection boundary, since the server's own user can replace it.
 //!
-//! While sealed, SIGINT and SIGTERM give up the wait; unsealed but not yet serving, they end the process.
+//! While sealed, SIGINT and SIGTERM give up the wait; unsealed but not yet serving, they end the process. Once the
+//! listener has served they are its own, through the shutdown after it stops.
 
 use std::collections::HashMap;
 use std::os::fd::FromRawFd as _;
@@ -47,10 +48,12 @@ const MAX_LINE: u64 = 1 << 20;
 /// test does, serves one for each; the socket root hands over goes to the first).
 static SERVED: LazyLock<Mutex<HashMap<PathBuf, PathBuf>>> = LazyLock::new(Mutex::default);
 
-/// Whether the HTTP listener serves, so a signal before it does ends the process ([`abandon_on_signal`]).
+/// Whether the HTTP listener has served since this boot began, so a signal before it does ends the process
+/// ([`abandon_on_signal`]). It stays set while the server shuts down after the listener stops: that shutdown stops the
+/// embedded Postgres, which an exit then would leave running.
 static SERVING: AtomicBool = AtomicBool::new(false);
 
-/// Say whether the HTTP listener serves.
+/// Say whether the HTTP listener serves: true when it opens, false when a boot begins.
 pub(crate) fn set_serving(serving: bool) {
     SERVING.store(serving, Ordering::SeqCst);
 }

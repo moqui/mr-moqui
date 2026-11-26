@@ -688,17 +688,64 @@ fn a_postmaster_whose_owner_is_gone_is_taken_over_and_stopped() {
     assert_eq!(owner_pid(&data_dir), None, "the owner file stays after the stop");
 }
 
+/// A postmaster an earlier image of this process started, as one a restart's exec leaves when its stop did not finish,
+/// is taken over by this image and stopped on drop: the process id is the same, the image is not.
+#[test]
+fn a_postmaster_of_an_earlier_image_is_taken_over_and_stopped() {
+    let dir = temp_cluster_dir();
+    let _guard = DirGuard(dir.clone());
+    let (cluster, driver) = EmbeddedCluster::start(&dir, 20).unwrap();
+    let data_dir = cluster.data_dir().to_path_buf();
+    drop(driver);
+    let pid = postmaster_pid(&data_dir);
+    let _kill = KillGuard(pid);
+    std::mem::forget(cluster);
+    std::fs::write(
+        data_dir.join(OWNER_FILE),
+        format!("{} before-exec\n", std::process::id()),
+    )
+    .unwrap();
+    let (cluster, driver) = EmbeddedCluster::start(&dir, 20).unwrap();
+    assert_eq!(postmaster_pid(&data_dir), pid, "taken over, not restarted");
+    assert_eq!(
+        owner_of(&data_dir).and_then(|owner| owner.image),
+        Some(image_token().to_string())
+    );
+    drop(driver);
+    drop(cluster);
+    assert!(!process_live(pid), "the taken-over postmaster {pid} was not stopped");
+}
+
 #[test]
 fn only_a_gone_owner_hands_its_postmaster_over() {
     let me = 100;
     let live = |pid: u32| pid == me || pid == 200;
-    assert!(!takes_over(None, me, live), "no owner file: adopted as before");
-    assert!(!takes_over(Some(200), me, live), "a live owner keeps its postmaster");
+    let owner = |pid: u32, image: Option<&str>| Owner {
+        pid,
+        image: image.map(str::to_string),
+    };
+    assert!(!takes_over(None, me, "a", live), "no owner file: adopted as before");
     assert!(
-        !takes_over(Some(me), me, live),
-        "a second handle in the owner's process"
+        !takes_over(Some(&owner(200, Some("b"))), me, "a", live),
+        "a live owner keeps its postmaster"
     );
-    assert!(takes_over(Some(300), me, live), "the owner is gone");
+    assert!(
+        !takes_over(Some(&owner(me, Some("a"))), me, "a", live),
+        "a second handle in the owner's image"
+    );
+    assert!(
+        takes_over(Some(&owner(300, Some("b"))), me, "a", live),
+        "the owner is gone"
+    );
+    // an exec keeps the process id: the image that wrote the file is gone, and this one takes the postmaster over
+    assert!(
+        takes_over(Some(&owner(me, Some("before"))), me, "a", live),
+        "an earlier image of this process"
+    );
+    assert!(
+        takes_over(Some(&owner(me, None)), me, "a", live),
+        "this process's id from an older build's file"
+    );
 }
 
 #[test]
@@ -707,6 +754,17 @@ fn the_owner_file_round_trips() {
     let _guard = DirGuard(dir.clone());
     std::fs::create_dir_all(&dir).unwrap();
     assert_eq!(owner_pid(&dir), None);
+    write_owner(&dir);
+    assert_eq!(
+        owner_of(&dir),
+        Some(Owner {
+            pid: std::process::id(),
+            image: Some(image_token().to_string())
+        })
+    );
+    // an older build's file names the process alone
+    std::fs::write(dir.join(OWNER_FILE), "1234\n").unwrap();
+    assert_eq!(owner_of(&dir), Some(Owner { pid: 1234, image: None }));
     write_owner(&dir);
     assert_eq!(owner_pid(&dir), Some(std::process::id()));
     remove_owner(&dir);
