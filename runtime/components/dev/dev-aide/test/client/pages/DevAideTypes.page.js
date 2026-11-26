@@ -11,7 +11,7 @@ const types = moqui.devAide.types;
 
 test("a server script is a JavaScript file under script/, wrapped as the function body it runs as", () => {
     assert.ok(types.isScript("script/org/moqui/Run.js"));
-    assert.ok(types.isScript("runtime/component/app/script/Run.qjs"));
+    assert.ok(types.isScript("runtime/components/addon/app/script/Run.qjs"));
     assert.ok(!types.isScript("screen/devstatic/DevAide.js"), "a browser file");
     assert.ok(!types.isScript("service/Things.xml"));
     assert.ok(!types.isScript("scripts/build.js"), "not a component's script/");

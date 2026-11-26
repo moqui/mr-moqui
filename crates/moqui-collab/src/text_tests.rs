@@ -47,7 +47,7 @@ fn writer(text: &str) -> Result<TextAccess, u16> {
 fn not_a_writer() -> Result<TextAccess, u16> {
     Ok(TextAccess {
         can_edit: false,
-        reason: "runtime/component/x is upstream: extend it in site".into(),
+        reason: "runtime/components/addon/x is upstream: extend it in site".into(),
         text: None,
         hash: None,
         max_bytes: 64,
