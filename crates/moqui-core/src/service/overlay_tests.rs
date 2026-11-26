@@ -179,6 +179,23 @@ fn a_new_file_and_a_script_files_text_stand_at_their_locations() {
     });
 }
 
+/// A buffer may not define a Rust service anew or point one at another function: that would run the server's code by
+/// a name, and so an authorization, the text chose.
+#[test]
+fn a_rust_service_the_text_defines_anew_is_refused() {
+    let root = framework("rust", &[]);
+    let ctx = context(root.clone());
+    let _entered = ctx.enter();
+    let err = ServiceOverlay::build(&[OverlayFile {
+        location: "component://test/service/test/over/Native.xml".into(),
+        path: root.join("service/test/over/Native.xml"),
+        text: r#"<services><service verb="run" noun="Native" type="rust" location="moqui_core::service::sso::login_user"/></services>"#
+            .into(),
+    }])
+    .unwrap_err();
+    assert!(err.message().contains("Rust service"), "{err:?}");
+}
+
 #[test]
 fn a_service_file_that_does_not_parse_is_refused_naming_it() {
     let root = framework("bad", &[]);

@@ -67,10 +67,13 @@ fn is_service_file(path: &std::path::Path) -> bool {
 impl ServiceOverlay {
     /// The overlay of `files`, over the entered context's service registry: the service files' definitions and the
     /// other files' texts. A file that is neither a service file nor a script (a screen, an entity file) is left out.
+    /// The runtime runs a `type="script"` service's location as JavaScript, so only `.js` texts are held.
     ///
     /// # Errors
     ///
-    /// Returns an error when no context is entered, or when a service file does not parse as XML (naming the file).
+    /// Returns an error when no context is entered, when a service file does not parse as XML (naming the file), or
+    /// when the text defines a Rust service anew or points one at another function (it would run server code by a
+    /// name of the text's choosing).
     pub fn build(files: &[OverlayFile]) -> Result<Self, Error> {
         let mut parsed = Vec::new();
         let mut scripts = HashMap::new();
@@ -89,6 +92,26 @@ impl ServiceOverlay {
         };
         if !parsed.is_empty() {
             let made = super::define::overlaid_definitions(parsed)?;
+            // a Rust function is code of the server's, run by its registered name and authorization: the text may not
+            // name one anew, or another one, for a service
+            for (name, def) in &made.services {
+                let Some(def) = def else {
+                    continue;
+                };
+                if !matches!(
+                    def.kind,
+                    super::define::ServiceKind::Rust | super::define::ServiceKind::Native
+                ) {
+                    continue;
+                }
+                let registered = super::define::find(name);
+                if registered.is_none_or(|have| have.kind != def.kind || have.location != def.location) {
+                    return Err(Error::new(format!(
+                        "service {name} is a Rust service its text defines anew or changes: save it to run it, \
+                         unsaved text runs only XML Actions and scripts"
+                    )));
+                }
+            }
             overlay.services = made.services;
             overlay.defined = made.defined;
             overlay.failures = made.failures;
@@ -145,6 +168,13 @@ pub fn with<R>(overlay: Arc<ServiceOverlay>, body: impl FnOnce() -> R) -> R {
     let previous = ACTIVE.with(|active| active.borrow_mut().replace(overlay));
     let _restore = Restore(previous);
     body()
+}
+
+/// Whether an overlay holds this thread: what is made from service definitions then (a screen's forms and units) is
+/// not kept for other threads (`screen::generate`).
+#[must_use]
+pub fn held() -> bool {
+    ACTIVE.with(|active| active.borrow().is_some())
 }
 
 /// The held overlay's definition of `name`: `Some(None)` when its files no longer define it, `None` when the overlay
