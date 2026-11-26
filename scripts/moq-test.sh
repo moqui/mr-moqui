@@ -15,7 +15,18 @@ unset MOQUI_RUNTIME MOQ_TEST_WORKERS VAULT_WASM_ENSURED
 SRC=$(cd "$(dirname "$0")/.." && pwd)
 # The physical path: moq resolves its root with cd -P, so its output names /private/var/... on macOS, where TMPDIR is
 # /var/folders/.../T/ (a symlink, and a trailing slash).
-FIX=$(cd "$(mktemp -d "${TMPDIR:-/tmp}/moq-test.XXXXXX")" && pwd -P)
+# A mktemp that fails (a full disk) prints nothing, and `cd ""` stays where it is, so FIX would name the current
+# directory, the checkout, and the trap below would remove it: stop unless FIX is a new directory of its own.
+FIX=$(mktemp -d "${TMPDIR:-/tmp}/moq-test.XXXXXX") && [ -n "$FIX" ] && [ -d "$FIX" ] && FIX=$(cd "$FIX" && pwd -P) || {
+    echo "moq-test.sh: could not make a temp directory (is the disk full?)" >&2
+    exit 1
+}
+case "$FIX" in
+    "" | / | "$SRC" | "$SRC"/* | "$HOME" | "$(pwd -P)")
+        echo "moq-test.sh: refusing temp directory $FIX" >&2
+        exit 1
+        ;;
+esac
 trap 'rm -rf "$FIX"' EXIT
 pass=0
 fail=0
