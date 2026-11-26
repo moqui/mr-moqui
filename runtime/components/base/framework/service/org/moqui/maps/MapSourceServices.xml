@@ -14,10 +14,12 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- Map archives (plans/Maps.md §4.1, §5; docs/tools/Maps.md "Archives"): a PMTiles archive registered as a layer's revision,
     the access check of the map-source transition (tools screen/Maps/LocalMap.xml source), the archives Configuration lists
-    and their readiness. The logic is MapSources.js; the header is read in Rust (moqui-tools maps_archive.rs, over
-    moqui-lib pmtiles.rs). Grants (tools data/MapsSecurityData.xml): get#SourceAccess is MAPS_DIALOG's (every signed-in
-    user: it checks the layer and the drive itself), check#ArchiveReadiness MAPS_READINESS's (it checks
-    ADMIN_OVERVIEW_VIEW itself), the rest MAPS_ADMIN's. No Java counterpart. -->
+    and their readiness; and a user's geographic file read as an overlay (convert#Overlay, P3). The logic is
+    MapSources.js; the header is read in Rust (moqui-tools maps_archive.rs, over moqui-lib pmtiles.rs), and an overlay
+    (moqui-tools maps_overlay.rs, over moqui-lib geo/overlay.rs). Grants (tools data/MapsSecurityData.xml): get#SourceAccess
+    is MAPS_DIALOG's (every signed-in user: it checks the layer and the drive itself), check#ArchiveReadiness
+    MAPS_READINESS's (it checks ADMIN_OVERVIEW_VIEW itself), convert#Overlay no group's (MapOverlays.js calls it after its
+    own check), the rest MAPS_ADMIN's. No Java counterpart. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
     <service verb="read" noun="ArchiveHeader" type="rust" location="moqui_tools::maps_archive::read_archive_header">
@@ -39,6 +41,41 @@ along with this software (see the LICENSE.md file). If not, see
                 internalCompression, minZoom, maxZoom, minLongitude, minLatitude, maxLongitude, maxLatitude, centerZoom,
                 centerLongitude, centerLatitude, addressedTiles, tileContents, clustered}</description></parameter>
             <parameter name="metadata" type="Map"><description>{name, description, attribution, version, type, vectorLayers}</description></parameter>
+        </out-parameters>
+    </service>
+
+    <service verb="convert" noun="Overlay" type="rust" location="moqui_tools::maps_overlay::convert_overlay_service" allow-remote="false">
+        <description>A GeoJSON, GPX or KML file read as a map overlay (plans/Maps.md §4.1, §8; moqui-lib geo/overlay.rs): at a
+            resource location (read as the framework) or given as text, at most maxBytes, at most maxFeatures features,
+            WGS84 or a GeoJSON file's declared EPSG:3857 (converted; any other CRS refused), each feature's geometry checked
+            by itself (one that is not sane is left out, counted and named in notes), labels and descriptions made plain
+            text, and no KML network link, image overlay, style, icon or other reference followed (each counted in
+            notes). Answers a sanitized GeoJSON FeatureCollection (geojson, unless summaryOnly) with featureCount,
+            rejectedCount, bounds and crs; a file that cannot be an overlay is valid false with reasonCode (FORMAT_UNKNOWN,
+            NOT_FOUND, NOT_READ, NOT_TEXT, TOO_LARGE, NOT_PARSED, NOT_FORMAT, CRS_UNSUPPORTED, TOO_MANY_FEATURES,
+            NO_FEATURES) and reason. Writes nothing. It reads whatever location it is given, so no group is granted it:
+            the overlay services (MapOverlays.js) call it after their own check of the caller's drive access.</description>
+        <in-parameters>
+            <parameter name="location"/>
+            <parameter name="text" allow-html="any"/>
+            <parameter name="format"><description>MLF_GEOJSON, MLF_GPX or MLF_KML; else by fileName's extension</description></parameter>
+            <parameter name="fileName"/>
+            <parameter name="maxBytes" type="Long"/>
+            <parameter name="maxFeatures" type="Integer"/>
+            <parameter name="summaryOnly" type="Boolean" default="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="valid" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="format"/>
+            <parameter name="featureCount" type="Integer"/>
+            <parameter name="rejectedCount" type="Integer"/>
+            <parameter name="bounds" type="List"/>
+            <parameter name="crs"/>
+            <parameter name="notes" type="List"/>
+            <parameter name="size" type="Long"/>
+            <parameter name="geojson"/>
         </out-parameters>
     </service>
 

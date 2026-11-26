@@ -12,8 +12,8 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Maps (plans/Maps.md): the providers, layers and profiles a map is drawn from, saved views, the registry of record and
-    layer adapters, and the registry and runs of the Geo data importer. The Geo extensions (GeoPostalCode, GeoPointAssoc)
+<!-- Maps (plans/Maps.md): the providers, layers and profiles a map is drawn from, saved views, users' overlays, the
+    registry of record and layer adapters, and the registry and runs of the Geo data importer. The Geo extensions (GeoPostalCode, GeoPointAssoc)
     are in BasicEntities.xml; the services in service/org/moqui/maps/. The settings are the conf's maps element. -->
 <entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-entity-definition.xsd">
 
@@ -37,14 +37,17 @@ along with this software (see the LICENSE.md file). If not, see
             line</description></field>
         <field name="termsUrl" type="text-medium"/>
         <field name="allowedOperations" type="text-medium"><description>What it is used for, comma separated: style, tiles,
-            geocode, reverse, search, autocomplete</description></field>
+            geocode, reverse, search, autocomplete. A geocoder is asked only when it is empty or names geocode or
+            search</description></field>
         <field name="requestsPerSecond" type="number-integer"><description>The provider's request rate limit for this
-            installation; empty when it publishes none</description></field>
-        <field name="requestsPerDay" type="number-integer"/>
-        <field name="cachePolicy" type="text-short"><description>What may keep its answers: none, private (the user's
-            browser) or shared (this server, for every user)</description></field>
-        <field name="cacheSeconds" type="number-integer"><description>How long an answer may be kept; empty for the
-            provider's own headers</description></field>
+            installation, enforced for a geocoder on each server by itself (a cluster of n servers may send n times it);
+            empty when it publishes none, which for Nominatim and Photon is taken as 1</description></field>
+        <field name="requestsPerDay" type="number-integer"><description>Recorded for the provider's terms; not
+            enforced</description></field>
+        <field name="cachePolicy" type="text-short"><description>What may keep its answers: none (or empty), private (the
+            user's browser only: this server keeps nothing) or shared (this server, for every user)</description></field>
+        <field name="cacheSeconds" type="number-integer"><description>How long a shared answer may be kept; empty for the
+            provider's own Cache-Control max-age (nothing kept when it gives none, or no-store)</description></field>
         <field name="proxyRequests" type="text-indicator"><description>Y: browsers reach the provider through this server,
             which then sees nothing of the user's address but the server's; not a claim of complete location privacy
             (§4.2)</description></field>
@@ -65,6 +68,14 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.Enumeration description="Raster tiles" enumId="MPK_RASTER_TILES" enumTypeId="MapProviderKind" sequenceNum="2"/>
             <moqui.basic.Enumeration description="Self-hosted archives" enumId="MPK_ARCHIVE" enumTypeId="MapProviderKind" sequenceNum="3"/>
             <moqui.basic.Enumeration description="Geocoder" enumId="MPK_GEOCODER" enumTypeId="MapProviderKind" sequenceNum="4"/>
+            <!-- a geocoder's service (P3; MapGeocoders.js): its kind says the API find#Places speaks and its test asks, so a
+                change of it is a change of the endpoint and needs a new test. MPK_GEOCODER alone names none (incomplete). -->
+            <moqui.basic.Enumeration description="Geocoder: US Census (street-range interpolation, US addresses)" enumId="MPK_GEOCODER_CENSUS"
+                    enumTypeId="MapProviderKind" parentEnumId="MPK_GEOCODER" sequenceNum="5"/>
+            <moqui.basic.Enumeration description="Geocoder: Nominatim (self-hosted)" enumId="MPK_GEOCODER_NOMINATIM"
+                    enumTypeId="MapProviderKind" parentEnumId="MPK_GEOCODER" sequenceNum="6"/>
+            <moqui.basic.Enumeration description="Geocoder: Photon (self-hosted)" enumId="MPK_GEOCODER_PHOTON"
+                    enumTypeId="MapProviderKind" parentEnumId="MPK_GEOCODER" sequenceNum="7"/>
         </seed-data>
     </entity>
 
@@ -187,6 +198,40 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="one" title="Owner" related="moqui.security.UserAccount">
             <key-map field-name="ownerUserId" related="userId"/></relationship>
         <relationship type="one" related="moqui.maps.MapProfile"/>
+    </entity>
+
+    <!-- A user's overlay (§4.1, §4.2, §8; P3, MapOverlays.js): a GeoJSON, GPX or KML file in a drive, drawn over the map as
+        sanitized GeoJSON through Browse's overlay transition, which checks the reader's access to the file in its drive on
+        every request (get#DriveAccess: the owner, a member, or a ResourceShare of the file or a folder above it) and writes
+        nothing. The file is the original, kept as it was uploaded (an upload goes to Maps/overlays in the user's personal
+        drive) or picked from a drive the user reads; the row holds what reading it found when it was added. A shared
+        overlay is the file shared with ResourceShare, no other ACL: a reader the file is shared with sees the owner's row
+        read-only. isPlaces Y is the user's saved places, the GeoJSON file Maps/places.geojson of their personal drive
+        (store#Place). Removing the row leaves the file. -->
+    <entity entity-name="MapOverlay" package="moqui.maps" use="transactional" cache="never">
+        <field name="overlayId" type="id" is-pk="true"/>
+        <field name="ownerUserId" type="id"/>
+        <field name="label" type="text-medium"/>
+        <field name="driveId" type="id"/>
+        <field name="path" type="text-medium"><description>The file's path in the drive, from its root</description></field>
+        <field name="formatEnumId" type="id"><description>MLF_GEOJSON, MLF_GPX or MLF_KML</description></field>
+        <field name="isPlaces" type="text-indicator"/>
+        <field name="featureCount" type="number-integer"/>
+        <field name="rejectedCount" type="number-integer"><description>Features left out for a geometry that is not sane</description></field>
+        <field name="minLongitude" type="number-float"/><field name="minLatitude" type="number-float"/>
+        <field name="maxLongitude" type="number-float"/><field name="maxLatitude" type="number-float"/>
+        <field name="sourceCrs" type="text-short"><description>EPSG:4326, or EPSG:3857 for a GeoJSON file that declared it</description></field>
+        <field name="importNotes" type="text-long"><description>What was not read or kept, a line each</description></field>
+        <field name="createdDate" type="date-time"/>
+        <relationship type="one" title="Owner" related="moqui.security.UserAccount">
+            <key-map field-name="ownerUserId" related="userId"/></relationship>
+        <relationship type="one-nofk" related="moqui.resource.ResourceDrive" short-alias="drive"/>
+        <relationship type="one" title="MapLayerFormat" related="moqui.basic.Enumeration" short-alias="format">
+            <key-map field-name="formatEnumId"/></relationship>
+        <!-- one row a user for a file: the same file added again brings its row up to date -->
+        <index name="MAPS_OVERLAY_FILE" unique="true"><index-field name="ownerUserId"/><index-field name="driveId"/>
+            <index-field name="path"/></index>
+        <index name="MAPS_OVERLAY_DRIVE"><index-field name="driveId"/></index>
     </entity>
 
     <!-- A registered record or layer adapter (§3.2), as ConnectionAdapter and TransferTarget register theirs: seed data of the

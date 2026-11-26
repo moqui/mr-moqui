@@ -13,9 +13,10 @@
 // the private network (allowPrivateNetwork, which is shown here and changed only in Tools, as for every kind): a hosted
 // style must parse as a MapLibre style (version 8, sources, layers) and name its sources, tiles, sprite and glyphs on its
 // own origin (scheme, host and port) only, so the map's allowed origins (the provider's) cover all it fetches; a raster
-// template must answer an image for tile 0/0/0, a TileJSON name its tiles on its own origin; a geocoder must answer
-// (HEAD); an archive provider has no URL (store#Connection refuses one, ARCHIVE_ENDPOINT) and is sent nothing. Its texts
-// are a fixed vocabulary (an origin only when it is a host name or an IP literal, a status, a kind of failure), never the
+// template must answer an image for tile 0/0/0, a TileJSON name its tiles on its own origin; a geocoder must answer its
+// service's fixed test search (MapGeocoders.js test: a public address or a city, never a user's text); an archive
+// provider has no URL (store#Connection refuses one, ARCHIVE_ENDPOINT) and is sent nothing. Its texts are a fixed
+// vocabulary (an origin only when it is a host name or an IP literal, a status, a kind of failure), never the
 // response's own text. A map draws an outside URL only of an enabled provider that passed its test as it is configured
 // now, on the provider's own origin (tested, for MapConfig.js).
 //
@@ -73,6 +74,27 @@ function endpointText(value, what) {
     if (!found) return ""
     urlText(templateUrls(found)[0] || found, what)
     return found
+}
+// The geocoders (MapGeocoders.js), loaded when asked: that module loads this one for tested
+const geocoders = () => ec.resource.script("component://framework/service/org/moqui/maps/MapGeocoders.js")
+// A whole number from 1 to max, or empty
+function wholeText(value, what, max) {
+    const found = text(value)
+    if (!found) return ""
+    if (!/^\d{1,9}$/.test(found) || Number(found) < 1 || Number(found) > max)
+        throw new Error(say("${what} is a whole number from 1 to ${max}", {what: L(what), max}))
+    return String(Number(found))
+}
+const OPERATIONS = ["style", "tiles", "geocode", "search", "reverse", "autocomplete"]
+// Operations, comma separated, each of OPERATIONS
+function operationsText(value) {
+    const found = text(value)
+        .toLowerCase()
+        .split(/[\s,]+/)
+        .filter(each => each)
+    const unknown = found.filter(each => !OPERATIONS.includes(each))
+    if (unknown.length) throw new Error(say("Allowed operations are of: ${list}", {list: OPERATIONS.join(", ")}))
+    return Array.from(new Set(found)).join(",")
 }
 // The concrete URLs of a URL or a tile template (MapConfig.js templateUrls)
 const templateUrls = url => mapConfig.templateUrls(url)
@@ -283,6 +305,8 @@ function providerTest(parts, context) {
     try {
         if (kind === "MPK_VECTOR_STYLE") return styleTest(url, context)
         if (kind === "MPK_RASTER_TILES") return rasterTest(url, context)
+        // a geocoder: its service's fixed test search (MapGeocoders.js), never a user's text
+        if (geocoders().isGeocoderKind(kind)) return geocoders().test(provider, context.denyInternal)
         return [Object.assign({check: "Address"}, connections.probe(url, context.denyInternal))]
     } catch (error) {
         return [
@@ -317,7 +341,7 @@ const definition = {
             kind: "url",
             endpoint: true,
             validate: value => endpointText(value, "The style or tile URL"),
-            help: "A hosted style document's URL, a raster tile template with {z}, {x} and {y}, or a geocoder's base URL; empty for self-hosted archives"
+            help: "A hosted style document's URL, a raster tile template with {z}, {x} and {y}, or a geocoder's base URL (https://geocoding.geo.census.gov/geocoder, a Nominatim or Photon server's root); empty for self-hosted archives"
         },
         {
             name: "attribution",
@@ -334,6 +358,47 @@ const definition = {
             help: "The link of each part of the attribution, a line each"
         },
         {name: "termsUrl", label: "Terms of use", kind: "url"},
+        // the provider's policy for this installation: what it is used for, what may keep its answers and its rate. None
+        // is an endpoint field, so a change of one needs no new test (the fingerprint is the endpoint's)
+        {
+            name: "allowedOperations",
+            label: "Allowed operations",
+            kind: "text",
+            validate: value => operationsText(value),
+            help: "What it is used for, comma separated: style, tiles, geocode, search, reverse, autocomplete. A geocoder is asked only when this is empty or names geocode or search"
+        },
+        {
+            name: "cachePolicy",
+            label: "Cache policy",
+            kind: "choice",
+            options: () => [
+                {value: "none", label: L("None: nothing of its answers is kept")},
+                {value: "private", label: L("Private: only the user's browser may keep them; not this server")},
+                {value: "shared", label: L("Shared: this server keeps them for every user")}
+            ],
+            help: "What its terms permit keeping; empty is none"
+        },
+        {
+            name: "cacheSeconds",
+            label: "Cache seconds",
+            kind: "number",
+            validate: value => wholeText(value, "Cache seconds", 31536000),
+            help: "How long a shared answer is kept; empty for what the provider's Cache-Control max-age says (nothing kept without one)"
+        },
+        {
+            name: "requestsPerSecond",
+            label: "Requests per second",
+            kind: "number",
+            validate: value => wholeText(value, "Requests per second", 1000),
+            help: "The most searches a second this server sends it (on each server of a cluster by itself); empty is 1 for Nominatim and Photon, none for the others"
+        },
+        {
+            name: "requestsPerDay",
+            label: "Requests per day",
+            kind: "number",
+            validate: value => wholeText(value, "Requests per day", 100000000),
+            help: "Recorded for the provider's terms; not enforced"
+        },
         {
             name: "privateNetwork",
             label: "Private network",
@@ -356,6 +421,7 @@ const definition = {
     incomplete: parts => {
         const kind = text(parts.main.providerKindEnumId)
         if (!kind) return L("Choose the provider's kind")
+        if (kind === "MPK_GEOCODER") return L("Choose the geocoder's service: US Census, Nominatim or Photon")
         if (kind !== "MPK_ARCHIVE" && !text(parts.main.endpointUrl)) return L("Give the provider's style or tile URL")
         return null
     },
@@ -657,8 +723,10 @@ function providerChecks() {
                         fix
                     )
         )
+        // a geocoder is asked by this server, never by a browser: no key rule and no page policy apply
+        const geocoder = geocoders().isGeocoderKind(provider.providerKindEnumId)
         // its key would be in the URLs a browser asks: it is not offered to a browser, so the page policy does not matter
-        if (text(provider.apiKey)) {
+        if (text(provider.apiKey) && !geocoder) {
             out.push(
                 check(
                     key + ".keyed",
@@ -682,6 +750,15 @@ function providerChecks() {
                     fix
                 )
             )
+            continue
+        }
+        if (geocoder) {
+            // a public demo server: its policy allows an application very little (plans/Maps.md §6.2)
+            const host = geocoders().publicHost(provider)
+            if (host)
+                out.push(
+                    check(key + ".public", "Geocoder policy", "warning", "PUBLIC_GEOCODER", geocoders().publicHostText(host), fix)
+                )
             continue
         }
         // the URLs a browser asks for this provider's layers, each tile subdomain by itself

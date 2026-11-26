@@ -41,6 +41,17 @@ along with this software (see the LICENSE.md file). If not, see
             centerLongitude="0" centerLatitude="20" zoom="2" externalAccess="Y" allowedOverrides="basemap,layers,extent,units"
             disabled="Y"/>
 
+    <!-- The US Census geocoder (plans/Maps.md §6.2), disabled: Browse's search asks it only after an administrator tests it
+        (a fixed public address) and enables it, and only for an explicit search. It interpolates along street address
+        ranges: its points are street-range interpolations, never rooftops. Nothing of its answers is kept (cachePolicy
+        none) until an administrator permits it. -->
+    <moqui.maps.MapProvider providerId="CENSUS_GEOCODER" providerKindEnumId="MPK_GEOCODER_CENSUS" providerName="US Census geocoder"
+            description="US addresses, one line, located by interpolation along the Census Bureau's street address ranges; public domain, no key"
+            endpointUrl="https://geocoding.geo.census.gov/geocoder" attribution="U.S. Census Bureau Geocoder"
+            attributionUrls="https://geocoding.geo.census.gov/geocoder/"
+            termsUrl="https://www.census.gov/data/developers/about/terms-of-service.html" allowedOperations="geocode"
+            cachePolicy="none" proxyRequests="N" disabled="Y" allowPrivateNetwork="N" sequenceNum="50"/>
+
     <!-- The local Protomaps profile (plans/Maps.md §4.1, §5): a regional Protomaps PMTiles extract an administrator places in
         a drive, in a git repository as a Git LFS object, or on disk, and registers under Configuration › Archives
         (MapSourceServices.register#ArchiveLayer, which records its revision and enables the layer). Drawn with the styles,
