@@ -1,9 +1,11 @@
 # Maps
 
-November 1, 2026 — initial design. Built P0 to P3 on November 25, 2026 (each stage's row in §9 says what was built; the HOME mount, P4 and the optional Overture stages remain). Reviewed November 25, 2026 against the code, the sibling plans
-and the outside projects it relies on: paths, settings and existing mechanisms are named as they are today, and
-what is still to build is marked proposed. The selected browser renderer is OpenLayers. This plan owns
-the framework Maps app, reusable map interface, configuration, resource delivery and geographic lookup work.
+November 1, 2026 — initial design. Built P0 to P3 on November 25, 2026 (each stage's row in §9 says what was built;
+P3's HOME mount and walks are mr-home's H1c, and P4 and the optional Overture stages remain). Reviewed November 25, 2026
+against the code, the sibling plans and the outside projects it relies on: paths, settings and existing mechanisms
+are named as they are today, and what is still to build is marked proposed. The selected browser renderer is
+OpenLayers. This plan owns the framework Maps app, reusable map interface, configuration, resource delivery and
+geographic lookup work.
 [BOSS shared maps](../runtime/components/addon/mr-boss/plan/design-crosscut.md#332-maps-and-record-location-dialogs)
 and [HOME Maps](../runtime/components/addon/mr-home/plan/initial-design.md#39-maps-places-and-geographic-information)
 own their application contexts. 3D layers over this app (terrain, extruded buildings, a facility on the map) are
@@ -49,7 +51,7 @@ Verified starting points, rather than claims that Maps already exists:
 
 | Foundation | Reuse and required extension |
 | --- | --- |
-| Tools app registration | `runtime/components/base/tools/MoquiConf.xml` mounts `dashboards` (menu-index 96), `system` (98) and `tools` (99) under the apps screen; Monitor is a section of System (`System/Monitor.xml`), not an app. The three roots are ADMIN-only (`ToolsSecurityData.xml`, `MonitoringSecurityData.xml`); Maps receives its own grants. Two precedents there split a capability from its app root: `SYSTEM_VAULT_DIALOGS` (two dialog screens and their transitions, `inheritAuthz="N"`, granted to ALL_USERS) and `CALC_GRID` (a screen and its services that apps grant to their own groups). |
+| Tools app registration | `runtime/components/base/tools/MoquiConf.xml` mounts `dashboards` (menu-index 96), `system` (98) and `tools` (99) under the apps screen; Monitor is a section of System (`System/Monitor.xml`), not an app. The three roots are ADMIN-only (`ToolsSecurityData.xml`, `MonitoringSecurityData.xml`); Maps receives its own grants. Two precedents there split a capability from its app root: `SYSTEM_VAULT_DIALOGS` (two dialog screens and their transitions, `inheritAuthz="N"`, granted to ALL_USERS) and `CALC_GRID` (the Dashboards screen and its services: an app shows CalcGrid under a root of its own, as BOSS's Insights does, and grants its groups `CALC_GRID_AUTHOR` and an access profile). |
 | XML screens and browser widgets | Follow the [app practices](../docs/dev/Practices-App-Dev.md): XML owns parameters/transitions/access; a `.qvue` can own the browsing layout, beside its XML screen and a `.tui.json` twin. Repeated map use becomes a shared widget, with TUI and print fallbacks; `code-view`/`m-code` is the precedent for a widget with a lazily loaded library (§3.2). |
 | Geographic reference data | `moqui.basic.Geo` (`BasicEntities.xml`) already has `GEOT_POSTAL_CODE`, `GEOT_COUNTY`, `GEOT_CITY`, localized names, codes and `wellKnownText`; `GeoAssoc` records geographic relationships (types group member, regions, county seat). `GeoPoint` stores coordinates, elevation, `dataSourceId` and a type whose enumeration has no values yet. No Geo has a point, and no postal-code, county or city Geo is loaded anywhere: seed data has the countries, Mantle's install data the states and provinces (`USA_CA`). The extensions are in §6. |
 | Domain locations | Mantle `PostalAddress` has `postalCodeGeoId` (read by sales tax and checkout, set by nothing) and `geoPointId`; `Facility`, `FacilityLocation`, `Asset`, `Container` and `PartyGeoPoint` already reference GeoPoint. Mantle owns their access and location updates; Maps knows no business entity names. Mantle's `GooglePartyServices` geocoder (called by nothing, its key a user preference) is superseded by the provider interface in P3. |
@@ -70,14 +72,15 @@ Ownership is explicit:
 - **Mantle:** party/address/facility/asset adapters, permission-scoped queries, provenance of record locations,
   and writes through the domain's guarded services. No new business location registry beside these entities.
 - **BOSS/HOME:** contextual navigation, authorized layers and links, vocabulary and workflow-specific actions.
-  HOME has no screens or conf yet, so its Maps mount is its first; a photo-location layer from its Media is a
-  registered layer adapter of HOME's (§3.2).
+  HOME's mount, its adapters (a photo-location layer from its Media is a registered layer adapter of HOME's, §3.2)
+  and its visibility walks are mr-home's H1c, planned in
+  [its §3.9](../runtime/components/addon/mr-home/plan/initial-design.md#39-maps-places-and-geographic-information).
 - **PASS/other consumers:** the same component with their own publication and access rules. A public map receives
   explicitly published features and permitted basemaps, never a staff dataset with client-side filtering.
 
 ## 3. Screens and reusable interface
 
-Names and routes in this section are proposed contracts, not built artifacts.
+The names and routes in this section are built (P1); [the Maps guide](../docs/tools/Maps.md) describes them as they are.
 
 ### 3.1 Tools Maps app
 
@@ -102,8 +105,8 @@ to its source record. Failed layers show a named, retryable status while other l
 
 ### 3.2 Map widget and local-map dialog
 
-Propose an XML `map-view` widget backed by `m-map`, with a shared dialog screen
-`component://tools/screen/Maps/LocalMap.xml`. Develop its parts together, by the element checklist of
+An XML `map-view` widget backed by `m-map`, with a shared dialog screen
+`component://tools/screen/Maps/LocalMap.xml`. Its parts were built together, by the element checklist of
 [the BOSS style guide](../runtime/components/addon/mr-boss/plan/style-guide.md) §8.1 and as `code-view`/`m-code`
 was added:
 
@@ -166,24 +169,24 @@ The common interface accepts:
 **Choosing a location.** No dialog today hands a value back to the form that opened it, and this one does not
 need to. **Choose location** posts the dialog's own form to a LocalMap transition, which calls the registered
 adapter's `store#RecordLocation` with the proposed point, the record identity and the version read; the adapter
-is the owning domain's guarded service. The dialog then closes (`submit-hide-id`) and the host screen reloads with
-the saved location. A plain coordinate field, with no record behind it, takes the picked point from an `m-map`
-event in the page, as `m-emoji-picker` gives its pick.
+is the owning domain's guarded service. The form posts in the background; on success the dialog closes
+(`background-hide-id`) and the host screen reloads in place with the saved location. A plain coordinate field, with no
+record behind it, takes the picked point from an `m-map` event in the page, as `m-emoji-picker` gives its pick.
 
-The shared dialog can be used without granting access to the standalone Maps launcher. Split map-view capability
-(`MAPS_DIALOG`) from app-root access (`MAPS_APP`), configuration administration (`MAPS_ADMIN`) and source-record
-writes (the adapter's own check). An app shows the dialog under its own route by the
+The shared dialog can be used without granting access to the standalone Maps launcher. Map-view capability
+(`MAPS_DIALOG`) is split from app-root access (`MAPS_APP`), configuration administration (`MAPS_ADMIN`) and
+source-record writes (the adapter's own check). An app shows the dialog under its own route by the
 [thin-wrapper rule](../docs/dev/Practices-App-Dev.md#a-framework-screen-under-an-apps-root): `include-screen` and
 one `transition-include` for each transition it offers, with its grants naming its own screen. Mount/app context
 narrows data and actions; it never grants authority. Do not copy System's grants or require BOSS app access to
 open a HOME map.
 
-Expose proposed typed services in `org.moqui.maps.MapServices`
-(`framework/service/org/moqui/maps/MapServices.xml`) for effective configuration, saved views, source
+Typed services in `org.moqui.maps.MapServices`
+(`framework/service/org/moqui/maps/MapServices.xml`) serve effective configuration, saved views, source
 metadata, postal lookup and geocoding. Record and layer adapters implement framework interface services:
 `get#RecordMapContext` (label, geometry, precision, permitted actions and links, after the adapter's own access
 check), `store#RecordLocation` and a bounded `find#LayerFeatures` for a viewport. A component registers an
-adapter as a seed data row (a proposed `moqui.maps.MapAdapter`: a key and the implementing service's name), as
+adapter as a seed data row (a `moqui.maps.MapAdapter`: a key and the implementing services' names), as
 `TransferTarget` and `ConnectionAdapter` rows register theirs; a row naming a service that does not exist is
 logged and left out. A browser sends only the adapter's key: never a service name, entity name, query,
 filesystem path or proxy URL. Optional full-screen record layers
@@ -658,7 +661,7 @@ prepared downloads. This keeps a HOME installation practical without a large geo
 | R — byte access | The to-build list of §5: LFS-only git archives with their readiness check, pinned revisions by range, the map-source transition with a strong validator and private caching, strong `If-Range`, cancellation. Independent of P1, and built by whichever of Maps and HOME Media starts first. |
 | P1 — map and shared UI | Tools Maps full-screen browser, local dialog, personal preferences/saved views, explicit current-location action, the outline map of a fresh install and the OpenFreeMap provider an administrator enables. A user can open a record dialog without System, BOSS or standalone Maps app access, but cannot read an unauthorized record; with no Mantle in this stage, that rule is tested with a test adapter of the framework's own test services (`framework/test/MoquiConf.xml` and `framework/test/service/org/moqui/mapstest/`, loaded in `moqui test` runs only). Text/TUI/phone fallbacks work. |
 | P2 — local data and archives | PMTiles through stage R on all four backends, packaged local styles/fonts/icons, the Geo data importer (§6.4) with its Census, GeoNames and operator-CSV parsers and its settings screen, a measured US import, provenance/precision and data refresh. Local browsing and postal lookup work with external requests disabled. Other GeoNames countries open after the measurement. Built (A7a, November 25, 2026): the postal lookup (`get#PostalLocation`) in Browse's search and as the local-map dialog's fallback for an address with no point, Maps › Configuration › Geo data (licenses, Import as a ServiceJob run, Refresh and its schedule, Cancel, Remove, run history), the `maps.geodata` readiness and refresh; measured US import (§6.3): 61 s first, 1.3 s conditional and 3.5 s forced refresh changing nothing, 41,637 codes and about 318,500 rows, lookup 0.46 ms cold; every country at once waits on the forced refresh's memory (§6.3), one country a run is offered. Built (A7b, November 25, 2026): PMTiles archives registered from a plain file, a drive (DbResource) or git as a Git LFS object (`register#ArchiveLayer`: header checked in Rust, revision, version, drive and size recorded; a non-LFS git archive refused, `NOT_LFS`), the map-source transition (`LocalMap.xml` `source`: access on every range with no write, 409 for a stale revision, pinned strong ETag and private caching) and the same-origin URL in the effective configuration, `m-map` loading its configuration again on a 409, Maps › Configuration › Archives, the `maps.archives` readiness, and the packaged local Protomaps profile (`LOCAL_PROTOMAPS`: the `@protomaps/basemaps` light and dark styles generated at build time, the basemaps-assets sprites, Noto Sans); acceptance `MapsArchiveBackends`, `MapsLocalOnly` and `MapsFrameworkOnly`. |
-| P3 — consumer integration | Mantle adapters and BOSS/HOME mounts, basic geographic file overlays, optional configured street/place search, private/shared collections. HOME-only and dual-suite users see only permitted places; a viewer cannot save record coordinates. P0–P3 comprise the initial Maps scope. Built, the framework part (A8, November 25, 2026): personal overlays (`MapServices.store#Overlay`, `MapOverlays.js`; a GeoJSON, GPX or KML upload kept in `Maps/overlays` of the personal drive, or a file of a drive the user reads, read first by `MapSourceServices.convert#Overlay` in Rust, `moqui-lib` `geo/overlay.rs`: `maps@overlay-max-bytes` (10 MiB) within `maps@import-max-bytes`, `maps@max-features` (5000 when 0), 4 MiB of GeoJSON, WGS84 or a declared EPSG:3857, each geometry checked by itself, plain-text labels and descriptions, no network link, icon or reference followed), recorded as `moqui.maps.MapOverlay` and drawn from Browse's `overlay` transition with the reader's drive access checked on every request; saved places as `Maps/places.geojson` (`store#Place`); collections shared only by sharing the file in Files (`ResourceShare`), listed read-only in Browse's Layers, Saved views and search; the geocoder kinds `MPK_GEOCODER_CENSUS`, `MPK_GEOCODER_NOMINATIM` and `MPK_GEOCODER_PHOTON` with their fixed-query test, `find#Places` (one tested provider, never another on failure, outside requests, allowed operations, a shared cache policy and the rate (1 a second for Nominatim and Photon by default, per server) honoured, the answer read to 1 MiB with the RestClient's new `text(maxBytes)`) and its candidates third in Browse's search with source, precision and ambiguity; the disabled seed `CENSUS_GEOCODER`. Regression: `MapsOverlays`, `MapsGeocoder`, `geo/overlay_tests.rs`. Built, the Mantle part (A9): the record adapters `postalAddress`, `party`, `facility` and `asset` (mr-mantle `mantle.other.MapPlaceServices`, its `docs/MapAdapters.md`), each checking access itself (a party's business addresses only to others, a home address only to the person or their personal contact's owner; `PARTY_LOCATION_EDIT`, `FACILITY_EDIT`, `MAINTENANCE_RESOURCE_EDIT` to choose a location); the postal fallback never written to a record; saves as new points with `GeoPointProvenance`, refusing a stale version and an estimate over a recorded point; `PostalAddress.postalCodeGeoId` derived from the local Geo data; the bounded, organization-scoped record layers `MANTLE_FACILITIES` and `MANTLE_ASSETS`; `GooglePartyServices` superseded (regression: mr-mantle `MapPlaces`). Built, the BOSS part (A10): mr-boss `screen/Shared/LocalMap.xml`, LocalMap by the thin-wrapper rule, mounted under its app roots; View map on contact addresses, FacilityDetail and Maintenance's EquipmentDetail; the adapters' route keys resolved to BOSS screens; `PARTY_LOCATION_EDIT` for `BOSS_CONTACT_ADMIN`, while an internal organization's own places stay its settings manager's (`ADMIN_SETTINGS_MANAGE`), and Maps configuration rights read from the user's own grants (`isPermittedOwn`), so a mount's inherited root grant confers none (regression: mr-boss `RecordMap`). Not built: the HOME mount and the HOME-only and dual-suite visibility walks, which wait for mr-home's first screens. |
+| P3 — consumer integration | Mantle adapters and BOSS/HOME mounts, basic geographic file overlays, optional configured street/place search, private/shared collections. HOME-only and dual-suite users see only permitted places; a viewer cannot save record coordinates. P0–P3 comprise the initial Maps scope. Built, the framework part (A8, November 25, 2026): personal overlays (`MapServices.store#Overlay`, `MapOverlays.js`; a GeoJSON, GPX or KML upload kept in `Maps/overlays` of the personal drive, or a file of a drive the user reads, read first by `MapSourceServices.convert#Overlay` in Rust, `moqui-lib` `geo/overlay.rs`: `maps@overlay-max-bytes` (10 MiB) within `maps@import-max-bytes`, `maps@max-features` (5000 when 0), 4 MiB of GeoJSON, WGS84 or a declared EPSG:3857, each geometry checked by itself, plain-text labels and descriptions, no network link, icon or reference followed), recorded as `moqui.maps.MapOverlay` and drawn from Browse's `overlay` transition with the reader's drive access checked on every request; saved places as `Maps/places.geojson` (`store#Place`); collections shared only by sharing the file in Files (`ResourceShare`), listed read-only in Browse's Layers, Saved views and search; the geocoder kinds `MPK_GEOCODER_CENSUS`, `MPK_GEOCODER_NOMINATIM` and `MPK_GEOCODER_PHOTON` with their fixed-query test, `find#Places` (one tested provider, never another on failure, outside requests, allowed operations, a shared cache policy and the rate (1 a second for Nominatim and Photon by default, per server) honoured, the answer read to 1 MiB with the RestClient's new `text(maxBytes)`) and its candidates third in Browse's search with source, precision and ambiguity; the disabled seed `CENSUS_GEOCODER`. Regression: `MapsOverlays`, `MapsGeocoder`, `geo/overlay_tests.rs`. Built, the Mantle part (A9): the record adapters `postalAddress`, `party`, `facility` and `asset` (mr-mantle `mantle.other.MapPlaceServices`, its `docs/MapAdapters.md`), each checking access itself (a party's business addresses only to others, a home address only to the person or their personal contact's owner; `PARTY_LOCATION_EDIT`, `FACILITY_EDIT`, `MAINTENANCE_RESOURCE_EDIT` to choose a location); the postal fallback never written to a record; saves as new points with `GeoPointProvenance`, refusing a stale version and an estimate over a recorded point; `PostalAddress.postalCodeGeoId` derived from the local Geo data; the bounded, organization-scoped record layers `MANTLE_FACILITIES` and `MANTLE_ASSETS`; `GooglePartyServices` superseded (regression: mr-mantle `MapPlaces`). Built, the BOSS part (A10): mr-boss `screen/Shared/LocalMap.xml`, LocalMap by the thin-wrapper rule, mounted under its app roots; View map on contact addresses, FacilityDetail and Maintenance's EquipmentDetail; the adapters' route keys resolved to BOSS screens; `PARTY_LOCATION_EDIT` for `BOSS_CONTACT_ADMIN`, while an internal organization's own places stay its settings manager's (`ADMIN_SETTINGS_MANAGE`), and Maps configuration rights read from the user's own grants (`isPermittedOwn`), so a mount's inherited root grant confers none (regression: mr-boss `RecordMap`). P3's framework, Mantle and BOSS parts are complete; its HOME mount, adapters and the HOME-only and dual-suite visibility walks are mr-home's H1c ([initial design §3.9](../runtime/components/addon/mr-home/plan/initial-design.md#39-maps-places-and-geographic-information) and [§7](../runtime/components/addon/mr-home/plan/initial-design.md#7-delivery-proposal)). |
 | P4 — richer GIS | Configured WMS/WMTS/WFS and additional imports/editing, COG/raster controls, advanced CRS workflows, large-data processing and optional detailed dashboard drill-downs. Prioritize concrete household/business scenarios. |
 | Optional O1 — Overture Places and Buildings | After the shared source/import foundation, add selected regional Places search and Buildings overlays with attribution, pinned releases and staged updates. Initial Maps remains usable without these datasets. |
 | Optional O2 — Overture regional addresses | After O1, evaluate and index regional address points; exercise ambiguous, missing and approximate matches plus refresh reconciliation. Retain postal/manual fallback and the existing record-save authority. |
@@ -681,8 +684,9 @@ clean; its scenarios are acceptance tests to write, named here, and running them
   lookup with external requests disabled, and no outside request from opening a locally resolvable address),
   `MapsBrowseWalk` and `MapsDialogWalk` in a browser at desktop and phone width, the terminal walk,
   `MapsFrameworkOnly` (an installation without Mantle), `GeoDataUsaImport` (the real Census and GeoNames US
-  downloads, recording time and memory), and with P3 the HOME-only and dual-suite visibility walks in their
-  components.
+  downloads, recording time and memory). P3's HOME-only and dual-suite visibility walks, `MapsHomeOnlyWalk` and
+  `MapsDualSuiteWalk`, are mr-home's H1c
+  ([its §7](../runtime/components/addon/mr-home/plan/initial-design.md#7-delivery-proposal)).
 
 Focused implementation checks should cover:
 
