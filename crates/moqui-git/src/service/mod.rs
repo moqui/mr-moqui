@@ -679,8 +679,9 @@ fn empty_diff() -> FileDiff {
 }
 
 /// `get#GitCommitDiff`: the line diff of each file a commit changed (or of the one at `path`): the file's change with
-/// `unifiedDiff` and `html` (the escaped `moqui-diff` table) when it is text under the size limit. Out:
-/// `fileDiffList`.
+/// `unifiedDiff` and `html` (the escaped `moqui-diff` table) when it is text under the size limit; with `diffLineLimit`
+/// its `hunks` instead, of only the lines of that window from `diffLineOffset`, as get#GitCompare's
+/// ([`hosting::diff_window`]). Out: `fileDiffList`.
 fn get_commit_diff(
     parameters: &BTreeMap<String, Value>,
     _facade: &EntityFacade,
@@ -692,6 +693,8 @@ fn get_commit_diff(
     let revision = text(parameters, "commitId").unwrap_or_default();
     let path = text(parameters, "path");
     let most = crate::browse::commit_max_diff_files();
+    let line_offset = number(parameters, "diffLineOffset", 0);
+    let line_limit = number(parameters, "diffLineLimit", 0);
     match provider.commit_diffs(&id, &revision, path.as_deref()) {
         Ok(Some(diffs)) => Ok(out([(
             "fileDiffList",
@@ -704,7 +707,9 @@ fn get_commit_diff(
                         // past the first files a file is counted, not shown (its hunks have no lines)
                         let full = path.is_some() || position < most;
                         if let (Value::Map(entries), Some(text)) = (&mut value, &diff.diff) {
-                            if full {
+                            if full && line_limit > 0 {
+                                hosting::diff_window(entries, text, line_offset, line_limit);
+                            } else if full {
                                 entries.insert("unifiedDiff".to_string(), Value::string(text.unified()));
                                 entries.insert("html".to_string(), Value::string(text.render_html()));
                             } else {

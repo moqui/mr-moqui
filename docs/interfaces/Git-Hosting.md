@@ -573,7 +573,11 @@ revision of `headRepositoryId`, another repository of the fork network that the 
 fork's branch against its parent's) answers as GitHub's compare: the
 merge base, the commits in head and not in base (oldest first, at most 250), ahead and behind, the files changed from
 the merge base to head with their line counts, and with `withDiffs` each file's diff (at most 300 files) as the
-`moqui-diff` html and as hunks of numbered lines (`oldNo`, `newNo`) for a review to anchor to.
+`moqui-diff` html and as hunks of numbered lines (`oldNo`, `newNo`) for a review to anchor to. With `diffLineLimit` a
+file's hunks hold only that many lines from `diffLineOffset` (counted without the hunks' headers; past the end, the last
+such window), a hunk cut at its start has `skippedLines`, and the file has `diffLineCount` and `diffLineOffset`: a page
+of a large file asks for its part, and the rest of the file's lines are never made into values (`get#GitCommitDiff`
+takes the same two, and gives such a file its hunks in place of `unifiedDiff` and `html`).
 
 `merge#GitRefs(source, target, method, message)` merges a revision into a branch as the current user, by gix-merge
 (gix's `merge` feature: git's `merge-ort` rules, renames followed, both sides' changes to one file merged by lines):
@@ -1332,11 +1336,18 @@ row refers to and that were not written or referenced again in the last `resourc
 
 File responses stream (`sendResourceResponse`, a screen's static files): a file over 256 KiB is read a window at a time
 as the client takes it, on a thread of its own (at most `webapp` `transfer-workers`, 4, reading the database at once, fewer when the content pool cannot hold them), so
-a slow download holds no request worker. One `Range` is answered with `ETag` (a git file's
-blob id, a content blob's SHA-256) and `If-Range`, reading only the bytes it names from a file on disk, a content
-blob (a DbResource file over 64 KiB, a `db` repository's object over 8 MiB) and a Git LFS object; a `local`
-repository's object that is not in LFS, a smaller `db` object and a `location#versionName` are read whole first.
-Only text types are compressed. An upload is read as it arrives: a
+a slow download holds no request worker; a client that goes away is read no further, and a window still waiting for a
+thread is not read. One `Range` of a GET is answered with `ETag` (a git file's blob id, a content blob's or a small
+DbResource file's SHA-256) and `If-Range` (by strong comparison: a weak tag, such as a file on disk has, never
+satisfies it), reading only the bytes it names from a file on disk, a content blob (a DbResource file over 64 KiB, a
+`db` repository's object over 8 MiB) and a Git LFS object, at the branch head or at a `location#versionName`; a
+`local` repository's object that is not in LFS (deflated in its object store) and a smaller `db` object are read whole
+first. `ec.resource.getContentAddress` names what a reader pins a revision by (an LFS object's oid, a git object's id,
+a content blob's SHA-256) with the strong tag its content is sent with, and `ec.web.sendPinnedResourceResponse`
+(`web::send_pinned_response`) serves one `location#versionName` while it is still that content (else 409), with the
+tag as its `ETag` and `Cache-Control: private` for `resource-facade` `pinned-max-age` (a day), for a reader that asks
+for many ranges (a map archive). Only text types are
+compressed. An upload is read as it arrives: a
 file part over 256 KiB goes to a file in `runtime/tmp/upload`, and from there to its storage (a content blob, a git
 object) as it is read; `webapp-list/webapp[webroot]/web-protection/requests@max-upload` (2 GiB) bounds it and `webapp-list/webapp[webroot]/web-protection/requests@upload-idle-timeout` (60 seconds) of silence
 ends it.
@@ -1384,7 +1395,7 @@ keeps therefore never passes what the service allows, however many uploads run a
 Moqui itself writes LFS files through `git://` locations: a file the `.gitattributes` of the branch head keep in LFS
 (`filter=lfs`) is stored as a content blob, linked to the repository, and committed as its pointer; a read gives the
 content, streamed for a response, and its size is the content's. `setup#GitLfs(repositoryId, patterns)` adds the
-patterns to `.gitattributes` (images, video, audio, PDFs and archives when empty); a content repository gets them when
+patterns to `.gitattributes` (images, video, audio, PDFs, archives and PMTiles map archives when empty); a content repository gets them when
 it is made (`init#GitRepository` with `contentRepository`, the tools screen's Content option, and the Content option of
 a project's new repository). A web site's images and their variants (`convert#Image` writes an image and its sizes in
 one commit) can so live in a `db` repository, with their history, in the database.

@@ -824,6 +824,25 @@ pub(crate) fn set_status(status: u16) {
     });
 }
 
+/// The answer of a page whose path screen failed in place ([`crate::screen::render::note_path_failure`]): `status`
+/// and `Cache-Control: no-store`, while the response is held. A response already committed to the client keeps the head
+/// it sent, its body with the error text in place; a status of 400 or more the screen set itself stays.
+pub(crate) fn fail_held_response(status: u16) {
+    WEB.with(|slot| {
+        if let Some(web) = slot.borrow_mut().as_mut() {
+            if web.stream.is_some() || web.streaming.as_ref().is_some_and(stream::Streaming::is_committed) {
+                return;
+            }
+            if web.status < 400 {
+                web.status = status;
+            }
+            web.headers
+                .retain(|(key, _)| !key.eq_ignore_ascii_case("cache-control"));
+            web.headers.push(("Cache-Control".to_string(), "no-store".to_string()));
+        }
+    });
+}
+
 /// The servlet API's `setHeader`: replace every value of `name`, or remove them with None.
 pub(crate) fn set_header(name: &str, value: Option<&str>) {
     WEB.with(|slot| {
@@ -1528,30 +1547,8 @@ fn attachment_disposition(file_name: &str) -> String {
 /// inline it is sandboxed (`file_headers`), and one of an active type is sent as an attachment even when asked inline
 /// ([`FileDisposition::Inline`]).
 pub(crate) fn send_resource_response(location: &str, inline: bool, file_name: Option<&str>) {
-    let opened = ExecutionContext::with_current(|ec| ec.factory().resource().open(location)).transpose();
-    let opened = match opened {
-        Ok(Some(Some(opened))) => opened,
-        Ok(_) => {
-            tracing::warn!("Sending not found response, resource not found at: {location}");
-            send_bytes(
-                404,
-                "text/plain",
-                format!("Resource not found at {location}").into_bytes(),
-            );
-            return;
-        }
-        Err(err) => {
-            tracing::warn!(
-                "Sending error response, resource at {location} cannot be read: {}",
-                err.message()
-            );
-            send_bytes(
-                500,
-                "text/plain",
-                format!("Resource at {location} cannot be read").into_bytes(),
-            );
-            return;
-        }
+    let Some(opened) = open_or_answer(location) else {
+        return;
     };
     let base = location.split_once('#').map_or(location, |(base, _)| base);
     let last = base.trim_end_matches('/').rsplit('/').next().unwrap_or(base);
@@ -1573,6 +1570,35 @@ pub(crate) fn send_resource_response(location: &str, inline: bool, file_name: Op
             "text/plain",
             format!("Resource at {location} cannot be read").into_bytes(),
         );
+    }
+}
+
+/// The file at `location` opened for a response, or `None` with the response sent: 404 when nothing is there, 500 when
+/// it cannot be read.
+fn open_or_answer(location: &str) -> Option<crate::context::Opened> {
+    match ExecutionContext::with_current(|ec| ec.factory().resource().open(location)).transpose() {
+        Ok(Some(Some(opened))) => Some(opened),
+        Ok(_) => {
+            tracing::warn!("Sending not found response, resource not found at: {location}");
+            send_bytes(
+                404,
+                "text/plain",
+                format!("Resource not found at {location}").into_bytes(),
+            );
+            None
+        }
+        Err(err) => {
+            tracing::warn!(
+                "Sending error response, resource at {location} cannot be read: {}",
+                err.message()
+            );
+            send_bytes(
+                500,
+                "text/plain",
+                format!("Resource at {location} cannot be read").into_bytes(),
+            );
+            None
+        }
     }
 }
 
@@ -1708,6 +1734,186 @@ pub fn send_file_response(
         .with(|slot| slot.borrow().as_ref().map(|web| web.conditional.clone()))
         .unwrap_or_default();
     crate::screen::static_files::respond_opened(&conditional, headers, opened)
+}
+
+/// `resource-facade` `pinned-max-age` when the conf leaves it out or it does not parse: a day.
+pub const PINNED_MAX_AGE: u64 = 86_400;
+
+/// How a browser may keep a file sent at a pinned revision ([`send_pinned_response`]): only the user's own browser
+/// (`private`, never a shared cache), for `resource-facade` `pinned-max-age` seconds ([`PINNED_MAX_AGE`], a day)
+/// without asking again, since the bytes at a revision named in the URL do not change (`immutable`, so a reload does
+/// not revalidate either); 0 asks the server each time (`no-cache`). After access is taken away, the ranges that
+/// browser already has stay readable there until the max-age passes, and any range it does not have is refused at
+/// once.
+#[must_use]
+pub fn pinned_cache_control() -> String {
+    let seconds = crate::resource::setting("pinned-max-age")
+        .parse::<u64>()
+        .unwrap_or(PINNED_MAX_AGE);
+    if seconds == 0 {
+        "private, no-cache".to_string()
+    } else {
+        format!("private, max-age={seconds}, immutable")
+    }
+}
+
+/// What [`send_pinned_response`] answered.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pinned {
+    /// The pinned content: the bytes or a range of them, a 304, a 416, or a 405 for a method other than GET and HEAD.
+    Sent,
+    /// 409: the content is not the one pinned (its strong tag is not the checksum, or its size is not the size), so
+    /// the caller's record is stale; logged.
+    Changed,
+}
+
+/// Send `opened`, the content of one fixed revision (a `location#version`), as this request's response, as
+/// [`send_file_response`] does with `disposition`, for a reader that asks for it many times by range (a map tile
+/// archive, a media file). `checksum` and `size` are what the caller recorded when it pinned the revision: the
+/// [`crate::context::ContentAddress`] `tag` and `size` ([`crate::context::ResourceFacade::content_address`]).
+///
+/// The content must still be that one: when the source has a strong tag (a git object, an LFS object, a content blob,
+/// a small `dbresource://` file's digest) it must be `checksum`, and its size must be `size`; otherwise nothing of it is
+/// sent and the answer is 409 ([`Pinned::Changed`]). A source with no strong tag (a file on disk) is checked by size
+/// only, and the caller guarantees its bytes: a file replaced by one of the same size is not seen. `checksum` is the
+/// `ETag` in place of a weak one, and the response is kept [`pinned_cache_control`] rather than `no-store`. One
+/// `Range` of a GET is answered (206, 416 past the end, the whole file for several ranges), with `If-None-Match`
+/// (304) and a strong `If-Range`; HEAD has no body and no range; another method is 405. It writes nothing: the caller
+/// checks access on each request first, and records no row per request.
+///
+/// The URL must name the revision, or a browser keeps the old bytes under it after the content changes.
+///
+/// # Errors
+///
+/// When `checksum` cannot be a strong entity tag (empty, weak `W/`, a quote, a space or a control character), and
+/// when the content cannot be read; nothing is sent then, and the caller answers.
+pub fn send_pinned_response(
+    opened: &crate::context::Opened,
+    file_name: &str,
+    disposition: FileDisposition,
+    checksum: &str,
+    size: u64,
+) -> Result<Pinned, Error> {
+    let tag = pinned_tag(checksum)?;
+    let conditional = WEB
+        .with(|slot| slot.borrow().as_ref().map(|web| web.conditional.clone()))
+        .unwrap_or_default();
+    if !conditional.is_read() {
+        refuse_method();
+        return Ok(Pinned::Sent);
+    }
+    let source = &opened.source;
+    let checksum = checksum.trim();
+    let holds = source.len() == size && source.tag().is_none_or(|own| own == checksum);
+    if !holds {
+        tracing::warn!(
+            "Refusing a pinned response of {file_name}: pinned as {checksum} of {size} bytes, it is now {} of {} bytes",
+            source.tag().unwrap_or_default(),
+            source.len()
+        );
+        send_bytes(
+            409,
+            "text/plain",
+            format!("{file_name} changed since it was pinned").into_bytes(),
+        );
+        return Ok(Pinned::Changed);
+    }
+    let cache = pinned_cache_control();
+    let mut headers = user_download_headers(file_name, disposition);
+    for (name, value) in &mut headers {
+        if name.eq_ignore_ascii_case("Cache-Control") {
+            value.clone_from(&cache);
+        }
+    }
+    crate::screen::static_files::respond_tagged(&conditional, headers, opened, Some(tag))?;
+    Ok(Pinned::Sent)
+}
+
+/// 405 for a method a file is not read by, with the methods it is.
+fn refuse_method() {
+    send_bytes(405, "text/plain", b"A file is read with GET or HEAD".to_vec());
+    add_header("Allow", "GET, HEAD");
+}
+
+/// `checksum` as a strong `ETag`, quoted: the characters of an entity tag (RFC 9110 §8.8.3), visible ASCII without
+/// `"`, and not weak.
+fn pinned_tag(checksum: &str) -> Result<String, Error> {
+    let checksum = checksum.trim();
+    let valid = !checksum.is_empty()
+        && !checksum.starts_with("W/")
+        && checksum.len() <= 256
+        && checksum.bytes().all(|byte| byte.is_ascii_graphic() && byte != b'"');
+    if !valid {
+        return Err(Error::new(
+            "a pinned response's checksum must be a strong entity tag: visible ASCII, no quote, not W/",
+        ));
+    }
+    Ok(format!("\"{checksum}\""))
+}
+
+/// `ec.web.sendPinnedResourceResponse(location, checksum, size, inline, fileName)`: the file at `location#versionName`
+/// by [`send_pinned_response`]; whether the pinned content was answered. A method other than GET and HEAD is 405; a
+/// checksum that is not a strong tag, or a location without `#versionName` on storage that keeps versions (whose
+/// content changes under it), is 500 and logged, before anything is read; nothing there is 404; content that changed
+/// is 409.
+pub(crate) fn send_pinned_resource_response(
+    location: &str,
+    checksum: &str,
+    size: u64,
+    inline: bool,
+    file_name: Option<&str>,
+) -> bool {
+    let method_read = WEB
+        .with(|slot| slot.borrow().as_ref().map(|web| web.conditional.is_read()))
+        .unwrap_or(true);
+    if !method_read {
+        refuse_method();
+        return false;
+    }
+    let unversioned = crate::context::split_version(location).is_none()
+        && ExecutionContext::with_current(|ec| ec.factory().resource().supports_version(location)).unwrap_or(false);
+    let refusal = match pinned_tag(checksum) {
+        Err(err) => Some(err.message().to_string()),
+        Ok(_) if unversioned => {
+            Some("a pinned response needs location#versionName on storage that keeps versions".to_string())
+        }
+        Ok(_) => None,
+    };
+    if let Some(refusal) = refusal {
+        tracing::error!("Refusing a pinned response of {location}: {refusal}");
+        send_bytes(
+            500,
+            "text/plain",
+            format!("Resource at {location} cannot be sent pinned").into_bytes(),
+        );
+        return false;
+    }
+    let Some(opened) = open_or_answer(location) else {
+        return false;
+    };
+    let base = location.split_once('#').map_or(location, |(base, _)| base);
+    let last = base.trim_end_matches('/').rsplit('/').next().unwrap_or(base);
+    let file_name = file_name.map(str::trim).filter(|name| !name.is_empty()).unwrap_or(last);
+    let disposition = if inline {
+        FileDisposition::Inline
+    } else {
+        FileDisposition::Attachment
+    };
+    match send_pinned_response(&opened, file_name, disposition, checksum, size) {
+        Ok(pinned) => pinned == Pinned::Sent,
+        Err(err) => {
+            tracing::warn!(
+                "Sending error response, resource at {location} cannot be sent: {}",
+                err.message()
+            );
+            send_bytes(
+                500,
+                "text/plain",
+                format!("Resource at {location} cannot be sent").into_bytes(),
+            );
+            false
+        }
+    }
 }
 
 /// The headers of a user's file that a service sends from its own storage ([`send_file_response`]; SEC-PSF-08). Its

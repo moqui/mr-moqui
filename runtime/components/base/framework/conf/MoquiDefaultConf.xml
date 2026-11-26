@@ -151,6 +151,15 @@
         instance, max-users the most users a run may have. -->
     <load-runner targets="" max-runs="1" max-users="1000"/>
 
+    <!-- Maps (plans/Maps.md §4.2, §6.4). external-requests false stops the server's own outside requests for maps (a
+        geocoder, a Geo data download) and stops it handing a browser a map profile with outside URLs; local maps and
+        postal lookup still work. A fresh install makes none either way: the hosted provider is seeded disabled.
+        import-max-bytes is the largest Geo data download or operator file, and the largest it may unzip to (512 MiB:
+        well past every registered source, GeoNames' allCountries at 19 MB zipped, and under the 2 GiB upload).
+        max-features is the most features one overlay or one viewport query of a layer adapter returns; 0 turns record
+        layers off. -->
+    <maps external-requests="true" import-max-bytes="536870912" max-features="5000" overlay-max-bytes="10485760"/>
+
     <!-- This server as a cluster member (plans/archive/Cluster.md). tls-cert and tls-key: the cluster TLS pair, base64 DER
         on one line each, generated together into runtime/.env (moqui_conf__cluster_member__tls_cert and _tls_key) and
         shared by provisioning, distinct from the session cookie key; set one, set both. https-port: the cluster port
@@ -413,6 +422,16 @@
         <!-- whether the Login screen's Test Login still holds (UserServices.get#TestLoginOffered), by a digest of the
             test account's stored hash, so an anonymous render runs the password check at most once a minute -->
         <cache name="webroot.login.test" type="local" expire-time-live="60" max-elements="10" value-type="Boolean"/>
+        <!-- the postal lookup of org.moqui.maps.MapServices.get#PostalLocation (JSON text by country and code); an import of
+            Geo data clears it when it finishes -->
+        <cache name="maps.postal.lookup" type="distributed" expire-time-live="86400" max-elements="20000" value-type="String"/>
+        <!-- a user's overlay as sanitized GeoJSON (MapOverlays.js get#OverlayContent), by the file's location and version,
+            read only after the reader's drive access was checked -->
+        <cache name="maps.overlay.geojson" type="local" expire-time-live="3600" max-elements="16" value-type="String"/>
+        <!-- a geocoder's answers, kept only when its provider's cachePolicy is shared (MapGeocoders.js find#Places), by a
+            digest of the request, never its text; and each provider's claimed request slots, for its rate (each server's) -->
+        <cache name="maps.geocoder.answer" type="local" expire-time-live="86400" max-elements="5000" value-type="String"/>
+        <cache name="maps.geocoder.last" type="local" expire-time-live="60" max-elements="2000" value-type="Long"/>
     </cache-list>
     <!-- sample-ratio: the share of traces whose spans below the request or job root are kept, decided from the trace id.
         At 0 every root span is kept, and the whole trace of an error or a slow root (the tail rule); 1 keeps every span. -->
@@ -758,11 +777,14 @@
         (FileServices ensure#PersonalDrive, create#Drive); a setting, not a user's preference, so a user does not choose
         where their drive is. sftp-max-read: the largest file the SFTP client (SftpClient getText and getBinary, the
         SystemMessage poll) reads from a remote server, in bytes; a larger one is refused, not read whole (0 or empty is
-        the default, 64 MiB; there is no setting for no limit). -->
+        the default, 64 MiB; there is no setting for no limit). pinned-max-age: seconds a browser keeps a file sent at a
+        pinned revision (ec.web.sendPinnedResourceResponse, a map archive's ranges) without asking again, private to
+        that browser; after access is taken away the ranges it already has stay readable there until then, and any
+        other is refused at once; 0 asks each time. -->
     <resource-facade xml-actions-template-location="component://framework/template/XmlActions.groovy.ftl"
             blob-chunk-size="1048576" blob-gc-prune-days="14" dbresource-blob-threshold="65536"
             image-max-concurrent="2" script-timeout="" script-module-cache="true" drive-root="dbresource://drive"
-            collab-max-state-bytes="8388608" sftp-max-read="67108864">
+            collab-max-state-bytes="8388608" sftp-max-read="67108864" pinned-max-age="86400">
         <!-- A drive's share links (FileServices download#PublicShare and upload#PublicShare; SEC-BOS-83, SEC-FIL-06), per
             link and per requester, the counts in a window (ten minutes for a folder's zip, an hour for uploads):
             folder-zip-max-bytes and folder-zip-max-files: the most a folder's zip holds; a larger folder is refused, not
@@ -1725,6 +1747,8 @@
         <load-data location="component://framework/data/TerminalSetupData.xml"/>
         <load-data location="component://framework/data/VaultTypeData.xml"/>
         <load-data location="component://framework/data/InstanceTypeData.xml"/>
+        <load-data location="component://framework/data/MapsData.xml"/>
+        <load-data location="component://framework/data/MapsSetupData.xml"/>
     </entity-facade>
     <database-list>
         <dictionary-type type="id" java-type="String" default-sql-type="VARCHAR(40)"/>

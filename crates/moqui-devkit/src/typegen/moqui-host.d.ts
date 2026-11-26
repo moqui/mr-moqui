@@ -727,6 +727,9 @@ interface MoquiResourceFacade {
     /** The versions under a location, newest first; on git:// each commit under the path with the paths it changed. */
     getChangeLog(location: string, limit?: number | null): { versionName: string; previousVersionName: string | null; versionDate: unknown; userId: string | null; note: string | null; paths: string[] }[];
     getTreeSize(location: string): number;
+    /** What the storage names a file's content by (`location#versionName`: that version's), to pin a revision: the tag
+     * and size to give sendPinnedResourceResponse. Null for a file on disk or nothing there. */
+    getContentAddress(location: string): { kind: "git-lfs" | "git-object" | "content-blob" | "digest"; id: string; size: number; tag: string } | null;
     /** A version written back as the newest; the new version's name. */
     restoreVersion(location: string, versionName: string, note?: string | null): string | null;
     getVersionBytes(location: string, versionName: string): Uint8Array | null;
@@ -1005,6 +1008,10 @@ interface MoquiWebFacade {
     sendTextResponse(text: string | null, contentType?: string | null, filename?: string | null): void;
     /** The bytes at a resource location, inline or (the default) as an attachment. 404 when nothing is there. */
     sendResourceResponse(location: string, inline?: boolean): void;
+    /** One revision of a file (`location#versionName`, read by range where the storage can) when it is still the
+     * content recorded by getContentAddress (its tag and size; else 409 and false), with that tag as its ETag; cached
+     * private, a GET's range and If-Range answered, nothing written. */
+    sendPinnedResourceResponse(location: string, checksum: string, size: number, inline?: boolean, filename?: string | null): boolean;
     saveScreenLastInfo(path?: string | null, parameters?: MoquiMap | null): void;
     getPageMessages(): MoquiPageMessage[];
     getScreenHistory(): { name: string; url: string; urlNoParams: string }[];
@@ -1283,9 +1290,11 @@ interface MoquiRestResponse {
     getReasonPhrase(): string | null;
     /** Throws for a status outside 200 to 299; else the response. */
     checkError(): MoquiRestResponse;
-    text(): string | null;
+    /** The body as text; with maxBytes, a body larger than that throws, and a kept body (send()) is not read past it. */
+    text(maxBytes?: number): string | null;
     getBodyText(): string | null;
-    bytes(): Uint8Array | null;
+    /** The body as received; maxBytes as text's. */
+    bytes(maxBytes?: number): Uint8Array | null;
     jsonObject(): unknown;
     /** The body parsed as XML. */
     xmlNode(): unknown;

@@ -1,0 +1,10 @@
+[
+  {
+    "t": "component",
+    "id": "MapsBrowseMap",
+    "name": "map",
+    "props": {
+      "source": "terminalMap"
+    }
+  }
+]

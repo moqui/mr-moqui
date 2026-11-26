@@ -40,7 +40,8 @@ What is kept whole:
 - **A failure ends the body abnormally.** A render error, or a commit of the render's transaction that fails, after the
   head is written as `Error rendering page: ...` where the page stopped. The body then ends abnormally: HTTP/1.1 sends
   no last chunk, and HTTP/2 resets the stream. The client never takes the part it has for the whole page. A failed
-  section is written where it was, as on any page.
+  section is written where it was, as on any page; so is a failed screen of the path, whose 500 a page still held
+  answers ([JS-Screen-Scripts](../dev/JS-Screen-Scripts.md)) and a committed one cannot.
 - **A client that goes away stops the render.** Writes fail and the render writes nothing more. A client that takes
   nothing for the listener's `write-timeout` (60 s) counts as gone.
 - **The worker stays held.** A streamed page holds its request worker, and the render's transaction, while the client

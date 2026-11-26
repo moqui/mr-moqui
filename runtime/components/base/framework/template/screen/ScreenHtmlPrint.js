@@ -118,6 +118,10 @@ table.panel { border: 1px solid black; }
 a { color: blue; }
 .dashboard { margin: 4pt 0; }
 .html-view { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0 0 6pt; }
+.map-view { margin: 0 0 6pt; break-inside: avoid; }
+.map-view-places { margin: 0 0 2pt; padding-left: 12pt; }
+.map-view-precision, .map-view-source, .map-view-attribution { color: #555555; }
+.map-view-attribution { font-size: 7pt; }
 .number-card { display: inline-block; vertical-align: top; min-width: 90pt; margin: 0 6pt 6pt 0; padding: 4pt 6pt; border: thin solid #999999; break-inside: avoid; }
 .number-card-title { font-size: 7pt; text-transform: uppercase; letter-spacing: 0.5pt; }
 .number-card-value { font-size: 14pt; font-weight: bold; }
@@ -433,6 +437,13 @@ a { color: blue; }
         // a code-view printed as a pre of its code
         "code-view": stmt((node) => {
             const line = `{ const $v = ((t) => (t && t !== "null" ? String(t).replace(/\\s+$/, "") : ""))(ec.resource.expandNoL10n(${jsString(attr(node, "text") || "")})); if ($v) sri.write("<pre class=\\"code-view\\"><code>" + $e($v) + "</code></pre>\\n"); }\n`;
+            const condition = attr(node, "condition");
+            return condition ? `if (${condition}) {\n${line}}\n` : line;
+        }),
+
+        // a map-view printed as its places and attribution, with no map image (ScreenSupport's mapViewHtmlFn)
+        "map-view": stmt((node) => {
+            const line = `sri.write((${S.mapViewHtmlFn})(${S.mapViewExpr(node, true)}, $e, ec.l10n, null, null));\n`;
             const condition = attr(node, "condition");
             return condition ? `if (${condition}) {\n${line}}\n` : line;
         }),

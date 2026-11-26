@@ -415,6 +415,56 @@ fn the_code_view_element() {
     assert!(tui.contains("pre") && tui.contains("{{x}} <b>"), "{tui}");
 }
 
+/// `map-view` is an m-map with its checked configuration as a literal of a bound attribute (so `{{` in a label is never
+/// compiled): WGS84, longitude first, a place off the globe left out and a zero kept, the transition of the effective
+/// configuration as config-url; a false condition writes nothing. html and print write the places as text with the
+/// attribution, the text modes a line a place, tui the map component with the places.
+#[test]
+fn the_map_view_element() {
+    let out = check("mapview", &[]);
+    for expected in [
+        r#"<m-map id="Offices" :config="{'profileId':'OUTLINE','zoom':3,'points':[{'id':'p0','lon':-87.6298,'lat':41.8781,'label':'Chicago &lt;office&gt; {{x}}','precisionEnumId':'GPP_POSTAL_AREA','precision':'Postal-area representative point','source':'Census 2026'},{'id':'p1','lon':0,'lat':0,'label':'Null Island'}],'pick':true}" class="q-mt-sm"></m-map>"#,
+        r#"'layers':['PARKS','TRAILS'],'extent':[-0.5,51.3,0.3,51.7]"#,
+        r#"config-url="/mapConfig" height="240px"></m-map>"#,
+        r#"'center':[10,20],'zoom':4,'projection':'EPSG:4326','adapter':'party','recordKey':{'partyId':'P1'},'points':[]"#,
+    ] {
+        assert!(out.contains(expected), "{expected} in {out}");
+    }
+    assert_eq!(out.matches("<m-map").count(), 3, "{out}");
+    assert!(!out.contains("Nowhere"), "{out}");
+    let html = render_mode("mapview", "", "html", &[]);
+    for expected in [
+        r#"<div id="Offices" class="map-view q-mt-sm"><ul class="map-view-places"><li><strong class="map-view-label">Chicago &lt;office&gt; {{x}}</strong> <span class="map-view-coordinates">41.87810, -87.62980</span> <span class="map-view-precision">Postal-area representative point</span> <span class="map-view-source">Census 2026</span></li><li><strong class="map-view-label">Null Island</strong> <span class="map-view-coordinates">0.00000, 0.00000</span></li></ul><div class="map-view-attribution">Map data: Natural Earth</div></div>"#,
+        r#"<strong class="map-view-label">London &amp; Co</strong> <span class="map-view-coordinates">51.50740, -0.12780</span> <span class="map-view-precision">User-confirmed point</span> <span class="map-view-source">Entered</span>"#,
+        r#"<div class="map-view-center">Center: 20.00000, 10.00000</div>"#,
+    ] {
+        assert!(html.contains(expected), "{expected} in {html}");
+    }
+    assert_eq!(html.matches("map-view-attribution").count(), 3, "{html}");
+    let print = render_mode("mapview", "", "html-print", &[]);
+    assert!(
+        print.contains(r#"<span class="map-view-coordinates">51.50740, -0.12780</span>"#),
+        "{print}"
+    );
+    let text = render_mode("mapview", "", "text", &[]);
+    for expected in [
+        "Chicago <office> {{x}}: 41.87810, -87.62980 (Postal-area representative point; Census 2026)",
+        "Null Island: 0.00000, 0.00000",
+        "London & Co: 51.50740, -0.12780 (User-confirmed point; Entered)",
+        "Center: 20.00000, 10.00000",
+        "Map data: Natural Earth",
+    ] {
+        assert!(text.contains(expected), "{expected} in {text}");
+    }
+    let tui = render_mode("mapview", "", "tui", &[]);
+    assert!(
+        tui.contains(r#""name":"map""#)
+            && tui.contains(r#""label":"Chicago <office> {{x}}""#)
+            && tui.contains(r#""pick":true"#),
+        "{tui}"
+    );
+}
+
 #[test]
 fn form_lists() {
     let out = check("lists", &[]);

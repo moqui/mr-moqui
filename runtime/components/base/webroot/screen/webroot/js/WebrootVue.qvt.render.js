@@ -8766,6 +8766,79 @@
               ], 10, ["id", "data-view"]))
             }
         } },
+        "m-map": { hash: "f53316c7", make: function (Vue) {
+            const { renderSlot: _renderSlot, resolveDynamicComponent: _resolveDynamicComponent, withCtx: _withCtx, createSlots: _createSlots, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, toDisplayString: _toDisplayString, createElementBlock: _createElementBlock, resolveComponent: _resolveComponent, createVNode: _createVNode, normalizeStyle: _normalizeStyle, renderList: _renderList, Fragment: _Fragment, createElementVNode: _createElementVNode, createTextVNode: _createTextVNode } = Vue
+
+            return function render(_ctx, _cache) {
+              const _component_q_spinner = _resolveComponent("q-spinner")
+
+              return (_ctx.view)
+                ? (_openBlock(), _createBlock(_resolveDynamicComponent(_ctx.view), {
+                    key: 0,
+                    id: _ctx.id,
+                    config: _ctx.config,
+                    "config-url": _ctx.configUrl,
+                    height: _ctx.height,
+                    pick: _ctx.pick,
+                    "library-error": _ctx.libraryError,
+                    onPick: $event => (_ctx.$emit('pick', $event)),
+                    onSelect: $event => (_ctx.$emit('select', $event)),
+                    onViewChange: $event => (_ctx.$emit('view-change', $event))
+                  }, _createSlots({ _: 2 }, [
+                    (_ctx.$slots.notice)
+                      ? {
+                          name: "notice",
+                          fn: _withCtx(() => [
+                            _renderSlot(_ctx.$slots, "notice")
+                          ]),
+                          key: "0"
+                        }
+                      : undefined
+                  ]), 1064, ["id", "config", "config-url", "height", "pick", "library-error", "onPick", "onSelect", "onViewChange"]))
+                : (_openBlock(), _createElementBlock("div", {
+                    key: 1,
+                    class: "m-map m-map-waiting",
+                    id: _ctx.id
+                  }, [
+                    (_ctx.failed)
+                      ? (_openBlock(), _createElementBlock("div", {
+                          key: 0,
+                          class: "m-map-fallback",
+                          role: "status"
+                        }, _toDisplayString(_ctx.failed), 1))
+                      : (_openBlock(), _createElementBlock("div", {
+                          key: 1,
+                          class: "m-map-frame flex flex-center",
+                          style: _normalizeStyle({height: _ctx.frameHeight})
+                        }, [
+                          _createVNode(_component_q_spinner, { size: "2em" })
+                        ], 4)),
+                    (_ctx.places.length)
+                      ? (_openBlock(), _createElementBlock("ul", {
+                          key: 2,
+                          class: "m-map-places"
+                        }, [
+                          (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.places, (place) => {
+                            return (_openBlock(), _createElementBlock("li", {
+                              key: place.key,
+                              class: "m-map-place"
+                            }, [
+                              _createElementVNode("span", { class: "m-map-place-label" }, _toDisplayString(place.label), 1),
+                              _createTextVNode(),
+                              _createElementVNode("span", { class: "m-map-place-coordinates" }, _toDisplayString(place.lat.toFixed(5)) + ", " + _toDisplayString(place.lon.toFixed(5)), 1),
+                              (place.details)
+                                ? (_openBlock(), _createElementBlock("span", {
+                                    key: 0,
+                                    class: "m-map-place-details"
+                                  }, _toDisplayString(place.details), 1))
+                                : _createCommentVNode("", true)
+                            ]))
+                          }), 128))
+                        ]))
+                      : _createCommentVNode("", true)
+                  ], 8, ["id"]))
+            }
+        } },
         "m-markdown": { hash: "94bdf7ee", make: function (Vue) {
             const { toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, resolveComponent: _resolveComponent, withCtx: _withCtx, createVNode: _createVNode, withModifiers: _withModifiers, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, createElementBlock: _createElementBlock, normalizeClass: _normalizeClass } = Vue
 

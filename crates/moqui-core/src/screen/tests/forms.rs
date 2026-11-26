@@ -600,6 +600,70 @@ fn a_subscreen_not_found_in_its_actions_answers_404() {
     }
 }
 
+/// A screen of the path that fails is written in place, the shell around it kept, and the page answers 500 with no-store:
+/// the screen the request addresses has lost its content, so the page is no answer for 200 or for a cache, whether the
+/// addressed screen failed or one above it did. A section or an included screen that fails is written in place with the
+/// page's 200, as Java does.
+#[test]
+fn a_path_screen_that_fails_answers_500_and_an_included_one_200() {
+    let site = shell_root("path-failure");
+    let shell = site.dir.join("Shell");
+    let throws = r#"<actions><script>throw new Error('the page broke')</script></actions>"#;
+    std::fs::write(
+        shell.join("Broken.xml"),
+        format!(r#"<screen require-authentication="false">{throws}<widgets><label text="the broken page"/></widgets></screen>"#),
+    )
+    .unwrap();
+    // a screen above the addressed one that fails: its subscreen never renders
+    std::fs::write(
+        shell.join("Above.xml"),
+        format!(
+            r#"<screen require-authentication="false" default-menu-include="false">{throws}<subscreens default-item="Below"/><widgets><text template="true">${{sri.renderSubscreen()}}</text></widgets></screen>"#
+        ),
+    )
+    .unwrap();
+    std::fs::create_dir_all(shell.join("Above")).unwrap();
+    std::fs::write(
+        shell.join("Above/Below.xml"),
+        r#"<screen require-authentication="false"><widgets><label text="the page below"/></widgets></screen>"#,
+    )
+    .unwrap();
+    // a page whose included screen and section fail, its own content shown
+    std::fs::write(
+        shell.join("Holds.xml"),
+        format!(
+            r#"<screen require-authentication="false"><widgets><label text="the holding page"/><include-screen location="{}"/><section name="Late">{throws}<widgets><label text="never"/></widgets></section></widgets></screen>"#,
+            shell.join("Missing.xml").display()
+        ),
+    )
+    .unwrap();
+    let world = World::open("");
+    for (path, shown) in [("/Broken", "the broken page"), ("/Above/Below", "the page below")] {
+        let mut get = request("GET", path);
+        get.set_header("accept", "text/html");
+        let page = serve_at(&world.factory, get, &site.root);
+        let html = page.body_text();
+        assert_eq!(page.status, 500, "{path}: {html}");
+        assert_eq!(page.header("Cache-Control"), Some("no-store"), "{path}");
+        assert!(html.contains("Error rendering screen ["), "{path}: {html}");
+        assert!(html.contains("the page broke"), "{path}: {html}");
+        assert!(!html.contains(shown), "{path}: {html}");
+        // the shell's header and footer are still there around the error
+        assert!(html.starts_with("<!DOCTYPE html>"), "{path}: {html}");
+        assert!(html.trim_end().ends_with("</html>"), "{path}: {html}");
+    }
+    let mut get = request("GET", "/Holds");
+    get.set_header("accept", "text/html");
+    let page = serve_at(&world.factory, get, &site.root);
+    let html = page.body_text();
+    assert_eq!(page.status, 200, "{html}");
+    assert_ne!(page.header("Cache-Control"), Some("no-store"), "{html}");
+    assert!(html.contains("the holding page"), "{html}");
+    assert!(html.contains("Missing.xml"), "{html}");
+    assert!(html.contains("the page broke"), "{html}");
+    assert!(!html.contains("never"), "{html}");
+}
+
 /// `auto-fields-service` builds a field for each in-parameter, `auto-widget-service` the widget of one field, and the form's
 /// transition that calls one service puts `validate-service` on the fields that are its parameters.
 #[test]

@@ -123,11 +123,12 @@ pub(crate) fn is_lfs(
     Ok(filter.as_deref() == Some("lfs"))
 }
 
-/// The patterns new content repositories keep in LFS: images, video, audio, PDFs and archives.
-pub const DEFAULT_LFS_PATTERNS: [&str; 30] = [
+/// The patterns new content repositories keep in LFS: images, video, audio, PDFs, archives and map archives.
+#[rustfmt::skip]
+pub const DEFAULT_LFS_PATTERNS: [&str; 31] = [
     "*.jpg", "*.jpeg", "*.png", "*.gif", "*.webp", "*.avif", "*.heic", "*.tif", "*.tiff", "*.psd", "*.mp4", "*.mov",
     "*.webm", "*.mkv", "*.avi", "*.m4v", "*.mp3", "*.wav", "*.ogg", "*.flac", "*.m4a", "*.aac", "*.pdf", "*.zip",
-    "*.gz", "*.tgz", "*.7z", "*.rar", "*.tar", "*.bz2",
+    "*.gz", "*.tgz", "*.7z", "*.rar", "*.tar", "*.bz2", "*.pmtiles",
 ];
 
 /// The attributes file `existing` with a `filter=lfs` line for each of `patterns` it does not have, as

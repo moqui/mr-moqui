@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Preferences (plans/Maps.md §3.1, §4.2): the user's own map defaults, over org.moqui.maps.MapServices get#Preferences and
+    store#Preferences: their map profile (else the installation's), basemap, initial extent, display units, whether the last
+    view is restored, and which layers are shown. Only what an administrator enabled is offered, and the profile's allowed
+    overrides decide what a preference changes (get#EffectiveConfig). Maps asks for no location unless Locate me is
+    pressed, and keeps no history of what is viewed: the last view is kept only while its restoring is on. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
+        default-menu-title="Preferences" default-menu-index="3" menu-image="sym_o_tune" menu-image-type="icon">
+
+    <transition name="storePreferences">
+        <actions>
+            <script><![CDATA[
+                const ids = String(allLayerIds || '').split(',').map(id => id.trim()).filter(id => id)
+                const checked = new Set([].concat(shownLayers ?? []).flatMap(value => String(value).split(',')).map(id => id.trim()).filter(id => id))
+                layerVisibility = Object.fromEntries(ids.map(id => [id, checked.has(id)]))
+            ]]></script>
+            <service-call name="org.moqui.maps.MapServices.store#Preferences" out-map="stored"
+                    in-map="{profileId:(profileId ?? ''), basemap:(basemap ?? ''), extent:(extent ?? ''), units:(units ?? ''),
+                        restoreLastView:(restoreLastView === 'Y'), layers:layerVisibility}"/>
+            <if condition="!ec.message.hasError()">
+                <script>ec.message.addMessage(stored.applied ? ec.l10n.localize('Map preferences saved') : stored.reason, stored.applied ? 'success' : 'warning')</script>
+            </if>
+        </actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+
+    <actions>
+        <service-call name="org.moqui.maps.MapServices.get#Preferences" out-map="found" transaction="force-new" ignore-error="true"/>
+        <set field="available" from="!!found?.preferences"/>
+        <service-call name="org.moqui.maps.MapServices.get#EffectiveConfig" out-map="effective" transaction="force-new" ignore-error="true"/>
+        <script><![CDATA[
+            const preferences = found?.preferences || {}
+            const installation = Array.from(found?.profileOptions || []).find(option => option.profileId === found?.installationProfileId)
+            profileOptions = [{value: '', label: ec.l10n.localize('The installation\'s') + (installation ? ' (' + installation.profileName + ')' : '')}]
+                .concat(Array.from(found?.profileOptions || []).map(option => ({value: option.profileId, label: option.profileName})))
+            basemapOptions = Array.from(found?.basemapOptions || []).map(option => ({value: option.layerId, label: option.label}))
+            const config = effective?.config || {}
+            const layers = Array.from(config.layers || []).concat(Array.from(config.recordLayers || []))
+            layerOptions = layers.map(layer => ({value: layer.id, label: layer.label || layer.id}))
+            const extent = Array.isArray(preferences.extent) ? preferences.extent : null
+            preferenceValues = {profileId: preferences.profileId || '', basemap: preferences.basemap || '', extent: extent ? extent.join(', ') : '',
+                units: preferences.units || '', restoreLastView: preferences.restoreLastView ? 'Y' : 'N',
+                shownLayers: layers.filter(layer => layer.visible !== false).map(layer => layer.id), allLayerIds: layers.map(layer => layer.id).join(',')}
+        ]]></script>
+    </actions>
+    <widgets>
+        <label text="Map preferences" type="h5"/>
+        <label type="p" style="text-caption m-muted"
+                text="Your own defaults for the maps of every app. Only what an administrator enabled is offered, and a map profile may keep some of its own settings."/>
+        <label type="p" style="text-negative" condition="!available" text="Map preferences are not available to you."/>
+        <section name="PreferencesSection" condition="available">
+            <widgets>
+                <container-box id="MapPreferencesBox">
+                    <box-header title="Defaults"/>
+                    <box-body>
+                        <form-single name="MapPreferences" transition="storePreferences" map="preferenceValues">
+                            <field name="profileId">
+                                <default-field title="Map profile">
+                                    <drop-down><list-options list="profileOptions" key="${value}" text="${label}"/></drop-down>
+                                </default-field>
+                            </field>
+                            <field name="basemap">
+                                <default-field title="Basemap" tooltip="Used where the map profile lets you choose its basemap">
+                                    <drop-down allow-empty="true"><list-options list="basemapOptions" key="${value}" text="${label}"/></drop-down>
+                                </default-field>
+                            </field>
+                            <field name="extent">
+                                <default-field title="Initial area" tooltip="West, south, east and north in degrees, such as -88.0, 41.6, -87.5, 42.1; empty for the profile's">
+                                    <text-line size="40"/>
+                                </default-field>
+                            </field>
+                            <field name="units">
+                                <default-field title="Units">
+                                    <drop-down allow-empty="true"><option key="metric" text="Metric (meters, kilometers)"/><option key="imperial" text="Imperial (feet, miles)"/></drop-down>
+                                </default-field>
+                            </field>
+                            <field name="restoreLastView">
+                                <default-field title="Restore my last view" tooltip="Off: nothing of where you looked is kept">
+                                    <check><option key="Y" text="Open Browse where I left it"/></check>
+                                </default-field>
+                            </field>
+                            <field name="shownLayers">
+                                <conditional-field condition="layerOptions.length" title="Layers shown">
+                                    <check><list-options list="layerOptions" key="${value}" text="${label}"/></check>
+                                </conditional-field>
+                                <default-field><hidden/></default-field>
+                            </field>
+                            <field name="allLayerIds"><default-field><hidden/></default-field></field>
+                            <field name="submitButton"><default-field title="Save preferences"><submit/></default-field></field>
+                        </form-single>
+                    </box-body>
+                </container-box>
+                <label type="p" style="text-caption m-muted"
+                        text="Maps asks for your location only when you press Locate me, and never keeps it. No history of what you view is kept: only your last view, and only while Restore my last view is on."/>
+            </widgets>
+        </section>
+    </widgets>
+</screen>

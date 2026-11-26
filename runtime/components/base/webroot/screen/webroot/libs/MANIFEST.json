@@ -2,7 +2,7 @@
   "generatedBy": "build/libs/refresh.mjs",
   "notices": {
     "path": "NOTICES.md",
-    "sha256": "b4639204ca94db02f9f02d3714c4c2be8ee4d31b2d500fd890b513c214a5121f"
+    "sha256": "538a7405a17d4141b9cbfe8d5b7cfd27830c4dc74b23d4ec51fa994b39d566a0"
   },
   "libraries": [
     {
@@ -663,6 +663,333 @@
           "from": "build",
           "size": 807538,
           "sha256": "f64ca08c3a4b4c61de1d00dfb0b033da6289396e46638d300e1d4f3048c4e3b7"
+        }
+      ]
+    },
+    {
+      "id": "openlayers",
+      "name": "OpenLayers with ol-mapbox-style and PMTiles (bundled)",
+      "version": "10.11.0",
+      "license": "BSD-2-Clause AND BSD-3-Clause AND ISC AND MIT",
+      "note": "Bundles ol, ol-mapbox-style, mapbox-to-css-font and @mapbox/unitbezier (BSD-2-Clause), ol-pmtiles, pmtiles, pbf and @maplibre/maplibre-gl-style-spec (BSD-3-Clause: the style spec's package.json says ISC, its LICENSE.txt is the BSD-3-Clause text of MapLibre and of the Mapbox code it contains), quickselect and tinyqueue (ISC), rbush and fflate (MIT). ol.css is OpenLayers'. Each license text is below once, with the packages it is the license of.",
+      "source": "https://registry.npmjs.org/ol/-/ol-10.11.0.tgz",
+      "npm": "ol@10.11.0",
+      "tarballIntegrity": "sha512-OJ+lrx7kx/1O7Xx18Ff9QkVnwZIEL0OuhJQSy2sYgzzDvyZ2qHvuZEGAajbSstUyBwaS1OtQ4RWnY84tRMDdqg==",
+      "build": "esbuild --bundle --minify --format=iife --global-name=MoquiOl --platform=browser --target=es2020 --legal-comments=none of an entry (OPENLAYERS_ENTRY) that exports Map, View, Overlay, Geolocation, Feature, Collection, unByKey, the projection and extent helpers, the Tile, Vector, VectorTile and Group layers, the XYZ, Vector and VectorTile sources, the GeoJSON, GPX, KML, TopoJSON and MVT formats, Point and polygonFromExtent, the controls, the interactions, the style classes, ol-mapbox-style's apply, applyStyle and applyBackground, PMTilesVectorSource and PMTilesRasterSource, and PMTiles, FetchSource and FileSource. Exposes the global MoquiOl. The build fails when the bundle holds an unreviewed package, evaluates code, or names an unreviewed host.",
+      "files": [
+        {
+          "path": "openlayers/ol.css",
+          "from": "ol.css",
+          "size": 6343,
+          "sha256": "abc8afd72cc10bd29cc143f443bae4a6804bd3cb3fb262e6b6a6bc6c924ea34f"
+        },
+        {
+          "path": "openlayers/ol-map.min.js",
+          "from": "build",
+          "size": 687879,
+          "sha256": "dda7a6540250b26645cab973e52f9b0d4bf63c31ea0f85be56e149cbddd2e537"
+        }
+      ]
+    },
+    {
+      "id": "mapfonts",
+      "name": "Noto Sans (map label fonts)",
+      "version": "5.3.0",
+      "license": "OFL-1.1",
+      "note": "The faces 400, 400-italic, 500, 700, every subset, woff2 only.",
+      "source": "https://registry.npmjs.org/@fontsource/noto-sans/-/noto-sans-5.3.0.tgz",
+      "npm": "@fontsource/noto-sans@5.3.0",
+      "tarballIntegrity": "sha512-fBCog2PY7DiVVTEEqtI/Qdinx/knobHYfoGpjFXdfBX5RoJaBp1Prw2G75p0OIsdlMZg3cLo0c+YbIUYOxnQJw==",
+      "build": "For each face of 400, 400-italic, 500, 700: its Fontsource CSS with only the woff2 source of each @font-face, at mapfonts/noto-sans/<face>.css, and those woff2 files under mapfonts/noto-sans/files/.",
+      "files": [
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-cyrillic-ext-400-normal.woff2",
+          "from": "build",
+          "size": 22220,
+          "sha256": "fa8331498f2c20fe4e4288eb00ed832c9ebcd8f5e7529a45a557e870baeaed93"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-cyrillic-400-normal.woff2",
+          "from": "build",
+          "size": 7096,
+          "sha256": "05af9e705d3b63aedba67197d19fb448b97353e1386930716c7e835b08f126ba"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-devanagari-400-normal.woff2",
+          "from": "build",
+          "size": 42676,
+          "sha256": "1ccb720178c307d17a30f2f8eda43c2f9ffa831c02cb7f7d9d7b8708bcbaf43c"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-greek-ext-400-normal.woff2",
+          "from": "build",
+          "size": 4872,
+          "sha256": "cf9669423c4b33c00dca35269187661f7311d23c753190afb7af9f36d701e5ba"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-greek-400-normal.woff2",
+          "from": "build",
+          "size": 7888,
+          "sha256": "c7c42b4b60ab0553cabd0a22b12d7ac595ae1fb90f4dff814e1a42e4eb95d0d6"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-vietnamese-400-normal.woff2",
+          "from": "build",
+          "size": 5316,
+          "sha256": "0f0c8a4858f1f5b2701331cf0a471ee00824ed92d33ecb21c9248ded975e297f"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-latin-ext-400-normal.woff2",
+          "from": "build",
+          "size": 55640,
+          "sha256": "c8e6bf928ae88c948ebc49dbe1df01ea5505d12408904ea3302309b26487fbca"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-latin-400-normal.woff2",
+          "from": "build",
+          "size": 13120,
+          "sha256": "09aee8065d25508f23a4c3d92cd777ac869c52d93fd868a88f025d888a7937d6"
+        },
+        {
+          "path": "mapfonts/noto-sans/400.css",
+          "from": "build",
+          "size": 2658,
+          "sha256": "5efd1245db1622ad96a0d24a78589e16f47033ea4ad279299aef1cdda320e5d8"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-cyrillic-ext-400-italic.woff2",
+          "from": "build",
+          "size": 24408,
+          "sha256": "74c34f5ce7414f353e4d5beba0dc4ef173bc3e930d628c51d785e1b8fbda629c"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-cyrillic-400-italic.woff2",
+          "from": "build",
+          "size": 8696,
+          "sha256": "8d37eb626fdbb4188026558df33ea1d5c62c96e630f2ef367e9c370adf48a8e7"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-devanagari-400-italic.woff2",
+          "from": "build",
+          "size": 42880,
+          "sha256": "39e78b404324be6e38a725af394e51125f6750a995d9c1c3ab6e8b3c0a8daef9"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-greek-ext-400-italic.woff2",
+          "from": "build",
+          "size": 5440,
+          "sha256": "f0930caef373fad465aff18f4952941f1faad487ccfbe589555646253c848b91"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-greek-400-italic.woff2",
+          "from": "build",
+          "size": 8528,
+          "sha256": "083cf480ee5b05d7c210d5a736d72bdf6ce173b79687a34ffdca6b88f7299d8b"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-vietnamese-400-italic.woff2",
+          "from": "build",
+          "size": 5336,
+          "sha256": "36e30fbf2839f9e2bee84697e8e5cf859b6714f63da244ac7fb26fc6a1bdc0c5"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-latin-ext-400-italic.woff2",
+          "from": "build",
+          "size": 57224,
+          "sha256": "8931874d4c940ef6eed0e231e74e3048fdd36eb5333246235aeb2b0113a8b361"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-latin-400-italic.woff2",
+          "from": "build",
+          "size": 13888,
+          "sha256": "c302cbfdd98d628d60b6ef8de3c8459c70449df3a5ff2baacfa7481d95e79f4c"
+        },
+        {
+          "path": "mapfonts/noto-sans/400-italic.css",
+          "from": "build",
+          "size": 2658,
+          "sha256": "85dad00cc42268f5c9cc5cd89237259a82e188c3f75943ea39eba5e1e14339e0"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-cyrillic-ext-500-normal.woff2",
+          "from": "build",
+          "size": 22920,
+          "sha256": "bfdcde1aa5f2f28d426adfb8da44df1ea6266a3f68f90d73f6a0540f3c765d36"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-cyrillic-500-normal.woff2",
+          "from": "build",
+          "size": 7320,
+          "sha256": "ffaaff9025964574d7aff3bab4c298d3423d7d276cec8957bb1f592d7edd7e56"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-devanagari-500-normal.woff2",
+          "from": "build",
+          "size": 45648,
+          "sha256": "a7654366e412389956794d6b2bb6df921855458b56f271adb48e4035564d0100"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-greek-ext-500-normal.woff2",
+          "from": "build",
+          "size": 5056,
+          "sha256": "2c9086e3f410b6a458b8d0091a90ae3ff3ef851568527dc9a6b3e2c6ffeb0df8"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-greek-500-normal.woff2",
+          "from": "build",
+          "size": 7992,
+          "sha256": "0b8963e6c361506d191661c3588417e2e719db79ea3732ec22fb6b746b0c04bd"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-vietnamese-500-normal.woff2",
+          "from": "build",
+          "size": 5720,
+          "sha256": "091e15d43fad7642155cc12765a790b60b19ed793547279479df53ec7955fbb7"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-latin-ext-500-normal.woff2",
+          "from": "build",
+          "size": 59844,
+          "sha256": "3ab9bdf323d30aec27bb06e96a400d17dff8483585ffccc9268a727de06e5200"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-latin-500-normal.woff2",
+          "from": "build",
+          "size": 13496,
+          "sha256": "1d35aaecc5c7a375d87c12787e1e4c5d6a695315b757e1e18a479d1a2f84e973"
+        },
+        {
+          "path": "mapfonts/noto-sans/500.css",
+          "from": "build",
+          "size": 2658,
+          "sha256": "8a5246a96b8080db3fa68a2f7efd95c93981338943a6dc3cb36a24c0b7c6c748"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-cyrillic-ext-700-normal.woff2",
+          "from": "build",
+          "size": 22264,
+          "sha256": "d5af4da0950580f5fbfc64d0bffa916f813c989858b2f8558938b261a5928a0e"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-cyrillic-700-normal.woff2",
+          "from": "build",
+          "size": 7288,
+          "sha256": "0980b97224d9130cf3f651c8ad15b9e0b1eb361d31c71259363ec2bbd5f70750"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-devanagari-700-normal.woff2",
+          "from": "build",
+          "size": 45836,
+          "sha256": "d2c26ac327f1d3f4848f114ee204cfd9c8345a711f4553eef6f9c34d55e2b4f5"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-greek-ext-700-normal.woff2",
+          "from": "build",
+          "size": 4940,
+          "sha256": "028e5e1a2d40dea342508a352c4ee953457dfd2fcd00d9245d94dc4bfae70598"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-greek-700-normal.woff2",
+          "from": "build",
+          "size": 8000,
+          "sha256": "453c49c9043e04c1103ed1228a1d8d96750c858e08d6b204119d7a16b7642246"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-vietnamese-700-normal.woff2",
+          "from": "build",
+          "size": 5700,
+          "sha256": "81e42f41bb61f9d1b2004c243cf15ea4946dffb14be4888e76fb3ca3cb75cdf8"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-latin-ext-700-normal.woff2",
+          "from": "build",
+          "size": 59144,
+          "sha256": "c0cd431266a7ed82d6f0dfe281e38a883c28a03eec1fdac308cc2f7c0ea39c3b"
+        },
+        {
+          "path": "mapfonts/noto-sans/files/noto-sans-latin-700-normal.woff2",
+          "from": "build",
+          "size": 13464,
+          "sha256": "e77bfe1db912f687b0319b60de158cfada67f89c8ee4f8e2bd6020f970accbfb"
+        },
+        {
+          "path": "mapfonts/noto-sans/700.css",
+          "from": "build",
+          "size": 2658,
+          "sha256": "84e37a98655d3d077298c9d934d57f38d6432c457158d8c76f47bf4c09550ff8"
+        }
+      ]
+    },
+    {
+      "id": "protomaps",
+      "name": "Protomaps basemap styles (generated) and sprites",
+      "version": "5.7.2",
+      "license": "BSD-3-Clause AND CC0-1.0 AND MIT",
+      "note": "The styles are generated by the package's code (BSD-3-Clause); their visual design is CC0, with derivatives of Mapzen icons (MIT), and the layer schema is adapted from Tilezen. The sprites are those of protomaps/basemaps-assets (derived from tangrams/icons, MIT).",
+      "source": "https://registry.npmjs.org/@protomaps/basemaps/-/basemaps-5.7.2.tgz",
+      "npm": "@protomaps/basemaps@5.7.2",
+      "tarballIntegrity": "sha512-K1Yk6bWdULulYg+R2QRVXx4NzJZan5YQhpejEG0c1/sXruJrfPIPZuakpf3jwAgVmjIRVQwAv+yRafDeN0aaUQ==",
+      "build": "For each flavor of light, dark: the package's layers(\"protomaps\", namedFlavor(flavor), {lang: \"en\"}), run by Node from dist/cjs/index.cjs, as a style (version 8, the source protomaps of type vector with the Protomaps and OpenStreetMap attribution, sprite /libs/protomaps/sprites/v4/<flavor>, no glyphs) at protomaps/<flavor>.json; and the committed sprites of basemaps-assets sprites/v4 (build/libs/assets/protomaps-sprites-v4) at protomaps/sprites/v4/. Fails when a style names a URL or a font that is not packaged.",
+      "files": [
+        {
+          "path": "protomaps/light.json",
+          "from": "build",
+          "size": 65654,
+          "sha256": "b9c83fd1e3b8918fdc940161a3eadba01188fd0f936259cbdf73eff23ab81f2b"
+        },
+        {
+          "path": "protomaps/sprites/v4/light.json",
+          "from": "build",
+          "size": 3549,
+          "sha256": "bfac76cf7ed5c2aa2992695904056a1c6b07785b7fd20e6c640cb44fd6244a2e"
+        },
+        {
+          "path": "protomaps/sprites/v4/light.png",
+          "from": "build",
+          "size": 16174,
+          "sha256": "b6a34640917bdc57d0bd080836db33376371a3312ebe7b849045268015de3481"
+        },
+        {
+          "path": "protomaps/sprites/v4/light@2x.json",
+          "from": "build",
+          "size": 3579,
+          "sha256": "1fb5b123fbe35d2e1f6ac171513ce01df89e671273a417ee89c44886a4c132f0"
+        },
+        {
+          "path": "protomaps/sprites/v4/light@2x.png",
+          "from": "build",
+          "size": 28852,
+          "sha256": "23f6e9df27c2e9a14385763980a24e3608966bfc8192a106058bc2ca959ab563"
+        },
+        {
+          "path": "protomaps/dark.json",
+          "from": "build",
+          "size": 65630,
+          "sha256": "0033b77b72ec975899e06a8d9501ec98e699aa703cb2e8ab261ec2b3df50f07e"
+        },
+        {
+          "path": "protomaps/sprites/v4/dark.json",
+          "from": "build",
+          "size": 3549,
+          "sha256": "bfac76cf7ed5c2aa2992695904056a1c6b07785b7fd20e6c640cb44fd6244a2e"
+        },
+        {
+          "path": "protomaps/sprites/v4/dark.png",
+          "from": "build",
+          "size": 16054,
+          "sha256": "8920f68e8f9f7a4188da43e62a81bbc426532579fff7b5f27aad09e130f4246e"
+        },
+        {
+          "path": "protomaps/sprites/v4/dark@2x.json",
+          "from": "build",
+          "size": 3579,
+          "sha256": "1fb5b123fbe35d2e1f6ac171513ce01df89e671273a417ee89c44886a4c132f0"
+        },
+        {
+          "path": "protomaps/sprites/v4/dark@2x.png",
+          "from": "build",
+          "size": 28407,
+          "sha256": "6e01b4e366d304f27bbd55390511a3d4e39aa1d03eb3e82f873f7ea32e74cbe4"
         }
       ]
     },

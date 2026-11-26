@@ -30,10 +30,12 @@ mod calc;
 mod calendar;
 mod chart;
 mod code;
+mod map;
 pub(crate) mod report;
 mod report_editor;
 mod timeline;
 mod tree;
+pub(crate) mod world;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -206,6 +208,7 @@ inventory::submit! { Registered(&calc::CalcGrid) }
 inventory::submit! { Registered(&calendar::Calendar) }
 inventory::submit! { Registered(&chart::Chart) }
 inventory::submit! { Registered(&code::Code) }
+inventory::submit! { Registered(&map::Map) }
 inventory::submit! { Registered(&report::ReportPanel) }
 inventory::submit! { Registered(&report::ReportDashboard) }
 inventory::submit! { Registered(&report::TraceWaterfall) }
@@ -316,6 +319,7 @@ mod tests {
                 "chart",
                 "code",
                 "log-tail",
+                "map",
                 "report-dashboard",
                 "report-definition-editor",
                 "report-panel",

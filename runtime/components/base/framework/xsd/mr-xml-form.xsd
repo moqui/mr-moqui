@@ -119,7 +119,8 @@ along with this software (see the LICENSE.md file). If not, see
         </xs:attribute>
         <xs:attribute name="background-reload-id" type="xs:string">
             <xs:annotation><xs:documentation>After the form is submitted in the background reload the
-                dynamic-container with this id.</xs:documentation></xs:annotation>
+                dynamic-container with this id; _screen reloads the screen the page shows (the page behind a dialog the form
+                is in). It and background-hide-id may hold ${} expressions.</xs:documentation></xs:annotation>
         </xs:attribute>
         <xs:attribute name="background-hide-id" type="xs:string">
             <xs:annotation><xs:documentation>After the form is submitted in the background hide the element (usually

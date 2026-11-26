@@ -26,6 +26,7 @@
 //! ec.resource.getChildChanges(location)    -> [{name, isFile, size, versionName, date, userId, note}]
 //! ec.resource.getChangeLog(location, limit)-> [{versionName, previousVersionName, versionDate, userId, note, paths}]
 //! ec.resource.getTreeSize(location)        -> bytes
+//! ec.resource.getContentAddress(location)  -> {kind, id, size, tag} or null: what a pinned revision is recorded by
 //! ec.resource.makeThumbnail(source, target, maxSize) -> {width, height, contentType} or null (not an image)
 //! ec.resource.makeStickerThumbnail(source, target, maxSide, thumbSize)
 //!                                          -> {format, contentType, width, height, thumbWidth, thumbHeight} or
@@ -96,6 +97,7 @@ macro_rules! files_js {
     ec.resource.getChildChanges = (location) => host.filesChildChanges(String(location));
     ec.resource.getChangeLog = (location, limit) => host.filesChangeLog(String(location), limit == null ? 100 : Number(limit));
     ec.resource.getTreeSize = (location) => host.filesTreeSize(String(location));
+    ec.resource.getContentAddress = (location) => host.filesContentAddress(String(location));
     ec.resource.imageAvailable = host.filesImageAvailable();
     Object.defineProperty(ec.service, "ssoAvailable", {get: () => host.filesSsoAvailable()});
     ec.resource.makeThumbnail = (source, target, maxSize) =>
@@ -138,6 +140,7 @@ pub(super) static METHODS: &[Method] = &[
     method!("tools", "filesChildChanges", [Text], files_child_changes),
     method!("tools", "filesChangeLog", [Text, Number], files_change_log),
     method!("tools", "filesTreeSize", [Text], files_tree_size),
+    method!("tools", "filesContentAddress", [Text], files_content_address),
     method!("tools", "filesImageAvailable", [], None, leaf, files_image_available),
     method!("tools", "filesSsoAvailable", [], None, leaf, files_sso_available),
     method!("tools", "filesThumbnail", [Text, Text, Number], files_thumbnail),
@@ -432,6 +435,25 @@ fn files_tree_size(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let location = call.text_or_empty(0);
     let size = with_resources(|resources| resources.tree_size(&location))?;
     Ok(Ret::Value(Value::I64(i64::try_from(size).unwrap_or(i64::MAX))))
+}
+
+/// `getContentAddress(location)`: what the storage names the content by, for a reader to pin
+/// (`ResourceFacade::content_address`): `{kind, id, size, tag}`, or null where it has no such address (a file on disk)
+/// or nothing is there.
+fn files_content_address(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let location = call.text_or_empty(0);
+    let Some(address) = with_resources(|resources| resources.content_address(&location))? else {
+        return Ok(Ret::Value(Value::Null));
+    };
+    let mut map = indexmap::IndexMap::default();
+    map.insert("kind".to_string(), Value::string(address.kind.name()));
+    map.insert("id".to_string(), Value::string(address.id));
+    map.insert(
+        "size".to_string(),
+        Value::I64(i64::try_from(address.size).unwrap_or(i64::MAX)),
+    );
+    map.insert("tag".to_string(), Value::string(address.tag));
+    Ok(Ret::Value(Value::Map(map)))
 }
 
 /// A PNG thumbnail of the image at `source`, no side longer than `max_size`, written to `target`. Null when the bytes

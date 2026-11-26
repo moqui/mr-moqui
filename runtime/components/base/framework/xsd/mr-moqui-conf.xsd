@@ -30,6 +30,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:element minOccurs="0" ref="channels"/>
                 <xs:element minOccurs="0" ref="push"/>
                 <xs:element minOccurs="0" ref="load-runner"/>
+                <xs:element minOccurs="0" ref="maps"/>
                 <xs:element minOccurs="0" ref="cluster-member"/>
                 <xs:element minOccurs="0" ref="xmpp-server"/>
                 <xs:element minOccurs="0" ref="sip-server"/>
@@ -1244,6 +1245,7 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="dbresource-blob-threshold" type="non-neg-int-expandable" default="65536"><xs:annotation><xs:documentation>A dbresource file over this many bytes is a content blob (stored once, streamed), not fileData. No Java counterpart.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="image-max-concurrent" type="non-neg-int-expandable" default="2"><xs:annotation><xs:documentation>Image conversions (convert#Image) and rich-text image uploads (upload#RichTextImage) that may run at once; a decoded image may take hundreds of MB. No Java counterpart.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="sftp-max-read" type="non-neg-int-expandable" default="67108864"><xs:annotation><xs:documentation>The largest file, in bytes, the SFTP client (SftpClient getText and getBinary, poll#SystemMessageSftp) reads from a remote server; a larger one is refused. 0 is the default, 64 MiB: there is no setting for no limit. No Java counterpart.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="pinned-max-age" type="non-neg-int-expandable" default="86400"><xs:annotation><xs:documentation>Seconds a browser keeps a file sent at a pinned revision (ec.web.sendPinnedResourceResponse, a map archive's ranges) without asking again: Cache-Control private, max-age, immutable. After access is taken away the ranges a browser already has stay readable in it until then; any other is refused at once. 0 asks the server each time (private, no-cache). Read on each response. No Java counterpart.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="script-module-cache" type="boolean" default="true"><xs:annotation><xs:documentation>A module ec.resource.script loads whose top level only declares gives the same value for the rest of the outermost script run, made once; false makes it again at each load. Read once.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="collab-max-state-bytes" type="xs:positiveInteger" default="8388608"><xs:annotation><xs:documentation>The most bytes a co-edited page's state may take; an update past it is refused (413). The whole state is held in memory and written again at each flush. Read on each update.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="drive-root" type="xs:string" default="dbresource://drive"><xs:annotation><xs:documentation>The location under which a new personal drive (personal/userId) and a new shared folder drive (shared/driveId) are made (FileServices ensure#PersonalDrive, create#Drive). A setting, not a user preference, so a user does not choose where their drive is. No Java counterpart.</xs:documentation></xs:annotation></xs:attribute>
@@ -2373,6 +2375,26 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="targets" type="xs:string"><xs:annotation><xs:documentation>URL prefixes (and ssh://host:port entries) a run may reach beside this server and loopback, comma separated.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="max-runs" type="non-neg-int-expandable" default="1"/>
             <xs:attribute name="max-users" type="non-neg-int-expandable" default="1000"/>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="maps">
+        <xs:annotation><xs:documentation>Maps (plans/Maps.md §4.2): the switch for the server's outside map requests and
+            the hard limits of Geo data imports and feature queries. Providers, layers and profiles are entity rows
+            (moqui.maps), not settings.</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:attribute name="external-requests" type="boolean" default="true"><xs:annotation><xs:documentation>false
+                stops the server's own outside requests for maps (a geocoder, a Geo data download) and its handing a
+                browser a profile with outside URLs; local maps and postal lookup still work.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="import-max-bytes" type="non-neg-int-expandable" default="536870912"><xs:annotation><xs:documentation>
+                The largest Geo data download or operator file, and the most it may unzip to, in bytes (512 MiB).</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="max-features" type="non-neg-int-expandable" default="5000"><xs:annotation><xs:documentation>
+                The most features one viewport query of a layer adapter returns, and one user's overlay or places file may
+                have; 0 returns none, which turns record layers off (an overlay may then have 5000). A value that is not a
+                whole number is logged and refuses the query (an overlay may then have 5000).</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="overlay-max-bytes" type="non-neg-int-expandable" default="10485760"><xs:annotation><xs:documentation>
+                The largest GeoJSON, GPX or KML file a user adds as an overlay, and their places file, in bytes (10 MiB),
+                within import-max-bytes: an overlay is drawn whole in the browser. Its GeoJSON is served up to 4 MiB of
+                characters.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
     <xs:element name="cluster-member">

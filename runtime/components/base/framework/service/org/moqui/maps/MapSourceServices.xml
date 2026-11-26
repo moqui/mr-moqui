@@ -1,0 +1,176 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Map archives (plans/Maps.md §4.1, §5; docs/tools/Maps.md "Archives"): a PMTiles archive registered as a layer's revision,
+    the access check of the map-source transition (tools screen/Maps/LocalMap.xml source), the archives Configuration lists
+    and their readiness; and a user's geographic file read as an overlay (convert#Overlay, P3). The logic is
+    MapSources.js; the header is read in Rust (moqui-tools maps_archive.rs, over moqui-lib pmtiles.rs), and an overlay
+    (moqui-tools maps_overlay.rs, over moqui-lib geo/overlay.rs). Grants (tools data/MapsSecurityData.xml): get#SourceAccess
+    is MAPS_DIALOG's (every signed-in user: it checks the layer and the drive itself), check#ArchiveReadiness
+    MAPS_READINESS's (it checks ADMIN_OVERVIEW_VIEW itself), convert#Overlay no group's (MapOverlays.js calls it after its
+    own check), the rest MAPS_ADMIN's. No Java counterpart. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
+
+    <service verb="read" noun="ArchiveHeader" type="rust" location="moqui_tools::maps_archive::read_archive_header">
+        <description>The header and metadata of the PMTiles archive at a resource location (location#versionName for a
+            version), read by range (the 127-byte header, then the metadata where it says) and checked: version 3, the zoom
+            range, the bounds, every section within the file and the root directory within its first 16 KiB, tiles of
+            vector (mvt) or image type, directories gzipped or not compressed, metadata that is a JSON object (naming its
+            vector layers for vector tiles). found false when nothing is there; each reason a map cannot draw it in
+            problems, and valid true only when there is none. Writes nothing. It reads whatever location it is given, so it
+            is MAPS_ADMIN's; register#ArchiveLayer and the readiness checks call it.</description>
+        <in-parameters><parameter name="location" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="found" type="Boolean"/>
+            <parameter name="valid" type="Boolean"/>
+            <parameter name="problems" type="List"/>
+            <parameter name="size" type="Long"/>
+            <parameter name="tag"><description>The strong tag the storage reads it with; empty for a file on disk</description></parameter>
+            <parameter name="header" type="Map"><description>{version, tileType, vector, raster, tileCompression,
+                internalCompression, minZoom, maxZoom, minLongitude, minLatitude, maxLongitude, maxLatitude, centerZoom,
+                centerLongitude, centerLatitude, addressedTiles, tileContents, clustered}</description></parameter>
+            <parameter name="metadata" type="Map"><description>{name, description, attribution, version, type, vectorLayers}</description></parameter>
+        </out-parameters>
+    </service>
+
+    <service verb="convert" noun="Overlay" type="rust" location="moqui_tools::maps_overlay::convert_overlay_service" allow-remote="false">
+        <description>A GeoJSON, GPX or KML file read as a map overlay (plans/Maps.md §4.1, §8; moqui-lib geo/overlay.rs): at a
+            resource location (read as the framework) or given as text, at most maxBytes, at most maxFeatures features,
+            WGS84 or a GeoJSON file's declared EPSG:3857 (converted; any other CRS refused), each feature's geometry checked
+            by itself (one that is not sane is left out, counted and named in notes), labels and descriptions made plain
+            text, and no KML network link, image overlay, style, icon or other reference followed (each counted in
+            notes). Answers a sanitized GeoJSON FeatureCollection (geojson, unless summaryOnly) with featureCount,
+            rejectedCount, bounds and crs; a file that cannot be an overlay is valid false with reasonCode (FORMAT_UNKNOWN,
+            NOT_FOUND, NOT_READ, NOT_TEXT, TOO_LARGE, NOT_PARSED, NOT_FORMAT, CRS_UNSUPPORTED, TOO_MANY_FEATURES,
+            NO_FEATURES) and reason. Writes nothing. It reads whatever location it is given, so no group is granted it:
+            the overlay services (MapOverlays.js) call it after their own check of the caller's drive access.</description>
+        <in-parameters>
+            <parameter name="location"/>
+            <parameter name="text" allow-html="any"/>
+            <parameter name="format"><description>MLF_GEOJSON, MLF_GPX or MLF_KML; else by fileName's extension</description></parameter>
+            <parameter name="fileName"/>
+            <parameter name="maxBytes" type="Long"/>
+            <parameter name="maxFeatures" type="Integer"/>
+            <parameter name="summaryOnly" type="Boolean" default="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="valid" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="format"/>
+            <parameter name="featureCount" type="Integer"/>
+            <parameter name="rejectedCount" type="Integer"/>
+            <parameter name="bounds" type="List"/>
+            <parameter name="crs"/>
+            <parameter name="notes" type="List"/>
+            <parameter name="size" type="Long"/>
+            <parameter name="geojson"/>
+        </out-parameters>
+    </service>
+
+    <service verb="register" noun="ArchiveLayer">
+        <description>Register the archive of a PMTiles layer (format MLF_PMTILES_VECTOR or MLF_PMTILES_RASTER), at
+            resourceLocation (the layer's own when empty), as the revision maps read. On storage that keeps versions
+            (git://, dbresource://) the current version is recorded (sourceVersionName), so a later write does not change
+            what a map reads until the layer is registered again; the content address of that version is the revision
+            (sourceRevision, sourceTag, sourceSize, sourceAddressKind: an LFS object's oid, a content blob's or a small
+            file's SHA-256). A file on disk has none: its SHA-256 is read once, with its modification time. Refused, the
+            layer unchanged: a caller who may not change Maps › Configuration (PERMISSION_DENIED); a layer that is not a
+            PMTiles one (FORMAT_NOT_ARCHIVE); a location with # or ?, or a folder (LOCATION_INVALID); nothing there
+            (SOURCE_GONE); storage not known to read by range (STORAGE_NOT_RANGED: an archive is kept on disk, in
+            dbresource:// or in git); in a git repository, a file that is not a Git LFS object (NOT_LFS: any other git
+            object is read whole for every request); a header a map cannot draw (ARCHIVE_INVALID, with each of problems);
+            tiles not of the layer's format (TILE_TYPE_MISMATCH). Records the drive the location is under (driveId), whose
+            access a viewer needs too, the archive's zoom range and bounds, its attribution and version when the layer has
+            none, and enables the layer. notes: what the archive's size meets (the upload limit, an LFS object's, its
+            drive's quota). A new revision is replaced (replaced true): a map drawing the old one is refused it (409) and
+            loads its configuration again.</description>
+        <in-parameters>
+            <parameter name="layerId" required="true"/>
+            <parameter name="resourceLocation"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="problems" type="List"/>
+            <parameter name="layerId"/>
+            <parameter name="revision"/>
+            <parameter name="replaced" type="Boolean"/>
+            <parameter name="size" type="Long"/>
+            <parameter name="addressKind"/>
+            <parameter name="driveId"/>
+            <parameter name="header" type="Map"/>
+            <parameter name="metadata" type="Map"/>
+            <parameter name="notes" type="List"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapSources.js').execute('register', context))</script></actions>
+    </service>
+
+    <service verb="get" noun="SourceAccess">
+        <description>Whether the current user may read a registered archive layer at a revision now, for the map-source
+            transition on every request (GET, HEAD, each range), writing nothing (no ResourceRecent): the layer enabled,
+            PMTiles and registered (SOURCE_MISSING, SOURCE_NOT_REGISTERED: 404), its viewPermission held (one not held is
+            SOURCE_MISSING), its provider enabled (PROVIDER_DISABLED), and at least view on its drive at its path
+            (FileServices get#DriveAccess: a member, or a share of the file or a folder above it; SOURCE_NOT_PERMITTED,
+            403, so a revoked share or a removed member is refused at the next request). A revision that is not the
+            registered one (REVISION_CHANGED) and a file on disk changed since it was registered (SOURCE_CHANGED) are 409,
+            so the map loads its configuration again. When ok: the location to send (location#versionName on storage
+            that keeps versions) with the registered tag and size, for ec.web.sendPinnedResourceResponse. Every
+            signed-in user may call it (MAPS_DIALOG): it checks the layer and the drive itself.</description>
+        <in-parameters>
+            <parameter name="layerId" required="true"/>
+            <parameter name="revision" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="ok" type="Boolean"/>
+            <parameter name="status" type="Integer"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="location"/>
+            <parameter name="tag"/>
+            <parameter name="size" type="Long"/>
+            <parameter name="fileName"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapSources.js').execute('sourceAccess', context))</script></actions>
+    </service>
+
+    <service verb="find" noun="ArchiveLayers">
+        <description>The PMTiles layers for Maps › Configuration › Archives, for a caller who may open Configuration
+            (PERMISSION_DENIED otherwise): each with its location, registered revision, version, size, zoom range, drive,
+            the profiles whose basemap it is, its state now (ready; NOT_REGISTERED; NEWER_REVISION, a later revision stored
+            but not registered; SOURCE_CHANGED, SOURCE_GONE, NOT_LFS, STORAGE_NOT_RANGED) and what its size meets; and the
+            limits (max-upload, git-server@lfs-max-object-size and max-object-size, resource-facade@pinned-max-age).
+            Changes nothing.</description>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="archiveList" type="List"/>
+            <parameter name="limits" type="Map"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapSources.js').execute('findArchives', context))</script></actions>
+    </service>
+
+    <service verb="check" noun="ArchiveReadiness" allow-remote="false">
+        <description>The maps.archives readiness provider (data/AdminConfigurationData.xml), changing nothing, for a caller with
+            ADMIN_OVERVIEW_VIEW (PERMISSION_DENIED otherwise): each PMTiles layer with a location, enabled or registered,
+            as find#ArchiveLayers states it (NOT_REGISTERED and NEWER_REVISION warnings; NOT_LFS, a git archive that is not
+            a Git LFS object, refused by name, SOURCE_CHANGED, SOURCE_GONE and STORAGE_NOT_RANGED failed); NO_ARCHIVES when
+            there is none.</description>
+        <in-parameters><parameter name="providerKey" required="true"/></in-parameters>
+        <out-parameters><parameter name="checks" type="List"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapSources.js').execute('readiness', context))</script></actions>
+    </service>
+</services>

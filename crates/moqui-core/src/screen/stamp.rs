@@ -56,6 +56,7 @@ pub const STAMPED: &[&str] = &[
     "html-view",
     "markdown-view",
     "code-view",
+    "map-view",
     "status-bar",
     "subscreens-panel",
     "subscreens-menu",

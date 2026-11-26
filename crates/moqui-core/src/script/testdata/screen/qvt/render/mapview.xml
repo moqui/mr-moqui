@@ -1,0 +1,19 @@
+<screen require-authentication="false">
+    <transition name="mapConfig"><default-response type="none"/></transition>
+    <actions>
+        <set field="places" from="[{longitude: -87.6298, latitude: 41.8781, label: 'Chicago &lt;office&gt; {{x}}', precisionEnumId: 'GPP_POSTAL_AREA', sourceText: 'Census 2026'},
+            {lon: 0, lat: 0, label: 'Null Island'}, {longitude: 200, latitude: 10, label: 'Nowhere'}]"/>
+        <set field="lat" value="51.5074"/>
+    </actions>
+    <widgets>
+        <!-- places from a list (one off the globe, left out; a zero is a coordinate), a zoom, pick, a class -->
+        <map-view id="Offices" profile="OUTLINE" points="places" zoom="3" pick="true" style="q-mt-sm"/>
+        <!-- a plain point with its precision and source, an area, a height and the effective configuration's transition -->
+        <map-view longitude="-0.1278" latitude="${lat}" label="London &amp; Co" precision="GPP_USER_CONFIRMED" source="Entered"
+                extent="-0.5,51.3,0.3,51.7" height="240px" config-transition="mapConfig" layers="PARKS, TRAILS"/>
+        <map-view center="10,20" zoom="4" condition="false"/>
+        <!-- a record through an adapter: only its key and the record's key go to the browser -->
+        <map-view center="10,20" zoom="4" adapter="party" record-key="{partyId: 'P1'}" projection="EPSG:4326"/>
+        <label text="the places are on their map"/>
+    </widgets>
+</screen>

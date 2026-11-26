@@ -1,0 +1,373 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Maps (plans/Maps.md): the providers, layers and profiles a map is drawn from, saved views, users' overlays, the
+    registry of record and layer adapters, and the registry and runs of the Geo data importer. The Geo extensions (GeoPostalCode, GeoPointAssoc)
+    are in BasicEntities.xml; the services in service/org/moqui/maps/. The settings are the conf's maps element. -->
+<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-entity-definition.xsd">
+
+    <!-- A map provider (§4.2): a hosted basemap style, a tile service, a self-hosted archive root or a geocoder. The native
+        record of the mapProvider connection kind (a ConnectionAdapter row of P1, on the engine of ConfigurationConnections.js,
+        as NetworkPrinter is the printer kind's): its secret is write-only and never in map JSON, an exported row or a
+        browser; a change of its endpoint clears the secret and asks for a new test; it is enabled only by a passing test.
+        So the seeded OpenFreeMap row starts disabled, and a fresh install makes no outside request. -->
+    <entity entity-name="MapProvider" package="moqui.maps" use="configuration" cache="true">
+        <field name="providerId" type="id" is-pk="true"/>
+        <field name="providerKindEnumId" type="id"/>
+        <field name="providerName" type="text-medium"/>
+        <field name="description" type="text-medium"/>
+        <field name="endpointUrl" type="text-medium"><description>A style document's URL, a tile URL template ({z}, {x},
+            {y}) or a geocoder's base URL; empty for an archive root</description></field>
+        <field name="resourceRoot" type="text-medium"><description>For self-hosted archives: the ResourceFacade location their
+            registered layers are under</description></field>
+        <field name="attribution" type="text-long"><description>The attribution the map shows with this provider's layers,
+            plain text, each part separated by a line break; termsUrl and the layer's own attribution beside it</description></field>
+        <field name="attributionUrls" type="text-long"><description>The links of the attribution's parts, in order, one a
+            line</description></field>
+        <field name="termsUrl" type="text-medium"/>
+        <field name="allowedOperations" type="text-medium"><description>What it is used for, comma separated: style, tiles,
+            geocode, reverse, search, autocomplete. A geocoder is asked only when it is empty or names geocode or
+            search</description></field>
+        <field name="requestsPerSecond" type="number-integer"><description>The provider's request rate limit for this
+            installation, enforced for a geocoder on each server by itself (a cluster of n servers may send n times it);
+            empty when it publishes none, which for Nominatim and Photon is taken as 1</description></field>
+        <field name="requestsPerDay" type="number-integer"><description>Recorded for the provider's terms; not
+            enforced</description></field>
+        <field name="cachePolicy" type="text-short"><description>What may keep its answers: none (or empty), private (the
+            user's browser only: this server keeps nothing) or shared (this server, for every user)</description></field>
+        <field name="cacheSeconds" type="number-integer"><description>How long a shared answer may be kept; empty for the
+            provider's own Cache-Control max-age (nothing kept when it gives none, or no-store)</description></field>
+        <field name="proxyRequests" type="text-indicator"><description>Y: browsers reach the provider through this server,
+            which then sees nothing of the user's address but the server's; not a claim of complete location privacy
+            (§4.2)</description></field>
+        <field name="apiKey" type="text-medium" encrypt="true"><description>The provider's key, write-only: never returned,
+            exported, logged or sent to a browser (a proxied provider's key stays on the server)</description></field>
+        <field name="disabled" type="text-indicator" enable-audit-log="update"><description>Y: no layer of it is drawn and
+            nothing is sent to it but the test of test#Connection. Set by an administrator, or by store#Connection when the
+            endpoint changed, until a test passes</description></field>
+        <field name="allowPrivateNetwork" type="text-indicator" enable-audit-log="update"><description>N: the server sends
+            nothing to a loopback, private or link-local address for this provider (moqui_core::outbound). Empty: as N on a
+            production instance, as Y on another, as NetworkPrinter's</description></field>
+        <field name="sequenceNum" type="number-integer"/>
+        <relationship type="one" title="MapProviderKind" related="moqui.basic.Enumeration" short-alias="kind">
+            <key-map field-name="providerKindEnumId"/></relationship>
+        <seed-data>
+            <moqui.basic.EnumerationType description="Map Provider Kind" enumTypeId="MapProviderKind"/>
+            <moqui.basic.Enumeration description="Hosted vector style" enumId="MPK_VECTOR_STYLE" enumTypeId="MapProviderKind" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="Raster tiles" enumId="MPK_RASTER_TILES" enumTypeId="MapProviderKind" sequenceNum="2"/>
+            <moqui.basic.Enumeration description="Self-hosted archives" enumId="MPK_ARCHIVE" enumTypeId="MapProviderKind" sequenceNum="3"/>
+            <moqui.basic.Enumeration description="Geocoder" enumId="MPK_GEOCODER" enumTypeId="MapProviderKind" sequenceNum="4"/>
+            <!-- a geocoder's service (P3; MapGeocoders.js): its kind says the API find#Places speaks and its test asks, so a
+                change of it is a change of the endpoint and needs a new test. MPK_GEOCODER alone names none (incomplete). -->
+            <moqui.basic.Enumeration description="Geocoder: US Census (street-range interpolation, US addresses)" enumId="MPK_GEOCODER_CENSUS"
+                    enumTypeId="MapProviderKind" parentEnumId="MPK_GEOCODER" sequenceNum="5"/>
+            <moqui.basic.Enumeration description="Geocoder: Nominatim (self-hosted)" enumId="MPK_GEOCODER_NOMINATIM"
+                    enumTypeId="MapProviderKind" parentEnumId="MPK_GEOCODER" sequenceNum="6"/>
+            <moqui.basic.Enumeration description="Geocoder: Photon (self-hosted)" enumId="MPK_GEOCODER_PHOTON"
+                    enumTypeId="MapProviderKind" parentEnumId="MPK_GEOCODER" sequenceNum="7"/>
+        </seed-data>
+    </entity>
+
+    <!-- A layer a profile draws (§4.2): a provider's style or tiles, a registered resource (a PMTiles archive, a GeoJSON,
+        GPX or KML file) or a same-origin file of this server, with its format, CRS, bounds, zoom, style, attribution and
+        the edition it was registered at. A dynamic layer names a registered adapter (MapAdapter) that checks the viewer's
+        access on each viewport query; no layer carries a service name, query or path a browser sends back. -->
+    <entity entity-name="MapLayer" package="moqui.maps" use="configuration" cache="true">
+        <field name="layerId" type="id" is-pk="true"/>
+        <field name="layerName" type="text-medium"/>
+        <field name="description" type="text-medium"/>
+        <field name="providerId" type="id"/>
+        <field name="formatEnumId" type="id"/>
+        <field name="sourceUrl" type="text-medium"><description>A path of this server (starting with /), or with a provider a
+            URL or template under its endpoint; never sent to a browser while maps@external-requests is false and it is
+            outside this server</description></field>
+        <field name="resourceLocation" type="text-medium"><description>A registered resource (ResourceFacade location),
+            served through the map-source transition, never as a path to the browser</description></field>
+        <field name="styleLocation" type="text-medium"><description>The style document: a URL of the provider, or a
+            resource location</description></field>
+        <field name="assetsLocation" type="text-medium"><description>Where the style's fonts, sprites and icons are served
+            from, so a local style contacts no outside font host (§4.1)</description></field>
+        <field name="crs" type="text-short"><description>The source CRS, EPSG:3857 when empty</description></field>
+        <field name="tileSize" type="number-integer"/>
+        <field name="minZoom" type="number-integer"/>
+        <field name="maxZoom" type="number-integer"/>
+        <field name="minLongitude" type="number-float"/><field name="minLatitude" type="number-float"/>
+        <field name="maxLongitude" type="number-float"/><field name="maxLatitude" type="number-float"/>
+        <field name="attribution" type="text-long"><description>The layer's own attribution, beside its provider's</description></field>
+        <field name="sourceEdition" type="text-short"><description>The source's edition or release (Natural Earth 4.1.0)</description></field>
+        <field name="sourceRevision" type="text-medium"><description>The registered revision's content address (an LFS oid,
+            a SHA-256), the strong validator and the revision in the map-source URL (§5)</description></field>
+        <field name="sourceTag" type="text-medium"><description>The strong tag the registered revision is sent with (the
+            ETag): sha256-(hex) of an LFS object, a content blob or a digest, or of a file on disk as it was read when
+            registered (MapSourceServices.register#ArchiveLayer)</description></field>
+        <field name="sourceSize" type="number-integer"><description>The registered revision's size in bytes</description></field>
+        <field name="sourceVersionName" type="text-medium"><description>On storage that keeps versions (git://,
+            dbresource://), the version registered: resourceLocation#sourceVersionName is what the map-source transition
+            sends, so a later commit or write does not change what a map already drawing reads until the layer is
+            registered again</description></field>
+        <field name="sourceAddressKind" type="text-short"><description>What sourceRevision is: git-lfs, content-blob,
+            digest (a small dbresource:// file kept in its row) or file (a file on disk, its SHA-256)</description></field>
+        <field name="sourceModifiedDate" type="date-time"><description>A file on disk: its modification time when
+            registered; a file changed in place since is refused (409) until the layer is registered again</description></field>
+        <field name="sourceRegisteredDate" type="date-time"/>
+        <field name="driveId" type="id"><description>The drive resourceLocation is under, whose access (a member, a
+            share of the file or a folder above it) a viewer needs too, checked on every request; empty for a location
+            outside every drive, which only an administrator registers</description></field>
+        <field name="isBasemap" type="text-indicator"/>
+        <field name="adapterKey" type="id"><description>A dynamic layer: the registered adapter whose
+            find#LayerFeatures answers a viewport, after its own access check</description></field>
+        <field name="viewPermission" type="id"><description>A permission a viewer must hold to be offered the
+            layer; empty for every user who may open a map</description></field>
+        <field name="disabled" type="text-indicator"/>
+        <relationship type="one" related="moqui.maps.MapProvider" short-alias="provider"/>
+        <relationship type="one" related="moqui.maps.MapAdapter" short-alias="adapter"/>
+        <relationship type="one-nofk" related="moqui.resource.ResourceDrive" short-alias="drive"/>
+        <relationship type="one" title="MapLayerFormat" related="moqui.basic.Enumeration" short-alias="format">
+            <key-map field-name="formatEnumId"/></relationship>
+        <seed-data>
+            <moqui.basic.EnumerationType description="Map Layer Format" enumTypeId="MapLayerFormat"/>
+            <moqui.basic.Enumeration description="Vector style (MapLibre/OpenMapTiles)" enumId="MLF_VECTOR_STYLE" enumTypeId="MapLayerFormat" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="Raster tiles (XYZ)" enumId="MLF_RASTER_XYZ" enumTypeId="MapLayerFormat" sequenceNum="2"/>
+            <moqui.basic.Enumeration description="PMTiles vector archive" enumId="MLF_PMTILES_VECTOR" enumTypeId="MapLayerFormat" sequenceNum="3"/>
+            <moqui.basic.Enumeration description="PMTiles raster archive" enumId="MLF_PMTILES_RASTER" enumTypeId="MapLayerFormat" sequenceNum="4"/>
+            <moqui.basic.Enumeration description="GeoJSON" enumId="MLF_GEOJSON" enumTypeId="MapLayerFormat" sequenceNum="5"/>
+            <moqui.basic.Enumeration description="TopoJSON" enumId="MLF_TOPOJSON" enumTypeId="MapLayerFormat" sequenceNum="6"/>
+            <moqui.basic.Enumeration description="GPX" enumId="MLF_GPX" enumTypeId="MapLayerFormat" sequenceNum="7"/>
+            <moqui.basic.Enumeration description="KML" enumId="MLF_KML" enumTypeId="MapLayerFormat" sequenceNum="8"/>
+            <moqui.basic.Enumeration description="Record features (a registered adapter)" enumId="MLF_ADAPTER" enumTypeId="MapLayerFormat" sequenceNum="9"/>
+        </seed-data>
+    </entity>
+
+    <!-- A map profile (§4.2): a basemap with compatible layers and defaults (extent, display units), whether it reaches an
+        outside host, and what a user may override. The installation's default is the ALL_USERS UserGroupPreference
+        maps.profile (OUTLINE when seeded), a user's own the UserPreference of that key; a consumer may select another
+        profile the user is permitted. -->
+    <entity entity-name="MapProfile" package="moqui.maps" use="configuration" cache="true">
+        <field name="profileId" type="id" is-pk="true"/>
+        <field name="profileName" type="text-medium"/>
+        <field name="description" type="text-medium"/>
+        <field name="basemapLayerId" type="id"/>
+        <field name="centerLongitude" type="number-float"/><field name="centerLatitude" type="number-float"/>
+        <field name="zoom" type="number-decimal"/>
+        <field name="minLongitude" type="number-float"/><field name="minLatitude" type="number-float"/>
+        <field name="maxLongitude" type="number-float"/><field name="maxLatitude" type="number-float"/>
+        <field name="displayUnits" type="text-short"><description>metric or imperial; empty for the user's locale</description></field>
+        <field name="externalAccess" type="text-indicator"><description>Y: a layer of it is drawn from an outside host, so
+            it is not offered while maps@external-requests is false and readiness names its hosts for the page's CSP; N: it
+            reaches only this server</description></field>
+        <field name="allowedOverrides" type="text-medium"><description>What a user's preferences may change, comma
+            separated: basemap, layers, extent, units</description></field>
+        <field name="viewPermission" type="id"/>
+        <field name="disabled" type="text-indicator" enable-audit-log="update"/>
+        <relationship type="one" title="Basemap" related="moqui.maps.MapLayer" short-alias="basemap">
+            <key-map field-name="basemapLayerId" related="layerId"/></relationship>
+        <relationship type="many" related="moqui.maps.MapProfileLayer" short-alias="layers">
+            <key-map field-name="profileId"/></relationship>
+    </entity>
+    <!-- The overlay layers a profile offers beside its basemap, in order, and whether each is shown at first. -->
+    <entity entity-name="MapProfileLayer" package="moqui.maps" use="configuration" cache="true">
+        <field name="profileId" type="id" is-pk="true"/>
+        <field name="layerId" type="id" is-pk="true"/>
+        <field name="sequenceNum" type="number-integer"/>
+        <field name="defaultVisible" type="text-indicator"/>
+        <relationship type="one" related="moqui.maps.MapProfile" short-alias="profile"/>
+        <relationship type="one" related="moqui.maps.MapLayer" short-alias="layer"/>
+    </entity>
+
+    <!-- A saved map view (§4.2), shaped as moqui.database.GridView: its owner's, and others' to read when shared. viewJson
+        holds the extent or center and zoom, the projection and the layers chosen with their styles; a layer it names that
+        is gone or not permitted falls back to the profile's, with an explanation. -->
+    <entity entity-name="MapSavedView" package="moqui.maps" use="configuration" cache="never">
+        <field name="savedViewId" type="id" is-pk="true"/>
+        <field name="description" type="text-medium"/>
+        <field name="ownerUserId" type="id"/>
+        <field name="isShared" type="text-indicator"/>
+        <field name="profileId" type="id"/>
+        <field name="viewJson" type="text-very-long"/>
+        <relationship type="one" title="Owner" related="moqui.security.UserAccount">
+            <key-map field-name="ownerUserId" related="userId"/></relationship>
+        <relationship type="one" related="moqui.maps.MapProfile"/>
+    </entity>
+
+    <!-- A user's overlay (§4.1, §4.2, §8; P3, MapOverlays.js): a GeoJSON, GPX or KML file in a drive, drawn over the map as
+        sanitized GeoJSON through Browse's overlay transition, which checks the reader's access to the file in its drive on
+        every request (get#DriveAccess: the owner, a member, or a ResourceShare of the file or a folder above it) and writes
+        nothing. The file is the original, kept as it was uploaded (an upload goes to Maps/overlays in the user's personal
+        drive) or picked from a drive the user reads; the row holds what reading it found when it was added. A shared
+        overlay is the file shared with ResourceShare, no other ACL: a reader the file is shared with sees the owner's row
+        read-only. isPlaces Y is the user's saved places, the GeoJSON file Maps/places.geojson of their personal drive
+        (store#Place). Removing the row leaves the file. -->
+    <entity entity-name="MapOverlay" package="moqui.maps" use="transactional" cache="never">
+        <field name="overlayId" type="id" is-pk="true"/>
+        <field name="ownerUserId" type="id"/>
+        <field name="label" type="text-medium"/>
+        <field name="driveId" type="id"/>
+        <field name="path" type="text-medium"><description>The file's path in the drive, from its root</description></field>
+        <field name="formatEnumId" type="id"><description>MLF_GEOJSON, MLF_GPX or MLF_KML</description></field>
+        <field name="isPlaces" type="text-indicator"/>
+        <field name="featureCount" type="number-integer"/>
+        <field name="rejectedCount" type="number-integer"><description>Features left out for a geometry that is not sane</description></field>
+        <field name="minLongitude" type="number-float"/><field name="minLatitude" type="number-float"/>
+        <field name="maxLongitude" type="number-float"/><field name="maxLatitude" type="number-float"/>
+        <field name="sourceCrs" type="text-short"><description>EPSG:4326, or EPSG:3857 for a GeoJSON file that declared it</description></field>
+        <field name="importNotes" type="text-long"><description>What was not read or kept, a line each</description></field>
+        <field name="createdDate" type="date-time"/>
+        <relationship type="one" title="Owner" related="moqui.security.UserAccount">
+            <key-map field-name="ownerUserId" related="userId"/></relationship>
+        <relationship type="one-nofk" related="moqui.resource.ResourceDrive" short-alias="drive"/>
+        <relationship type="one" title="MapLayerFormat" related="moqui.basic.Enumeration" short-alias="format">
+            <key-map field-name="formatEnumId"/></relationship>
+        <!-- one row a user for a file: the same file added again brings its row up to date -->
+        <index name="MAPS_OVERLAY_FILE" unique="true"><index-field name="ownerUserId"/><index-field name="driveId"/>
+            <index-field name="path"/></index>
+        <index name="MAPS_OVERLAY_DRIVE"><index-field name="driveId"/></index>
+    </entity>
+
+    <!-- A registered record or layer adapter (§3.2), as ConnectionAdapter and TransferTarget register theirs: seed data of the
+        component that owns the records, never a name an administrator or a browser enters. A browser sends only the
+        adapterKey; org.moqui.maps.MapServices.get#AdapterService resolves it. Each named service implements its
+        framework interface of MapServices; a row naming a service that does not exist is logged by name when read and
+        left out (find#MapAdapters), as is one whose service lacks its interface's in-parameters. The registration adds no
+        right: the adapter checks the caller's access to the record itself. The local-map dialog's grants (MAPS_DIALOG) are
+        not inherited, so each adapter service needs a grant of its own, from its component, to the users who open the
+        dialog. -->
+    <entity entity-name="MapAdapter" package="moqui.maps" use="configuration" cache="true">
+        <field name="adapterKey" type="id" is-pk="true"/>
+        <field name="description" type="text-medium"/>
+        <field name="contextServiceName" type="text-medium"><description>Implements get#RecordMapContext; empty for a
+            layer adapter</description></field>
+        <field name="storeServiceName" type="text-medium"><description>Implements store#RecordLocation; empty for a
+            read-only adapter, which offers no Choose location</description></field>
+        <field name="featuresServiceName" type="text-medium"><description>Implements find#LayerFeatures; empty for a
+            record adapter with no layer</description></field>
+        <field name="sequenceNum" type="number-integer"/>
+        <field name="disabled" type="text-indicator"/>
+    </entity>
+
+    <!-- A registered source of Geo data (§6.4): seed data for the sources supported first, and an administrator's row for a
+        mirror or a later year. A download goes only to the host of a registered row. urlTemplate takes {country} (a
+        country's code as the source has it) and {year} (sourceYear); archiveMember names the zip member read, with the
+        same placeholders, and is empty for a bare file. parser is the reader of the source's format, yields what it gives,
+        and priority which source's point is a Geo's active one where several have it (lower first). The license is
+        acknowledged once, by an administrator, before the first run. sourceKey names the source in the IDs of the points
+        it makes (BasicEntities.xml, before GeoPostalCode): a mirror or a later year of a source has the same sourceKey, so
+        its import updates the same rows. The seed's identity, parser, license and attribution are in data/MapsData.xml
+        (seed); urlTemplate, archiveMember, sourceYear and priority, which an administrator may change, in
+        data/MapsSetupData.xml (seed-initial), so a reload of the seed does not undo an edit. -->
+    <entity entity-name="GeoDataSet" package="moqui.maps" use="configuration" cache="true">
+        <field name="dataSetId" type="id" is-pk="true"/>
+        <field name="sourceKey" type="id"><description>At most 12 characters (a point ID is the Geo's ID, _ and this, within
+            40): CENSUS_ZCTA, GN_POSTAL</description></field>
+        <field name="publisher" type="text-medium"/>
+        <field name="description" type="text-long"/>
+        <field name="parserEnumId" type="id"/>
+        <field name="yieldsEnumId" type="id"/>
+        <field name="urlTemplate" type="text-medium"><description>Empty for an operator's file, which comes from an upload
+            or a resource location</description></field>
+        <field name="archiveMember" type="text-medium"/>
+        <field name="sourceYear" type="text-short"/>
+        <field name="coverageGeoId" type="id"><description>The country it covers; empty for a set read a country at a time
+            (perCountry Y) or one that is global</description></field>
+        <field name="perCountry" type="text-indicator"><description>Y: a run names a country, the {country} of urlTemplate</description></field>
+        <field name="countryCodes" type="text-long"><description>For a set read a country at a time: the ISO alpha-2 codes of
+            the countries its publisher has a file for, comma separated (GeoNames' 124), the countries Geo data's Import
+            offers; empty for any country</description></field>
+        <field name="licenseName" type="text-medium"/>
+        <field name="licenseUrl" type="text-medium"/>
+        <field name="attribution" type="text-long"/>
+        <field name="sourceUrl" type="text-medium"><description>The publisher's page for the set, its documentation</description></field>
+        <field name="priority" type="number-integer"/>
+        <field name="dataSourceId" type="id"><description>The DataSource of the Geo rows and points it makes</description></field>
+        <field name="licenseAckUserId" type="id" enable-audit-log="update"/>
+        <field name="licenseAckDate" type="date-time"/>
+        <field name="disabled" type="text-indicator"/>
+        <relationship type="one" title="GeoDataParser" related="moqui.basic.Enumeration" short-alias="parser">
+            <key-map field-name="parserEnumId"/></relationship>
+        <relationship type="one" title="GeoDataYields" related="moqui.basic.Enumeration" short-alias="yields">
+            <key-map field-name="yieldsEnumId"/></relationship>
+        <!-- no FK: the countries are seed-initial data, this registry seed -->
+        <relationship type="one-nofk" title="Coverage" related="moqui.basic.Geo" short-alias="coverage">
+            <key-map field-name="coverageGeoId" related="geoId"/></relationship>
+        <relationship type="one" related="moqui.basic.DataSource" short-alias="dataSource"/>
+        <relationship type="one" title="LicenseAck" related="moqui.security.UserAccount">
+            <key-map field-name="licenseAckUserId" related="userId"/></relationship>
+        <seed-data>
+            <moqui.basic.EnumerationType description="Geo Data Parser" enumTypeId="GeoDataParser"/>
+            <moqui.basic.Enumeration description="Census pipe-delimited text with a header" enumId="GDP_CENSUS" enumTypeId="GeoDataParser" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="GeoNames tab-delimited text, no header" enumId="GDP_GEONAMES" enumTypeId="GeoDataParser" sequenceNum="2"/>
+            <moqui.basic.Enumeration description="Operator CSV (country, code, place, admin codes, latitude, longitude, precision)" enumId="GDP_OPERATOR_CSV" enumTypeId="GeoDataParser" sequenceNum="3"/>
+
+            <moqui.basic.EnumerationType description="Geo Data Yields" enumTypeId="GeoDataYields"/>
+            <moqui.basic.Enumeration description="Postal codes with points" enumId="GDY_POSTAL_POINTS" enumTypeId="GeoDataYields" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="Counties (second-level divisions) with points" enumId="GDY_COUNTIES" enumTypeId="GeoDataYields" sequenceNum="2"/>
+            <moqui.basic.Enumeration description="Cities and places with points" enumId="GDY_PLACES" enumTypeId="GeoDataYields" sequenceNum="3"/>
+            <moqui.basic.Enumeration description="The county of each postal area" enumId="GDY_POSTAL_COUNTY" enumTypeId="GeoDataYields" sequenceNum="4"/>
+            <moqui.basic.Enumeration description="Countries" enumId="GDY_COUNTRIES" enumTypeId="GeoDataYields" sequenceNum="5"/>
+            <moqui.basic.Enumeration description="First-level divisions (states, provinces)" enumId="GDY_ADMIN1" enumTypeId="GeoDataYields" sequenceNum="6"/>
+            <moqui.basic.Enumeration description="Second-level divisions" enumId="GDY_ADMIN2" enumTypeId="GeoDataYields" sequenceNum="7"/>
+        </seed-data>
+    </entity>
+
+    <!-- A run of the Geo data importer (§6.4): one data set, and a country for a set read a country at a time. The edition is
+        the source's year or its Last-Modified; the counts are written after each batch, and a cancel request is read
+        between batches. Rejected rows go to the error file. A run that fails or is cancelled leaves the edition in use,
+        the last completed run's, as it was. Run as a ServiceJob, whose run it names. -->
+    <entity entity-name="GeoDataImport" package="moqui.maps" use="transactional" cache="never">
+        <field name="geoDataImportId" type="id" is-pk="true"/>
+        <field name="dataSetId" type="id"/>
+        <field name="countryGeoId" type="id"/>
+        <field name="statusId" type="id" enable-audit-log="true"/>
+        <field name="edition" type="text-short"/>
+        <field name="sourceUrl" type="text-medium"><description>The URL downloaded, its template expanded</description></field>
+        <field name="sourceLocation" type="text-medium"><description>An operator's file: its resource location</description></field>
+        <field name="sourceEtag" type="text-medium"/>
+        <field name="sourceLastModified" type="text-short"/>
+        <field name="checksum" type="text-medium"><description>SHA-256 of the file read, hex (64 characters)</description></field>
+        <field name="byteCount" type="number-integer"/>
+        <field name="rowsRead" type="number-integer"/>
+        <field name="rowsCreated" type="number-integer"/>
+        <field name="rowsUpdated" type="number-integer"/>
+        <field name="rowsUnchanged" type="number-integer"/>
+        <field name="rowsRetired" type="number-integer"/>
+        <field name="rowsRejected" type="number-integer"/>
+        <field name="errorFileLocation" type="text-medium"/>
+        <field name="errorLocation" type="text-medium"><description>Where the run failed: a step, or a line of the file</description></field>
+        <field name="failureText" type="text-long"/>
+        <field name="forced" type="text-indicator"><description>Y: an administrator accepted a file with far fewer rows than
+            the edition in use</description></field>
+        <field name="cancelRequested" type="text-indicator"/>
+        <field name="jobRunId" type="id"/>
+        <field name="userId" type="id"/>
+        <field name="fromDate" type="date-time"/>
+        <field name="thruDate" type="date-time"/>
+        <relationship type="one" related="moqui.maps.GeoDataSet" short-alias="dataSet"/>
+        <relationship type="one" title="Country" related="moqui.basic.Geo" short-alias="country">
+            <key-map field-name="countryGeoId" related="geoId"/></relationship>
+        <relationship type="one" title="GeoDataImport" related="moqui.basic.StatusItem" short-alias="status"/>
+        <relationship type="one-nofk" related="moqui.service.job.ServiceJobRun" short-alias="jobRun"/>
+        <relationship type="one" related="moqui.security.UserAccount"/>
+        <index name="MAPS_IMPORT_SET"><index-field name="dataSetId"/><index-field name="countryGeoId"/></index>
+        <seed-data>
+            <moqui.basic.StatusType description="Geo Data Import" statusTypeId="GeoDataImport"/>
+            <moqui.basic.StatusItem description="Pending" sequenceNum="1" statusId="GdiPending" statusTypeId="GeoDataImport"/>
+            <moqui.basic.StatusItem description="Downloading" sequenceNum="2" statusId="GdiDownloading" statusTypeId="GeoDataImport"/>
+            <moqui.basic.StatusItem description="Validating" sequenceNum="3" statusId="GdiValidating" statusTypeId="GeoDataImport"/>
+            <moqui.basic.StatusItem description="Loading" sequenceNum="4" statusId="GdiLoading" statusTypeId="GeoDataImport"/>
+            <moqui.basic.StatusItem description="Completed" sequenceNum="5" statusId="GdiCompleted" statusTypeId="GeoDataImport"/>
+            <moqui.basic.StatusItem description="Current (source unchanged)" sequenceNum="6" statusId="GdiUnchanged" statusTypeId="GeoDataImport"/>
+            <moqui.basic.StatusItem description="Failed" sequenceNum="7" statusId="GdiFailed" statusTypeId="GeoDataImport"/>
+            <moqui.basic.StatusItem description="Cancelled" sequenceNum="8" statusId="GdiCancelled" statusTypeId="GeoDataImport"/>
+        </seed-data>
+    </entity>
+</entities>

@@ -184,6 +184,11 @@ along with this software (see the LICENSE.md file). If not, see
             description="A printer on a print server (NetworkPrinter)"/>
     <moqui.server.ConnectionAdapter adapterKey="relay" title="Mail relay" adapterGroup="mail" creatable="Y" sequenceNum="10"
             description="An outgoing mail server no mail account owns (EmailServer)"/>
+    <!-- Maps' providers (plans/Maps.md §4.2): a kind with a service, org.moqui.maps.MapServices.run#MapProviderAdapter
+        (MapProviders.js), on the same engine; Maps › Configuration takes the shared parts in -->
+    <moqui.server.ConnectionAdapter adapterKey="mapProvider" title="Map provider" adapterGroup="integration" creatable="Y" sequenceNum="70"
+            description="A hosted basemap style, raster tiles or a geocoder a map is drawn from or asks (MapProvider)"
+            adapterServiceName="org.moqui.maps.MapServices.run#MapProviderAdapter"/>
 
     <!-- ========== Admin P12 (mr-boss plan/impl-admin.md P12): protocols and the mail queue ========== -->
     <!-- The protocol services for every signed-in user: get#ProtocolReadiness checks ADMIN_CONNECTION_VIEW,
@@ -558,6 +563,33 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.server.ReadinessProvider providerKey="constitution.global" version="1" ownerApp="System" title="Instance Constitution"
             healthGroupEnumId="AdmHgBusiness" scopeEnumId="AdmScInstance" serviceName="org.moqui.admin.ReadinessServices.check#InstanceSetup"
             requiredPermission="ADMIN_OVERVIEW_VIEW" fixRoute="constitution" sequenceNum="140"/>
+    <!-- Maps' (plans/Maps.md §4.2), org.moqui.maps.MapServices.check#Readiness (MapProviders.js; its grant is tools
+        data/MapsSecurityData.xml MAPS_READINESS): mapsConfiguration is Maps › Configuration's key -->
+    <moqui.server.ReadinessProvider providerKey="maps.profile" version="1" ownerApp="Maps" title="Map profile"
+            description="The installation's default map profile can be drawn; whether maps draw the country outlines only"
+            healthGroupEnumId="AdmHgBusiness" scopeEnumId="AdmScInstance" serviceName="org.moqui.maps.MapServices.check#Readiness"
+            requiredPermission="ADMIN_OVERVIEW_VIEW" fixRoute="mapsConfiguration" sequenceNum="300"/>
+    <moqui.server.ReadinessProvider providerKey="maps.providers" version="1" ownerApp="Maps" title="Map providers"
+            description="Each enabled map provider passed its test, and the page's Content-Security-Policy lets a browser reach its hosts"
+            healthGroupEnumId="AdmHgTransport" scopeEnumId="AdmScInstance" serviceName="org.moqui.maps.MapServices.check#Readiness"
+            requiredPermission="ADMIN_CONNECTION_VIEW" fixRoute="adminConnection" sequenceNum="310"/>
+    <!-- Maps' archives (plans/Maps.md §5), org.moqui.maps.MapSourceServices.check#ArchiveReadiness (MapSources.js; its grant is
+        tools data/MapsSecurityData.xml MAPS_READINESS) -->
+    <moqui.server.ReadinessProvider providerKey="maps.archives" version="1" ownerApp="Maps" title="Map archives"
+            description="Each registered map archive is still the registered revision, read by range (in git, a Git LFS object), and each archive layer is registered"
+            healthGroupEnumId="AdmHgBusiness" scopeEnumId="AdmScInstance" serviceName="org.moqui.maps.MapSourceServices.check#ArchiveReadiness"
+            requiredPermission="ADMIN_OVERVIEW_VIEW" fixRoute="mapsConfiguration" sequenceNum="315"/>
+    <!-- Maps' Geo data (plans/Maps.md §6.4), org.moqui.maps.MapServices.check#GeoDataReadiness (GeoData.js; its grant is tools
+        data/MapsSecurityData.xml MAPS_READINESS), and its refresh, which starts the GeoDataRefresh ServiceJob
+        (GeoDataServices.request#GeoDataRefresh): offered to holders of ADMIN_SETTINGS_MANAGE, and run only for a caller who
+        also holds MAPS_ADMIN's authorization of the service (ADMIN's); another is refused by authorization -->
+    <moqui.server.ReadinessProvider providerKey="maps.geodata" version="1" ownerApp="Maps" title="Geo data"
+            description="Postal code data is imported for the default country, the last import of each data set did not fail, and a postal data set's license is acknowledged"
+            healthGroupEnumId="AdmHgBusiness" scopeEnumId="AdmScInstance" serviceName="org.moqui.maps.MapServices.check#GeoDataReadiness"
+            requiredPermission="ADMIN_OVERVIEW_VIEW" fixRoute="mapsConfiguration" sequenceNum="320"/>
+    <moqui.server.RefreshOperation refreshKey="maps.geodata.refresh" version="1" ownerApp="Maps" title="Refresh the imported Geo data"
+            serviceName="org.moqui.maps.GeoDataServices.request#GeoDataRefresh" sourceKindEnumId="AdmRsFeed" sourceName="Geo data"
+            requiredPermission="ADMIN_SETTINGS_MANAGE" providerKey="maps.geodata"/>
     <!-- The framework's own settings index entries, each shown to a caller its System screen opens to. An app that
         shows one of these screens under its own root seeds the entry again with its own screenLocation. -->
     <moqui.server.SettingsEntry settingsKey="admin.instanceSettings" version="1" ownerApp="System" title="Instance settings"
@@ -595,4 +627,11 @@ along with this software (see the LICENSE.md file). If not, see
             settingsGroupEnumId="AdmSgInstance" scopeEnumId="AdmScInstance" destinationRoute="adminTopics"
             screenLocation="component://tools/screen/System/Operations/Topics.xml" viewPermission="ADMIN_SETTINGS_VIEW"
             configuredBy="Configuration administrator" sequenceNum="116"/>
+    <!-- Maps › Configuration (plans/Maps.md §3.1), shown to a caller whose grants open it (MAPS_ADMIN, tools
+        data/MapsSecurityData.xml); mapsConfiguration is its route key (tools template/AdminMount.js) -->
+    <moqui.server.SettingsEntry settingsKey="maps.configuration" version="1" ownerApp="Maps" title="Maps"
+            description="The basemaps and layers every map draws and where they come from: map providers, profiles and the default one, layers, outside requests and readiness"
+            settingsGroupEnumId="AdmSgApplications" scopeEnumId="AdmScInstance" destinationRoute="mapsConfiguration"
+            screenLocation="component://tools/screen/Maps/Configuration.xml" providerKey="maps.profile"
+            configuredBy="Configuration administrator" sequenceNum="300"/>
 </entity-facade-xml>
