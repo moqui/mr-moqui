@@ -747,16 +747,19 @@ function receive(p) {
         ec.logger.warn(`SMS ${p.messageId}: a text from a new number ${theirs} to ${ours} past the day's ${pairRooms} new conversations; held`)
         const overKey = 'pairs-held:' + ours
         const first = sentToday(overKey, day) === 0
-        ec.transaction.runRequireNew(null, 'The held conversation was not counted', () => countSent([overKey], day, 1))
-        if (first) {
-          try {
+        // the first held one of the day tells the admins, in the count's own transaction: the count and the notice are
+        // kept or lost together (a notice goes out when its transaction commits), so a failed notice is tried again by
+        // the next held text; either failure is logged and the text is still kept
+        try {
+          ec.transaction.runRequireNew(null, 'The held conversation was not counted', () => {
+            countSent([overKey], day, 1)
             // the title's names are the message's: a number is never part of the template
-            ec.makeNotificationMessage().topic('VoiceAlert').userGroupId((one(POLICY, { voicePolicyId: 'DEFAULT' }) || {}).alertUserGroupId)
+            if (first) ec.makeNotificationMessage().topic('VoiceAlert').userGroupId((one(POLICY, { voicePolicyId: 'DEFAULT' }) || {}).alertUserGroupId)
               .message({ kind: 'newConversationsHeld', ourNumber: ours, cap: pairRooms })
               .title('New text conversations on ${ourNumber} are held: more than ${cap} came today').send()
-          } catch (err) {
-            ec.logger.error(`SMS ${p.messageId}: the admins were not told of the held conversations: ${err && err.message ? err.message : err}`)
-          }
+          })
+        } catch (err) {
+          ec.logger.error(`SMS ${p.messageId}: the held conversation was not counted, or the admins not told of it: ${err && err.message ? err.message : err}`)
         }
       } else {
         ec.transaction.runRequireNew(null, 'The new conversation was not counted', () => countSent([pairsKey], day, 1))

@@ -250,9 +250,9 @@ along with this software (see the LICENSE.md file). If not, see
     </eeca>
     <!-- The new-device sign-in notice (mr-boss plan/impl-admin.md P10, design-admin §4 Sessions): a successful sign-in's
         history row is written by a worker after the sign-in itself (crates/moqui-core/src/user/login.rs save_history, at
-        most one row a minute for a user), with its visit; the notice is decided and sent then, in a transaction of its own
-        (a notification whose email cannot be sent marks its transaction rollback-only). It never fails the row: a failure
-        is logged. -->
+        most one row a minute for a user), with its visit; the notice is decided and stored then, in a transaction of its
+        own, and goes out (socket, email, push) once that commits, an email that cannot be sent being logged. It never fails
+        the row: a failure is logged. -->
     <eeca id="UserLoginHistoryNewDevice" entity="moqui.security.UserLoginHistory" on-create="true">
         <condition><expression>successfulLogin == 'Y' &amp;&amp; !!visitId</expression></condition>
         <actions><script><![CDATA[
