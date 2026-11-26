@@ -990,6 +990,23 @@ test('geomaps read the bundled outline, match Moqui, alpha-2 and numeric country
     try {app.mount(target);await Vue.nextTick();const shaded=target.querySelector('svg [data-country="840"]');assert.equal(shaded.getAttribute('fill-opacity'),'1');assert.equal(target.querySelectorAll('figure.m-report-geomap svg path').length,outline.length);}
     finally {app.unmount();target.remove();}
 });
+test('a geomap mounted before its outline loads draws the countries when the load finishes (DASH-UI-006)',async()=>{
+    const outline=await report.loadOutline(),saved=[report.outline,report.outlineLoading],fetch=window.fetch;
+    let release;const held=new Promise(resolve=>{release=resolve;});
+    report.outline=null;report.outlineLoading=null;window.fetch=(...args)=>held.then(()=>fetch(...args));
+    const frame={fields:[{name:'countryGeoId',type:'string',values:['FRA']},{name:'sales',type:'number',values:[3]}]},mounted=[];
+    const mount=async()=>{const target=document.createElement('div');document.body.appendChild(target);
+        const app=Vue.createApp(moqui.qvtComponents['m-report-panel'],{frame,panel:{visualization:'geomap'}});app.mount(target);await Vue.nextTick();mounted.push({target,app});return target;};
+    const paths=target=>target.querySelectorAll('figure.m-report-geomap svg path').length,status=target=>(target.querySelector('figure.m-report-geomap [role="status"]')||{}).textContent||'';
+    try {
+        // the second panel mounts while the first panel's load is in flight
+        const first=await mount(),second=await mount();
+        for(const target of [first,second]){assert.equal(paths(target),0);assert.equal(status(target),'Loading the map outline…');}
+        release();await report.loadOutline();await Vue.nextTick();
+        // nothing else touched the panels: the load alone draws them
+        for(const target of [first,second]){assert.equal(paths(target),outline.length);assert.equal(status(target),'');assert.ok(target.querySelector('svg [data-country="250"]'));}
+    } finally {window.fetch=fetch;release();report.outline=saved[0];report.outlineLoading=saved[1];for(const each of mounted){each.app.unmount();each.target.remove();}}
+});
 test('a geomap country or point opens Maps there only where the dashboard offers the maps link',async()=>{
     const outline=await report.loadOutline();
     const france=outline.find(country=>country.id==='250'),extent=report.countryExtent(france);

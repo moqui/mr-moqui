@@ -563,13 +563,19 @@
     // The bundled outline (Natural Earth 110m countries as TopoJSON, from world-atlas), loaded once; the print document
     // inlines it as moquiReportGeo.
     report.outlinePath = "/libs/naturalearth/countries-110m.json";
+    // The outline when it is already at hand (loaded, or inlined by the print document), else null. It is marked raw so
+    // a panel holding it in its data does not make its geometries reactive.
+    report.currentOutline = () => {
+        if (root.moquiReportGeo && !report.outline) report.outline = report.rawOutline(report.topoCountries(root.moquiReportGeo));
+        return report.outline || null;
+    };
+    report.rawOutline = (outline) => root.Vue && root.Vue.markRaw ? root.Vue.markRaw(outline) : outline;
     report.loadOutline = () => {
-        if (root.moquiReportGeo && !report.outline) report.outline = report.topoCountries(root.moquiReportGeo);
-        if (report.outline) return Promise.resolve(report.outline);
+        if (report.currentOutline()) return Promise.resolve(report.outline);
         if (!report.outlineLoading) report.outlineLoading = root.fetch(report.outlinePath, { credentials: "same-origin" }).then((response) => {
             if (!response.ok) throw new Error("Map outline unavailable (" + response.status + ")");
             return response.json();
-        }).then((topology) => (report.outline = report.topoCountries(topology))).catch((error) => { report.outlineLoading = null; throw error; });
+        }).then((topology) => (report.outline = report.rawOutline(report.topoCountries(topology)))).catch((error) => { report.outlineLoading = null; throw error; });
         return report.outlineLoading;
     };
     // Countries of a TopoJSON topology: {id (ISO numeric), name, polygons of [lon, lat] rings, centroid}.
@@ -1374,7 +1380,7 @@
             title: String, height: { type: String, default: "300px" }, dashboardId: String, panelId: String, screenUrl: String, range: Object, variables: Object, syncGroup:String,filters:{type:Array,default:()=>[]},
             editable:Boolean, embedded:Boolean, single:Boolean, appLinks:Object, display:Boolean },
         emits:["filter"],
-        data: () => ({ sortField: -1, descending: false, inspector: false, inspection: null, busy: false, actionError: "", menu: false, shared: "", status: "", flameFocus: null, outlineReady: false, outlineError: "" }),
+        data: () => ({ sortField: -1, descending: false, inspector: false, inspection: null, busy: false, actionError: "", menu: false, shared: "", status: "", flameFocus: null, outline: report.currentOutline(), outlineError: "" }),
         computed: { themeDark() { return !!(this.$q && this.$q.dark && this.$q.dark.isActive); } },
         mounted() { this.needOutline(); this.colorFlameLabels(); },
         updated() { this.needOutline(); this.colorFlameLabels(); },
@@ -1419,11 +1425,13 @@
                     label.setAttribute("fill", chosen.get(key));
                 }
             },
-            // A geomap waits for the bundled outline; the panel draws again once it is loaded.
+            // A geomap waits for the bundled outline. The render reads it from this panel's data, not from moqui.report
+            // (which Vue does not track), so setting it there when the load finishes draws the countries
+            // (plans/ui-review-dashboards.md DASH-UI-006).
             needOutline() {
-                if ((this.panel.visualization || this.panel.type) !== "geomap" || report.outline || this.outlineError || this.outlineRequested) return;
+                if ((this.panel.visualization || this.panel.type) !== "geomap" || this.outline || this.outlineError || this.outlineRequested) return;
                 this.outlineRequested = true;
-                report.loadOutline().then(() => { this.outlineReady = true; }).catch((error) => { this.outlineError = String(error && error.message || error); });
+                report.loadOutline().then((outline) => { this.outline = outline; }).catch((error) => { this.outlineError = String(error && error.message || error); });
             },
             // The app's links: the dashboard's, or a standalone panel's own (Explore's histogram).
             links(){return this.appLinks || this.panel.appLinks;},
@@ -1507,8 +1515,6 @@
             const shared = this.status ? h("p", { role: "status", class: "q-my-xs" }, [this.status, " ", this.shared ? h("input", { type: "text", readonly: true, value: this.shared, "aria-label": T("Panel link"), style: { width: "min(100%,40rem)" }, onFocus: (event) => event.target.select() }) : null,
                 E.button("Close", () => { this.status = ""; this.shared = ""; })]) : null;
             let content;
-            // The print document inlines the outline, so its map is drawn in the first pass.
-            if (visual === "geomap" && !report.outline && root.moquiReportGeo) report.loadOutline();
             if (visual === "text") content = h(root.Vue.resolveComponent("m-markdown"), { text: report.substituteVariables(this.panel.text || "", Object.assign({}, this.variables, this.panel.repeatValues), this.range) });
             // a panel that could not be read (a dataset the viewer may not read, a failed query) says so, never "no data"
             else if (!rows.length && report.unavailable(this.panel)) content = h("p", { role: "alert", class: "text-negative" }, T("Not available: {0}", report.unavailable(this.panel)));
@@ -1575,8 +1581,8 @@
                         h("rect", { width: "100%", height: rowHeight - 1, style: { width: "max(0.5px, calc(100% - 1px))" }, fill: report.color(colors[rect.depth % colors.length]), opacity: 0.35 + 0.65 * (rect.self / rect.total || 0) }),
                         // a frame narrower than 1% of the graph keeps its title tooltip but draws no label
                         rect.w >= 0.01 ? h("text", { class: "m-report-flame-label", x: 3, y: 14, "font-size": "12", fill: "currentColor" }, rect.name) : null])))]);
-            } else if (visual === "geomap" && report.geomap(frame, this.panel, report.outline)) {
-                const map = report.geomap(frame, this.panel, report.outline), formatted = (value) => report.format(value, map.field || { type: "number" });
+            } else if (visual === "geomap" && report.geomap(frame, this.panel, this.outline)) {
+                const map = report.geomap(frame, this.panel, this.outline), formatted = (value) => report.format(value, map.field || { type: "number" });
                 // a country or a point opens Maps there, where the dashboard's screen offers it (appLinks.maps); else nothing changes
                 const maps = (this.links() || {}).maps, opens = (place, name) => {
                     const url = report.mapsUrl(maps, place);
@@ -1589,7 +1595,7 @@
                     opens({ lon: point.lon, lat: point.lat }, point.label || report.format(point.lat, { type: "number" }) + ", " + report.format(point.lon, { type: "number" }))), [h("title", (point.label ? point.label + ": " : "") + formatted(point.value))]));
                 content = h("figure", { class: "m-report-geomap q-ma-none" }, [
                     h("svg", { viewBox: "0 0 360 150", width: "100%", style: { maxHeight: this.height }, role: "img", "aria-label": map.mode === "points" ? "Map of " + map.points.length + " places" : "Map of " + map.listed.length + " countries" }, [...base, ...points]),
-                    !report.outline ? h("p", { role: "status", class: "text-caption" }, this.outlineError || "Loading the map outline…") : null,
+                    !this.outline ? h("p", { role: "status", class: "text-caption" }, this.outlineError || "Loading the map outline…") : null,
                     map.mode === "countries" ? h("details", [h("summary", "Values by country"), h("table", { class: "q-table" }, [h("tbody", map.listed.slice(0, 50).map((item) => h("tr", { key: item.id }, [h("td", item.name), h("td", formatted(item.value))])))]),
                         map.unmatched.length ? h("p", { class: "text-caption" }, "Not a known country code: " + map.unmatched.join(", ")) : null]) : null]);
             } else if (visual === "stateTimeline") {
