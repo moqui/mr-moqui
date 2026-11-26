@@ -23,3 +23,13 @@ browser.runInPage({
         "/files/component/dev-aide/screen/devstatic/DevAideGit.js"],
     test: "/files/component/dev-aide/test/client/pages/DevAideGit.page.js",
 })
+
+// Co-editing a file (DevAideCoedit.js, F15): the pure parts, and two tabs on one fake room bound to m-code-editor's
+// y-codemirror.next extensions, with moqui.coedit.Provider's protocol.
+
+browser.runInPage({
+    scripts: ["/js/MoquiLib.js", "/js/WebrootVue.qvt.js", "/libs/codemirror/codemirror.min.js", "/js/WebrootCode.js",
+        "/libs/yjs/yjs.min.js", "/libs/codemirror/y-codemirror.min.js", "/files/component/dev-aide/screen/devstatic/DevAideCoedit.js"],
+    test: "/files/component/dev-aide/test/client/pages/DevAideCoedit.page.js",
+})
+

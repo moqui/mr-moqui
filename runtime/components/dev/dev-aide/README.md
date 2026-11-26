@@ -13,7 +13,10 @@ The assisted IDE of mr-moqui (`plans/design-dev-aide.md`), at `/qapps/dev` on a 
 - **Workspace** is the IDE: the roots (the repositories and directories of the loaded components), the file tree with
   git status, files in the CodeMirror editor with schema completion and checks, Save that reloads what the file defines,
   Search in files with Replace (a preview of each file's matches to choose from, written as Save writes), Changes
-  (stage, unstage, discard, commit with the task trailer), Commits, Fetch, Pull, Push and Publish. In the
+  (stage, unstage, discard, commit with the task trailer), Commits, Fetch, Pull, Push and Publish. The editor's
+  settings (Settings › Editor) pick CodeMirror's, VS Code's or Vim's keys. On a shared dev
+  server (`dev-aide shared="true"`) the users with one file open edit it together, each seeing the others' carets and
+  selections by name, the file a writer may save seeded into its room and Save still each user's own, by hash. In the
   terminal (`moqui tui`) it is a simpler form, `WorkspaceTui.xml`: the tree, Go to file and Search, one file in the
   `code` editor with Save and its problems (and References and Browse for the artifacts it defines), Changes with the commit form, Commits with Cherry-pick and Revert, and a Git
   menu; branches, tags, stashes, merge requests, review and blame open in the browser. A hosted root (Repositories ›

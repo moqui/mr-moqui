@@ -293,6 +293,25 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <out-parameters><parameter name="editors" type="List"/></out-parameters>
     </service>
+    <service verb="get" noun="CoeditAccess" type="rust" location="dev_aide::coedit::get_coedit_access" allow-remote="false" read-only="true">
+        <description>Whether a user may co-edit a file (F15), asked by the file's room (moqui-collab text rooms) as the
+            user: shared mode only, a user who may write the file as Save would, the path confined and as the Workspace
+            names it; with the bounds, and the file's text (LF line endings) when asked. Refused for another user than
+            the current one.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="path" required="true"/>
+            <parameter name="userId" required="true"/>
+            <parameter name="withText" type="Boolean"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="canEdit" type="Boolean"/>
+            <parameter name="reason"><description>Why not, when the user may not</description></parameter>
+            <parameter name="text"/>
+            <parameter name="maxBytes" type="Long"/>
+            <parameter name="maxRooms" type="Long"/>
+        </out-parameters>
+    </service>
     <service verb="get" noun="Credentials" type="rust" location="dev_aide::workspace::get_credentials" allow-remote="false" read-only="true">
         <description>The shared server's stored git tokens, without the tokens. An admin's.</description>
         <out-parameters><parameter name="credentials" type="List"/></out-parameters>

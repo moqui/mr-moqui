@@ -8,6 +8,8 @@
  * Commits. It talks to the transitions of DevAide/Workspace.xml. A save that finds the file changed on disk opens
  * Compare; a reload report (the DevReload notification) refreshes the tree and the status and the clean tabs, and marks
  * a tab with edits "Changed on disk". Unsaved text is kept in the browser (IndexedDB) by root and path until saved.
+ * On a shared dev server each tab of a file the user may write is co-edited with the others who have it open
+ * (DevAideCoedit.js, F15: their carets and selections by name; Save stays each user's, by hash).
  *
  * The pure parts are moqui.devAide.pure, which test/client/pages/DevAide.page.js runs in the page.
  */
@@ -610,6 +612,7 @@
             if (this.offPresence) this.offPresence();
             if (this.offSaved) this.offSaved();
             if (this.offProgress) this.offProgress();
+            if (this.coeditSessions) this.coeditSessions.destroy();
             clearInterval(this.presenceTimer);
             clearInterval(this.rebuildTimer);
             Object.values(this.outlineTimers || {}).forEach(clearTimeout);
@@ -654,6 +657,7 @@
                     this.gitAvailable = !!answer.gitAvailable;
                     this.upstreamEdits = !!answer.upstreamEdits;
                     this.shared = !!answer.shared;
+                    if (this.shared) this.syncCoedit();
                     const asked = this.query && this.query.rootId;
                     const site = this.roots.find((item) => !item.upstream);
                     this.selectRoot((asked && this.roots.find((item) => item.id === asked) ? asked : null) || (site || this.roots[0] || {}).id);
@@ -671,6 +675,7 @@
                     this.note("Unsaved changes in " + ((this.roots.find((item) => item.id === this.rootId) || {}).label || this.rootId) + " are kept in this browser until you open them again", "info");
                 }
                 this.rootId = id;
+                if (this.coeditSessions) this.coeditSessions.endAll();
                 this.tabs = []; this.active = null; this.status = null; this.diff = null; this.log = []; this.commitDetail = null;
                 this.treeKey++;
                 if (this.rail === "tasks") this.loadTasks();
@@ -755,7 +760,8 @@
                 if (!path) return;
                 how = how || {};
                 const opened = pure.openTab(this.tabs, { path, text: "", saved: "", base: "", loading: true, problems: [], line: line || 0,
-                    view: "text", artifact: how.artifact || "", page: how.page || "", outline: null, outlineError: "", companions: [] });
+                    view: "text", artifact: how.artifact || "", page: how.page || "", outline: null, outlineError: "", companions: [],
+                    collab: null, coedit: null, roomSavedHash: "" });
                 this.tabs = opened.tabs;
                 if (!quiet) this.active = opened.active;
                 this.tab = "code";
@@ -776,6 +782,7 @@
                         binary: !!file.binary, lineEnding: file.lineEnding || "LF", component: file.component
                     });
                     this.offerDraft(tab, this.rootId);
+                    this.syncCoedit();
                     this.loadSchema(tab);
                     this.loadThreads(tab);
                     this.takeDraft(tab, this.rootId);
@@ -954,6 +961,7 @@
                 const tab = this.tabs.find((item) => item.path === path);
                 const close = () => {
                     const next = pure.closeTab(this.tabs, path, this.active); this.tabs = next.tabs; this.active = next.active;
+                    this.syncCoedit();
                     if (moqui.codeEditor && moqui.codeEditor.dropState) moqui.codeEditor.dropState(this.rootId + ":" + path);
                     clearTimeout(this.outlineTimers[path]); delete this.outlineTimers[path];
                     this.saveHooks.delete(tab);
@@ -968,6 +976,32 @@
                     if (tab.text === text) tab.problems = answer.problems || [];
                     return answer.problems || [];
                 });
+            },
+            // ---- co-editing (F15): each tab of a file the user may write, on its room, in shared mode ----
+            syncCoedit() {
+                if (!this.shared || this.guided) return;
+                const client = this.$root && this.$root.notificationClient;
+                if (!client || typeof client.send !== "function" || !moqui.coedit || !moqui.coedit.Provider) return;
+                const loaded = devAide.coedit && devAide.coedit.loaded ? Promise.resolve()
+                    : moqui.loadScript("/devstatic/DevAideCoedit.js", null, () => !!(devAide.coedit && devAide.coedit.loaded));
+                loaded.then(() => {
+                    if (this.unmounted) return;
+                    if (!this.coeditSessions) {
+                        const rootVm = this.$root || {};
+                        const userId = rootVm.userId || "";
+                        const name = rootVm.userFullName || rootVm.username || userId;
+                        this.coeditSessions = new devAide.coedit.Sessions({ client, markRaw: root.Vue && root.Vue.markRaw,
+                            user: { id: userId, name, color: moqui.coedit.userColor(userId || name) },
+                            watch: (tab, fn) => this.$watch(() => tab.text, fn),
+                            onDropped: (tab) => this.note(tab.path.split("/").pop() + ": the shared text of the others replaced your unsaved changes", "warning") });
+                    }
+                    this.coeditSessions.sync(this.rootId, this.tabs, !!(this.root && this.root.kind === "hosted"));
+                }, (error) => console.error("Co-editing could not load; the files are edited alone", error));
+            },
+            coeditNote(tab) {
+                if (!tab || !tab.coedit) return "";
+                const peers = tab.coedit.peers || [];
+                return peers.length ? "co-editing with " + peers.join(", ") : "co-editing";
             },
             save(tab) {
                 tab = tab || this.current;
@@ -1035,6 +1069,12 @@
             reloadTab(tab) {
                 return this.get("file", { rootId: this.rootId, path: tab.path }).then((file) => {
                     if (file.hash === tab.base) { tab.changedOnDisk = false; return; }
+                    // co-edited: a save in the room (DevSaved names its hash), or the disk at the shared text, is the tab's
+                    // new base; the shared text stays as it is
+                    if (tab.collab && (file.hash === tab.roomSavedHash || devAide.coedit.lf(file.text) === devAide.coedit.lf(tab.text))) {
+                        tab.saved = devAide.coedit.lf(file.text); tab.base = file.hash; tab.status = file.status || ""; tab.changedOnDisk = false; tab.conflict = null;
+                        return;
+                    }
                     if (pure.isDirty(tab)) { tab.changedOnDisk = true; tab.disk = { text: file.text || "", hash: file.hash }; return; }
                     tab.text = file.text || ""; tab.saved = tab.text; tab.base = file.hash; tab.status = file.status || ""; tab.changedOnDisk = false;
                 }, () => { tab.changedOnDisk = true; });
@@ -1062,6 +1102,8 @@
             onSaved(message) {
                 const saved = pure.messageJson(message);
                 if (!saved || saved.rootId !== this.rootId || !this.tabs.some((tab) => tab.path === saved.path)) return;
+                const tab = this.tabs.find((item) => item.path === saved.path);
+                if (tab.collab && saved.hash) { tab.roomSavedHash = saved.hash; if (!tab.saving) this.reloadTab(tab); }
                 this.note(saved.path.split("/").pop() + " was saved by " + (saved.username || "another user"), "info");
             },
             editorsOf(path) { return pure.editorsOf(this.editors, path); },
@@ -1965,7 +2007,9 @@
           <span v-if="current.status" class="m-file-status q-ml-sm" :class="'m-file-status-' + current.status">{{current.status}}</span>
           <span v-else-if="!isGit" class="q-ml-sm m-muted">Not versioned</span>
           <q-chip v-if="current.readOnly" dense square icon="sym_o_lock" class="q-ml-sm" id="DevReadOnly">{{current.readOnlyReason || 'read only'}}</q-chip>
-          <q-chip v-if="editorsOf(current.path).length" dense square icon="sym_o_group" class="q-ml-sm" color="amber-3" text-color="black" id="DevEditedBy">being edited by {{editorsOf(current.path).join(', ')}}</q-chip>
+          <q-chip v-if="current.coedit" dense square icon="sym_o_group_work" class="q-ml-sm" color="teal-2" text-color="black" id="DevCoediting"
+              :title="'Shared: ' + current.coedit.state">{{coeditNote(current)}}</q-chip>
+          <q-chip v-else-if="editorsOf(current.path).length" dense square icon="sym_o_group" class="q-ml-sm" color="amber-3" text-color="black" id="DevEditedBy">being edited by {{editorsOf(current.path).join(', ')}}</q-chip>
           <q-space></q-space>
           <q-btn-toggle v-if="currentViews.length > 1" dense flat no-caps size="sm" :model-value="current.view" @update:model-value="setView(current, $event)"
               :options="currentViews.map(v => ({ label: v.label, value: v.name }))" id="DevViewToggle"></q-btn-toggle>
@@ -2008,7 +2052,7 @@
           <m-code-editor v-show="!currentSpec" class="col" :key="rootId + ':' + current.path" v-model="current.text" :file-name="current.path"
               :state-key="rootId + ':' + current.path" :read-only="current.readOnly" :blame="current.blame || threadMarks(current)" :schema="current.schema" :lint="lintOf(current)" height="100%"
               :highlight-lines="current.line ? [current.line] : []" @save="save(current)" @cursor="cursor = $event"
-              :extensions="editorExtensions()" @ready="editorView = $event"></m-code-editor>
+              :extensions="editorExtensions()" :collab="current.collab" @ready="editorView = $event"></m-code-editor>
         </template>
         <div class="m-dev-problems" v-if="refs.title" id="DevReferences">
           <div class="row items-center no-wrap q-px-sm q-pt-xs"><span class="text-caption text-weight-medium">{{refs.title}} {{refs.loading ? '…' : refs.items.length}}</span>

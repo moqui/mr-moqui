@@ -26,6 +26,7 @@ pub mod audit;
 mod browser;
 mod buffers;
 mod changeset;
+mod coedit;
 pub mod confine;
 mod data_load;
 mod dbform;
@@ -74,6 +75,7 @@ fn register(registry: &mut NativeRegistry) -> Result<(), Error> {
     dbform::register(registry)?;
     docs::register(registry)?;
     editor::register(registry)?;
+    coedit::register(registry)?;
     replace::register(registry)?;
     entities::register(registry)?;
     data_load::register(registry)?;

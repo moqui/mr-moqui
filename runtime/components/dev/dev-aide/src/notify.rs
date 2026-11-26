@@ -172,15 +172,17 @@ pub(crate) fn set_presence(
     }
 }
 
-/// A save told to the other users, whose clean tabs of the file take the new text through the reload report.
+/// A save told to the other users, whose clean tabs of the file take the new text through the reload report; `hash` is
+/// the file's after it, which a co-edited tab of the file takes as its base (F15).
 pub(crate) fn announce_save(
     facade: &moqui_core::entity::EntityFacade,
     user: &str,
     username: &str,
     root: &str,
     path: &str,
+    hash: &str,
 ) {
-    let json = serde_json::json!({ "rootId": root, "path": path, "userId": user, "username": username });
+    let json = serde_json::json!({ "rootId": root, "path": path, "userId": user, "username": username, "hash": hash });
     send_to_users(facade, SAVED_TOPIC, json.to_string(), Some(user));
 }
 

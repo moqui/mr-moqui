@@ -1401,7 +1401,10 @@ shows the others' avatars (once per user, not the user here) and the sync state.
 answered, and read-only when `canEdit` is false or after a 403; it stays editable offline.
 
 `moqui.coedit.Provider` speaks the protocol on the shell's notification socket, `{client, docKey, doc, awareness, lib}` (`lib` is
-the `Tiptap` global). The client id `C` is random per editor; `D` is the doc key; updates are base64 of Yjs's binary update
+the `Yjs` global of `libs/yjs`, or `Tiptap`, which re-exports it: Yjs is its own library, loaded before Tiptap's bundle, which
+reads `Y` and the awareness protocol from it, so a page has one copy of Yjs). The same provider carries a Dev AIDE file
+(`DevFile:<rootId>:<path>`, a `Y.Text` bound to `m-code-editor` with y-codemirror.next; `runtime/components/dev/dev-aide`
+`DevAideCoedit.js`). The client id `C` is random per editor; `D` is the doc key; updates are base64 of Yjs's binary update
 (`moqui.coedit.toBase64`, `fromBase64`). Client to server, by `send`:
 
 | Frame | When |
