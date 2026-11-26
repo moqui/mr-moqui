@@ -150,6 +150,44 @@ pub(crate) fn note_touch(
     TOUCHES.with(|touches| touches.borrow_mut().entry(frame).or_default().push(touch));
 }
 
+/// [`note_touch`] for the creates of `rows`, all of `entity_name`, that one call wrote (`EntityFacade::create_values`):
+/// the frame's registration and whether the feed keeps the values decided once for them all. Out of a transaction
+/// each is fed as [`note_touch`] feeds it.
+pub(crate) fn note_creates(facade: &EntityFacade, entity_name: &str, rows: &[Arc<FieldMap>]) {
+    let Some(tx) = facade.transactions_for(entity_name).ok() else {
+        return;
+    };
+    let Some(frame) = tx.frame_token() else {
+        for row in rows {
+            note_touch(facade, entity_name, "create", Some(row), None);
+        }
+        return;
+    };
+    if rows.is_empty()
+        || !TOUCHES.with(|touches| touches.borrow().contains_key(&frame))
+            && (tx.on_commit(move || drop_frame_touches(frame)).is_err()
+                || tx.on_rollback(move || drop_frame_touches(frame)).is_err())
+    {
+        return;
+    }
+    let keep_fields = feed_keeps_values(facade, entity_name);
+    let origin_agent = keep_fields.then(|| (crate::hooks::get().agent_id)()).flatten();
+    TOUCHES.with(|touches| {
+        let mut touches = touches.borrow_mut();
+        let frame_touches = touches.entry(frame).or_default();
+        frame_touches.reserve(rows.len());
+        for row in rows {
+            frame_touches.push(Touch {
+                entity_name: entity_name.to_string(),
+                operation: "create".to_string(),
+                fields: keep_fields.then(|| Arc::clone(row)),
+                old: None,
+                origin_agent: origin_agent.clone(),
+            });
+        }
+    });
+}
+
 /// Whether the data feed keeps the values of a write of `entity_name` ([`note_touch`]), so a bulk write that would
 /// read only the primary key reads whole rows (plans/archive/High-Level-Review.md HL-033).
 pub(crate) fn feed_keeps_values(facade: &EntityFacade, entity_name: &str) -> bool {

@@ -346,6 +346,35 @@ pub fn insert(entity: &EntityDefinition, dialect: &Dialect, columns: &[&str]) ->
     Ok(sql)
 }
 
+/// `INSERT INTO table (columns) VALUES (?, ?), (?, ?)` with `rows` rows of the columns, which the caller binds row
+/// after row; one row is [`insert`]'s statement. Every database the framework runs on takes several rows to a statement
+/// ([`supports_insert_rows`]).
+pub fn insert_rows(
+    entity: &EntityDefinition,
+    dialect: &Dialect,
+    columns: &[&str],
+    rows: usize,
+) -> Result<String, Error> {
+    let mut sql = insert(entity, dialect, columns)?;
+    if rows > 1 {
+        let row = format!(", ({})", placeholders(dialect, columns.len()));
+        sql.reserve(row.len() * (rows - 1));
+        for _ in 1..rows {
+            sql.push_str(&row);
+        }
+    }
+    Ok(sql)
+}
+
+/// Whether `dialect` takes several rows in one `INSERT ... VALUES` ([`insert_rows`]): Postgres, MySQL, SQLite and H2;
+/// not Oracle before 23, so any other database inserts a row to a statement.
+#[must_use]
+pub fn supports_insert_rows(dialect: &Dialect) -> bool {
+    ["postgres", "mysql", "sqlite", "h2"]
+        .iter()
+        .any(|prefix| dialect.name.starts_with(prefix))
+}
+
 /// `UPDATE table SET col = ? WHERE ...`. The caller binds the `SET` values, then the statement's
 /// params. An empty condition omits `WHERE`.
 pub fn update(
