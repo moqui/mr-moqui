@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Another Moqui project on this machine (plans/design-dev-aide.md 13.6): a Java Moqui checkout, an MR Moqui clone or
+//! Another Moqui project on this machine (plans/archive/design-dev-aide.md 13.6): a Java Moqui checkout, an MR Moqui clone or
 //! an MR Moqui runtime, named by its directory, whose artifacts the dev tools read without it being the runtime of
 //! the process. [`detect`] tells the layout from marker paths; [`ModelDirs`] are the directories a model-only boot of
 //! it reads; [`boot`] boots it inside a running server without touching the process; [`cache`] keeps the index of a

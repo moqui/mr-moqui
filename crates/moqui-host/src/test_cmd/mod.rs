@@ -319,7 +319,7 @@ pub(crate) fn component_dir_named(runtime: &Path, name: &str) -> Option<PathBuf>
 }
 
 /// Whether a component of `components` is in a set that loads only on some instance purposes, so the run boots on the
-/// dev purpose, where it loads (plans/design-dev-aide.md 3.1).
+/// dev purpose, where it loads (plans/archive/design-dev-aide.md 3.1).
 pub(crate) fn needs_dev_purpose(runtime: &Path, components: &[TestComponent]) -> bool {
     components
         .iter()
@@ -822,7 +822,7 @@ pub fn dispatch_test(args: &[String]) -> Result<(), Error> {
             set_dirs_text(&runtime)
         )));
     }
-    // A dev component's specs run on a dev instance, where it loads (plans/design-dev-aide.md 3.1).
+    // A dev component's specs run on a dev instance, where it loads (plans/archive/design-dev-aide.md 3.1).
     if needs_dev_purpose(&runtime, &components)
         && moqui_lib::env::get_prop_or_env(&moqui_core::context::conf_env::env_name_of(
             moqui_core::context::conf_env::PURPOSE,

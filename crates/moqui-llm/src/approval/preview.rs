@@ -91,7 +91,7 @@ pub struct SimRun<T> {
 }
 
 /// Run `body` in the sim overlay on a thread of its own, logged in as `username`, as an approval's preview runs a write
-/// (the dev-aide's Try in sim, plans/design-dev-aide.md 9.4): entity writes go into the overlay and are answered as rows
+/// (the dev-aide's Try in sim, plans/archive/design-dev-aide.md 9.4): entity writes go into the overlay and are answered as rows
 /// against production, and an outside effect (a resource write, mail, a notification, a remote call) is refused.
 ///
 /// # Errors

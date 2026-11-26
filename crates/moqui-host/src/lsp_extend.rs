@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The "Extend in my-site" quick fix of `moqui lsp` (plans/design-dev-aide.md D17, 5.6, P9): an in-place edit of an
+//! The "Extend in my-site" quick fix of `moqui lsp` (plans/archive/design-dev-aide.md D17, 5.6, P9): an in-place edit of an
 //! upstream component, while the upstream lock is on, rewritten as the site component's extension where that is
 //! mechanical. The edit is the open text against the file at git's `HEAD`; the mechanical edits are
 //!

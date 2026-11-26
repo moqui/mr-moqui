@@ -247,7 +247,7 @@ impl EcaIndex {
     }
 }
 
-/// Read the facade's EECA rules again from the entity directories and swap them in (plans/design-dev-aide.md 6.1, F4);
+/// Read the facade's EECA rules again from the entity directories and swap them in (plans/archive/design-dev-aide.md 6.1, F4);
 /// a write in flight keeps the rules it has. Answers how many rules there are now.
 pub fn reload_eca_rules(facade: &EntityFacade) -> usize {
     reload_eca_rules_with(facade, &[])

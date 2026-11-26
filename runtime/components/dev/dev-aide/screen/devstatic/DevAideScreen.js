@@ -1,7 +1,7 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
 /*
- * The screen view of the Dev AIDE (plans/design-dev-aide.md 11): m-dev-screen-view, a visual view of a screen or
+ * The screen view of the Dev AIDE (plans/archive/design-dev-aide.md 11): m-dev-screen-view, a visual view of a screen or
  * screen-extend file's tab. The canvas is the real render of the screen in a same-origin frame (11.2): it renders the
  * tab's buffers, not the files (put#CanvasBuffer and the frame's buffer:<id> preview token, F14), each widget stamped
  * with the file and line that wrote it (moquiAide=source, F10), under an overlay that outlines and names the element

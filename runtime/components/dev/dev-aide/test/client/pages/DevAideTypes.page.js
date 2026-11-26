@@ -1,6 +1,6 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
-// The TypeScript checker (DevAideTypes.js and its worker DevAideTsWorker.js, plans/design-dev-aide.md 5.4), in the page:
+// The TypeScript checker (DevAideTypes.js and its worker DevAideTsWorker.js, plans/archive/design-dev-aide.md 5.4), in the page:
 // which files are server scripts, the wrapping as file_function runs them, diagnostics as the editor's problems, and the
 // worker on the vendored compiler: a type error in a script's buffer is a problem at its line, a top-level return is
 // none, and a name the script reads from its context is information. The declarations are a small stand-in for the

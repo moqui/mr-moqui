@@ -1,5 +1,5 @@
 // A gitECA rule's condition against a push of the push log (ServiceWriterServices.get#PushContexts over
-// GitServices.get#GitUpdateEventContexts, plans/design-dev-aide.md 10): the repositories a rule's repository-pattern
+// GitServices.get#GitUpdateEventContexts, plans/archive/design-dev-aide.md 10): the repositories a rule's repository-pattern
 // takes, the push log of the one chosen, and the contexts the rule's event had from a change, as the events build them
 // (crates/moqui-git events::context, whose Rust test replays real pushes), each marked whether the rule's ref-pattern
 // takes its ref; then the condition tried against one in the sim. The change is a recorded push of a commit made by

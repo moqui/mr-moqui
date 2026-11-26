@@ -14,7 +14,7 @@
 
 //! Component directories. `depends-on` is one insertion pass.
 //!
-//! A component may load only on some instance purposes (plans/design-dev-aide.md 3.1): `purpose` on a `component-dir`
+//! A component may load only on some instance purposes (plans/archive/design-dev-aide.md 3.1): `purpose` on a `component-dir`
 //! restricts every component found in it, and `purpose` on a `component` element or a `component.xml` root restricts
 //! that component. On another purpose the component is left out with a WARN naming it. A component that loads on every
 //! purpose may not depend on a restricted one, and one whose `depends-on` names a component that is not there is left

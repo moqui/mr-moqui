@@ -1,5 +1,5 @@
 {
-  "about": "The change set card of propose_edit (src/agent/propose.rs change_card, plans/design-dev-aide.md 13.3) from a patch: each vector's files are a root's files with their text now and the change proposed (edits, the exact replacements of a patch, or a new file's text); card is what the server's card holds for them, which src/agent/propose_card_tests.rs checks and test/client/pages/DevAideCard.page.js renders in m-assist-change-set (webroot js/WebrootAssist.js). MOQUI_REGENERATE_VECTORS=1 cargo test -p dev-aide --lib change_card writes card again, for review.",
+  "about": "The change set card of propose_edit (src/agent/propose.rs change_card, plans/archive/design-dev-aide.md 13.3) from a patch: each vector's files are a root's files with their text now and the change proposed (edits, the exact replacements of a patch, or a new file's text); card is what the server's card holds for them, which src/agent/propose_card_tests.rs checks and test/client/pages/DevAideCard.page.js renders in m-assist-change-set (webroot js/WebrootAssist.js). MOQUI_REGENERATE_VECTORS=1 cargo test -p dev-aide --lib change_card writes card again, for review.",
   "vectors": [
     {
       "card": {

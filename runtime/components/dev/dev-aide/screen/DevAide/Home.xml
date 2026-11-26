@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Dev AIDE Home (plans/design-dev-aide.md 1, D18): the site's unpublished changes with Publish, each repository and
+<!-- Dev AIDE Home (plans/archive/design-dev-aide.md 1, D18): the site's unpublished changes with Publish, each repository and
     directory with its branch and changes, the reload log (what each save or outside edit reloaded, and its problems), the
     restart a change needs, "No site component yet. Create one", and New component from the component template. Plain
     forms and lists, so the terminal reaches it. -->
@@ -31,7 +31,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="restart"><service-call name="org.moqui.dev.DevToolsServices.restart#Server"/>
         <actions><message type="warning">Restarting: the server comes back in a few seconds</message></actions>
         <default-response url="."/></transition>
-    <!-- Rebuild (plans/design-dev-aide.md 6.5): ./moq build in a host session of the Terminal; the banner follows it -->
+    <!-- Rebuild (plans/archive/design-dev-aide.md 6.5): ./moq build in a host session of the Terminal; the banner follows it -->
     <transition name="rebuild"><service-call name="org.moqui.devaide.LocalRunServices.rebuild#Server" out-map="built"/>
         <actions><if condition="built.sessionId"><message type="info">Building in the Terminal: ${built.command}</message></if></actions>
         <default-response url="."/></transition>

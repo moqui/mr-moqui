@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `check` (plans/design-dev-aide.md 13.2, READ): the checks of a file, saved or as proposed text (the schema, the
+//! `check` (plans/archive/design-dev-aide.md 13.2, READ): the checks of a file, saved or as proposed text (the schema, the
 //! references, the expressions; D17's upstream edit), each problem naming its rule and the skill section that has it;
 //! with no file, the problems of the last reloads. The words are the editor's Problems panel's, so a person and a model
 //! fix them the same way.
@@ -174,7 +174,7 @@ moqui_llm::submit_tool!(CheckTool);
 mod tests {
     use super::*;
 
-    /// The upstream rule's sentence is in its skill section word for word (plans/design-dev-aide.md 13.1).
+    /// The upstream rule's sentence is in its skill section word for word (plans/archive/design-dev-aide.md 13.1).
     #[test]
     fn the_upstream_rule_is_in_its_skill_section() {
         let skill = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/skill/site-customizing.md")).unwrap();

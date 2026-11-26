@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The dev-aide's records (plans/design-dev-aide.md 16): an audit row for every write, the roots and settings Settings
+<!-- The dev-aide's records (plans/archive/design-dev-aide.md 16): an audit row for every write, the roots and settings Settings
     adds over the conf, and the tokens a shared dev server's admin sets for network git. -->
 <entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-entity-definition.xsd">
     <entity entity-name="DevAideAudit" package="moqui.dev" use="transactional" cache="never">
@@ -44,13 +44,13 @@ along with this software (see the LICENSE.md file). If not, see
             (question 15).</description></field>
         <field name="publishBranchRequired" type="text-indicator"><description>Y hides the plain Push.</description></field>
         <field name="hostedServerId" type="id"><description>The group server (DevAideServer) that hosts the repository of
-            this working tree's remote (plans/design-dev-aide.md 21.3), asked when it is resolved and on a fetch</description></field>
+            this working tree's remote (plans/archive/design-dev-aide.md 21.3), asked when it is resolved and on a fetch</description></field>
         <field name="hostedRemote" type="text-short"><description>The remote whose URL it is behind</description></field>
         <field name="hostedRepositoryId" type="text-medium"/>
         <field name="hostedJson" type="text-very-long"><description>What the server answered of the repository: its path,
             default branch, the user's rights, its merge request settings, who keeps it, the agreement</description></field>
         <field name="hostedDate" type="date-time"/>
-        <field name="worktreeOf" type="text-medium"><description>A worktree of an agent's session (plans/design-dev-aide.md
+        <field name="worktreeOf" type="text-medium"><description>A worktree of an agent's session (plans/archive/design-dev-aide.md
             21.8): the location of the working tree it is a worktree of</description></field>
         <field name="worktreeBranch" type="text-medium"/>
         <field name="conversationId" type="id"><description>The Assist conversation whose tools are rooted in the
@@ -59,14 +59,14 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="worktreeEndedDate" type="date-time"><description>When its conversation ended (archived or deleted)
             while the worktree had uncommitted changes, so it was kept and its user told once (21.8)</description></field>
         <field name="rootKind" type="text-short"><description>hosted: a repository of this server's git hosting at a
-            branch (plans/design-dev-aide.md 4.10), with no directory; empty for a directory</description></field>
+            branch (plans/archive/design-dev-aide.md 4.10), with no directory; empty for a directory</description></field>
         <field name="gitRepositoryId" type="text-medium"><description>A hosted root's GitRepository</description></field>
         <field name="gitBranch" type="text-medium"><description>A hosted root's branch: each Save is a commit to it</description></field>
         <field name="hostedByUserId" type="id"><description>Who added the hosted root</description></field>
         <index name="DEV_AIDE_ROOT_LOC" unique="true"><index-field name="location"/></index>
     </entity>
     <entity entity-name="DevDataLoadBaseline" package="moqui.dev" use="configuration" cache="never">
-        <description>A data file's text as Load the changed records last loaded it (plans/design-dev-aide.md 12): the
+        <description>A data file's text as Load the changed records last loaded it (plans/archive/design-dev-aide.md 12): the
             base of the next load's three-way compare, written only after that load committed. One per root and file,
             not per user: the database is the instance's, so what it last took from a file is too.</description>
         <field name="rootId" type="text-short" is-pk="true"/>
@@ -87,7 +87,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="settingValue" type="text-long"/>
     </entity>
     <entity entity-name="DevAideServer" package="moqui.dev" use="configuration">
-        <description>A connection to a group server (plans/design-dev-aide.md 21.2, D20): its address, what it offers (asked
+        <description>A connection to a group server (plans/archive/design-dev-aide.md 21.2, D20): its address, what it offers (asked
             of it: /rest/s1/moqui/hosting/offer), the user's account there, and what Connect set from it, so Remove takes
             it back. The token is the DevAideCredential of the same serverId: after an app sign-in a key for git alone
             (question 18), with the tasks and gateway keys here. A user's own; with no userId an admin's for the instance (a
@@ -144,7 +144,7 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="one-nofk" related="moqui.security.UserAccount"/>
     </entity>
     <entity entity-name="DevAideTaskSource" package="moqui.dev" use="configuration">
-        <description>A user's task source (plans/design-dev-aide.md 14): another Moqui instance, such as the team's Projects
+        <description>A user's task source (plans/archive/design-dev-aide.md 14): another Moqui instance, such as the team's Projects
             server, read over its REST API with the user's own access token. This instance's Mantle tasks need no row.</description>
         <field name="taskSourceId" type="id" is-pk="true"/>
         <field name="userId" type="id"/>

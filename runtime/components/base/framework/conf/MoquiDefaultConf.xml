@@ -496,7 +496,7 @@
             https-listen-port: the port the built-in HTTPS listener binds, with certificates from runtime/cert: empty is
                 8443, "off" none.
             http-bind: the address the HTTP listener binds, every address when empty; 127.0.0.1 keeps it local (a dev
-                instance with the dev-aide gives code execution to its users: plans/design-dev-aide.md 15).
+                instance with the dev-aide gives code execution to its users: plans/archive/design-dev-aide.md 15).
             allowed-hosts: the Host names (with the port, as the header gives it: 127.0.0.1:8080) a request straight to a
                 listener must name, comma separated, or it is answered 421; empty takes any. The Desktop app's node sets
                 its own loopback names, against DNS rebinding.

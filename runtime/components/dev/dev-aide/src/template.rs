@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! New components from a template (plans/design-dev-aide.md 12): the component template in
+//! New components from a template (plans/archive/design-dev-aide.md 12): the component template in
 //! `runtime/components/dev/template` (the App kind, and the other kinds in its `kinds/`) and the dev-aide's Site
 //! template. The rules for the component template, its placeholders, kinds and parts, are in
 //! `runtime/components/dev/README.md`; `./moq component-create` follows the same ones.
@@ -224,7 +224,7 @@ impl Part {
 /// (`kinds/<kind>`), which an App component leaves out.
 pub(crate) const KINDS_DIR: &str = "kinds";
 
-/// The kind of a new component (plans/design-dev-aide.md 12): an App (the template itself, with its part), data only,
+/// The kind of a new component (plans/archive/design-dev-aide.md 12): an App (the template itself, with its part), data only,
 /// native (a Rust crate `./moq build` links), a theme of the `/qapps` shell, a skill pack, or a dev tool (in
 /// `runtime/components/dev`, `purpose="dev"`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

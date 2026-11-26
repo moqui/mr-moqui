@@ -1,6 +1,6 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
-// The operation builders of the terminal's guided editors (plans/design-dev-aide.md D14; the twins Entities/EditTui,
+// The operation builders of the terminal's guided editors (plans/archive/design-dev-aide.md D14; the twins Entities/EditTui,
 // Services/EditTui and Screens/DesignTui): the browser views' pure builders (moqui.devAide.entityOps, serviceOps and
 // screenOps in screen/devstatic/DevAideEntity.js, DevAideService.js and DevAideScreen.js), ported as they are so a
 // terminal edit makes the operations a browser edit does. test/GuidedOps.spec.js runs the browser page specs' cases

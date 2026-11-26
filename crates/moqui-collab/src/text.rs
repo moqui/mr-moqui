@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Co-edited text files (plans/design-dev-aide.md F15): a Yjs document per file of a Dev AIDE root that its editors
+//! Co-edited text files (plans/archive/design-dev-aide.md F15): a Yjs document per file of a Dev AIDE root that its editors
 //! type in at once, the text the `Y.Text` [`TEXT_NAME`] (y-codemirror.next's binding of a CodeMirror editor), on the
 //! socket protocol of the wiki's documents (moqui-host `notws/collab.rs`). The key is `DevFile:<rootId>:<path>`.
 //!

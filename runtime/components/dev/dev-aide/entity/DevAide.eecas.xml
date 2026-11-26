@@ -13,7 +13,7 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <eecas xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-entity-eca.xsd">
-    <!-- An Assist conversation that ends (archived) or is deleted ends its session's worktrees (plans/design-dev-aide.md
+    <!-- An Assist conversation that ends (archived) or is deleted ends its session's worktrees (plans/archive/design-dev-aide.md
         21.8): once the write commits, a clean one is removed and one with uncommitted changes is kept, its user told
         (WorktreeServices.end#ConversationWorktrees); one restored from archived clears that notice. The condition is
         narrow: only a delete, or an update that writes a status into or out of AgcArchived (the stored row read before

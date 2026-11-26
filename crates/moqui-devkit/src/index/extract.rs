@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! One file's artifacts and references (plans/design-dev-aide.md 7.1), read from its text alone: what it defines,
+//! One file's artifacts and references (plans/archive/design-dev-aide.md 7.1), read from its text alone: what it defines,
 //! with each definition's line, and each reference the rules of [`crate::refs`] find, with the artifact it is
 //! made in. Pure, so the server's index, the model-only index of `moqui refs` and the tests share it.
 
@@ -1682,7 +1682,7 @@ impl Reader<'_> {
 pub const PK_MARK: &str = ", pk";
 
 /// The operation a reference makes by how it refers, before what the element around it says
-/// (plans/design-dev-aide.md 7.1): a find, a delete by condition, a data file's records (stored), a service call (or the
+/// (plans/archive/design-dev-aide.md 7.1): a find, a delete by condition, a data file's records (stored), a service call (or the
 /// entity-auto operation its name says), the fields a find reads, a script run.
 fn default_operation(kind: ToKind, ref_type: &str, name: &str) -> &'static str {
     match (kind, ref_type) {

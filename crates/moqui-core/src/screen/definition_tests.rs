@@ -62,7 +62,7 @@ fn a_screen_extend_adds_client_libraries_by_library_and_mode() {
 }
 
 /// `widgets-extend where="prepend|append"` puts its widgets first or last inside the named element: a section's
-/// widgets, a container-box's body, a container itself (plans/design-dev-aide.md F16).
+/// widgets, a container-box's body, a container itself (plans/archive/design-dev-aide.md F16).
 #[test]
 fn widgets_extend_prepends_and_appends_inside_the_named_element() {
     let screen = MNode::parse_text(

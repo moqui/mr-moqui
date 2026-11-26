@@ -124,7 +124,7 @@ impl ArtifactStack {
         let artifact_type = known(artifact_type);
         let name: Arc<str> = Arc::from(name);
         let action = known(action);
-        // the calls observed on a dev instance, for the artifact index (plans/design-dev-aide.md 7.1)
+        // the calls observed on a dev instance, for the artifact index (plans/archive/design-dev-aide.md 7.1)
         if crate::devtools::calls::enabled() {
             if let Some(parent) = self.frames.last() {
                 crate::devtools::calls::observe(&parent.artifact_type, &parent.name, &artifact_type, &name);

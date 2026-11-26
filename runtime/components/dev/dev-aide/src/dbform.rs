@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! "Convert to site extension" (plans/design-dev-aide.md 7.2, question 16: one way only). A `DbForm` that modifies a
+//! "Convert to site extension" (plans/archive/design-dev-aide.md 7.2, question 16: one way only). A `DbForm` that modifies a
 //! screen form (`modifyXmlScreenForm`, rows in the database) becomes the form merge of the site component's
 //! `screen-extend` of that screen: the form of the base form's kind and name with the DbForm's fields, written as the
 //! screen builder's extension mode writes a form merge. The fields are the ones the framework builds from the rows

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A hosted root's paths and names (plans/design-dev-aide.md 4.10).
+//! A hosted root's paths and names (plans/archive/design-dev-aide.md 4.10).
 
 use super::{clean_path, id_of, location_of};
 

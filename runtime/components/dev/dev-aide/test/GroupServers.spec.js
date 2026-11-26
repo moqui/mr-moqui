@@ -1,4 +1,4 @@
-// Group servers in Dev AIDE Settings (plans/design-dev-aide.md 21.2, P11): a connection's state, what the server offers
+// Group servers in Dev AIDE Settings (plans/archive/design-dev-aide.md 21.2, P11): a connection's state, what the server offers
 // and what Connect would set, never its token; Settings shows them, the plan of one server and the identity providers
 // it signs in with (Phase 1: the provider choice); the app the server offers for its tasks is in the plan and among the
 // apps a task opens in; a server's address is https (http only for this machine). Connect against a server (the app sign-in, merge requests, push to review, check

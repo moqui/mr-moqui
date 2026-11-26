@@ -1,7 +1,7 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
 /*
- * The code editor widgets (plans/design-dev-aide.md 5.1, F9), on the vendored CodeMirror 6 bundle (libs/codemirror), which
+ * The code editor widgets (plans/archive/design-dev-aide.md 5.1, F9), on the vendored CodeMirror 6 bundle (libs/codemirror), which
  * loads when the first editor mounts:
  *   - m-code-editor: one file's text with its language (by `language` or `file-name`), line numbers, folding, search,
  *     completion (XML elements and attributes from a schema digest; for `sql:<kind>` the dialect, and tables and columns
@@ -11,7 +11,7 @@
  *     VS Code's or Vim, whose library loads when picked) and the keys a user rebound) apply to every editor on the page.
  *     A language of the second bundle (libs/codemirror/legacy-modes.min.js: shell, Groovy, properties, TOML,
  *     Dockerfile, nginx) loads the first time a file needs it. With `collab` the text is a shared Y.Text
- *     (y-codemirror.next, plans/design-dev-aide.md F15), with the others' carets and selections by name and Yjs' undo.
+ *     (y-codemirror.next, plans/archive/design-dev-aide.md F15), with the others' carets and selections by name and Yjs' undo.
  *     When the bundle cannot load it is a plain text area, so a form still submits. In a form it writes a hidden input
  *     of `name`.
  *   - m-diff-view: two texts side by side (MergeView) or inline (unifiedMergeView), read only unless `editable`.
@@ -170,7 +170,7 @@
     };
     editor.dropState = (key) => { keptStates.delete(key); };
 
-    // ---- editor settings (plans/design-dev-aide.md 5.1) ----
+    // ---- editor settings (plans/archive/design-dev-aide.md 5.1) ----
 
     // What a user sets (the dev-aide's DEV_AIDE_EDITOR preference, given to setSettings by the page that holds it, which
     // takes them back as it goes): the font size in pixels, the tab size and the indent unit (that many spaces; null
@@ -369,7 +369,7 @@
     }
     editor.legacyLanguage = legacyLanguage;
 
-    // What a co-edited editor needs (plans/design-dev-aide.md F15): the CodeMirror bundle, Yjs (libs/yjs, the global
+    // What a co-edited editor needs (plans/archive/design-dev-aide.md F15): the CodeMirror bundle, Yjs (libs/yjs, the global
     // Yjs) and y-codemirror.next built against both (the global YCodeMirror), in that order; resolved with
     // { CM, Yjs, YCodeMirror }.
     let collabLoading = null;
@@ -588,7 +588,7 @@
             stateKey: String,
             // the editor settings of this editor (as setSettings takes them), in place of the page's
             settings: Object,
-            // a shared text (plans/design-dev-aide.md F15): { ytext, awareness, undoManager } of a joined Y.Doc, with
+            // a shared text (plans/archive/design-dev-aide.md F15): { ytext, awareness, undoManager } of a joined Y.Doc, with
             // editor.loadCollab() done; the text is the Y.Text's while it is set (the model follows it), the undo Yjs'
             collab: Object
         },
@@ -797,7 +797,7 @@
             original: { type: String, default: "" }, modified: { type: String, default: "" }, language: String,
             fileName: String, unified: Boolean, editable: Boolean, collapseUnchanged: { type: Boolean, default: true },
             height: String,
-            // unified and editable: Accept and Reject on each chunk (a reviewed proposal; plans/design-dev-aide.md 13.3)
+            // unified and editable: Accept and Reject on each chunk (a reviewed proposal; plans/archive/design-dev-aide.md 13.3)
             mergeControls: Boolean
         },
         emits: ["update:modified", "ready"],
@@ -975,7 +975,7 @@
         }
     };
 
-    // A pan-and-zoom layer (plans/design-dev-aide.md D9): one CSS transform on the layer; drag the background, the wheel
+    // A pan-and-zoom layer (plans/archive/design-dev-aide.md D9): one CSS transform on the layer; drag the background, the wheel
     // or a trackpad to pan, Ctrl+wheel or a pinch to zoom at the pointer, arrow keys and + and - for both, 0 to fit. With
     // `wheel-zoom` a plain wheel zooms at the pointer and Shift+wheel pans; `controls` adds zoom out, the zoom (click: 100%),
     // zoom in and Fit buttons in the bottom right corner. The default slot is the layer's content, absolutely placed; the

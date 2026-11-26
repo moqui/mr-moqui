@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The request-scoped location overlay (plans/design-dev-aide.md F14): a screen renders from unsaved or proposed text
+//! The request-scoped location overlay (plans/archive/design-dev-aide.md F14): a screen renders from unsaved or proposed text
 //! standing at its location, for the renders on this thread while the overlay is held, so relative paths, subscreens
 //! and `screen-extend` files resolve as they will after the save (the Preview of a proposed change set, the dev
 //! dialects, later the builder's buffer). Nothing is written. While one is held, screen definitions and resolved paths

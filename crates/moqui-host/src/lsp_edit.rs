@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The text edits `moqui lsp` answers (plans/design-dev-aide.md 13.6): the `textDocument/codeAction` quick fixes of
+//! The text edits `moqui lsp` answers (plans/archive/design-dev-aide.md 13.6): the `textDocument/codeAction` quick fixes of
 //! the check rules that know one (an unknown entity, service, field or in-parameter: the nearest known names), and the
 //! positions and edits a rename (`lsp_rename.rs`) is made of.
 

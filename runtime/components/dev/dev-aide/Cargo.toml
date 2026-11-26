@@ -1,4 +1,4 @@
-# The Rust side of the dev-aide (plans/design-dev-aide.md 3.3): the workspace file operations with their confinement, the
+# The Rust side of the dev-aide (plans/archive/design-dev-aide.md 3.3): the workspace file operations with their confinement, the
 # git layer over the developer's own git command, and the services the screens call. A member of the mr-moqui workspace,
 # linked by crates/moqui under the devtools feature (Maximal, the default, and Debug; Lite only with --features devtools);
 # in a binary without it the component's screens load on a dev instance but its services are not built in.
@@ -16,7 +16,7 @@ moqui-core = { workspace = true }
 # The development tools the dev-aide serves: reload, check, the artifact index (plans/archive/Crate-Split.md).
 moqui-devkit = { workspace = true }
 moqui-llm = { workspace = true }
-# The CI file's parser and planner, for Run locally (src/local_run.rs, plans/design-dev-aide.md 21.5).
+# The CI file's parser and planner, for Run locally (src/local_run.rs, plans/archive/design-dev-aide.md 21.5).
 moqui-git = { workspace = true }
 moqui-lib = { workspace = true }
 tracing = { workspace = true }

@@ -1,4 +1,4 @@
-// A hosted root (plans/design-dev-aide.md 4.10, src/hosted.rs): a db repository of this server's git hosting, added
+// A hosted root (plans/archive/design-dev-aide.md 4.10, src/hosted.rs): a db repository of this server's git hosting, added
 // at its branch by a user who may update it (one who may not is refused, and is not shown the root; another who may
 // does not relabel it), is a root of kind hosted with no working tree. Its tree, a file, Go to file and search read the
 // branch; a Save is a commit by the user with its message (Edit <path> by default) and the task trailer; a Save over a

@@ -1,4 +1,4 @@
-// The editor settings (WorkspaceServices get#, store#EditorSettings and store#EditorKey, plans/design-dev-aide.md 5.1):
+// The editor settings (WorkspaceServices get#, store#EditorSettings and store#EditorKey, plans/archive/design-dev-aide.md 5.1):
 // the user's DEV_AIDE_EDITOR preference, a UserPreferenceKey; the defaults with none; the font size, tab size, wrap,
 // white space, keymap (default, vscode or vim) and type check stored, a size out of range and an unknown keymap
 // refused; a command's keys rebound over the keymap, keys another command has or not in CodeMirror's form refused, and

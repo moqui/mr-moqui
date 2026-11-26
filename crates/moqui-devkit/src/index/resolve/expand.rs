@@ -13,7 +13,7 @@
  */
 
 //! What an artifact declares to be filled in from elsewhere, expanded from the artifacts the resolver knows
-//! (plans/design-dev-aide.md 7.1), as Moqui fills it in:
+//! (plans/archive/design-dev-aide.md 7.1), as Moqui fills it in:
 //! - a service's parameters from its `implements` (the implemented services' first, `required` set when the element
 //!   says, as `moqui_core::service::define`'s `implemented`) and its `auto-parameters` (the entity's fields by
 //!   `include` and `exclude`, as `moqui_core::service::validate::auto_fields`), merged with the parameters it declares

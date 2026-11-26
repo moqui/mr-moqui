@@ -1,6 +1,6 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
-// The terminal guided editors' server side (plans/design-dev-aide.md D14; Entities/EditTui, Services/EditTui and
+// The terminal guided editors' server side (plans/archive/design-dev-aide.md D14; Entities/EditTui, Services/EditTui and
 // Screens/DesignTui): what each twin reads (the view service, its edit target and companions as staged in the user's
 // edit buffer, their outlines), and the steps of an edit (build the operations with GuidedOps.js, apply them on the
 // buffered text with apply#EditBufferOps), of Save (save#EditBuffer in kind order, its conflict kept for the page that

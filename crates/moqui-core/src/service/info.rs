@@ -213,7 +213,7 @@ pub fn service_definition_info(name: &str) -> Option<moqui_lib::object::ValueMap
     Some(map)
 }
 
-/// A service as the dev-aide's service view reads it (plans/design-dev-aide.md 9.1): its names, type, location and method,
+/// A service as the dev-aide's service view reads it (plans/archive/design-dev-aide.md 9.1): its names, type, location and method,
 /// its settings, the file and line of its actions, what it implements, and its in- and out-parameters, nested, each
 /// with its type, required, default, allow-html, checks and description; an in-parameter that `auto-parameters`
 /// implies is marked `implied`. `None` when there is no such service.

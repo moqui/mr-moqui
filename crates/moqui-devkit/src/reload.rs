@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Reload what changed files define (plans/design-dev-aide.md 6.1 and 6.2, F3, F4, F6).
+//! Reload what changed files define (plans/archive/design-dev-aide.md 6.1 and 6.2, F3, F4, F6).
 //!
 //! [`reload_paths`] classifies each path by its component, its directory and its name, groups the paths by kind and
 //! reloads the kinds in dependency order (entities, services, ECA rules, REST, screens and the files they read,

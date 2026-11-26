@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The roots of the Workspace (plans/design-dev-aide.md 4.1): the git repositories that hold the loaded components (found
+//! The roots of the Workspace (plans/archive/design-dev-aide.md 4.1): the git repositories that hold the loaded components (found
 //! by looking up from each component directory for `.git`), each loaded component in no repository, `runtime/conf` when
 //! no repository holds it, and the roots the conf and Settings add. A root whose components the site does not own is
 //! upstream: shown, searched and read, written only by the full tier with "Allow editing upstream components" on (D17).
@@ -65,7 +65,7 @@ pub struct Root {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub publish_branch: Option<String>,
     pub publish_branch_required: bool,
-    /// The repository a connected group server hosts for this working tree's remote (plans/design-dev-aide.md 21.3):
+    /// The repository a connected group server hosts for this working tree's remote (plans/archive/design-dev-aide.md 21.3):
     /// `serverId`, `remote` and `repository` as the server answered, when it was resolved.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hosted: Option<serde_json::Value>,

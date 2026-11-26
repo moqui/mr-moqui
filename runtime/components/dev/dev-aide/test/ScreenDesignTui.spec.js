@@ -1,4 +1,4 @@
-// The screen builder's terminal twin (screen/DevAide/Screens/DesignTui.xml, plans/design-dev-aide.md D14): an intent on
+// The screen builder's terminal twin (screen/DevAide/Screens/DesignTui.xml, plans/archive/design-dev-aide.md D14): an intent on
 // the selected element is staged on the screen's file and nothing is written, and the twin's one tui render (its own tui
 // texts: the tabs, the outline tree, the preview) shows the outline, the element's properties from the schema digest
 // and its intents; an upstream screen in extension mode stages its edits in the site's screen-extend, at the element's

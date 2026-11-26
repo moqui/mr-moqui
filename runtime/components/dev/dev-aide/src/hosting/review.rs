@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The hosted repository of a working tree and its merge requests (plans/design-dev-aide.md 21.3, 21.4, D21): a
+//! The hosted repository of a working tree and its merge requests (plans/archive/design-dev-aide.md 21.3, 21.4, D21): a
 //! remote's URL that belongs to a connected server is resolved there (`/rest/s1/moqui/hosting/repository`) and kept on
 //! the root; the merge requests are listed, opened, checked out (`refs/merge-requests/<n>/head`) and, for a user who
 //! may not push, proposed by a push to `refs/for/<branch>`; Fork makes the user's fork on a server that offers forks.

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.devaide.TaskServices`, the task panel (plans/design-dev-aide.md 14, P8): the user's open tasks from a task
+//! `org.moqui.devaide.TaskServices`, the task panel (plans/archive/design-dev-aide.md 14, P8): the user's open tasks from a task
 //! source (`mantle`, this instance's `WorkEffort` tasks assigned to the user when Mantle is loaded; or `moqui-rest`,
 //! another Moqui instance such as the team's Projects server, read through Mantle's REST API, `my/tasks`, with the
 //! user's own access token), the apps a task opens in (the conf's `task-app` elements and `DevAideTaskApp` rows), Quick create, and a
@@ -178,7 +178,7 @@ fn source_row(context: &Context, id: &str, user: &str) -> Result<moqui_core::ent
 
 /// A GET of another instance's REST API with the source's token, its JSON answer. A source Connect made
 /// (`serverId`) reads with the group server's token, sent only to the server's own origin, whatever its `baseUrl` says
-/// (plans/design-dev-aide.md 21.6).
+/// (plans/archive/design-dev-aide.md 21.6).
 fn rest_get(row: &moqui_core::entity::EntityValue, path: &str) -> Result<Json, LibError> {
     let server_id = field(row, "serverId");
     if !server_id.is_empty() {
@@ -389,7 +389,7 @@ fn apps(context: &Context) -> Vec<Json> {
 }
 
 /// `get#Tasks`: the user's open tasks from their source, the apps (the chosen one first) and each task's link in it.
-/// With `rootId` of a working tree whose hosted repository's server offers its issues (plans/design-dev-aide.md 21.6):
+/// With `rootId` of a working tree whose hosted repository's server offers its issues (plans/archive/design-dev-aide.md 21.6):
 /// the repository's open issues too, and the tasks of the projects linked to it first.
 fn get_tasks(
     ec: &ExecutionContext,

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.devaide.VcsServices`: the git of a root (plans/design-dev-aide.md 4.5 and 4.6): status, diffs and the log;
+//! `org.moqui.devaide.VcsServices`: the git of a root (plans/archive/design-dev-aide.md 4.5 and 4.6): status, diffs and the log;
 //! stage, unstage and discard by file; commit with the current task's trailer, the user as author and the server's git
 //! identity as committer; fetch, pull (fast-forward only) and push; switch and create a branch; and Publish (D18): the
 //! site component's changes staged, committed and pushed, to the publish branch when one is set (question 15).
@@ -62,7 +62,7 @@ pub(crate) fn git_root<'a>(context: &'a Context, parameters: &Parameters) -> Res
 }
 
 /// The git repository a write goes to: for the extend tier, a site component's, as it writes only inside site components
-/// (plans/design-dev-aide.md 3.4); `what` names the write in the refusal.
+/// (plans/archive/design-dev-aide.md 3.4); `what` names the write in the refusal.
 pub(crate) fn git_write_root<'a>(
     context: &'a Context,
     parameters: &Parameters,
@@ -134,7 +134,7 @@ pub(crate) fn network_allowed(context: &Context) -> Result<(), LibError> {
 }
 
 /// The environment variables stored tokens reach git's credential helpers by, never their argv: the root's token, then
-/// the group servers' the user let git have (plans/design-dev-aide.md 21.2), each for its own host.
+/// the group servers' the user let git have (plans/archive/design-dev-aide.md 21.2), each for its own host.
 const TOKEN_USER_ENVS: [&str; 4] = [
     "MOQUI_DEV_AIDE_GIT_USERNAME",
     "MOQUI_DEV_AIDE_GIT_USERNAME_2",
@@ -869,7 +869,7 @@ pub(crate) fn fetch_remote(
         },
         "fetch",
     )?;
-    // the hosted repository asked again (plans/design-dev-aide.md 21.3), as the rights or the rules may have changed
+    // the hosted repository asked again (plans/archive/design-dev-aide.md 21.3), as the rights or the rules may have changed
     let context = Context::of(ec, Tier::Extend)?;
     let _authz = ec.disable_authz();
     if let Ok(root) = git_root(&context, parameters) {
@@ -882,7 +882,7 @@ pub(crate) fn fetch_remote(
 ///
 /// The files the pull changed are reloaded at once (the watcher then passes over them), which keeps the artifact index
 /// current, and the answer names the site's extensions whose targets the pull removed (`extensionsAffected`, the
-/// upgrade checklist of plans/design-dev-aide.md 4.7).
+/// upgrade checklist of plans/archive/design-dev-aide.md 4.7).
 pub(crate) fn pull_remote(
     ec: &ExecutionContext,
     _service: &ServiceInfo<'_>,
@@ -1010,7 +1010,7 @@ fn push_remote(
         },
         "push",
     )?;
-    // Push and open a merge request of the branch on its hosted repository (plans/design-dev-aide.md 21.4)
+    // Push and open a merge request of the branch on its hosted repository (plans/archive/design-dev-aide.md 21.4)
     if flag(parameters, "openMergeRequest") {
         let context = Context::of(ec, Tier::Extend)?;
         let _authz = ec.disable_authz();
@@ -1115,7 +1115,7 @@ fn create_branch(
     Ok(out)
 }
 
-/// `set#CurrentTask`: the task whose trailer this root's commits get (plans/design-dev-aide.md 14), kept as the user's
+/// `set#CurrentTask`: the task whose trailer this root's commits get (plans/archive/design-dev-aide.md 14), kept as the user's
 /// `DEV_AIDE_CURRENT_TASK.<rootId>` preference; empty clears it.
 fn set_current_task(
     ec: &ExecutionContext,

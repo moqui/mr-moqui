@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `moqui lsp` (plans/design-dev-aide.md 13.6, F13): a Language Server Protocol server over stdio for editors and
+//! `moqui lsp` (plans/archive/design-dev-aide.md 13.6, F13): a Language Server Protocol server over stdio for editors and
 //! coding agents, answering from what `moqui check` and `moqui refs` use: diagnostics (the checks of
 //! `moqui_devkit::check`, on each open file's text as it changes), go to definition and references (the artifact
 //! index, read into memory on a model-only boot and kept current with the open buffers), hover (an artifact's summary,

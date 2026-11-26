@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A connection to a group server (plans/design-dev-aide.md 21.2): its `DevAideServer` row, the user's token there (a
+//! A connection to a group server (plans/archive/design-dev-aide.md 21.2): its `DevAideServer` row, the user's token there (a
 //! `DevAideCredential` of its `serverId`, sent only to the server's own address), and its REST as that user: the
 //! framework's (`/rest/s1/moqui/git`, `/rest/s1/moqui/hosting`) and, where the server offers one, the application's
 //! (Smithy's, under the offer's `application.restBase`). After an app sign-in the token is a key for git alone, the

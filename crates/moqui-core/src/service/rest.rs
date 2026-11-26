@@ -229,7 +229,7 @@ fn miss_reload_due() -> bool {
     due
 }
 
-/// Read the entered context's REST files again and keep what they define now (plans/design-dev-aide.md 6.1, F6).
+/// Read the entered context's REST files again and keep what they define now (plans/archive/design-dev-aide.md 6.1, F6).
 /// Answers how many root resources they define.
 ///
 /// # Errors

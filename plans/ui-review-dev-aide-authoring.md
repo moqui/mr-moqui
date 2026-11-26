@@ -17,7 +17,7 @@ Review the guided development loop from a discovered artifact to a deliberate, r
 references and ownership, edit the model/service/screen, inspect the generated result, simulate or preview, save and
 verify the consuming behavior. Browser canvases and actual terminal editors are distinct interaction surfaces.
 
-Sources: [Dev AIDE README](../runtime/components/dev/dev-aide/README.md), [design](design-dev-aide.md),
+Sources: [Dev AIDE README](../runtime/components/dev/dev-aide/README.md), [design](archive/design-dev-aide.md),
 [Autodoc](../docs/dev/Autodoc.md), [TUI](../docs/ui/TUI.md),
 [application practices](../docs/dev/Practices-App-Dev.md), current Artifacts/Entities/Services/Screens/Eca/Data screens,
 `GuidedEdit.qvue`, `Artifacts/Browse.qvue`, `devstatic` editor modules, `GuidedOps.js` and corresponding service/spec

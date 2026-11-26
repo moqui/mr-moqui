@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Review in the Workspace (plans/design-dev-aide.md 21.4, P12): a merge request's changes in the merge view with the
+//! Review in the Workspace (plans/archive/design-dev-aide.md 21.4, P12): a merge request's changes in the merge view with the
 //! server's review threads on their lines, a reply, a new comment on a line, resolve, and a review (approve, comment,
 //! request changes); and the open threads of the merge request whose branch is checked out, for the editor's gutter.
 //! Threads are an application's (Mantle's): a repository an application keeps (Smithy) is read and written through

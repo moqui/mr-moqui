@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Who reads the artifact index on any instance (plans/design-dev-aide.md 7.4): the AIDE_READ permission and the
+<!-- Who reads the artifact index on any instance (plans/archive/design-dev-aide.md 7.4): the AIDE_READ permission and the
     AIDE_READERS group, for remote tools that read the index of a project an admin allowed (DevArtifactProject) over
     REST with an API key. Only the reads: rebuilding the index and every development tool that writes or runs code stay
     on dev instances, in the dev-aide's own seed (DEV_AIDE_APP). Framework seed, so it is on every instance. -->

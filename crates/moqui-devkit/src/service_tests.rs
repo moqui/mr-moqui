@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Who reads which index (plans/design-dev-aide.md 7.4), and the seed that splits the read services from the rest.
+//! Who reads which index (plans/archive/design-dev-aide.md 7.4), and the seed that splits the read services from the rest.
 
 use std::cell::Cell;
 

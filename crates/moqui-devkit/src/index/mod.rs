@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The artifact index (plans/design-dev-aide.md 7.1, F11): every definition the components' files make, with its file
+//! The artifact index (plans/archive/design-dev-aide.md 7.1, F11): every definition the components' files make, with its file
 //! and line, the references between them, and on a dev instance the calls observed on the artifact stack. It serves
 //! search, the reference lists, the Customizations list and the extension checks, go to definition, the agents'
 //! `artifact` tool, MCP and `moqui refs`.
@@ -2093,7 +2093,7 @@ fn expand_in(
     rewrites
 }
 
-/// A test's failure point in the index writer (plans/design-dev-aide.md 19): the owners whose next expansion write
+/// A test's failure point in the index writer (plans/archive/design-dev-aide.md 19): the owners whose next expansion write
 /// ([`write_expanded`]) fails, each once, by the factory whose index writes it, so tests in parallel keep their own.
 #[cfg(test)]
 pub(crate) static FAIL_EXPANSION_WRITE: Mutex<Vec<(usize, String)>> = Mutex::new(Vec::new());
@@ -2925,7 +2925,7 @@ fn binding_of(row: &EntityValue) -> BindingEntry {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// Queries over the rows (plans/design-dev-aide.md 7.1 API).
+// Queries over the rows (plans/archive/design-dev-aide.md 7.1 API).
 
 /// The artifacts whose names match `text`, best first: segment and camel case matching (`OrdHdr`, `place#Order`), an
 /// exact id or name first. `kinds` and `components` narrow it when not empty.

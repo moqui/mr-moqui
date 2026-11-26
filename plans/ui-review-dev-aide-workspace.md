@@ -18,7 +18,7 @@ and collaborate, then verify what reloaded or still needs restart. One Workspace
 workflows, each listed below. Guided entity/service/screen authoring has its own companion file.
 
 Sources: [Dev AIDE README](../runtime/components/dev/dev-aide/README.md),
-[design](design-dev-aide.md), [Run and Deploy](../docs/Run-Deploy.md),
+[design](archive/design-dev-aide.md), [Run and Deploy](../docs/Run-Deploy.md),
 [Git hosting](../docs/interfaces/Git-Hosting.md), [Terminal](../docs/ui/Terminal.md),
 current DevAide Home/Workspace/Repositories/Tasks/Settings, Workspace QVue/TUI,
 `devstatic`, `DevAideSecurityData.xml`, and `org.moqui.devaide` services. Reconcile current implemented group-server

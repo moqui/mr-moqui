@@ -11165,7 +11165,7 @@
         app.config.globalProperties.window = root;
         app.config.globalProperties.$router = qvt.makeRouter();
         Object.defineProperty(app.config.globalProperties, "$route", { get: () => (moqui.webrootVue ? moqui.webrootVue.getRoute() : { matched: [], params: {} }) });
-        // $bridge: a .qvue screen's reads and submits, the same calls as a Vue SFC canvas's (plans/design-dev-aide.md F12),
+        // $bridge: a .qvue screen's reads and submits, the same calls as a Vue SFC canvas's (plans/archive/design-dev-aide.md F12),
         // so the code an agent previewed in the sandbox is the screen's: get reads a transition that answers JSON, a
         // name alone being the current screen's; submit posts to a transition of the current screen
         app.config.globalProperties.$bridge = moqui.bridge = moqui.bridge || {

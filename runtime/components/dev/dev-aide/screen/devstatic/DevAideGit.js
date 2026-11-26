@@ -13,7 +13,7 @@
  */
 
 /*
- * Git depth in the Workspace (plans/design-dev-aide.md 4.3 to 4.6, P8): the Branches, Tags and Stashes tabs under the
+ * Git depth in the Workspace (plans/archive/design-dev-aide.md 4.3 to 4.6, P8): the Branches, Tags and Stashes tabs under the
  * Advanced toggle, the Merge requests tab of a root a group server hosts (21.4: mine, waiting for my review, open; Check
  * out, New; Review with the server's threads), a commit's checks (21.5: statuses, runs, a job's log and its failed tests
  * as links, Re-run, Run locally: a job of the working tree's ci.xml in a terminal, or in its image where Docker or

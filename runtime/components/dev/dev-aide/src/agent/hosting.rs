@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `hosting` (plans/design-dev-aide.md 13.2, 21.8, P13): a working tree's hosted repository on a connected group
+//! `hosting` (plans/archive/design-dev-aide.md 13.2, 21.8, P13): a working tree's hosted repository on a connected group
 //! server. It reads merge requests, their review threads and changes, a commit's checks, a job's log and failed tests,
 //! and an issue (READ); it opens a merge request and writes a comment or a reply, each an EXTERNAL approval whose card
 //! shows the text and where it goes. It never approves, merges, re-runs, resolves a thread, signs the agreement or
@@ -61,7 +61,7 @@ const NOT_OFFERED: [(&str, &str); 10] = [
     ),
     (
         "merge",
-        "Merging is on the server's page, by a person (plans/design-dev-aide.md question 17).",
+        "Merging is on the server's page, by a person (plans/archive/design-dev-aide.md question 17).",
     ),
     (
         "rerun",

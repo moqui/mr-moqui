@@ -1,6 +1,6 @@
 # Dev AIDE by HEMP
 
-November 18, 2026 — design, not implemented. This plan makes HEMP the structure of [Dev AIDE](design-dev-aide.md):
+November 18, 2026 — design, not implemented. This plan makes HEMP the structure of [Dev AIDE](archive/design-dev-aide.md):
 its terms, its process as the menu, Coarchy's screens adapted for the requirements work, and a diagram-like overview
 of a site. It adds to the Dev AIDE design and changes its menu (§4); the decisions D1 to D22 cited here are that
 design's. The storage, the Coarchy scope, the overview and the place of agents were decided with the user the same
@@ -404,7 +404,7 @@ artifact's name and Open, and Link to on an element picks an artifact by the ind
   that plan is done.
 - **In a meeting.** A session over a Comms call shares the board's area of the tab ([Comms-Whiteboard
   §3.2](archive/Comms-Whiteboard.md#32-browser-upgrades), Element Capture). The Expert User drawing on it too needs the
-  board co-edited, which on a dev instance waits for the group server ([design-dev-aide](design-dev-aide.md) §21).
+  board co-edited, which on a dev instance waits for the group server ([design-dev-aide](archive/design-dev-aide.md) §21).
   §21 is built (Nov 14, 2026), but its connection carries the repositories, merge requests, tasks and the model gateway,
   not boards: a board co-edited with the Expert User is still one on an instance both reach.
 - **The terminal.** A board has no drawing there: the terminal shows its name, its text elements and its links, with

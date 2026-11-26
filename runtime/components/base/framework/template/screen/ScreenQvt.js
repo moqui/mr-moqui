@@ -2501,7 +2501,7 @@
     const valueDescs = (fields, kind) => `[${fields.map((field) => valueDesc(field, kind)).filter((text) => text).join(",\n")}]`;
 
     // The code of one field of a form-single.
-    // A field's source stamp (dev instances, plans/design-dev-aide.md F10): the form macros write a field's box or
+    // A field's source stamp (dev instances, plans/archive/design-dev-aide.md F10): the form macros write a field's box or
     // cell themselves, so the field names its source to the render just before it.
     const stampCode = (node) => (node.src ? `$v.stamp(${lit(node.src)});\n` : "");
 

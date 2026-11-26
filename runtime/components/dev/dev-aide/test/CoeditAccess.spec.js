@@ -1,4 +1,4 @@
-// Who may co-edit a file (WorkspaceServices.get#CoeditAccess, plans/design-dev-aide.md F15), which a file's room in
+// Who may co-edit a file (WorkspaceServices.get#CoeditAccess, plans/archive/design-dev-aide.md F15), which a file's room in
 // moqui-collab asks as the user (its rooms, bounds and seeding are moqui-collab's text_tests.rs): only on a shared dev
 // server; a writer of the file as Save would allow, with its text in LF and the bounds; the upstream lock refuses as
 // Save does; a path that is not the file's own name in the root is refused; and the answer is never for another user.

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The reference rules (plans/design-dev-aide.md 5.3, F8): which attribute names which kind of artifact, and how it
+//! The reference rules (plans/archive/design-dev-aide.md 5.3, F8): which attribute names which kind of artifact, and how it
 //! resolves in its context. One table drives the reference checks, `moqui refs`, and later the editor's value
 //! completion, go to definition and the artifact index.
 

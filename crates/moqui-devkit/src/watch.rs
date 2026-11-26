@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The dev file watcher (plans/design-dev-aide.md 6.3, F6): on a dev instance of a package with `devtools`, with
+//! The dev file watcher (plans/archive/design-dev-aide.md 6.3, F6): on a dev instance of a package with `devtools`, with
 //! `dev-reload` on (it is unless `enabled="false"`), every component directory is watched, and a change reloads what
 //! the file defines through [`crate::reload_paths`], so an editor or an agent in a terminal gets live reload without
 //! the dev-aide. Events are gathered until `debounce-ms` (300) pass without one, so an editor's write and rename is one

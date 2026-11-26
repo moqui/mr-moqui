@@ -4,7 +4,7 @@ The Dev AIDE (assisted IDE) is the `/qapps` app for changing and creating Moqui 
 a workspace of the components' repositories with an editor, git and live reload; an artifact index with search and a
 browser; an entity modeler; a service writer with a logic composer and ECA rule tools; a screen builder; a task panel;
 and Dev Assist, the dev agent, with tools for all of it. It is at `/qapps/dev` (menu Dev AIDE) on a dev instance. The
-design and its build record are in [plans/design-dev-aide.md](../../plans/design-dev-aide.md).
+design and its build record are in [plans/archive/design-dev-aide.md](../../plans/archive/design-dev-aide.md).
 
 The code: the component `runtime/components/dev/dev-aide` (its crate in `src/`, services in
 `service/org/moqui/devaide/`, screens in `screen/DevAide/`, the browser client in `screen/devstatic/`, the dev agent's
@@ -90,7 +90,9 @@ is the page.
 ### The Workspace with git
 
 The git commands are the developer's own `git` (`dev-aide@git-command`), with its config, hooks, signing and
-credential helpers. The tabs of a git root:
+credential helpers. A read (status, a diff, a file at a commit, the log, blame) runs nothing a repository names: no
+lazy fetch from a partial clone's remote, no `core.fsmonitor` and no hooks; writes and network commands keep the
+repository's config. The tabs of a git root:
 
 - **Changes**: the staged and unstaged files with their diffs; Stage, Unstage and Discard by file or by hunk (the hunks
   as chips over the merge view); the commit form with the current task's trailer, Amend, Skip hooks, and Commit and

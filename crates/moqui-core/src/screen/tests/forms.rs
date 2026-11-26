@@ -2161,7 +2161,7 @@ fn a_form_list_reads_a_context_list_with_its_value_types() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// F14 for services (plans/design-dev-aide.md): a form assembled while a service overlay holds the thread (a render in a
+/// F14 for services (plans/archive/design-dev-aide.md): a form assembled while a service overlay holds the thread (a render in a
 /// Dev AIDE Try) is made from the overlay's definition and is not kept, and one kept before is not used then; a render
 /// after it has the registry's definition again.
 #[test]

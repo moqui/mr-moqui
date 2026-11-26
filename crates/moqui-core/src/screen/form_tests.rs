@@ -31,7 +31,7 @@ fn refs_in(node: &MNode) -> Vec<String> {
 }
 
 /// A field an extension adds with `after` lands after that field in the layout, inside its row
-/// (plans/design-dev-aide.md F16); without `after`, or with an anchor that is not there, it goes last.
+/// (plans/archive/design-dev-aide.md F16); without `after`, or with an anchor that is not there, it goes last.
 #[test]
 fn an_extension_field_goes_after_the_named_field_in_the_layout() {
     let form = parse(

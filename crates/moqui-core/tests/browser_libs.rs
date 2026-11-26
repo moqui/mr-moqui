@@ -121,7 +121,7 @@ fn the_manifest_licenses_are_the_reviewed_set() {
             "atkinson-next" | "atkinson-mono" => "OFL-1.1",
             // the map label fonts (Noto Sans from @fontsource/noto-sans)
             "mapfonts" => "OFL-1.1",
-            // the TypeScript compiler of the dev-aide's type checker (plans/design-dev-aide.md 5.4)
+            // the TypeScript compiler of the dev-aide's type checker (plans/archive/design-dev-aide.md 5.4)
             "tom-select" | "material-icons" | "material-symbols" | "pdfjs" | "typescript" => "Apache-2.0",
             "mermaid" => "MIT AND ISC AND BSD-3-Clause AND Apache-2.0",
             "dompurify" => "MPL-2.0 OR Apache-2.0",

@@ -85,7 +85,7 @@ pub(super) fn dispatch(args: &TestArgs, runtime: &Path, framework: &Path) -> Res
             super::set_dirs_text(runtime)
         )));
     }
-    // a dev component's agents run on a dev instance, where it loads (plans/design-dev-aide.md 3.1)
+    // a dev component's agents run on a dev instance, where it loads (plans/archive/design-dev-aide.md 3.1)
     if super::needs_dev_purpose(runtime, &components)
         && moqui_lib::env::get_prop_or_env(&moqui_core::context::conf_env::env_name_of(
             moqui_core::context::conf_env::PURPOSE,

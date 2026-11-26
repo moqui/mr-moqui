@@ -1,7 +1,7 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
 /*
- * The service writer and the ECA view of the Dev AIDE (plans/design-dev-aide.md 9, 10). m-dev-service-view is the
+ * The service writer and the ECA view of the Dev AIDE (plans/archive/design-dev-aide.md 9, 10). m-dev-service-view is the
  * visual view of a service file's tab: one service at a time, its header and settings from the schema digest, its
  * parameters (nested, from the buffer, those auto-parameters imply marked; Add, Add child in a Map or a List, Edit and
  * Remove on each declared one by its path of names, with the terminal twin's builders), its implementation (inline

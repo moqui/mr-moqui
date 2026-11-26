@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The framework's artifact index (plans/design-dev-aide.md 7, F11) as the dev-aide shows it: each artifact with the root
+<!-- The framework's artifact index (plans/archive/design-dev-aide.md 7, F11) as the dev-aide shows it: each artifact with the root
     and path that open it in the Workspace and whether it is the site's or upstream. The view tier and above. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
     <service verb="search" noun="Artifacts" type="rust" location="dev_aide::artifacts::search_artifacts" allow-remote="false" read-only="true">
@@ -98,7 +98,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="siteComponents" type="List"/>
         </out-parameters>
     </service>
-    <!-- Convert to site extension (plans/design-dev-aide.md 7.2, question 16), src/dbform.rs: a DbForm that modifies a
+    <!-- Convert to site extension (plans/archive/design-dev-aide.md 7.2, question 16), src/dbform.rs: a DbForm that modifies a
         screen form becomes the form merge of the site's screen-extend of that screen, one way. -->
     <service verb="get" noun="DbFormChanges" type="rust" location="dev_aide::dbform::get_db_form_changes" allow-remote="false" read-only="true">
         <description>The DbForms that modify a screen form (modifyXmlScreenForm): formId, description, screenLocation,

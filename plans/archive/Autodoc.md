@@ -2,7 +2,7 @@
 
 > Archived 2026-11-04: built, and the checks under "Built" at the end are done: the browser look and the Chromium check by hand, and a full export timed on the release package (7.3 s for 7,970 docs), so the Dev AIDE's export stays in the request. The guide is [docs/dev/Autodoc.md](../../docs/dev/Autodoc.md); nothing is left open.
 
-Built Nov 3, 2026. Generated Markdown docs for Moqui artifacts, like JavaDoc: shown in the Dev AIDE ([design-dev-aide](../design-dev-aide.md) §7) and exported as a `.md` tree.
+Built Nov 3, 2026. Generated Markdown docs for Moqui artifacts, like JavaDoc: shown in the Dev AIDE ([design-dev-aide](design-dev-aide.md) §7) and exported as a `.md` tree.
 
 ## Context
 
@@ -277,7 +277,7 @@ The tests named here are new. They are regression tests on small fixtures, run w
 
 - **`docs/dev/Autodoc.md`:** the layout, what each doc holds, templates and overriding, the CLI and Export.
 - **Links:** from `docs/README.md` and the dev-aide `README.md` (the Artifacts bullet: Docs and Export docs; Tests).
-- **`plans/design-dev-aide.md` §7:** a short 7.5 pointing to `plans/Autodoc.md`. It notes that D9's "no Mermaid" is
+- **`plans/archive/design-dev-aide.md` §7:** a short 7.5 pointing to `plans/Autodoc.md`. It notes that D9's "no Mermaid" is
   about the browser canvas and still holds.
 
 ## Order of work

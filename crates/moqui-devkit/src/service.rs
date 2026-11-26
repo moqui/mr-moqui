@@ -13,7 +13,7 @@
  */
 
 //! `org.moqui.dev.DevToolsServices`: the framework's development tools (this crate) as services, on dev
-//! instances only (plans/design-dev-aide.md 17), but for the index reads of an allowed project, which answer on any
+//! instances only (plans/archive/design-dev-aide.md 17), but for the index reads of an allowed project, which answer on any
 //! instance for `AIDE_READ` (7.4).
 
 use std::collections::BTreeMap;
@@ -93,7 +93,7 @@ fn dev_permitted() -> bool {
         || moqui_core::user::is_in_group("ADMIN").unwrap_or(false)
 }
 
-/// The permission that reads the index of an allowed project on any instance (plans/design-dev-aide.md 7.4), apart
+/// The permission that reads the index of an allowed project on any instance (plans/archive/design-dev-aide.md 7.4), apart
 /// from the dev-aide's tiers; the framework's seed grants it to `ADMIN` and `AIDE_READERS`.
 pub(crate) const AIDE_READ: &str = "AIDE_READ";
 
@@ -135,7 +135,7 @@ pub(crate) enum Source {
     Allowed { directory: String, java: bool },
 }
 
-/// Where a read answers from, or why it is refused (plans/design-dev-aide.md 7.4):
+/// Where a read answers from, or why it is refused (plans/archive/design-dev-aide.md 7.4):
 ///
 /// - `projectId`: an allowed `DevArtifactProject`, for an [`AIDE_READ`] reader on any instance or a dev-aide reader on
 ///   a dev instance. Its own index only: a miss is a miss, never answered from this server's rows.
@@ -337,7 +337,7 @@ fn read_index(
     out
 }
 
-/// `find#Artifacts`: the artifacts whose names match a text (plans/design-dev-aide.md 7.2). Out: `artifacts`,
+/// `find#Artifacts`: the artifacts whose names match a text (plans/archive/design-dev-aide.md 7.2). Out: `artifacts`,
 /// `indexStamp`.
 fn find_artifacts(
     parameters: &BTreeMap<String, Value>,
@@ -542,7 +542,7 @@ fn rebuild_artifact_index(
     Ok(out)
 }
 
-/// `apply#XmlOps`: the operations of the lossless XML layer (`moqui_lib::xml_edit`, plans/design-dev-aide.md 5.2) on a
+/// `apply#XmlOps`: the operations of the lossless XML layer (`moqui_lib::xml_edit`, plans/archive/design-dev-aide.md 5.2) on a
 /// text, answered as the new text and each operation's edits. Pure text: no file is read or written. Out: `text`,
 /// `steps` (a list of lists of `{from, to, from16, to16, text}`).
 fn apply_xml_ops(
@@ -589,7 +589,7 @@ fn apply_xml_ops(
     Ok(out)
 }
 
-/// `get#XmlOutline`: the outline of an XML text (plans/design-dev-aide.md 5.2), for the visual views. Out: `outline`;
+/// `get#XmlOutline`: the outline of an XML text (plans/archive/design-dev-aide.md 5.2), for the visual views. Out: `outline`;
 /// a text that does not parse answers its error as a message.
 fn get_xml_outline(
     parameters: &BTreeMap<String, Value>,
@@ -610,7 +610,7 @@ fn get_xml_outline(
     Ok(out)
 }
 
-/// `get#SchemaDigest`: the digest of the XSDs for a root element (plans/design-dev-aide.md 5.3), for the editor's XML
+/// `get#SchemaDigest`: the digest of the XSDs for a root element (plans/archive/design-dev-aide.md 5.3), for the editor's XML
 /// completion and checks. Out: `digest`, `null` for a root no XSD defines.
 fn get_schema_digest(
     parameters: &BTreeMap<String, Value>,
@@ -633,7 +633,7 @@ fn get_schema_digest(
     Ok(out)
 }
 
-/// `restart#Server`: shut the server down gracefully and run it again (plans/design-dev-aide.md 6.5). Out: `restarting`.
+/// `restart#Server`: shut the server down gracefully and run it again (plans/archive/design-dev-aide.md 6.5). Out: `restarting`.
 fn restart_server(
     _parameters: &BTreeMap<String, Value>,
     _facade: &EntityFacade,

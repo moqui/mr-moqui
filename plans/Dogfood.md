@@ -4,7 +4,7 @@ Nov 11, 2026 · Research and plan; nothing built. The decisions are in [§0](#0-
 most of them the same day, in two rounds (each row says so), and the rest are this plan's choices, each with its
 reason. The questions are in [§16](#16-risks-and-open-questions), six of them answered. The page-by-page design of the
 new app is the first phase's output (`mr-pass/plan/design-smithy.md`, [§13](#13-phases) DG0), and the Dev AIDE's part
-is [design-dev-aide §21](design-dev-aide.md#21-dev-aide-with-a-group-server).
+is [design-dev-aide §21](archive/design-dev-aide.md#21-dev-aide-with-a-group-server).
 
 The Moqui project runs on other people's software today: GitHub for the repositories, Issues and pull requests, and
 for the `moqui-site` repository that holds the web site; Discourse for forum.moqui.org; Google Groups for the mailing
@@ -49,7 +49,7 @@ Contents: [0 decisions](#0-decisions) · [1 what moves](#1-what-moves) · [2 tod
 | --- | --- | --- |
 | D1 | moqui.org is one production instance, a cluster later, with mr-mantle, mr-pass and mr-boss: a **public group server**. Smithy's first version runs where the git data is, not as a remote PASS frontend. | A remote PASS host has no `/git` and no git rows. One server is the least to run, and Run-Deploy's group server is this shape already. |
 | D2 | The app is **Smithy**, a PASS app in mr-pass. Its rules and entities are in mr-mantle (`mantle.smithy`), on the PASS pattern: registered in `PublicApps.js` and `Apps.js`, pages calling `pass.Facade.call#Operation`, public accounts with roles in data, and 404 for what a caller may not see. It needs Mantle, not BOSS. | Decided with the user, Nov 11, 2026 (the app and its name; "Forge" is overused). Public-facing apps go in mr-pass and internal ones in mr-boss (`boss/plan/impl-projects.md` §9.4). |
-| D3 | The framework stays the git host. Anonymous read, repository paths, forks, push-to-review, push mirrors and the CI engine go in `moqui-git` and the framework. Smithy and Projects' Code share what is underneath, and neither depends on the other. | It is [design-dev-aide](design-dev-aide.md#0-decisions) D7's rule. BOSS Projects' Code gets each of them too, and a dev shop with BOSS alone is served. |
+| D3 | The framework stays the git host. Anonymous read, repository paths, forks, push-to-review, push mirrors and the CI engine go in `moqui-git` and the framework. Smithy and Projects' Code share what is underneath, and neither depends on the other. | It is [design-dev-aide](archive/design-dev-aide.md#0-decisions) D7's rule. BOSS Projects' Code gets each of them too, and a dev shop with BOSS alone is served. |
 | D4 | `repositoryId` stays the key. A unique `repositoryPath` (`moqui/mr-moqui`) is what URLs carry: `/git/<path>.git`, SSH `<path>.git`, and pages at `/<group>/<repo>` with `/-/` before a section (`/moqui/mr-moqui/-/issues/12`). The page URL itself clones. | Rows that name a repository keep their ids, and a rename or a transfer changes one field. `/-/` keeps a repository's name from colliding with a section's, as GitLab does. |
 | D5 | Visibility is public, members or private, on a group and on a repository, and a repository is no wider than its group. Roles (Owner, Maintainer, Developer, Reporter, Guest) are membership rows on a group, inherited by its subgroups and repositories, or on one repository. One Mantle check gives a repository's rights from those rows and from project roles. | PASS roles live in data, never in user groups (`pass/plan/design-forum.md` §5.1). The git server and the pages must agree, so there is one check (`mantle.work.GitServices.check#GitRepositoryAuthz` today). |
 | D6 | An issue is a Mantle work item: a task of the project linked to the repository or the group. Smithy shows the public projection of it (public items, outward messages). BOSS Projects, when it is loaded, is the maintainers' view of the same rows. An issue may be filed confidential: any account files one, and only the owners of the repository or the group read and edit it. | Decided with the user, Nov 11, 2026, confidential issues with it. The tracker, its links to commits, branches, tags and merge requests, and its import exist; a second tracker would repeat them. |
@@ -104,7 +104,7 @@ them.
 | Containers | Services that create, start, stop and remove a container through the Docker Remote API, with `InstanceHost` and `InstanceHostType` rows that name a host type's services. A container image of the server. | `fw/service/org/moqui/dev/InstanceServices.xml`, `fw/entity/ServerEntities.xml`, `podman/` |
 | Tests | `moqui test --workers N` runs specs in N processes, each with its own database, and writes JUnit. | [Build-Test](../docs/Build-Test.md) |
 | Deploy | A component is fetched from git, previewed and deployed live, on one server or a cluster. | [Component-Deploy](../docs/tools/Component-Deploy.md) |
-| Dev AIDE | Working trees through the `git` command, Publish, the task panel over a Mantle or a `moqui-rest` source, a shared mode. It has no merge request, review or check screens, and a working tree does not know its hosted repository. Since Nov 14, 2026 ([§11](#11-dev-aide), design-dev-aide P11 to P13) it has them: a connection to a group server, the hosted repository of a working tree, merge requests, review threads and checks in the Workspace, the agreement's warning and Sign, the `hosting` tool and worktrees for agents. | [design-dev-aide](design-dev-aide.md) |
+| Dev AIDE | Working trees through the `git` command, Publish, the task panel over a Mantle or a `moqui-rest` source, a shared mode. It has no merge request, review or check screens, and a working tree does not know its hosted repository. Since Nov 14, 2026 ([§11](#11-dev-aide), design-dev-aide P11 to P13) it has them: a connection to a group server, the hosted repository of a working tree, merge requests, review threads and checks in the Workspace, the agreement's warning and Sign, the `hosting` tool and worktrees for agents. | [design-dev-aide](archive/design-dev-aide.md) |
 | Group server | A production instance with BOSS that hosts a team's repositories, work items and LLM gateway. | [Run-Deploy](../docs/Run-Deploy.md#dev-instances-with-a-dev-group-server) |
 
 ---
@@ -671,7 +671,7 @@ repository's `AUTHORS.md`, under both lists, each by a commit of their own accou
 
 ## 11. Dev AIDE
 
-The Dev AIDE's additions are designed in [design-dev-aide §21](design-dev-aide.md#21-dev-aide-with-a-group-server),
+The Dev AIDE's additions are designed in [design-dev-aide §21](archive/design-dev-aide.md#21-dev-aide-with-a-group-server),
 with their decisions (D20 to D22), framework changes (F17 to F19) and phases (P11 to P13). In short:
 
 - **A group server is a connection**: one record gives the token, the addons repository, the task source and the

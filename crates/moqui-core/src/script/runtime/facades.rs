@@ -63,7 +63,7 @@ fn modified_of(path: &std::path::Path) -> Option<std::time::SystemTime> {
     std::fs::metadata(path).and_then(|meta| meta.modified()).ok()
 }
 
-/// Drop the kept text of every script file among `files` at once, rather than at the next check (plans/design-dev-aide.md
+/// Drop the kept text of every script file among `files` at once, rather than at the next check (plans/archive/design-dev-aide.md
 /// 6.1, F6). Answers the script locations dropped.
 pub fn forget_scripts(files: &[std::path::PathBuf]) -> Vec<String> {
     let canonical = |path: &std::path::Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());

@@ -54,6 +54,22 @@ Guide [Monitoring](../docs/tools/Monitoring.md).
 | Shop payments | Before production, an Authorize.Net sandbox check of the stored-credential indicators and renewals (F106, F115) | mr-pass `plan/impl-shop.md` |
 | Mantle | Not called by `moqui test mr-mantle` because they need a network: the three Google services (`GooglePartyServices`) and `create#ContactRequestReCaptcha` | [ConvertProcess](archive/ConvertProcess.md), [MantleFlowTests](archive/MantleFlowTests.md) |
 
+### Dev AIDE
+
+Plan [design-dev-aide](archive/design-dev-aide.md) (archived 2026-11-26); guide [Dev-AIDE](../docs/tools/Dev-AIDE.md). Every dev-aide spec
+runs under 15 s with the add-ons since 2026-11-26.
+
+| Area | Item | Source |
+|---|---|---|
+| Dev agent | The live-model run of the dev agent's evaluation tasks, `moqui test dev-aide --agents --llm-profile <profile>`: it costs API spend, so it runs only with the user's OK (the replays pass) | [§19](archive/design-dev-aide.md#19-tests), P4 |
+| Windows | The first result of the dev-aide's `confine::`, `vcs::` and `git::` tests in `.github/workflows/windows.yml`, at the next push | [§19](archive/design-dev-aide.md#19-tests), P1a |
+| CI | A job's log and failed tests in the Workspace against a real CI run | [§21.5](archive/design-dev-aide.md#215-checks), P12 |
+| Terminal twins | The terminal twins walked by hand | [ui-review-dev-aide-authoring](ui-review-dev-aide-authoring.md) |
+| Desktop shell | The desktop shell's library list with Yjs before Tiptap (`libs.txt`), by `./moq test-clients desktop` | [§18](archive/design-dev-aide.md#18-phases), "Keymaps, legacy modes, co-editing" |
+| MySQL | `EntityFacade::create_values`' multi-row inserts against a live MySQL server | moqui-entity `entity/value/create_values.rs` |
+| Co-editing | One file co-edited in two browsers on one shared dev server: carets, a revoked writer, a room seeded again (the page test runs two tabs on a fake room) | `DevAideCoedit.page.js`, [§18](archive/design-dev-aide.md#18-phases) |
+| Smithy | Smithy's side of P11, checked by its REST contract only | mr-mantle `test/smithy/SmithyDevAide.spec.js` |
+
 ### Browsers, terminals and screens
 
 | Area | Item | Source |

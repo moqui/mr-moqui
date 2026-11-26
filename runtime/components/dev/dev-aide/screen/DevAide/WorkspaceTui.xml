@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The Workspace's terminal form (plans/design-dev-aide.md D14), in a dynamic container of Workspace.xml with its
+<!-- The Workspace's terminal form (plans/archive/design-dev-aide.md D14), in a dynamic container of Workspace.xml with its
     parameters. A header with the root, the branch and its changes, a Git menu (Fetch, Pull, Push, Switch branch, New
     branch) and Restart needed; then the tabs Code (the file tree, Go to file, Search, the file in the code component
     with Save, its problems, a save conflict's diff, the file's actions), Changes (stage, unstage and discard the files
@@ -151,7 +151,7 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response url="../Workspace"><parameter name="rootId"/><parameter name="path"/></default-response>
         <error-response url="../Workspace"><parameter name="rootId"/><parameter name="path"/></error-response>
     </transition>
-    <!-- Load the changed records (plans/design-dev-aide.md 12), three ways as the browser's: planned, then loaded with the
+    <!-- Load the changed records (plans/archive/design-dev-aide.md 12), three ways as the browser's: planned, then loaded with the
         plan's hashes when nothing needs a choice; a conflict, a removal or a record not compared for this user is never
         settled here by default, so the answer names them for the browser's data file view -->
     <transition name="loadChangedRecords">

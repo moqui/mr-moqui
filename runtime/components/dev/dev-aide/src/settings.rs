@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The dev-aide settings (plans/design-dev-aide.md 16): the conf's `dev-aide` element, with what Settings stores over it in
+//! The dev-aide settings (plans/archive/design-dev-aide.md 16): the conf's `dev-aide` element, with what Settings stores over it in
 //! `moqui.dev.DevAideSetting` rows (the site components, network git in shared mode).
 
 use std::path::PathBuf;

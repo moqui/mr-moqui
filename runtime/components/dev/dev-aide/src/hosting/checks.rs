@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Checks in the Workspace (plans/design-dev-aide.md 21.5, P12): the combined state of the statuses of commits (a chip
+//! Checks in the Workspace (plans/archive/design-dev-aide.md 21.5, P12): the combined state of the statuses of commits (a chip
 //! on Commits and on Branches), a commit's checks with its pipeline runs and their jobs, a job's log (followed while it
 //! runs), its failed tests as links to the working tree's file and line, and Re-run of a run or a job for a user who
 //! may. All through the framework's REST as the connected user (`commits/{id}/statuses`, `pipelines`, `jobs`), which

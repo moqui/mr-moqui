@@ -1,6 +1,6 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
-// Convert to site extension (plans/design-dev-aide.md 7.2, question 16; src/dbform.rs): Customizations lists the DbForms
+// Convert to site extension (plans/archive/design-dev-aide.md 7.2, question 16; src/dbform.rs): Customizations lists the DbForms
 // that change a screen form, and the conversion refuses a DbForm it would not keep equivalent: one with responses (a
 // survey) and one that modifies no screen form (a form extends it). The conversion itself, its review, digest, the
 // written screen-extend and the deleted rows on a scratch site component, is in the host's integration test

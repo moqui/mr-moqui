@@ -1,7 +1,7 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
 /*
- * The TypeScript checker's worker (plans/design-dev-aide.md 5.4, question 10): the compiler (libs/typescript, vendored by
+ * The TypeScript checker's worker (plans/archive/design-dev-aide.md 5.4, question 10): the compiler (libs/typescript, vendored by
  * build-js) over the ES2023 declarations and the project's `moqui types` files, checking one JavaScript buffer at a
  * time as checkJs does. Messages, each answered with its id:
  *   {type: "init", id, compiler, libs}: importScripts of the compiler and of the declarations script (self.MoquiTsLibs)
