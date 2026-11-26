@@ -102,17 +102,22 @@ checks of `moqui check`), go to definition and references of the entities, servi
 attribute's documentation from the XSDs, completion of elements, attributes, enumerated values and entity and service
 names, and document and workspace symbols.
 
-Rename (with prepare) takes an entity field, a service, a form field or a parameter and answers one edit across the
-files: each definition, each reference the index resolves to it, and what takes the name from it (an
-`auto-parameters` parameter, an `alias-all` alias, an `auto-fields` form field, a transition's or REST method's
-parameter from its service, a form field that posts to the parameter, a declared one of that name that merges with
-it). A service keeps its file's prefix: give the new `verb#Noun`. It is refused, with the reason, when a reference
-of the name does not resolve, when something reads the name by another name (a view alias's `field`, a prefixed
-`alias-all`, a REST path parameter, a form field posting to a parameter outside the rename), when a reference is not
-the name as an attribute value or a string literal, and when an edit would land in an upstream component while
+Rename (with prepare) takes the entity field, service, form field or parameter that the attribute value or script
+string under the cursor names or defines (a `from` names none) and answers one edit across the files: each
+definition, each reference the index resolves to it, what takes the name from it (an `auto-parameters` parameter,
+an `alias-all` alias, an `auto-fields` form field, a transition's or REST method's parameter from its service, a form
+field that posts to the parameter, a declared one that merges with it, each followed by what it was made from, not
+by its name), a view alias's `field`, the `exclude`s that leave it out, a form's `field-ref`s, the `key-map`s that
+write both sides, and in data files a record's attribute of the field or a value that is the service's name. A
+service keeps its file's prefix: give the new `verb#Noun`. It is refused, with the reason: when a reference of the
+name does not resolve; when something reads the name by another name (a prefixed `alias-all`, a REST path
+parameter, a form field posting to a parameter outside the rename); when a use depends on the name itself (an
+`econdition` or `field-map` with no `from`, a `key-map` with no `related`, a relationship with no `key-map` on the
+field as a key); when a service's noun change would change its entity (`entity-auto`, an `auto-parameters` with no
+`entity-name`, a noun that names an entity); when the quoted name is left anywhere else in the components it touches
+(each place is listed: change or check them first); and when an edit would land in an upstream component while
 `dev-aide@allow-upstream-edits` is off: the site components are those of `dev-aide@site-component` in the conf, and
-with none there a rename that edits more than one component is refused. Names inside expressions (a `from`, a
-`${}`) are not references and are not edited: check them after a rename. Code actions offer the nearest known names
+with none there a rename that edits more than one component is refused. Code actions offer the nearest known names
 for an unknown entity, service, field or in-parameter (`reference.entity`, `reference.service`, `reference.field`,
 `reference.parameter`). With `--server` rename is refused and the quick fixes find entities and services there.
 

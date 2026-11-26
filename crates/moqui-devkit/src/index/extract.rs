@@ -624,7 +624,7 @@ impl Reader<'_> {
                         Some(lang) if lang.contains("js") || lang.contains("javascript") => "js",
                         _ => "groovy",
                     };
-                    self.script_refs(&from, &text, node.line(), origin);
+                    self.script_refs(&from, &text, node.line(), origin, false);
                 }
             }
             let children: Vec<MNode> = node.child_iter().collect();
@@ -1499,8 +1499,10 @@ impl Reader<'_> {
         }
     }
 
-    /// The service and entity names in the string literals of a script's calls, with what each call does.
-    fn script_refs(&mut self, from: &str, text: &str, first_line: u32, origin: &str) {
+    /// The service and entity names in the string literals of a script's calls, with what each call does. A script
+    /// file's (`whole_file`) are placed at their line and column; an inline `<script>`'s text is the element's, trimmed,
+    /// so its column is not known (0) and its line is as near as that text tells.
+    fn script_refs(&mut self, from: &str, text: &str, first_line: u32, origin: &str, whole_file: bool) {
         for ScriptName {
             kind,
             name,
@@ -1509,7 +1511,13 @@ impl Reader<'_> {
         } in script_names(text)
         {
             let line = first_line + u32::try_from(text[..offset].matches('\n').count()).unwrap_or(0);
-            self.reference(from, kind, &name, "", "script", line, 0);
+            let line_start = text[..offset].rfind('\n').map_or(0, |at| at + 1);
+            let column = if whole_file {
+                u32::try_from(text[line_start..offset].chars().count() + 1).unwrap_or(0)
+            } else {
+                0
+            };
+            self.reference(from, kind, &name, "", "script", line, column);
             if let Some(last) = self.index.refs.last_mut() {
                 last.operation = operation.to_string();
                 last.origin = origin.to_string();
@@ -1521,7 +1529,7 @@ impl Reader<'_> {
         let location = self.info.location.to_string();
         let id = format!("script:{location}");
         self.artifact(id.clone(), "script", &location, None, String::new(), None);
-        self.script_refs(&id, text, 1, self.origin);
+        self.script_refs(&id, text, 1, self.origin, true);
     }
 
     /// The operation of an `entity-create`, `entity-update` or `entity-delete` on a value field of the actions block,

@@ -18,7 +18,7 @@
 //! index, read into memory on a model-only boot and kept current with the open buffers), hover (an artifact's summary,
 //! or an element's or attribute's documentation from the XSD digest), completion (the elements and attributes the
 //! digest gives, and entity and service names from the index in their attributes), document and workspace symbols, and
-//! on the local index rename (with `prepareRename`) and the check rules' quick fixes (`lsp_edit.rs`).
+//! on the local index rename (with `prepareRename`, `lsp_rename.rs`) and the check rules' quick fixes (`lsp_edit.rs`).
 //! With `--server URL` the checks and the index are a running dev instance's, over its MCP tools `check` and
 //! `artifact`, with the login key `moqui tui --server` keeps (or `MOQUI_LOGIN_KEY`); rename is refused there, and the
 //! quick fixes find names with the instance's `artifact` tool.
@@ -39,6 +39,8 @@ use crate::devtools_remote::{Remote, Target};
 
 #[path = "lsp_edit.rs"]
 mod edit;
+#[path = "lsp_rename.rs"]
+mod rename;
 
 /// What answers the server: this checkout's model and index, or a running instance's.
 pub enum Backend {
@@ -98,37 +100,30 @@ impl Backend {
         }
     }
 
-    /// What a rename at `line` of `path` would rename, or why none: the local index's artifact there.
-    fn rename_target(&self, path: &Path, line: u32, word: &str) -> Result<edit::RenameTarget, String> {
+    /// What a rename at the 0-based `line` and UTF-16 `character` of `path` (its text `text`) would rename, with the
+    /// span of its name, or why none: the local index's artifact the attribute or string under the cursor names.
+    fn rename_target(
+        &self,
+        path: &Path,
+        text: &str,
+        line: u32,
+        character: u32,
+    ) -> Result<(rename::RenameTarget, rename::Span), String> {
         let Self::Local { index, .. } = self else {
             return Err("moqui lsp renames on the local index only, not with --server".to_string());
         };
-        match index.at(&path.display().to_string(), line, word) {
-            Some((_, Some(artifact))) => {
-                // the name under the cursor is the target's (a service's verb or noun at its definition)
-                let target = edit::rename_target(&artifact)?;
-                if !word.is_empty() && !target.name.contains(word) && !word.ends_with(&target.name) {
-                    return Err(format!("{word} is not the name of {}", target.id));
-                }
-                Ok(target)
-            }
-            Some((Some(reference), None)) => Err(format!(
-                "{} {} does not resolve: there is nothing known to rename",
-                reference.to_kind, reference.to_name
-            )),
-            _ => Err("nothing the index knows is here to rename".to_string()),
-        }
+        rename::target_at(index, &path.display().to_string(), text, line, character)
     }
 
     /// The edits of renaming `target` to `new_name`, or why the rename is refused.
     fn rename(
         &self,
-        target: &edit::RenameTarget,
+        target: &rename::RenameTarget,
         new_name: &str,
         text_of: &dyn Fn(&Path) -> Option<String>,
     ) -> Result<std::collections::BTreeMap<PathBuf, Vec<edit::Edit>>, String> {
         match self {
-            Self::Local { factory, index } => edit::rename_edits(factory, index, target, new_name, text_of),
+            Self::Local { factory, index } => rename::rename_edits(factory, index, target, new_name, text_of),
             Self::Remote(_) => Err("moqui lsp renames on the local index only, not with --server".to_string()),
         }
     }
@@ -620,23 +615,13 @@ impl Server {
         } = Self::position(params);
         let path = path_of(&uri_text).ok_or_else(|| format!("{uri_text} is no file"))?;
         let text = self.text_of(&uri_text);
-        let (start, end, word) = word_span(&text, line, character);
-        let target = self.backend.rename_target(&path, line + 1, &word)?;
+        let (target, span) = self.backend.rename_target(&path, &text, line, character)?;
         if request.method == "textDocument/prepareRename" {
-            // the part of the word that is the name: a service's whole name, else the last segment of a dotted word
-            let (start, placeholder) = if target.kind == "service" || word == target.name {
-                (start, word.clone())
-            } else if let Some(at) = word
-                .rfind(&target.name)
-                .filter(|at| at + target.name.len() == word.len())
-            {
-                let skipped = u32::try_from(word[..at].encode_utf16().count()).unwrap_or(0);
-                (start + skipped, target.name.clone())
-            } else {
-                (start, word.clone())
-            };
-            let range = lsp::Range::new(lsp::Position::new(line, start), lsp::Position::new(line, end));
-            return Ok(json!({ "range": range, "placeholder": placeholder }));
+            let range = lsp::Range::new(
+                lsp::Position::new(span.line, span.start),
+                lsp::Position::new(span.line, span.end),
+            );
+            return Ok(json!({ "range": range, "placeholder": target.name }));
         }
         let new_name = params["newName"].as_str().unwrap_or_default();
         let documents: HashMap<PathBuf, &String> = self

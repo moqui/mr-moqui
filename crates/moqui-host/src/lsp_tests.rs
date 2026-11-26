@@ -99,12 +99,21 @@ impl Drop for LspBed {
 
 impl LspBed {
     fn new(name: &str, conf: &str) -> Self {
+        Self::with(name, conf, &[])
+    }
+
+    /// [`Self::new`] with the files `extra` (each a path under the directory and its text), in place of the standard
+    /// ones of the same path.
+    fn with(name: &str, conf: &str, extra: &[(&str, &str)]) -> Self {
         let dir = std::env::temp_dir().join(format!("moqui-lsp-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        for (path, text) in [
+        let mut files: Vec<(&str, &str)> = vec![
             ("up/entity/UpEntities.xml", UP_ENTITIES),
             ("site/service/site/ThingServices.xml", SITE_SERVICES),
-        ] {
+        ];
+        files.retain(|(path, _)| !extra.iter().any(|(other, _)| other == path));
+        files.extend_from_slice(extra);
+        for (path, text) in files {
             let path = dir.join(path);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(path, text).unwrap();
@@ -185,7 +194,8 @@ impl LspBed {
 /// prepareRename names the whole name. A parameter renamed from a field-map: its definition and the field-map.
 #[test]
 fn a_rename_edits_the_definition_and_each_reference() {
-    let mut bed = LspBed::new("rename", "");
+    let jobs = "<entity-facade-xml type=\"seed\">\n    <moqui.service.job.ServiceJob jobName=\"thing\" serviceName=\"site.ThingServices.save#Thing\"/>\n</entity-facade-xml>\n";
+    let mut bed = LspBed::with("rename", "", &[("site/data/Jobs.xml", jobs)]);
     let uri = bed.services_uri();
     // line 8: the service-call of save#Thing
     let prepared = bed
@@ -195,16 +205,23 @@ fn a_rename_edits_the_definition_and_each_reference() {
         )
         .unwrap();
     assert_eq!(prepared["placeholder"], "site.ThingServices.save#Thing");
+    // and a data file's job that runs it
     let service = bed.rename(&uri, 8, 40, "store#Thing").unwrap();
     assert_eq!(
         service,
-        [(
-            "ThingServices.xml".to_string(),
-            vec![
-                (1, 19, "store".to_string()),
-                (8, 37, "site.ThingServices.store#Thing".to_string())
-            ]
-        )]
+        [
+            (
+                "Jobs.xml".to_string(),
+                vec![(1, 63, "site.ThingServices.store#Thing".to_string())]
+            ),
+            (
+                "ThingServices.xml".to_string(),
+                vec![
+                    (1, 19, "store".to_string()),
+                    (8, 37, "site.ThingServices.store#Thing".to_string())
+                ]
+            )
+        ]
     );
     // the field-map's field-name on the same line names the parameter
     let parameter = bed.rename(&uri, 8, 94, "caption").unwrap();
@@ -345,4 +362,206 @@ fn the_nearest_names_are_within_a_third_of_the_names_length() {
     );
     // several fields at once: no one fix
     assert_eq!(edit::unknown_name("reference.field", "field a, b of E: x"), None);
+}
+
+/// A relationship to the field's entity that joins by its key: its key-map's `related` is edited with the field, and
+/// one with no `related`, whose related field has the key-map's own field's name, refuses the rename.
+#[test]
+fn a_rename_edits_a_key_maps_related_and_refuses_an_implied_one() {
+    let site = r#"<entities><entity entity-name="Part" package="site">
+    <field name="partId" type="id" is-pk="true"/><field name="thingId" type="id"/>
+    <relationship type="one" related="up.Thing"><key-map field-name="thingId" related="thingId"/></relationship>
+</entity></entities>"#;
+    let conf = r#"<moqui-conf><dev-aide site-component="site,up"/></moqui-conf>"#;
+    let mut bed = LspBed::with("key-maps", conf, &[("site/entity/SiteEntities.xml", site)]);
+    let uri = bed.uri("up/entity/UpEntities.xml");
+    let (line, character) = position(UP_ENTITIES, "name=\"thingId\"", 7);
+    let edits = bed.rename(&uri, line, character, "thingKey").unwrap();
+    let (related_line, related_column) = position(site, "related=\"thingId\"", 9);
+    assert_eq!(
+        edits,
+        [
+            (
+                "SiteEntities.xml".to_string(),
+                vec![(
+                    u64::from(related_line),
+                    u64::from(related_column),
+                    "thingKey".to_string()
+                )]
+            ),
+            ("UpEntities.xml".to_string(), vec![(2, 21, "thingKey".to_string())]),
+        ]
+    );
+    let implied = site.replace(" related=\"thingId\"", "");
+    let mut bed = LspBed::with("key-maps-implied", conf, &[("site/entity/SiteEntities.xml", &implied)]);
+    let uri = bed.uri("up/entity/UpEntities.xml");
+    let message = bed.rename(&uri, line, character, "thingKey").unwrap_err();
+    assert!(
+        message.contains("has no related, so it joins to the field by its own name thingId"),
+        "{message}"
+    );
+}
+
+/// The safety scan: the quoted name left in a component the rename touches, where the index knows no artifact it
+/// names, refuses the rename and says each place.
+#[test]
+fn a_rename_is_refused_where_the_quoted_name_is_left() {
+    let uses = "<services>\n    <service verb=\"use\" noun=\"Label\"><actions><set field=\"copy\" from=\"label\"/></actions></service>\n</services>\n";
+    let mut bed = LspBed::with("scan", "", &[("site/service/site/Uses.xml", uses)]);
+    let uri = bed.services_uri();
+    let message = bed.rename(&uri, 8, 94, "caption").unwrap_err();
+    assert!(
+        message.contains("label is written where the rename does not know what it names"),
+        "{message}"
+    );
+    assert!(message.contains("Uses.xml:2"), "{message}");
+}
+
+/// Two references of a script file on one line are each edited at its own place, by the column the index read it at.
+#[test]
+fn a_rename_edits_each_script_literal_at_its_column() {
+    let script = "// twice\nec.service.sync().name(\"site.ThingServices.save#Thing\").call(); ec.service.sync().name(\"site.ThingServices.save#Thing\").call()\n";
+    let mut bed = LspBed::with("scripts", "", &[("site/script/Twice.groovy", script)]);
+    let uri = bed.services_uri();
+    let edits = bed.rename(&uri, 8, 40, "store#Thing").unwrap();
+    let line = script.lines().nth(1).unwrap();
+    let column = |at: usize| u64::try_from(line[..at].encode_utf16().count() + 1).unwrap();
+    let new = "site.ThingServices.store#Thing".to_string();
+    assert_eq!(
+        edits[1],
+        (
+            "Twice.groovy".to_string(),
+            vec![
+                (1, column(line.find('"').unwrap()), new.clone()),
+                (1, column(line.rfind("\"site").unwrap()), new),
+            ]
+        )
+    );
+}
+
+/// The 0-based line and UTF-16 character of the first character of `needle` in `text`, plus `into` characters.
+fn position(text: &str, needle: &str, into: u32) -> (u32, u32) {
+    let at = text.find(needle).expect("the needle is in the text");
+    let line = u32::try_from(text[..at].matches('\n').count()).unwrap();
+    let start = text[..at].rfind('\n').map_or(0, |found| found + 1);
+    let column = u32::try_from(text[start..at].encode_utf16().count()).unwrap();
+    (line, column + into)
+}
+
+const MORE_SERVICES: &str = r#"<services>
+    <service verb="find" noun="More">
+        <actions>
+            <entity-find entity-name="up.Thing" list="found"><econdition field-name="thingId"/></entity-find>
+            <service-call name="site.ThingServices.save#Thing"><field-map field-name="label" from="caption"/></service-call>
+            <service-call name="site.Missing.run#Gone"><field-map field-name="label" value="x"/></service-call>
+        </actions>
+    </service>
+    <service verb="update" noun="Widget"><in-parameters><auto-parameters/></in-parameters></service>
+</services>
+"#;
+
+/// The refusals, each with its reason: a name taken, a use that reads the context value of the name (an `econdition`
+/// with no `from`), an unresolved reference of the name whose service the index does not know, a noun change of a
+/// service whose auto-parameters read its noun, a prefixed alias-all; and a cursor on a `from` renames nothing.
+#[test]
+fn a_rename_is_refused_where_it_cannot_follow_the_name() {
+    let mut bed = LspBed::with("refused", "", &[("site/service/site/MoreServices.xml", MORE_SERVICES)]);
+    let uri = bed.uri("site/service/site/MoreServices.xml");
+    let at = |needle: &str, into: u32| position(MORE_SERVICES, needle, into);
+    let refused = |bed: &mut LspBed, (line, character): (u32, u32), new_name: &str| {
+        bed.rename(&uri, line, character, new_name).unwrap_err()
+    };
+    let taken = refused(&mut bed, at("site.ThingServices.save#Thing", 3), "make#Thing");
+    assert!(taken.contains("make#Thing is there already"), "{taken}");
+    let implied = refused(&mut bed, at("field-name=\"thingId\"", 13), "thingKey");
+    assert!(
+        implied.contains("has no from, so it reads the value named thingId"),
+        "{implied}"
+    );
+    let unresolved = refused(&mut bed, at("field-name=\"label\" from", 13), "caption");
+    assert!(
+        unresolved.contains("MoreServices.xml:6 names label and does not resolve"),
+        "{unresolved}"
+    );
+    let noun = refused(&mut bed, at("noun=\"Widget\"", 7), "update#Gadget");
+    assert!(noun.contains("reads its noun"), "{noun}");
+    // the from of a field-map names a value, not the parameter
+    let from = refused(&mut bed, at("from=\"caption\"", 7), "other");
+    assert!(from.contains("the from of field-map names no artifact"), "{from}");
+
+    let views = r#"<entities><view-entity entity-name="ThingView" package="up">
+    <member-entity entity-alias="T" entity-name="up.Thing"/><alias-all entity-alias="T" prefix="thing"/>
+</view-entity></entities>"#;
+    let mut viewed = LspBed::with("prefixed", "", &[("up/entity/UpViews.xml", views)]);
+    let entities = viewed.uri("up/entity/UpEntities.xml");
+    let (line, character) = position(UP_ENTITIES, "name=\"name\"", 7);
+    let prefixed = viewed.rename(&entities, line, character, "title").unwrap_err();
+    assert!(
+        prefixed.contains("aliases it as thingName by a prefixed alias-all"),
+        "{prefixed}"
+    );
+}
+
+/// An entity field renamed at its definition, in a file of CRLF lines with characters of several bytes before the
+/// name: the definition, the parameter its service's auto-parameters makes and the field-map naming it, the form field
+/// bound to that parameter with its field-ref, and an exclude that leaves it out of another form; the alias-all's alias
+/// of a view follows with no text of its own.
+#[test]
+fn a_rename_goes_through_alias_all_auto_parameters_and_a_form_binding() {
+    let entities = "<entities>\r\n    <entity entity-name=\"Thing\" package=\"up\">\r\n        <field name=\"thingId\" type=\"id\" is-pk=\"true\"/>\r\n        <field description=\"\u{dc}n\u{ef}code \u{2713}\" name=\"name\" type=\"text-medium\"/>\r\n    </entity>\r\n    <view-entity entity-name=\"ThingView\" package=\"up\"><member-entity entity-alias=\"T\" entity-name=\"up.Thing\"/><alias-all entity-alias=\"T\"/></view-entity>\r\n</entities>\r\n";
+    let services = r#"<services>
+    <service verb="save" noun="Item">
+        <in-parameters><auto-parameters entity-name="up.Thing"/></in-parameters>
+    </service>
+    <service verb="make" noun="Item">
+        <actions><service-call name="site.ThingServices.save#Item"><field-map field-name="name" value="x"/></service-call></actions>
+    </service>
+</services>
+"#;
+    let screen = r#"<screen>
+    <transition name="save"><service-call name="site.ThingServices.save#Item"/><default-response url="."/></transition>
+    <widgets>
+        <form-single name="Edit" transition="save">
+            <field name="name"><default-field><text-line/></default-field></field>
+            <field-layout><field-ref name="name"/></field-layout>
+        </form-single>
+        <form-list name="List" list="things"><auto-fields-entity entity-name="up.Thing"><exclude field-name="name"/></auto-fields-entity></form-list>
+    </widgets>
+</screen>
+"#;
+    let mut bed = LspBed::with(
+        "through",
+        r#"<moqui-conf><dev-aide site-component="site,up"/></moqui-conf>"#,
+        &[
+            ("up/entity/UpEntities.xml", entities),
+            ("site/service/site/ThingServices.xml", services),
+            ("site/screen/Things.xml", screen),
+        ],
+    );
+    let uri = bed.uri("up/entity/UpEntities.xml");
+    // the field's definition: line 3, its name after the description's characters of several bytes
+    let edits = bed.rename(&uri, 3, 46, "title").unwrap();
+    let title = |line: u64, start: u64| (line, start, "title".to_string());
+    let place = |text: &str, needle: &str, into: u32| {
+        let (line, character) = position(text, needle, into);
+        title(u64::from(line), u64::from(character))
+    };
+    assert_eq!(
+        edits,
+        [
+            (
+                "ThingServices.xml".to_string(),
+                vec![place(services, "field-name=\"name\"", 12)]
+            ),
+            (
+                "Things.xml".to_string(),
+                vec![
+                    place(screen, "<field name=\"name\"", 13),
+                    place(screen, "<field-ref name=\"name\"", 17),
+                    place(screen, "<exclude field-name=\"name\"", 21),
+                ]
+            ),
+            ("UpEntities.xml".to_string(), vec![title(3, 45)]),
+        ]
+    );
 }

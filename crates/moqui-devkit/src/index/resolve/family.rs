@@ -138,6 +138,27 @@ impl Resolver {
         found
     }
 
+    /// Whether the service `service` (its id) reads its noun as an entity: an `auto-parameters` with no `entity-name` of
+    /// its own, or of a service it implements (which reads the implementing service's noun), in turn.
+    #[must_use]
+    pub fn reads_noun(&self, service: &str) -> bool {
+        let mut visited: HashSet<String> = HashSet::new();
+        let mut frontier = vec![service.to_string()];
+        while let Some(current) = frontier.pop() {
+            if !visited.insert(current.clone()) || visited.len() > super::FIND_DEPTH {
+                continue;
+            }
+            for mark in self.marks_of(&current) {
+                match mark {
+                    Mark::AutoParameters { entity: None, .. } => return true,
+                    Mark::Implements { service, .. } => frontier.push(format!("service:{service}")),
+                    _ => {}
+                }
+            }
+        }
+        false
+    }
+
     /// Each row the owner `owner` (of `kind`) expands, with its name and what it was made from.
     fn provenance(&self, owner: &str, kind: &str) -> Vec<(String, String, Vec<String>)> {
         let mut rows = Vec::new();

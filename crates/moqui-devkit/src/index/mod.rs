@@ -221,8 +221,8 @@ pub fn hash_of(text: &str) -> String {
     // auto-fields, extends, a transition's calls and field-maps), and the references of auto-parameters and extends.
     // 8 a screen's allow-extra-path mark, and a form's bindings by the path it posts to, its own screen's transition too.
     // 9 a view entity's members, alias-alls and aliases, the parameters written before an auto-parameters, and a REST
-    // method's service. 10 a view's member-relationships.
-    let digest = Sha256::digest(format!("10\n{text}").as_bytes());
+    // method's service. 10 a view's member-relationships. 11 a script reference's column.
+    let digest = Sha256::digest(format!("11\n{text}").as_bytes());
     digest.iter().take(12).map(|byte| format!("{byte:02x}")).collect()
 }
 
