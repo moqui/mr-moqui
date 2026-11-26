@@ -6,8 +6,10 @@
  *   - m-code-editor: one file's text with its language (by `language` or `file-name`), line numbers, folding, search,
  *     completion (XML elements and attributes from a schema digest; for `sql:<kind>` the dialect, and tables and columns
  *     from a schema map), lint (a `lint` function answering problems), the
- *     shell's dark mode, Mod-S as `save`; `ready` gives the EditorView to a host such as the dev-aide. When the bundle cannot
- *     load it is a plain text area, so a form still submits. In a form it writes a hidden input of `name`.
+ *     shell's dark mode, Mod-S as `save`; `ready` gives the EditorView to a host such as the dev-aide. The user's editor
+ *     settings (`moqui.codeEditor.setSettings`: font size, tab size, wrap, white space shown, the keymap and the keys a
+ *     user rebound) apply to every editor on the page. When the bundle cannot load it is a plain text area, so a form
+ *     still submits. In a form it writes a hidden input of `name`.
  *   - m-diff-view: two texts side by side (MergeView) or inline (unifiedMergeView), read only unless `editable`.
  *   - m-file-tree: a lazy tree of a directory over a `load(path)` function, each entry with its git status, the folder's
  *     rolled up; `open` for a file, `menu` for a right click.
@@ -149,6 +151,85 @@
     };
     editor.dropState = (key) => { keptStates.delete(key); };
 
+    // ---- editor settings (plans/design-dev-aide.md 5.1) ----
+
+    // What a user sets (the dev-aide's DEV_AIDE_EDITOR preference, given to setSettings): the font size in pixels, the tab
+    // size (and the indent unit, that many spaces), wrap (for an editor whose `wrap` is not set), white space shown, the
+    // keymap (a base of KEYMAPS by name; "default" is CodeMirror's) and keys (a command's keys by its name, over the
+    // keymap).
+    editor.DEFAULT_SETTINGS = Object.freeze({ fontSize: 13, tabSize: 4, wrap: false, whitespace: false, keymap: "default", keys: Object.freeze({}) });
+    // The keymaps a user picks from: each a function of the bundle answering the extension it adds ahead of the editor's
+    // own keys. Another (Vim) is added here by the script that loads its library: KEYMAPS.vim = (CM) => CM.vim().
+    editor.KEYMAPS = editor.KEYMAPS || { default: () => [] };
+    // The commands a key row rebinds (DEV_AIDE_EDITOR keys), each the bundle's function its default bindings run, which
+    // finds them; save is the editor's own (Mod-S emits `save`).
+    editor.COMMANDS = {
+        save: null, toggleComment: (CM) => CM.toggleComment, find: (CM) => CM.openSearchPanel, completion: (CM) => CM.startCompletion,
+        undo: (CM) => CM.undo, redo: (CM) => CM.redo, foldAll: (CM) => CM.foldAll, unfoldAll: (CM) => CM.unfoldAll
+    };
+    const KEY_PART = /^(mod|ctrl|control|alt|shift|meta|cmd)$/i;
+    // A key in CodeMirror's form ("Mod-Shift-f", "Ctrl-Space", "F2"): modifiers, then one key.
+    editor.validKeys = (keys) => {
+        const parts = String(keys || "").split(/-(?!$)/);
+        const key = parts[parts.length - 1];
+        return key !== "" && !/\s/.test(key) && (key === "-" || !key.endsWith("-")) && parts.slice(0, -1).every((part) => KEY_PART.test(part));
+    };
+    // The settings with the defaults filled in, a font size of 8 to 32 and a tab size of 1 to 8, and only the keys that
+    // are valid.
+    editor.normalizeSettings = (value) => {
+        const given = value && typeof value === "object" ? value : {};
+        const number = (raw, low, high, fallback) => { const n = Math.round(Number(raw)); return raw !== null && raw !== "" && Number.isFinite(n) && n >= low && n <= high ? n : fallback; };
+        const keys = {};
+        for (const [name, keyText] of Object.entries(given.keys && typeof given.keys === "object" ? given.keys : {}))
+            if (Object.prototype.hasOwnProperty.call(editor.COMMANDS, name) && typeof keyText === "string" && editor.validKeys(keyText)) keys[name] = keyText;
+        const base = editor.DEFAULT_SETTINGS;
+        return {
+            fontSize: number(given.fontSize, 8, 32, base.fontSize), tabSize: number(given.tabSize, 1, 8, base.tabSize),
+            wrap: given.wrap === true || given.wrap === "true", whitespace: given.whitespace === true || given.whitespace === "true",
+            keymap: typeof given.keymap === "string" && given.keymap ? given.keymap : base.keymap, keys
+        };
+    };
+    // The bindings with `keys` over them (each a command's keys by name): a command rebound loses its default bindings,
+    // found by the function they run (`commands`, name to function), and runs on its keys instead, ahead of the rest.
+    editor.rebind = (bindings, keys, commands) => {
+        const ahead = [];
+        const dropped = new Set();
+        for (const [name, keyText] of Object.entries(keys || {})) {
+            const run = commands && commands[name];
+            if (typeof run !== "function") continue;
+            dropped.add(run);
+            ahead.push({ key: keyText, run, preventDefault: true });
+        }
+        return ahead.concat((bindings || []).filter((binding) => !dropped.has(binding.run)));
+    };
+    // Whether a keydown `event` is `keys` in CodeMirror's form, Mod being Cmd on a Mac and Ctrl elsewhere: for a page's
+    // own keys that a user rebinds, as the Workspace's Go to file.
+    editor.keyMatches = (event, keys, isMac) => {
+        if (!event || !keys) return false;
+        const parts = String(keys).split(/-(?!$)/);
+        const key = parts.pop();
+        const want = { ctrl: false, alt: false, shift: false, meta: false };
+        for (const part of parts.map((name) => name.toLowerCase())) {
+            if (part === "mod") want[isMac ? "meta" : "ctrl"] = true;
+            else if (part === "ctrl" || part === "control") want.ctrl = true;
+            else if (part === "alt") want.alt = true;
+            else if (part === "shift") want.shift = true;
+            else if (part === "meta" || part === "cmd") want.meta = true;
+        }
+        const named = key === "Space" ? " " : key;
+        return String(event.key || "").toLowerCase() === named.toLowerCase() && !!event.ctrlKey === want.ctrl && !!event.altKey === want.alt
+            && !!event.shiftKey === want.shift && !!event.metaKey === want.meta;
+    };
+    // settings a page gave before this file loaded (the Workspace sets them as it starts) are kept
+    editor.settings = editor.normalizeSettings(editor.settings || null);
+    // The editors on the page, which a change of the settings reconfigures.
+    const liveEditors = new Set();
+    editor.setSettings = (value) => {
+        editor.settings = editor.normalizeSettings(value);
+        for (const vm of liveEditors) vm.applySettings();
+        return editor.settings;
+    };
+
     // ---- the CodeMirror bundle ----
 
     let loading = null;
@@ -215,7 +296,7 @@
         }
         return [
             CM.EditorView.theme({
-                "&": { height: "100%", fontSize: "13px" },
+                "&": { height: "100%" },
                 ".cm-scroller": { fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace", lineHeight: "1.5" },
                 ".cm-gutters": dark ? { backgroundColor: "#1d1d1d", color: "#8a8a8a", border: "none" }
                     : { backgroundColor: "#f7f7f9", color: "#999", border: "none" },
@@ -239,9 +320,38 @@
         ];
     }
 
-    function keys(CM, extra) {
-        return CM.keymap.of([].concat(extra || [], CM.closeBracketsKeymap, CM.defaultKeymap, CM.searchKeymap,
-            CM.historyKeymap, CM.foldKeymap, CM.completionKeymap, CM.lintKeymap, [CM.indentWithTab]));
+    // The editor's keys: the chosen keymap's extension first, then save and CodeMirror's keymaps with the keys the user
+    // rebound over them.
+    function keys(CM, save, settings) {
+        const commands = {};
+        for (const [name, of] of Object.entries(editor.COMMANDS)) if (of) commands[name] = of(CM);
+        const base = [].concat(CM.closeBracketsKeymap, CM.defaultKeymap, CM.searchKeymap, CM.historyKeymap, CM.foldKeymap,
+            CM.completionKeymap, CM.lintKeymap, [CM.indentWithTab]);
+        const keymap = editor.KEYMAPS[settings.keymap] || editor.KEYMAPS.default;
+        return [keymap(CM), CM.keymap.of([{ key: settings.keys.save || "Mod-s", preventDefault: true, run: save }]
+            .concat(editor.rebind(base, settings.keys, commands)))];
+    }
+
+    // White space shown: each space a centered dot, each tab a line, in the lines on screen.
+    function whitespaceMarks(CM) {
+        const space = CM.Decoration.mark({ class: "cm-m-space" });
+        const tab = CM.Decoration.mark({ class: "cm-m-tab" });
+        const build = (view) => {
+            const builder = new CM.RangeSetBuilder();
+            for (const { from, to } of view.visibleRanges) {
+                const text = view.state.doc.sliceString(from, to);
+                for (let index = 0; index < text.length; index++) {
+                    const ch = text.charCodeAt(index);
+                    if (ch === 32) builder.add(from + index, from + index + 1, space);
+                    else if (ch === 9) builder.add(from + index, from + index + 1, tab);
+                }
+            }
+            return builder.finish();
+        };
+        return CM.ViewPlugin.fromClass(class {
+            constructor(view) { this.decorations = build(view); }
+            update(update) { if (update.docChanged || update.viewportChanged) this.decorations = build(update.view); }
+        }, { decorations: (plugin) => plugin.decorations });
     }
 
     function highlighted(CM, lines, doc) {
@@ -293,6 +403,9 @@
         style.textContent = ".m-code-editor{position:relative;border:1px solid var(--m-border,rgba(0,0,0,.12));border-radius:4px;overflow:hidden}" +
             ".m-code-editor .cm-editor{height:100%}.m-code-editor .cm-editor.cm-focused{outline:none}" +
             ".m-code-editor .cm-m-blame{font-size:11px;opacity:.75;padding:0 6px;white-space:nowrap}" +
+            ".m-code-editor .cm-m-space{background-image:radial-gradient(circle at 50% 55%,rgba(127,127,127,.6) 12%,transparent 14%)}" +
+            ".m-code-editor .cm-m-tab{background-image:linear-gradient(rgba(127,127,127,.5),rgba(127,127,127,.5));background-size:calc(100% - 4px) 1px;" +
+            "background-position:center;background-repeat:no-repeat}" +
             ".m-code-editor-fallback{width:100%;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px}" +
             ".m-diff-view{border:1px solid var(--m-border,rgba(0,0,0,.12));border-radius:4px;overflow:auto}" +
             ".m-file-tree .m-file-status{font-family:ui-monospace,Menlo,monospace;font-size:11px;font-weight:600;margin-left:auto;padding-left:8px}" +
@@ -313,7 +426,8 @@
         name: "mCodeEditor",
         props: {
             modelValue: { type: String, default: "" }, language: String, fileName: String, readOnly: Boolean,
-            lineNumbers: { type: Boolean, default: true }, wrap: Boolean, highlightLines: Array, schema: Object, lint: Function,
+            // wrap unset follows the user's settings
+            lineNumbers: { type: Boolean, default: true }, wrap: { type: Boolean, default: undefined }, highlightLines: Array, schema: Object, lint: Function,
             name: String, form: String, minHeight: { type: String, default: "6rem" }, maxHeight: String, height: String,
             autofocus: Boolean, placeholder: String, ariaLabel: String, ariaLabelledby: String,
             // who last changed each run of lines (git blame), shown in a gutter while it is set
@@ -322,7 +436,9 @@
             extensions: Function,
             // a key of the buffer (a file tab): the editor's state, with its undo history, is kept under it when the editor
             // unmounts and taken back when one mounts again with the same key and text, so switching tabs keeps history
-            stateKey: String
+            stateKey: String,
+            // the editor settings of this editor (as setSettings takes them), in place of the page's
+            settings: Object
         },
         emits: ["update:modelValue", "save", "cursor", "ready"],
         data() { return { failed: false, ready: false, text: this.modelValue || "" }; },
@@ -350,6 +466,7 @@
             schema() { this.reconfigure("language"); },
             readOnly() { this.reconfigure("readOnly"); },
             wrap() { this.reconfigure("wrap"); },
+            settings() { this.applySettings(); },
             ariaLabel() { this.reconfigure("accessibility"); },
             ariaLabelledby() { this.reconfigure("accessibility"); },
             highlightLines() { this.reconfigure("highlight"); this.reveal(); },
@@ -357,6 +474,7 @@
         },
         mounted() {
             addStyles();
+            liveEditors.add(this);
             this.$watch(() => isDark(this), () => this.reconfigure("theme"));
             editor.load().then((CM) => { if (!this.unmounted) this.build(CM); }, (error) => {
                 console.error("The code editor could not load; editing as plain text", error);
@@ -365,6 +483,7 @@
         },
         beforeUnmount() {
             this.unmounted = true;
+            liveEditors.delete(this);
             if (this.view) {
                 if (this.stateKey && this.owner) editor.keepState(this.stateKey, { state: this.view.state, compartments: this.compartments, owner: this.owner });
                 this.owner.vm = null;
@@ -372,12 +491,23 @@
             }
         },
         methods: {
+            // the settings this editor follows: its own, else the page's
+            effectiveSettings() { return this.settings ? editor.normalizeSettings(this.settings) : editor.settings; },
+            applySettings() { ["settings", "keys", "wrap"].forEach((key) => this.reconfigure(key)); },
             parts(CM) {
+                const owner = this.owner;
+                const save = (view) => { if (owner && owner.vm) owner.vm.$emit("save", view.state.doc.toString()); return true; };
                 return {
                     language: () => languageExtension(CM, this.resolvedLanguage, this.schema),
                     theme: () => theme(CM, isDark(this)),
                     readOnly: () => [CM.EditorState.readOnly.of(!!this.readOnly), CM.EditorView.editable.of(!this.readOnly)],
-                    wrap: () => (this.wrap ? CM.EditorView.lineWrapping : []),
+                    wrap: () => ((this.wrap === undefined ? this.effectiveSettings().wrap : this.wrap) ? CM.EditorView.lineWrapping : []),
+                    settings: () => {
+                        const settings = this.effectiveSettings();
+                        return [CM.EditorView.theme({ "&": { fontSize: settings.fontSize + "px" } }), CM.EditorState.tabSize.of(settings.tabSize),
+                            CM.indentUnit.of(" ".repeat(settings.tabSize)), settings.whitespace ? whitespaceMarks(CM) : []];
+                    },
+                    keys: () => keys(CM, save, this.effectiveSettings()),
                     accessibility: () => CM.EditorView.contentAttributes.of(this.accessibilityAttributes),
                     highlight: () => highlighted(CM, this.highlightLines, this.view ? this.view.state.doc : CM.Text.of(this.text.split("\n"))),
                     blame: () => blameGutter(CM, this.blame)
@@ -392,7 +522,7 @@
                     this.owner = kept.owner;
                     this.owner.vm = this;
                     this.view = new CM.EditorView({ state: kept.state, parent: this.$refs.host });
-                    ["language", "theme", "readOnly", "wrap", "accessibility", "highlight", "blame"].forEach((key) => this.reconfigure(key));
+                    ["language", "theme", "readOnly", "wrap", "accessibility", "highlight", "blame", "settings", "keys"].forEach((key) => this.reconfigure(key));
                     if (this.autofocus) this.view.focus();
                     this.ready = true;
                     this.reveal();
@@ -409,7 +539,6 @@
                 const extensions = [
                     this.lineNumbers ? CM.lineNumbers() : [],
                     basics(CM),
-                    keys(CM, [{ key: "Mod-s", preventDefault: true, run: (view) => { if (owner.vm) owner.vm.$emit("save", view.state.doc.toString()); return true; } }]),
                     configured,
                     this.placeholder ? CM.placeholder(this.placeholder) : [],
                     this.extensions ? this.extensions(CM) : [],

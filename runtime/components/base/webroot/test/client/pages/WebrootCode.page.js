@@ -136,6 +136,72 @@ test("the bundle has what the widgets use, and a state for every language", () =
     }
 });
 
+test("the editor settings: defaults filled in, sizes bounded, only valid keys of known commands", () => {
+    assert.deepEqual(editor.normalizeSettings(null), { fontSize: 13, tabSize: 4, wrap: false, whitespace: false, keymap: "default", keys: {} });
+    const given = editor.normalizeSettings({ fontSize: "16", tabSize: 40, wrap: true, whitespace: "true", keymap: "vim",
+        keys: { toggleComment: "Mod-Shift-7", save: "Alt-s", nothing: "Mod-q", find: "Hyper-f" } });
+    assert.deepEqual(given, { fontSize: 16, tabSize: 4, wrap: true, whitespace: true, keymap: "vim", keys: { toggleComment: "Mod-Shift-7", save: "Alt-s" } });
+    assert.ok(editor.validKeys("Ctrl-Space") && editor.validKeys("F2") && editor.validKeys("Mod--"));
+    assert.ok(!editor.validKeys("") && !editor.validKeys("Mod-") && !editor.validKeys("Super-x"));
+    // the bundle has each command a key rebinds
+    for (const [name, of] of Object.entries(editor.COMMANDS)) if (of) assert.equal(typeof of(CM), "function", name);
+});
+
+test("a rebound command runs on its keys, ahead of the rest, and not on its default ones", () => {
+    const comment = () => true, other = () => true;
+    const bindings = [{ key: "Mod-/", run: comment }, { key: "Mod-x", run: other }, { key: "Mod-k", run: comment }];
+    const out = editor.rebind(bindings, { toggleComment: "Alt-c", find: "Alt-f" }, { toggleComment: comment });
+    assert.deepEqual(out.map((binding) => binding.key), ["Alt-c", "Mod-x"]);
+    assert.equal(out[0].run, comment);
+    assert.deepEqual(editor.rebind(bindings, {}, { toggleComment: comment }).map((binding) => binding.key), ["Mod-/", "Mod-x", "Mod-k"]);
+    // with the bundle's keymaps: toggleComment's Mod-/ goes, its new key comes first
+    const base = [].concat(CM.defaultKeymap, CM.historyKeymap);
+    const rebound = editor.rebind(base, { toggleComment: "Alt-c", undo: "Alt-u" }, { toggleComment: CM.toggleComment, undo: CM.undo });
+    assert.deepEqual(rebound.slice(0, 2).map((binding) => binding.key), ["Alt-c", "Alt-u"]);
+    assert.ok(!rebound.slice(2).some((binding) => binding.run === CM.toggleComment || binding.run === CM.undo));
+    assert.ok(rebound.some((binding) => binding.run === CM.redo));
+});
+
+test("an editor takes the settings: font size, tab size and indent, wrap, and the keys rebound over its keymap", () => {
+    const methods = editor.components["m-code-editor"].methods;
+    const editorOf = (settings, wrap) => {
+        const vm = { settings, wrap, owner: { vm: null } };
+        vm.effectiveSettings = methods.effectiveSettings.bind(vm);
+        return methods.parts.call(vm, CM);
+    };
+    const parts = editorOf({ fontSize: 18, tabSize: 2, wrap: true, keys: { toggleComment: "Alt-c" } }, undefined);
+    const state = CM.EditorState.create({ doc: "x", extensions: [parts.settings(), parts.keys()] });
+    assert.equal(state.tabSize, 2);
+    assert.equal(state.facet(CM.indentUnit), "  ");
+    const bindings = state.facet(CM.keymap).flat();
+    assert.ok(bindings.some((binding) => binding.key === "Alt-c" && binding.run === CM.toggleComment));
+    assert.ok(!bindings.some((binding) => binding.key === "Mod-/"));
+    assert.ok(bindings.some((binding) => binding.key === "Mod-s"), "save keeps its default");
+    // wrap: the user's when the editor does not set it, else the editor's
+    assert.equal(parts.wrap(), CM.EditorView.lineWrapping);
+    assert.deepEqual(editorOf({ wrap: true }, false).wrap(), []);
+    // the page's settings when an editor has none of its own
+    const page = editor.settings;
+    try {
+        editor.setSettings({ tabSize: 8 });
+        const defaults = editorOf(undefined, undefined);
+        assert.equal(CM.EditorState.create({ doc: "", extensions: [defaults.settings()] }).tabSize, 8);
+    } finally {
+        editor.setSettings(page);
+    }
+});
+
+test("a keydown is a key in CodeMirror's form, Mod by the platform", () => {
+    const event = (key, mods) => Object.assign({ key, ctrlKey: false, altKey: false, shiftKey: false, metaKey: false }, mods || {});
+    assert.ok(editor.keyMatches(event("p", { ctrlKey: true }), "Mod-p", false));
+    assert.ok(!editor.keyMatches(event("p", { ctrlKey: true }), "Mod-p", true));
+    assert.ok(editor.keyMatches(event("p", { metaKey: true }), "Mod-p", true));
+    assert.ok(editor.keyMatches(event("O", { ctrlKey: true, shiftKey: true }), "Mod-Shift-o", false));
+    assert.ok(!editor.keyMatches(event("o", { ctrlKey: true }), "Mod-Shift-o", false));
+    assert.ok(editor.keyMatches(event(" ", { ctrlKey: true }), "Ctrl-Space", false));
+    assert.ok(!editor.keyMatches(event("p"), "", false));
+});
+
 test("kept editor states come back by key, the most recent 50", () => {
     const state = CM.EditorState.create({ doc: "x", extensions: [CM.history()] });
     editor.keepState("a", { state, compartments: {}, owner: { vm: null } });
