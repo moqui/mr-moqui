@@ -55,6 +55,7 @@ use moqui_lib::object::{is_empty, to_plain_string, Value};
 use moqui_lib::sync::{lock, read, write};
 use sha2::Digest;
 
+use crate::context::framework_thread;
 use crate::context::{ExecutionContext, ExecutionContextFactory};
 use crate::entity::{EntityFacade, EntityValue};
 use crate::transaction::TransactionAttribute;
@@ -881,7 +882,7 @@ pub fn start(factory: &Arc<ExecutionContextFactory>) {
     let weak: Weak<ExecutionContextFactory> = Arc::downgrade(factory);
     let spawned = std::thread::Builder::new()
         .name("moqui-chat-bridge".to_string())
-        .spawn(move || {
+        .spawn(framework_thread(move || {
             let mut first = true;
             loop {
                 // The factory is held only for a round, not while waiting, so a stopped server releases it.
@@ -933,7 +934,7 @@ pub fn start(factory: &Arc<ExecutionContextFactory>) {
                     Err(error) => tracing::error!("the chat bridge round failed: {error}"),
                 }
             }
-        });
+        }));
     match spawned {
         Ok(handle) => *lock(&state.thread) = Some(handle),
         Err(error) => tracing::error!("the chat bridge worker did not start: {error}"),

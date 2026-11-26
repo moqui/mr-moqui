@@ -365,7 +365,10 @@ Do not "fix" these:
   `unwrap_or_else(PoisonError::into_inner)` through `moqui_lib::sync`, so that one panicked request does not lock
   everyone out.
 - **async and threads.** `moqui-host` uses Tokio and axum. `moqui-core` is synchronous on `std::thread` by design. Do
-  not add async to core.
+  not add async to core. A thread the framework starts for its own work that may enter an execution context is
+  started with `moqui_core::context::framework_thread` (`.spawn(framework_thread(move || ...))`, scoped threads too),
+  so that leaving its outermost context never runs an inline factory's queued work, which belongs to the thread that
+  drains it (a test, the browser's worker).
 - **Crates along hook seams.** Google favors small crates and a flat layout. Here a crate is split off only along a
   seam a hook can carry (a register entry above core, a hook table below it), when the split saves rebuild time or
   keeps a heavy dependency out of core ([Crate-Split](../../plans/archive/Crate-Split.md)). Modules inside a crate carry

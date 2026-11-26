@@ -37,6 +37,7 @@ use moqui_lib::error::Error;
 use moqui_lib::object::{to_plain_string, Value};
 use moqui_lib::sync::lock;
 
+use crate::context::framework_thread;
 use crate::context::ExecutionContextFactory;
 use crate::entity::EntityFacade;
 use crate::transaction::TransactionAttribute;
@@ -309,7 +310,7 @@ pub(super) fn forward_note(facade: &EntityFacade, entity: &str, key: Option<Stri
     let sending = facade.clone();
     let spawned = std::thread::Builder::new()
         .name("moqui-edge-notes".to_string())
-        .spawn(move || {
+        .spawn(framework_thread(move || {
             std::thread::sleep(NOTE_GATHER);
             let notes = {
                 let mut waiting = lock(&outgoing);
@@ -317,7 +318,7 @@ pub(super) fn forward_note(facade: &EntityFacade, entity: &str, key: Option<Stri
                 std::mem::take(&mut waiting.notes)
             };
             publish_notes(&sending, notes);
-        });
+        }));
     if let Err(err) = spawned {
         tracing::error!("Edge replication: the notes for the sender were not sent: {err}");
         facade.with_slot(OutgoingSlot::default, |slot| lock(&slot.0).gathering = false);

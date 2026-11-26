@@ -454,7 +454,9 @@ impl ServicePools {
     /// while draining runs in the same pass. Returns how many ran.
     ///
     /// Runs nothing while a transaction is in place on this thread, or when this thread is already
-    /// draining. A failure is logged, as on a worker, and does not stop the rest.
+    /// draining. A frame suspended under a force-new counts as in place (`thread_in_transaction`), so the
+    /// after-commit hooks of the inner transaction, which run before the outer frame resumes, drain
+    /// nothing. A failure is logged, as on a worker, and does not stop the rest.
     pub fn run_pending(&self) -> usize {
         let Some(inline) = &self.inline else {
             return 0;
