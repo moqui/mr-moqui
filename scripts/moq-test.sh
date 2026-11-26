@@ -1123,8 +1123,9 @@ EOF
     check "component-create" 0 'Created runtime/components/addon/my-shop from template' -- \
         "$M" component-create my-shop --myaddons me --git-remote https://example.com/my-shop.git
     S=$R/runtime/components/addon/my-shop
+    # an App has every file of the template but its other kinds (kinds/, components.sh)
     check "create names every file" 0 '' -- test "$(files_of "$S")" = "$(files_of "$R/runtime/components/dev/template" \
-        | sed -e 's/@component@/my-shop/g' -e 's/@Class@/MyShop/g' -e 's/@package@/myshop/g' | LC_ALL=C sort)"
+        | grep -v '^\./kinds/' | sed -e 's/@component@/my-shop/g' -e 's/@Class@/MyShop/g' -e 's/@package@/myshop/g' | LC_ALL=C sort)"
     check "create directories" 0 '' -- test -f "$S/service/myshop/MyShopServices.xml" -a -f "$S/screen/MyShop/FindItem.xml"
     check "create leaves no placeholder" 1 '' -- grep -rE --exclude-dir=.git '@(component|Title|Class|package|ID)@' "$S"
     check "create takes out disabled" 1 '' -- grep -q 'disabled=' "$S/component.xml"
