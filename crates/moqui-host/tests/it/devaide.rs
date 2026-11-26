@@ -2362,7 +2362,8 @@ fn an_entity_save_relinks_and_adds_its_column() {
         .unwrap()
         .is_some());
 
-    // Load the changed records: only those added or changed since the last commit
+    // Load the changed records: with no load of it yet, compared with the last commit and the database (three ways,
+    // dev-aide data_load.rs): the changed record the database still has as committed, and the added one
     isolate_git(&gate.runtime);
     let site = gate.runtime.join("components/addon/my-site");
     git(&site, &["init", "-q", "-b", "main"]);
@@ -2401,7 +2402,8 @@ fn an_entity_save_relinks_and_adds_its_column() {
         &[("rootId", "my-site"), ("path", "data/MySiteSeedData.xml")],
     )
     .unwrap();
-    assert_eq!(text(&loaded, "changed"), "2");
+    assert_eq!(text(&loaded, "written"), "2", "{loaded:?}");
+    assert_eq!(text(&loaded, "conflicts"), "0");
     let low = facade
         .find("moqui.basic.Enumeration")
         .unwrap()

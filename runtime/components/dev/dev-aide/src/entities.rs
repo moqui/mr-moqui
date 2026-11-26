@@ -47,10 +47,6 @@ pub(crate) fn register(registry: &mut NativeRegistry) -> Result<(), Error> {
     registry.service_function(moqui_core::service_location!(load_seed_file), load_seed_file)?;
     registry.service_function(moqui_core::service_location!(check_data_file), check_data_file)?;
     registry.service_function(moqui_core::service_location!(export_records), export_records)?;
-    registry.service_function(
-        moqui_core::service_location!(load_changed_records),
-        load_changed_records,
-    )?;
     registry.service_function(moqui_core::service_location!(get_view_sql), get_view_sql)?;
     registry.service_function(moqui_core::service_location!(list_data_files), list_data_files)
 }
@@ -106,7 +102,7 @@ const CREDENTIAL_ENTITIES: &[&str] = &[
 /// `moqui.security` entity, Dev AIDE's credential entities, or an entity with an encrypted field
 /// (plans/Security-Review-Medium.md SEC-DEV-01). The text never holds a password or encrypted field for anyone: the
 /// data writer leaves them out without a full backup.
-fn export_refused(context: &Context, name: &str) -> Option<String> {
+pub(crate) fn export_refused(context: &Context, name: &str) -> Option<String> {
     let full_name = info::definition_info(&context.facade, name)
         .and_then(|detail| detail.get("fullEntityName").map(moqui_lib::object::to_plain_string))
         .filter(|full| !full.is_empty())
@@ -196,83 +192,6 @@ fn export_records(
     let mut out = Parameters::new();
     out.insert("records".into(), Value::string(records));
     out.insert("count".into(), Value::I64(i64::try_from(written).unwrap_or(i64::MAX)));
-    Ok(out)
-}
-
-/// The top-level elements of a data file's text, each with its whitespace made one space, for comparing records.
-fn records_of(text: &str) -> Vec<String> {
-    let Ok(doc) = moqui_lib::xml_edit::Doc::parse(text) else {
-        return Vec::new();
-    };
-    let Some(root) = doc.root() else {
-        return Vec::new();
-    };
-    doc.elements(root)
-        .map(|element| {
-            doc.slice(&doc.nodes[element].span)
-                .split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" ")
-        })
-        .collect()
-}
-
-/// The records of `now` that `before` does not have as they are: those added or changed.
-fn changed_records(before: &str, now: &str) -> Vec<String> {
-    let had: std::collections::HashSet<String> = records_of(before).into_iter().collect();
-    records_of(now)
-        .into_iter()
-        .filter(|record| !had.contains(record))
-        .collect()
-}
-
-/// `load#ChangedRecords`: of a data file, only the records added or changed since its last commit, loaded (12).
-fn load_changed_records(
-    ec: &ExecutionContext,
-    _service: &ServiceInfo<'_>,
-    parameters: &Parameters,
-) -> Result<Parameters, LibError> {
-    let context = Context::of(ec, Tier::Extend)?;
-    let root = context.root(&text(parameters, "rootId"))?;
-    let resolved = context.resolve(root, &text(parameters, "path"))?;
-    context.may_write(root, &resolved.relative)?;
-    let now = std::fs::read_to_string(&resolved.path)
-        .map_err(|err| LibError::new(format!("{}: {err}", resolved.relative)))?;
-    let committed = context
-        .git()
-        .read(&root.path, &["show", &format!("HEAD:{}", resolved.relative)])
-        .unwrap_or_default();
-    let changed = changed_records(&committed, &now);
-    let mut out = Parameters::new();
-    out.insert("changed".into(), Value::I64(i64::try_from(changed.len()).unwrap_or(0)));
-    if changed.is_empty() {
-        out.insert("records".into(), Value::I64(0));
-        return Ok(out);
-    }
-    let document = format!("<entity-facade-xml>\n{}\n</entity-facade-xml>\n", changed.join("\n"));
-    let loaded = moqui_core::entity::load_feed::load_entity_xml_text(
-        &context.facade,
-        &resolved.path.display().to_string(),
-        &document,
-        &moqui_core::entity::load_feed::LoadOptions::default(),
-    );
-    audit::record(
-        &context.facade,
-        &Write {
-            action: "DAA_LOAD",
-            root: &root.id,
-            path: &resolved.relative,
-            detail: Some(
-                json!({ "changed": changed.len(), "records": loaded.as_ref().map(|result| result.records).ok(),
-                "error": loaded.as_ref().err().map(ToString::to_string) }),
-            ),
-            ..Write::default()
-        },
-    );
-    out.insert(
-        "records".into(),
-        Value::I64(i64::try_from(loaded?.records).unwrap_or(i64::MAX)),
-    );
     Ok(out)
 }
 
@@ -759,17 +678,6 @@ mod tests {
             kind("<entity-facade-xml type=\u{201c}seed\u{201c}>").as_deref(),
             Some("seed")
         );
-    }
-
-    #[test]
-    fn the_changed_records_are_those_added_or_changed() {
-        let before = "<entity-facade-xml>\n    <a id=\"1\" x=\"one\"/>\n    <a id=\"2\"\n       x=\"two\"/>\n</entity-facade-xml>";
-        let now = "<entity-facade-xml>\n    <a id=\"1\" x=\"uno\"/>\n    <a id=\"2\" x=\"two\"/>\n    <!-- new -->\n    <a id=\"3\"/>\n</entity-facade-xml>";
-        assert_eq!(
-            super::changed_records(before, now),
-            ["<a id=\"1\" x=\"uno\"/>", "<a id=\"3\"/>"]
-        );
-        assert_eq!(super::changed_records("", "<x><a/></x>"), ["<a/>"]);
     }
 
     /// The entity view's operations (test/vectors/entity-view-vectors.json): each vector's outline is the one this layer

@@ -345,7 +345,7 @@
                 adding: null, relAdding: null, indexAdding: null, memberAdding: null, aliasAdding: null, uses: null,
                 membersAs: "diagram", memberSizes: {},
                 ddl: null, showOnForm: null, entityOptions: [], filterFields: "", seedPending: false, schema: null, viewSql: "",
-                dataCheck: null, exporting: null
+                dataCheck: null, loadPlan: null, exporting: null
             };
         },
         computed: {
@@ -673,10 +673,31 @@
                     this.dataCheck = { messages: answer.messages || [], differences: answer.differences || [], fields: answer.fieldsChecked };
                 }, (error) => { this.dataCheck = null; this.ctx.fail(error); });
             },
+            // Load the changed records (12), three ways: the plan first (base, file and database per record), then the
+            // load with a choice for each conflict (Keep database by default) and each removal (kept unless chosen)
             loadChanged() {
-                this.ctx.post("loadChanged", { rootId: this.ctx.rootId, path: this.tab.path }).then((answer) => {
-                    this.ctx.note(answer.changed ? "Loaded " + answer.records + " records of the " + answer.changed + " changed since the last commit" : "No record changed since the last commit");
-                }, (error) => this.ctx.fail(error));
+                this.loadPlan = { running: true };
+                this.ctx.post("planDataLoad", { rootId: this.ctx.rootId, path: this.tab.path }).then((answer) => {
+                    const choices = {};
+                    for (const record of answer.records || []) if (record.action === "conflict" || record.action === "remove") choices[record.key] = "database";
+                    this.loadPlan = { counts: answer.counts || {}, records: answer.records || [], skipped: answer.skipped || [], truncated: !!answer.truncated,
+                        baseFrom: answer.baseFrom, baseHash: answer.baseHash, fileHash: answer.fileHash, choices, loading: false };
+                }, (error) => { this.loadPlan = null; this.ctx.fail(error); });
+            },
+            planRecords(action) { return ((this.loadPlan && this.loadPlan.records) || []).filter((record) => record.action === action); },
+            planPk(record) { return Object.keys(record.pk || {}).map((name) => name + "=" + record.pk[name]).join(", "); },
+            runLoad() {
+                const plan = this.loadPlan;
+                plan.loading = true;
+                this.ctx.post("loadChanged", { rootId: this.ctx.rootId, path: this.tab.path, choices: JSON.stringify(plan.choices),
+                    baseHash: plan.baseHash, fileHash: plan.fileHash }).then((answer) => {
+                    this.loadPlan = null;
+                    const parts = [answer.written + " written"];
+                    if (answer.deleted) parts.push(answer.deleted + " deleted");
+                    if (answer.kept) parts.push(answer.kept + " kept as the database has them");
+                    if (answer.applied) parts.push(answer.applied + " already loaded");
+                    this.ctx.note("Loaded the changed records: " + parts.join(", "), "positive");
+                }, (error) => { plan.loading = false; this.ctx.fail(error); });
             },
             startExport() { this.exporting = { entity: "", filter: "" }; },
             exportRecords() {
@@ -751,6 +772,46 @@
         </tr></tbody></table></div>
     </div>
     <div v-if="!seedTables.length" class="m-muted">{{ t('No records yet.') }}</div>
+    <div v-if="loadPlan" class="q-mt-md" id="DevLoadPlan">
+      <div class="row items-center"><span class="text-subtitle2">Load the changed records</span>
+        <q-spinner v-if="loadPlan.running" size="14px" class="q-ml-sm"></q-spinner><q-space></q-space>
+        <q-btn dense flat round size="sm" icon="close" aria-label="Close the plan" @click="loadPlan = null"></q-btn></div>
+      <template v-if="!loadPlan.running">
+        <div class="text-caption m-muted">Compared with {{loadPlan.baseFrom === 'baseline' ? 'the text the last load of this file loaded' : loadPlan.baseFrom === 'commit' ? 'the last commit' : 'nothing (no load and no history yet)'}} and the database.</div>
+        <div class="row q-gutter-xs q-my-xs" id="DevLoadPlanCounts">
+          <q-chip dense square>{{loadPlan.counts.write || 0}} to write</q-chip>
+          <q-chip dense square :color="loadPlan.counts.conflict ? 'orange-3' : undefined">{{loadPlan.counts.conflict || 0}} in conflict</q-chip>
+          <q-chip dense square>{{loadPlan.counts.remove || 0}} removed from the file</q-chip>
+          <q-chip dense square>{{loadPlan.counts.applied || 0}} already loaded</q-chip>
+          <q-chip dense square>{{loadPlan.counts.unchanged || 0}} unchanged</q-chip>
+          <q-chip v-if="loadPlan.counts.skip" dense square>{{loadPlan.counts.skip}} passed over</q-chip>
+        </div>
+        <div v-for="record in planRecords('conflict')" :key="record.key" class="q-mb-sm m-dev-load-conflict">
+          <div class="row items-center no-wrap"><span class="text-weight-medium">{{record.entity}}</span><span class="q-ml-sm text-caption">{{planPk(record)}}</span>
+            <span class="q-ml-sm text-caption m-muted">{{record.change === 'removed' ? 'removed from the file, changed in the database' : record.change === 'added' ? 'added to the file, the database has it otherwise' : 'changed in the file and in the database'}}</span></div>
+          <table v-if="record.fields.length" class="m-dev-grid"><thead><tr><th>Field</th><th>Last loaded</th><th>File</th><th>Database</th></tr></thead>
+            <tbody><tr v-for="field in record.fields" :key="field.name"><td>{{field.name}}</td><td>{{field.base == null ? '—' : field.base}}</td>
+              <td>{{field.file == null ? '—' : field.file}}</td><td>{{field.db == null ? '—' : field.db}}</td></tr></tbody></table>
+          <q-btn-toggle v-model="loadPlan.choices[record.key]" dense no-caps unelevated size="sm" toggle-color="primary" class="q-mt-xs"
+              :options="[{ label: 'Keep database', value: 'database' }, { label: record.change === 'removed' ? 'Take file (delete)' : 'Take file', value: 'file' }]"></q-btn-toggle>
+        </div>
+        <div v-for="record in planRecords('remove')" :key="record.key" class="row items-center no-wrap q-mb-xs">
+          <span class="text-weight-medium">{{record.entity}}</span><span class="q-ml-sm text-caption">{{planPk(record)}}</span>
+          <span class="q-ml-sm text-caption m-muted">removed from the file</span><q-space></q-space>
+          <q-btn-toggle v-model="loadPlan.choices[record.key]" dense no-caps unelevated size="sm" toggle-color="primary"
+              :options="[{ label: 'Keep', value: 'database' }, { label: 'Delete', value: 'file' }]"></q-btn-toggle>
+        </div>
+        <q-expansion-item v-if="planRecords('write').length" dense dense-toggle header-class="text-caption q-px-none" :label="planRecords('write').length + ' to write'">
+          <div v-for="record in planRecords('write')" :key="record.key" class="text-caption">{{record.entity}} {{planPk(record)}}<span class="m-muted">{{record.fields.length ? ': ' + record.fields.map((field) => field.name).join(', ') : ''}}</span></div>
+        </q-expansion-item>
+        <div v-if="loadPlan.truncated" class="text-caption m-muted">The first 500 records are listed.</div>
+        <div v-for="(why, i) in loadPlan.skipped" :key="'s' + i" class="text-caption text-warning">Passed over: {{why}}</div>
+        <div class="row q-mt-sm"><q-space></q-space>
+          <q-btn unelevated no-caps color="primary" :loading="loadPlan.loading" id="DevLoadPlanRun"
+              :disable="!ctx.canWrite || !((loadPlan.counts.write || 0) + (loadPlan.counts.conflict || 0) + (loadPlan.counts.remove || 0))"
+              label="Load" @click="runLoad"></q-btn></div>
+      </template>
+    </div>
     <div v-if="dataCheck" class="q-mt-md" id="DevDataCheck">
       <div class="text-subtitle2">Against the database <q-spinner v-if="dataCheck.running" size="14px"></q-spinner></div>
       <template v-if="!dataCheck.running">

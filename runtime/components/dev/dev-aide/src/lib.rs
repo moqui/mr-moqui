@@ -27,6 +27,7 @@ mod browser;
 mod buffers;
 mod changeset;
 pub mod confine;
+mod data_load;
 mod docs;
 mod entities;
 pub mod git;
@@ -65,6 +66,7 @@ fn register(registry: &mut NativeRegistry) -> Result<(), Error> {
     changeset::register(registry)?;
     docs::register(registry)?;
     entities::register(registry)?;
+    data_load::register(registry)?;
     screens::register(registry)?;
     services::register(registry)?;
     vcs::register(registry)?;
