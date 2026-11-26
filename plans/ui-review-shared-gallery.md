@@ -32,8 +32,8 @@ The November 25 nine-plan execution queue is superseded. Its 147 rows, counts an
 
 | Priority | Observed failure | Owner and next observation |
 |---|---|---|
-| P2 · AI-UI-006 | Changing only the delay in Standard Entity Sync Detail submitted the untouched split as `60,000`. The commit failed. Reopening showed the old delay. Entering unformatted digits in both fields saved the change. | [AI-B03](ui-review-system-ai-integrations.md#ai-b03--november-26-change-led-review). Recheck a one-field edit with the other field untouched. |
-| P2 · DASH-UI-006 | A newly opened dashboard geomap had zero country links after the local outline downloaded. Opening the panel menu drew 174 country paths. France then opened the correct Maps extent. | [DASH-B03](ui-review-dashboards.md#dash-b03--november-26-change-led-review). Check fresh entry and return navigation without interacting with the panel first. |
+| P2 · AI-UI-006 | Changing only the delay in Standard Entity Sync Detail submitted the untouched split as `60,000`. The commit failed. Reopening showed the old delay. Entering unformatted digits in both fields saved the change. | **Fixed 2026-11-26**, not rechecked live. [AI-B03](ui-review-system-ai-integrations.md#ai-b03--november-26-change-led-review). Recheck a one-field edit with the other field untouched. |
+| P2 · DASH-UI-006 | A newly opened dashboard geomap had zero country links after the local outline downloaded. Opening the panel menu drew 174 country paths. France then opened the correct Maps extent. | **Fixed 2026-11-26**, not rechecked live. [DASH-B03](ui-review-dashboards.md#dash-b03--november-26-change-led-review). Check fresh entry and return navigation without interacting with the panel first. |
 
 The table counts original activity IDs selected for a branch this pass. A passing branch does not close every step of its older activity. New Maps and Dev AIDE IDs are additional. The dated November 25 findings and dispositions below retain their original wording.
 

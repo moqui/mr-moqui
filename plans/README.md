@@ -11,8 +11,9 @@ Design, status and review documents for MR Moqui. User guides for built features
 **UI review plans**
 
 Full screen inventories, user workflows, verification maps and running records for the framework apps, without
-addons, including shared helpers and generated email/report outputs. The November 26 change-led queue supersedes the November 25 execution queue. Dated activity outcomes and evidence remain available in the owning ledgers.
-See the [active queue and results](ui-review-shared-gallery.md#november-26-change-led-review). The
+addons, including shared helpers and generated email/report outputs. The November 26 change-led queue supersedes the
+November 25 execution queue; dated activity outcomes and evidence remain in the owning ledgers. See the
+[active queue and results](ui-review-shared-gallery.md#november-26-change-led-review). The
 [shared review protocol](ui-review-shared-gallery.md#common-review-protocol) applies to the whole set.
 
 - [Shared shell and Gallery](ui-review-shared-gallery.md): authentication, navigation, preferences, shared controls,
