@@ -59,6 +59,10 @@ feature("a task app's paths are paths on this server, each with its placeholder"
             elsewhere: call("store#TaskApp", Object.assign({}, APP, {taskPath: "https://elsewhere.example.com/t/{taskId}"})).errors,
             protocolRelative: call("store#TaskApp", Object.assign({}, APP, {projectPath: "//elsewhere.example.com/{projectId}"})).errors,
             noPlaceholder: call("store#TaskApp", Object.assign({}, APP, {taskPath: "/qapps/Spec/Task"})).errors,
+            // a browser drops a tab, a newline or a carriage return in a URL: /<tab>/evil.example is that host
+            controls: ["\t", "\n", "\r"].map(ch =>
+                call("store#TaskApp", Object.assign({}, APP, {taskPath: "/" + ch + "/evil.example/t/{taskId}"})).errors),
+            confTitle: call("store#TaskApp", Object.assign({}, APP, {title: "IronStone Projects"})).errors,
             noPath: call("store#TaskApp", {title: "Spec Tracker"}).errors,
             added: call("store#TaskApp", APP)
         }))
@@ -67,6 +71,9 @@ feature("a task app's paths are paths on this server, each with its placeholder"
         result.elsewhere.includes("is not a path on the server")
         result.protocolRelative.includes("is not a path on the server")
         result.noPlaceholder.includes("has no {taskId}")
+        result.controls.length == 3 && result.controls.every(errors => errors.includes("is not a path on the server"))
+        // another app under a conf app's title would pass for it
+        result.confTitle.includes("is the title of a task app of the conf")
         result.noPath.includes("a project path or a task path")
         result.added.errors == ""
         // its name is its title's

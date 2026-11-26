@@ -340,7 +340,7 @@
   <q-list dense><q-item v-for="remote in remotes" :key="remote.name" :data-remote="remote.name">
     <q-item-section><q-item-label>{{remote.name}}</q-item-label><q-item-label caption>{{remote.url}}</q-item-label></q-item-section>
     <q-item-section side><div class="row no-wrap">
-      <q-btn v-if="hostPage(remote.url)" dense flat no-caps size="sm" label="Open on the server" :href="hostPage(remote.url)" target="_blank" type="a"></q-btn>
+      <q-btn v-if="hostPage(remote.url)" dense flat no-caps size="sm" label="Open on the server" :href="hostPage(remote.url)" target="_blank" rel="noopener noreferrer" type="a"></q-btn>
       <q-btn dense flat no-caps size="sm" label="Prune" :disable="!ws.canWrite" @click="prune(remote)"></q-btn>
       <q-btn dense flat no-caps size="sm" label="Set URL" :disable="ws.tier !== 'full'" @click="setUrl(remote)"></q-btn>
       <q-btn dense flat no-caps size="sm" label="Remove" :disable="ws.tier !== 'full'" @click="remove(remote)"></q-btn></div></q-item-section>

@@ -2035,7 +2035,7 @@
               <q-item-label caption>{{issue.key}}{{issue.number ? ' · ' + issue.taskId : ''}} · {{issue.statusId}}{{issue.projectName ? ' · ' + issue.projectName : ''}}
                 <q-icon v-if="status && status.currentTask === issue.key" name="sym_o_star" size="xs"></q-icon></q-item-label></q-item-section>
             <q-item-section side><q-btn dense flat round size="xs" icon="more_vert" :aria-label="'Actions for ' + issue.key"><q-menu><q-list dense style="min-width: 10rem">
-              <q-item v-if="issue.url" clickable v-close-popup :href="issue.url" target="_blank" tag="a"><q-item-section>Open</q-item-section></q-item>
+              <q-item v-if="issue.url" clickable v-close-popup :href="issue.url" target="_blank" rel="noopener noreferrer" tag="a"><q-item-section>Open</q-item-section></q-item>
               <q-item clickable v-close-popup @click="copyText(issue.key)"><q-item-section>Copy key</q-item-section></q-item>
               <q-item clickable v-close-popup :disable="!isGit" @click="useTask(issue)"><q-item-section>Use in commit ({{trailerOf(issue.key)}})</q-item-section></q-item>
               <q-item clickable v-close-popup :disable="!isGit" @click="useTask(issue, true)"><q-item-section>{{ t('Set current') }}</q-item-section></q-item>
@@ -2056,7 +2056,7 @@
               <q-item-label caption>{{task.key}} · {{task.statusId}}{{task.projectName ? ' · ' + task.projectName : ''}}
                 <q-icon v-if="status && status.currentTask === task.key" name="sym_o_star" size="xs"></q-icon></q-item-label></q-item-section>
             <q-item-section side><q-btn dense flat round size="xs" icon="more_vert" :aria-label="'Actions for ' + task.key"><q-menu><q-list dense style="min-width: 10rem">
-              <q-item v-if="task.url" clickable v-close-popup :href="task.url" target="_blank" tag="a"><q-item-section>Open</q-item-section></q-item>
+              <q-item v-if="task.url" clickable v-close-popup :href="task.url" target="_blank" rel="noopener noreferrer" tag="a"><q-item-section>Open</q-item-section></q-item>
               <q-item clickable v-close-popup @click="copyText(task.key)"><q-item-section>Copy key</q-item-section></q-item>
               <q-item clickable v-close-popup :disable="!isGit" @click="useTask(task)"><q-item-section>Use in commit</q-item-section></q-item>
               <q-item clickable v-close-popup :disable="!isGit" @click="useTask(task, true)"><q-item-section>{{ t('Set current') }}</q-item-section></q-item>

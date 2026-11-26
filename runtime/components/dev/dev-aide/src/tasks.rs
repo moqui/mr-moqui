@@ -294,12 +294,13 @@ pub fn offered_app_name(server_id: &str) -> String {
     format!("server-{server_id}")
 }
 
-/// A path of an offered app: on the server, with `{taskId}` or `{projectId}` in it, never another origin.
+/// A path of an offered app: on the server, with `{taskId}` or `{projectId}` in it, never another origin (no
+/// backslash, white space or control character, which a browser reads as another host: `/\t/evil.example`).
 fn offered_path(app: &Json, key: &str) -> String {
     app[key]
         .as_str()
         .map(str::trim)
-        .filter(|path| path.starts_with('/') && !path.starts_with("//") && !path.contains('\\'))
+        .filter(|path| moqui_lib::string::local_path(path))
         .unwrap_or_default()
         .to_string()
 }
@@ -616,15 +617,18 @@ fn delete_task_source(
 }
 
 /// Why `path` is no path template of a task app, or None: a path on the app's server (as an offered app's paths are,
-/// [`offered_path`]: from `/`, never `//` or a `\`), with `placeholder` (`{taskId}`, `{projectId}`) in it. Empty is
-/// none given.
+/// [`offered_path`]: from one `/`, with no backslash, white space or control character), with `placeholder`
+/// (`{taskId}`, `{projectId}`) in it. Empty is none given.
 #[must_use]
 pub fn app_path_problem(path: &str, placeholder: &str) -> Option<String> {
     if path.is_empty() {
         return None;
     }
-    if !path.starts_with('/') || path.starts_with("//") || path.contains('\\') {
-        return Some(format!("{path} is not a path on the server: it starts with one /"));
+    if !moqui_lib::string::local_path(path) {
+        return Some(format!(
+            "{} is not a path on the server: it starts with one /, with no backslash, space or control character",
+            path.escape_debug()
+        ));
     }
     if !path.contains(placeholder) {
         return Some(format!("{path} has no {placeholder}"));
@@ -647,7 +651,8 @@ pub fn app_name_of(title: &str) -> String {
 }
 
 /// The names of the conf's `task-app` elements.
-fn conf_app_names(context: &Context) -> Vec<String> {
+/// The names and titles of the conf's `task-app` elements.
+fn conf_apps(context: &Context) -> Vec<(String, String)> {
     let Ok(conf) = MNode::parse_shared("moqui-conf", &context.factory.conf_text()) else {
         return Vec::new();
     };
@@ -655,7 +660,12 @@ fn conf_app_names(context: &Context) -> Vec<String> {
         .flat_map(|element| {
             element
                 .named_iter("task-app")
-                .filter_map(|app| app.attribute("name"))
+                .map(|app| {
+                    (
+                        app.attribute("name").unwrap_or_default(),
+                        app.attribute("title").unwrap_or_default(),
+                    )
+                })
                 .collect::<Vec<_>>()
         })
         .collect()
@@ -727,11 +737,18 @@ fn store_task_app(
                     "the task app {name} was added by another: only they or the full tier change it"
                 )));
             }
-        } else if conf_app_names(&context).contains(&name) {
+        } else if conf_apps(&context).iter().any(|(conf_name, _)| *conf_name == name) {
             return Err(LibError::new(format!(
                 "{name} is a task app of the conf: only the full tier replaces it"
             )));
         }
+    }
+    // another app under a conf app's title would pass for it in every user's Open in
+    let taken = conf_apps(&context)
+        .into_iter()
+        .any(|(conf_name, conf_title)| conf_name != name && conf_title.trim().eq_ignore_ascii_case(&title));
+    if taken {
+        return Err(LibError::new(format!("{title} is the title of a task app of the conf")));
     }
     let mut row = match existing {
         Some(row) => row,
@@ -954,6 +971,12 @@ mod tests {
             "//elsewhere.example.com/{taskId}",
             "/a\\b/{taskId}",
             "x/{taskId}",
+            // a browser drops a tab, a newline or a carriage return in a URL: /<tab>/evil.example is that host
+            "/\t/evil.example/{taskId}",
+            "/\n/evil.example/{taskId}",
+            "/\r/evil.example/{taskId}",
+            "/a b/{taskId}",
+            "/a\u{7}b/{taskId}",
         ] {
             assert!(
                 problem(off, "{taskId}").unwrap().contains("not a path on the server"),

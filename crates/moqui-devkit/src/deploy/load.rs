@@ -631,7 +631,10 @@ fn deployed(factory: &Arc<ExecutionContextFactory>, name: &str) -> bool {
 /// commits not on its upstream. Empty for a clean clone, or when `git` cannot tell.
 fn clone_changes(location: &Path) -> Vec<String> {
     let git = |args: &[&str]| {
-        std::process::Command::new("git")
+        let mut command = std::process::Command::new("git");
+        // a read of the clone: nothing its config names runs (moqui_lib::git_read)
+        moqui_lib::git_read::isolate(&mut command);
+        command
             .args(args)
             .current_dir(location)
             .env("GIT_TERMINAL_PROMPT", "0")

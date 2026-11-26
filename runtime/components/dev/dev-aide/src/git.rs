@@ -192,6 +192,11 @@ impl Git {
         let repo_lock = (mode != Mode::Read).then(|| write_lock(repo));
         let _held = repo_lock.as_deref().map(lock);
         let mut command = Command::new(&self.command);
+        if mode == Mode::Read {
+            // a read runs nothing the repository's config names: no lazy fetch from a promisor remote (whose URL may
+            // be ext::<command>), no fsmonitor, no hooks, no inherited GIT_DIR (moqui_lib::git_read)
+            moqui_lib::git_read::harden(&mut command);
+        }
         command
             .args(["-c", "core.quotepath=off", "-c", "color.ui=false"])
             .args(args)
