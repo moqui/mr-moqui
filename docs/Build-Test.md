@@ -228,7 +228,7 @@ everything.
 
 Maximal is the default, with the dev tools: development wants git, SSH and the dev-aide, and one default build with
 everything is simpler than a smaller one that saves some build time. The dev tools act only on a dev instance
-([design-dev-aide](../plans/design-dev-aide.md) 3.3); a deployment that wants none builds Lite or Enterprise.
+([Dev-AIDE](tools/Dev-AIDE.md#loading-and-access)); a deployment that wants none builds Lite or Enterprise.
 `./moq build --lite -- --features devtools` adds them to Lite. (A Dev package, Lite with git, SSH and the dev tools on
 a `develop` profile, was the default before; it is commented out in `moq`, `.cargo/config.toml` and the crates'
 features, and likely to be removed.)
@@ -271,7 +271,7 @@ build, with no features of its own.
 | `vault` | host (`moqui-vault-server`) | Vaults ([Vault-Instances](../plans/archive/Vault-Instances.md) §3): personal and operational vaults, leases, machine access and recovery. The vault crypto (`moqui-vault`) is in every build, for `moqui vault` and `moqui operator` | yes | yes | yes |
 | `instances` | host (`moqui-instance`; includes `vault`) | Managed instances ([Vault-Instances](../plans/archive/Vault-Instances.md) §4): instance kinds, provisioning on Docker and Podman hosts, deploys, rotation and transit by the manager | | yes | yes |
 | `manage` | host (includes `grpc`, `moqui-vault`) | The manager link ([Vault-Instances](../plans/archive/Vault-Instances.md) §4.4): a managed instance dials its manager on ALPN `moqui-manage/1`; with `instances`, the manager's end on the HTTPS listener | yes | yes | yes |
-| `devtools` | host, moqui-devkit (`watch`) | What only development needs ([design-dev-aide](../plans/design-dev-aide.md) 3.3): the framework's file watcher that reloads changed artifacts on a dev instance, and in the binary crates the components/dev crates of `runtime/components/dev`; in Maximal (the default) and Debug | | | yes |
+| `devtools` | host, moqui-devkit (`watch`) | What only development needs ([Dev-AIDE](tools/Dev-AIDE.md#loading-and-access)): the framework's file watcher that reloads changed artifacts on a dev instance, and in the binary crates the components/dev crates of `runtime/components/dev`; in Maximal (the default) and Debug | | | yes |
 | `smtp` | host (`moqui-mail`) | Outbound mail: `send#EmailMessage`, `send#EmailTemplate`, password reset and notification mail | yes | yes | yes |
 | `imap` | host (`moqui-mail`) | Inbound mail: `poll#EmailServer`, the mail client's sync, IDLE, rules and import (includes `smtp`) | | yes | yes |
 | `git` | host (`moqui-git`) | `git://` locations, git drives, `org.moqui.git.GitServices`, the git server over HTTP and SSH, LFS | | yes | yes |
@@ -1098,10 +1098,11 @@ The tools component's suite (`test/agent/`): `assist.agent.js` (21 tasks in the 
 the `a2a` surface, run through the run engine; the spec lets the assist agent serve that surface while it runs). The
 surface of a spec is `drawer`, `chat`, `tui`, `job`, `a2a` or `mcp`; a headless one sends only the time in the tail.
 
-The dev agent's tasks are in `runtime/components/dev/dev-aide/test/agent/dev.agent.js` (plans/design-dev-aide.md P4): a
-field added to an upstream entity and shown on its form from the site component, a list column, where a service is used,
-and a spec written from a Try in the sim. A dev component's agents run on a dev instance; the example component stands in
-for the site component for the run, and the files a task writes are put back after it. With the hand-authored replies:
+The dev agent's tasks are in `runtime/components/dev/dev-aide/test/agent/dev.agent.js`
+([Dev-AIDE](tools/Dev-AIDE.md#tests)): a field added to an upstream entity and shown on its form from the site
+component, a list column, where a service is used, and a spec written from a Try in the sim. A dev component's agents
+run on a dev instance; the example component stands in for the site component for the run, and the files a task writes
+are put back after it. With the hand-authored replies:
 `moqui test dev-aide --agents --replay runtime/components/dev/dev-aide/test/agent/replay`. With a model (a key from the
 environment, nightly and before a phase closes; the design's `--live` is `--llm-profile`):
 `moqui test dev-aide --agents --llm-profile <profile> --runs 3 --min-pass 0.8`, a pass being the checks of the task: the
