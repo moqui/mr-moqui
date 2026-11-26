@@ -225,7 +225,8 @@ MOQUI_DESKTOP_NODE=client ./moq desktop    # a client of a remote server: sign i
   `PATH`.
 - **CEF download:** the first build fetches the CEF binary distribution, about 1 GB, into the `tauri-cef` cache
   (`~/Library/Caches/tauri-cef` on macOS, `~/.cache/tauri-cef` on Linux, `%LOCALAPPDATA%\tauri-cef` on Windows). Set
-  `CEF_PATH` to use another.
+  `CEF_PATH` to use another. The crate's build script moves the runtime files cef-dll-sys copies into
+  `target/<profile>/build/` up beside the executable (`libcef.dll` on Windows, `libcef.so` on Linux, and `locales/`).
 - **Driving the window:** in a development run, `MOQUI_DESKTOP_DEVTOOLS_PORT=9339 ./moq desktop` opens the Chromium
   DevTools protocol on that loopback port, for `chrome://inspect` or a CDP client. It takes effect from the second start
   after it is first set: the earlier start leaves Chromium's `devtools.remote_debugging.allowed` off in the profile, and
