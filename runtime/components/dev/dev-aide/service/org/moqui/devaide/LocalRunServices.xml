@@ -55,8 +55,9 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- Rebuild from the app (plans/design-dev-aide.md 6.5), src/rebuild.rs. -->
     <service verb="rebuild" noun="Server" type="rust" location="dev_aide::rebuild::rebuild_server" allow-remote="false">
         <description>./moq build of the package this server runs (--debug for target/debug/moqui, and so on), typed into
-            a new host session of the Terminal in the checkout, the shell ending with the build's exit status. The full
-            tier's, audited (DAA_BUILD); only where the runtime has moq beside it; from a session only. Restart
+            a new host session of the Terminal in the checkout as exec ./moq build, so the session ends with the build's
+            exit status. The full tier's, audited (DAA_BUILD, with the Terminal's refusal when it opened nothing); only on
+            Unix (the Terminal's host sessions) where the runtime has moq beside it; from a session only. Restart
             (org.moqui.dev.DevToolsServices.restart#Server) runs the new binary once the session ended with 0.</description>
         <out-parameters>
             <parameter name="sessionId"/>
@@ -65,7 +66,7 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
     <service verb="get" noun="Rebuild" type="rust" location="dev_aide::rebuild::get_rebuild" allow-remote="false" read-only="true">
-        <description>Whether this runtime can rebuild (available: it has moq, and the user the full tier), and a rebuild's
+        <description>Whether this runtime can rebuild (available: Unix, it has moq, and the user the full tier), and a rebuild's
             session (sessionId, else the user's last): state running, succeeded (ended with 0), failed or gone (no longer
             listed), and its exitStatus.</description>
         <in-parameters><parameter name="sessionId"/></in-parameters>

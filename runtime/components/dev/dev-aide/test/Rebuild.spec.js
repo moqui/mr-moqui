@@ -35,6 +35,18 @@ spec({
     },
     cleanupSpec() {
         ec.user.internalLoginUser("john.doe")
+        ec.artifactExecution.disableAuthz()
+        try {
+            const remove = (entity, field, value) => ec.entity.find(entity).condition(field, value).deleteAll()
+            remove("moqui.security.UserGroupMember", "userId", "specRbReader")
+            remove("moqui.security.UserPreference", "userId", "specRbReader")
+            remove("moqui.security.UserAccount", "userId", "specRbReader")
+            remove("moqui.security.ArtifactAuthz", "artifactAuthzId", "SPEC_RB_READERS_APP")
+            remove("moqui.security.UserGroupPermission", "userGroupId", "SPEC_RB_READERS")
+            remove("moqui.security.UserGroup", "userGroupId", "SPEC_RB_READERS")
+        } finally {
+            ec.artifactExecution.enableAuthz()
+        }
     }
 })
 

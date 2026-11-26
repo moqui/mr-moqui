@@ -14,7 +14,7 @@
 
 //! Rebuild from the app (plans/design-dev-aide.md 6.5): `./moq build` of the package this server runs, typed into a new
 //! host session of the Terminal in the checkout, as Run locally types its script (`open#TerminalSession` `input`). The
-//! shell ends with the build's exit status (`; exit $?`), so the session's end is the build's: the Terminal keeps an
+//! shell `exec`s it (sh, bash, zsh, fish, csh and tcsh all take `exec`), so the session's end is the build's: the Terminal keeps an
 //! ended session listed with its exit status and its last output (`find#TerminalSessions`), and the banner that follows
 //! it offers the restart (`restart#Server`) once it ended with 0. Offered only where the runtime has `moq` beside it, as
 //! Repositories' "Get a component" is.
@@ -58,20 +58,17 @@ pub fn package_option(exe: &Path, checkout: &Path) -> Option<&'static str> {
     }
 }
 
-/// The command line typed into the session: `./moq build` (`moq.cmd build` on Windows) with the package option, and on
-/// Unix `; exit $?`, so the shell, and with it the session, ends with the build's status.
-pub fn command_line(package: Option<&str>, windows: bool) -> String {
-    let launch = if windows { "moq.cmd build" } else { "./moq build" };
-    let build = match package {
-        Some(option) => format!("{launch} {option}"),
-        None => launch.to_string(),
-    };
-    if windows {
-        format!("{build}\r\n")
-    } else {
-        format!("{build}; exit $?\n")
+/// The command line typed into the session: `exec ./moq build` with the package option, so moq takes the shell's place
+/// and the session ends with the build's status, whatever the user's shell (a `; exit $?` is not fish's or csh's).
+pub fn command_line(package: Option<&str>) -> String {
+    match package {
+        Some(option) => format!("exec ./moq build {option}\n"),
+        None => "exec ./moq build\n".to_string(),
     }
 }
+
+/// Whether this platform has host sessions to rebuild in: the Terminal's are Unix only.
+const HOST_SESSIONS: bool = cfg!(unix);
 
 /// What the banner shows of a rebuild's session: `running`, `succeeded` (ended with 0), `failed` (ended otherwise) or
 /// `gone` (no longer listed: ended long ago, or by a restart).
@@ -104,13 +101,18 @@ fn rebuild_server(
             "Rebuild is a person's, from a session: not a request logged in by a header",
         ));
     }
+    if !HOST_SESSIONS {
+        return Err(LibError::new(
+            "Rebuild runs in a host session of the Terminal, which this platform does not have: run ./moq build",
+        ));
+    }
     let program =
         crate::repos::moq(&context).ok_or_else(|| LibError::new("This runtime has no moq beside it to build with"))?;
     let checkout = program.parent().unwrap_or(Path::new(".")).to_path_buf();
     let package = std::env::current_exe()
         .ok()
         .and_then(|exe| package_option(&exe, &checkout));
-    let input = command_line(package, cfg!(windows));
+    let input = command_line(package);
     let opened = moqui_core::service::sync(
         "org.moqui.terminal.TerminalServices.open#TerminalSession",
         &[
@@ -131,6 +133,8 @@ fn rebuild_server(
         .get("sessionId")
         .map(moqui_lib::object::to_plain_string)
         .unwrap_or_default();
+    // a refusal of the Terminal opened nothing: the audit says what did not run, and why
+    let refused = opened.get("reasonCode").map(moqui_lib::object::to_plain_string);
     audit::record(
         &context.facade,
         &Write {
@@ -139,7 +143,7 @@ fn rebuild_server(
             path: "moq build",
             detail: Some(
                 json!({ "command": input.trim_end(), "directory": checkout.display().to_string(),
-                "sessionId": session_id }),
+                "sessionId": session_id, "opened": !session_id.is_empty(), "refused": refused }),
             ),
             ..Write::default()
         },
@@ -168,7 +172,7 @@ fn get_rebuild(
     let mut out = Parameters::new();
     out.insert(
         "available".into(),
-        Value::Bool(context.tier >= Tier::Full && crate::repos::moq(&context).is_some()),
+        Value::Bool(HOST_SESSIONS && context.tier >= Tier::Full && crate::repos::moq(&context).is_some()),
     );
     let asked = text(parameters, "sessionId");
     let session_id = if asked.is_empty() {
@@ -184,7 +188,10 @@ fn get_rebuild(
         "org.moqui.terminal.TerminalServices.find#TerminalSessions",
         &Parameters::new(),
     ) {
-        Ok(found) => found.get("sessions").map(moqui_lib::json::to_json).unwrap_or(Json::Null),
+        Ok(found) => found
+            .get("sessions")
+            .map(moqui_lib::json::to_json)
+            .unwrap_or(Json::Null),
         Err(err) => {
             tracing::warn!("get#Rebuild: the Terminal's sessions were not read: {err}");
             Json::Null
@@ -231,9 +238,10 @@ mod tests {
 
     #[test]
     fn the_shell_ends_with_the_build() {
-        assert_eq!(command_line(None, false), "./moq build; exit $?\n");
-        assert_eq!(command_line(Some("--debug"), false), "./moq build --debug; exit $?\n");
-        assert_eq!(command_line(Some("--lite"), true), "moq.cmd build --lite\r\n");
+        // moq takes the shell's place, in any shell, so the session's exit status is the build's
+        assert_eq!(command_line(None), "exec ./moq build\n");
+        assert_eq!(command_line(Some("--debug")), "exec ./moq build --debug\n");
+        assert_eq!(command_line(Some("--lite")), "exec ./moq build --lite\n");
     }
 
     #[test]
