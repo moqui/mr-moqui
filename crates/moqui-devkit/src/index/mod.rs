@@ -47,7 +47,7 @@ pub use self::extract::{ArtifactRow, BindingRow, FileIndex, FileInfo, RefRow, To
 use self::resolve::Resolver;
 use self::sources::{expand_source, refresh, refresh_locked, screen_rows_moved, source_change, stored_hash};
 use super::ArtifactKind;
-use moqui_core::context::ExecutionContextFactory;
+use moqui_core::context::{framework_thread, ExecutionContextFactory};
 use moqui_core::entity::{fence, EntityFacade, EntityValue};
 use moqui_core::transaction::{TransactionAttribute, TransactionManager};
 
@@ -1852,16 +1852,21 @@ fn write_batches(
     };
     std::thread::scope(|scope| {
         let mut helpers = Vec::new();
+        // the helpers are framework threads: leaving their contexts never drains an inline factory's queue, which
+        // belongs to the thread that called (a test's)
         for _ in 1..writers.min(batches.len()) {
             let spawned = std::thread::Builder::new()
                 .name("artifact-index-write".into())
-                .spawn_scoped(scope, || {
-                    let entered = factory.new_context();
-                    let _enter = entered.enter();
-                    let _authz = entered.disable_authz();
-                    let _lifted = fence::lift();
-                    work();
-                });
+                .spawn_scoped(
+                    scope,
+                    framework_thread(|| {
+                        let entered = factory.new_context();
+                        let _enter = entered.enter();
+                        let _authz = entered.disable_authz();
+                        let _lifted = fence::lift();
+                        work();
+                    }),
+                );
             match spawned {
                 Ok(helper) => helpers.push(helper),
                 Err(err) => {
