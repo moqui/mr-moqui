@@ -37,7 +37,8 @@ pub struct ArtifactRow {
     /// own transitions, forms, form fields, subscreens items and ext items by its location), `screen-extend:<location>`,
     /// `extend-entity:<location>#<entity>`, `relationship:<entity>@<[title#]related entity>`, `index:<entity>@<name>`,
     /// `view-member:<view entity>@<entity alias>`, `seca:<location>#<key>` (and `eeca`, `emeca`, `giteca`; the key is
-    /// [`eca_key`]), `rest:<path>`, `rest:<path>:<method>` (lowercase HTTP method), `data:<location>`,
+    /// [`eca_key`]), `rest:<path>`, `rest:<path>:<method>` (lowercase HTTP method), `artifact-group:<artifactGroupId>`
+    /// (a row's, `super::rows`), `data:<location>`,
     /// `record:<entity>:<pk values>` ([`record_id`]), `widget-template:<location>#<name>`, `script:<location>`,
     /// `skill:<location>`, and
     /// `parameter:<owner id>@<in|out|path>.<name>` ([`parameter_id`]): a service's in or out parameter
@@ -67,14 +68,18 @@ pub struct ArtifactRow {
     /// service's `auto-parameters` and `implements`, a form's `auto-fields-entity`,
     /// `auto-fields-service`, `extends` and transition, a transition's calls. Each mark is words separated by spaces, the
     /// marks by `; `:
-    /// - `auto-parameters <in|out> <entity, - for the service's noun> <all|pk|nonpk> <required true|false> <excludes>`
+    /// - `auto-parameters <in|out> <entity, - for the service's noun> <all|pk|nonpk> <required true|false> <excludes>
+    ///   <the parameters written before it>`
     /// - `implements <service> <required true|false|->`
+    /// - a view entity's `member <entity-alias> <entity>` and `alias-all <entity-alias> <prefix, -> <excludes>`, and its
+    ///   alias's `alias <entity-alias> <field> <type>` (each `-` when not written)
     /// - `auto-fields-entity <entity> <all|pk|nonpk> <field-type> <excludes>` and
     ///   `auto-fields-service <service> <in|out|all> <field-type> <excludes>`
     /// - `extends <location#form, or form of the same screen>`
     /// - `transition <name>` (of the same screen) or `transition-path <screen path>`
     /// - `call <service> <passes the request y|n> <field-maps from=to>`
-    /// - `service-call <service>`: a transition's own `service-call`, whose parameters are the transition's
+    /// - `service-call <service>`: a transition's own `service-call`, or a REST method's `service`, whose parameters are
+    ///   the transition's or the method's
     ///
     /// A list is comma separated, `-` when empty.
     #[serde(skip_serializing_if = "String::is_empty")]
@@ -124,21 +129,28 @@ pub const DERIVED_PATH: &str = "derived:entity-auto";
 
 /// The origins of the artifacts and bindings the index expands from what an artifact declares
 /// ([`super::resolve::Resolver::expand`]): a service's parameters from its `auto-parameters` and `implements`, a form's
-/// fields from its `auto-fields-entity`, `auto-fields-service` and `extends`, a transition's parameters from its
-/// `service-call`.
-pub const EXPANDED_ORIGINS: [&str; 6] = [
+/// fields from its `auto-fields-entity`, `auto-fields-service` and `extends`, a transition's and a REST method's
+/// parameters from its service, a view entity's aliases from its `alias-all`.
+pub const EXPANDED_ORIGINS: [&str; 7] = [
     "auto-parameters",
     "implements",
     "auto-fields-entity",
     "auto-fields-service",
     "extends",
     ORIGIN_SERVICE_CALL,
+    ORIGIN_ALIAS_ALL,
 ];
 
 /// The origin of a transition's parameter the index expands from the service its own `service-call` calls: each
 /// out-parameter of the service, and each in-parameter when the call passes the request's parameters and the
-/// transition declares no parameter of its name ([`super::resolve::Resolver::expand`]).
+/// transition declares no parameter of its name ([`super::resolve::Resolver::expand`]); and of a REST method's from the
+/// service it runs, which takes the request's parameters, with the binding of each path parameter into the service.
 pub const ORIGIN_SERVICE_CALL: &str = "service-call";
+
+/// The origin of a view entity's alias the index expands from an `alias-all`: one for each field of the member entity
+/// (but `lastUpdatedStamp`, the excluded ones and a name an alias has already), `prefix` and the field's name with its
+/// first letter upper-cased when it has a prefix, as `moqui_db::model::view`'s `expand_alias_alls`.
+pub const ORIGIN_ALIAS_ALL: &str = "alias-all";
 
 /// Whether `origin` is one of [`EXPANDED_ORIGINS`].
 #[must_use]
@@ -193,7 +205,14 @@ pub enum ToKind {
     /// `/apps/a/B`, `//Commons/Party`. It resolves to the screen or transition it reaches
     /// ([`super::resolve::Resolver::screen_path`]).
     ScreenPath,
+    /// A REST resource by its path (`/mantle/orders`), as an artifact group's member names it.
+    Rest,
 }
+
+/// The scope of an artifact group member's reference whose name is a pattern (`nameIsPattern="Y"`): it is one
+/// reference for each artifact of its kind whose name the pattern matches whole, as Moqui's `String.matches`
+/// ([`super::resolve::Resolver::expand_patterns`]), and an unresolved one while it matches none.
+pub const PATTERN_SCOPE: &str = "pattern";
 
 impl ToKind {
     #[must_use]
@@ -209,6 +228,7 @@ impl ToKind {
             Self::TransitionAnchor => "transition-anchor",
             Self::Parameter => "parameter",
             Self::ScreenPath => "screen-path",
+            Self::Rest => "rest",
         }
     }
 
@@ -225,6 +245,7 @@ impl ToKind {
             "transition-anchor" => Self::TransitionAnchor,
             "parameter" => Self::Parameter,
             "screen-path" => Self::ScreenPath,
+            "rest" => Self::Rest,
             _ => return None,
         })
     }
@@ -603,7 +624,7 @@ impl Reader<'_> {
                         Some(lang) if lang.contains("js") || lang.contains("javascript") => "js",
                         _ => "groovy",
                     };
-                    self.script_refs(&from, &text, node.line(), origin);
+                    self.script_refs(&from, &text, node.line(), origin, false);
                 }
             }
             let children: Vec<MNode> = node.child_iter().collect();
@@ -635,6 +656,9 @@ impl Reader<'_> {
                         .unwrap_or_default()
                 });
                 self.artifact(id.clone(), element, &full, Some(node), summary, None);
+                if element == "view-entity" {
+                    self.mark_last(&view_marks(node));
+                }
                 Some(id)
             }
             (ArtifactKind::Entity, "extend-entity") => {
@@ -670,6 +694,9 @@ impl Reader<'_> {
                     summary,
                     Some(parent_id),
                 );
+                if element == "alias" {
+                    self.mark_last(&[alias_mark(node)]);
+                }
                 None
             }
             (ArtifactKind::Entity, "relationship") => {
@@ -887,6 +914,15 @@ impl Reader<'_> {
                     format!("HTTP {method}"),
                     Some(from.to_string()),
                 );
+                // the service it runs, which takes the request's parameters: its parameters are the method's, and the
+                // path parameters are bound into it (resolve/expand.rs)
+                if let Some(service) = node
+                    .first_named("service")
+                    .and_then(|service| service.attribute("name"))
+                    .filter(|name| is_mark_word(name) && refs::is_literal(name))
+                {
+                    self.mark_last(&[format!("service-call {service}")]);
+                }
                 // Each method binds the path variables of its route; inputs declared by its service stay there.
                 let path = rest_path(node);
                 let mut names = std::collections::BTreeSet::new();
@@ -1463,8 +1499,10 @@ impl Reader<'_> {
         }
     }
 
-    /// The service and entity names in the string literals of a script's calls, with what each call does.
-    fn script_refs(&mut self, from: &str, text: &str, first_line: u32, origin: &str) {
+    /// The service and entity names in the string literals of a script's calls, with what each call does. A script
+    /// file's (`whole_file`) are placed at their line and column; an inline `<script>`'s text is the element's, trimmed,
+    /// so its column is not known (0) and its line is as near as that text tells.
+    fn script_refs(&mut self, from: &str, text: &str, first_line: u32, origin: &str, whole_file: bool) {
         for ScriptName {
             kind,
             name,
@@ -1473,7 +1511,13 @@ impl Reader<'_> {
         } in script_names(text)
         {
             let line = first_line + u32::try_from(text[..offset].matches('\n').count()).unwrap_or(0);
-            self.reference(from, kind, &name, "", "script", line, 0);
+            let line_start = text[..offset].rfind('\n').map_or(0, |at| at + 1);
+            let column = if whole_file {
+                u32::try_from(text[line_start..offset].chars().count() + 1).unwrap_or(0)
+            } else {
+                0
+            };
+            self.reference(from, kind, &name, "", "script", line, column);
             if let Some(last) = self.index.refs.last_mut() {
                 last.operation = operation.to_string();
                 last.origin = origin.to_string();
@@ -1485,7 +1529,7 @@ impl Reader<'_> {
         let location = self.info.location.to_string();
         let id = format!("script:{location}");
         self.artifact(id.clone(), "script", &location, None, String::new(), None);
-        self.script_refs(&id, text, 1, self.origin);
+        self.script_refs(&id, text, 1, self.origin, true);
     }
 
     /// The operation of an `entity-create`, `entity-update` or `entity-delete` on a value field of the actions block,
@@ -2036,7 +2080,16 @@ fn service_marks(service: &MNode) -> Vec<String> {
         let Some(parameters) = service.first_named(list) else {
             continue;
         };
-        for auto in parameters.named_iter("auto-parameters") {
+        // the parameters written before each auto-parameters, which its fields merge into as Moqui merges them in order
+        let mut before: Vec<String> = Vec::new();
+        for auto in parameters.child_iter() {
+            if auto.has_name("parameter") {
+                before.extend(auto.attribute("name").filter(|name| is_mark_word(name)));
+                continue;
+            }
+            if !auto.has_name("auto-parameters") {
+                continue;
+            }
             let entity = auto.attribute("entity-name").filter(|name| !name.trim().is_empty());
             if entity.as_deref().is_some_and(|name| !refs::is_literal(name)) {
                 continue;
@@ -2051,10 +2104,11 @@ fn service_marks(service: &MNode) -> Vec<String> {
                 .filter_map(|exclude| exclude.attribute("field-name"))
                 .collect();
             marks.push(format!(
-                "auto-parameters {direction} {} {include} {} {}",
+                "auto-parameters {direction} {} {include} {} {} {}",
                 entity.as_deref().unwrap_or("-"),
                 auto.attribute_is("required", "true"),
-                mark_list(&excludes)
+                mark_list(&excludes),
+                mark_list(&before)
             ));
         }
     }
@@ -2070,6 +2124,78 @@ fn service_marks(service: &MNode) -> Vec<String> {
         marks.push(format!("implements {name} {required}"));
     }
     marks
+}
+
+/// The marks of a view entity ([`ArtifactRow::marks`]): each `member-entity` (`member <entity-alias> <entity>`), each
+/// `member-relationship` (`member-rel <entity-alias> <join-from-alias> <relationship>`, its entity the relationship's
+/// related one, as moqui-db's `resolve_members` takes it) and each `alias-all` (`alias-all <entity-alias> <prefix, - for
+/// none> <excludes>`), in the order written. A member named by an expression is left out: its aliases get no key and
+/// type, and an `alias-all` of it none.
+fn view_marks(view: &MNode) -> Vec<String> {
+    let mut marks = Vec::new();
+    for child in view.child_iter() {
+        match child.name().as_str() {
+            "member-relationship" => {
+                let word = |name: &str| child.attribute(name).filter(|value| is_mark_word(value));
+                if let (Some(alias), Some(from), Some(relationship)) =
+                    (word("entity-alias"), word("join-from-alias"), word("relationship"))
+                {
+                    marks.push(format!("member-rel {alias} {from} {relationship}"));
+                }
+            }
+            "member-entity" => {
+                let (Some(alias), Some(entity)) = (
+                    child.attribute("entity-alias").filter(|alias| is_mark_word(alias)),
+                    child
+                        .attribute("entity-name")
+                        .filter(|name| is_mark_word(name) && refs::is_literal(name)),
+                ) else {
+                    continue;
+                };
+                marks.push(format!("member {alias} {entity}"));
+            }
+            "alias-all" => {
+                let Some(alias) = child.attribute("entity-alias").filter(|alias| is_mark_word(alias)) else {
+                    continue;
+                };
+                let prefix = child
+                    .attribute("prefix")
+                    .filter(|prefix| is_mark_word(prefix))
+                    .unwrap_or_else(|| "-".to_string());
+                let excludes: Vec<String> = child
+                    .named_iter("exclude")
+                    .filter_map(|exclude| exclude.attribute("field"))
+                    .filter(|field| is_mark_word(field))
+                    .collect();
+                marks.push(format!("alias-all {alias} {prefix} {}", mark_list(&excludes)));
+            }
+            _ => {}
+        }
+    }
+    marks
+}
+
+/// The mark of a view entity's `alias` ([`ArtifactRow::marks`]): `alias <entity-alias> <field> <type>`, each `-` when it
+/// is not written; a `complex-alias` or `case` alias reads no one member field, so its entity alias is `-`.
+fn alias_mark(alias: &MNode) -> String {
+    let word = |name: &str| {
+        alias
+            .attribute(name)
+            .filter(|value| is_mark_word(value))
+            .unwrap_or_else(|| "-".to_string())
+    };
+    let computed = alias.first_named("complex-alias").is_some() || alias.first_named("case").is_some();
+    let entity_alias = if computed {
+        "-".to_string()
+    } else {
+        word("entity-alias")
+    };
+    format!("alias {entity_alias} {} {}", word("field"), word("type"))
+}
+
+/// Whether `text` can be a word of a mark: not empty, no space and no `,` or `;`.
+fn is_mark_word(text: &str) -> bool {
+    !text.is_empty() && !text.contains([' ', ',', ';'])
 }
 
 /// The marks of a form's `auto-fields-entity`, `auto-fields-service` and `extends` ([`ArtifactRow::marks`]); its transition's

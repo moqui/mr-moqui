@@ -42,14 +42,17 @@
 //! maps the field into ([`Resolver::path_bindings`]).
 
 mod expand;
+mod family;
+mod groups;
 
 pub use expand::{path_seed, Expansion, FormCall};
+pub use family::{ExcludeOf, NameDependents, NameEdit};
 
 use std::collections::{HashMap, HashSet};
 
 use super::extract::{
     parameter_id, short_of, ArtifactRow, BindingRow, RefRow, ToKind, CALLS_MARK, CONF_ITEM, DERIVED_PATH,
-    NO_SUB_PATH_MARK, ORIGIN_DERIVED, OWN_IN_MAP_MARK, PK_MARK, REQUEST_MARK, ROW_ITEM,
+    NO_SUB_PATH_MARK, ORIGIN_DERIVED, OWN_IN_MAP_MARK, PATTERN_SCOPE, PK_MARK, REQUEST_MARK, ROW_ITEM,
 };
 use super::parameter::{parameter_row, ParamDirection, ParamPlace, ParamSpec};
 
@@ -106,6 +109,24 @@ pub struct Resolver {
     entity_paths: HashMap<String, Vec<String>>,
     /// The rows expanded for each owner ([`Self::expand`]) as they were written, by the owner's id.
     expanded: HashMap<String, Vec<ArtifactRow>>,
+    /// The aliases a view entity declares, by its full name.
+    aliases: HashMap<String, Vec<expand::DeclaredAlias>>,
+    /// The artifact groups' patterns ([`Self::expand_patterns`]): each group's id with the kind and the pattern, matched
+    /// whole, of each member whose name is a pattern.
+    patterns: HashMap<String, Vec<(ToKind, String, moqui_lib::object::CompiledRegex)>>,
+    /// An entity's relationships by its full name, for a view's `member-relationship` ([`Self::relationship`]).
+    relationships: HashMap<String, Vec<Relation>>,
+}
+
+/// A relationship of an entity, as its artifact names it (`relationship:<entity>@<[title#]related>`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Relation {
+    id: String,
+    /// `[title#]related`, the related entity by its full name when the model gave it.
+    key: String,
+    /// The related entity as written.
+    related: String,
+    short_alias: Option<String>,
 }
 
 /// One subscreens item of a screen.
@@ -200,6 +221,30 @@ impl Resolver {
                 if !services.is_empty() {
                     self.requests.insert(artifact.id.clone(), services);
                 }
+            }
+            "artifact-group" => self.add_group(artifact),
+            "relationship" => {
+                let Some((entity, key)) = artifact
+                    .id
+                    .strip_prefix("relationship:")
+                    .and_then(|rest| rest.split_once('@'))
+                else {
+                    return;
+                };
+                // the summary is `<type> <related as written>[, short-alias <alias>]`
+                let (head, short_alias) = match artifact.summary.split_once(", short-alias ") {
+                    Some((head, alias)) => (head, Some(alias.to_string())),
+                    None => (artifact.summary.as_str(), None),
+                };
+                let related = head.split_once(' ').map_or(head, |(_, related)| related).to_string();
+                let relations = self.relationships.entry(entity.to_string()).or_default();
+                relations.retain(|known| known.id != artifact.id);
+                relations.push(Relation {
+                    id: artifact.id.clone(),
+                    key: key.to_string(),
+                    related,
+                    short_alias,
+                });
             }
             "field" => {
                 if let Some(entity) = artifact.parent.as_deref().and_then(|id| id.strip_prefix("entity:")) {
@@ -303,6 +348,18 @@ impl Resolver {
                 }
                 self.requests.remove(&artifact.id);
             }
+            "artifact-group" => {
+                self.patterns.remove(&artifact.id);
+            }
+            "relationship" => {
+                if let Some((entity, _)) = artifact
+                    .id
+                    .strip_prefix("relationship:")
+                    .and_then(|rest| rest.split_once('@'))
+                {
+                    remove_one(&mut self.relationships, entity, |known| known.id == artifact.id);
+                }
+            }
             "field" => {
                 if let Some(entity) = artifact.parent.as_deref().and_then(|id| id.strip_prefix("entity:")) {
                     if let Some(fields) = self.fields.get_mut(entity) {
@@ -348,6 +405,64 @@ impl Resolver {
         self.entities.get(short).and_then(|full| full.first()).cloned()
     }
 
+    /// The full name of the entity the relationship `name` of the entity `entity` (full) leads to, matched as moqui-db's
+    /// `Relationship::matches`: its `[title#]related` name, its short alias, or, with no title, its related entity's
+    /// name as written, full or short. With none of its own of the name, the auto-reverse relationship moqui-db adds
+    /// for another entity's relationship to it (`[title#]<that entity>`, by its full or short name), as
+    /// `add_reverse_relationships` makes them.
+    #[must_use]
+    pub fn relationship(&self, entity: &str, name: &str) -> Option<String> {
+        let short = |full: &str| full.rsplit('.').next().unwrap_or(full).to_string();
+        let related_of = |relation: &Relation| {
+            let related = relation
+                .key
+                .rsplit_once('#')
+                .map_or(relation.key.as_str(), |(_, related)| related);
+            self.entity(related).unwrap_or_else(|| related.to_string())
+        };
+        let own = self.relationships.get(entity).into_iter().flatten().find(|relation| {
+            let untitled = !relation.key.contains('#');
+            relation.key == name
+                || relation.short_alias.as_deref() == Some(name)
+                || (untitled
+                    && (relation.related == name || short(&relation.related) == name || short(&relation.key) == name))
+        });
+        if let Some(relation) = own {
+            return Some(related_of(relation));
+        }
+        // an auto-reverse relationship: another entity's relationship to this one. moqui-db names it
+        // `[title#]<that entity's full name>` and matches it by that name, or with no title by that entity's name as
+        // written: a titled one by its full name only; an untitled one by its full name, else by a short name only
+        // one such entity has
+        let (title, source) = match name.split_once('#') {
+            Some((title, source)) => (Some(title), source),
+            None => (None, name),
+        };
+        let mut sources: Vec<&String> = self
+            .relationships
+            .iter()
+            .filter(|(_, relations)| {
+                relations.iter().any(|relation| {
+                    let relation_title = relation.key.split_once('#').map(|(title, _)| title);
+                    relation_title == title && related_of(relation) == entity
+                })
+            })
+            .map(|(from, _)| from)
+            .collect();
+        sources.sort();
+        if let Some(exact) = sources.iter().find(|from| from.as_str() == source) {
+            return Some((*exact).clone());
+        }
+        if title.is_some() {
+            return None;
+        }
+        let by_short: Vec<&&String> = sources.iter().filter(|from| short(from) == source).collect();
+        match by_short.as_slice() {
+            [only] => Some((**only).clone()),
+            _ => None,
+        }
+    }
+
     /// The location of a screen named by its location, or by a location whose component differs but whose path under
     /// `screen/` is a screen's.
     #[must_use]
@@ -363,6 +478,12 @@ impl Resolver {
     /// Set `reference`'s target and whether it resolves. A location that is no indexed artifact resolves when
     /// `exists` says something is there.
     pub fn resolve(&self, reference: &mut RefRow, exists: &dyn Fn(&str) -> bool) {
+        if reference.to_scope == PATTERN_SCOPE {
+            // one artifact the pattern matched ([`Self::expand_patterns`]), while it is there
+            reference.to_id = reference.to_id.take().filter(|id| self.has(id));
+            reference.resolved = reference.to_id.is_some();
+            return;
+        }
         if reference.to_kind == ToKind::TransitionAnchor {
             // the base screen's transition it replaces, else a transition it adds: resolved while the base is there
             let base = self.screen(&reference.to_scope);
@@ -445,6 +566,10 @@ impl Resolver {
             }),
             ToKind::TransitionAnchor => None,
             ToKind::Parameter => self.service_parameter(&reference.to_scope, "in", &reference.to_name),
+            ToKind::Rest => {
+                let id = format!("rest:{}", reference.to_name);
+                self.has(&id).then_some(id)
+            }
         };
         reference.resolved = target.is_some();
         reference.to_id = target;
@@ -595,8 +720,8 @@ impl Resolver {
             let spec = ParamSpec::new(direction, field, kind, &required.to_string());
             rows.push(parameter_row(id, &spec, &place));
         };
-        let fields: Vec<&AutoField> = self.ordered_fields(full);
-        let keys: Vec<&AutoField> = fields.iter().copied().filter(|field| field.pk).collect();
+        let fields: Vec<AutoField> = self.ordered_fields(full);
+        let keys: Vec<&AutoField> = fields.iter().filter(|field| field.pk).collect();
         for (at, key) in keys.iter().enumerate() {
             let required = match verb {
                 "update" | "delete" => true,

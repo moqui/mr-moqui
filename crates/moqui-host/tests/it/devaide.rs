@@ -1237,18 +1237,23 @@ const AUTO_DEFINED: &str = r#"<services>
 
 /// The rows of the derived entity-auto services in the database index: written for a call to an entity-auto name, with
 /// the binding into its parameter; derived again when the entity's fields change; dropped while a file defines the id,
-/// and derived again when that file goes; and derived for a call indexed before its entity, once the entity comes.
+/// and derived again when that file goes; and derived for a call indexed before its entity, once the entity comes. A
+/// view entity's `alias-all` of the entity has the new field too, in the view's file.
 #[test]
 fn the_index_rows_derive_entity_auto_services() {
     if !crate::common::own_process() {
         return;
     }
+    let views = r#"<entities><view-entity entity-name="WidgetView" package="acme">
+        <member-entity entity-alias="W" entity-name="acme.Widget"/><alias-all entity-alias="W"/>
+    </view-entity></entities>"#;
     let files = [
         (
             "components/addon/acme-site/component.xml",
             r#"<component name="acme-site"/>"#,
         ),
         ("components/addon/acme-site/entity/AcmeEntities.xml", AUTO_ENTITIES),
+        ("components/addon/acme-site/entity/AcmeViews.xml", views),
         ("components/addon/acme-site/service/acme/WidgetServices.xml", AUTO_CALLS),
         ("components/addon/acme-site/service/acme/SaveServices.xml", AUTO_SAVE),
         ("components/addon/acme-site/screen/Widgets.xml", AUTO_SCREEN),
@@ -1359,6 +1364,19 @@ fn the_index_rows_derive_entity_auto_services() {
     assert_eq!(
         form_bound(&factory),
         [format!("{save_param}color"), format!("{save_param}widgetName")]
+    );
+    let view_field = index::describe(&factory, "field:acme.WidgetView.color")
+        .unwrap()
+        .map(|row| {
+            (
+                row.origin,
+                row.summary,
+                row.path.rsplit('/').next().unwrap_or_default().to_string(),
+            )
+        });
+    assert_eq!(
+        view_field,
+        Some(("alias-all".to_string(), "id".to_string(), "AcmeViews.xml".to_string()))
     );
 
     // a file defining the id: its service and parameters answer, the derived rows are gone
