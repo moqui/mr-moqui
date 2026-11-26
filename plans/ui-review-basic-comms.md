@@ -1740,6 +1740,8 @@ With the media listener configured, calls.client.b answered the next call and se
 
 Against B10’s original-behavior list, 032 now has partial evidence from the ring transaction. Its mention transaction remains outstanding. Carry forward partial 007, 016, 020, 025, 026, 027, 034, 035, 036 and 037, plus unverified 021, 031 and 033. The ten design dispositions are unchanged. This yields 13 verified, 11 partial and three unverified across the 27 original behaviors.
 
+**Follow-up 2026-11-25.** COM-UI-032 is fixed for every caller: a notification sent inside a transaction is stored in it and delivered only at its commit (see its register row). The mention rollback now has a spec-level check beside the ring's (PushDevice), not a live observation; the carry-forward above is unchanged until the next walk.
+
 Local evidence is under `plans/ui-refinement-evidence/closeout-d10e22f/`.
 
 #### Remaining branches

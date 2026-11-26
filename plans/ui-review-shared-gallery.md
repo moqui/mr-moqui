@@ -860,9 +860,9 @@ All 147 activities have an owning ledger row, a last observed result, and a next
 
 | Priority | Finding and affected consumer | Evidence |
 |---|---|---|
-| P1 · AI-UI-004 | Entity Sync advances the success time beyond a selected row with a 60-second split. The operator sees Complete and the receiving database lacks the row. | [Integration register](ui-review-system-ai-integrations.md), sync-window-loss.json |
-| P2 · AI-UI-005 | System Entity Sync Detail omits its primary key on update. An operator cannot repair the split or delay on that form. | [Integration register](ui-review-system-ai-integrations.md), sync-set-window.json |
-| P3 · DASH-UI-005 | Report Definition history presents change dates as epoch milliseconds. Authors cannot read the time of a version in their zone. | [Dashboard register](ui-review-dashboards.md), panel-folder.json |
+| P1 · AI-UI-004 | Entity Sync advances the success time beyond a selected row with a 60-second split. The operator sees Complete and the receiving database lacks the row. **Fixed 2026-11-25**, not rechecked live. | [Integration register](ui-review-system-ai-integrations.md), sync-window-loss.json |
+| P2 · AI-UI-005 | System Entity Sync Detail omits its primary key on update. An operator cannot repair the split or delay on that form. **Fixed 2026-11-25**, not rechecked live. | [Integration register](ui-review-system-ai-integrations.md), sync-set-window.json |
+| P3 · DASH-UI-005 | Report Definition history presents change dates as epoch milliseconds. Authors cannot read the time of a version in their zone. **Fixed 2026-11-25**, with the same fault in Log context, Releases and Fleet; not rechecked live. | [Dashboard register](ui-review-dashboards.md), panel-folder.json |
 
 The scoped Analysis panel, nonempty Git push, guided Seed edit, designer Save, View-tier Workspace tree, controlled sync redirect and corrected delivery, Remote Agent and MCP creation, connection/relay accessible names and native filtered Gallery export all have current runtime evidence in their owning batches. The earlier 302 source remains unknown. BasicComms retains three original behaviors without direct verification and eleven with partial evidence. Ten design decisions retain separate accounting.
 
