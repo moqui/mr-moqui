@@ -1009,6 +1009,19 @@ fn a_dev_instance_connects_to_its_group_server_and_opens_merge_requests() {
             serde_json::json!({"action": "open_merge_request", "root": "my-site", "title": "From a key",
                 "source": "main", "target": "main"}),
         ];
+        // what the group server holds, as a viewer reads it: the merge request's threads, and the merge requests
+        let on_server = || {
+            [
+                threads_path.clone(),
+                "/rest/s1/moqui/git/my-site/mergeRequests".to_string(),
+            ]
+            .map(|path| {
+                let (status, _, body) = exchange(address, &http_request("GET", &path, &[("api_key", &viewer_key)], ""));
+                assert_eq!(status, 200, "{path}: {body}");
+                body
+            })
+        };
+        let before = on_server();
         for args in &writes {
             let refused = moqui_core::screen::gate::with_request_frame(
                 moqui_core::screen::gate::RenderOrigin::Browser,
@@ -1023,6 +1036,20 @@ fn a_dev_instance_connects_to_its_group_server_and_opens_merge_requests() {
                 refused.instruction
             );
         }
+        // nothing reached the server: no thread, reply or merge request came of them
+        let after = on_server();
+        assert_eq!(after, before, "the group server changed");
+        assert!(
+            !after
+                .iter()
+                .any(|body| body.contains("From a key") || body.contains("Fixed in the next commit")),
+            "{after:?}"
+        );
+        assert!(
+            before[1].contains("A viewer's fix"),
+            "the merge requests read: {}",
+            before[1]
+        );
         dev_aide::agent::hosting::execute(&card.args).unwrap();
     }
     let (status, _, body) = exchange(

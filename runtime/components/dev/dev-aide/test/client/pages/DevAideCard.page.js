@@ -119,6 +119,12 @@ test("a new title is worded on the card, and the change set's arguments carry it
 
 test("once decided the card keeps its summary, with no titles to word and no Preview", async () => {
     const [vector] = await vectors();
+    // pending, on a page that is not the Workspace, it has both, so their absence below is the decision's
+    const pending = await mount(cardOf(vector), true);
+    assert.equal(location.pathname.indexOf("/dev/Workspace"), -1, location.pathname);
+    assert.notEqual(pending.host.querySelector('[data-assist-action="preview-change-set"]'), null, "Preview while pending");
+    assert.equal(pending.host.querySelectorAll("input[data-assist-change-value]").length, vector.card.values.length);
+    pending.unmount();
     const card = await mount(cardOf(vector), false);
     assert.equal(card.host.querySelectorAll("[data-assist-change-row]").length, vector.card.rows.length);
     assert.equal(card.host.querySelectorAll("[data-assist-change-value]").length, 0);
