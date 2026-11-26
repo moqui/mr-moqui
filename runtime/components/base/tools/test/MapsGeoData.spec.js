@@ -21,10 +21,7 @@ function waitFor(test, millis) {
     const deadline = Date.now() + millis
     while (Date.now() < deadline) {
         if (test()) return true
-        const pause = Date.now() + 50
-        while (Date.now() < pause) {
-            /* look again shortly */
-        }
+        sleep(50)
     }
     return test()
 }
@@ -103,7 +100,7 @@ feature("Geo data renders its data sets, licenses and Import for an administrato
         return {
             admin: render("john.doe", "/apps/maps/Configuration/GeoData"),
             user: render("maps.geo.scr.user", "/apps/maps/Configuration/GeoData"),
-            // the Import dialog, loaded when opened: GeoNames' countries only
+            // the Import dialog, loaded when opened: GeoNames' countries only, and every country with its estimate
             dialog: render("john.doe", "/apps/maps/Configuration/GeoData/ImportDialog", {
                 dataSetId: "GEONAMES_POSTAL",
                 lastStandalone: "true"
@@ -126,6 +123,9 @@ feature("Geo data renders its data sets, licenses and Import for an administrato
         dialog.output.includes("Start import")
         dialog.output.includes("Morocco")
         !dialog.output.includes("Antarctica")
+        // every country, as a queue, with its estimate
+        dialog.output.includes("Import every country")
+        /Imports 1\d\d countries one after another/.test(dialog.output)
     }
 })
 

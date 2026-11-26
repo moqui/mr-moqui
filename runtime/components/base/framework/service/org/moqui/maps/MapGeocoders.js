@@ -18,7 +18,10 @@
 //   names geocode or search (OPERATION_NOT_ALLOWED). The log names the provider and the kind of failure, never the text.
 // - Its rate: requestsPerSecond, or 1 for Nominatim and Photon when empty, refused rather than queued (RATE_LIMITED). A
 //   request claims its slot with the cache's putIfAbsent, so two at once cannot both pass; the cache is each server's, so a
-//   cluster of n servers may send n times the rate. requestsPerDay is recorded, not enforced. The public Nominatim and
+//   cluster of n servers may send n times the rate. Its requestsPerDay, when set, is the most searches it is sent in a
+//   calendar day (UTC), refused past it (DAILY_LIMIT): a search claims one by locking its MapProviderDayCount row in a
+//   transaction of its own before anything is sent, so the servers of a cluster share the day's count and the limit holds
+//   for them together; a cached answer, a refused search and the connection test claim none. The public Nominatim and
 //   Photon demo servers are named by the test and readiness, since their policies allow an application very little.
 // - This server keeps an answer only when its cachePolicy is shared (none, empty and private keep nothing here: private
 //   is the user's browser alone), for cacheSeconds or, when empty, the answer's own Cache-Control max-age (at most a
@@ -28,6 +31,7 @@
 //   rooftop); Nominatim and Photon say an address point, a street, a postal code or a place. Several candidates are
 //   ambiguous: choices, none chosen. A provider's confidence is never made a distance.
 const PROVIDER = "moqui.maps.MapProvider"
+const DAY_COUNT = "moqui.maps.MapProviderDayCount"
 const ANSWERS = "maps.geocoder.answer"
 const LAST = "maps.geocoder.last"
 const MAX_BYTES = 1024 * 1024
@@ -191,6 +195,43 @@ const rateOf = provider =>
         : ["MPK_GEOCODER_NOMINATIM", "MPK_GEOCODER_PHOTON"].includes(text(provider.providerKindEnumId))
           ? 1
           : 0
+// One of its requestsPerDay claimed for today (UTC), or false when the day's are used: the day's row locked in a transaction
+// of its own, so two servers at once cannot both take the last one; a first request of the day that loses the race to
+// create the row claims on the row the other made.
+function claimDay(providerId, limit) {
+    const now = new Date()
+    const two = value => String(value).padStart(2, "0")
+    const countDate = now.getUTCFullYear() + "-" + two(now.getUTCMonth() + 1) + "-" + two(now.getUTCDate())
+    const claim = () => {
+        const was = ec.artifactExecution.disableAuthz()
+        try {
+            const row = ec.entity.find(DAY_COUNT).condition({providerId, countDate}).forUpdate(true).one()
+            if (!row) {
+                ec.entity.makeValue(DAY_COUNT).setAll({providerId, countDate, requestCount: 1}).create()
+                return true
+            }
+            const count = Number(row.requestCount) || 0
+            if (count >= limit) return false
+            row.set("requestCount", count + 1)
+            row.update()
+            return true
+        } finally {
+            if (!was) ec.artifactExecution.enableAuthz()
+        }
+    }
+    // the first try's failure (the row another server made at once) is passed over, its words kept out of the caller's
+    ec.message.pushErrors()
+    let first = null
+    try {
+        first = !!ec.transaction.runRequireNew(10, "Counting a geocoder request", claim)
+    } catch (error) {
+        first = null
+    } finally {
+        ec.message.clearErrors()
+        ec.message.popErrors()
+    }
+    return first !== null ? first : !!ec.transaction.runRequireNew(10, "Counting a geocoder request", claim)
+}
 // Its allowedOperations: empty, or naming geocode or search
 const operationAllowed = provider => {
     const operations = text(provider.allowedOperations)
@@ -375,6 +416,17 @@ function findPlaces(p) {
                 extra
             )
     }
+    // its requests a day, claimed last, so only a search that is sent counts
+    const perDay = Number(provider.requestsPerDay) > 0 ? Number(provider.requestsPerDay) : 0
+    if (perDay > 0 && !claimDay(provider.providerId, perDay))
+        return refusal(
+            "DAILY_LIMIT",
+            say("${name} takes at most ${count} searches a day from this installation: search again tomorrow", {
+                name,
+                count: perDay
+            }),
+            extra
+        )
     const answer = fetchJson(url, !privateAllowed(provider))
     if (answer.failure || !adapter.shapeOk(answer.json)) {
         ec.logger.warn("Geocoder " + provider.providerId + " failed a search: " + (answer.kind || "unexpected answer"))
@@ -440,5 +492,7 @@ const operations = {findPlaces}
     isGeocoderKind,
     publicHost,
     publicHostText,
-    availability
+    availability,
+    // for the providers' proxy (MapProviders.js): its requestsPerDay
+    claimDay
 })

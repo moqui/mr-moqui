@@ -97,6 +97,9 @@ fn census_zcta_keeps_leading_zeros_and_passes_over_a_bad_row() {
             longitude: 0.0
         })
     );
+    // the land area is kept for the lookup's extent
+    assert_eq!(first.land_area, Some(166_836_392));
+    assert_eq!(postal(&records)[1].land_area, Some(2_335_958));
     let fields: Vec<(u64, &str)> = rejected.iter().map(|e| (e.line, e.field.as_str())).collect();
     assert_eq!(fields, [(4, "GEOID"), (5, "latitude"), (6, "longitude")]);
     assert!(rejected[0].message.contains("five-digit"), "{}", rejected[0].message);
@@ -631,4 +634,189 @@ fn a_member_whose_declared_size_lies_is_refused() {
     // the crate either stops at the declared size and fails its check, or our ratio bound ends the read
     let error = result.expect_err("a lying member is not read whole");
     assert!(!error.message().is_empty());
+}
+
+#[test]
+fn a_zcta_with_no_land_area_column_or_value_still_loads() {
+    let text = "GEOID|INTPTLAT|INTPTLONG\n01001|42.06|-72.61\n";
+    let (records, rejected, _) = read(Format::CensusZcta, text.as_bytes());
+    assert!(rejected.is_empty(), "{rejected:?}");
+    assert_eq!(postal(&records)[0].land_area, None);
+    let text = "GEOID|ALAND|INTPTLAT|INTPTLONG\n01001||42.06|-72.61\n01002|0|42.36|-72.5\n";
+    let (records, rejected, _) = read(Format::CensusZcta, text.as_bytes());
+    assert!(rejected.is_empty(), "{rejected:?}");
+    assert_eq!(postal(&records)[0].land_area, None, "an empty ALAND is no area");
+    assert_eq!(
+        postal(&records)[1].land_area,
+        None,
+        "a zero ALAND (all water) is no area to size by"
+    );
+}
+
+#[test]
+fn geonames_first_level_codes_cross_to_iso_3166_2() {
+    use super::admin1::{iso_code, iso_field, matches_iso, source_is_iso, DivisionCodes};
+    // FIPS codes through the crosswalk
+    assert_eq!(iso_code("CA", "01").as_deref(), Some("AB"), "Alberta");
+    assert_eq!(
+        iso_code("ca", " 10 ").as_deref(),
+        Some("QC"),
+        "Quebec, trimmed and any case"
+    );
+    assert_eq!(
+        iso_code("JP", "01").as_deref(),
+        Some("23"),
+        "FIPS JA01 is Aichi, ISO JP-23"
+    );
+    assert_eq!(iso_code("IN", "01").as_deref(), Some("AN"));
+    assert_eq!(iso_code("DE", "02").as_deref(), Some("BY"));
+    assert_eq!(iso_code("GB", "ENG").as_deref(), Some("ENG"));
+    // the three chosen by hand
+    assert_eq!(iso_code("OM", "02").as_deref(), Some("BJ"));
+    assert_eq!(iso_code("AZ", "30").as_deref(), Some("LA"));
+    // the countries whose GeoNames codes are ISO already, and a code with none
+    assert!(source_is_iso("US") && source_is_iso("ch") && source_is_iso("BE") && source_is_iso("ME"));
+    assert!(!source_is_iso("CA"));
+    assert_eq!(iso_code("US", "ca").as_deref(), Some("CA"));
+    assert_eq!(iso_code("CH", "ZH").as_deref(), Some("ZH"));
+    assert_eq!(iso_code("CA", "99"), None);
+    assert_eq!(iso_code("XX", "01"), None);
+    assert_eq!(iso_code("CA", ""), None);
+    // the forms of Mantle's install data
+    let alpha = DivisionCodes {
+        geo_id: "CAN_AB",
+        alpha2: "AB",
+        numeric: "",
+    };
+    assert!(matches_iso(alpha, "CAN", "CA", "AB"));
+    assert!(!matches_iso(alpha, "CAN", "CA", "BC"));
+    let numeric = DivisionCodes {
+        geo_id: "JPN_23",
+        alpha2: "",
+        numeric: "23",
+    };
+    assert!(matches_iso(numeric, "JPN", "JP", "23"));
+    let whole = DivisionCodes {
+        geo_id: "VNM_VN-SG",
+        alpha2: "",
+        numeric: "",
+    };
+    assert!(matches_iso(whole, "VNM", "VN", "SG"), "by an ID of the whole ISO code");
+    let whole_alpha = DivisionCodes {
+        geo_id: "VNM_HCM",
+        alpha2: "VN-SG",
+        numeric: "",
+    };
+    assert!(
+        matches_iso(whole_alpha, "VNM", "VN", "SG"),
+        "by the whole ISO code in geoCodeAlpha2"
+    );
+    assert!(!matches_iso(whole_alpha, "VNM", "VN", ""));
+    assert_eq!(iso_field("01"), "geoCodeNumeric");
+    assert_eq!(iso_field("AB"), "geoCodeAlpha2");
+}
+
+#[test]
+fn the_crosswalk_gives_each_iso_code_once_a_country_and_folds_names() {
+    use super::admin1::{fold_name, iso_code, same_name};
+    let mut seen = std::collections::BTreeMap::new();
+    for line in include_str!("admin1_iso.tsv")
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+    {
+        let (key, iso) = line.split_once('\t').expect("a key, a tab and a code");
+        let (country, _) = key.split_once('.').expect("country.code");
+        if let Some(other) = seen.insert((country, iso), key) {
+            panic!("{country}-{iso} is the code of both {other} and {key}");
+        }
+    }
+    // the three the join missed, and one of a pair kept
+    assert_eq!(iso_code("IN", "12").as_deref(), Some("JK"));
+    assert_eq!(iso_code("IN", "41").as_deref(), Some("LA"));
+    assert_eq!(iso_code("IN", "52").as_deref(), Some("DH"));
+    assert_eq!(iso_code("AZ", "56").as_deref(), Some("SUS"));
+    assert_eq!(iso_code("AZ", "55"), None);
+    // a source's ASCII name and a native spelling are the same name
+    assert!(same_name("Telangana", "Telangāna"));
+    assert!(same_name("Hyogo", " Hyōgo "));
+    assert!(same_name("SETUBAL", "Setúbal"));
+    assert!(same_name("Baden-Wurttemberg", "Baden-Württemberg"));
+    assert!(same_name("Constanta", "Constanța"));
+    assert_eq!(
+        fold_name("Thu\u{301}ringen"),
+        "thuringen",
+        "a combining mark is dropped"
+    );
+    assert!(!same_name("Hesse", "Hessen"));
+}
+
+/// The attributes of each `<{element} .../>` of an entity-facade XML file.
+fn xml_rows<'a>(text: &'a str, element: &str) -> Vec<std::collections::HashMap<&'a str, &'a str>> {
+    let open = format!("<{element} ");
+    let mut rows = Vec::new();
+    let mut rest = text;
+    while let Some((_, after)) = rest.split_once(open.as_str()) {
+        let (body, next) = after.split_once("/>").unwrap_or((after, ""));
+        let mut row = std::collections::HashMap::new();
+        let mut attributes = body;
+        while let Some((name, value_and_more)) = attributes.split_once("=\"") {
+            let Some((value, more)) = value_and_more.split_once('"') else {
+                break;
+            };
+            row.insert(name.trim(), value);
+            attributes = more;
+        }
+        rows.push(row);
+        rest = next;
+    }
+    rows
+}
+
+#[test]
+fn every_mantle_first_level_code_of_a_fips_country_is_in_the_crosswalk() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../runtime/components/addon/mr-mantle/data/20-install");
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        eprintln!("mr-mantle is not checked out at {}: nothing to compare", dir.display());
+        return;
+    };
+    let mut texts = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with("Geography") && name.ends_with(".xml") {
+            texts.push(std::fs::read_to_string(entry.path()).expect("a Mantle geography file reads"));
+        }
+    }
+    let geos: std::collections::HashMap<&str, std::collections::HashMap<&str, &str>> = texts
+        .iter()
+        .flat_map(|text| xml_rows(text, "Geo"))
+        .filter_map(|row| row.get("geoId").copied().map(|id| (id, row)))
+        .collect();
+    for (country_geo_id, alpha2) in [("CAN", "CA"), ("IND", "IN"), ("JPN", "JP"), ("PRT", "PT")] {
+        let crosswalk = super::admin1::iso_codes(alpha2);
+        let children: Vec<&str> = texts
+            .iter()
+            .flat_map(|text| xml_rows(text, "GeoAssoc"))
+            .filter(|row| {
+                row.get("geoId") == Some(&country_geo_id) && row.get("geoAssocTypeEnumId") == Some(&"GAT_REGIONS")
+            })
+            .filter_map(|row| row.get("toGeoId").copied())
+            .collect();
+        assert!(
+            !children.is_empty(),
+            "Mantle has first-level divisions of {country_geo_id}"
+        );
+        for child in children {
+            let Some(geo) = geos.get(child) else { continue };
+            let code = geo
+                .get("geoCodeAlpha2")
+                .or_else(|| geo.get("geoCodeNumeric"))
+                .copied()
+                .unwrap_or_default();
+            assert!(
+                crosswalk.contains(&code),
+                "{child} ({code}) of {country_geo_id} is no value of the crosswalk"
+            );
+        }
+    }
 }

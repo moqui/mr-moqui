@@ -52,7 +52,10 @@ pub mod files;
 pub mod geo;
 // ---------- Map archives (plans/Maps.md §5) ----------
 pub mod maps_archive;
+pub mod maps_ogc;
 pub mod maps_overlay;
+pub mod maps_simplify;
+pub mod maps_tiles;
 
 /// The services of the schema, job, table and activity screens, of ETL and the grid's file source, of the Geo data
 /// importer and of map archives.
@@ -66,7 +69,10 @@ fn register_schema_and_jobs(
     etl::service::register(map)?;
     geo::service::register(map)?;
     maps_archive::register(map)?;
+    maps_ogc::register(map)?;
     maps_overlay::register(map)?;
+    maps_simplify::register(map)?;
+    maps_tiles::register(map)?;
     geo::lookup::register(map)?;
     files::register(map)
 }

@@ -13,8 +13,9 @@
 //   lower precision said as such (GPP_PLACE_ESTIMATE and matchKind prefix); no other country's code is ever cut. A prefix
 //   code (GPG_PREFIX), found so or asked for, is said to be only the first part of the code, with a wider extent.
 // - The extent is a box around the point broad enough for a postal area (wider for a prefix), widened to the code's place
-//   points nearby; it is not the area's boundary, and no accuracy in meters is made up. (Sizing it from the Census
-//   ZCTA's land area, which the importer does not keep yet, is a later improvement.)
+//   points nearby; it is not the area's boundary, and no accuracy in meters is made up. Where the active point's source
+//   gave the area's land area (a Census ZCTA's ALAND, GeoPointAssoc.landArea) the box is a square of that area, within
+//   limits; else a fixed size.
 // - A code with several place names is ambiguous: its names are aliases of the one area, listed as choices, none chosen.
 // - Puerto Rico, the US Virgin Islands, Guam, American Samoa and the Northern Mariana Islands have US ZIP codes, which
 //   the US data sets (the Census ZCTAs) hold: a code of one of them not found under its own country is looked up as a US
@@ -26,6 +27,9 @@ const NORMALIZE = "org.moqui.maps.GeoDataServices.normalize#PostalCode"
 const APPROXIMATE = "Approximate location — postal area"
 // half the height of the box around a point, in degrees of latitude: a full code's area, a prefix's district
 const HALF_HEIGHT = {code: 0.08, prefix: 0.3}
+// a box sized from a land area: half its side within these, in degrees of latitude (about 0.5 km to 55 km)
+const AREA_HALF_HEIGHT = {min: 0.005, max: 0.5}
+const METERS_PER_DEGREE = 111320
 // a place point further than this from the representative point is not taken into the extent
 const PLACE_REACH = 1.0
 const MAX_PLACES = 50
@@ -55,9 +59,19 @@ function countryOf(value) {
     return cached()("moqui.basic.Geo", {geoTypeEnumId: "GEOT_COUNTRY", [field]: code}).list()[0] || null
 }
 
-// [west, south, east, north] around a point, widened to the place points within reach
-function extentAround(lon, lat, kind, places) {
-    const halfHeight = HALF_HEIGHT[kind] || HALF_HEIGHT.code
+// Half the height of a full code's box, in degrees of latitude, from its land area in square meters: half the side of a
+// square of that area, within AREA_HALF_HEIGHT; null with no area
+function areaHalfHeight(landArea) {
+    const area = Number(landArea)
+    if (!Number.isFinite(area) || area <= 0) return null
+    const half = Math.sqrt(area) / 2 / METERS_PER_DEGREE
+    return Math.min(Math.max(half, AREA_HALF_HEIGHT.min), AREA_HALF_HEIGHT.max)
+}
+
+// [west, south, east, north] around a point, widened to the place points within reach; a full code's box sized from its
+// land area where there is one
+function extentAround(lon, lat, kind, places, landArea) {
+    const halfHeight = (kind === "code" && areaHalfHeight(landArea)) || HALF_HEIGHT[kind] || HALF_HEIGHT.code
     const halfWidth = Math.min(halfHeight / Math.max(Math.cos((lat * Math.PI) / 180), 0.2), 5)
     let [west, south, east, north] = [lon - halfWidth, lat - halfHeight, lon + halfWidth, lat + halfHeight]
     for (const place of places) {
@@ -151,7 +165,7 @@ function matchOf(code, kind) {
         matchKind: kind,
         lon,
         lat,
-        extent: extentAround(lon, lat, prefix ? "prefix" : "code", places),
+        extent: extentAround(lon, lat, prefix ? "prefix" : "code", places, assoc.landArea),
         precisionEnumId,
         approximate: true,
         prefixOnly: prefix,

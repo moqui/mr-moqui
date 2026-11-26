@@ -15,8 +15,9 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- A map provider's page (plans/Maps.md §4.2): one connection of the mapProvider kind, read from
     org.moqui.admin.ConfigurationServices.get#Connection and changed through store#Connection and test#Connection, through
     the shared parts of template/ConnectionParts.xml (README, "Mounting the administration screens"): its settings and its
-    key (write-only, and a provider with a key is never offered to a browser), a test (one request with no credentials,
-    which enables it when it passes) and Enable and Disable. Only map providers: adapterKey is mapProvider whatever a
+    key (write-only: a provider with a key is offered to a browser only through this server, Through this server, whose
+    proxy adds it), a test (one request with no credentials, or as the proxy asks for a proxied provider, which enables it
+    when it passes) and Enable and Disable. Only map providers: adapterKey is mapProvider whatever a
     request says, so no other kind of connection is reached here. Reading needs ADMIN_CONNECTION_VIEW and a change or a test
     ADMIN_CONNECTION_MANAGE, checked by the services. Named as System › Integrations' detail is (the sibling names an app
     that shows these screens uses). -->

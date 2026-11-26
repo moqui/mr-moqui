@@ -363,6 +363,8 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="dataSetId" type="id"/>
         <field name="edition" type="text-short"/>
         <field name="priority" type="number-integer"/>
+        <field name="landArea" type="number-integer"><description>The land area of the Geo's area in square meters, where
+            the point's source has it (a Census ZCTA's ALAND): the postal lookup sizes its extent from it</description></field>
         <field name="fromDate" type="date-time"/>
         <field name="thruDate" type="date-time"/>
         <relationship type="one" related="moqui.basic.Geo" short-alias="geo"/>

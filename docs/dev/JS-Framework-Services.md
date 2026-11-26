@@ -351,7 +351,7 @@ A drive is a tree of files with members and permissions; every user has a person
 | `get#ResourceInfo` | `driveId*`, `path*`, `versionName` → `resource`, with the location to read it from |
 | `find#Resources` | `text`, `driveId`, `path`, `fileType`, `modifiedFrom`, `tagId`, `limit` → `resultList` |
 | `upload#Resource` | `driveId*`, `path`, `file` or `fileList`, `versionNote`, `conflictPolicy` → `uploadedList`, `versionName` |
-| `save#Text` | `driveId*`, `path*`, `text`, `versionNote` → `versionName` |
+| `save#Text` | `driveId*`, `path*`, `text`, `versionNote` → `versionName`; refused past the drive's quota |
 | `create#Folder` | `driveId*`, `path`, `name*` → `newPath` |
 | `rename#Resource` | `driveId*`, `path*`, `newName*` → `newPath` |
 | `move#Resource`, `copy#Resource` | `driveId*`, `path` or `pathList`, `toDriveId`, `toPath`, `conflictPolicy` → `movedList`, `copiedList` |

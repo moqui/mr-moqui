@@ -11,9 +11,10 @@
 // an explanation; an installation with no OUTLINE row or no maps.profile preference still draws the outline, and an
 // administrator is told so, with the link to Configuration only for a user who may open it.
 //
-// What reaches a browser: no provider's key (a provider with one is not offered to a browser at all: its key would be
-// in the tile and style URLs, and no provider kind of P1 has a key meant to be public; a proxied provider, which keeps the
-// key on the server, is a later option), no service, entity or resource name, only paths of this server and outside URLs
+// What reaches a browser: no provider's key (a provider with one is offered only through this server's proxy, its
+// proxyRequests Y: its key would be in the tile and style URLs, and no provider kind has a key meant to be public; a
+// proxied provider's layers are handed the proxy's same-origin paths, LocalMap.xml providerProxy, only to a caller the
+// proxy lets reach it, MapProviders.js proxyOffered), no service, entity or resource name, only paths of this server and outside URLs
 // of an enabled provider that passed its test as it is configured now, on that provider's own origin (a layer with no
 // provider, or a URL of another origin than its provider's, is a layer error), and with outside requests off only this
 // server's. allowedOrigins are those origins, each tile subdomain ({s}, {a-c}) by itself. A profile or layer the caller
@@ -61,7 +62,9 @@ const BASEMAP_KINDS = {
     MLF_VECTOR_STYLE: "style",
     MLF_RASTER_XYZ: "xyz",
     MLF_PMTILES_VECTOR: "pmtiles",
-    MLF_PMTILES_RASTER: "pmtiles"
+    MLF_PMTILES_RASTER: "pmtiles",
+    MLF_WMS: "wms",
+    MLF_WMTS: "wmts"
 }
 const OVERLAY_KINDS = {
     MLF_GEOJSON: "geojson",
@@ -71,7 +74,10 @@ const OVERLAY_KINDS = {
     MLF_RASTER_XYZ: "xyz",
     MLF_PMTILES_VECTOR: "pmtiles",
     MLF_PMTILES_RASTER: "pmtiles",
-    MLF_ADAPTER: "features"
+    MLF_ADAPTER: "features",
+    MLF_WMS: "wms",
+    MLF_WMTS: "wmts",
+    MLF_WFS: "wfs"
 }
 const GEOMETRY_TYPES = ["Point", "MultiPoint", "LineString", "MultiLineString", "Polygon", "MultiPolygon"]
 const OVERRIDES = ["basemap", "layers", "extent", "units"]
@@ -168,9 +174,10 @@ function geometryOf(value) {
 // a path of this server: /..., never //host
 const isLocal = url => /^\/(?!\/)/.test(text(url))
 const isWeb = url => /^https?:\/\/[^\/?#@\s]+/i.test(text(url))
-// scheme://host[:port], lower case, without the scheme's default port
+// scheme://host[:port], lower case, without the scheme's default port; null for a URL with credentials (user@host): its
+// host is the part after the @, which a check of the part before it would miss
 function originOf(url) {
-    const parts = /^(https?):\/\/([^\/?#@\s]+)/i.exec(text(url))
+    const parts = /^(https?):\/\/([^\/?#@\s\\]+)(?=[\/?#]|$)/i.exec(text(url))
     if (!parts) return null
     const scheme = parts[1].toLowerCase()
     const host = parts[2].toLowerCase().replace(scheme === "https" ? /:443$/ : /:80$/, "")
@@ -220,13 +227,58 @@ function providerRefusal(provider, providerId) {
     if (!provider) return refusal("PROVIDER_MISSING", say("its provider ${providerId} is not registered", {providerId}))
     const name = text(provider.providerName) || provider.providerId
     if (provider.disabled === "Y") return refusal("PROVIDER_DISABLED", say("its provider ${name} is not enabled", {name}))
-    // a key is never sent to a browser, and no provider kind has one meant to be public
-    if (text(provider.apiKey))
+    // a key is never sent to a browser, and no provider kind has one meant to be public: one with a key is drawn only
+    // through this server's proxy, which adds it
+    if (text(provider.apiKey) && provider.proxyRequests !== "Y")
         return refusal("PROVIDER_KEYED", say("its provider ${name} needs a key, which is never sent to a browser", {name}))
     return null
 }
 // The map archives (MapSources.js), loaded when a layer has one
 let sources = null
+// The OGC services (MapOgc.js), loaded when a layer is of one
+let ogcModule = null
+const ogc = () => (ogcModule = ogcModule || ec.resource.script("component://framework/service/org/moqui/maps/MapOgc.js"))
+const OGC_FORMATS = ["MLF_WMS", "MLF_WMTS", "MLF_WFS"]
+const PROXY_PATH = "/apps/maps/LocalMap/providerProxy"
+// The URLs an OGC layer's browser asks for (MapOgc.js layerSource, from what its provider's last test recorded): {url, styleUrl,
+// ogc}, or a refusal. Always of an enabled, tested provider of its service, on that provider's origin or through this
+// server's proxy.
+function ogcUrls(layer, provider) {
+    if (!provider)
+        return refusal("SOURCE_UNTESTED", L("it asks a host outside this server that is not an enabled, tested map provider's"))
+    if (offline())
+        return refusal(
+            "EXTERNAL_REQUESTS_OFF",
+            L("it is drawn from a host outside this server, and outside requests are turned off (maps@external-requests)")
+        )
+    if (!providerTested(provider))
+        return refusal(
+            "PROVIDER_UNTESTED",
+            say("its provider ${name} has not passed a test as it is configured now", {
+                name: text(provider.providerName) || provider.providerId
+            })
+        )
+    const proxiedProvider = provider.proxyRequests === "Y"
+    if (proxiedProvider) {
+        providerKind = providerKind || ec.resource.script("component://framework/service/org/moqui/maps/MapProviders.js")
+        if (!providerKind.proxyOffered(provider))
+            return refusal("LAYER_MISSING", say("the layer ${layerId} is not registered", {layerId: layer.layerId}))
+    }
+    const built = ogc().layerSource(
+        layer,
+        provider,
+        proxiedProvider ? PROXY_PATH + "/" + encodeURIComponent(provider.providerId) : null
+    )
+    if (!built.ok) return built
+    // a direct one: on its provider's own origin only (each a provider's recorded address or the endpoint's)
+    if (!proxiedProvider) {
+        const own = new Set(originsOf(provider.endpointUrl))
+        const asked = originsOf(built.url)
+        if (!asked.length || !asked.every(origin => own.has(origin)))
+            return refusal("URL_NOT_PROVIDERS", L("its address is not on its provider's host"))
+    }
+    return {url: built.url, styleUrl: "", ogc: built.ogc}
+}
 // The URLs a layer's browser asks for: {url, styleUrl}, or a refusal.
 function layerUrls(layer, provider, kind) {
     const format = text(layer.formatEnumId)
@@ -235,20 +287,23 @@ function layerUrls(layer, provider, kind) {
     if (format === "MLF_VECTOR_STYLE") url = text(layer.styleLocation) || text(provider?.endpointUrl)
     else if (format === "MLF_RASTER_XYZ") url = text(layer.sourceUrl) || text(provider?.endpointUrl)
     else if (format === "MLF_ADAPTER") return {url: "", styleUrl: ""}
+    else if (OGC_FORMATS.includes(format)) return ogcUrls(layer, provider)
     else {
         url = text(layer.sourceUrl)
         if (kind === "pmtiles") styleUrl = text(layer.styleLocation)
     }
     if (!url && text(layer.resourceLocation)) {
         if (kind !== "pmtiles")
-            return refusal("SOURCE_NOT_SERVED", L("its file is a registered resource, which this server does not hand to a map here"))
+            return refusal(
+                "SOURCE_NOT_SERVED",
+                L("its file is a registered resource, which this server does not hand to a map here")
+            )
         // a registered archive: the map-source transition's same-origin URL with its revision, for a caller it lets read the
         // archive now (MapSources.js); one it does not is, to a caller who may not configure, one that is not there
         sources = sources || ec.resource.script("component://framework/service/org/moqui/maps/MapSources.js")
         const served = sources.servedUrl(layer)
         if (!served.ok)
-            return served.reasonCode === "SOURCE_MISSING" ||
-                (served.reasonCode === "SOURCE_NOT_PERMITTED" && !canConfigure())
+            return served.reasonCode === "SOURCE_MISSING" || (served.reasonCode === "SOURCE_NOT_PERMITTED" && !canConfigure())
                 ? refusal("LAYER_MISSING", say("the layer ${layerId} is not registered", {layerId: layer.layerId}))
                 : refusal(served.reasonCode, served.reason)
         url = served.url
@@ -282,6 +337,27 @@ function layerUrls(layer, provider, kind) {
                     name: text(provider.providerName) || provider.providerId
                 })
             )
+    }
+    // a proxied provider: the browser asks this server's proxy, at the same paths of the provider's origin, the key added
+    // there; only a caller the proxy lets reach the provider is handed them
+    if (provider?.proxyRequests === "Y" && isWeb(url)) {
+        providerKind = providerKind || ec.resource.script("component://framework/service/org/moqui/maps/MapProviders.js")
+        if (!providerKind.proxyOffered(provider))
+            return refusal("LAYER_MISSING", say("the layer ${layerId} is not registered", {layerId: layer.layerId}))
+        const proxiedUrl = providerKind.proxyUrl(provider, url)
+        if (!proxiedUrl) return refusal("URL_NOT_PROVIDERS", L("its address is not on its provider's host"))
+        // the proxy forwards only what the provider's last test reached: a layer added since needs a new test
+        if (!providerKind.proxyRecorded(provider, url))
+            return refusal(
+                "PROVIDER_UNTESTED",
+                say(
+                    "its address is not one a test of its provider ${name} reached through this server: test the provider again",
+                    {
+                        name: text(provider.providerName) || provider.providerId
+                    }
+                )
+            )
+        return {url: proxiedUrl, styleUrl}
     }
     return {url, styleUrl}
 }
@@ -322,6 +398,8 @@ function resolveLayer(layer, layerId, asBasemap) {
         attributionUrls: lines(provider?.attributionUrls)
     }
     if (urls.styleUrl) entry.styleUrl = urls.styleUrl
+    // an OGC layer: what m-map builds its source from (MapOgc.js layerSource), its URL the service's or the proxy's
+    if (urls.ogc) entry.ogc = urls.ogc
     if (format === "MLF_PMTILES_RASTER") entry.raster = true
     if (num(layer.minZoom) !== null) entry.minZoom = num(layer.minZoom)
     if (num(layer.maxZoom) !== null) entry.maxZoom = num(layer.maxZoom)
@@ -680,6 +758,20 @@ function effectiveConfig(p) {
                             .slice(0, 20)
                             .map(link => ({label: text(link.label), route: text(link.route), parameters: link.parameters || {}})),
                         located: !!geometry
+                    }
+                    // the links a registered route (moqui.maps.MapRoute) of the host app (routeApp), else of no app, resolves
+                    // to a screen the user's own grants open (MapRoutes.js); record.links stay as the adapter named them
+                    try {
+                        record.resolvedLinks = record.links.length
+                            ? ec.resource
+                                  .script("component://framework/service/org/moqui/maps/MapRoutes.js")
+                                  .resolveLinks(record.links, text(p.routeApp) || null, recordKey)
+                            : []
+                    } catch (err) {
+                        ec.logger.warn(
+                            "Map adapter " + adapterKey + ": the record's links were not resolved: " + (err?.message ?? err)
+                        )
+                        record.resolvedLinks = []
                     }
                     if (geometry && geometry.type === "Point") {
                         const [lon, lat] = geometry.coordinates.map(num)
@@ -1271,7 +1363,121 @@ function storeProfileSettings(p) {
     return {applied: true, reason: enable === false ? say("${name} is disabled", {name}) : say("${name} is saved", {name})}
 }
 
+// ===== Add OGC layer (Configuration) =====
+const OGC_LAYER_FORMATS = {MPK_WMS: "MLF_WMS", MPK_WMTS: "MLF_WMTS", MPK_WFS: "MLF_WFS"}
+// An OGC provider the caller may add a layer from: a tested one of an OGC kind
+function ogcProvider(providerId) {
+    const provider = text(providerId) ? one(PROVIDER, {providerId: text(providerId)}) : null
+    return provider && OGC_LAYER_FORMATS[text(provider.providerKindEnumId)] && providerTested(provider) ? provider : null
+}
+// get#OgcLayerOptions: the tested OGC providers, and what one's recorded capabilities offer for a layer (MapOgc.js layerOptions)
+function ogcLayerOptions(p) {
+    if (!canConfigure()) return refused("PERMISSION_DENIED", L("Maps configuration is not available to you"))
+    // the fields the test state reads, not each provider's recorded capabilities
+    const providers = Array.from(
+        find(PROVIDER, {})
+            .selectFields([
+                "providerId",
+                "providerName",
+                "providerKindEnumId",
+                "endpointUrl",
+                "apiKey",
+                "apiKeyParameter",
+                "proxyRequests",
+                "lastUpdatedStamp"
+            ])
+            .orderBy("providerName")
+            .limit(200)
+            .list()
+    )
+        .filter(row => OGC_LAYER_FORMATS[text(row.providerKindEnumId)] && providerTested(row))
+        .map(row => ({value: row.providerId, label: text(row.providerName) || row.providerId}))
+    const provider = ogcProvider(p.providerId)
+    return Object.assign({applied: true, providers}, provider ? ogc().layerOptions(provider, p.ogcLayers) : {})
+}
+// store#OgcLayer: a layer of a tested OGC provider, from what its last test recorded, checked as a map would draw it before it
+// is kept; with a profileId, also one of that profile's layers (an overlay) or that profile's basemap (a basemap layer)
+function storeOgcLayer(p) {
+    if (!canConfigure() || !canChangeConfiguration())
+        return refused("PERMISSION_DENIED", L("Changing the maps configuration is not available to you"))
+    const provider = ogcProvider(p.providerId)
+    if (!provider)
+        return refused("PROVIDER_UNAVAILABLE", L("Choose an OGC provider (WMS, WMTS or WFS) that passed its test as it is now"))
+    const format = OGC_LAYER_FORMATS[text(provider.providerKindEnumId)]
+    const isBasemap = yes(p.isBasemap) && format !== "MLF_WFS"
+    const fields = {
+        providerId: provider.providerId,
+        formatEnumId: format,
+        ogcLayers: text(p.ogcLayers),
+        ogcStyles: text(p.ogcStyles) || null,
+        ogcFormat: text(p.ogcFormat) || null,
+        crs: text(p.crs) || null,
+        ogcMatrixSet: format === "MLF_WMTS" ? text(p.ogcMatrixSet) || null : null,
+        ogcTime: text(p.ogcTime) || null,
+        ogcSingleImage: format === "MLF_WMS" && yes(p.ogcSingleImage) ? "Y" : "N",
+        isBasemap: isBasemap ? "Y" : "N",
+        disabled: "N"
+    }
+    const built = ogc().layerSource(Object.assign({layerId: "new"}, fields), provider, null)
+    if (!built.ok)
+        return refused("LAYER_UNAVAILABLE", say("This layer cannot be drawn: ${reason}", {reason: built.reason}), {
+            cause: built.reasonCode
+        })
+    const title = ogc().layerOptions(provider, fields.ogcLayers.split(",")[0]).title
+    let layerName
+    try {
+        layerName = lib().plainText(text(p.layerName) || title || fields.ogcLayers, "The name", 255)
+    } catch (error) {
+        return refused("NAME_INVALID", String(error?.message ?? error))
+    }
+    let layerId = text(p.layerId)
+    if (layerId && !/^[A-Za-z0-9][A-Za-z0-9_]{0,39}$/.test(layerId))
+        return refused("LAYER_ID_INVALID", L("A layer's id is up to 40 letters, digits or underscores"))
+    if (layerId && one(LAYER, {layerId}))
+        return refused("LAYER_EXISTS", say("The layer ${layerId} is already registered", {layerId}))
+    const profileId = text(p.profileId)
+    const profile = profileId ? one(PROFILE, {profileId}) : null
+    if (profileId && !profile)
+        return refused("RECORD_UNAVAILABLE", say("The map profile ${profileId} is not registered", {profileId}))
+    const value = ec.entity.makeValue(LAYER).setAll(Object.assign(fields, {layerName}))
+    asCaller(() => {
+        if (layerId) value.set("layerId", layerId)
+        else value.setSequencedIdPrimary()
+        value.create()
+        layerId = String(value.layerId)
+        if (profile && isBasemap) ec.entity.makeValue(PROFILE).setAll({profileId, basemapLayerId: layerId}).update()
+        else if (profile) {
+            const count = Number(ec.entity.find(PROFILE_LAYER).condition({profileId}).disableAuthz().count())
+            ec.entity
+                .makeValue(PROFILE_LAYER)
+                .setAll({profileId, layerId, sequenceNum: (count + 1) * 10, defaultVisible: "Y"})
+                .createOrUpdate()
+        }
+    })
+    return {
+        applied: true,
+        layerId,
+        reason:
+            profile && isBasemap
+                ? say("${name} is added, and is the basemap of the profile ${profile}", {
+                      name: layerName,
+                      profile: profileName(profile, profileId)
+                  })
+                : profile
+                  ? say("${name} is added, and shown in the profile ${profile}", {
+                        name: layerName,
+                        profile: profileName(profile, profileId)
+                    })
+                  : say("${name} is added", {name: layerName})
+    }
+}
+let libModule = null
+const lib = () =>
+    (libModule = libModule || ec.resource.script("component://framework/service/org/moqui/admin/ConfigurationLib.js"))
+
 const operations = {
+    ogcLayerOptions,
+    storeOgcLayer,
     effectiveConfig,
     getPreferences,
     storePreferences,

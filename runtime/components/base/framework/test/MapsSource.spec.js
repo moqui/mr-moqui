@@ -1,10 +1,13 @@
 // Map archives (plans/Maps.md §5; org.moqui.maps.MapSourceServices, MapSources.js, tools screen/Maps/LocalMap.xml source):
 // registering a PMTiles archive records its revision (a DbResource archive in a drive, by its content blob; a file on disk,
 // by its SHA-256 and time), and refuses an archive a map cannot draw, a raster layer over vector tiles, a git archive that
-// is not a Git LFS object (NOT_LFS) and a caller who may not change Configuration; the map-source transition answers a
+// is not a Git LFS object (NOT_LFS) and a caller who may not change Configuration, and registers several layers of one
+// archive in one action (the light and dark styles of an extract); the map-source transition answers a
 // holder of the drive's share a range (206) with the registered strong ETag and private caching, writing no ResourceRecent,
 // and refuses a non-holder, a revoked share and a stale revision (409); the effective configuration hands the same-origin
-// URL only to a user the transition lets read. The archive is a tiny valid PMTiles version 3 file made here.
+// URL only to a user the transition lets read; the Z/X/Y tile transition answers a holder one tile with its strong ETag
+// (and 304, and 204 for no tile) and refuses a non-holder and a stale revision. The archive is a tiny valid PMTiles
+// version 3 file made here.
 // Run: ./moq test framework --spec MapsSource
 const S = "org.moqui.maps.MapSourceServices."
 const HOLDER = "MAPS_SRC_HOLDER"
@@ -78,6 +81,20 @@ function source(userId, layerId, revision, range) {
             contentRange: res.header("Content-Range"),
             cacheControl: String(res.header("Cache-Control") || ""),
             length: String(res.output || "").length
+        }
+    })
+}
+// the tile transition as the user (tile/{layerId}/{revision}/{zxy}), with the request's headers: status and its headers
+function tile(userId, layerId, revision, zxy, headers = {}) {
+    return as(userId, () => {
+        let test = ec.screen.makeTest().rootScreen("component://webroot/screen/webroot.xml")
+        for (const [name, value] of Object.entries(headers)) test = test.header(name, value)
+        const res = test.render("apps/maps/LocalMap/tile/" + layerId + "/" + revision + "/" + zxy, {}, "get")
+        return {
+            status: res.status,
+            etag: res.header("ETag"),
+            type: String(res.header("Content-Type") || ""),
+            cacheControl: String(res.header("Cache-Control") || "")
         }
     })
 }
@@ -174,11 +191,26 @@ feature("registering records the revision of a drive's archive and a file's, and
             broken: register(layers.raster, BAD_LOCATION),
             mismatch: register(layers.raster, DRIVE_LOCATION),
             git: register(layers.git, GIT_LOCATION),
+            // the light and dark styles of one archive: one action registers both; a layer of another format refuses it
+            together: as(null, () =>
+                invoke(S + "register#ArchiveLayer", {
+                    layerId: layers.file,
+                    resourceLocation: FILE_LOCATION,
+                    alsoLayerIds: [layers.fileUri]
+                })
+            ),
+            mixed: as(null, () =>
+                invoke(S + "register#ArchiveLayer", {
+                    layerId: layers.file,
+                    resourceLocation: FILE_LOCATION,
+                    alsoLayerIds: [layers.raster]
+                })
+            ),
             refused: as(HOLDER, () => invoke(S + "register#ArchiveLayer", {layerId: layers.file})),
             readiness: as(null, () => invoke(S + "check#ArchiveReadiness", {providerKey: "maps.archives"}))
         }
     },
-    then({drive, file, fileUri, outside, driveRow, fileRow, broken, mismatch, git, refused, readiness}) {
+    then({drive, file, fileUri, outside, driveRow, fileRow, broken, mismatch, git, together, mixed, refused, readiness}) {
         drive.applied && file.applied && fileUri.applied
         layerRow(layers.fileUri).sourceRevision == fileRow.sourceRevision && layerRow(layers.fileUri).sourceAddressKind == "file"
         // outside every drive: registering says every user who may see the layer reads it
@@ -193,6 +225,9 @@ feature("registering records the revision of a drive's archive and a file's, and
         !broken.applied && broken.reasonCode == "ARCHIVE_INVALID" && /version 2/.test(broken.reason)
         !mismatch.applied && mismatch.reasonCode == "TILE_TYPE_MISMATCH"
         !git.applied && git.reasonCode == "NOT_LFS" && /Git LFS/.test(git.reason)
+        together.applied && together.layerIds.join() == [layers.file, layers.fileUri].join()
+        layerRow(layers.fileUri).resourceLocation == FILE_LOCATION && layerRow(layers.fileUri).disabled == "N"
+        !mixed.applied && mixed.reasonCode == "FORMAT_MISMATCH"
         layerRow(layers.raster).disabled == "Y" && !layerRow(layers.git).sourceRevision
         refused.applied !== true && (refused.reasonCode == "PERMISSION_DENIED" || /authoriz/i.test(refused.error))
         Array.from(readiness.checks || []).find(check => check.checkKey == "maps.archive." + layers.drive)?.state == "ready"
@@ -239,6 +274,33 @@ feature("a stale revision is 409, and a revoked share is refused at the next req
         plain.status == 206 && plain.contentRange.startsWith("bytes 127-200/")
         revoked.status == 403
         changed.status == 409
+    }
+})
+
+feature("the tile transition answers a holder a tile with its ETag, and refuses a non-holder and a stale revision", {
+    when() {
+        const row = layerRow(layers.drive)
+        const before = recentCount()
+        const holder = tile(HOLDER, layers.drive, row.sourceRevision, "0/0/0.mvt")
+        return {
+            row,
+            holder,
+            again: tile(HOLDER, layers.drive, row.sourceRevision, "0/0/0", {"If-None-Match": holder.etag || "none"}),
+            none: tile(HOLDER, layers.drive, row.sourceRevision, "1/0/0"),
+            other: tile(OTHER, layers.drive, row.sourceRevision, "0/0/0"),
+            stale: tile(HOLDER, layers.drive, "0".repeat(64), "0/0/0"),
+            recent: recentCount() - before
+        }
+    },
+    then({row, holder, again, none, other, stale, recent}) {
+        holder.status == 200 && holder.type.startsWith("application/vnd.mapbox-vector-tile")
+        holder.etag == '"' + row.sourceTag + '.0"'
+        holder.cacheControl.includes("private") && holder.cacheControl.includes("immutable")
+        again.status == 304
+        none.status == 204
+        other.status == 403 && other.etag == null
+        stale.status == 409
+        recent == 0
     }
 })
 

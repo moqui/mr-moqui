@@ -990,6 +990,32 @@ test('geomaps read the bundled outline, match Moqui, alpha-2 and numeric country
     try {app.mount(target);await Vue.nextTick();const shaded=target.querySelector('svg [data-country="840"]');assert.equal(shaded.getAttribute('fill-opacity'),'1');assert.equal(target.querySelectorAll('figure.m-report-geomap svg path').length,outline.length);}
     finally {app.unmount();target.remove();}
 });
+test('a geomap country or point opens Maps there only where the dashboard offers the maps link',async()=>{
+    const outline=await report.loadOutline();
+    const france=outline.find(country=>country.id==='250'),extent=report.countryExtent(france);
+    // mainland France, not French Guiana
+    assert.equal(extent[0]>-6 && extent[2]<10 && extent[1]>41 && extent[3]<52,true);
+    assert.equal(report.mapsUrl('/apps/maps/Browse',{extent}),'/apps/maps/Browse?extent='+encodeURIComponent(extent.join(',')));
+    assert.equal(report.mapsUrl('/apps/maps/Browse',{lon:2.35,lat:48.85}),'/apps/maps/Browse?longitude=2.35&latitude=48.85');
+    assert.equal(report.mapsUrl(null,{lon:2.35,lat:48.85}),'');assert.equal(report.mapsUrl('/apps/maps/Browse',{extent:null}),'');
+    const navigate=report.navigate,visited=[];report.navigate=href=>visited.push(href);
+    const mount=async(appLinks,frame)=>{const target=document.createElement('div');document.body.appendChild(target);
+        const app=Vue.createApp(moqui.qvtComponents['m-report-panel'],{frame,panel:{visualization:'geomap'},appLinks});app.mount(target);await Vue.nextTick();return {target,app};};
+    const sales={fields:[{name:'countryGeoId',type:'string',values:['FRA']},{name:'sales',type:'number',values:[3]}]};
+    const cities={fields:[{name:'city',type:'string',values:['Paris']},{name:'lat',type:'number',values:[48.85]},{name:'lon',type:'number',values:[2.35]}]};
+    const offered=await mount({maps:'/apps/maps/Browse'},sales),points=await mount({maps:'/apps/maps/Browse'},cities),plain=await mount({},sales);
+    try {
+        const country=offered.target.querySelector('svg [data-country="250"]');
+        assert.equal(country.getAttribute('role'),'link');assert.equal(country.getAttribute('tabindex'),'0');
+        country.dispatchEvent(new MouseEvent('click',{bubbles:true}));
+        country.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));
+        points.target.querySelector('svg circle').dispatchEvent(new MouseEvent('click',{bubbles:true}));
+        assert.deepEqual(visited,[report.mapsUrl('/apps/maps/Browse',{extent}),report.mapsUrl('/apps/maps/Browse',{extent}),'/apps/maps/Browse?longitude=2.35&latitude=48.85']);
+        // without the link the geomap is as it was: nothing to follow
+        assert.equal(plain.target.querySelector('svg [data-country="250"]').getAttribute('role'),null);
+        assert.equal(plain.target.querySelectorAll('svg [data-maps-url]').length,0);
+    } finally {report.navigate=navigate;for(const each of [offered,points,plain]){each.app.unmount();each.target.remove();}}
+});
 test('a repeated copy shows its own variable value and edits the panel it repeats',async()=>{
     const target=document.createElement('div');document.body.appendChild(target);const navigate=report.navigate,visited=[];report.navigate=href=>visited.push(href);
     const panel={title:'Sales in west',visualization:'text',text:'Region $region',repeatOf:'sales',repeatValues:{region:'west'}};

@@ -99,6 +99,14 @@ spec({
             authzTypeEnumId: "AUTHZT_ALLOW",
             authzActionEnumId: "AUTHZA_ALL"
         })
+        // where the adapter's links go, for every app's maps: the Maps app's own screen (a Maps user holds it)
+        make("moqui.maps.MapRoute", {
+            mapRouteId: "MAPS_SCR_ROUTE",
+            routeKey: "specRecord",
+            priority: 1,
+            urlTemplate: "/apps/maps/Browse?recordId={recordId}",
+            screenLocation: "component://tools/screen/Maps.xml"
+        })
         ec.cache.getCache("moqui.test.maps.stored").clear()
         ec.artifactExecution.enableAuthz()
     },
@@ -111,6 +119,7 @@ spec({
         ec.entity.find("moqui.security.ArtifactGroupMember").condition("artifactGroupId", GRANT).deleteAll()
         ec.entity.find("moqui.security.ArtifactGroup").condition("artifactGroupId", GRANT).deleteAll()
         ec.entity.find("moqui.maps.MapAdapter").condition("adapterKey", ADAPTER).deleteAll()
+        ec.entity.find("moqui.maps.MapRoute").condition("mapRouteId", "MAPS_SCR_ROUTE").deleteAll()
         ec.artifactExecution.enableAuthz()
     }
 })
@@ -120,7 +129,12 @@ feature("Browse renders its qvue and its terminal twin for a Maps user, and the 
         return {
             qvue: as(WRITER, "apps/maps/Browse", {}, null, "qvue"),
             tui: as(WRITER, "apps/maps/Browse", {}, null, "tui"),
-            terminal: as(WRITER, "apps/maps/Browse/terminalMap", {adapterKey: ADAPTER, recordKey: located}, "get"),
+            terminal: as(
+                WRITER,
+                "apps/maps/Browse/terminalMap",
+                {adapterKey: ADAPTER, recordKey: located, postal: "US 00000"},
+                "get"
+            ),
             plainConfig: as(PLAIN, "apps/maps/Browse/getConfig", {}, "get")
         }
     },
@@ -139,6 +153,11 @@ feature("Browse renders its qvue and its terminal twin for a Maps user, and the 
         json(terminal).points.some(
             point => point.label === "Spec place" && point.precision === "Postal-area representative point"
         )
+        // its overlays (none yet), and a postal search said with its result: no Geo data has the code here
+        Array.isArray(json(terminal).overlays)
+        json(terminal).postalSearch.query == "US 00000"
+        json(terminal).postalSearch.count == 0
+        json(terminal).postalSearch.reason != null
         // the app is MAPS_APP's
         refused(plainConfig)
         !plainConfig.output.includes("profileId")
@@ -168,6 +187,10 @@ feature("LocalMap shows the record's place, Choose location and Open in Maps to 
         qvt.output.includes("SpecDialog")
         qvt.output.includes("_screen")
         qvt.output.includes("Open in Maps")
+        // the record's link a route of no app resolves (the one to the record itself left out)
+        qvt.output.includes('href="/apps/maps/Browse?recordId=RELATED"')
+        qvt.output.includes("Spec related")
+        !qvt.output.includes("recordId=LOCATED")
     }
 })
 
@@ -316,5 +339,66 @@ feature("Configuration is refused to a Maps user; its settings entry and its pro
         profile.disabled == "Y"
         audited.length >= 2
         audited.every(row => !!row.changedByUserId)
+    }
+})
+
+feature("an app's own allow of Maps.xml opens neither Configuration nor a Geo data service: MAPS_ADMIN is the user's own grant", {
+    when() {
+        // a group of another app given the Maps app (an inheritable allow of Maps.xml), not MAPS_USERS and not MAPS_ADMIN
+        const GROUP = "MAPS_SCR_APP_GROUP"
+        const USER = "MAPS_SCR_APP_USER"
+        ec.artifactExecution.disableAuthz()
+        make("moqui.security.UserAccount", {userId: USER, username: usernameOf(USER), userFullName: "Maps screens app user"})
+        make("moqui.security.UserGroup", {userGroupId: GROUP, description: "Maps screens spec: an app's group"})
+        make("moqui.security.UserGroupMember", {userGroupId: GROUP, userId: USER, fromDate: ec.user.nowTimestamp})
+        make("moqui.security.ArtifactAuthz", {
+            artifactAuthzId: GROUP,
+            userGroupId: GROUP,
+            artifactGroupId: "MAPS_APP",
+            authzTypeEnumId: "AUTHZT_ALLOW",
+            authzActionEnumId: "AUTHZA_ALL"
+        })
+        ec.artifactExecution.enableAuthz()
+        try {
+            const screen = as(USER, "apps/maps/Configuration/Archives", {})
+            // a service MAPS_ADMIN names, called under Maps.xml, whose allow the frame passes down
+            ec.user.internalLoginUser(usernameOf(USER))
+            let service
+            try {
+                ec.artifactExecution.push("component://tools/screen/Maps.xml", "AT_XML_SCREEN", "AUTHZA_VIEW", true)
+                try {
+                    const out = ec.service.sync().name("org.moqui.maps.GeoDataServices.find#GeoDataSets").call() || {}
+                    service = {errors: ec.message.getErrorsString(), dataSets: out.dataSetList}
+                } finally {
+                    ec.artifactExecution.pop()
+                }
+            } catch (e) {
+                service = {errors: String(e.message || e)}
+            } finally {
+                ec.message.clearErrors()
+                ec.user.logoutUser()
+            }
+            return {screen, service}
+        } finally {
+            ec.artifactExecution.disableAuthz()
+            ec.entity.find("moqui.security.ArtifactAuthz").condition("artifactAuthzId", GROUP).deleteAll()
+            ec.entity.find("moqui.security.UserGroupMember").condition("userGroupId", GROUP).deleteAll()
+            ec.entity.find("moqui.security.UserGroup").condition("userGroupId", GROUP).deleteAll()
+            for (const entity of ["moqui.security.ArtifactAuthzFailure", "moqui.security.UserAccount"])
+                try {
+                    ec.entity.find(entity).condition("userId", USER).deleteAll()
+                } catch (e) {
+                    ec.logger.warn("MapsScreens: " + entity + " of " + USER + " not removed: " + (e.message || e))
+                }
+            ec.message.clearErrors()
+            ec.artifactExecution.enableAuthz()
+            ec.user.internalLoginUser("john.doe")
+        }
+    },
+    then({screen, service}) {
+        refused(screen)
+        !screen.output.includes("Register an archive")
+        String(service.errors).includes("PERMISSION_DENIED") || /not authorized/i.test(service.errors)
+        !service.dataSets
     }
 })

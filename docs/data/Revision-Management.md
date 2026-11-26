@@ -259,7 +259,7 @@ repository on disk, a folder drive as a zip), `find#OwnedDrives` and `transfer#D
 by its owner, or with `DRIVE_OWNER_CHANGE` when the owner leaves; the new owner an enabled internal account). Files: `list#Folder` (size, modified and modified by from the last change,
 version and note, shared, favorite, tags, content and file type), `get#ResourceInfo`, `find#Resources` (through the `MoquiDriveFile`
 search document when search is available, else a walk), `find#Recent`, `upload#Resource` (one change set, a version note,
-conflicts replace, keepBoth or skip, the quota), `save#Text`, `create#Folder`, `rename#Resource`, `move#Resource` and
+conflicts replace, keepBoth or skip, the quota), `save#Text` (the quota too), `create#Folder`, `rename#Resource`, `move#Resource` and
 `copy#Resource` (within a drive one change set; a move across drives is a copy and a trash), `download#Zip`,
 `get#Activity` (versions or commits under the path, shares, trash), `get#Preview` (made once per version under
 `runtime://tmp/preview`: an image thumbnail; a PDF's first page and page count, drawn by the vendored pdf.js in the PDF

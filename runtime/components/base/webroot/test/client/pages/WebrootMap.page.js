@@ -1,7 +1,8 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
 // m-map's pure helpers in the page (moqui.map of /js/WebrootMap.js), and its list of places when the map cannot be drawn. The
-// OpenLayers bundle is not loaded: drawing the map is a browser walk, not a regression test. The page is https://moqui.test.
+// OpenLayers bundle is loaded for its formats and vector sources only: drawing the map is a browser walk, not a regression
+// test. The page is https://moqui.test.
 "use strict";
 
 const map = moqui.map;
@@ -254,6 +255,36 @@ test("what the server did not resolve is named under the map, a cut feature list
     }
 });
 
+test("an overlay's feature is selected by its text, never markup; Enter takes the feature nearest the map's center", () => {
+    // a profile layer's KML description may hold HTML: shown as plain text, scripts and tags gone, a lone "<" kept
+    assert.equal(map.plainText('<p>Trail <b>head</b></p><script>alert(1)</script><img src=x onerror="alert(2)">&lt;b&gt; a<b'), "Trail head <b> a<b");
+    assert.equal(map.plainText("Line one\r\nLine two\u0007"), "Line one\nLine two");
+    assert.equal(map.plainText({ html: "<b>x</b>" }), "", "an object is no text");
+    // comments go; numeric entities are read, and what they make is still text (a tag made so is not removed, nor markup)
+    assert.equal(map.plainText("Spring<!-- <b>hidden</b> --> water<!-- unclosed"), "Spring water");
+    assert.equal(map.plainText("Caf&#233; &#x2014; &#60;b&#62;bold&#60;/b&#62; &#7;&#0;"), "Café — <b>bold</b> &#0;");
+    assert.equal(map.plainText("&#xD800; &#1114112; &bogus;"), "&#xD800; &#1114112; &bogus;", "not a character: left as it was");
+    assert.equal(map.plainText("x".repeat(30), 10), "xxxxxxxxx…");
+    assert.deepEqual(map.featureDetails({ name: "<i>Spring</i>", desc: "Fresh <a href='javascript:alert(1)'>water</a>", geometry: {} }),
+        { label: "Spring", description: "Fresh water" });
+    assert.deepEqual(map.featureDetails({ label: "Camp", name: "ignored", description: "" }), { label: "Camp", description: "" });
+    assert.deepEqual(map.featureDetails(null), { label: "", description: "" });
+    // the sources of a map's shown overlays, in degrees here (the map's projection in m-map)
+    const features = new MoquiOl.GeoJSON().readFeatures({ type: "FeatureCollection", features: [
+        { type: "Feature", id: "spring", geometry: { type: "Point", coordinates: [10, 10] }, properties: { label: "Spring" } },
+        { type: "Feature", id: "trail", geometry: { type: "LineString", coordinates: [[0, 20], [20, 20]] }, properties: { label: "Trail" } },
+        { type: "Feature", id: "park", geometry: { type: "Polygon", coordinates: [[[-5, -5], [30, -5], [30, 30], [-5, 30], [-5, -5]]] }, properties: { label: "Park" } }] });
+    const overlay = { get: (name) => ({ overlayLayerId: "overlay:7", overlayLabel: "Hikes" })[name] };
+    const candidates = [{ source: new MoquiOl.VectorSource({ features }), layer: overlay }];
+    const near = (lon, lat) => { const hit = map.nearestFeature(candidates, [lon, lat], 1); return hit ? hit.feature.getId() : null; };
+    assert.equal(near(10.5, 10.5), "spring", "a point within the tolerance, inside the park, wins");
+    assert.equal(near(5, 20.4), "trail");
+    assert.equal(near(25, 0), "park", "inside an area with nothing nearer");
+    assert.equal(near(60, 60), null, "nothing within the tolerance");
+    assert.equal(map.nearestFeature(candidates, [10, 10], 1).layer, overlay, "the layer says whose feature it is");
+    assert.equal(map.nearestFeature([], [0, 0], 1), null);
+});
+
 test("a registered archive's 409 says its revision changed; another failure does not, and both still fail the read", async () => {
     const answers = { "/a.pmtiles": "Bad response code: 409", "/b.pmtiles": "Bad response code: 404" };
     const O = { FetchSource: class { constructor(url) { this.url = url; }
@@ -267,4 +298,129 @@ test("a registered archive's 409 says its revision changed; another failure does
         assert.equal(failed, answers[url]);
     }
     assert.deepEqual(changed, ["/a.pmtiles"]);
+});
+
+test("an OGC layer's options are checked, and its WMS, WMTS and WFS sources ask only the URL the server gave, with no network", async () => {
+    const O = MoquiOl;
+    // WMS: only the parameters a GetMap takes, VERSION 1.3.0 whatever is given
+    const wms = map.normalizeConfig({ layers: [{ id: "W", kind: "WMS", url: "https://maps.example.org/wms?map=a",
+        ogc: { params: { LAYERS: "roads,rivers", STYLES: ",", FORMAT: "image/png", TRANSPARENT: "TRUE", VERSION: "1.1.1", REQUEST: "GetFeatureInfo", EVIL: "x" }, projection: "EPSG:3857" } }] }).layers[0];
+    assert.equal(wms.kind, "wms");
+    assert.deepEqual(Object.keys(wms.ogc.params).sort(), ["FORMAT", "LAYERS", "STYLES", "TRANSPARENT", "VERSION"]);
+    assert.equal(wms.ogc.params.VERSION, "1.3.0");
+    const tile = new O.TileWMS({ url: wms.url, params: wms.ogc.params, projection: wms.ogc.projection });
+    const url = new URL(tile.getTileUrlFunction()([2, 1, 1], 1, O.getProjection("EPSG:3857")));
+    assert.equal(url.origin + url.pathname, "https://maps.example.org/wms");
+    assert.equal(url.searchParams.get("map"), "a");
+    assert.equal(url.searchParams.get("LAYERS"), "roads,rivers");
+    assert.equal(url.searchParams.get("CRS"), "EPSG:3857");
+    assert.equal(url.searchParams.get("REQUEST"), "GetMap");
+    assert.equal(url.searchParams.get("EVIL"), null);
+    assert.equal(map.normalizeOgc({ params: { FORMAT: "image/png" } }, "wms"), null, "no layer");
+    assert.equal(map.normalizeOgc({ params: { LAYERS: "a" } }, "xyz"), null, "another kind has none");
+
+    // WMTS: the tile grid from the recorded matrix set (EPSG:3857, two matrices), KVP and a REST template
+    const matrixSet = { Identifier: "GoogleMapsCompatible", SupportedCRS: "urn:ogc:def:crs:EPSG::3857", TileMatrix: [0, 1].map((z) => ({
+        Identifier: String(z), ScaleDenominator: 559082264.0287178 / Math.pow(2, z), TopLeftCorner: [-20037508.3427892, 20037508.3427892],
+        TileWidth: 256, TileHeight: 256, MatrixWidth: Math.pow(2, z), MatrixHeight: Math.pow(2, z) })) };
+    const wmts = map.normalizeConfig({ profile: { basemaps: [{ id: "T", kind: "wmts", url: "https://tiles.example.org/wmts",
+        ogc: { layer: "Topo", style: "default", format: "image/png", matrixSet, projection: matrixSet.SupportedCRS, requestEncoding: "KVP", dimensions: { Time: "2026-11-01", Other: "x" } } }] } }).profile.basemaps[0];
+    assert.equal(wmts.ogc.requestEncoding, "KVP");
+    assert.deepEqual(wmts.ogc.dimensions, { Time: "2026-11-01" });
+    const kvp = new O.WMTS({ url: wmts.url, layer: wmts.ogc.layer, style: wmts.ogc.style, format: wmts.ogc.format, matrixSet: matrixSet.Identifier,
+        tileGrid: O.createFromCapabilitiesMatrixSet(JSON.parse(JSON.stringify(wmts.ogc.matrixSet))), projection: wmts.ogc.projection,
+        requestEncoding: "KVP", dimensions: wmts.ogc.dimensions });
+    assert.deepEqual(kvp.getTileGrid().getMatrixIds(), ["0", "1"]);
+    const kvpUrl = new URL(kvp.getTileUrlFunction()([1, 1, 0], 1, O.getProjection("EPSG:3857")));
+    assert.equal(kvpUrl.origin + kvpUrl.pathname, "https://tiles.example.org/wmts");
+    assert.deepEqual(["layer", "TileMatrix", "TileCol", "TileRow", "Time"].map((name) => kvpUrl.searchParams.get(name)), ["Topo", "1", "1", "0", "2026-11-01"]);
+    const rest = new O.WMTS({ url: "https://tiles.example.org/{Layer}/{Style}/{TileMatrixSet}/{TileMatrix}/{TileRow}/{TileCol}.png", layer: "Topo",
+        style: "default", format: "image/png", matrixSet: matrixSet.Identifier, tileGrid: O.createFromCapabilitiesMatrixSet(JSON.parse(JSON.stringify(matrixSet))),
+        projection: matrixSet.SupportedCRS, requestEncoding: "REST" });
+    assert.equal(rest.getTileUrlFunction()([1, 0, 1], 1, O.getProjection("EPSG:3857")), "https://tiles.example.org/Topo/default/GoogleMapsCompatible/1/1/0.png");
+    const broken = JSON.parse(JSON.stringify(matrixSet));
+    broken.TileMatrix[1].TileWidth = 0;
+    assert.equal(map.normalizeOgc({ layer: "Topo", matrixSet: broken }, "wmts"), null, "a matrix that is not whole numbers");
+    const origins = map.allowedOrigins(map.normalizeConfig({ profile: { basemaps: [wmts] }, layers: [{ id: "R", kind: "wmts", url: "https://rest.example.net/{TileMatrix}/{TileRow}/{TileCol}.png", ogc: { layer: "Topo", matrixSet } }] }), page);
+    assert.ok(origins.has("https://tiles.example.org") && origins.has("https://rest.example.net"));
+
+    // WFS: GeoJSON for the view's box, in the srsName's units, at most maxFeatures
+    const wfs = map.normalizeConfig({ layers: [{ id: "F", kind: "wfs", url: "/apps/maps/LocalMap/providerProxy/P/wfs",
+        ogc: { typeName: "parks", outputFormat: "application/json", projection: "EPSG:4326", maxFeatures: "250" } }] }).layers[0];
+    assert.equal(wfs.ogc.maxFeatures, 250);
+    assert.equal(map.normalizeOgc({ typeName: "t" }, "wfs").maxFeatures, 1000, "the default count a typical answer fits in");
+    assert.equal(map.wfsDataProjection(wfs.ogc.srsName), "EPSG:4326");
+    assert.equal(map.wfsDataProjection("urn:ogc:def:crs:EPSG::3857"), "EPSG:3857");
+    const wfsUrl = new URL(map.wfsUrl(page + wfs.url, wfs.ogc, [-87.7, 41.8, -87.6, 41.9]));
+    assert.equal(wfsUrl.origin, page);
+    assert.deepEqual(["REQUEST", "TYPENAMES", "OUTPUTFORMAT", "SRSNAME", "BBOX", "COUNT"].map((name) => wfsUrl.searchParams.get(name)),
+        ["GetFeature", "parks", "application/json", "EPSG:4326", "-87.7,41.8,-87.6,41.9,EPSG:4326", "250"]);
+
+    // a srsName read latitude first gets its box latitude first; CRS84 and the short EPSG:4326 longitude first
+    const latFirst = new URL(map.wfsUrl(page + "/wfs", Object.assign({}, wfs.ogc, { srsName: "urn:ogc:def:crs:EPSG::4326" }), [-87.7, 41.8, -87.6, 41.9]));
+    assert.equal(latFirst.searchParams.get("BBOX"), "41.8,-87.7,41.9,-87.6,urn:ogc:def:crs:EPSG::4326");
+    assert.ok(!map.wfsLatitudeFirst("CRS:84") && !map.wfsLatitudeFirst("EPSG:4326") && map.wfsLatitudeFirst("http://www.opengis.net/def/crs/EPSG/0/4326"));
+});
+
+test("m-map builds its WMS, WMTS and WFS layers only for the URL it was given, with CORS as the provider answers", () => {
+    const O = MoquiOl;
+    const methods = map.components["m-map-view"].methods;
+    const matrixSet = { Identifier: "g", SupportedCRS: "EPSG:3857", TileMatrix: [{ Identifier: "0", ScaleDenominator: 559082264.0287178,
+        TopLeftCorner: [-20037508.3427892, 20037508.3427892], TileWidth: 256, TileHeight: 256, MatrixWidth: 1, MatrixHeight: 1 }] };
+    const config = map.normalizeConfig({ layers: [
+        { id: "W", kind: "wms", url: "https://maps.example.org/wms", ogc: { params: { LAYERS: "roads", FORMAT: "image/png" }, projection: "EPSG:3857", cors: false } },
+        { id: "I", kind: "wms", url: "/apps/maps/LocalMap/providerProxy/P/wms", ogc: { params: { LAYERS: "roads" }, projection: "EPSG:3857", singleImage: true } },
+        { id: "T", kind: "wmts", url: "https://tiles.example.org/wmts", ogc: { layer: "topo", matrixSet, projection: "EPSG:3857" } },
+        { id: "F", kind: "wfs", url: "https://features.example.org/wfs", ogc: { typeName: "parks", projection: "EPSG:3857" } },
+        { id: "X", kind: "wms", url: "https://elsewhere.example/wms", ogc: { params: { LAYERS: "roads" } } }] });
+    const statuses = [];
+    // a stand-in for the component: its own methods, the profile's origins, no map drawn
+    const self = { origins: map.allowedOrigins(config, page), pageOrigin: () => page, status: (...args) => statuses.push(args), watchSource: () => {},
+        featureStyle: () => null };
+    for (const name of ["checkUrl", "ogcOf", "ogcCrossOrigin", "wmsLayer", "wmtsLayer", "wfsLayer"]) self[name] = methods[name].bind(self);
+    self.origins.delete("https://elsewhere.example");
+    const built = {};
+    for (const layer of config.layers) {
+        const group = new O.LayerGroup();
+        try { self[layer.kind + "Layer"](O, group, layer, ""); built[layer.id] = group.getLayers().item(0); } catch (err) { built[layer.id] = err.message; }
+    }
+    const source = (id) => built[id].getSource();
+    assert.ok(source("W") instanceof O.TileWMS);
+    assert.ok(source("W").crossOrigin === null, "a provider that answers no CORS is asked as a plain image");
+    assert.ok(source("I") instanceof O.ImageWMS, "one image of the view");
+    assert.ok(source("T") instanceof O.WMTS);
+    assert.equal(source("T").crossOrigin, "anonymous", "no page credentials for a provider that answers CORS");
+    assert.equal(source("T").getTileUrlFunction()([0, 0, 0], 1, O.getProjection("EPSG:3857")).split("?")[0], "https://tiles.example.org/wmts");
+    assert.ok(source("F") instanceof O.VectorSource);
+    assert.equal(built.F.get("overlayLayerId"), "F", "its features are selected as an overlay's");
+    assert.ok(/is not a host of the map's profile/.test(built.X), "a layer of a host the profile does not name is refused");
+    assert.equal(map.ogcCrossOrigin(page + "/apps/x", { cors: true }, page), undefined, "this server's proxy is asked with the session");
+});
+
+test("an edit is saved as plain GeoJSON: WGS84 to seven decimals, plain text, unique ids; a keyboard shape needs its vertices", () => {
+    const edited = map.editedCollection({ type: "FeatureCollection", features: [
+        { type: "Feature", id: "a", geometry: { type: "Point", coordinates: [190.123456789, 10] },
+            properties: { label: "<b>Spring</b>", other: "dropped", description: "Fresh <script>alert(1)</script>water" } },
+        { type: "Feature", id: "a", geometry: { type: "LineString", coordinates: [[0, 0], [1, 1]] }, properties: { name: "Trail" } },
+        { type: "Feature", geometry: { type: "GeometryCollection", geometries: [] } },
+        { type: "Feature", id: "<x>", geometry: { type: "Polygon", coordinates: [[[0, 0], [1, 0], [1, 1], [0, 0]]] }, properties: {} },
+        { type: "Feature", id: "bad", geometry: { type: "Point", coordinates: ["a", 1] } }] });
+    assert.deepEqual(edited.features.map((feature) => feature.id), ["a", "f2", "f4"], "a used or unplain id is made from its number");
+    assert.deepEqual(edited.features[0].geometry.coordinates, [-169.8765432, 10], "a wrapped longitude back in range");
+    assert.deepEqual(edited.features[0].properties, { label: "Spring", description: "Fresh water" });
+    assert.deepEqual(edited.features[1].properties, { label: "Trail" });
+    assert.deepEqual(map.editedCollection(null), { type: "FeatureCollection", features: [] });
+    // from the keyboard: a point of one vertex, a line of two, an area of three, closed
+    assert.deepEqual(map.sketchGeometry("Point", [[1, 2]]), { type: "Point", coordinates: [1, 2] });
+    assert.equal(map.sketchGeometry("LineString", [[1, 2]]), null);
+    assert.deepEqual(map.sketchGeometry("Polygon", [[0, 0], [1, 0], [1, 1]]).coordinates, [[[0, 0], [1, 0], [1, 1], [0, 0]]]);
+    assert.equal(map.sketchGeometry("Polygon", [[0, 0], [1, 0]]), null);
+    assert.equal(map.sketchGeometry("Circle", [[0, 0]]), null);
+    // only one's own overlay drawn whole is edited
+    const own = { overlayId: "7", isOwn: true, kind: "geojson" };
+    assert.equal(map.canEditOverlay(own), true);
+    assert.equal(map.canEditOverlay(Object.assign({}, own, { isOwn: false })), false, "shared with the user");
+    assert.equal(map.canEditOverlay(Object.assign({}, own, { tilesStatus: "ready", kind: "mvt" })), false, "simplified into tiles");
+    assert.equal(map.canEditOverlay({ id: "PARKS", kind: "geojson" }), false, "a profile's layer");
+    assert.ok(typeof MoquiOl.Snap === "function" && typeof MoquiOl.Draw === "function" && typeof MoquiOl.Modify === "function", "the bundle has the editing interactions");
 });

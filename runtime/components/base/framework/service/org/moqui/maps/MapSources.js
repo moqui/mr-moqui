@@ -238,6 +238,92 @@ function sourceAccess(p) {
         : {ok: false, status: out.status, reasonCode: out.reasonCode, reason: out.reason}
 }
 
+// ===== get#ArchiveTile: the tile transition, every request (plans/Maps.md §5, a Z/X/Y endpoint) =====
+// One tile of a registered archive, or of a user's overlay generalized into one on the server (overlay:ID, MapOverlays.js
+// buildTiles), for a client with no PMTiles reader. The same check as the map-source transition, on every request: a layer
+// by check() above; an overlay by its file's own access, the reader's in its drive at its path now (a revoked share or a
+// removed member is refused at the next request), as the overlay transition decides it. Then the tile is read by range in
+// Rust (read#ArchiveTile: the header and directories kept by the archive's tag), writing nothing.
+const TILE_PATH = "/apps/maps/LocalMap/tile/"
+const OVERLAY = "moqui.maps.MapOverlay"
+const cleanPath = value =>
+    String(value ?? "")
+        .split("/")
+        .filter(part => part && part !== ".")
+        .join("/")
+// The tile URL template of a layer or an overlay at a revision: {z}, {x} and {y} left for the client
+const tileUrl = (layerId, revision) =>
+    TILE_PATH + encodeURIComponent(layerId).replace(/%3A/g, ":") + "/" + encodeURIComponent(revision) + "/{z}/{x}/{y}"
+// {ok, location, tag, size} of an overlay's generalized archive for the current user, or the refusal
+function overlayArchive(overlayId, revision) {
+    const missing = refusal("OVERLAY_MISSING", L("The overlay is not available"), 404)
+    const row = overlayId ? ec.entity.find(OVERLAY).condition({overlayId}).disableAuthz().one() : null
+    if (!row || !text(ec.user.userId)) return missing
+    if (text(row.tilesStatus) !== "ready" || !text(row.tilesRevision) || !text(row.tilesPath) || row.tilesSize == null)
+        return missing
+    const drive = text(row.driveId) ? one(DRIVE, {driveId: row.driveId}) : null
+    const root = drive ? text(drive.rootLocation).replace(/\/+$/, "") : ""
+    if (!root || !cleanPath(row.path)) return missing
+    // the overlay's access: its file's, for the reader, at its path, now (the owner as anyone); a reader it is not shared
+    // with is told nothing of it
+    if (driveLevel({driveId: row.driveId, root, path: cleanPath(row.path)}) < 1) return missing
+    if (text(revision) !== text(row.tilesRevision))
+        return refusal("REVISION_CHANGED", L("The overlay was simplified again: load the map again"), 409)
+    const location = root + "/" + cleanPath(row.tilesPath)
+    // an archive in a drive on the server's disk has no content address: one whose size or modification time changed
+    // is not the recorded one, as check() decides for a registered file
+    if (row.tilesModifiedDate != null) {
+        const stat = statOf(location)
+        if (!stat || stat.size !== num(row.tilesSize) || !sameSecond(stat.modified, millis(row.tilesModifiedDate)))
+            return refusal("SOURCE_CHANGED", L("The overlay's simplified copy changed: add the file again"), 409)
+    }
+    return {
+        ok: true,
+        location: text(row.tilesVersionName) ? location + "#" + text(row.tilesVersionName) : location,
+        tag: text(row.tilesTag),
+        size: num(row.tilesSize)
+    }
+}
+function archiveTile(p) {
+    const layerId = text(p.layerId)
+    const revision = text(p.revision)
+    let target
+    if (layerId.startsWith("overlay:")) target = overlayArchive(layerId.slice("overlay:".length), revision)
+    else target = check(layerId ? one(LAYER, {layerId}) : null, layerId || "(none)", revision)
+    if (!target.ok) return {ok: false, status: target.status, reasonCode: target.reasonCode, reason: target.reason}
+    // the caller was checked above; the archive's storage is read as the framework
+    const read = quietly(() =>
+        ec.service
+            .sync()
+            .name("org.moqui.maps.MapSourceServices.read#ArchiveTile")
+            .parameters({
+                location: target.location,
+                tag: target.tag,
+                size: target.size,
+                z: text(p.z),
+                x: text(p.x),
+                y: text(p.y),
+                acceptGzip: p.acceptGzip === true || p.acceptGzip === "true",
+                ifNoneMatch: text(p.ifNoneMatch)
+            })
+            .disableAuthz()
+            .call()
+    )
+    if (ec.message.hasError() || !read) return {ok: false, status: 404, reasonCode: "TILE_UNREAD", reason: L("The tile could not be read")}
+    const status = Number(read.status) || 404
+    return {
+        ok: [200, 204, 304].includes(status),
+        status,
+        reasonCode: status === 409 ? "REVISION_CHANGED" : status === 404 ? "TILE_MISSING" : null,
+        reason: text(read.reason) || null,
+        bytes: read.bytes ?? null,
+        contentType: text(read.contentType) || null,
+        contentEncoding: text(read.contentEncoding) || null,
+        etag: text(read.etag) || null,
+        cacheControl: text(read.cacheControl) || null
+    }
+}
+
 // For MapConfig.js: the URL a map reads a layer's archive at, or the refusal
 function servedUrl(layer) {
     const out = check(layer, layer?.layerId || "(none)", null)
@@ -340,6 +426,29 @@ function register(p) {
                 root: DISK_ROOT
             })
         )
+    // the other layers drawn from the same archive (the light and dark styles of one extract): those asked for, which must
+    // be PMTiles layers of the same format, and every other one of that format that already names the location
+    const format = text(layer.formatEnumId)
+    const asked = Array.from(p.alsoLayerIds || [])
+        .map(text)
+        .filter(id => id && id !== layerId)
+    const others = []
+    for (const id of asked) {
+        const row = ec.entity.find(LAYER).condition({layerId: id}).disableAuthz().one()
+        if (!row) return refused("RECORD_UNAVAILABLE", say("The map layer ${layerId} is not registered", {layerId: id}))
+        if (text(row.formatEnumId) !== format)
+            return refused(
+                "FORMAT_MISMATCH",
+                say("The layer ${layerId} is not a PMTiles layer of the same format, so it cannot draw the same archive", {
+                    layerId: id
+                })
+            )
+        if (!others.some(other => other.layerId === row.layerId)) others.push(row)
+    }
+    for (const row of Array.from(
+        ec.entity.find(LAYER).condition({resourceLocation: location, formatEnumId: format}).disableAuthz().limit(50).list()
+    ))
+        if (row.layerId !== layerId && !others.some(other => other.layerId === row.layerId)) others.push(row)
     const change = quietly(() => ec.resource.getLastChange(location))
     if (!change) return refused("SOURCE_GONE", say("There is no file at ${location}", {location}))
     if (!change.isFile) return refused("LOCATION_INVALID", say("${location} is a folder, not a file", {location}))
@@ -396,7 +505,6 @@ function register(p) {
     const drive = driveOf(location)
     const metadata = header.metadata || {}
     const fields = {
-        layerId,
         resourceLocation: location,
         sourceRevision: text(address.id),
         sourceTag: text(address.tag),
@@ -414,13 +522,21 @@ function register(p) {
         maxLatitude: Number(head.maxLatitude),
         disabled: "N"
     }
-    if (!text(layer.attribution) && text(metadata.attribution)) fields.attribution = plainAttribution(metadata.attribution)
-    if (!text(layer.sourceEdition) && text(metadata.version)) fields.sourceEdition = text(metadata.version).slice(0, 60)
+    // each layer's own: the archive's attribution and version where the layer has none
+    // the layer chosen and those asked for are enabled; one that only names the location keeps its state
+    const fieldsOf = row => {
+        const own = Object.assign({layerId: row.layerId}, fields)
+        if (row.layerId !== layerId && !asked.includes(String(row.layerId))) delete own.disabled
+        if (!text(row.attribution) && text(metadata.attribution)) own.attribution = plainAttribution(metadata.attribution)
+        if (!text(row.sourceEdition) && text(metadata.version)) own.sourceEdition = text(metadata.version).slice(0, 60)
+        return own
+    }
+    const layerIds = [layerId].concat(others.map(row => String(row.layerId)))
     const previous = text(layer.sourceRevision)
     asCaller(() => {
-        ec.entity.makeValue(LAYER).setAll(fields).update()
+        for (const row of [layer].concat(others)) ec.entity.makeValue(LAYER).setAll(fieldsOf(row)).update()
         // a profile drawn from it that still starts at the seed's whole-world view starts at the archive's center
-        const centered = Array.from(ec.entity.find(PROFILE).condition({basemapLayerId: layerId}).disableAuthz().list())
+        const centered = Array.from(ec.entity.find(PROFILE).condition("basemapLayerId", "in", layerIds).disableAuthz().list())
         for (const profile of centered) {
             const seedView = num(profile.centerLongitude) === 0 && num(profile.centerLatitude) === 20 && num(profile.zoom) === 2
             if (!seedView || profile.minLongitude != null) continue
@@ -442,10 +558,14 @@ function register(p) {
                 "It is outside every drive, so nothing but the layer guards it: every user who may see the layer reads the archive."
             )
         )
-    const name = text(layer.layerName) ? L(layer.layerName) : layerId
+    const name = [layer]
+        .concat(others)
+        .map(row => (text(row.layerName) ? L(row.layerName) : row.layerId))
+        .join(", ")
     return {
         applied: true,
         layerId,
+        layerIds,
         revision: fields.sourceRevision,
         replaced: !!previous && previous !== fields.sourceRevision,
         size: fields.sourceSize,
@@ -457,12 +577,17 @@ function register(p) {
         reason:
             previous && previous !== fields.sourceRevision
                 ? say("${name}: the new revision is registered; a map that was drawing the old one loads again", {name})
-                : say("${name}: its archive is registered (${size}, zoom ${min} to ${max})", {
-                      name,
-                      size: bytesText(fields.sourceSize),
-                      min: fields.minZoom,
-                      max: fields.maxZoom
-                  })
+                : say(
+                      others.length
+                          ? "${name}: their archive is registered (${size}, zoom ${min} to ${max})"
+                          : "${name}: its archive is registered (${size}, zoom ${min} to ${max})",
+                      {
+                          name,
+                          size: bytesText(fields.sourceSize),
+                          min: fields.minZoom,
+                          max: fields.maxZoom
+                      }
+                  )
     }
 }
 
@@ -636,7 +761,7 @@ function readiness(p) {
     return {checks}
 }
 
-const operations = {sourceAccess, register, findArchives, readiness}
+const operations = {sourceAccess, archiveTile, register, findArchives, readiness}
 ;({
     execute: (op, parameters) => {
         if (!Object.hasOwn(operations, op)) throw new Error("Unknown map source operation " + op)
@@ -644,5 +769,6 @@ const operations = {sourceAccess, register, findArchives, readiness}
     },
     // for the effective configuration (MapConfig.js)
     servedUrl,
+    tileUrl,
     SOURCE_PATH
 })

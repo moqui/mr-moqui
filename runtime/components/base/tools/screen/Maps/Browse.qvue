@@ -18,7 +18,14 @@ along with this software (see the LICENSE.md file). If not, see
     geocoder's candidates with their source, precision and ambiguity when one is enabled), Layers (the basemap, the
     overlays and record layers, the user's own and shared overlays with Add overlay and Remove, each layer that is not
     shown named with Retry, and a cut feature list said), Saved views (Save view saves where the map is) and the selected
-    feature's details (Save place, Remove place). Below 600 px the panel is a bottom sheet over the map. Full screen is the browser's, on request. The last view
+    feature's details (a place's or a record's, or an overlay's feature with its label and plain-text description and its
+    overlay; the record's links a registered route resolves; Save place, Remove place). Add overlay takes an upload or a file
+    chosen with the drive picker (pickerData, pickerFolder, pickerSearch: the formats an overlay reads only). Edit, on one of
+    the user's own overlays drawn whole (their places among them), opens the Edit panel: m-map's editing (editCommand,
+    edit-change: draw points, lines and areas, move the selected feature's vertices, delete it, give it a label and
+    description as plain text; from the keyboard a vertex at the map's center), saved through saveOverlayEdit as a new version
+    of the file (or of name.edited.geojson beside a file of another format), refused when the file changed since it was
+    opened. Below 600 px the panel is a bottom sheet over the map. Full screen is the browser's, on request. The last view
     is posted (rememberView) only when the user turned Restore my last view on. Brand color names and Quasar classes
     only. -->
 <template><div ref="frame" class="m-maps-browse column no-wrap" :class="fullscreen ? ($q.dark.isActive ? 'bg-dark' : 'bg-white') : ''">
@@ -30,6 +37,9 @@ along with this software (see the LICENSE.md file). If not, see
                 dense outlined clearable style="min-width:120px" :label="t('Postal country')" id="MapsPostalCountry"></q-select>
         <q-btn id="MapsSearchButton" dense flat no-caps icon="sym_o_search" :label="phone ? '' : t('Search')" :aria-label="t('Search')" @click="runSearch"></q-btn>
         <q-space></q-space>
+        <q-btn v-if="editing" dense flat no-caps icon="sym_o_edit" :label="phone ? '' : t('Editing')" :aria-label="t('Editing') + ': ' + editing.label"
+                :class="panel === 'edit' ? 'm-tonal text-primary' : 'text-positive'" :aria-pressed="panel === 'edit' ? 'true' : 'false'" @click="togglePanel('edit')"
+                id="MapsEditingButton"></q-btn>
         <q-btn dense flat no-caps icon="sym_o_layers" :label="phone ? '' : t('Layers')" :aria-label="t('Layers')" :class="panel === 'layers' ? 'm-tonal text-primary' : ''"
                 :aria-pressed="panel === 'layers' ? 'true' : 'false'" @click="togglePanel('layers')">
             <q-badge v-if="problemCount" floating color="warning" rounded>{{problemCount}}</q-badge>
@@ -112,6 +122,17 @@ along with this software (see the LICENSE.md file). If not, see
                             <q-item-label caption>{{overlayCaption(layer)}}</q-item-label>
                             <q-item-label v-if="layer.rejectedCount" caption class="text-warning">{{layer.rejectedCount}} {{t('features left out: their geometry is not valid')}}</q-item-label>
                         </q-item-section>
+                        <q-item-section side v-if="canEdit(layer)">
+                            <q-btn dense flat round size="sm" icon="sym_o_edit" :aria-label="t('Edit') + ' ' + layer.label" @click="startEdit(layer)"
+                                    :data-maps-edit="layer.overlayId" :disable="editLoading">
+                                <q-tooltip>{{t('Edit on the map')}}</q-tooltip>
+                            </q-btn>
+                        </q-item-section>
+                        <q-item-section side v-if="layer.isOwn && tilesBusy(layer)">
+                            <q-btn dense flat round size="sm" icon="sym_o_cancel" :aria-label="t('Stop simplifying')" @click="cancelTiles(layer)" data-maps-cancel-tiles="true">
+                                <q-tooltip>{{t('Stop simplifying')}}</q-tooltip>
+                            </q-btn>
+                        </q-item-section>
                         <q-item-section side v-if="layer.isOwn">
                             <q-btn dense flat round size="sm" icon="sym_o_delete" :aria-label="t('Remove from the map')" @click="removeOverlay(layer)">
                                 <q-tooltip>{{t('Remove from the map (the file stays in your files)')}}</q-tooltip>
@@ -119,7 +140,7 @@ along with this software (see the LICENSE.md file). If not, see
                         </q-item-section>
                     </q-item>
                 </q-list>
-                <div v-else class="text-caption m-muted">{{t('Add a GeoJSON, GPX or KML file. Share its file in Files to show it to others.')}}</div>
+                <div v-else class="text-caption m-muted">{{t('Add a GeoJSON, KML, GPX, shapefile or other geographic file. Share its file in Files to show it to others.')}}</div>
                 <div v-if="layerErrors.length" class="q-mt-sm m-maps-layer-errors">
                     <div class="text-caption m-muted">{{t('Not shown')}}</div>
                     <div v-for="layerError in layerErrors" :key="layerError.id" class="row items-start no-wrap q-py-xs" :data-maps-layer-error="layerError.id">
@@ -154,12 +175,49 @@ along with this software (see the LICENSE.md file). If not, see
                 <a class="text-caption q-mt-sm block" :href="siblingUrl('Views')" @click.prevent="$root.setUrl(siblingUrl('Views'))">{{t('Manage saved views')}}</a>
             </template>
 
+            <template v-if="panel === 'edit' && editing">
+                <div class="text-body1 text-weight-medium">{{editing.label}}</div>
+                <div class="text-caption m-muted" id="MapsEditWhere">{{editing.inPlace
+                    ? t('Saving writes a new version of its file; the earlier ones stay in its versions.')
+                    : t('Saving writes') + ' ' + editing.editPath + ' ' + t('beside its file, which stays as it is, and the overlay draws that from then on.')}}</div>
+                <div class="text-caption m-muted q-mt-sm">{{t('Draw')}}</div>
+                <q-btn-toggle v-model="editing.drawType" dense no-caps unelevated toggle-color="primary" :options="drawOptions" @update:model-value="setDraw"
+                        id="MapsEditDraw"></q-btn-toggle>
+                <div class="text-caption m-muted q-mt-xs">{{editing.drawType
+                    ? t('Click the map to place each vertex; a double click ends a line or an area. From the keyboard: Enter on the map adds a vertex at its center.')
+                    : t('Click a feature to select it, then drag its vertices to move them (they snap to the other features). From the keyboard: Enter on the map selects the feature at its center, Delete removes it.')}}</div>
+                <div v-if="editing.drawType" class="row q-gutter-xs q-mt-xs">
+                    <q-btn dense flat no-caps icon="sym_o_add_location" :label="editing.drawType === 'Point' ? t('Add a point at the center') : t('Add a vertex at the center')"
+                            @click="editCommand('enter')"></q-btn>
+                    <q-btn v-if="editing.drawType !== 'Point'" dense flat no-caps icon="sym_o_done" :label="t('Finish the shape')" :disable="!editState.sketch"
+                            @click="editCommand('finish')"></q-btn>
+                </div>
+                <div v-if="editState.selected" class="q-mt-sm m-tonal q-pa-sm" id="MapsEditSelected">
+                    <m-text-line v-model="editLabel" name="editLabel" id="MapsEditLabel" :label="t('Name')" @update:model-value="applyDetails"></m-text-line>
+                    <q-input v-model="editDescription" type="textarea" dense outlined autogrow :label="t('Description')" class="q-mt-xs" id="MapsEditDescription"
+                            @update:model-value="applyDetails"></q-input>
+                    <div class="text-caption m-muted">{{t('Plain text: markup is not kept.')}}</div>
+                    <q-btn dense flat no-caps icon="sym_o_delete" :label="t('Delete this feature')" class="q-mt-xs" @click="editCommand('delete')"></q-btn>
+                </div>
+                <div class="text-caption q-mt-sm">{{editState.count}} {{t('features')}}<span v-if="editState.dirty" class="text-warning"> · {{t('Not saved')}}</span></div>
+                <ul v-if="editNotes.length" class="text-caption text-negative q-my-xs q-pl-md" id="MapsEditNotes"><li v-for="note in editNotes" :key="note">{{note}}</li></ul>
+                <div class="row justify-end q-mt-sm q-gutter-sm">
+                    <q-btn v-if="editStale" dense flat no-caps :label="t('Open it again')" @click="reopenEdit"></q-btn>
+                    <q-btn dense flat no-caps :label="t('Close')" @click="stopEdit()"></q-btn>
+                    <q-btn dense unelevated no-caps color="primary" :label="t('Save')" :loading="editSaving" :disable="!editState.dirty" @click="saveEdit" id="MapsEditSave"></q-btn>
+                </div>
+            </template>
+
             <template v-if="panel === 'details' && selected">
                 <div class="text-body1 text-weight-medium">{{selected.label || t('Place')}}</div>
                 <div class="text-caption m-muted" v-if="selectedLayerLabel">{{selectedLayerLabel}}</div>
+                <div v-if="selected.description" class="text-body2 q-mt-xs m-maps-description" style="white-space:pre-line;overflow-wrap:anywhere">{{selected.description}}</div>
                 <div class="q-mt-xs" style="font-family:var(--m-font-mono)">{{coordinates(selected)}}</div>
                 <div class="text-caption m-muted" v-if="selected.precision">{{selected.precision}}</div>
                 <div class="text-caption m-muted" v-if="selected.source">{{selected.source}}</div>
+                <div v-if="selectedLinks.length" class="column items-start q-mt-xs m-maps-record-links">
+                    <a v-for="link in selectedLinks" :key="link.url" :href="link.url" class="text-primary">{{link.label}}</a>
+                </div>
                 <q-btn dense flat no-caps icon="sym_o_content_copy" :label="t('Copy coordinates')" class="q-mt-sm" @click="copy(selected)"></q-btn>
                 <q-btn v-if="!selected.placeId" dense flat no-caps icon="sym_o_star" :label="t('Save place')" class="q-mt-sm" id="MapsSavePlace" @click="openSavePlace"></q-btn>
                 <q-btn v-if="selected.placeId && selected.isOwn" dense flat no-caps icon="sym_o_delete" :label="t('Remove place')" class="q-mt-sm" @click="removePlace(selected)"></q-btn>
@@ -167,7 +225,8 @@ along with this software (see the LICENSE.md file). If not, see
         </component>
 
         <div class="col" ref="mapHolder" style="min-width:0">
-            <m-map v-if="mapConfig" id="MapsBrowseMap" :config="mapConfig" :height="mapPx + 'px'" @select="onSelect" @view-change="onViewChange"></m-map>
+            <m-map v-if="mapConfig" ref="map" id="MapsBrowseMap" :config="mapConfig" :height="mapPx + 'px'" @select="onSelect" @view-change="onViewChange"
+                    @edit-change="onEditChange"></m-map>
             <div v-else class="flex flex-center" :style="{height: mapPx + 'px'}"><q-spinner size="2em"></q-spinner></div>
         </div>
     </div>
@@ -189,21 +248,43 @@ along with this software (see the LICENSE.md file). If not, see
 
     <m-dialog v-model="addShown" :title="t('Add overlay')" width="480">
         <div>
-            <div class="text-caption m-muted">{{t('A GeoJSON, GPX or KML file of at most 10 MB. It is kept in Maps/overlays of your files, checked, and drawn only by this server: links, icons and scripts in it are not followed.')}}</div>
-            <q-file v-model="addFile" dense outlined clearable accept=".geojson,.json,.gpx,.kml" :label="t('Upload a file')" class="q-mt-sm" id="MapsOverlayFile"></q-file>
-            <div v-if="overlayFiles.length" class="q-mt-sm">
-                <div class="text-caption m-muted">{{t('Or one of your files')}}</div>
-                <q-list dense bordered separator style="max-height:180px" class="scroll">
-                    <q-item v-for="file in overlayFiles" :key="file.driveId + '/' + file.path" clickable @click="addPick = file"
-                            :active="addPick === file" active-class="m-tonal text-primary">
+            <div class="text-caption m-muted">{{t('A GeoJSON, TopoJSON, EsriJSON, GPX, KML, GML, WKT, WKB or CSV file, or a shapefile zipped with its .dbf and .prj, of at most 10 MB, in WGS84 or Web Mercator. It is kept in Maps/overlays of your files, checked, and drawn only by this server: links, icons and scripts in it are not followed.')}}</div>
+            <q-file v-model="addFile" dense outlined clearable :accept="OVERLAY_ACCEPT" :label="t('Upload a file')" class="q-mt-sm" id="MapsOverlayFile" @update:model-value="addOffer = false"></q-file>
+            <div v-if="picker.drives.length" class="q-mt-sm" id="MapsOverlayPicker">
+                <div class="text-caption m-muted">{{t('Or a file of a drive you may open')}}</div>
+                <div class="row items-center q-gutter-xs">
+                    <q-chip v-for="drive in picker.drives" :key="drive.driveId" dense square clickable
+                            :class="picker.driveId === drive.driveId && !picker.searching ? 'm-tonal text-primary' : ''"
+                            :aria-pressed="picker.driveId === drive.driveId && !picker.searching ? 'true' : 'false'"
+                            @click="pickerOpen(drive.driveId, '')">{{drive.driveName}}</q-chip>
+                </div>
+                <div class="q-mt-xs" @keydown.enter.prevent="pickerSearch"><m-text-line v-model="picker.text" name="pickerText" id="MapsOverlayPickerText" :label="t('Search files')"></m-text-line></div>
+                <div v-if="!picker.searching" class="row items-center no-wrap q-mt-xs" style="overflow:hidden">
+                    <template v-for="(crumb, index) in picker.crumbs" :key="index">
+                        <q-icon v-if="index" name="chevron_right" size="xs" class="m-muted"></q-icon>
+                        <q-btn flat dense no-caps size="sm" @click="pickerOpen(picker.driveId, crumb.path)">{{crumb.name}}</q-btn>
+                    </template>
+                </div>
+                <div v-else class="text-caption m-muted q-mt-xs">{{picker.text ? t('Found') : t('Recent files')}}</div>
+                <q-list dense bordered separator style="max-height:200px" class="scroll">
+                    <q-item v-if="picker.loading"><q-item-section class="text-center"><q-spinner></q-spinner></q-item-section></q-item>
+                    <q-item v-for="row in picker.rows" :key="pickerKey(row)" clickable @click="pickerClick(row)"
+                            :active="!row.isDirectory && addPick && pickerKey(addPick) === pickerKey(row)" active-class="m-tonal text-primary"
+                            :data-maps-pick="row.path">
+                        <q-item-section avatar><q-icon :name="row.icon || (row.isDirectory ? 'sym_o_folder' : 'sym_o_draft')"></q-icon></q-item-section>
                         <q-item-section>
-                            <q-item-label>{{file.name}}</q-item-label>
-                            <q-item-label caption>{{file.driveName}} · {{file.path}}</q-item-label>
+                            <q-item-label class="ellipsis">{{row.name}}</q-item-label>
+                            <q-item-label caption class="ellipsis" v-if="pickerCaption(row)">{{pickerCaption(row)}}</q-item-label>
                         </q-item-section>
                     </q-item>
+                    <q-item v-if="!picker.loading && !picker.rows.length"><q-item-section class="text-caption m-muted">{{t('No geographic file here')}}</q-item-section></q-item>
                 </q-list>
             </div>
             <m-text-line v-model="addLabel" name="label" id="MapsOverlayLabel" :label="t('Name (the file name when empty)')" class="q-mt-sm"></m-text-line>
+            <div v-if="addOffer" class="q-mt-sm m-tonal q-pa-sm" id="MapsOverlayGeneralizeOffer">
+                <div class="text-caption">{{t('This file has more than a map draws at once. This server can simplify it for each zoom into a tiled copy kept beside the file, drawn in its place; the file itself is not changed.')}}</div>
+                <q-btn dense unelevated no-caps color="primary" class="q-mt-xs" :label="t('Simplify on the server')" :loading="adding" id="MapsOverlayGeneralize" @click="addOverlay(true)"></q-btn>
+            </div>
             <div class="row justify-end q-mt-md q-gutter-sm">
                 <q-btn flat dense no-caps :label="t('Cancel')" @click="addShown = false"></q-btn>
                 <q-btn dense unelevated no-caps color="primary" :label="t('Add overlay')" :loading="adding" :disable="!addFile && !addPick" @click="addOverlay"></q-btn>
@@ -225,6 +306,7 @@ along with this software (see the LICENSE.md file). If not, see
 
 <script>
 const t = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
+const OVERLAY_ACCEPT = '.geojson,.json,.topojson,.esrijson,.gpx,.kml,.gml,.wkt,.wkb,.csv,.tsv,.zip';
 const PRECISION = { GPP_USER_CONFIRMED: 'User-confirmed point', GPP_ADDRESS_MATCH: 'Address match', GPP_STREET_RANGE: 'Street-range interpolation',
     GPP_POSTAL_AREA: 'Postal-area representative point', GPP_PLACE_ESTIMATE: 'Place estimate' };
 
@@ -235,7 +317,10 @@ module.exports = {
         return { effective: null, error: '', panel: '', query: '', results: [], postalCountries: [], postalCountry: null, postalNote: '', searching: false, savedViews: [], hidden: {}, basemapId: '',
             view: null, lastView: null, marker: null, selected: null, mapPx: 480, phone: false, fullscreen: false, saveShown: false,
             saveName: '', saveShared: 'N', saving: false, restoreLastView: false, geocoder: null, addShown: false, addFile: null, addPick: null,
-            addLabel: '', adding: false, overlayFiles: [], placeShown: false, placeName: '' };
+            addLabel: '', adding: false, addOffer: false, placeShown: false, placeName: '', OVERLAY_ACCEPT,
+            editing: null, editState: { count: 0, dirty: false, selected: null, sketch: 0 }, editLabel: '', editDescription: '', editNotes: [],
+            editSaving: false, editLoading: false, editStale: false,
+            picker: { drives: [], driveId: null, crumbs: [], rows: [], loading: false, text: '', searching: false } };
     },
     computed: {
         screenPath() { return this.mScreen ? this.mScreen.path : this.$root.basePath + '/' + this.$root.currentPathList.join('/'); },
@@ -250,9 +335,19 @@ module.exports = {
         layerErrors() { return this.effective ? this.effective.layerErrors || [] : []; },
         problemCount() { return this.layerErrors.length + (this.effective && this.effective.featuresTruncated ? 1 : 0); },
         panelTitle() {
-            return { search: t('Search results'), layers: t('Layers'), views: t('Saved views'), details: t('Selected') }[this.panel] || '';
+            return { search: t('Search results'), layers: t('Layers'), views: t('Saved views'), details: t('Selected'), edit: t('Edit') }[this.panel] || '';
+        },
+        // a saved place is a point: its file draws nothing else
+        drawOptions() {
+            const none = { label: t('Select'), value: '' };
+            const point = { label: t('Point'), value: 'Point' };
+            return this.editing && this.editing.isPlaces ? [none, point] : [none, point, { label: t('Line'), value: 'LineString' }, { label: t('Area'), value: 'Polygon' }];
         },
         sheetStyle() { return { position: 'fixed', left: '0', right: '0', bottom: '0', maxHeight: '55vh', zIndex: 2000 }; },
+        // the record's links a registered route resolved to a screen the user may open (get#EffectiveConfig), on its place
+        selectedLinks() {
+            return this.selected && this.selected.isRecord === true && this.effective && this.effective.record ? this.effective.record.resolvedLinks || [] : [];
+        },
         selectedLayerLabel() {
             if (!this.selected || !this.selected.layerId) return '';
             const layer = this.recordLayers.concat(this.overlays).find((one) => one.id === this.selected.layerId);
@@ -300,7 +395,10 @@ module.exports = {
         attributionText(value) { return String(value || '').split(/\s*\n\s*/).filter(Boolean).join(', '); },
         overlayCaption(layer) {
             const owner = layer.isOwn ? (layer.isPlaces ? t('Your places') : t('Yours')) : t('Shared by') + ' ' + (layer.ownerName || '');
-            return [owner, layer.featureCount + ' ' + t('features')].join(' · ');
+            const tiles = !layer.tilesStatus ? null : this.tilesBusy(layer) ? t('Simplifying on the server') + ' ' + (layer.tilesProgress || 0) + '%'
+                : layer.tilesStatus === 'ready' ? t('Simplified for drawing') : layer.tilesStatus === 'cancelled' ? t('Simplifying cancelled')
+                : t('Not simplified') + (layer.tilesNote ? ': ' + layer.tilesNote : '');
+            return [owner, layer.featureCount + ' ' + t('features'), tiles].filter(Boolean).join(' · ');
         },
         coordinates(place) { return Number(place.lat).toFixed(5) + ', ' + Number(place.lon).toFixed(5); },
         layerShown(layer) { return this.hidden[layer.id] !== undefined ? !this.hidden[layer.id] : layer.visible !== false; },
@@ -309,7 +407,7 @@ module.exports = {
         configParameters(extraLayerId) {
             const p = this.parameters;
             const out = {};
-            ['profileId', 'adapterKey', 'recordKey', 'addressPurpose'].forEach((key) => { if (p[key]) out[key] = p[key]; });
+            ['profileId', 'adapterKey', 'recordKey', 'addressPurpose', 'routeApp'].forEach((key) => { if (p[key]) out[key] = p[key]; });
             if (extraLayerId) {
                 // a user's overlay is not the profile's layer: getConfig lists it itself
                 const shown = this.profileOverlays.concat(this.recordLayers).filter((layer) => this.layerShown(layer)).map((layer) => layer.id);
@@ -322,6 +420,7 @@ module.exports = {
             const asked = typeof extraLayerId === 'string' ? extraLayerId : '';
             return this.request('getConfig', { params: this.configParameters(asked) }).then((config) => {
                 this.effective = config;
+                this.watchTiles();
                 const p = this.parameters;
                 const lon = Number(p.longitude), lat = Number(p.latitude);
                 if (p.longitude !== undefined && p.latitude !== undefined && String(p.longitude).trim() && String(p.latitude).trim()
@@ -329,6 +428,10 @@ module.exports = {
                     this.marker = { id: 'given', lon, lat, label: String(p.label || '') };
                     this.view = { center: [lon, lat], zoom: 14 };
                 }
+                // an area to open on (a dashboard geomap's country): west,south,east,north, with no marker
+                const box = String(p.extent || '').split(',').map((value) => value.trim() === '' ? NaN : Number(value));
+                if (!this.view && !this.marker && box.length === 4 && box.every(Number.isFinite) && box[0] >= -180 && box[2] <= 180
+                        && box[1] >= -90 && box[3] <= 90 && box[0] <= box[2] && box[1] <= box[3]) this.view = { extent: box };
             }, (err) => { this.error = t('The map settings did not load') + ': ' + (err && err.message || err); });
         },
         loadViews() {
@@ -413,8 +516,22 @@ module.exports = {
                     .some((feature) => feature.properties && feature.properties.layerId === layer.id))) this.load(layer.id);
         },
         onSelect(place) {
+            // an overlay's feature: its label and description (plain text, shown as text), its overlay and where it is; a
+            // place of the user's own places file can be removed
+            if (place.kind === 'overlay') {
+                const layer = this.overlays.find((one) => one.id === place.layerId) || {};
+                this.selected = { id: place.id, label: place.label, lon: place.lon, lat: place.lat, layerId: place.layerId, description: place.description || '',
+                    source: layer.overlayId ? (layer.isOwn ? (layer.isPlaces ? t('Your saved place') : t('Your overlay')) : t('Shared by') + ' ' + (layer.ownerName || '')) : '',
+                    precision: layer.isPlaces ? t('User-confirmed point') : '', placeId: layer.isPlaces && layer.isOwn && place.id ? place.id : null,
+                    isOwn: !!layer.isOwn };
+                this.panel = 'details';
+                return;
+            }
             const point = (this.mapConfig.points || []).find((one) => one.id === place.id) || {};
-            this.selected = Object.assign({}, place, { precision: this.precisionText(point.precisionEnumId) || point.precision || '', source: point.source || point.sourceText || '' });
+            // the record's own place: the configuration's point or area record, not an overlay's or a layer's feature of that id
+            const recordArea = ((this.effective && this.effective.features && this.effective.features.features) || []).some((feature) => feature && feature.id === 'record');
+            this.selected = Object.assign({}, place, { precision: this.precisionText(point.precisionEnumId) || point.precision || '', source: point.source || point.sourceText || '',
+                isRecord: !place.kind && !place.layerId && place.id === 'record' && (point.id === 'record' || recordArea) });
             this.panel = 'details';
         },
         onViewChange(change) {
@@ -444,27 +561,167 @@ module.exports = {
                 } else moqui.notifyMessages(null, [json.reason || t('The view was not saved')]);
             }, (err) => moqui.notifyMessages(null, [String(err && err.message || err)])).then(() => { this.saving = false; });
         },
+        // Add overlay: an upload, or a file chosen with the drive picker (pickerData, pickerFolder, pickerSearch: the drives the
+        // user may open, their folders and files by name, only GeoJSON, GPX and KML files listed)
         openAddOverlay() {
-            this.addFile = null; this.addPick = null; this.addLabel = ''; this.addShown = true;
-            this.request('overlayFiles').then((json) => { this.overlayFiles = json.fileList || []; }, () => { this.overlayFiles = []; });
+            this.addFile = null; this.addPick = null; this.addLabel = ''; this.addOffer = false; this.addShown = true;
+            this.picker = { drives: [], driveId: null, crumbs: [], rows: [], loading: true, text: '', searching: true };
+            this.request('pickerData').then((json) => {
+                this.picker.drives = json.driveList || [];
+                this.picker.rows = json.recentList || [];
+                this.picker.loading = false;
+                if (json.personalDriveId && !this.picker.rows.length) this.pickerOpen(json.personalDriveId, '');
+            }, () => { this.picker.loading = false; this.picker.drives = []; });
+        },
+        pickerOpen(driveId, path) {
+            Object.assign(this.picker, { driveId, searching: false, loading: true });
+            this.request('pickerFolder', { params: { driveId, path: path || '' } }).then((json) => {
+                this.picker.rows = (json.fileList || []).map((row) => Object.assign({ driveId }, row));
+                this.picker.crumbs = json.breadcrumbList || [];
+                this.picker.loading = false;
+            }, () => { this.picker.loading = false; this.picker.rows = []; });
+        },
+        pickerSearch() {
+            const text = String(this.picker.text || '').trim();
+            if (!text) return;
+            Object.assign(this.picker, { searching: true, loading: true });
+            this.request('pickerSearch', { params: { text } }).then((json) => {
+                this.picker.rows = json.fileList || [];
+                this.picker.loading = false;
+            }, () => { this.picker.loading = false; this.picker.rows = []; });
+        },
+        pickerKey(row) { return (row.driveId || this.picker.driveId) + '\n' + row.path; },
+        pickerCaption(row) {
+            if (row.isDirectory) return '';
+            return this.picker.searching && row.driveName ? row.driveName + (row.folderPath ? ' / ' + row.folderPath : '') : '';
+        },
+        pickerClick(row) {
+            if (row.isDirectory) this.pickerOpen(row.driveId || this.picker.driveId, row.path);
+            else { this.addPick = Object.assign({ driveId: this.picker.driveId }, row); this.addFile = null; this.addOffer = false; }
         },
         // the file is read on the server first: one that cannot be drawn is refused with its reason, nothing kept
-        addOverlay() {
+        // a file too large to draw whole is refused with canGeneralize: the dialog then offers simplifying it on the server
+        addOverlay(generalize) {
             if (this.adding) return;
             this.adding = true;
             const body = new FormData();
             if (this.addFile) body.append('overlayFile', this.addFile, this.addFile.name);
             else if (this.addPick) { body.append('driveId', this.addPick.driveId); body.append('path', this.addPick.path); }
             if (this.addLabel.trim()) body.append('label', this.addLabel.trim());
+            if (generalize === true) body.append('generalize', 'true');
             this.request('addOverlay', { method: 'POST', params: body }).then((json) => {
                 if (json.applied) {
                     this.addShown = false;
+                    this.addOffer = false;
                     const left = json.rejectedCount ? ' ' + json.rejectedCount + ' ' + t('features left out: their geometry is not valid') : '';
-                    moqui.notifyMessages([{ type: left ? 'warning' : 'success', message: t('Overlay added') + ': ' + json.featureCount + ' ' + t('features') + '.' + left }], null);
+                    const message = json.generalizing ? t('Overlay added: it is drawn once this server has simplified it') + ' (' + json.featureCount + ' ' + t('features') + ').'
+                        : t('Overlay added') + ': ' + json.featureCount + ' ' + t('features') + '.';
+                    moqui.notifyMessages([{ type: left ? 'warning' : 'success', message: message + left }], null);
                     this.keepView();
                     this.load();
-                } else moqui.notifyMessages(null, [json.reason || t('The overlay was not added')]);
+                } else {
+                    this.addOffer = !!json.canGeneralize;
+                    moqui.notifyMessages(null, [json.reason || t('The overlay was not added')]);
+                }
             }, (err) => moqui.notifyMessages(null, [String(err && err.message || err)])).then(() => { this.adding = false; });
+        },
+        tilesBusy(layer) { return layer.tilesStatus === 'pending' || layer.tilesStatus === 'running'; },
+        cancelTiles(layer) {
+            this.request('cancelOverlayTiles', { method: 'POST', params: { overlayId: layer.overlayId } }).then((json) => {
+                if (!json.applied) moqui.notifyMessages(null, [json.reason || t('The simplifying was not stopped')]);
+                this.keepView();
+                this.load();
+            }, (err) => moqui.notifyMessages(null, [String(err && err.message || err)]));
+        },
+        // while an overlay of the user's is being simplified, its progress is asked for (a light call, waiting twice as
+        // long each time up to a minute, and not while the page is hidden); the layers are loaded again once it ends
+        watchTiles() {
+            clearTimeout(this.tilesTimer);
+            const busy = this.personalOverlays.filter((layer) => layer.isOwn && this.tilesBusy(layer)).map((layer) => layer.overlayId);
+            if (!busy.length) { this.tilesDelay = 0; return; }
+            this.tilesDelay = Math.min((this.tilesDelay || 2500) * 2, 60000);
+            this.tilesTimer = setTimeout(() => this.pollTiles(busy), this.tilesDelay);
+        },
+        pollTiles(ids) {
+            if (document.hidden) { this.tilesTimer = setTimeout(() => this.pollTiles(ids), this.tilesDelay || 5000); return; }
+            this.request('overlayTilesStatus', { params: { overlayIds: ids.join(',') } }).then((json) => {
+                const list = json.statusList || [];
+                const ended = ids.some((id) => { const row = list.find((one) => one.overlayId === id); return !row || !this.tilesBusy(row); });
+                if (ended) { this.tilesDelay = 0; this.keepView(); this.load(); return; }
+                list.forEach((row) => { const layer = this.personalOverlays.find((one) => one.overlayId === row.overlayId); if (layer) layer.tilesProgress = row.tilesProgress; });
+                this.watchTiles();
+            }, () => this.watchTiles());
+        },
+        // ---- editing one's own overlay (m-map's editCommand; MapOverlays.js editOverlay and saveEdit) ----
+        canEdit(layer) { return !!(moqui.map && moqui.map.canEditOverlay ? moqui.map.canEditOverlay(layer) : layer.isOwn && !layer.tilesStatus && layer.kind === 'geojson'); },
+        editCommand(name, value) { return this.$refs.map && this.$refs.map.editCommand ? this.$refs.map.editCommand(name, value) : null; },
+        startEdit(layer) {
+            if (this.editing && !this.stopEdit()) return;
+            this.editLoading = true;
+            this.request('overlayEdit', { params: { overlayId: layer.overlayId } }).then((json) => {
+                if (!json.applied) { moqui.notifyMessages(null, [json.reason || t('The overlay cannot be edited')]); return; }
+                let collection = null;
+                try { collection = JSON.parse(json.geojson); } catch (err) { collection = null; }
+                if (!collection) { moqui.notifyMessages(null, [t('The overlay cannot be edited')]); return; }
+                this.editing = { overlayId: json.overlayId, layerId: layer.id, label: layer.label, version: json.version, isPlaces: json.isPlaces,
+                    editPath: json.editPath, inPlace: json.inPlace, drawType: '' };
+                this.editNotes = [];
+                this.editStale = false;
+                this.editState = { count: collection.features.length, dirty: false, selected: null, sketch: 0 };
+                // the overlay is shown, so its features are there to edit (m-map hides it while its copy is edited)
+                if (!this.layerShown(layer)) { this.keepView(); this.hidden = Object.assign({}, this.hidden, { [layer.id]: false }); }
+                this.editCommand('start', { layerId: layer.id, collection, pointsOnly: json.isPlaces });
+                this.panel = 'edit';
+            }, (err) => moqui.notifyMessages(null, [String(err && err.message || err)])).then(() => { this.editLoading = false; });
+        },
+        setDraw(type) { this.editCommand('draw', type || ''); },
+        onEditChange(state) {
+            if (!state) return;
+            const before = this.editState.selected;
+            this.editState = state;
+            if (this.editing && state.drawType !== undefined) this.editing.drawType = state.drawType;
+            // the fields follow the selection, not each change they make themselves
+            if (state.selected && (!before || before.id !== state.selected.id)) { this.editLabel = state.selected.label || ''; this.editDescription = state.selected.description || ''; }
+        },
+        applyDetails() { this.editCommand('details', { label: this.editLabel, description: this.editDescription }); },
+        saveEdit() {
+            if (!this.editing || this.editSaving) return;
+            const collection = this.editCommand('collection');
+            if (!collection) return;
+            this.editSaving = true;
+            this.editNotes = [];
+            const params = { overlayId: this.editing.overlayId, geojson: JSON.stringify(collection), baseVersion: this.editing.version };
+            this.request('saveOverlayEdit', { method: 'POST', params }).then((json) => {
+                if (json.applied) {
+                    this.editing.version = json.version;
+                    this.editing.editPath = json.path;
+                    this.editing.inPlace = true;
+                    this.editCommand('saved');
+                    moqui.notifyMessages([{ type: 'success', message: t('Overlay saved') + ': ' + json.featureCount + ' ' + t('features') + '.' }], null);
+                } else {
+                    this.editNotes = json.notes || [];
+                    this.editStale = json.reasonCode === 'STALE_VERSION';
+                    moqui.notifyMessages(null, [json.reason || t('The overlay was not saved')]);
+                }
+            }, (err) => moqui.notifyMessages(null, [String(err && err.message || err)])).then(() => { this.editSaving = false; });
+        },
+        // ends the editing (asking first when there are changes not saved); false when the user keeps editing
+        stopEdit(force) {
+            if (!this.editing) return true;
+            if (!force && this.editState.dirty && !window.confirm(t('Close without saving your changes?'))) return false;
+            this.editCommand('stop');
+            this.editing = null;
+            this.editState = { count: 0, dirty: false, selected: null, sketch: 0 };
+            if (this.panel === 'edit') this.panel = 'layers';
+            this.keepView();
+            this.load();
+            return true;
+        },
+        // the file changed meanwhile: what is being edited is let go and the file's version now opened
+        reopenEdit() {
+            const layer = this.overlays.find((one) => this.editing && one.id === this.editing.layerId);
+            this.stopEdit(true);
+            if (layer) this.startEdit(layer);
         },
         removeOverlay(layer) {
             this.request('removeOverlay', { method: 'POST', params: { overlayId: layer.overlayId } }).then((json) => {
@@ -533,9 +790,11 @@ module.exports = {
         this.loadPreferences();
     },
     beforeUnmount() {
+        if (this.editing) this.editCommand('stop');
         window.removeEventListener('resize', this.onResize);
         document.removeEventListener('fullscreenchange', this.onFullscreenChange);
         clearTimeout(this.rememberTimer);
+        clearTimeout(this.tilesTimer);
     }
 };
 </script>

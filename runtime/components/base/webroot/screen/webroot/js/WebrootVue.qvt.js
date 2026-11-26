@@ -8229,7 +8229,8 @@
     // m-pan-zoom). The bundle failing is passed on as library-error, so m-map-view lists the places in its place; until the file
     // has loaded, and when it cannot, the places are listed here, so a record's actions stay usable. config is the map's
     // configuration (an object or its JSON; the shape is in js/WebrootMap.js), config-url a transition answering the effective
-    // one. Emits pick ({lon, lat}), select and view-change.
+    // one. Emits pick ({lon, lat}), select, view-change and edit-change; editCommand(name, value) is m-map-view's (the editing
+    // of an overlay, js/WebrootMap.js), answering null until the map has loaded.
     let mapLoad = null;
     const loadMap = () => mapLoad || (mapLoad = Promise.all([
         moqui.loadScript("/js/WebrootMap.js", null, () => !!(moqui.map && moqui.map.components)),
@@ -8239,8 +8240,11 @@
     component("m-map", {
         name: "mMap",
         props: { id: String, config: [Object, String], configUrl: String, height: String, pick: Boolean },
-        emits: ["pick", "select", "view-change"],
+        emits: ["pick", "select", "view-change", "edit-change"],
         data() { return { view: null, libraryError: "", failed: "" }; },
+        methods: {
+            editCommand(name, value) { return this.$refs.view && this.$refs.view.editCommand ? this.$refs.view.editCommand(name, value) : null; }
+        },
         computed: {
             // the places given, for the list shown while the map loads or when it cannot
             places() {
@@ -8258,8 +8262,8 @@
             frameHeight() { return this.height || "360px"; }
         },
         template:
-            '<component :is="view" v-if="view" :id="id" :config="config" :config-url="configUrl" :height="height" :pick="pick" :library-error="libraryError"' +
-                ' @pick="$emit(\'pick\', $event)" @select="$emit(\'select\', $event)" @view-change="$emit(\'view-change\', $event)">' +
+            '<component :is="view" v-if="view" ref="view" :id="id" :config="config" :config-url="configUrl" :height="height" :pick="pick" :library-error="libraryError"' +
+                ' @pick="$emit(\'pick\', $event)" @select="$emit(\'select\', $event)" @view-change="$emit(\'view-change\', $event)" @edit-change="$emit(\'edit-change\', $event)">' +
                 '<template v-if="$slots.notice" v-slot:notice><slot name="notice"></slot></template>' +
             '</component>' +
             '<div v-else class="m-map m-map-waiting" :id="id">' +

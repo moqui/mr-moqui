@@ -219,3 +219,249 @@ fn reads_the_metadata() {
         .contains("not a JSON object"));
     assert!(Metadata::parse(b"{nope").unwrap_err().message().contains("not JSON"));
 }
+
+#[test]
+fn tile_ids_follow_the_hilbert_order() {
+    // pmtiles' own test values
+    assert_eq!(tile_id(0, 0, 0).unwrap(), 0);
+    assert_eq!(tile_id(1, 0, 0).unwrap(), 1);
+    assert_eq!(tile_id(1, 0, 1).unwrap(), 2);
+    assert_eq!(tile_id(1, 1, 1).unwrap(), 3);
+    assert_eq!(tile_id(1, 1, 0).unwrap(), 4);
+    assert_eq!(tile_id(2, 0, 0).unwrap(), 5);
+    assert_eq!(tile_id(3, 7, 0).unwrap(), 84);
+    assert_eq!(tile_id(20, 0, 0).unwrap(), 366_503_875_925);
+    for z in 0..=8u8 {
+        for x in 0..(1u32 << z).min(40) {
+            for y in [0, (1u32 << z) / 3, (1u32 << z) - 1] {
+                let id = tile_id(z, x, y).unwrap();
+                assert_eq!(tile_zxy(id).unwrap(), (z, x, y), "{z}/{x}/{y}");
+            }
+        }
+    }
+    let deep = tile_id(26, 12345, 67_108_863).unwrap();
+    assert_eq!(tile_zxy(deep).unwrap(), (26, 12345, 67_108_863));
+    assert!(tile_id(2, 4, 0).is_err() && tile_id(27, 0, 0).is_err());
+}
+
+fn entries() -> Vec<Entry> {
+    vec![
+        Entry {
+            tile_id: 0,
+            offset: 0,
+            length: 10,
+            run_length: 1,
+        },
+        Entry {
+            tile_id: 1,
+            offset: 10,
+            length: 20,
+            run_length: 3,
+        },
+        Entry {
+            tile_id: 5,
+            offset: 0,
+            length: 10,
+            run_length: 1,
+        },
+        Entry {
+            tile_id: 9,
+            offset: 30,
+            length: 5,
+            run_length: 0,
+        },
+    ]
+}
+
+#[test]
+fn directories_decode_what_they_encode() {
+    let bytes = encode_directory(&entries());
+    // count 4; deltas 0 1 4 4; runs 1 3 1 0; lengths 10 20 10 5; offsets 1, 0 (follows), 1, 31
+    assert_eq!(bytes, vec![4, 0, 1, 4, 4, 1, 3, 1, 0, 10, 20, 10, 5, 1, 0, 1, 31]);
+    assert_eq!(decode_directory(&bytes).unwrap(), entries());
+    assert!(decode_directory(&bytes[..16])
+        .unwrap_err()
+        .message()
+        .contains("cut short"));
+    assert!(decode_directory(&[200, 1]).unwrap_err().message().contains("claims"));
+    // a delta of 0 after the first entry: out of order
+    assert!(decode_directory(&[2, 3, 0, 1, 1, 1, 1, 1, 1]).is_err());
+}
+
+#[test]
+fn finds_a_tile_in_a_run_or_a_leaf() {
+    let entries = entries();
+    assert_eq!(find_entry(&entries, 0).unwrap().length, 10);
+    // tiles 1, 2 and 3 are one run of content at 10
+    assert_eq!(find_entry(&entries, 3).unwrap().offset, 10);
+    assert!(find_entry(&entries, 4).is_none());
+    assert_eq!(find_entry(&entries, 5).unwrap().tile_id, 5);
+    assert!(find_entry(&entries, 6).is_none());
+    // from 9 on, a leaf may hold it
+    assert!(find_entry(&entries, 9).unwrap().is_leaf());
+    assert!(find_entry(&entries, 1000).unwrap().is_leaf());
+    assert!(find_entry(&[], 0).is_none());
+}
+
+fn options() -> ArchiveOptions {
+    ArchiveOptions {
+        tile_type: TileType::Mvt,
+        tile_compression: Compression::None,
+        internal_compression: Compression::None,
+        min_zoom: 0,
+        max_zoom: 2,
+        bounds: [-10.0, -5.0, 10.0, 5.0],
+        center_zoom: 1,
+    }
+}
+
+/// The tile `id` of `archive`, read through its directories as the endpoint reads them
+fn read(archive: &[u8], id: u64) -> Option<Vec<u8>> {
+    let header = Header::parse(archive).unwrap();
+    let mut reads = 0;
+    let found = locate_tile(&header, id, |offset, length| {
+        reads += 1;
+        let start = usize::try_from(offset).unwrap();
+        let end = start + usize::try_from(length).unwrap();
+        Ok(std::sync::Arc::new(decode_directory(&archive[start..end])?))
+    })
+    .unwrap();
+    assert!(reads <= MAX_DEPTH);
+    found.map(|(offset, length)| {
+        let start = usize::try_from(offset).unwrap();
+        archive[start..start + length as usize].to_vec()
+    })
+}
+
+#[test]
+fn writes_an_archive_its_directory_reads() {
+    let tiles = vec![
+        (0, b"world".to_vec()),
+        (1, b"same".to_vec()),
+        (2, b"same".to_vec()),
+        (3, b"other".to_vec()),
+        (7, b"z2".to_vec()),
+    ];
+    let archive = write_archive(tiles, br#"{"vector_layers":[{"id":"overlay"}]}"#, &options(), &|b| {
+        b.to_vec()
+    })
+    .unwrap();
+    let header = Header::parse(&archive).unwrap();
+    assert!(
+        header.problems(archive.len() as u64).is_empty(),
+        "{:?}",
+        header.problems(archive.len() as u64)
+    );
+    assert_eq!((header.addressed_tiles, header.tile_entries), (5, 4));
+    assert!(header.clustered && header.leaf_length == 0);
+    assert!((header.min_lon + 10.0).abs() < 1e-6 && (header.center_lat).abs() < 1e-6);
+    assert_eq!(Header::parse(&header.to_bytes()).unwrap(), header);
+    assert_eq!(read(&archive, 0).unwrap(), b"world");
+    assert_eq!(read(&archive, 2).unwrap(), b"same");
+    assert_eq!(read(&archive, 3).unwrap(), b"other");
+    assert_eq!(read(&archive, 7).unwrap(), b"z2");
+    assert!(read(&archive, 4).is_none() && read(&archive, 8).is_none());
+    assert!(write_archive(vec![(3, vec![1]), (2, vec![2])], b"{}", &options(), &|b| b.to_vec()).is_err());
+    assert!(write_archive(Vec::new(), b"{}", &options(), &|b| b.to_vec()).is_err());
+}
+
+#[test]
+fn a_large_archive_has_leaf_directories() {
+    // 40,000 tiles of distinct contents: the root alone would pass 16 KiB, so it points to leaves
+    let tiles: Vec<(u64, Vec<u8>)> = (0..40_000u64).map(|id| (id * 2, id.to_le_bytes().to_vec())).collect();
+    let archive = write_archive(tiles, b"{}", &options(), &|b| b.to_vec()).unwrap();
+    let header = Header::parse(&archive).unwrap();
+    assert!(header.leaf_length > 0 && header.root_offset + header.root_length <= ROOT_END_MAX);
+    assert!(header.problems(archive.len() as u64).is_empty());
+    assert_eq!(read(&archive, 0).unwrap(), 0u64.to_le_bytes());
+    assert_eq!(read(&archive, 2 * 31_337).unwrap(), 31_337u64.to_le_bytes());
+    assert_eq!(read(&archive, 2 * 39_999).unwrap(), 39_999u64.to_le_bytes());
+    assert!(read(&archive, 2 * 31_337 + 1).is_none());
+}
+
+/// The header of `header_bytes` with a leaf section and tile data where a test puts them
+fn sections(leaf_length: u64, tile_data_offset: u64, tile_data_length: u64) -> Header {
+    let mut header = Header::parse(&header_bytes()).unwrap();
+    header.leaf_offset = 1000;
+    header.leaf_length = leaf_length;
+    header.tile_data_offset = tile_data_offset;
+    header.tile_data_length = tile_data_length;
+    header
+}
+
+fn one(entry: Entry) -> impl FnMut(u64, u64) -> Result<std::sync::Arc<Vec<Entry>>, Error> {
+    move |_, _| Ok(std::sync::Arc::new(vec![entry]))
+}
+
+#[test]
+fn refuses_a_malicious_archive_s_directories() {
+    // a leaf that points at itself: followed at most MAX_DEPTH times
+    let leaf = Entry {
+        tile_id: 0,
+        offset: 0,
+        length: 10,
+        run_length: 0,
+    };
+    let mut reads = 0;
+    let looping = locate_tile(&sections(100, 5000, 100), 7, |_, _| {
+        reads += 1;
+        Ok(std::sync::Arc::new(vec![leaf]))
+    })
+    .unwrap_err();
+    assert!(
+        looping.message().contains("nest deeper") && reads == MAX_DEPTH,
+        "{}",
+        looping.message()
+    );
+    // a leaf outside the leaf directories, a tile outside the tile data
+    let far_leaf = Entry {
+        tile_id: 0,
+        offset: 95,
+        length: 10,
+        run_length: 0,
+    };
+    assert!(locate_tile(&sections(100, 5000, 100), 0, one(far_leaf))
+        .unwrap_err()
+        .message()
+        .contains("leaf"));
+    let far_tile = Entry {
+        tile_id: 0,
+        offset: 95,
+        length: 10,
+        run_length: 1,
+    };
+    assert!(locate_tile(&sections(100, 5000, 100), 0, one(far_tile))
+        .unwrap_err()
+        .message()
+        .contains("tile data"));
+    // offsets that overflow when added to their section's
+    let tile = Entry {
+        tile_id: 0,
+        offset: 10,
+        length: 10,
+        run_length: 1,
+    };
+    let overflow = locate_tile(&sections(100, u64::MAX - 5, u64::MAX), 0, one(tile)).unwrap_err();
+    assert!(overflow.message().contains("overflows"), "{}", overflow.message());
+    let mut header = sections(u64::MAX, 5000, 100);
+    header.leaf_offset = u64::MAX - 5;
+    let leaf = Entry {
+        tile_id: 0,
+        offset: 10,
+        length: 10,
+        run_length: 0,
+    };
+    assert!(locate_tile(&header, 0, one(leaf))
+        .unwrap_err()
+        .message()
+        .contains("overflows"));
+    // a varint of more than 64 bits, and a count larger than the bytes hold
+    assert!(decode_directory(&[0xff; 11])
+        .unwrap_err()
+        .message()
+        .contains("too large"));
+    assert!(decode_directory(&[0xff, 0xff, 0xff, 0x01])
+        .unwrap_err()
+        .message()
+        .contains("claims"));
+}

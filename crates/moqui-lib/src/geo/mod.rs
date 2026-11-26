@@ -15,20 +15,27 @@
 //! Geo data files read for the importer (plans/Maps.md §6.3, §6.4, §7): one delimited-text reader over a bare file or a
 //! member of a zip, decompressed within limits ([`text`]); the parsers of the registered sources, each yielding typed
 //! records ([`census`], [`geonames`], [`operator`]); postal-code normalization by country ([`postal`]); the derived Geo
-//! and point IDs ([`ids`]); and the coordinate checks and precision rules here. No ExecutionContext: the importer that
+//! and point IDs ([`ids`]); and the coordinate checks and precision rules here. A user's overlay is read by [`overlay`],
+//! and one too large to draw whole is cut into vector tiles ([`tiles`], over [`simplify`] and [`mvt`]). An OGC service's
+//! capabilities are read by [`ogc`]. No ExecutionContext: the importer that
 //! writes the rows is `moqui_tools::geo`.
 //!
 //! A malformed row is a [`RowError`], counted and reported, and the rest of the file goes on; only a file that cannot
 //! be read as a whole (no such member, a missing header column, a decompression limit passed) is an
 //! [`Error`](crate::error::Error).
 
+pub mod admin1;
 pub mod census;
 pub mod geonames;
 pub mod ids;
+pub mod mvt;
+pub mod ogc;
 pub mod operator;
 pub mod overlay;
 pub mod postal;
+pub mod simplify;
 pub mod text;
+pub mod tiles;
 
 use crate::error::Error;
 
@@ -220,7 +227,7 @@ pub fn truncated(text: &str, max: usize) -> &str {
 /// The files the parsers read, by the registry's parser and yields (`GeoDataParser`, `GeoDataYields`, MapEntities.xml).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Format {
-    /// Census Gazetteer ZCTAs: GEOID, INTPTLAT, INTPTLONG.
+    /// Census Gazetteer ZCTAs: GEOID, INTPTLAT, INTPTLONG, and ALAND where it is there.
     CensusZcta,
     /// Census Gazetteer Counties: USPS, GEOID, NAME, INTPTLAT, INTPTLONG.
     CensusCounties,

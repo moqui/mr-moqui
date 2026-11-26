@@ -41,6 +41,23 @@ along with this software (see the LICENSE.md file). If not, see
             centerLongitude="0" centerLatitude="20" zoom="2" externalAccess="Y" allowedOverrides="basemap,layers,extent,units"
             disabled="Y"/>
 
+    <!-- The USGS National Map's topographic basemap (plans/Maps.md P4a), an OGC WMTS service: public domain, no key, the
+        United States only. Disabled until an administrator tests the provider (its capabilities are read and recorded) and
+        enables the profile; the browser then loads its tiles from basemap.nationalmap.gov, which sees the area viewed. -->
+    <moqui.maps.MapProvider providerId="USGS_NATIONAL_MAP" providerKindEnumId="MPK_WMTS" providerName="USGS The National Map"
+            description="The USGS topographic basemap as an OGC WMTS service; public domain, no key, the United States only"
+            endpointUrl="https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/WMTS/1.0.0/WMTSCapabilities.xml"
+            attribution="USGS The National Map" attributionUrls="https://www.usgs.gov/programs/national-geospatial-program/national-map"
+            termsUrl="https://www.usgs.gov/information-policies-and-instructions/copyrights-and-credits" allowedOperations="tiles"
+            cachePolicy="private" proxyRequests="N" disabled="Y" allowPrivateNetwork="N" sequenceNum="20"/>
+    <moqui.maps.MapLayer layerId="USGS_TOPO" layerName="USGS Topo" providerId="USGS_NATIONAL_MAP" formatEnumId="MLF_WMTS"
+            ogcLayers="USGSTopo" ogcMatrixSet="GoogleMapsCompatible" crs="urn:ogc:def:crs:EPSG::3857" minZoom="0" maxZoom="16"
+            minLongitude="-180" minLatitude="-15" maxLongitude="180" maxLatitude="72" isBasemap="Y"/>
+    <moqui.maps.MapProfile profileId="USGS_TOPO" profileName="USGS Topo" basemapLayerId="USGS_TOPO"
+            description="The USGS topographic basemap (the United States), loaded by the browser from basemap.nationalmap.gov"
+            centerLongitude="-98.5" centerLatitude="39.5" zoom="4" externalAccess="Y" allowedOverrides="basemap,layers,extent,units"
+            disabled="Y"/>
+
     <!-- The US Census geocoder (plans/Maps.md §6.2), disabled: Browse's search asks it only after an administrator tests it
         (a fixed public address) and enables it, and only for an explicit search. It interpolates along street address
         ranges: its points are street-range interpolations, never rooftops. Nothing of its answers is kept (cachePolicy

@@ -184,6 +184,10 @@
         // the drill screen (Tools' own, or a mount's; a mount that names none offers none): the panel menu's Drill, in the
         // browser and the terminal
         if (mount.links.drill) dashboardDefinition.appLinks.drill = sri.buildUrl(mount.links.drill).path
+        // a geomap's country or point opens Maps' Browse there (plans/Maps.md §2), only for a viewer whose own grants open the
+        // Maps app (an app's grant on the screen showing the dashboard does not count); it carries a plain extent or point
+        if (ec.artifactExecution.isPermittedOwn('component://tools/screen/Maps.xml', 'AT_XML_SCREEN', 'AUTHZA_VIEW'))
+            dashboardDefinition.appLinks.maps = '/apps/maps/Browse'
         dashboardDefinition.panelId = panelId || null
         dashboardDefinition.kiosk = String(ec.web.parameters.kiosk || '') === 'true'
         dashboardDefinition.variableValues = rendered.variableValues || dashboardDefinition.variableValues

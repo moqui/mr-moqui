@@ -626,6 +626,25 @@
             .sort((a, b) => b.value - a.value);
         return { mode: "countries", countries, listed, unmatched: unmatched.slice(0, 20), max, field: value && value.field };
     };
+    // A geomap's drill-down into Maps (plans/Maps.md §2, the Dashboard geomap row): Browse centered on a country's largest
+    // land area (its extent, so an overseas territory does not widen it) or on a point, a plain extent or point and nothing
+    // else of the panel's rows. Offered only where the dashboard's screen names the maps link (appLinks.maps: a viewer whose
+    // own grants open the Maps app); "" otherwise.
+    report.countryExtent = (country) => {
+        const area = (points) => Math.abs(points.reduce((sum, point, at) => { const next = points[(at + 1) % points.length]; return sum + point[0] * next[1] - next[0] * point[1]; }, 0));
+        const outer = (country && country.polygons || []).map((polygon) => polygon[0]).filter((ring) => ring && ring.length).sort((a, b) => area(b) - area(a))[0];
+        if (!outer) return null;
+        const lons = outer.map((point) => point[0]), lats = outer.map((point) => point[1]);
+        return [Math.min(...lons), Math.min(...lats), Math.max(...lons), Math.max(...lats)].map((value) => Math.round(value * 1e4) / 1e4);
+    };
+    report.mapsUrl = (maps, place) => {
+        if (!maps || !place) return "";
+        const url = new root.URL(maps, root.location.href);
+        if (Array.isArray(place.extent)) url.searchParams.set("extent", place.extent.join(","));
+        else if (Number.isFinite(place.lon) && Number.isFinite(place.lat)) { url.searchParams.set("longitude", String(place.lon)); url.searchParams.set("latitude", String(place.lat)); }
+        else return "";
+        return url.pathname + url.search;
+    };
     // ---- time ranges ----
     // Hours, days, and minutes stay separate templates: Spanish gender follows the unit. Last 1 hour stays singular.
     report.quickRanges = [
@@ -1558,9 +1577,16 @@
                         rect.w >= 0.01 ? h("text", { class: "m-report-flame-label", x: 3, y: 14, "font-size": "12", fill: "currentColor" }, rect.name) : null])))]);
             } else if (visual === "geomap" && report.geomap(frame, this.panel, report.outline)) {
                 const map = report.geomap(frame, this.panel, report.outline), formatted = (value) => report.format(value, map.field || { type: "number" });
-                const base = map.countries.map((country, at) => h("path", { key: "c" + at, d: report.countryPath(country), fill: country.value != null ? "var(--q-primary)" : "rgba(127,127,127,0.18)", "fill-opacity": country.value != null ? country.shade : 1,
-                    stroke: "var(--m-panel-bg, white)", "stroke-width": "0.2", "data-country": country.id }, [h("title", country.name + (country.value != null ? ": " + formatted(country.value) : ""))]));
-                const points = (map.points || []).map((point, at) => h("circle", { key: "p" + at, cx: point.x, cy: point.y, r: point.r, fill: "var(--q-negative)", "fill-opacity": "0.6", "data-point": point.label || at }, [h("title", (point.label ? point.label + ": " : "") + formatted(point.value))]));
+                // a country or a point opens Maps there, where the dashboard's screen offers it (appLinks.maps); else nothing changes
+                const maps = (this.links() || {}).maps, opens = (place, name) => {
+                    const url = report.mapsUrl(maps, place);
+                    return url ? { tabindex: 0, role: "link", "aria-label": T("Open in Maps") + ": " + name, "data-maps-url": url, style: { cursor: "pointer" },
+                        onClick: () => report.navigate(url), onKeydown: (event) => { if (event.key === "Enter") report.navigate(url); } } : {};
+                };
+                const base = map.countries.map((country, at) => h("path", Object.assign({ key: "c" + at, d: report.countryPath(country), fill: country.value != null ? "var(--q-primary)" : "rgba(127,127,127,0.18)", "fill-opacity": country.value != null ? country.shade : 1,
+                    stroke: "var(--m-panel-bg, white)", "stroke-width": "0.2", "data-country": country.id }, opens({ extent: report.countryExtent(country) }, country.name)), [h("title", country.name + (country.value != null ? ": " + formatted(country.value) : ""))]));
+                const points = (map.points || []).map((point, at) => h("circle", Object.assign({ key: "p" + at, cx: point.x, cy: point.y, r: point.r, fill: "var(--q-negative)", "fill-opacity": "0.6", "data-point": point.label || at },
+                    opens({ lon: point.lon, lat: point.lat }, point.label || report.format(point.lat, { type: "number" }) + ", " + report.format(point.lon, { type: "number" }))), [h("title", (point.label ? point.label + ": " : "") + formatted(point.value))]));
                 content = h("figure", { class: "m-report-geomap q-ma-none" }, [
                     h("svg", { viewBox: "0 0 360 150", width: "100%", style: { maxHeight: this.height }, role: "img", "aria-label": map.mode === "points" ? "Map of " + map.points.length + " places" : "Map of " + map.listed.length + " countries" }, [...base, ...points]),
                     !report.outline ? h("p", { role: "status", class: "text-caption" }, this.outlineError || "Loading the map outline…") : null,

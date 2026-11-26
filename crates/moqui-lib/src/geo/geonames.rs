@@ -225,6 +225,7 @@ pub fn parse_postal(
                 point: Some(point),
                 accuracy,
                 precision,
+                land_area: None,
             }));
             None
         },

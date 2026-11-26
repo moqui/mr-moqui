@@ -594,7 +594,9 @@ if (header == null) { ec.message.addError(`Order ${orderId} not found`); return 
 One record. A field reads and writes as a property (`value.statusId`, `value["statusId"]`) and with `get` and `set`.
 A method wins over a field of the same name. A relationship name also reads as a property: the related value for a
 `one` relationship, the list for a `many`. `Object.keys(value)` gives the fields the value holds. `==` on two values
-is identity; `equals` compares them.
+is identity; `equals` compares them. A value a method returns as itself (`value.create()`, `setAll`) is the same
+object; a record read back another way (from the context or a map) after a script has handled about a thousand other
+records may be a second object over the same record, its fields shared, so compare records with `equals`.
 
 | Member | |
 |---|---|
@@ -1226,7 +1228,7 @@ The server the execution context belongs to.
 | `getStartupReport()` | What the server reported when it became ready: listeners, integrations, tools |
 | `getThreadList()` | A row for each thread |
 | `workerPool` | The service worker pool, as `ec.service.jobWorkerPool` |
-| `waitWorkerPoolEmpty(retryLimit)` | Waits up to `retryLimit` (50) times 100 ms for async service work to finish; whether the pool is empty |
+| `waitWorkerPoolEmpty(retryLimit)` | Waits up to `retryLimit` (50) times 100 ms for async service work to finish; whether the pool is empty. The service worker pool only: it returns at once while a ServiceJob runs on a job worker (a spec waits for one with `sleep`, [JS-Testkit](JS-Testkit.md#helpers)) |
 | `isDestroyed()` | false |
 | `entity`, `service`, `l10n`, `resource`, `cache`, `screen`, `logger` | The same objects as `ec.entity` and the rest |
 | `getTool(name, ...parameters)` | A tool (below) |

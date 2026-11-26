@@ -418,7 +418,8 @@ Dashboards (menu index 96, `DASHBOARDS_APP`) holds the general tool.
   - A geomap draws points from latitude and longitude fields, sized by a value. Without those fields, it shades
     countries from a country field: a Moqui `geoId` (ISO alpha-3), alpha-2 or a numeric code. The outline is Natural
     Earth's 110m countries (`libs/naturalearth`, inlined into the print document). The TUI plots braille points over
-    a land mask.
+    a land mask. For a viewer whose own grants open the Maps app, a country or a point opens Maps' Browse there
+    (`appLinks.maps`; [Maps, From a dashboard](Maps.md#from-a-dashboard)), with a plain extent or point.
   - Two query modes over spans feed the first two:
     - `mode: "serviceMap"` gives the calls between services: a span whose parent is in another service, a CLIENT span
       to a database (`db:<system>`), and a CLIENT span to a `server.address` that no span answered.

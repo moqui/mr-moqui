@@ -14,7 +14,7 @@ searches.
 
 | Screen | What it is |
 | --- | --- |
-| Browse (`Maps/Browse.xml`, `Browse.qvue`, `Browse.tui.json`) | The map filling the page, with optional browser full screen. One panel at a time beside it, a bottom sheet on a phone: Search (saved views and places, the permitted records of the record layers shown, postal codes and, when one is enabled, the geocoder's addresses), Layers (the basemap, overlays and record layers, and the user's own and shared overlays with Add overlay ([below](#overlays-and-places)); a layer that is not shown is named with Retry; a record layer cut to `maps@max-features` says so), Saved views (and Save view, which keeps where the map is, its basemap and its layers) and the selected feature's details (Save place). The scale, attribution, coordinate readout and Locate me are the map's. A qvue screen: under `/apps` it opens at the same path under `/qapps`. In the terminal, the `map` component over `terminalMap`: the saved places and records as a list over the braille land mask, the notices and the attribution |
+| Browse (`Maps/Browse.xml`, `Browse.qvue`, `Browse.tui.json`) | The map filling the page, with optional browser full screen. One panel at a time beside it, a bottom sheet on a phone: Search (saved views and places, the permitted records of the record layers shown, postal codes and, when one is enabled, the geocoder's addresses), Layers (the basemap, overlays and record layers, and the user's own and shared overlays with Add overlay and, on one's own, Edit ([below](#overlays-and-places)); a layer that is not shown is named with Retry; a record layer cut to `maps@max-features` says so), Saved views (and Save view, which keeps where the map is, its basemap and its layers) and the selected feature's details: a place's, a record's (with its [links](#record-links)) or an overlay's feature, selected by a click or by Enter on the map for the feature at its center, with its label and description as plain text, its overlay and its coordinates (Save place; Remove place on one of one's own places). The scale, attribution, coordinate readout and Locate me are the map's. A qvue screen: under `/apps` it opens at the same path under `/qapps`. In the terminal, the `map` component over `terminalMap`: a postal search's places (`s`: a code and its country, the local Geo data's approximate place), the saved places (own and, read-only, shared), the saved views' and the records' places as a list over the braille land mask, then the overlays, own and shared, the notices and the attribution |
 | Saved views (`Maps/Views.xml`) | The user's saved views and those others shared, each with its place, owner and whether its layers are all available; Share, Stop sharing and Delete for one's own, View map for any. Below them the user's overlays and saved places and, read-only, those shared with them, with Remove for one's own |
 | Preferences (`Maps/Preferences.xml`) | The user's map profile, basemap, initial area, units, the layers shown and Restore my last view. Only what an administrator enabled is offered, and a profile's `allowedOverrides` decide what a preference changes. No location is asked for unless Locate me is pressed, and the last view is kept only while its restoring is on |
 | Configuration (`Maps/Configuration.xml`, route key `mapsConfiguration`) | For `MAPS_ADMIN`: readiness, the outside-request policy and limits (read from the conf), map providers (connections of the `mapProvider` kind: a provider's page is `Configuration/ConnectionDetail` over `tools/template/ConnectionParts.xml`), profiles (enable, disable, make the installation default) and layers; Archives (`Configuration/Archives.xml`, [below](#archives)); and Geo data (`Configuration/GeoData.xml`, [below](#geo-data)). Its settings index entry is `maps.configuration` |
@@ -44,7 +44,12 @@ Three artifact groups in `tools/data/MapsSecurityData.xml`:
   nor any app's access.
 - `MAPS_ADMIN`: Configuration, its `find#Configuration` and `store#ProfileSettings`, the archive services (`read#ArchiveHeader`,
   `register#ArchiveLayer`, `find#ArchiveLayers`) and the Geo data services, `ADMIN`'s;
-  `MAPS_USERS` is denied it. A profile setting changes only with Configuration's update (view alone reads it), and a
+  `MAPS_USERS` is denied it. It is asked for as the user's **own** grant: an allow of `Maps.xml` that an app grants its own
+  group is inheritable and would reach Configuration and the services its transitions call, so Configuration's
+  always-actions refuse a user without their own grant (`isPermittedOwn`, a 403 for every render and transition below it),
+  `Maps.xml` shows its tab only to them, and the Geo data services, the importer and the archive and profile services ask
+  the same of their own artifacts. An app that shows Configuration under its own root has its administrators hold
+  `MAPS_ADMIN`. `read#ArchiveHeader` is not remote: only the archive services call it, after their check. A profile setting changes only with Configuration's update (view alone reads it), and a
   profile enabled or disabled and a change of the installation default are in the audit log.
 
 `Maps.xml` has no `always-actions`: a render of LocalMap runs the always-actions of the screens above it without their
@@ -66,6 +71,92 @@ maps), `maps@max-features` (the most features one record layer or viewport sends
 `Content-Security-Policy` stricter than the default needs each provider's host in `connect-src`, `img-src` and
 `font-src`; the readiness checks name what to add.
 
+**A provider through this server.** A provider's page has Through this server (`proxyRequests`) and Key parameter
+(`apiKeyParameter`: a query parameter's name, `key` when empty, or `header:Name`). A provider with a key is drawn only so:
+its key never reaches a browser. Its test asks as the proxy does, the key added, over https only (a keyed provider with
+another URL is refused unless it is allowed the private network), its endpoint and each enabled layer of it that names
+another URL of the provider, and records what they name as exact rules (`proxyPaths`, one a line): `doc` a style's,
+TileJSON's or data file's path, `sprite` a sprite's path (with `.json`, `.png`, `@2x.json` or `@2x.png` after it), `tile`
+a tile template (its `{z}`, `{x}`, `{y}` whole numbers, `{r}` an optional `@2x`), each with the query its document named,
+never a directory or `/`; a document naming another host, or a path with a `.` or `..` segment (raw or %-encoded), fails
+the test. A layer whose URL the last test did not reach is not drawn until the provider is tested again. The effective configuration then hands its layers
+`/apps/maps/LocalMap/providerProxy/{providerId}/{the provider's path}` in place of the provider's URLs, and the proxy
+(`MapSourceServices.get#ProviderAsset`, `MapProviders.js`) answers each GET only for a user who may be offered one of the
+provider's layers (its `viewPermission`, and the basemap or a layer of an enabled profile whose `viewPermission` they hold),
+while outside requests are on and the provider is enabled and tested as it is (decided once in 30 seconds for a user and
+provider revision, `maps.provider.proxy`, so a change of a layer, profile or permission reaches it within that), within
+its requests per second (each server's) and per day (the cluster's), else 429: one GET to the provider's origin (its
+endpoint's, the first tile subdomain) at a path a rule matches, with that rule's query (the browser's own query is not
+passed on), no redirect, ten seconds, at most 4 MiB, no internal address
+unless the provider is allowed the private network, of a style, TileJSON, sprite or tile type. A style or TileJSON comes
+back with each URL rewritten to the proxy's, any query parameter carrying the key dropped and the key's text, plain and
+URL-encoded, taken out (glyph ranges are dropped: labels are drawn with web fonts). Its `Cache-Control` is always `private`: `no-store` for a cache policy of none, else its cache seconds or the
+answer's own max-age, at most a day; a shared policy also keeps the rewritten documents of at most 256 KiB on this server
+(`maps.provider.document`, by the provider's revision, the path and the rule's query). **A proxy is not complete location privacy**: the provider no longer sees the user's address,
+but it still sees every area viewed (as this server's requests), and this server sees and could log them all.
+
+## OGC services
+
+A WMS, WMTS or WFS service is a map provider of the kind `MPK_WMS` (WMS 1.3.0), `MPK_WMTS` (WMTS 1.0.0) or `MPK_WFS`
+(WFS 2.0.0, read as GeoJSON) (`MapOgc.js`, plans/Maps.md §4.1). Its URL is the service's (`https://host/geoserver/ows`,
+a MapServer URL with its own `map=` query, or a WMTS service's `WMTSCapabilities.xml`); an https URL, as every provider's.
+The seed has the USGS National Map's topographic WMTS (provider `USGS_NATIONAL_MAP`, layer and profile `USGS_TOPO`; public
+domain, the United States only), disabled until its provider passes a test and the profile is enabled.
+
+**The test** asks the service's GetCapabilities (the URL with `SERVICE`, `REQUEST=GetCapabilities` and `VERSION` added; a
+WMTS `.xml` URL as it is) as every provider's test asks: no credentials but a proxied provider's key, no redirect, at most
+8 MiB, no internal address unless the provider is allowed the private network. The answer is read in Rust
+(`MapServices.read#OgcCapabilities`, `moqui-lib` `geo/ogc.rs`) by the framework's XML reader, which refuses a DOCTYPE, an
+entity declaration and an entity it does not know, so no DTD or external entity is read (a WMS 1.1.1 answer, which has a
+DOCTYPE, is refused). A passing test records what a map draws (`capabilitiesJson`, at most 2 MB, the CRS and style lists
+a WMS's layers inherit kept once): at most 2,000 layers (a WMS's named layers, with the CRSs, styles, bounds and time
+dimension they inherit; a WMTS's layers with a matrix set in a CRS a map draws, each set kept once with at most 30
+matrices, and the tile template; a WFS's feature types with a GeoJSON output), their titles, styles and formats (images:
+PNG, JPEG, WebP, GIF, AVIF), and the CRSs of them a map draws: EPSG:3857 and EPSG:4326 under the names OpenLayers knows
+(`CRS:84`, `urn:ogc:def:crs:EPSG::3857`, ...). A URL with credentials (`https://a@b/...`) is never the provider's. For a
+provider browsers ask themselves the test also asks one sample (a small GetMap, a tile, one feature) with an `Origin` and
+records whether it answers CORS: a WMS or WMTS that does not is drawn with plain images, which send the browser's
+cookies of the provider's site to it (readiness warns, `PROVIDER_NO_CORS`), and a WFS that does not fails the test, since
+a browser cannot read its features: reach either through this server. A layer added to the service since is offered
+after the provider is tested again.
+
+**Add OGC layer** (Configuration › Settings › Layers, `store#OgcLayer`) makes a layer of a tested OGC provider from that
+record, choosing one of its layers, its style, format, CRS and matrix set (`get#OgcLayerOptions`, no request sent), with
+an optional time (a value of the layer's time dimension), one image of the view instead of tiles (WMS), basemap (WMS,
+WMTS) and a profile it is shown in: an overlay is added to the profile's layers, a basemap becomes the profile's basemap.
+The layer is checked as a map draws it before it is kept. Its fields on `MapLayer` are `ogcLayers` (a WMS layer row may
+name several, comma separated), `ogcStyles`, `ogcFormat`, `crs`, `ogcMatrixSet`, `ogcTime` and `ogcSingleImage`; a CRS
+left empty is EPSG:3857 when the layer has it.
+
+**What a map asks.** The effective configuration hands an OGC layer (`kind` `wms`, `wmts` or `wfs`, with its `ogc`
+options) only from what the last test recorded, and only on the provider's own origin: an operation the capabilities
+advertise at another host (a server behind a proxy often names its inner host) is asked at the service's own URL instead,
+and a WMTS tile template of another host is not used (KVP at the service's URL is, when it has it). `m-map` draws a WMS
+layer with `TileWMS` (or `ImageWMS` for one image), a WMTS layer with its tile grid made from the recorded matrix set (the
+browser never reads the capabilities), REST by its template or KVP, and a WFS feature type as GeoJSON for the view's box
+(the bbox strategy), at most `maps@max-features` features and no more than 1,000 at a time (`COUNT`, so a typical answer
+fits the proxy's 4 MiB; a load that would make more starts the layer again with the view's features only), its features
+selectable with plain-text details. It asks a provider that answers CORS without the page's credentials. A WFS layer is
+read in its `srsName`: EPSG:3857 when the feature type has it, else CRS84 or the short EPSG:4326 (longitude first), else
+the EPSG:4326 URN, whose box is sent latitude first; the GeoJSON is read longitude first, as RFC 7946 has it. The
+provider's attribution is shown as text.
+
+**Through this server.** A proxied OGC provider's test records its rules: `wms`, `wmts` and `wfs` the operation's path
+with the service URL's own query, and `wmtsrest` a tile template's path (a template with a query, or with a placeholder
+other than `{TileMatrix}`, `{TileMatrixSet}`, `{Style}`, `{Layer}`, `{TileRow}`, `{TileCol}` and `{Time}`, is not used
+through this server: KVP is, when the service has it). The proxy forwards a request only for one of the provider's
+registered layers the caller may be offered (enabled, its `viewPermission` held, and the basemap or a layer of an enabled
+profile whose `viewPermission` they hold, or any basemap layer where such a profile allows the basemap override), with
+that layer's own names, style, format and matrix set: a WMS GetMap's `LAYERS`, `STYLES` and `FORMAT`; a WMTS GetTile's
+`LAYER`, `STYLE`, `FORMAT`, `TILEMATRIXSET` and a `TILEMATRIX` of the set (and a tile template's path with those values);
+a WFS GetFeature's `TYPENAMES`, `OUTPUTFORMAT` and `SRSNAME` (decided once in 30 seconds for the user and the provider's
+revision, `maps.provider.proxy`). The other parameters are checked by themselves: `CRS` one a map draws, `BBOX` four
+plain decimal numbers (a WFS's with its `SRSNAME` after them), `WIDTH` and `HEIGHT` at most 4096, `TRANSPARENT`,
+`TILEROW` and `TILECOL` whole numbers, `TIME` a time's characters, and a WFS `COUNT` of at most `maps@max-features`. Each
+name may be given once, in any case; anything else, another request (GetFeatureInfo, a WFS Transaction), a filter, a
+type or layer not registered or not the caller's, is refused (400; a template path that is no layer's is 404). A WFS
+answer is passed on as it came, at most 4 MiB, refused when it carries the key. Editing a WFS layer (WFS-T) is not built.
+
 ## Archives
 
 A PMTiles archive on this server draws a map with no outside request (plans/Maps.md §4.1, §5). The seed has the local
@@ -86,6 +177,11 @@ Configuration › Archives (`MapSourceServices.register#ArchiveLayer`):
   `runtime/maps/`; anywhere else is `DISK_ROOT_ONLY`, as an operator's Geo data file is read only from
   `runtime://import/`). Its header is checked first, then its SHA-256 read once, with its size and modification time
   taken before and after (a change while it is read refuses it).
+
+One action registers every layer drawn from an archive: Archives' form takes the layer and the others that draw it too
+(`alsoLayerIds`), so the local profile's light and dark layers are registered from one location together (the form offers
+them so while neither is), and Register again on a row registers every layer that names the same location (each named
+layer is enabled; one that only names the location keeps its state).
 
 Registering reads the archive's header and metadata (`read#ArchiveHeader`, two small reads, in Rust): version 3, the zoom
 range (at most 26, the browser reader's), the bounds, every section after the header and within the file and the root
@@ -116,6 +212,21 @@ day): after a share is revoked, the ranges a browser already has stay readable i
 one). Registering one says so, and Archives says it beside the form. Keep an archive only some users may read in a drive
 shared with them, or give its layer a `viewPermission`.
 
+**Tiles one at a time.** A client with no PMTiles reader (OpenLayers' XYZ vector tile source, a terminal, another
+program) reads one tile at `/apps/maps/LocalMap/tile/{layerId}/{revision}/{z}/{x}/{y}` (the `y` may end in `.mvt`,
+`.pbf` or `.png`; the revision is the one in the layer's `source` URL). It is the same facade and the same check as the
+map-source transition (`MapSourceServices.get#ArchiveTile` over `check()`), on every request and writing nothing; a
+revision that is no longer the registered one is 409. The tile is read in Rust (`read#ArchiveTile`, `moqui-tools`
+`maps_tiles.rs` over `moqui-lib` `pmtiles.rs`): the header, the root directory and the leaf directories the lookup goes
+through (run lengths included), each by range, kept by the archive's tag (a content address, so a new revision is a new
+key; at most 256 directories and about two million entries in all), then the tile's own range. It goes out with its type
+(`application/vnd.mapbox-vector-tile`, `image/png` and so on), gzipped as stored with `Content-Encoding: gzip` when the
+client's `Accept-Encoding` takes it and decompressed when not (at most 16 MiB), a strong `ETag` of the registered tag,
+the tile ID and the encoding (304 for `If-None-Match`), `Vary: Accept-Encoding` and the same `Cache-Control: private,
+max-age=<pinned-max-age>, immutable`. No such tile is 204 for vector tiles (an empty tile) and 404 for images. The reader
+is our own rather than the `pmtiles` crate (MIT or Apache-2.0), whose reader is async over its own backends (Tokio, an
+HTTP client, memory maps) and does not fit the facade's synchronous `read_at`; the directory format is a few varints.
+
 **Limits.** An upload is at most 2 GiB (`webapp-list/webapp[webroot]/web-protection/requests@max-upload`), a Git LFS object
 5 GiB (`git-server@lfs-max-object-size`), and a drive has its own `quotaBytes`, which a replacement needs room in for both
 revisions until the old content is collected; Archives shows each against the archive's size. A larger regional or
@@ -126,18 +237,45 @@ range the browser has read is not asked again while it keeps it.
 
 ## Overlays and places
 
-A user adds a GeoJSON, GPX or KML file as a personal overlay with Add overlay under Browse › Layers: an upload, kept as it
-was sent in `Maps/overlays` of their personal drive ("My files"; a name already there gets "name (2).ext"), or one of
-their files (their personal drive's top, `Maps` and `Maps/overlays` folders and their recent files of any drive they
-still read), which stays where it is (`MapServices.store#Overlay`, `MapOverlays.js`). The file is read before anything is
-kept (`MapSourceServices.convert#Overlay`, in Rust: `moqui-lib` `geo/overlay.rs`):
+A user adds a geographic file (the formats below) as a personal overlay with Add overlay under Browse › Layers: an
+upload, kept as it was sent in `Maps/overlays` of their personal drive ("My files"; a name already there gets "name
+(2).ext"), or a file chosen with the drive picker (basic-comms' `FilePickerServices` through Browse's `pickerData`,
+`pickerFolder` and `pickerSearch`: the drives they may open, their folders, recent files and a search by name, listing only
+files of those formats), which stays where it is (`MapServices.store#Overlay`, `MapOverlays.js`). The file is read before
+anything is kept (`MapSourceServices.convert#Overlay`, in Rust: `moqui-lib` `geo/overlay.rs` and a reader a format in
+`geo/overlay/`), an upload as its bytes, so a binary format arrives whole:
 
-- At most `maps@overlay-max-bytes` (10 MiB, within `maps@import-max-bytes`), and at most 4 MiB of characters as the
+| Format | Extension | What is read |
+| --- | --- | --- |
+| GeoJSON | `.geojson`, `.json` | Features, a FeatureCollection or a bare geometry (a GeometryCollection's members each a feature); a `.json` that is TopoJSON or EsriJSON is read as that |
+| TopoJSON | `.topojson` | Every object's geometries, lines and rings stitched from the shared arcs through the topology's transform; the positions stitching makes are bounded in all (`overlay-max-bytes` / 4), since features may share an arc any number of times |
+| EsriJSON | `.esrijson`, `.esri.json` | A FeatureSet (or one feature): points, multipoints, polylines, polygons (clockwise outer rings, counterclockwise holes), `attributes` as properties; curves are not read |
+| GPX | `.gpx` | Waypoints, routes, tracks |
+| KML | `.kml` | Placemarks with their geometries (MultiGeometry, gx:Track); network links, image overlays, styles and icons counted, never fetched |
+| GML | `.gml` | GML 3.2 simple features (3.1 and 2 too), as a WFS answer or an OGR export has them: each child of a `featureMember`, `featureMembers` or `member`, its first geometry (points, lines, rings, polygons, their multi forms, a Curve of line segments, a Surface of polygon patches; `pos`, `posList` by `srsDimension`, GML 2's `coordinates`) and its simple properties; arcs and other curves are not read |
+| WKT | `.wkt` | One geometry a line (empty and `#` lines passed over), with no label: POINT, LINESTRING, POLYGON, their MULTI forms and GEOMETRYCOLLECTION, Z, M and ZM dropped, EWKT's `SRID=n;` |
+| WKB | `.wkb` | OGC, ISO and EWKB geometries one after another, binary, or hex text one a line; every count checked against the bytes left before anything is kept |
+| Delimited text | `.csv`, `.tsv` | A header row, then a feature a row (comma, semicolon or tab, quoted as RFC 4180 has it; UTF-8, or read as Windows-1252, noted, when it is not): the geometry from a column named WKT, geometry, geom, the_geom, shape or WKB (WKT, EWKT or hex WKB), or from latitude (lat) and longitude (lon, lng, long) columns |
+| Shapefile | `.zip` | The zip's one `.shp` record by record (the `.shx` is not needed), the `.dbf` record of each as its properties (dBASE III or IV; a dBASE 7 table is not read, noted), decoded as its `.cpg` says (UTF-8 or Windows-1252; with none, Windows-1252 where a field is not UTF-8; a field of another code page that is not UTF-8 is left out and counted, not mis-read), the `.prj` (WKT1, or WKT2's GEOGCRS) for its CRS: points, multipoints, polylines, polygons, with Z and M dropped; at most 64 entries, inflated to at most four times `overlay-max-bytes` in all and a hundred times each member's compressed size; one geometry of at most 10,000 rings, whose holes are grouped within a bounded work |
+
+A **GeoPackage** (`.gpkg`) is not read, and says so: it is an SQLite database, and the server links no SQLite reader
+(`rusqlite` with its bundled C SQLite is in the browser and client crates only); export its layer as GeoJSON or a zipped
+shapefile. Each reader is our own: the formats are small (a few fixed headers, a grammar, an XML or JSON shape), each
+reader's bounds are its own to keep, and the `shapefile` crate (MIT, with `dbase`) and GDAL's bindings would add
+dependencies for what a few hundred lines do. The rules every format shares:
+
+- At most `maps@overlay-max-bytes` (10 MiB, within `maps@import-max-bytes`), and at most a position for every four of its
+  bytes in all its features, whatever the format (only a format whose features share parts could pass it), and at most 4 MiB of characters as the
   GeoJSON it is served as: an overlay is drawn whole in the browser. At most `maps@max-features` features (5000 when that
   is 0, which turns only record layers off); a file with more is refused, not cut. A label or description is read from at
   most eight times its kept length, so a large field costs no more than a short one.
-- Coordinates WGS84 (GPX and KML always are); a GeoJSON file's pre-2016 `crs` may name EPSG:4326 or CRS84, or EPSG:3857,
-  which is converted. Any other CRS is refused (`CRS_UNSUPPORTED`): no reprojection is made.
+- Coordinates WGS84 (GPX and KML always are) or Web Mercator, converted: a GeoJSON or TopoJSON file's pre-2016 `crs`, an
+  EsriJSON `spatialReference` (WKID 4326, or 3857, 102100 and Web Mercator's other codes; none is WGS84, noted), a GML
+  geometry's `srsName` or the nearest one above it (EPSG:4326 as a URN or an `opengis.net/def/crs` URL is latitude first,
+  as GML 3.2 has it, the short `EPSG:4326` and `CRS:84` longitude first; a member geometry's own must be its geometry's
+  CRS; none is WGS84 longitude first, noted), an EWKT or EWKB SRID (none is WGS84, noted), or a shapefile's `.prj` (a GEOGCS of the WGS 84 datum, or Web or Pseudo Mercator; with no `.prj` the
+  coordinates are read as WGS84 when the file's box is within degrees). Any other CRS is refused by its name
+  (`CRS_UNSUPPORTED`, NAD83 and UTM among them): no reprojection is made until P4c. The CRS recorded is the file's first.
 - Each feature's geometry is checked by itself (positions in range and numbers, a line of two positions or more, a ring
   of four or more, closed when it was not): one that fails is left out and counted, with the first ten named, and the rest
   are kept. A file with none left is refused.
@@ -155,6 +293,66 @@ file's version (`maps.overlay.geojson`, 16 entries); a file that grew past 4 MiB
 remembered until it changes. Remove takes an overlay off the user's maps; its file stays in their files. A
 saved view keeps the overlays shown (`overlay:ID`), and a reader of the view sees each only while its file is readable to
 them.
+
+**Large overlays.** A file past the 4 MiB of GeoJSON a map draws at once, or past `maps@max-features`, is refused with
+an offer: Add overlay then shows **Simplify on the server**, which adds it again with `generalize`. The file is kept (an
+upload in `Maps/overlays`, a picked file where it is, which the user must be able to add a file beside:
+`TILES_NOT_WRITABLE` otherwise), read and sanitized as any overlay but with up to 250,000 features, and a run of the
+`MapOverlayTiles` ServiceJob starts as the user (`MapSourceServices.build#OverlayTiles`, `MapOverlays.js`). It cuts the
+file into vector tiles in Rust (`generalize#Overlay`, `moqui-tools` `maps_simplify.rs` over `moqui-lib` `geo/tiles.rs`,
+`geo/simplify.rs` and `geo/mvt.rs`): projected to Web Mercator, and for each zoom from 0 simplified by Douglas–Peucker to
+half a pixel of a 256-pixel tile, clipped to each tile it touches with a small buffer (Sutherland–Hodgman for rings,
+Liang–Barsky for lines), points thinned to one a pixel, written as one MVT layer `overlay` with each feature's label and
+description. It stops at the first zoom from 12 that keeps every position and point (a map draws that zoom's tiles larger
+past it), at zoom 14, or before a zoom that would pass a limit, the note on the row saying which. Before a zoom is made
+its cost is counted without making it: the feature and tile pairs it would clip (two million at most; a feature's tiles
+counted from its own points and segments, not only its box, so points far apart or a line across the antimeridian count
+the tiles they touch), the label and description text those pairs carry (256 MiB), and the positions clipped over the
+whole run (100 million); then the tiles allowed (50,000) and their compressed bytes (64 MiB). A zoom is made a tile at a
+time, each tile's features clipped, encoded, compressed and dropped before the next, so a run holds the file's features
+and their simplified shapes (a few times the file's size, which `maps@overlay-max-bytes` bounds for the run as for Add
+overlay), the zoom's pairs and the tiles made. A simplified ring may touch itself and a clipped one runs along the tile's
+edge: enough for display, not kept as data. The tiles (gzipped) are written as a PMTiles archive beside the file,
+`name.tiles.pmtiles`, through `FileServices.upload#Resource` (the drive's write check, quota and versions), replacing only
+this overlay's own earlier archive (another file of that name, such as another reader's archive of a shared file, is kept
+and the new one named "name.tiles (2).pmtiles"); its version and content address are recorded on the overlay's row, and
+for a drive on the server's disk, which has none, its SHA-256 with its size and modification time, each checked on every
+tile. A drive that keeps it in git outside Git LFS is refused (every tile would read the whole archive). Removing the
+overlay, or a failed run, leaves the archive in the user's files, as removing an overlay leaves its file. Browse then draws it from the tile transition above, as `overlay:ID` with the archive's
+revision, which checks the reader's access to the overlay's **file** in its drive on every request, as the overlay
+transition does: a share of the file reaches its tiles, and a revoked share is refused at the next request. Layers shows
+the run's progress (written to the row in a transaction of its own after each zoom and at most once a second within one;
+Browse asks for it with a light call, `get#OverlayTilesStatus`, waiting twice as long each time up to a minute and not
+while the page is hidden) with **Stop simplifying** (`cancel#OverlayTiles`: the run reads it when it writes its progress
+and stops), and the user is notified when it ends (topic `MapOverlayTiles`). The row records its job run: a run that
+ended without saying so (its run gone or ended, or older than the job's hour-long transaction) is ended by Stop
+simplifying or by adding the file again, and the outcome is written in a transaction of its own. Adding the file again simplifies it again; until then a change of the file does not change its
+tiles. The MVT writer, the simplification and the clipping are our own, not the `mvt` or `geo` crates (MIT or
+Apache-2.0), which bring a protobuf runtime or a dozen geometry crates for these few functions.
+
+**Editing.** Edit, beside one of the user's own overlays under Layers (not one shared with them, not one simplified into
+tiles; their saved places too), opens the Edit panel and edits the overlay on the map (`m-map`'s editing, `WebrootMap.js`):
+the overlay's features in a layer of their own while the overlay is hidden, read through Browse's `overlayEdit`
+(`MapServices.get#OverlayEdit`: the sanitized GeoJSON a map draws and the version of the file). Draw makes points, lines
+and areas (a saved place is a point only) with OpenLayers' Draw; a click selects a feature, whose vertices are then dragged
+(Modify) and snap to the other features (Snap), and the panel gives its label and description (plain text) and Delete. From
+the keyboard, with the map focused: Enter selects the feature at the center, or, while drawing, adds a vertex there (a
+point at once; Finish the shape ends a line or an area), Delete removes the selected feature and Escape lets go. Moving a
+vertex needs a pointer. Save (`saveOverlayEdit`, `store#OverlayEdit`) sends the FeatureCollection with the version it
+started from: the overlay's row is locked, and a file changed since is refused (`STALE_VERSION`, with Open it again; a
+write to the file by other means in the moment between that check and the save is not told apart, and the drive keeps
+both versions); the edit is read by `convert#Overlay` as any overlay (a geometry that is not valid refuses the save,
+`INVALID_GEOMETRY` with its notes; only labels and descriptions are kept, as plain text). Where it goes is decided from
+the file as it is at the save: the overlay's own file gets the edit as its new version (`FileServices.save#Text` as the
+user: the drive's write check, quota and versions) only when nothing of it would change but the edit, that is a GeoJSON
+file that is exactly what the map makes of it (compared as JSON), the user's saved places, or an edited copy made here.
+Any other file (another format, a `.json` that is TopoJSON or EsriJSON, GeoJSON with a `name`, other properties, markup,
+a declared CRS or anything the map does not keep) stays as it is, and the edit is written beside it as
+`name.edited.geojson` (or the next free `name.edited (2).geojson`; `FileServices.upload#Resource` with `keepBoth`, so no
+file there is replaced), which the overlay draws from then on, its row keeping the original as `sourcePath` with what
+reading the original found (its CRS and notes). A reader of the original through a share of that file alone does not
+read the edited copy; a share of the folder reaches both. An overlay with no feature left is refused (remove it
+instead); places may all be removed. A WFS layer is not edited (WFS-T, plans/Maps.md §4.1).
 
 **Saved places** are named points in one GeoJSON file, `Maps/places.geojson` of the personal drive: Save place on the
 selected place or search result (`store#Place`, written through `FileServices.save#Text`, so the drive keeps each change
@@ -195,7 +393,10 @@ its cache policy is `shared` (`none` or empty keeps nothing, and `private` means
 the server), for its cache seconds or, when empty, the answer's own `Cache-Control` max-age (at most a day; nothing with
 `no-store`, `no-cache` or `private`), under a digest of the request, never its text. Its requests per second are enforced
 (`RATE_LIMITED`, not queued), 1 for Nominatim and Photon when empty: a request claims its slot atomically, on each server
-by itself, so a cluster of n servers may send n times the rate. Requests per day are recorded, not enforced. Browse's search asks the geocoder third, after saved places and records and the postal codes, only
+by itself, so a cluster of n servers may send n times the rate. Its requests per day, when set, are the most searches it is
+sent in a calendar day (UTC), refused past that (`DAILY_LIMIT`): a search claims one by locking the provider's
+`moqui.maps.MapProviderDayCount` row in a transaction of its own before it is sent, so the servers of a cluster share the
+day's count (a cached answer and the connection test claim none). Browse's search asks the geocoder third, after saved places and records and the postal codes, only
 when one is enabled, and says which service was asked and its attribution. Opening a map or the local-map dialog never
 calls it: an address leaves the server only when the user searches.
 
@@ -212,7 +413,9 @@ An app opens LocalMap beside an address or coordinate field with View map, as a 
 Its parameters are a record's `adapterKey`, `recordKey` (its key fields as JSON) and an optional `addressPurpose`, or a
 plain `longitude`, `latitude` and `label` (with `pick=true` to let the user choose a point), or a plain `postalCode` and
 `countryGeoId` (an address with no point), and `dialogId` when the dialog's id is not `LocalMapDialog` (a list with one
-per row).
+per row). Optional for any of them: `profileId`, a consumer's map profile (HOME's), which the effective configuration's
+precedence weighs as any consumer's (a profile the user may not be offered falls back), and `routeApp`, the host app
+whose routes the record's [links](#record-links) resolve to; Open in Maps carries both to Browse.
 
 - **A record.** LocalMap reads the record's place in its actions through `get#EffectiveConfig`, which calls the
   registered adapter's `get#RecordMapContext` as the user; the adapter checks access first (no record layer's adapter
@@ -232,9 +435,19 @@ per row).
   edition and the code's place names. Opening it asks no outside service, and nothing is saved to the record.
 - **A plain point** grants no record access and posts nothing: with `pick=true` the page takes the point from the
   bubbling `m-map-pick` DOM event (`detail` `{lon, lat}`).
+- **The record's links** (an adapter's route keys) show where a registered route resolves them ([Record links](#record-links)).
 - **Open in Maps** shows only to a user whose own grants open the Maps app (`isPermittedOwn`: an app's grant on the
   screen that shows the dialog does not count). Keyboard focus returns to View map when the dialog
   closes, and on a phone the dialog fills the screen.
+
+### From a dashboard
+
+A Dashboards geomap ([Monitoring](Monitoring.md)) opens Maps where a country or a point is clicked (or chosen with Enter):
+Browse centered on the country's largest land area (`extent=west,south,east,north`, so an overseas territory does not
+widen it) or on the point (`longitude`, `latitude`), and nothing else of the panel's rows. It is offered only to a viewer
+whose own grants open the Maps app (`Dashboard.xml` sets `appLinks.maps` by `isPermittedOwn` of `Maps.xml`; an app's
+grant on the screen that shows the dashboard does not count); without it the geomap is as it was. The terminal's geomap
+offers no link yet.
 
 ### Under an app's route
 
@@ -251,7 +464,8 @@ never `component://tools/screen/Maps/LocalMap.xml`:
 </screen>
 ```
 
-Leave `storeLocation` out where the app offers no Choose location. The app's mount narrows what is shown; it never grants
+Leave `storeLocation` out where the app offers no Choose location. An app whose routes the record's links should resolve to
+sets `routeApp` (a field of its wrapper before the include, or a parameter of its View map). The app's mount narrows what is shown; it never grants
 authority, and the dialog does not need the app's other grants or System's.
 
 ### Record adapters
@@ -263,6 +477,35 @@ for the postal fallback), `store#RecordLocation` (answering `applied` false with
 `STALE_VERSION`, `PERMISSION_DENIED` or `RECORD_UNAVAILABLE`) and `find#LayerFeatures` for a record layer (a `MapLayer`
 with format `MLF_ADAPTER`). The component grants its adapter services to the users who open the dialog; a browser sends
 only the key. The framework's test adapter (`framework/test/service/org/moqui/mapstest`) is the example the specs use.
+
+### Record links
+
+An adapter names its record's links by route key (`{label, route, parameters}`: Mantle's `partyDetail`, `facilityDetail`,
+`assetDetail`), never a URL. A component registers where a key goes in its app as a `moqui.maps.MapRoute` seed row:
+`routeKey`, `routeApp` (the app whose maps it is for, empty for every app's), `urlTemplate` (a path of this site with
+`{name}` placeholders of the link's parameters, each URL-encoded: `/apps/myapp/Party/PartyDetail?partyId={partyId}`),
+`screenLocation` (the screen whose grant opens it), `priority` (lower first) and `componentName`:
+
+```xml
+<moqui.maps.MapRoute mapRouteId="MYAPP_PARTY" routeKey="partyDetail" routeApp="myapp" priority="10" componentName="myapp"
+        urlTemplate="/apps/myapp/Party/PartyDetail?partyId={partyId}" screenLocation="component://myapp/screen/MyApp.xml"/>
+```
+
+The effective configuration resolves the record's links in the host app's context (`routeApp`) as
+`record.resolvedLinks` (`MapRoutes.js`), which LocalMap and Browse show: for each key the enabled rows of the host app by
+priority, then those of no app, never another app's (a HOME dialog never links into BOSS for a user of both), the first
+whose every placeholder the link's parameters fill (each value URL-encoded, so it stays one path segment or one query
+value; a value of `.` or `..` fills none) and whose `screenLocation` the user's own grants open (`isPermittedOwn`, view).
+A link to the record the map shows (every parameter one of its key fields, with the same value) is left out, and so is a
+key no row resolves, silently; `record.links` stay as the adapter named them. A link is data, never authority: the screen
+it opens checks the user again.
+
+Rows of no app resolve wherever no `routeApp` is passed, under an app's wrapper of LocalMap that sets none as much as in
+the framework's own LocalMap and Browse, so an app whose maps should link only to its own screens sets `routeApp`. BOSS
+resolves Mantle's keys itself under its mount (mr-boss `service/ironstone/shared/MapLinks.js`) and registers no rows yet.
+`routeApp` alone does not keep rows of no app out: the app's rows come first and those of no app after them. An app that
+resolves its links itself sets `routeLinks` false on its wrapper (a field before the include, or a parameter of View map),
+and LocalMap shows none of `record.resolvedLinks`; BOSS's wrapper does so, and sets `routeApp` `boss` for Browse.
 
 ## Geo data
 
@@ -291,9 +534,15 @@ file (5), then Census (10), then GeoNames (20).
 - **Acknowledge license**: a data set is imported only after an administrator acknowledged its license and attribution;
   who and when are recorded (`licenseAckUserId`, in the audit log).
 - **Import** starts a run of the `GeoDataImport` ServiceJob (`start#GeoDataImport`), never the import in the request, and
-  notifies the administrator when it ends (topic `GeoDataImport`). A set read a country at a time asks for the country:
-  one country a run, among those the data set has files for (its `countryCodes`: GeoNames' 124), and every GeoNames
-  country at once is not offered. An operator's file is uploaded (at most `maps@import-max-bytes`, refused before it is
+  notifies the administrator when it ends (topic `GeoDataImport`). A set read a country at a time asks for the country,
+  among those the data set has files for (its `countryCodes`: GeoNames' 124), or offers **Import every country**: after a
+  confirmation with an estimate (`everyCountryEstimate`), a queue of runs, one pending run a country with a country Geo
+  sharing a `queueId`, run one after another (each run starts the next when it ends, whatever its end), each its own run
+  and edition; a run holds one country's records while it loads, so the queue's peak memory is that of its largest
+  country (plans/Maps.md §6.3). A refusal every run would meet (the set disabled, its license, outside requests off) cancels
+  the waiting runs with its reason. **Imported** shows the queue's progress with **Cancel the rest** (`cancel#GeoDataImport`
+  with the `queueId`: the countries waiting are cancelled, the one running stops at its next step; a run with no word for
+  an hour is taken as abandoned and ended at once). An operator's file is uploaded (at most `maps@import-max-bytes`, refused before it is
   written when the import could not start) and kept under the administrator's own folder,
   `dbresource://moqui/maps/import/(userId)/`; an operator's file is read only from the caller's own folder there, from
   `runtime://import/` or from their own uploads. A completed import of an upload deletes the uploads of the scope's
@@ -303,11 +552,18 @@ file (5), then Census (10), then GeoNames (20).
   loads in batches of 2,000 codes, and only after a whole load end-dates what the new edition no longer has. A file with
   far fewer rows than the edition in use is refused unless forced. Rejected rows go to the run's error file. A failed or
   cancelled run leaves the edition in use as it was. The importer never changes a user-confirmed point, a record's own
-  location, a code made by hand or another source's rows.
+  location, a code made by hand or another source's rows. A first-level division (a state, a province) is found among
+  the country's divisions by its ISO 3166-2 code: GeoNames' first-level codes are FIPS 10-4 for most countries, crossed
+  to ISO by `moqui_lib::geo::admin1` (its `admin1_iso.tsv`, GeoNames joined with Wikidata's CC0 codes), so a city or a
+  second-level division of `CA.01` links to Mantle's `CAN_AB`; a division with no ISO code is matched by name, else
+  `{country}_A1_{code}` is made.
 - **Imported** lists each data set and country with its edition in use, its postal codes and points in use and its last
   run, with **Refresh** (that scope again; an operator's file is the one its last run read), **Cancel** (a run stops at
   its next step, retiring nothing) and **Remove** (`remove#GeoData`: the rows nothing refers to are deleted, the rest
-  end-dated; not offered for countries and divisions, whose rows are shared).
+  end-dated, a batch of Geo IDs at a time in its own transaction, so one stopped part way is finished by another; a
+  batch that fails is rolled back and named in the error while the rest go on; an import of the scope is refused while
+  it runs, by its mark on the data set, and an import that starts anyway stops it; not offered for countries and
+  divisions, whose rows are shared).
 - **Refresh all** runs the `GeoDataRefresh` ServiceJob now (`request#GeoDataRefresh`, also System › Health's refresh
   `maps.geodata.refresh`, offered to holders of `ADMIN_SETTINGS_MANAGE` and run only for those who also hold `MAPS_ADMIN`,
   `ADMIN`'s): each scope in use (one that ever completed a run and still has rows, whatever its last run) is imported
@@ -327,9 +583,9 @@ code) and a postal code, nothing else, and answers from the local Geo data with 
 the importer's own rules (`normalize#PostalCode`): leading zeros kept, a Canadian, British or Dutch code spaced as its
 country writes it, a US ZIP+4 read as its ZIP code. Each match carries the code's active representative point, never a
 user-confirmed point or a record's own location; its source, edition and attribution; its place names, which are aliases
-of one area (a code with several is `ambiguous`, and they are offered as choices, none chosen); and a broad extent around
-the point, which is not the area's boundary (sizing it from the Census ZCTA's land area, which the importer does not keep
-yet, is a later improvement). Puerto Rico, the US Virgin Islands, Guam, American Samoa and the Northern Mariana Islands
+of one area (a code with several is `ambiguous`, and they are offered as choices, none chosen); and an extent around the
+point, which is not the area's boundary: a square of the area's land area where the point's source gave it (a Census
+ZCTA's `ALAND`, kept as `GeoPointAssoc.landArea`; half its side between about 0.5 and 55 km), else a fixed box. Puerto Rico, the US Virgin Islands, Guam, American Samoa and the Northern Mariana Islands
 have US ZIP codes: a code of one of them not found under its own country is looked up among the US codes.
 
 Precision is said in words, never as a made-up radius:
@@ -348,20 +604,51 @@ was cancelled after them) and a Remove clear it. Every signed-in user may call i
 
 ## Tests
 
-The regression spec is `tools/test/MapsScreens.spec.js` (Browse in qvue and tui; LocalMap, a plain XML screen, once in
+The regression spec is `tools/test/MapsScreens.spec.js` (Browse in qvue and tui, its terminal's overlays and postal search; LocalMap, a plain XML screen, once in
 qvt for a writer and once in html for a user it refuses the record; the access rules, Save location, the profile
-rules); the configuration services' rules are `framework/test/MapsConfig.spec.js`, and the archives'
-(registering, the map-source transition's access, ranges, revocation and stale revisions) `framework/test/MapsSource.spec.js`,
-with the header's in Rust (`moqui-lib` `pmtiles_tests.rs`). Overlays and places: `framework/test/MapsOverlays.spec.js`
-(a file refused before it is kept, an upload kept with its bad feature counted, the overlay transition for the owner, a
-share holder, a non-holder and a revoked share, saved places), with the converter's rules in Rust (`moqui-lib`
-`geo/overlay_tests.rs`: geometry, CRS, caps, KML sanitizing, GPX); the geocoder: `framework/test/MapsGeocoder.spec.js`
+rules); the configuration services' rules are `framework/test/MapsConfig.spec.js` (with a record link resolved to the host
+app's route, else one of no app, and left out for a non-holder), and the archives'
+(registering, the map-source transition's access, ranges, revocation and stale revisions, and the tile transition's tile,
+304, 204, non-holder and stale revision) `framework/test/MapsSource.spec.js`, with the header's, the tile IDs', the
+directories' and the archive writer's in Rust (`moqui-lib` `pmtiles_tests.rs`) and the tile reader's (`moqui-tools`
+`maps_tiles_tests.rs`: gzip or plain by the client, a missing tile, `If-None-Match`, a changed archive, the cache's
+bound). Overlays and places: `framework/test/MapsOverlays.spec.js`
+(a file refused before it is kept, an upload kept with its bad feature counted, a delimited text and a binary WKB upload
+read, a GeoPackage refused, an edit saved by the owner beside its KML file and refused to another user, for a geometry
+that is not valid and for a stale version, the overlay transition for the owner, a
+share holder, a non-holder and a revoked share, saved places, and a file past `maps@max-features` offered simplifying and
+then cut into tiles beside it that its owner and a holder of its share read and a non-holder and a revoked share do not,
+`TILES_NOT_WRITABLE` for a reader, `TILES_RUNNING` while its run goes on, and a run that ended without saying so ended
+by Stop simplifying), with the converter's rules in Rust
+(`moqui-lib` `geo/overlay_tests.rs`: geometry, CRS, caps, KML sanitizing, GPX; `geo/overlay/formats_tests.rs`: each
+other format's reader, its CRS and axis order, and its malformed and oversized inputs: shared TopoJSON arcs, claimed WKB
+and shapefile counts, a zip that inflates too far, nested collections, a geometry of thousands of rings, the positions
+bound, code pages and CRS names) and the tiler's (`geo/tiles_tests.rs`:
+the budgets against a pathological file, a stop within a zoom, points, the poles and the antimeridian;
+`geo/simplify_tests.rs`, `geo/mvt_tests.rs`); the geocoder: `framework/test/MapsGeocoder.spec.js`
 (nothing sent untested or with outside requests off, the test's fixed address, the Census answer through `HttpFixtures`,
-a failure with nothing else asked, the dialog's reads sending nothing). The archive backends, local-only browsing and an installation
+a failure with nothing else asked, the rate and the requests a day, the dialog's reads sending nothing); a provider through
+this server: `framework/test/MapsProviderProxy.spec.js` (the test with the key and the recorded paths, the proxy's path in
+the configuration, the style and TileJSON rewritten, a tile with the key added, a path not recorded, outside requests off and
+a user not offered the profile refused); OGC services: `framework/test/MapsOgc.spec.js` (a DOCTYPE, an entity
+declaration and an unknown entity refused; WMS, WMTS and WFS capabilities recorded through `HttpFixtures`, a user@host
+address not the provider's; the effective configuration for a permitted user and not another; the proxy's OGC requests for
+a registered layer the caller may be offered and no other, by KVP and by a WMTS template; Add OGC layer's services), with the reader's
+rules in Rust (`moqui-lib` `geo/ogc_tests.rs`), `m-map`'s WMS, WMTS and WFS sources a page test, and the USGS topographic
+WMTS and NASA GIBS's WMS tested, added and asked for an image, the acceptance test `MapsOgcPublic`; Configuration refused
+to an app's own allow of `Maps.xml`: `MapsScreens`. The
+archive backends, local-only browsing and an installation
 without Mantle are the acceptance tests `MapsArchiveBackends`, `MapsLocalOnly` and `MapsFrameworkOnly`
-(`./moq accept framework --spec MapsArchiveBackends`). Geo data: the importer's rules are
+(`./moq accept framework --spec MapsArchiveBackends`), and a real Protomaps extract (a box of Florence, zooms 0 to 14, read
+by ranges from a recent daily build, about 3 MB) registered for both local layers and drawn through the map-source
+transition, its tiles' MVT layers checked, `MapsProtomapsExtract`. Geo data: the importer's rules are
 `framework/test/GeoDataImport.spec.js`, the postal lookup's `framework/test/MapsPostalLookup.spec.js`, and the Geo data
-screen and its Import `tools/test/MapsGeoData.spec.js`; the real US import, with its times and counts, is the acceptance
-test `GeoDataUsaImport` (`./moq accept framework --spec GeoDataUsaImport`).
-The acceptance walks are `MapsBrowseWalk` and `MapsDialogWalk` (browser, desktop and phone width) and
+screen and its Import `tools/test/MapsGeoData.spec.js`, with the parsers, the crosswalk and the land area in Rust
+(`moqui-lib` `geo/tests.rs`); the real US import, with its times and counts, is the acceptance test `GeoDataUsaImport`
+(`./moq accept framework --spec GeoDataUsaImport`), a queue of three GeoNames countries with the largest, Portugal, `GeoDataEveryCountry`, and a real
+import cancelled between batches and run again `GeoDataImportCancel`.
+m-map's feature selection (plain-text details, the feature nearest the center) and its editing helpers (the edited
+FeatureCollection, a keyboard shape, which overlays are editable) are a page test,
+`webroot/test/client/pages/WebrootMap.page.js`, a dashboard geomap's link into Maps `WebrootReport.page.js`, and the terminal's postal search and overlays `moqui-tui`
+`components/map_tests.rs`. The acceptance walks are `MapsBrowseWalk` and `MapsDialogWalk` (browser, desktop and phone width) and
 `MapsTerminalWalk`, with their fixture `MapsWalkFixtures`: `./moq accept tools --spec MapsBrowseWalk`.

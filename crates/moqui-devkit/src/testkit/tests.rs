@@ -1048,3 +1048,24 @@ feature("a secret attribute is null to a script, and a malformed selector throws
         "put back after cleanupSpec"
     );
 }
+
+#[test]
+fn sleep_pauses_the_spec_thread() {
+    let result = run(r#"
+feature("sleep pauses for its milliseconds", {
+    when() {
+        const started = Date.now()
+        sleep(60)
+        const waited = Date.now() - started
+        let refused = null
+        try { sleep(Infinity) } catch (e) { refused = String(e) }
+        return {waited, refused}
+    },
+    then({waited, refused}) {
+        waited >= 50
+        refused.includes("finite number")
+    },
+})
+"#);
+    assert_eq!(outcomes(&result), vec![("sleep pauses for its milliseconds".to_string(), "passed")], "{result:?}");
+}

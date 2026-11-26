@@ -10,7 +10,8 @@ its services and entities are members of `SYSTEM_APP`.
 Maps (`screen/Maps.xml`: Browse, Saved views, Preferences, Configuration and the local-map dialog LocalMap;
 [docs/tools/Maps.md](../../../../docs/tools/Maps.md)) has three groups in `data/MapsSecurityData.xml`: `MAPS_APP` (its
 root, for `MAPS_USERS` and `ADMIN`), `MAPS_DIALOG` (the local-map dialog and the adapter registry, for every user) and
-`MAPS_ADMIN` (Configuration, map archives and the Geo data importer, `ADMIN`'s). An app shows LocalMap under its own route by the
+`MAPS_ADMIN` (Configuration, map archives and the Geo data importer, `ADMIN`'s, asked as the user's own grant so an app's
+allow of `Maps.xml` does not reach it). An app shows LocalMap under its own route by the
 thin-wrapper rule ([The local-map dialog](../../../../docs/tools/Maps.md#the-local-map-dialog)).
 
 Another app may show the Dashboards screens under its own root, as BOSS Insights does
