@@ -339,6 +339,24 @@
         settings.keys = editorKeys;
         return { settings, workspaceKeys };
     };
+    // What Replace sends of a preview (replace#Files, 4.3): each file's chosen matches with the hash its preview read.
+    // A file the user may not write is left out, and one open in a tab with unsaved changes is refused here (the tab
+    // would lose its edit or the replace): save or close it, then preview again.
+    pure.replaceRequest = (preview, tabs) => {
+        const dirty = new Set((tabs || []).filter((tab) => pure.isDirty(tab)).map((tab) => tab.path));
+        const files = [];
+        const refused = [];
+        for (const file of (preview && preview.files) || []) {
+            const chosen = (file.matches || []).filter((hit) => hit.chosen !== false).map((hit) => hit.index);
+            if (!chosen.length || file.refused) continue;
+            if (dirty.has(file.path)) {
+                refused.push({ path: file.path, reason: "it has unsaved changes in its tab: save or close it, then preview again" });
+                continue;
+            }
+            files.push({ path: file.path, hash: file.hash, matches: chosen });
+        }
+        return { files, refused, count: files.reduce((sum, file) => sum + file.matches.length, 0) };
+    };
 
     // The unsaved drafts (a whole file each, by root and path) in IndexedDB, where a few large files do not fill the
     // origin's few MB of localStorage: store's API, each call a promise (set and drop answer whether they were written).
@@ -436,7 +454,8 @@
                 status: null, tab: "code", rail: "files", treeKey: 0, selected: null,
                 tabs: [], active: null, cursor: { line: 1, column: 1 }, lastReload: "", restartNeeded: false,
                 search: { query: "", regex: false, caseSensitive: false, pathFilter: "", results: [], running: false, truncated: false },
-                workspaceKeys: null,
+                // Replace across files (4.3): the replacement, the preview with what is chosen, and the last result
+                replace: { open: false, text: "", preview: null, running: false, result: null }, workspaceKeys: null,
                 diff: null, commitForm: { summary: "", body: "", amend: false, signOff: false, skipHooks: false, task: "" },
                 log: [], commitDetail: null, goto: { open: false, filter: "", files: [], loading: false, error: "" }, busy: "", schemas: {},
                 refs: { title: "", items: [], loading: false }, artifactGoto: { open: false, text: "", results: [], loading: false, error: "" },
@@ -1045,6 +1064,48 @@
                     pathFilter: this.search.pathFilter }).then((answer) => {
                     this.search.running = false; this.search.results = answer.results || []; this.search.truncated = !!answer.truncated;
                 }, (error) => { this.search.running = false; this.fail(error); });
+            },
+            // ---- replace across files (4.3): a preview, the matches chosen, then Replace through the save pipeline ----
+            replaceQuery() {
+                return { rootId: this.rootId, query: this.search.query, replacement: this.replace.text, regex: this.search.regex,
+                    caseSensitive: this.search.caseSensitive, pathFilter: this.search.pathFilter };
+            },
+            previewReplace() {
+                if (!this.search.query) return;
+                const replace = this.replace;
+                replace.running = true; replace.result = null;
+                // Replace sends what this preview showed, whatever is typed since
+                const query = this.replaceQuery();
+                this.post("replaceFiles", query).then((answer) => {
+                    replace.running = false;
+                    const files = (answer.files || []).map((file) => Object.assign(file, {
+                        matches: (file.matches || []).map((hit) => Object.assign(hit, { chosen: !file.refused })) }));
+                    replace.preview = { query, files, truncated: !!answer.truncated, matchCount: answer.matchCount || 0 };
+                }, (error) => { replace.running = false; this.fail(error); });
+            },
+            chooseFile(file, chosen) { for (const hit of file.matches) hit.chosen = chosen; },
+            applyReplace() {
+                const replace = this.replace;
+                const request = pure.replaceRequest(replace.preview, this.tabs);
+                if (!request.files.length) {
+                    replace.result = { replaced: [], refused: request.refused };
+                    this.note(moqui.l10n.localize("Nothing chosen to replace"), "warning");
+                    return;
+                }
+                this.$q.dialog({ title: "Replace " + request.count + " matches in " + request.files.length + " files?", cancel: true,
+                    message: moqui.l10n.localize("Each file is saved, reloaded and checked as Save does."), ok: { label: "Replace", color: "primary" } }).onOk(() => {
+                    replace.running = true;
+                    this.post("replaceFiles", Object.assign({}, replace.preview.query, { files: JSON.stringify(request.files) })).then((answer) => {
+                        replace.running = false; replace.preview = null;
+                        replace.result = { replaced: answer.replaced || [], refused: request.refused.concat(answer.refused || []) };
+                        // a replaced file's open tab has no unsaved text (those were refused): it reads the file again
+                        for (const done of replace.result.replaced) {
+                            const tab = this.tabs.find((item) => item.path === done.path);
+                            if (tab && !pure.isDirty(tab)) this.reloadTab(tab);
+                        }
+                        this.treeKey++; this.refreshStatus();
+                    }, (error) => { replace.running = false; this.fail(error); });
+                });
             },
             openGoto() {
                 this.goto = { open: true, filter: "", files: [], loading: true, error: "" };
@@ -1692,9 +1753,38 @@
           <q-checkbox dense size="xs" v-model="search.regex" label=".*"></q-checkbox>
           <q-checkbox dense size="xs" v-model="search.caseSensitive" label="Aa" class="q-ml-sm"></q-checkbox>
           <q-input dense borderless v-model="search.pathFilter" placeholder="in path" class="q-ml-sm col"></q-input>
+          <q-btn v-if="canWrite" dense flat round size="sm" icon="sym_o_find_replace" :color="replace.open ? 'primary' : undefined" :aria-label="t('Replace')"
+              @click="replace.open = !replace.open; replace.preview = null" id="DevReplaceToggle"><q-tooltip>{{ t('Replace across files') }}</q-tooltip></q-btn>
+        </div>
+        <div v-if="replace.open && canWrite" class="row items-center no-wrap q-gutter-x-xs" id="DevReplace">
+          <q-input dense outlined class="col" v-model="replace.text" :placeholder="t('Replace with')" @keyup.enter="previewReplace" id="DevReplaceText"></q-input>
+          <q-btn dense flat no-caps size="sm" :label="t('Preview')" :disable="!search.query" :loading="replace.running && !replace.preview" @click="previewReplace" id="DevReplacePreview"></q-btn>
+          <q-btn dense unelevated no-caps size="sm" color="primary" :label="t('Replace')" :disable="!replace.preview" :loading="replace.running && !!replace.preview"
+              @click="applyReplace" id="DevReplaceApply"></q-btn>
+        </div>
+        <div v-if="replace.result" class="text-caption q-pa-xs" id="DevReplaceResult">
+          <div>{{ replace.result.replaced.reduce((sum, done) => sum + done.count, 0) }} replaced in {{ replace.result.replaced.length }} files</div>
+          <div v-for="item in replace.result.refused" :key="item.path" class="text-warning">{{item.path}}: {{item.reason}}</div>
         </div>
         <q-linear-progress v-if="search.running" indeterminate></q-linear-progress>
-        <q-list dense class="col scroll" id="DevSearchResults">
+        <q-list v-if="replace.open && replace.preview" dense class="col scroll" id="DevReplaceFiles">
+          <q-item-label v-if="!replace.preview.files.length" caption class="q-pa-sm">{{ t('No matches') }}</q-item-label>
+          <template v-for="file in replace.preview.files" :key="file.path">
+            <q-item dense :data-path="file.path">
+              <q-item-section side><q-checkbox dense size="xs" :disable="!!file.refused" :model-value="file.matches.every(hit => hit.chosen)"
+                  @update:model-value="v => chooseFile(file, v)"></q-checkbox></q-item-section>
+              <q-item-section><q-item-label caption class="ellipsis">{{file.path}} · {{file.matches.length}}{{file.more ? '+' : ''}}</q-item-label>
+                <q-item-label v-if="file.refused" caption class="text-warning">{{file.refused}}</q-item-label></q-item-section>
+            </q-item>
+            <q-item v-for="hit in file.matches" :key="file.path + ':' + hit.index" dense clickable class="q-pl-lg" @click="openFile(file.path, hit.line)">
+              <q-item-section side><q-checkbox dense size="xs" :disable="!!file.refused" v-model="hit.chosen" @click.stop></q-checkbox></q-item-section>
+              <q-item-section><q-item-label caption class="ellipsis m-dev-mono">{{hit.line}}: {{hit.text}}</q-item-label>
+                <q-item-label class="ellipsis m-dev-mono">{{hit.after}}</q-item-label></q-item-section>
+            </q-item>
+          </template>
+          <q-item v-if="replace.preview.truncated"><q-item-section class="text-caption">{{ t('The first files and matches only') }}</q-item-section></q-item>
+        </q-list>
+        <q-list v-else dense class="col scroll" id="DevSearchResults">
           <q-item v-for="(hit, index) in search.results" :key="index" clickable @click="openFile(hit.path, hit.line)">
             <q-item-section><q-item-label caption>{{hit.path}}:{{hit.line}}</q-item-label><q-item-label class="ellipsis m-dev-mono">{{hit.text}}</q-item-label></q-item-section>
           </q-item>

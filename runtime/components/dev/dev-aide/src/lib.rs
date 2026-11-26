@@ -36,6 +36,7 @@ mod libraries;
 mod local_run;
 mod notify;
 mod patch;
+mod replace;
 mod repo;
 mod repos;
 pub mod roots;
@@ -66,6 +67,7 @@ fn register(registry: &mut NativeRegistry) -> Result<(), Error> {
     changeset::register(registry)?;
     docs::register(registry)?;
     editor::register(registry)?;
+    replace::register(registry)?;
     entities::register(registry)?;
     screens::register(registry)?;
     services::register(registry)?;

@@ -207,7 +207,7 @@ pub(crate) fn sha256(bytes: &[u8]) -> String {
 const BOM: &[u8] = b"\xEF\xBB\xBF";
 
 /// A file's bytes as an editor's text: the byte order mark taken off, `None` for bytes that are not UTF-8 text.
-fn decode(bytes: &[u8]) -> Option<(String, bool)> {
+pub(crate) fn decode(bytes: &[u8]) -> Option<(String, bool)> {
     if confine::is_binary(bytes) {
         return None;
     }
@@ -897,7 +897,7 @@ fn delete_path(
 
 /// The files of a root a search or Go to file reads: what git tracks and the untracked files it does not ignore, or a
 /// walk of a plain root that leaves out hidden directories and build output.
-fn root_files(context: &Context, root: &Root, limit: usize) -> Vec<String> {
+pub(crate) fn root_files(context: &Context, root: &Root, limit: usize) -> Vec<String> {
     if root.kind == RootKind::Git {
         if let Ok(out) = context.git().read(
             &root.path,

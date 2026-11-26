@@ -153,6 +153,32 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="truncated" type="Boolean"/>
         </out-parameters>
     </service>
+    <service verb="replace" noun="Files" type="rust" location="dev_aide::replace::replace_files" allow-remote="false">
+        <description>Replace across a root's files (4.3). With no files, the preview: each file a search finds (git grep
+            in a repository, a walk of a plain root), its matches with their lines before and after, its hash, and why
+            the user may not write it (refused: an upstream file while the lock is on, a read-only root), at most 200
+            files and 2000 matches. With files, the matches chosen in each replaced through the save pipeline (audited,
+            reloaded), each file on its own: one changed since its preview (its hash) or that may not be written is
+            refused and named, and the others are written.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="query" required="true" allow-html="any"/>
+            <parameter name="replacement" allow-html="any"><description>For a regular expression, $1 and ${name} are its groups.</description></parameter>
+            <parameter name="regex" type="Boolean"/>
+            <parameter name="caseSensitive" type="Boolean"/>
+            <parameter name="pathFilter"/>
+            <parameter name="files" type="Object"><description>[{path, hash, matches}]: each file's hash as the preview
+                read it and the indexes of the matches to replace; empty for the preview.</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="files" type="List"><description>The preview: {path, hash, matches [{index, line, column,
+                text, after}], more, refused}.</description></parameter>
+            <parameter name="matchCount" type="Integer"/>
+            <parameter name="truncated" type="Boolean"/>
+            <parameter name="replaced" type="List"><description>{path, count, hash, problems}</description></parameter>
+            <parameter name="refused" type="List"><description>{path, reason}</description></parameter>
+        </out-parameters>
+    </service>
     <service verb="get" noun="EditorSettings" type="rust" location="dev_aide::editor::get_editor_settings" allow-remote="false" read-only="true">
         <description>The user's editor settings (the DEV_AIDE_EDITOR preference, 5.1): font size, tab size, wrap, white
             space shown, the keymap, and each command's keys with its default.</description>

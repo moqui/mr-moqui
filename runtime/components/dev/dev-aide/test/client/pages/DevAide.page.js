@@ -363,3 +363,18 @@ test("the editor settings: the editor's rebound keys to m-code-editor, the Works
     assert.deepEqual(pure.editorSettingsOf(null).workspaceKeys, pure.WORKSPACE_KEYS);
 });
 
+test("Replace sends the chosen matches with each file's hash, and refuses a file with unsaved changes in a tab", () => {
+    const hit = (index, chosen) => ({ index, line: index + 1, chosen });
+    const preview = { files: [
+        { path: "a.xml", hash: "ha", matches: [hit(0, true), hit(1, false), hit(2, true)] },
+        { path: "b.xml", hash: "hb", matches: [hit(0, true)] },
+        { path: "c.xml", hash: "hc", matches: [hit(0, false)] },
+        { path: "up.xml", hash: "hu", refused: "upstream", matches: [hit(0, true)] }] };
+    const tabs = [{ path: "a.xml", text: "x", saved: "x" }, { path: "b.xml", text: "edited", saved: "x" }];
+    const request = pure.replaceRequest(preview, tabs);
+    assert.deepEqual(request.files, [{ path: "a.xml", hash: "ha", matches: [0, 2] }]);
+    assert.equal(request.count, 2);
+    assert.deepEqual(request.refused.map((item) => item.path), ["b.xml"]);
+    assert.ok(request.refused[0].reason.includes("unsaved"));
+    assert.deepEqual(pure.replaceRequest(null, tabs), { files: [], refused: [], count: 0 });
+});
