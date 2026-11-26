@@ -174,6 +174,17 @@ fn i64_of(value: u64) -> Value {
     Value::I64(i64::try_from(value).unwrap_or(i64::MAX))
 }
 
+/// The rows of `ids` by `objectId`: one id by an equality, so with `repositoryId` it is the whole primary key and the
+/// row is read by it (an IN list of one, padded, was read through another index of the table when Postgres reckoned
+/// the repository at one row, as for a repository grown since the table was analyzed: every object of the repository
+/// filtered for each object read); more by an `IN (...)` ([`in_values`]).
+fn id_condition(ids: &[ObjectId]) -> Condition {
+    match ids {
+        [id] => Condition::equals("objectId", Value::string(id.to_string())),
+        _ => Condition::is_in("objectId", in_values(ids)),
+    }
+}
+
 /// `ids` as the values of an `IN (...)`, padded with the last to one of [`IN_SIZES`].
 fn in_values(ids: &[ObjectId]) -> Vec<Value> {
     let mut values: Vec<Value> = ids.iter().map(|id| Value::string(id.to_string())).collect();
@@ -309,7 +320,7 @@ impl DbStore {
                 .entity
                 .find(GIT_OBJECT)?
                 .eq("repositoryId", Value::string(self.objects_id.as_ref()))
-                .condition(Condition::is_in("objectId", in_values(chunk)));
+                .condition(id_condition(chunk));
             for field in META_FIELDS {
                 find = find.select_field(field);
             }
@@ -645,7 +656,7 @@ impl DbStore {
         for chunk in ids.chunks(BATCH) {
             let condition = Condition::and(vec![
                 Condition::equals("repositoryId", Value::string(self.objects_id.as_ref())),
-                Condition::is_in("objectId", in_values(chunk)),
+                id_condition(chunk),
                 Condition::less("lastUpdatedStamp", stamp_value(cutoff)),
             ]);
             let statement = self.entity.with_entity(GIT_OBJECT, |definition, dialect, _| {
@@ -712,7 +723,7 @@ impl DbStore {
         for chunk in ids.chunks(BATCH) {
             let condition = Condition::and(vec![
                 Condition::equals("repositoryId", Value::string(self.objects_id.as_ref())),
-                Condition::is_in("objectId", in_values(chunk)),
+                id_condition(chunk),
             ]);
             let statement = self.entity.with_entity(GIT_OBJECT, |definition, dialect, _| {
                 moqui_db::sql::update(definition, dialect, &["deltaDepth"], Some(&condition))
@@ -951,7 +962,7 @@ impl DbStore {
         for chunk in ids.chunks(BATCH) {
             let condition = Condition::and(vec![
                 Condition::equals("repositoryId", Value::string(self.objects_id.as_ref())),
-                Condition::is_in("objectId", in_values(chunk)),
+                id_condition(chunk),
                 Condition::less("lastUpdatedStamp", stamp_value(before)),
             ]);
             let statement = self.entity.with_entity(GIT_OBJECT, |definition, dialect, _| {
@@ -1049,7 +1060,7 @@ impl GitStore for DbStore {
                 .entity
                 .find(GIT_OBJECT)?
                 .eq("repositoryId", Value::string(self.objects_id.as_ref()))
-                .condition(Condition::is_in("objectId", in_values(chunk)))
+                .condition(id_condition(chunk))
                 .select_field("objectId")
                 .list()?;
             for row in rows.iter() {

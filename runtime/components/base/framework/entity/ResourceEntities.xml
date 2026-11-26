@@ -197,11 +197,17 @@ along with this software (see the LICENSE.md file). If not, see
         <!-- GitRepository is in the transactional group, on another database: no foreign key, read separately. -->
         <relationship type="one-nofk" related="moqui.resource.GitRepository"/>
         <relationship type="one" related="moqui.resource.ContentBlob" short-alias="blob"/>
-        <relationship type="one" title="DeltaBase" related="moqui.resource.GitObject" short-alias="deltaBase">
+        <!-- Only the primary key starts with repositoryId, so a read of a repository's objects by id (repositoryId and
+            objectId, or objectId IN a list) always takes it. With another index leading with repositoryId, Postgres
+            took that one for a repository added or grown since the table was last analyzed, which it reckoned at one
+            row, and filtered every object of the repository for each read. So the delta base has no foreign key, whose
+            index would lead with repositoryId (on MySQL it must, in the primary key's order); gc#GitRepositories keeps
+            the base of every delta it keeps. -->
+        <relationship type="one-nofk" title="DeltaBase" related="moqui.resource.GitObject" short-alias="deltaBase">
             <key-map field-name="repositoryId"/><key-map field-name="deltaBaseId" related="objectId"/></relationship>
-        <index name="GIT_OBJ_KIND"><index-field name="repositoryId"/><index-field name="objectType"/>
+        <index name="GIT_OBJ_TYPE"><index-field name="objectType"/><index-field name="repositoryId"/>
             <index-field name="objectId"/></index>
-        <index name="GIT_OBJ_BASE"><index-field name="repositoryId"/><index-field name="deltaBaseId"/></index>
+        <index name="GIT_OBJ_DELTA_BASE"><index-field name="deltaBaseId"/><index-field name="repositoryId"/></index>
         <index name="GIT_OBJ_BLOB"><index-field name="blobId"/></index>
     </entity>
     <view-entity entity-name="GitObjectUsage" package="moqui.resource">

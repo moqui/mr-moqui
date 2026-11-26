@@ -1345,3 +1345,49 @@ fn gc_removes_a_dead_pushs_quarantine() {
     assert!(!dead.exists(), "the dead push's quarantine is removed");
     assert!(own.exists(), "this process's is kept");
 }
+
+/// A read of one object is an equality on both columns of the primary key, and no other index of `GitObject` (nor a
+/// foreign key's) leads with `repositoryId`: with one that did, Postgres read a repository added or grown since the
+/// table was analyzed through that index, reckoning it at one row, and filtered every object of the repository for
+/// each object read (a commit of 2,001 files took 10 s, a listing of them 14 s).
+#[test]
+fn an_object_is_read_by_its_primary_key() {
+    let tape = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let entity = moqui_core::testing::open_with_tape(std::sync::Arc::clone(&tape));
+    entity
+        .with_entity(super::db::GIT_OBJECT, |definition, _, _| {
+            for index in &definition.indexes {
+                assert_ne!(
+                    index.fields.first().map(String::as_str),
+                    Some("repositoryId"),
+                    "{}",
+                    index.name
+                );
+            }
+            for relationship in definition
+                .relationships
+                .iter()
+                .filter(|rel| rel.relationship_type == "one")
+            {
+                let first = relationship.key_pairs.first().map(|(field, _)| field.as_str());
+                assert_ne!(
+                    first,
+                    Some("repositoryId"),
+                    "the foreign key to {}",
+                    relationship.related
+                );
+            }
+            Ok(())
+        })
+        .unwrap();
+    let store = super::db::DbStore::new(entity, "code", super::db::object_cache());
+    let id = gix::ObjectId::from_hex(b"8ab686eafeb1f44702738c8b0f24f2567c36da6d").unwrap();
+    assert_eq!(store.object_size(&id).unwrap(), None);
+    let statements = moqui_lib::sync::lock(&tape).clone();
+    let read = statements
+        .iter()
+        .find(|sql| sql.contains("git_object") && sql.starts_with("SELECT"))
+        .expect("a read of the object");
+    assert!(read.contains(r#""object_id" = ?"#), "{read}");
+    assert!(!read.contains(" IN ("), "{read}");
+}
