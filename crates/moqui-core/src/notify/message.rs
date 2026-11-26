@@ -677,10 +677,6 @@ fn persist_rows(
     .map_err(Error::from)
 }
 
-/// What a send does once its recipients, title and link are known: publish to the sockets, email and push, and with no
-/// transaction in place write the rows first. Built in [`NotificationMessage::send`] from the topic, the user settings
-/// and the recipients read then, in the sender's transaction, so a setting the sender just changed counts; done at
-/// once, or at the sender's commit.
 /// What [`Delivery::deliver`] did once the rows were written.
 struct Delivered {
     email_message_ids: HashMap<String, String>,
@@ -688,6 +684,10 @@ struct Delivered {
     publish_error: Option<Error>,
 }
 
+/// What a send does once its recipients, title and link are known: publish to the sockets, email and push, and with no
+/// transaction in place write the rows first. Built in [`NotificationMessage::send`] from the topic, the user settings
+/// and the recipients read then, in the sender's transaction, so a setting the sender just changed counts; done at
+/// once, or at the sender's commit.
 struct Delivery {
     topic_name: String,
     /// The `NotificationMessage` row still to write: a persisted message sent with no transaction in place.
@@ -760,7 +760,10 @@ impl Delivery {
     }
 }
 
-/// The transaction a send waits for: the default group's, or the notification group's, when one is in place.
+/// The transaction a send joins, if any: the default group's or the notification group's. The rows are written through
+/// the notification group's manager (`UseOrBegin`), so they roll back with the caller only when that group shares the
+/// caller's transaction, as every linked group does (`link_groups`); a notification group of its own, apart from a
+/// caller in the default group, commits the rows at once, while delivery still waits for the caller's commit.
 fn open_transaction(facade: &EntityFacade) -> Option<TransactionManager> {
     [facade.default_transactions(), facade.transactions_for(MESSAGE)]
         .into_iter()
