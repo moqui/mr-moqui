@@ -695,7 +695,8 @@ fn send_counts(factory: &Arc<ExecutionContextFactory>, user_id: &str) {
     let _cleanup = super::pool::WorkCleanup::new(Some(Arc::clone(factory)));
     let outcome = catch_unwind(AssertUnwindSafe(|| -> Result<(), Error> {
         let ctx = factory.new_context();
-        let _entered = ctx.enter();
+        // the sender's thread runs none of an inline factory's queued work: that is its callers' to drain
+        let _entered = ctx.enter_background();
         let _authz = ctx.disable_authz();
         use_user_locale(user_id);
         let Some(counts) = shell_counts(user_id) else {
