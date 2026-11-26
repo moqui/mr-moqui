@@ -15,6 +15,10 @@
 //! Runs the Tauri build steps: the config, the icons and the embedded assets for tauri::generate_context!, the Android
 //! package name tauri::mobile_entry_point binds to, and the app manifest of the commands.
 //!
+//! The client settings are `client-conf.xml`, or the file `MOQUI_CLIENT_CONF` names (an absolute path, or one relative to
+//! this crate), so a build of one app (its own `start-path`) needs no change to a tracked file: `src/lib.rs` embeds the
+//! file `MOQUI_CLIENT_CONF_FILE` names.
+//!
 //! The assets are the client's shell as `./moq android` stages it (`target/mobile-shell`, `frontendDist`); a build
 //! without it (`cargo test` on the desktop) gets a placeholder page, so the crate still compiles, and says so.
 //!
@@ -86,7 +90,14 @@ const COMMANDS: &[&str] = &[
 fn main() {
     let staged = Path::new("../../target/mobile-shell");
     println!("cargo:rerun-if-changed=../../target/mobile-shell");
-    println!("cargo:rerun-if-changed=client-conf.xml");
+    println!("cargo:rerun-if-env-changed=MOQUI_CLIENT_CONF");
+    let conf = std::env::var("MOQUI_CLIENT_CONF")
+        .ok()
+        .filter(|path| !path.trim().is_empty());
+    let conf = Path::new(env!("CARGO_MANIFEST_DIR")).join(conf.as_deref().unwrap_or("client-conf.xml").trim());
+    assert!(conf.is_file(), "MOQUI_CLIENT_CONF: no file {}", conf.display());
+    println!("cargo:rerun-if-changed={}", conf.display());
+    println!("cargo:rustc-env=MOQUI_CLIENT_CONF_FILE={}", conf.display());
     if !staged.join("shell/index.html").exists() {
         println!(
             "cargo:warning=the client's shell is not staged (./moq android stages it): a placeholder page instead"

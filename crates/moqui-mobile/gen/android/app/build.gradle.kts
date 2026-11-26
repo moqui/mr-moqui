@@ -27,6 +27,15 @@ val tauriProperties = Properties().apply {
 // MOQUI_ANDROID_KEY_PASSWORD (the store's password when not set). Without a keystore the release build is unsigned.
 val releaseKeystore = System.getenv("MOQUI_ANDROID_KEYSTORE")?.takeIf { it.isNotBlank() }
 
+// Another app from the same code, installed beside this one (crates/moqui-mobile/README.md "Another app"):
+// MOQUI_ANDROID_APP_ID its application id, MOQUI_ANDROID_APP_LABEL its name under the icon, and MOQUI_ANDROID_RES a res
+// folder whose files take the place of this app's (mipmap-*/ic_launcher*.png: its icon). The Kotlin package and the
+// Tauri identifier stay org.moqui.mobile.
+fun buildEnv(name: String) = System.getenv(name)?.takeIf { it.isNotBlank() }
+val appId = buildEnv("MOQUI_ANDROID_APP_ID") ?: "org.moqui.mobile"
+val appLabel = buildEnv("MOQUI_ANDROID_APP_LABEL")
+val appRes = buildEnv("MOQUI_ANDROID_RES")
+
 android {
     if (releaseKeystore != null) {
         signingConfigs {
@@ -43,7 +52,9 @@ android {
     namespace = "org.moqui.mobile"
     defaultConfig {
         manifestPlaceholders["usesCleartextTraffic"] = "false"
-        applicationId = "org.moqui.mobile"
+        manifestPlaceholders["appLabel"] = appLabel ?: "@string/app_name"
+        manifestPlaceholders["activityLabel"] = appLabel ?: "@string/main_activity_title"
+        applicationId = appId
         minSdk = 26
         targetSdk = 37
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
@@ -55,6 +66,11 @@ android {
     }
     if (fcm) {
         sourceSets.getByName("main").java.srcDir("src/fcm/java")
+    }
+    // a build type's resources take the place of main's of the same name
+    if (appRes != null) {
+        sourceSets.getByName("debug").res.srcDir(appRes)
+        sourceSets.getByName("release").res.srcDir(appRes)
     }
     buildTypes {
         getByName("debug") {

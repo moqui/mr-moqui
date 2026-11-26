@@ -14,7 +14,7 @@
 
 use tauri::Url;
 
-use super::{goes, nonce_script, own_host, server_path, Goes, PageState};
+use super::{goes, is_start, nonce_script, own_host, server_path, FreshLoad, Goes, PageState};
 
 const SHELL: &str = "http://moqui-shell.localhost";
 const APP: &str = "http://moqui-app.localhost";
@@ -200,4 +200,35 @@ fn the_document_of_a_server_page_opened_is_asked_for_with_its_account() {
     page.unbind_app(None);
     page.navigating(Some(&url("http://moqui-app.localhost/qapps/system")));
     assert_eq!(page.account(Some("a1")), None);
+}
+
+/// A fresh navigation's first page load on its origin clears the history, once; a later navigation that adds to the
+/// history cancels it.
+#[test]
+fn a_fresh_navigation_clears_the_history_once_at_its_first_load() {
+    let fresh = FreshLoad::default();
+    let start = url(&format!("{APP}/qapps/feed"));
+    let home = url(&format!("{APP}/qapps/feed/Home"));
+    assert!(!fresh.loaded(&start));
+    fresh.navigating(Some(&start));
+    // the shell going is not the start page coming
+    assert!(!fresh.loaded(&url(&format!("{SHELL}/"))));
+    // a redirect's page, or the page it goes to: the first one
+    assert!(fresh.loaded(&home));
+    assert!(!fresh.loaded(&home));
+    fresh.navigating(Some(&start));
+    fresh.navigating(None);
+    assert!(!fresh.loaded(&start));
+}
+
+#[test]
+fn the_start_path_is_matched_as_the_shell_opens_it() {
+    let start = Some("/apps/feed");
+    assert!(is_start("/qapps/feed", start));
+    assert!(is_start("/qapps/feed/?tab=new", start));
+    assert!(is_start("/apps/feed", Some("/qapps/feed")));
+    assert!(!is_start("/qapps/feed/Item", start));
+    assert!(!is_start("/qapps/feeds", start));
+    assert!(!is_start("/qapps/appsfeed", Some("/appsfeed")));
+    assert!(!is_start("/qapps/feed", None));
 }

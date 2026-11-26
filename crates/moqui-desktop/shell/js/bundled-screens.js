@@ -1332,6 +1332,13 @@ module.exports = {
         // the server out of reach: the start's answers came from the store, or one since (moqui.connection)
         isOffline() { return !!(moqui.connection && moqui.connection.offline) || (this.offline && this.socketState !== 'open'); },
         // the comms app's path under basePath (BasicComms, or an app's own Comms)
+        // the build's start screen (<client-conf start-path>): the home in place of the chat panel and the apps
+        startPath() { return String((this.state && this.state.startPath) || ''); },
+        // the start screen is shown here (a bundled one) with nothing before it: Back leaves the app
+        atStart() {
+            const start = this.startPath && !this.backStack.length ? this.route(this.startPath) : null;
+            return !!(start && this.view === start.view);
+        },
         commsRel() { return String(this.commsPath || '/apps/BasicComms').replace(/^\/apps\/?/, ''); },
         commsLink() { return this.linkBasePath + '/' + this.commsRel; },
         currentPath() { return this.basePath + (this.currentPathList.length ? '/' + this.currentPathList.join('/') : ''); },
@@ -1517,7 +1524,11 @@ module.exports = {
             if (previous && this.route(previous)) this.setUrl(previous, null, null, false);
             else this.goHome();
         },
-        goHome() { this.view = null; this.currentPathList = []; this.currentParameters = {}; this.backStack = []; this.activeContainers = {}; },
+        // the home: the chat panel, or the build's start screen, in place or as the server's page
+        goHome() {
+            this.view = null; this.currentPathList = []; this.currentParameters = {}; this.backStack = []; this.activeContainers = {};
+            if (this.startPath) this.setUrl(this.startPath, null, null, false);
+        },
         goPreviousScreen() { this.historyBack(); },
         // a path of the screens (/apps/...) as the server's page (/qapps/...)
         getLinkPath(path) { return String(path || '').replace(/^\/apps(\/|$)/, this.linkBasePath + '$1'); },
@@ -1529,7 +1540,12 @@ module.exports = {
         loadContainer(id, url) { const comp = this.activeContainers[id]; if (comp) comp.load(url); },
         hideContainer(id) { const comp = this.activeContainers[id]; if (comp && comp.hide) comp.hide(); },
         // the host's link to a comms screen (an OS mailto:, a notification): shown here (shell.js takeOpen)
-        openPathFromHost(path) { this.setUrl(path); },
+        // With a bundled start screen and nothing shown yet (a cold start from a link), the start screen goes under the
+        // link, so Back goes to it and then leaves the app.
+        openPathFromHost(path) {
+            if (this.startPath && !this.view && path !== this.startPath && this.route(this.startPath)) this.backStack = [this.startPath];
+            this.setUrl(path);
+        },
         // the call this window is in (moqui.call): an account switch, an added account or a sign-out loads the shell again,
         // which would drop it, so it is confirmed and left first
         inCall() { return !!(moqui.call && moqui.call.state && moqui.call.state.current); },
@@ -1679,9 +1695,14 @@ module.exports = {
     },
     mounted() {
         // Back with no layer open goes back in the shell's history, and at the home answers that it did nothing (so
-        // Android's back leaves the app there)
+        // Android's back leaves the app there). With a start screen, the home is that screen: from anywhere else Back
+        // goes back towards it, never to the chat panel or the apps.
         if (moqui.back) {
-            moqui.back.base = () => { if (!this.view) return false; this.historyBack(); return true; };
+            moqui.back.base = () => {
+                if (this.startPath ? this.atStart : !this.view) return false;
+                this.historyBack();
+                return true;
+            };
             // the drawer over the page (a narrow screen) is a layer too
             this.backOff = moqui.back.track(this, () => this.drawer && this.$q.screen.lt.md, () => { this.drawer = false; });
         }
@@ -1777,7 +1798,7 @@ module.exports = {
                                 "aria-label": _ctx.t('Menu'),
                                 onClick: $event => (_ctx.drawer = !_ctx.drawer)
                               }, null, 8, ["aria-label", "onClick"]),
-                              (_ctx.view)
+                              (_ctx.view && !_ctx.atStart)
                                 ? (_openBlock(), _createBlock(_component_q_btn, {
                                     key: 0,
                                     flat: "",
@@ -2260,69 +2281,73 @@ module.exports = {
                                     _createVNode(_component_q_separator, { spaced: "" })
                                   ], 64))
                                 : _createCommentVNode("", true),
-                              _createVNode(_component_q_item_label, { header: "" }, {
-                                default: _withCtx(() => [
-                                  _createTextVNode(_toDisplayString(_ctx.t('Applications')), 1)
-                                ]),
-                                _: 1
-                              }),
-                              (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.apps, (app) => {
-                                return (_openBlock(), _createBlock(_component_q_item, {
-                                  key: app.name,
-                                  clickable: "",
-                                  onClick: $event => (_ctx.setUrl(app.path))
-                                }, {
-                                  default: _withCtx(() => [
-                                    _createVNode(_component_q_item_section, { avatar: "" }, {
+                              (!_ctx.startPath)
+                                ? (_openBlock(), _createElementBlock(_Fragment, { key: 1 }, [
+                                    _createVNode(_component_q_item_label, { header: "" }, {
                                       default: _withCtx(() => [
-                                        (app.imageType === 'icon' && app.image)
-                                          ? (_openBlock(), _createBlock(_component_m_menu_icon, {
-                                              key: 0,
-                                              name: app.image
-                                            }, null, 8, ["name"]))
-                                          : (_openBlock(), _createBlock(_component_q_icon, {
-                                              key: 1,
-                                              name: "sym_o_apps"
-                                            }))
-                                      ]),
-                                      _: 2
-                                    }, 1024),
-                                    _createVNode(_component_q_item_section, null, {
-                                      default: _withCtx(() => [
-                                        _createTextVNode(_toDisplayString(app.title || app.name), 1)
-                                      ]),
-                                      _: 2
-                                    }, 1024),
-                                    _createVNode(_component_q_item_section, { side: "" }, {
-                                      default: _withCtx(() => [
-                                        _createVNode(_component_q_icon, {
-                                          name: "sym_o_open_in_new",
-                                          size: "xs"
-                                        })
+                                        _createTextVNode(_toDisplayString(_ctx.t('Applications')), 1)
                                       ]),
                                       _: 1
-                                    })
-                                  ]),
-                                  _: 2
-                                }, 1032, ["onClick"]))
-                              }), 128)),
-                              (!_ctx.apps.length)
-                                ? (_openBlock(), _createBlock(_component_q_item, { key: 1 }, {
-                                    default: _withCtx(() => [
-                                      _createVNode(_component_q_item_section, null, {
+                                    }),
+                                    (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.apps, (app) => {
+                                      return (_openBlock(), _createBlock(_component_q_item, {
+                                        key: app.name,
+                                        clickable: "",
+                                        onClick: $event => (_ctx.setUrl(app.path))
+                                      }, {
                                         default: _withCtx(() => [
-                                          _createVNode(_component_q_item_label, { caption: "" }, {
+                                          _createVNode(_component_q_item_section, { avatar: "" }, {
                                             default: _withCtx(() => [
-                                              _createTextVNode(_toDisplayString(_ctx.offline ? _ctx.t('The apps show once the server is reached.') : _ctx.t('No applications')), 1)
+                                              (app.imageType === 'icon' && app.image)
+                                                ? (_openBlock(), _createBlock(_component_m_menu_icon, {
+                                                    key: 0,
+                                                    name: app.image
+                                                  }, null, 8, ["name"]))
+                                                : (_openBlock(), _createBlock(_component_q_icon, {
+                                                    key: 1,
+                                                    name: "sym_o_apps"
+                                                  }))
+                                            ]),
+                                            _: 2
+                                          }, 1024),
+                                          _createVNode(_component_q_item_section, null, {
+                                            default: _withCtx(() => [
+                                              _createTextVNode(_toDisplayString(app.title || app.name), 1)
+                                            ]),
+                                            _: 2
+                                          }, 1024),
+                                          _createVNode(_component_q_item_section, { side: "" }, {
+                                            default: _withCtx(() => [
+                                              _createVNode(_component_q_icon, {
+                                                name: "sym_o_open_in_new",
+                                                size: "xs"
+                                              })
                                             ]),
                                             _: 1
                                           })
                                         ]),
-                                        _: 1
-                                      })
-                                    ]),
-                                    _: 1
-                                  }))
+                                        _: 2
+                                      }, 1032, ["onClick"]))
+                                    }), 128)),
+                                    (!_ctx.apps.length)
+                                      ? (_openBlock(), _createBlock(_component_q_item, { key: 0 }, {
+                                          default: _withCtx(() => [
+                                            _createVNode(_component_q_item_section, null, {
+                                              default: _withCtx(() => [
+                                                _createVNode(_component_q_item_label, { caption: "" }, {
+                                                  default: _withCtx(() => [
+                                                    _createTextVNode(_toDisplayString(_ctx.offline ? _ctx.t('The apps show once the server is reached.') : _ctx.t('No applications')), 1)
+                                                  ]),
+                                                  _: 1
+                                                })
+                                              ]),
+                                              _: 1
+                                            })
+                                          ]),
+                                          _: 1
+                                        }))
+                                      : _createCommentVNode("", true)
+                                  ], 64))
                                 : _createCommentVNode("", true)
                             ]),
                             _: 1
@@ -2779,18 +2804,23 @@ module.exports = {
                                 class: "m-shell-home"
                               }, {
                                 default: _withCtx(() => [
-                                  _createElementVNode("div", { class: "m-shell-chat" }, [
-                                    (_ctx.chatPanel)
-                                      ? (_openBlock(), _createBlock(_resolveDynamicComponent(_ctx.chatPanel), {
-                                          key: 0,
-                                          home: "",
-                                          onRoom: $event => (_ctx.homeRoom = $event)
-                                        }, null, 40, ["onRoom"]))
-                                      : (_openBlock(), _createElementBlock("div", {
-                                          key: 1,
-                                          class: "q-pa-md m-muted"
-                                        }, _toDisplayString(_ctx.t('Chat is not available on this server.')), 1))
-                                  ])
+                                  (!_ctx.startPath)
+                                    ? (_openBlock(), _createElementBlock("div", {
+                                        key: 0,
+                                        class: "m-shell-chat"
+                                      }, [
+                                        (_ctx.chatPanel)
+                                          ? (_openBlock(), _createBlock(_resolveDynamicComponent(_ctx.chatPanel), {
+                                              key: 0,
+                                              home: "",
+                                              onRoom: $event => (_ctx.homeRoom = $event)
+                                            }, null, 40, ["onRoom"]))
+                                          : (_openBlock(), _createElementBlock("div", {
+                                              key: 1,
+                                              class: "q-pa-md m-muted"
+                                            }, _toDisplayString(_ctx.t('Chat is not available on this server.')), 1))
+                                      ]))
+                                    : _createCommentVNode("", true)
                                 ]),
                                 _: 1
                               }))

@@ -29,7 +29,7 @@ along with this software (see the LICENSE.md file). If not, see
     <q-header v-show="!(homeRoom && !view && $q.screen.lt.md)" elevated class="bg-primary text-white">
         <q-toolbar>
             <q-btn flat round dense icon="sym_o_menu" :aria-label="t('Menu')" @click="drawer = !drawer"></q-btn>
-            <q-btn v-if="view" flat round dense icon="sym_o_arrow_back" :aria-label="t('Back')" @click="goBack"><q-tooltip>{{t('Back')}}</q-tooltip></q-btn>
+            <q-btn v-if="view && !atStart" flat round dense icon="sym_o_arrow_back" :aria-label="t('Back')" @click="goBack"><q-tooltip>{{t('Back')}}</q-tooltip></q-btn>
             <q-toolbar-title class="ellipsis">{{viewTitle ? viewTitle + ' · ' + serverName : serverName}}</q-toolbar-title>
             <q-chip v-if="isOffline" dense square color="warning" text-color="black" icon="sym_o_cloud_off" class="m-shell-offline">{{t('Offline: showing what was last seen')}}
                 <q-tooltip>{{shared ? t('A shared device keeps only the recent rooms and mail for offline use.') : t('What you send waits here and goes when the server can be reached.')}}</q-tooltip></q-chip>
@@ -107,6 +107,8 @@ along with this software (see the LICENSE.md file). If not, see
                 </q-item>
                 <q-separator spaced></q-separator>
             </template>
+            <!-- a build with a start screen (state.startPath) is that one app: no list of the others -->
+            <template v-if="!startPath">
             <q-item-label header>{{t('Applications')}}</q-item-label>
             <q-item v-for="app in apps" :key="app.name" clickable @click="setUrl(app.path)">
                 <q-item-section avatar>
@@ -119,6 +121,7 @@ along with this software (see the LICENSE.md file). If not, see
             <q-item v-if="!apps.length">
                 <q-item-section><q-item-label caption>{{offline ? t('The apps show once the server is reached.') : t('No applications')}}</q-item-label></q-item-section>
             </q-item>
+            </template>
         </q-list>
     </q-drawer>
     <q-dialog v-model="devicesOpen">
@@ -217,7 +220,7 @@ along with this software (see the LICENSE.md file). If not, see
             <component v-if="viewComponent" ref="view" :is="viewComponent" :key="view"></component>
         </q-page>
         <q-page v-else class="m-shell-home">
-            <div class="m-shell-chat">
+            <div v-if="!startPath" class="m-shell-chat">
                 <component v-if="chatPanel" :is="chatPanel" home @room="homeRoom = $event"></component>
                 <div v-else class="q-pa-md m-muted">{{t('Chat is not available on this server.')}}</div>
             </div>
@@ -371,6 +374,13 @@ module.exports = {
         // the server out of reach: the start's answers came from the store, or one since (moqui.connection)
         isOffline() { return !!(moqui.connection && moqui.connection.offline) || (this.offline && this.socketState !== 'open'); },
         // the comms app's path under basePath (BasicComms, or an app's own Comms)
+        // the build's start screen (<client-conf start-path>): the home in place of the chat panel and the apps
+        startPath() { return String((this.state && this.state.startPath) || ''); },
+        // the start screen is shown here (a bundled one) with nothing before it: Back leaves the app
+        atStart() {
+            const start = this.startPath && !this.backStack.length ? this.route(this.startPath) : null;
+            return !!(start && this.view === start.view);
+        },
         commsRel() { return String(this.commsPath || '/apps/BasicComms').replace(/^\/apps\/?/, ''); },
         commsLink() { return this.linkBasePath + '/' + this.commsRel; },
         currentPath() { return this.basePath + (this.currentPathList.length ? '/' + this.currentPathList.join('/') : ''); },
@@ -556,7 +566,11 @@ module.exports = {
             if (previous && this.route(previous)) this.setUrl(previous, null, null, false);
             else this.goHome();
         },
-        goHome() { this.view = null; this.currentPathList = []; this.currentParameters = {}; this.backStack = []; this.activeContainers = {}; },
+        // the home: the chat panel, or the build's start screen, in place or as the server's page
+        goHome() {
+            this.view = null; this.currentPathList = []; this.currentParameters = {}; this.backStack = []; this.activeContainers = {};
+            if (this.startPath) this.setUrl(this.startPath, null, null, false);
+        },
         goPreviousScreen() { this.historyBack(); },
         // a path of the screens (/apps/...) as the server's page (/qapps/...)
         getLinkPath(path) { return String(path || '').replace(/^\/apps(\/|$)/, this.linkBasePath + '$1'); },
@@ -568,7 +582,12 @@ module.exports = {
         loadContainer(id, url) { const comp = this.activeContainers[id]; if (comp) comp.load(url); },
         hideContainer(id) { const comp = this.activeContainers[id]; if (comp && comp.hide) comp.hide(); },
         // the host's link to a comms screen (an OS mailto:, a notification): shown here (shell.js takeOpen)
-        openPathFromHost(path) { this.setUrl(path); },
+        // With a bundled start screen and nothing shown yet (a cold start from a link), the start screen goes under the
+        // link, so Back goes to it and then leaves the app.
+        openPathFromHost(path) {
+            if (this.startPath && !this.view && path !== this.startPath && this.route(this.startPath)) this.backStack = [this.startPath];
+            this.setUrl(path);
+        },
         // the call this window is in (moqui.call): an account switch, an added account or a sign-out loads the shell again,
         // which would drop it, so it is confirmed and left first
         inCall() { return !!(moqui.call && moqui.call.state && moqui.call.state.current); },
@@ -718,9 +737,14 @@ module.exports = {
     },
     mounted() {
         // Back with no layer open goes back in the shell's history, and at the home answers that it did nothing (so
-        // Android's back leaves the app there)
+        // Android's back leaves the app there). With a start screen, the home is that screen: from anywhere else Back
+        // goes back towards it, never to the chat panel or the apps.
         if (moqui.back) {
-            moqui.back.base = () => { if (!this.view) return false; this.historyBack(); return true; };
+            moqui.back.base = () => {
+                if (this.startPath ? this.atStart : !this.view) return false;
+                this.historyBack();
+                return true;
+            };
             // the drawer over the page (a narrow screen) is a layer too
             this.backOff = moqui.back.track(this, () => this.drawer && this.$q.screen.lt.md, () => { this.drawer = false; });
         }

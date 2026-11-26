@@ -21,7 +21,8 @@ sent when the server can be reached. How it works on Android is [docs/ui/Mobile-
 - **The shell** is the desktop's (`crates/moqui-desktop/shell`), staged by `./moq android` into
   `target/mobile-shell` and embedded as the app's Tauri assets (`frontendDist`). A build without it (`cargo test`)
   gets a placeholder page.
-- **`client-conf.xml`**: the build's `<client-conf>`, read at build time.
+- **`client-conf.xml`**: the build's `<client-conf>`, read at build time. `MOQUI_CLIENT_CONF` names another file
+  (absolute, or relative to this crate), so a build can use its own conf with no change to a tracked file.
 - **The version** is this crate's (`Cargo.toml`), which `./moq android` passes to the Tauri CLI; release signing and
   Google Play are in [Build-Test](../../docs/Build-Test.md#release-builds-and-google-play).
 - **Tauri** 3.0.0-alpha.6, the desktop app's, on `tauri-runtime-wry`. Its Linux backend is GTK3 (gtk 0.18,
@@ -61,6 +62,34 @@ Needs the Android SDK, a JDK 17 or later, the Tauri CLI of the desktop app and t
 adb reverse tcp:8080 tcp:8080                 # the loopback HTTP server from Build-Test as the app's http://localhost:8080
 adb logcat -s moqui-mobile                    # the app's log
 ```
+
+## Another app
+
+One build can open one app as its home: `start-path` in the build's `<client-conf>`
+([Desktop-Client](../../docs/ui/Desktop-Client.md#device-modes-and-client-conf)). A second APK, with its own package id,
+name and icon, installs beside the main app. Set these when you build:
+
+| Variable | What |
+|---|---|
+| `MOQUI_CLIENT_CONF` | the build's client-conf file, with `start-path` (for example `/apps/feed`) |
+| `MOQUI_ANDROID_APP_ID` | the Android `applicationId` (default `org.moqui.mobile`) |
+| `MOQUI_ANDROID_APP_LABEL` | the name under the icon and in the task list (default the `app_name` string) |
+| `MOQUI_ANDROID_RES` | an Android `res` directory that overrides the main one, for the launcher icon (`mipmap-*/ic_launcher*`) |
+
+```sh
+cat > ~/feed-conf.xml <<'XML'
+<client-conf device-mode="choose" start-path="/apps/feed"/>
+XML
+MOQUI_CLIENT_CONF=~/feed-conf.xml MOQUI_ANDROID_APP_ID=org.example.feed MOQUI_ANDROID_APP_LABEL=Feed \
+  MOQUI_ANDROID_RES=$HOME/feed-res ./moq android build --release
+```
+
+Do not change the Tauri `identifier`: the Kotlin package and the Rust glue use `org.moqui.mobile`. Limits:
+
+- Both apps take the `org.moqui.mobile:` links (SSO, rooms, calls), so Android can ask which app opens one.
+- Native push needs the new package id in `google-services.json`. Push registration still names `org.moqui.mobile`.
+- `./moq android dev` starts `org.moqui.mobile`, so use `build` and `adb install` for the other app.
+- The start screen is the whole app: the shell shows no account menu. The server's page must offer sign-out.
 
 ## Test
 
