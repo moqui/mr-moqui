@@ -274,6 +274,9 @@ feature("a mounted dashboard reads the mount's links, policy and fixed variable;
         tools.errors == ""
         toolsText.includes('"definition":"/apps/dashboards/Definition"')
         toolsText.includes('"alertRule":"/apps/dashboards/AlertRule"')
+        // a geomap's link into Maps only for a viewer whose own grants open Maps (an administrator here, not the mount's user)
+        toolsText.includes('"maps":"/apps/maps/Browse"')
+        !mounted.includes('"maps":')
         edit.location.includes("/apps/dashboards/Definition")
         !toolsText.includes("/forged")
         !edit.location.includes("/forged")

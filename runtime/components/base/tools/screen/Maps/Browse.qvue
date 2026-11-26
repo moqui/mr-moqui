@@ -114,6 +114,11 @@ along with this software (see the LICENSE.md file). If not, see
                             <q-item-label caption>{{overlayCaption(layer)}}</q-item-label>
                             <q-item-label v-if="layer.rejectedCount" caption class="text-warning">{{layer.rejectedCount}} {{t('features left out: their geometry is not valid')}}</q-item-label>
                         </q-item-section>
+                        <q-item-section side v-if="layer.isOwn && tilesBusy(layer)">
+                            <q-btn dense flat round size="sm" icon="sym_o_cancel" :aria-label="t('Stop simplifying')" @click="cancelTiles(layer)" data-maps-cancel-tiles="true">
+                                <q-tooltip>{{t('Stop simplifying')}}</q-tooltip>
+                            </q-btn>
+                        </q-item-section>
                         <q-item-section side v-if="layer.isOwn">
                             <q-btn dense flat round size="sm" icon="sym_o_delete" :aria-label="t('Remove from the map')" @click="removeOverlay(layer)">
                                 <q-tooltip>{{t('Remove from the map (the file stays in your files)')}}</q-tooltip>
@@ -196,7 +201,7 @@ along with this software (see the LICENSE.md file). If not, see
     <m-dialog v-model="addShown" :title="t('Add overlay')" width="480">
         <div>
             <div class="text-caption m-muted">{{t('A GeoJSON, GPX or KML file of at most 10 MB. It is kept in Maps/overlays of your files, checked, and drawn only by this server: links, icons and scripts in it are not followed.')}}</div>
-            <q-file v-model="addFile" dense outlined clearable accept=".geojson,.json,.gpx,.kml" :label="t('Upload a file')" class="q-mt-sm" id="MapsOverlayFile"></q-file>
+            <q-file v-model="addFile" dense outlined clearable accept=".geojson,.json,.gpx,.kml" :label="t('Upload a file')" class="q-mt-sm" id="MapsOverlayFile" @update:model-value="addOffer = false"></q-file>
             <div v-if="picker.drives.length" class="q-mt-sm" id="MapsOverlayPicker">
                 <div class="text-caption m-muted">{{t('Or a GeoJSON, GPX or KML file of a drive you may open')}}</div>
                 <div class="row items-center q-gutter-xs">
@@ -228,6 +233,10 @@ along with this software (see the LICENSE.md file). If not, see
                 </q-list>
             </div>
             <m-text-line v-model="addLabel" name="label" id="MapsOverlayLabel" :label="t('Name (the file name when empty)')" class="q-mt-sm"></m-text-line>
+            <div v-if="addOffer" class="q-mt-sm m-tonal q-pa-sm" id="MapsOverlayGeneralizeOffer">
+                <div class="text-caption">{{t('This file has more than a map draws at once. This server can simplify it for each zoom into a tiled copy kept beside the file, drawn in its place; the file itself is not changed.')}}</div>
+                <q-btn dense unelevated no-caps color="primary" class="q-mt-xs" :label="t('Simplify on the server')" :loading="adding" id="MapsOverlayGeneralize" @click="addOverlay(true)"></q-btn>
+            </div>
             <div class="row justify-end q-mt-md q-gutter-sm">
                 <q-btn flat dense no-caps :label="t('Cancel')" @click="addShown = false"></q-btn>
                 <q-btn dense unelevated no-caps color="primary" :label="t('Add overlay')" :loading="adding" :disable="!addFile && !addPick" @click="addOverlay"></q-btn>
@@ -259,7 +268,7 @@ module.exports = {
         return { effective: null, error: '', panel: '', query: '', results: [], postalCountries: [], postalCountry: null, postalNote: '', searching: false, savedViews: [], hidden: {}, basemapId: '',
             view: null, lastView: null, marker: null, selected: null, mapPx: 480, phone: false, fullscreen: false, saveShown: false,
             saveName: '', saveShared: 'N', saving: false, restoreLastView: false, geocoder: null, addShown: false, addFile: null, addPick: null,
-            addLabel: '', adding: false, placeShown: false, placeName: '',
+            addLabel: '', adding: false, addOffer: false, placeShown: false, placeName: '',
             picker: { drives: [], driveId: null, crumbs: [], rows: [], loading: false, text: '', searching: false } };
     },
     computed: {
@@ -329,7 +338,10 @@ module.exports = {
         attributionText(value) { return String(value || '').split(/\s*\n\s*/).filter(Boolean).join(', '); },
         overlayCaption(layer) {
             const owner = layer.isOwn ? (layer.isPlaces ? t('Your places') : t('Yours')) : t('Shared by') + ' ' + (layer.ownerName || '');
-            return [owner, layer.featureCount + ' ' + t('features')].join(' · ');
+            const tiles = !layer.tilesStatus ? null : this.tilesBusy(layer) ? t('Simplifying on the server') + ' ' + (layer.tilesProgress || 0) + '%'
+                : layer.tilesStatus === 'ready' ? t('Simplified for drawing') : layer.tilesStatus === 'cancelled' ? t('Simplifying cancelled')
+                : t('Not simplified') + (layer.tilesNote ? ': ' + layer.tilesNote : '');
+            return [owner, layer.featureCount + ' ' + t('features'), tiles].filter(Boolean).join(' · ');
         },
         coordinates(place) { return Number(place.lat).toFixed(5) + ', ' + Number(place.lon).toFixed(5); },
         layerShown(layer) { return this.hidden[layer.id] !== undefined ? !this.hidden[layer.id] : layer.visible !== false; },
@@ -351,6 +363,7 @@ module.exports = {
             const asked = typeof extraLayerId === 'string' ? extraLayerId : '';
             return this.request('getConfig', { params: this.configParameters(asked) }).then((config) => {
                 this.effective = config;
+                this.watchTiles();
                 const p = this.parameters;
                 const lon = Number(p.longitude), lat = Number(p.latitude);
                 if (p.longitude !== undefined && p.latitude !== undefined && String(p.longitude).trim() && String(p.latitude).trim()
@@ -358,6 +371,10 @@ module.exports = {
                     this.marker = { id: 'given', lon, lat, label: String(p.label || '') };
                     this.view = { center: [lon, lat], zoom: 14 };
                 }
+                // an area to open on (a dashboard geomap's country): west,south,east,north, with no marker
+                const box = String(p.extent || '').split(',').map((value) => value.trim() === '' ? NaN : Number(value));
+                if (!this.view && !this.marker && box.length === 4 && box.every(Number.isFinite) && box[0] >= -180 && box[2] <= 180
+                        && box[1] >= -90 && box[3] <= 90 && box[0] <= box[2] && box[1] <= box[3]) this.view = { extent: box };
             }, (err) => { this.error = t('The map settings did not load') + ': ' + (err && err.message || err); });
         },
         loadViews() {
@@ -490,7 +507,7 @@ module.exports = {
         // Add overlay: an upload, or a file chosen with the drive picker (pickerData, pickerFolder, pickerSearch: the drives the
         // user may open, their folders and files by name, only GeoJSON, GPX and KML files listed)
         openAddOverlay() {
-            this.addFile = null; this.addPick = null; this.addLabel = ''; this.addShown = true;
+            this.addFile = null; this.addPick = null; this.addLabel = ''; this.addOffer = false; this.addShown = true;
             this.picker = { drives: [], driveId: null, crumbs: [], rows: [], loading: true, text: '', searching: true };
             this.request('pickerData').then((json) => {
                 this.picker.drives = json.driveList || [];
@@ -523,25 +540,60 @@ module.exports = {
         },
         pickerClick(row) {
             if (row.isDirectory) this.pickerOpen(row.driveId || this.picker.driveId, row.path);
-            else { this.addPick = Object.assign({ driveId: this.picker.driveId }, row); this.addFile = null; }
+            else { this.addPick = Object.assign({ driveId: this.picker.driveId }, row); this.addFile = null; this.addOffer = false; }
         },
         // the file is read on the server first: one that cannot be drawn is refused with its reason, nothing kept
-        addOverlay() {
+        // a file too large to draw whole is refused with canGeneralize: the dialog then offers simplifying it on the server
+        addOverlay(generalize) {
             if (this.adding) return;
             this.adding = true;
             const body = new FormData();
             if (this.addFile) body.append('overlayFile', this.addFile, this.addFile.name);
             else if (this.addPick) { body.append('driveId', this.addPick.driveId); body.append('path', this.addPick.path); }
             if (this.addLabel.trim()) body.append('label', this.addLabel.trim());
+            if (generalize === true) body.append('generalize', 'true');
             this.request('addOverlay', { method: 'POST', params: body }).then((json) => {
                 if (json.applied) {
                     this.addShown = false;
+                    this.addOffer = false;
                     const left = json.rejectedCount ? ' ' + json.rejectedCount + ' ' + t('features left out: their geometry is not valid') : '';
-                    moqui.notifyMessages([{ type: left ? 'warning' : 'success', message: t('Overlay added') + ': ' + json.featureCount + ' ' + t('features') + '.' + left }], null);
+                    const message = json.generalizing ? t('Overlay added: it is drawn once this server has simplified it') + ' (' + json.featureCount + ' ' + t('features') + ').'
+                        : t('Overlay added') + ': ' + json.featureCount + ' ' + t('features') + '.';
+                    moqui.notifyMessages([{ type: left ? 'warning' : 'success', message: message + left }], null);
                     this.keepView();
                     this.load();
-                } else moqui.notifyMessages(null, [json.reason || t('The overlay was not added')]);
+                } else {
+                    this.addOffer = !!json.canGeneralize;
+                    moqui.notifyMessages(null, [json.reason || t('The overlay was not added')]);
+                }
             }, (err) => moqui.notifyMessages(null, [String(err && err.message || err)])).then(() => { this.adding = false; });
+        },
+        tilesBusy(layer) { return layer.tilesStatus === 'pending' || layer.tilesStatus === 'running'; },
+        cancelTiles(layer) {
+            this.request('cancelOverlayTiles', { method: 'POST', params: { overlayId: layer.overlayId } }).then((json) => {
+                if (!json.applied) moqui.notifyMessages(null, [json.reason || t('The simplifying was not stopped')]);
+                this.keepView();
+                this.load();
+            }, (err) => moqui.notifyMessages(null, [String(err && err.message || err)]));
+        },
+        // while an overlay of the user's is being simplified, its progress is asked for (a light call, waiting twice as
+        // long each time up to a minute, and not while the page is hidden); the layers are loaded again once it ends
+        watchTiles() {
+            clearTimeout(this.tilesTimer);
+            const busy = this.personalOverlays.filter((layer) => layer.isOwn && this.tilesBusy(layer)).map((layer) => layer.overlayId);
+            if (!busy.length) { this.tilesDelay = 0; return; }
+            this.tilesDelay = Math.min((this.tilesDelay || 2500) * 2, 60000);
+            this.tilesTimer = setTimeout(() => this.pollTiles(busy), this.tilesDelay);
+        },
+        pollTiles(ids) {
+            if (document.hidden) { this.tilesTimer = setTimeout(() => this.pollTiles(ids), this.tilesDelay || 5000); return; }
+            this.request('overlayTilesStatus', { params: { overlayIds: ids.join(',') } }).then((json) => {
+                const list = json.statusList || [];
+                const ended = ids.some((id) => { const row = list.find((one) => one.overlayId === id); return !row || !this.tilesBusy(row); });
+                if (ended) { this.tilesDelay = 0; this.keepView(); this.load(); return; }
+                list.forEach((row) => { const layer = this.personalOverlays.find((one) => one.overlayId === row.overlayId); if (layer) layer.tilesProgress = row.tilesProgress; });
+                this.watchTiles();
+            }, () => this.watchTiles());
         },
         removeOverlay(layer) {
             this.request('removeOverlay', { method: 'POST', params: { overlayId: layer.overlayId } }).then((json) => {
@@ -613,6 +665,7 @@ module.exports = {
         window.removeEventListener('resize', this.onResize);
         document.removeEventListener('fullscreenchange', this.onFullscreenChange);
         clearTimeout(this.rememberTimer);
+        clearTimeout(this.tilesTimer);
     }
 };
 </script>

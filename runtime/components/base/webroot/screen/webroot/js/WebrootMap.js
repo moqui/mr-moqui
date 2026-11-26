@@ -24,13 +24,21 @@
  *                       transition's, naming its revision, and a 409 from it loads the configuration again), styleUrl
  *                       its style (raster: true for a raster archive); a style's vector source is bound to the archive
  *                       (applyStyle, updateSource false)
+ *         kind wms:     url a WMS 1.3.0 service (its GetMap address, or this server's proxy), ogc {params: {LAYERS, STYLES,
+ *                       FORMAT, TRANSPARENT, VERSION, TIME}, projection, singleImage}: TileWMS, or ImageWMS for one image
+ *         kind wmts:    url a WMTS service's KVP address or tile template, ogc {layer, style, format, matrixSet (as the
+ *                       server recorded it from the capabilities: {Identifier, SupportedCRS, TileMatrix}), projection,
+ *                       requestEncoding KVP or REST, dimensions}: the tile grid is made from matrixSet, so the browser never
+ *                       reads the capabilities
  *       basemap: the id of the one drawn first (else the first),
  *       allowedOrigins: ["https://tiles.example.org"]   origins its styles' sources, sprites and tiles may also come from
  *       notice: {text, href, linkText}  shown over the map: the effective configuration gives an administrator the way to
  *                                       Configuration when no provider is enabled
  *     },
- *     layers: ["PARKS"] (IDs asked for) or [{id, label, kind (geojson, gpx, kml, topojson, xyz, pmtiles), url, attribution,
- *             visible}] (as the effective configuration resolved them); an ID left unresolved shows as not available,
+ *     layers: ["PARKS"] (IDs asked for) or [{id, label, kind (geojson, gpx, kml, topojson, xyz, pmtiles, wms, wmts, wfs), url,
+ *             attribution, visible, ogc}] (as the effective configuration resolved them); an ID left unresolved shows as not
+ *             available. kind wfs: url a WFS 2.0.0 service, ogc {typeName, outputFormat (GeoJSON), srsName, version,
+ *             maxFeatures}: read as GeoJSON for the view's box (the bbox strategy), at most maxFeatures at a time,
  *     center: [lon, lat], zoom: 0-22, extent: [west, south, east, north], projection: "EPSG:3857" | "EPSG:4326",
  *     points: [{id, lon, lat, label, precisionEnumId, precision, source}]  (longitude/latitude, sourceText are read too),
  *     features: a GeoJSON FeatureCollection in WGS84 (each feature's label or name property its label),
@@ -47,7 +55,9 @@
  * metadata['ol:webfonts'] replaced with the local fonts' absolute template (map.webfonts), which is also the webfonts option;
  * a TileJSON is fetched here and handed on with its attribution escaped; KML is read with an iconUrlFunction answering a blank
  * data: icon (map.kmlOptions) and styled here; and nothing is asked of a host that is not the page's or the profile's own
- * (urlAllowed, and transformRequest for what ol-mapbox-style fetches). Locate me asks the browser for the position only when
+ * (urlAllowed, and transformRequest for what ol-mapbox-style fetches). An OGC layer asks only its url's host (its provider's
+ * origin or this server's proxy), with no credentials of the page for a provider that answers CORS (ogc.cors; one that does
+ * not is asked as a plain image, which a fetched WFS cannot be). Locate me asks the browser for the position only when
  * pressed, and the position is neither kept nor sent.
  *
  * Events: pick ({lon, lat}, also the DOM event m-map-pick with that detail, which bubbles), select (a place or a feature:
@@ -83,8 +93,10 @@
     const OUTLINE = { profileId: "OUTLINE", profileName: "Outline", basemaps: [{ id: "OUTLINE_NE110", label: "Country outlines", kind: "outline",
         url: "/libs/naturalearth/countries-110m.json", attribution: "Natural Earth", attributionUrls: ["https://www.naturalearthdata.com/"] }] };
     map.OUTLINE = OUTLINE;
-    const KINDS = ["outline", "style", "xyz", "pmtiles"];
-    const LAYER_KINDS = ["geojson", "gpx", "kml", "topojson", "xyz", "pmtiles"];
+    const KINDS = ["outline", "style", "xyz", "pmtiles", "wms", "wmts"];
+    const LAYER_KINDS = ["geojson", "gpx", "kml", "topojson", "xyz", "pmtiles", "wms", "wmts", "wfs", "mvt"];
+    // the vector files an overlay layer is read from by url
+    const FILE_KINDS = ["geojson", "gpx", "kml", "topojson"];
     const PRECISION = { GPP_USER_CONFIRMED: "User-confirmed point", GPP_ADDRESS_MATCH: "Address match", GPP_STREET_RANGE: "Street-range interpolation",
         GPP_POSTAL_AREA: "Postal-area representative point", GPP_PLACE_ESTIMATE: "Place estimate" };
 
@@ -167,14 +179,75 @@
         return { id: text(basemap.id) || "basemap" + index, label: text(basemap.label) || text(basemap.id) || kind, kind, url: text(basemap.url),
             styleUrl: text(basemap.styleUrl), attribution: text(basemap.attribution),
             attributionUrls: Array.isArray(urls) ? urls.map(text) : text(urls) ? text(urls).split("\n").map((url) => url.trim()) : [],
-            minZoom: num(basemap.minZoom), maxZoom: num(basemap.maxZoom), raster: basemap.raster === true || basemap.raster === "true" };
+            minZoom: num(basemap.minZoom), maxZoom: num(basemap.maxZoom), raster: basemap.raster === true || basemap.raster === "true",
+            ogc: map.normalizeOgc(basemap.ogc, kind) };
     };
     const normalizeLayer = (layer, index) => {
         if (typeof layer === "string") return text(layer) ? { id: text(layer), requested: true } : null;
         if (!layer || typeof layer !== "object") return null;
-        return { id: text(layer.id) || "layer" + index, label: text(layer.label) || text(layer.id), kind: text(layer.kind).toLowerCase(), url: text(layer.url),
-            styleUrl: text(layer.styleUrl), attribution: text(layer.attribution), visible: layer.visible !== false && layer.visible !== "false" };
+        const kind = text(layer.kind).toLowerCase();
+        return { id: text(layer.id) || "layer" + index, label: text(layer.label) || text(layer.id), kind, url: text(layer.url),
+            styleUrl: text(layer.styleUrl), attribution: text(layer.attribution), visible: layer.visible !== false && layer.visible !== "false",
+            ogc: map.normalizeOgc(layer.ogc, kind), maxZoom: num(layer.maxZoom) };
     };
+
+    // ---- OGC layers ----
+
+    // An OGC layer's options as the server resolved them, checked: only the names each kind's source takes, each a short
+    // text or a number; null for another kind or nothing usable.
+    const shortText = (v, max) => { const value = text(v); return value.length <= (max || 255) && !/[\u0000-\u001f\u007f]/.test(value) ? value : ""; };
+    const WMS_PARAMS = ["LAYERS", "STYLES", "FORMAT", "TRANSPARENT", "VERSION", "TIME"];
+    map.normalizeOgc = (ogc, kind) => {
+        if (!ogc || typeof ogc !== "object" || !["wms", "wmts", "wfs"].includes(kind)) return null;
+        const projection = shortText(ogc.projection, 128);
+        if (kind === "wms") {
+            const given = ogc.params && typeof ogc.params === "object" ? ogc.params : {};
+            const params = {};
+            WMS_PARAMS.forEach((name) => { const value = shortText(given[name], 1024); if (value || name === "STYLES") params[name] = value; });
+            if (!params.LAYERS) return null;
+            params.VERSION = "1.3.0";
+            return { service: "wms", params, projection: projection || "EPSG:3857", singleImage: ogc.singleImage === true, cors: ogc.cors !== false };
+        }
+        if (kind === "wmts") {
+            const set = ogc.matrixSet && typeof ogc.matrixSet === "object" ? ogc.matrixSet : null;
+            const matrices = set && Array.isArray(set.TileMatrix) ? set.TileMatrix.slice(0, 30).map((matrix) => ({
+                Identifier: shortText(matrix && matrix.Identifier, 64), ScaleDenominator: num(matrix && matrix.ScaleDenominator),
+                TopLeftCorner: numbers(matrix && matrix.TopLeftCorner, 2), TileWidth: num(matrix && matrix.TileWidth), TileHeight: num(matrix && matrix.TileHeight),
+                MatrixWidth: num(matrix && matrix.MatrixWidth), MatrixHeight: num(matrix && matrix.MatrixHeight) })) : [];
+            const valid = matrices.length && matrices.every((matrix) => matrix.Identifier && matrix.ScaleDenominator > 0 && matrix.TopLeftCorner &&
+                [matrix.TileWidth, matrix.TileHeight, matrix.MatrixWidth, matrix.MatrixHeight].every((n) => Number.isInteger(n) && n > 0));
+            const layer = shortText(ogc.layer), crs = shortText(set && set.SupportedCRS, 128);
+            if (!valid || !layer || !crs) return null;
+            const dimensions = {};
+            if (ogc.dimensions && typeof ogc.dimensions === "object" && shortText(ogc.dimensions.Time, 64)) dimensions.Time = shortText(ogc.dimensions.Time, 64);
+            return { service: "wmts", layer, style: shortText(ogc.style) || "default", format: shortText(ogc.format, 64) || "image/png",
+                matrixSet: { Identifier: shortText(set.Identifier, 128), SupportedCRS: crs, TileMatrix: matrices },
+                projection: crs, requestEncoding: ogc.requestEncoding === "REST" ? "REST" : "KVP", dimensions, cors: ogc.cors !== false };
+        }
+        const typeName = shortText(ogc.typeName), maxFeatures = num(ogc.maxFeatures);
+        if (!typeName) return null;
+        return { service: "wfs", typeName, outputFormat: shortText(ogc.outputFormat, 128) || "application/json", srsName: projection || shortText(ogc.srsName, 128) || "EPSG:3857",
+            version: "2.0.0", maxFeatures: Number.isInteger(maxFeatures) && maxFeatures > 0 ? Math.min(maxFeatures, 100000) : 1000, cors: ogc.cors !== false };
+    };
+    // The data projection of a WFS layer's GeoJSON: EPSG:3857 for a Web Mercator srsName, else EPSG:4326 (GeoJSON's
+    // longitude, latitude)
+    map.wfsDataProjection = (srsName) => (/(^|[:#\/])(3857|900913|102100|102113)$/.test(text(srsName)) ? "EPSG:3857" : "EPSG:4326");
+    // A WFS GetFeature URL of a layer for a box in its srsName's units (west, south, east, north; longitude first, sent latitude
+    // first for a srsName read so), at most ogc.maxFeatures features
+    // Whether a srsName is EPSG:4326 in a form whose axis order is latitude first (a URN or an http URI of EPSG:4326; the
+    // short EPSG:4326 and CRS84 are read longitude first, as GeoJSON is)
+    map.wfsLatitudeFirst = (srsName) => /^(urn:(x-)?ogc:def:crs:EPSG:[0-9.]*:4326|http:\/\/www\.opengis\.net\/def\/crs\/EPSG\/0\/4326)$/.test(text(srsName));
+    map.wfsUrl = (url, ogc, extent) => {
+        const box = map.wfsLatitudeFirst(ogc.srsName) ? [extent[1], extent[0], extent[3], extent[2]] : extent;
+        const params = { SERVICE: "WFS", VERSION: "2.0.0", REQUEST: "GetFeature", TYPENAMES: ogc.typeName, OUTPUTFORMAT: ogc.outputFormat,
+            SRSNAME: ogc.srsName, BBOX: box.map((n) => Number(n.toFixed(map.wfsDataProjection(ogc.srsName) === "EPSG:3857" ? 2 : 7))).join(",") + "," + ogc.srsName,
+            COUNT: String(ogc.maxFeatures) };
+        const query = Object.keys(params).map((name) => name + "=" + encodeURIComponent(params[name])).join("&");
+        return url + (url.includes("?") ? "&" : "?") + query;
+    };
+    // The crossOrigin of an OGC layer's images: none for this server (its proxy, with the session), anonymous (no credentials
+    // of the page) for a provider whose test saw CORS, and none for one that did not, whose images then load as plain images
+    map.ogcCrossOrigin = (url, ogc, pageOrigin) => (map.sameOrigin(url, pageOrigin) || !ogc || ogc.cors === false ? undefined : "anonymous");
 
     // The configuration as m-map-view draws it (the shape at the top of this file), from a server's answer, a map-view's
     // attributes bound in a static template (texts) or a JSON text: numbers parsed, a point, center or extent that is not WGS84
@@ -587,6 +660,8 @@
                     else if (basemap.kind === "xyz") this.xyzLayer(O, group, basemap, attributions);
                     else if (basemap.kind === "style") this.styleLayer(O, group, basemap, attributions).catch(fail);
                     else if (basemap.kind === "pmtiles") this.pmtilesLayer(O, group, basemap, attributions).catch(fail);
+                    else if (basemap.kind === "wms") this.wmsLayer(O, group, basemap, attributions);
+                    else if (basemap.kind === "wmts") this.wmtsLayer(O, group, basemap, attributions);
                     else throw new Error(L("Not a kind of basemap this map draws") + ": " + basemap.kind);
                 } catch (err) { fail(err); }
             },
@@ -636,6 +711,80 @@
                 const source = new O.XYZ({ url: entry.url, attributions, crossOrigin: "anonymous", maxZoom: entry.maxZoom === null ? 19 : entry.maxZoom });
                 this.watchSource(source, entry, "tile");
                 group.getLayers().push(new O.TileLayer({ source }));
+            },
+            // Vector tiles at a Z/X/Y template of this server (LocalMap's tile transition: a user's overlay simplified on the
+            // server), drawn and selected as an overlay file's features are; past its maxZoom the last zoom's tiles are drawn larger
+            mvtLayer(O, group, entry, attributions) {
+                this.checkUrl(entry.url, L("The tiles"));
+                if (!map.sameOrigin(entry.url, this.pageOrigin())) throw new Error(L("Vector tiles must be of this server") + ": " + entry.url);
+                // full features (not render features), so a selected point has its coordinates and a highlight redraws it
+                const source = new O.VectorTileSource({ format: new O.MVT({ featureClass: O.Feature }), url: entry.url, attributions,
+                    maxZoom: entry.maxZoom === null ? 14 : entry.maxZoom });
+                this.watchSource(source, entry, "tile");
+                const layer = new O.VectorTileLayer({ source, declutter: true, style: (feature) => this.featureStyle(O, feature) });
+                layer.set("overlayLayerId", entry.id);
+                layer.set("overlayLabel", entry.label);
+                group.getLayers().push(layer);
+            },
+            ogcCrossOrigin(url, ogc) { return map.ogcCrossOrigin(url, ogc, this.pageOrigin()); },
+            ogcOf(entry, service) {
+                if (!entry.ogc || entry.ogc.service !== service) throw new Error(L("The layer's service settings are missing") + ": " + entry.id);
+                return entry.ogc;
+            },
+            // A WMS layer: tiles of the view (TileWMS), or one image of it (ImageWMS)
+            wmsLayer(O, group, entry, attributions) {
+                const ogc = this.ogcOf(entry, "wms");
+                this.checkUrl(entry.url, L("The service"));
+                const options = { url: entry.url, params: Object.assign({}, ogc.params), projection: ogc.projection, attributions, crossOrigin: this.ogcCrossOrigin(entry.url, ogc) };
+                if (ogc.singleImage) {
+                    const source = new O.ImageWMS(Object.assign(options, { ratio: 1 }));
+                    let loaded = false;
+                    source.on("imageloadend", () => { if (!loaded) { loaded = true; this.status(entry.id, entry.label, "ready"); } });
+                    source.on("imageloaderror", () => this.status(entry.id, entry.label, "failed", L("Its data did not load")));
+                    group.getLayers().push(new O.ImageLayer({ source }));
+                    return;
+                }
+                const source = new O.TileWMS(options);
+                this.watchSource(source, entry, "tile");
+                group.getLayers().push(new O.TileLayer({ source }));
+            },
+            // A WMTS layer: its tile grid from the matrix set the server recorded, never the capabilities fetched here
+            wmtsLayer(O, group, entry, attributions) {
+                const ogc = this.ogcOf(entry, "wmts");
+                this.checkUrl(entry.url, L("The tiles"));
+                if (!O.getProjection(ogc.projection)) throw new Error(L("The layer's projection is not one this map draws") + ": " + ogc.projection);
+                const matrixSet = JSON.parse(JSON.stringify(ogc.matrixSet));
+                const source = new O.WMTS({ url: entry.url, layer: ogc.layer, style: ogc.style, format: ogc.format, matrixSet: matrixSet.Identifier,
+                    tileGrid: O.createFromCapabilitiesMatrixSet(matrixSet), projection: ogc.projection, requestEncoding: ogc.requestEncoding,
+                    dimensions: ogc.dimensions, attributions, crossOrigin: this.ogcCrossOrigin(entry.url, ogc), wrapX: true });
+                this.watchSource(source, entry, "tile");
+                group.getLayers().push(new O.TileLayer({ source }));
+            },
+            // A WFS feature type read as GeoJSON for the view's box, at most maxFeatures at a time: a load that would make more
+            // starts the layer again with the view's features only, cut to maxFeatures
+            wfsLayer(O, group, entry, attributions) {
+                const ogc = this.ogcOf(entry, "wfs");
+                this.checkUrl(entry.url, L("The service"));
+                const dataProjection = map.wfsDataProjection(ogc.srsName);
+                const format = new O.GeoJSON({ dataProjection });
+                const credentials = map.sameOrigin(entry.url, this.pageOrigin()) ? "same-origin" : "omit";
+                const source = new O.VectorSource({ format, attributions, strategy: O.bboxStrategy,
+                    loader: (extent, resolution, projection, success, failure) => {
+                        const box = O.transformExtent(extent, projection, dataProjection);
+                        root.fetch(map.wfsUrl(new URL(entry.url, this.pageOrigin() + "/").href, ogc, box), { credentials, headers: { Accept: "application/json" } })
+                            .then((response) => { if (!response.ok) throw new Error("HTTP " + response.status); return response.json(); })
+                            .then((json) => {
+                                const features = format.readFeatures(json, { dataProjection, featureProjection: projection }).slice(0, ogc.maxFeatures);
+                                if (source.getFeatures().length + features.length > ogc.maxFeatures) source.clear(true);
+                                source.addFeatures(features);
+                                success(features);
+                            }).catch((err) => { console.warn("m-map: the features of " + entry.id + " did not load", err); failure(); });
+                    } });
+                this.watchSource(source, entry, "vector");
+                const vector = new O.VectorLayer({ source, style: (feature) => this.featureStyle(O, feature) });
+                vector.set("overlayLayerId", entry.id);
+                vector.set("overlayLabel", entry.label);
+                group.getLayers().push(vector);
             },
             // the request filter of what ol-mapbox-style fetches (TileJSON, tiles, sprites): only the profile's hosts
             // A TileJSON ("Source") is fetched here and answered with its attribution escaped, since the attribution control sets it
@@ -756,7 +905,11 @@
                 try {
                     if (layer.kind === "xyz") this.xyzLayer(O, group, layer, attributions);
                     else if (layer.kind === "pmtiles") this.pmtilesLayer(O, group, layer, attributions).catch(fail);
-                    else if (LAYER_KINDS.includes(layer.kind)) {
+                    else if (layer.kind === "wms") this.wmsLayer(O, group, layer, attributions);
+                    else if (layer.kind === "wmts") this.wmtsLayer(O, group, layer, attributions);
+                    else if (layer.kind === "wfs") this.wfsLayer(O, group, layer, attributions);
+                    else if (layer.kind === "mvt") this.mvtLayer(O, group, layer, attributions);
+                    else if (FILE_KINDS.includes(layer.kind)) {
                         this.checkUrl(layer.url, L("The layer"));
                         const format = layer.kind === "gpx" ? new O.GPX() : layer.kind === "kml" ? new O.KML(map.kmlOptions()) :
                             layer.kind === "topojson" ? new O.TopoJSON() : new O.GeoJSON();

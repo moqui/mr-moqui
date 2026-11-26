@@ -60,7 +60,15 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="proxyPaths" type="text-long"><description>A proxied provider's rules, one a line, as its last passing
             test found them in its style, TileJSON and layers (MapProviders.js): "doc path[?query]" an exact path, "sprite
             path" with .json, .png, @2x.json or @2x.png after it, "tile template[?query]" its {z}, {x}, {y} whole numbers;
-            the only paths the proxy forwards, each with its own query. Written by the test</description></field>
+            the only paths the proxy forwards, each with its own query; for an OGC service (MapOgc.js) "wms path[?query]",
+            "wmts path[?query]" and "wfs path[?query]" its operation's path with the parameters its requests may add, and
+            "wmtsrest template" a WMTS tile template. Written by the test</description></field>
+        <field name="capabilitiesJson" type="text-very-long"><description>An OGC service's (MPK_WMS, MPK_WMTS, MPK_WFS)
+            capabilities as its last passing test read them (MapOgc.js): {service, version, url, kvp, cors, formats, layers:
+            [{name, title, styles, crs, formats, bounds, time, matrixSets, template}], crsLists, styleLists, matrixSets}, a
+            layer's crs and styles the index of a list kept once; at most 2,000 layers and 2 MB. The
+            Configuration's Add OGC layer picks from it and the effective configuration builds a WMTS layer's tile grid from it,
+            so no browser reads the capabilities. Written by the test, never by a form</description></field>
         <field name="disabled" type="text-indicator" enable-audit-log="update"><description>Y: no layer of it is drawn and
             nothing is sent to it but the test of test#Connection. Set by an administrator, or by store#Connection when the
             endpoint changed, until a test passes</description></field>
@@ -84,6 +92,10 @@ along with this software (see the LICENSE.md file). If not, see
                     enumTypeId="MapProviderKind" parentEnumId="MPK_GEOCODER" sequenceNum="6"/>
             <moqui.basic.Enumeration description="Geocoder: Photon (self-hosted)" enumId="MPK_GEOCODER_PHOTON"
                     enumTypeId="MapProviderKind" parentEnumId="MPK_GEOCODER" sequenceNum="7"/>
+            <!-- OGC services (P4a; MapOgc.js): the endpoint is the service's URL, whose GetCapabilities the test reads -->
+            <moqui.basic.Enumeration description="OGC Web Map Service (WMS 1.3.0)" enumId="MPK_WMS" enumTypeId="MapProviderKind" sequenceNum="8"/>
+            <moqui.basic.Enumeration description="OGC Web Map Tile Service (WMTS 1.0.0)" enumId="MPK_WMTS" enumTypeId="MapProviderKind" sequenceNum="9"/>
+            <moqui.basic.Enumeration description="OGC Web Feature Service (WFS 2.0.0, read as GeoJSON)" enumId="MPK_WFS" enumTypeId="MapProviderKind" sequenceNum="10"/>
         </seed-data>
     </entity>
 
@@ -142,6 +154,19 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="driveId" type="id"><description>The drive resourceLocation is under, whose access (a member, a
             share of the file or a folder above it) a viewer needs too, checked on every request; empty for a location
             outside every drive, which only an administrator registers</description></field>
+        <field name="ogcLayers" type="text-medium"><description>An OGC layer (MLF_WMS, MLF_WMTS, MLF_WFS): the names its
+            provider's capabilities advertise, a WMS layer's comma separated (LAYERS), a WMTS layer's identifier, a WFS feature
+            type's name (TYPENAMES)</description></field>
+        <field name="ogcStyles" type="text-medium"><description>The style of each of ogcLayers (WMS STYLES, comma
+            separated; a WMTS style's identifier); empty for the default</description></field>
+        <field name="ogcFormat" type="text-short"><description>The image format of a WMS or WMTS layer (image/png), the
+            output format of a WFS layer (application/json); one its capabilities advertise</description></field>
+        <field name="ogcMatrixSet" type="text-medium"><description>A WMTS layer's tile matrix set, one its capabilities
+            link it to</description></field>
+        <field name="ogcTime" type="text-short"><description>A value of the layer's time dimension (TIME), when it has
+            one; empty for its default</description></field>
+        <field name="ogcSingleImage" type="text-indicator"><description>Y: a WMS layer is drawn as one image of the
+            view (ImageWMS) rather than as tiles (TileWMS)</description></field>
         <field name="isBasemap" type="text-indicator"/>
         <field name="adapterKey" type="id"><description>A dynamic layer: the registered adapter whose
             find#LayerFeatures answers a viewport, after its own access check</description></field>
@@ -164,6 +189,9 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.Enumeration description="GPX" enumId="MLF_GPX" enumTypeId="MapLayerFormat" sequenceNum="7"/>
             <moqui.basic.Enumeration description="KML" enumId="MLF_KML" enumTypeId="MapLayerFormat" sequenceNum="8"/>
             <moqui.basic.Enumeration description="Record features (a registered adapter)" enumId="MLF_ADAPTER" enumTypeId="MapLayerFormat" sequenceNum="9"/>
+            <moqui.basic.Enumeration description="OGC WMS layer" enumId="MLF_WMS" enumTypeId="MapLayerFormat" sequenceNum="10"/>
+            <moqui.basic.Enumeration description="OGC WMTS layer" enumId="MLF_WMTS" enumTypeId="MapLayerFormat" sequenceNum="11"/>
+            <moqui.basic.Enumeration description="OGC WFS feature type (GeoJSON)" enumId="MLF_WFS" enumTypeId="MapLayerFormat" sequenceNum="12"/>
         </seed-data>
     </entity>
 
@@ -241,6 +269,23 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="sourceCrs" type="text-short"><description>EPSG:4326, or EPSG:3857 for a GeoJSON file that declared it</description></field>
         <field name="importNotes" type="text-long"><description>What was not read or kept, a line each</description></field>
         <field name="createdDate" type="date-time"/>
+        <!-- a file too large to draw whole, generalized on the server into vector tiles (MapSourceServices
+            build#OverlayTiles, the MapOverlayTiles ServiceJob): a PMTiles archive written beside the file in its drive and
+            drawn through LocalMap's tile transition with the file's own access -->
+        <field name="tilesStatus" type="text-short"><description>pending, running, ready, failed or cancelled; empty for
+            an overlay drawn whole</description></field>
+        <field name="tilesProgress" type="number-integer"><description>Percent of the zooms made</description></field>
+        <field name="tilesCancel" type="text-indicator"><description>Y: the run stops at its next zoom</description></field>
+        <field name="tilesNote" type="text-medium"><description>Why the tiles failed, or what they hold</description></field>
+        <field name="tilesPath" type="text-medium"><description>The archive's path in the file's drive</description></field>
+        <field name="tilesVersionName" type="text-short"/>
+        <field name="tilesRevision" type="text-medium"><description>The archive's content address, named in its tile URL</description></field>
+        <field name="tilesTag" type="text-medium"/>
+        <field name="tilesSize" type="number-integer"/>
+        <field name="tilesMaxZoom" type="number-integer"/>
+        <field name="tilesModifiedDate" type="date-time"><description>An archive in a drive on the server's disk, which
+            has no content address: its modification time, checked with its size on each tile</description></field>
+        <field name="tilesJobRunId" type="id"><description>The MapOverlayTiles run making the tiles</description></field>
         <relationship type="one" title="Owner" related="moqui.security.UserAccount">
             <key-map field-name="ownerUserId" related="userId"/></relationship>
         <relationship type="one-nofk" related="moqui.resource.ResourceDrive" short-alias="drive"/>

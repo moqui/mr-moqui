@@ -35,6 +35,8 @@ along with this software (see the LICENSE.md file). If not, see
     <parameter name="latitude"/>
     <parameter name="label"/>
     <parameter name="savedViewId"/>
+    <!-- an area to open on, west,south,east,north (a dashboard geomap's country) -->
+    <parameter name="extent"/>
 
     <!-- the effective configuration m-map draws (WebrootMap.js documents its shape); the layers asked for are shown. The
         user's overlays and those shared with them (find#Overlays) follow the profile's layers, each a GeoJSON layer read
@@ -50,8 +52,11 @@ along with this software (see the LICENSE.md file). If not, see
                 ec.message.pushErrors()
                 try {
                     const found = ec.service.sync().name('org.moqui.maps.MapServices.find#Overlays').requireNewTransaction(true).call()
+                    // an overlay simplified on the server is drawn from its tiles once they are ready, and not drawn while they are made
                     if (!ec.message.hasError()) config.layers = Array.from(config.layers || []).concat(Array.from(found?.overlayList || []).map(entry => ({
-                        id: entry.layerId, label: entry.label, kind: 'geojson', url: entry.url, visible: true, attribution: '', overlayId: entry.overlayId,
+                        id: entry.layerId, label: entry.label, kind: entry.tileUrl ? 'mvt' : 'geojson', url: entry.tileUrl || entry.url,
+                        maxZoom: entry.tilesMaxZoom, tilesStatus: entry.tilesStatus, tilesProgress: entry.tilesProgress, tilesNote: entry.tilesNote,
+                        visible: !(entry.tilesStatus && !entry.tileUrl), attribution: '', overlayId: entry.overlayId,
                         isOwn: entry.isOwn, isPlaces: entry.isPlaces, ownerName: entry.ownerName, fileName: entry.fileName, featureCount: entry.featureCount,
                         rejectedCount: entry.rejectedCount, notes: entry.notes, bounds: entry.bounds})))
                 } catch (err) {
@@ -82,10 +87,32 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script><![CDATA[
             const upload = context.overlayFile ?? null
             const out = ec.service.sync().name('org.moqui.maps.MapServices.store#Overlay').requireNewTransaction(true)
-                .parameters({file: upload && typeof upload === 'object' ? upload : null, driveId: driveId || null, path: path || null, label: label || null}).call()
+                .parameters({file: upload && typeof upload === 'object' ? upload : null, driveId: driveId || null, path: path || null, label: label || null,
+                    generalize: String(context.generalize ?? '') === 'true'}).call()
             if (ec.message.hasError()) { const errors = ec.message.getErrorsString(); ec.message.clearErrors(); ec.web.sendJsonResponse({errors}) }
             else ec.web.sendJsonResponse({applied: out.applied, reasonCode: out.reasonCode, reason: out.reason, overlayId: out.overlayId,
-                featureCount: out.featureCount, rejectedCount: out.rejectedCount, notes: out.notes || []})
+                featureCount: out.featureCount, rejectedCount: out.rejectedCount, notes: out.notes || [], canGeneralize: out.canGeneralize === true,
+                generalizing: out.generalizing === true})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- The simplifying of the user's own overlays named, for Browse's poll (MapSourceServices.get#OverlayTilesStatus) -->
+    <transition name="overlayTilesStatus" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const ids = String(context.overlayIds ?? '').split(',').map(id => id.trim()).filter(id => id)
+            const out = ec.service.sync().name('org.moqui.maps.MapSourceServices.get#OverlayTilesStatus').parameters({overlayIds: ids}).call()
+            if (ec.message.hasError()) { const errors = ec.message.getErrorsString(); ec.message.clearErrors(); ec.web.sendJsonResponse({errors}) }
+            else ec.web.sendJsonResponse({statusList: out.statusList || []})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- Stop simplifying one of the user's overlays (MapSourceServices.cancel#OverlayTiles) -->
+    <transition name="cancelOverlayTiles">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.maps.MapSourceServices.cancel#OverlayTiles').requireNewTransaction(true)
+                .parameters({overlayId: String(overlayId ?? '')}).call()
+            if (ec.message.hasError()) { const errors = ec.message.getErrorsString(); ec.message.clearErrors(); ec.web.sendJsonResponse({errors}) }
+            else ec.web.sendJsonResponse({applied: out.applied, reason: out.reason})
         ]]></script></actions>
         <default-response type="none"/>
     </transition>

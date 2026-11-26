@@ -128,7 +128,9 @@ const PMTILES_PACKAGES = ['pmtiles', 'ol-pmtiles'];
 // and of the Natural Earth outline (TopoJSON), the controls, the default interactions with Select, Modify and Draw to
 // pick a point, the style classes, an Overlay for a popup, Geolocation, ol-mapbox-style's apply, applyStyle and
 // applyBackground for a MapLibre style, and the PMTiles sources, with pmtiles' FetchSource and FileSource for a source
-// m-map makes itself.
+// m-map makes itself. The OGC layers (plans/Maps.md P4a): TileWMS and ImageWMS with the Image layer, WMTS with its tile
+// grid made from a matrix set the server recorded (createFromCapabilitiesMatrixSet), and the bbox loading strategy of a
+// WFS layer read as GeoJSON.
 const OPENLAYERS_ENTRY = `export { default as Map } from 'ol/Map.js';
 export { default as View } from 'ol/View.js';
 export { default as Overlay } from 'ol/Overlay.js';
@@ -145,6 +147,12 @@ export { default as LayerGroup } from 'ol/layer/Group.js';
 export { default as XYZ } from 'ol/source/XYZ.js';
 export { default as VectorSource } from 'ol/source/Vector.js';
 export { default as VectorTileSource } from 'ol/source/VectorTile.js';
+export { default as ImageLayer } from 'ol/layer/Image.js';
+export { default as TileWMS } from 'ol/source/TileWMS.js';
+export { default as ImageWMS } from 'ol/source/ImageWMS.js';
+export { default as WMTS } from 'ol/source/WMTS.js';
+export { createFromCapabilitiesMatrixSet } from 'ol/tilegrid/WMTS.js';
+export { bbox as bboxStrategy } from 'ol/loadingstrategy.js';
 export { default as GeoJSON } from 'ol/format/GeoJSON.js';
 export { default as GPX } from 'ol/format/GPX.js';
 export { default as KML } from 'ol/format/KML.js';
@@ -635,8 +643,9 @@ licenses/Unicode-3.0.txt, from ${UNICODE_URL}.
     noticeDedupe: true,
     build: 'esbuild --bundle --minify --format=iife --global-name=MoquiOl --platform=browser --target=es2020 ' +
       '--legal-comments=none of an entry (OPENLAYERS_ENTRY) that exports Map, View, Overlay, Geolocation, Feature, ' +
-      'Collection, unByKey, the projection and extent helpers, the Tile, Vector, VectorTile and Group layers, the XYZ, ' +
-      'Vector and VectorTile sources, the GeoJSON, GPX, KML, TopoJSON and MVT formats, Point and polygonFromExtent, the ' +
+      'Collection, unByKey, the projection and extent helpers, the Tile, Vector, VectorTile, Image and Group layers, the ' +
+      'XYZ, Vector, VectorTile, TileWMS, ImageWMS and WMTS sources, the WMTS tile grid from a recorded matrix set, the bbox ' +
+      'loading strategy, the GeoJSON, GPX, KML, TopoJSON and MVT formats, Point and polygonFromExtent, the ' +
       'controls, the interactions, the style classes, ol-mapbox-style\'s apply, applyStyle and applyBackground, ' +
       'PMTilesVectorSource and PMTilesRasterSource, and PMTiles, FetchSource and FileSource. Exposes the global MoquiOl. ' +
       'The build fails when the bundle holds an unreviewed package, evaluates code, or names an unreviewed host.',
@@ -866,6 +875,7 @@ export const atob = typeof globalThis.atob === 'function' ? globalThis.atob.bind
       // the packages in the bundle are the reviewed ones, each the single top-level copy whose license is printed
       const output = Object.values(JSON.parse(readFileSync(join(build, 'ol-inputs.json'))).outputs)[0];
       const reviewed = [...OPENLAYERS_PACKAGES, ...PMTILES_PACKAGES];
+      const unreviewed = new Set();
       for (const [path, input] of Object.entries(output.inputs)) {
         if (!input.bytesInOutput || path === 'ol-entry.js') continue;
         // the style spec's dist carries its own copies of a few small dependencies (STYLE_SPEC_INLINED)
@@ -873,8 +883,9 @@ export const atob = typeof globalThis.atob === 'function' ? globalThis.atob.bind
         if (inlined && STYLE_SPEC_INLINED.includes(inlined[1])) continue;
         const pkg = path.match(/^node_modules\/((?:@[^/]+\/)?[^/]+)\/(.*)$/);
         if (!pkg || pkg[2].includes('node_modules/')) throw new Error(`the OpenLayers bundle holds ${path}, not a top-level package`);
-        if (!reviewed.includes(pkg[1])) throw new Error(`the OpenLayers bundle holds ${pkg[1]}: review its license and add it`);
+        if (!reviewed.includes(pkg[1])) unreviewed.add(pkg[1]);
       }
+      if (unreviewed.size) throw new Error(`the OpenLayers bundle holds ${[...unreviewed].join(', ')}: review each license and add it`);
       const text = out.toString('utf8');
       for (const banned of ['eval(', 'new function(', 'importscripts', 'websocket', 'sendbeacon', 'document.cookie',
         'localstorage', 'sessionstorage', 'indexeddb']) {
@@ -886,11 +897,8 @@ export const atob = typeof globalThis.atob === 'function' ? globalThis.atob.bind
         ...[...text.matchAll(/\b((?:https?|wss?):)\/\/([^\s"'`/\\)<>,;?#]+)/gi)].map((m) => m[1].toLowerCase() + '//' + host(m[2])),
         ...[...text.matchAll(/["'`]\/\/([^\s"'`/\\)<>,;?#]+\.[^\s"'`/\\)<>,;?#]+)/g)].map((m) => '//' + host(m[1])),
       ]);
-      for (const name of hosts) {
-        if (OPENLAYERS_HOSTS.includes(name)) continue;
-        throw new Error(name.includes('${') ? `the OpenLayers bundle builds a URL host at run time, ${name}: review it and add it`
-          : `the OpenLayers bundle names ${name}: review it and add it`);
-      }
+      const unlisted = [...hosts].filter((name) => !OPENLAYERS_HOSTS.includes(name)).sort();
+      if (unlisted.length) throw new Error(`the OpenLayers bundle names ${unlisted.join(', ')} (a \${…} is a host built at run time): review each and add it`);
       return out;
     },
     mapFonts() {

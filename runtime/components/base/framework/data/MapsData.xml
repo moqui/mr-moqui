@@ -120,4 +120,12 @@ along with this software (see the LICENSE.md file). If not, see
             serviceName="org.moqui.maps.GeoDataServices.import#GeoData" topic="GeoDataImport" transactionTimeout="86400" noTimeLimit="Y"/>
     <moqui.service.job.ServiceJob jobName="GeoDataRefresh" description="Refresh the imported Geo data"
             serviceName="org.moqui.maps.GeoDataServices.run#GeoDataRefresh" topic="GeoDataRefresh" transactionTimeout="86400" noTimeLimit="Y"/>
+    <!-- a user's overlay too large to draw whole, simplified into vector tiles beside its file (MapOverlays.js buildTiles,
+        docs/tools/Maps.md "Large overlays"): run as the user who asked, who is told when it ends -->
+    <moqui.security.user.NotificationTopic topic="MapOverlayTiles" inboxEnumId="NinUpdates" description="Map overlay simplified"
+            typeString="success" showAlert="Y" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y" emailTemplateId="NOTIFICATION"
+            titleTemplate="Map overlay ${results.label || ''}: ${results.tilesStatus === 'ready' ? 'simplified for drawing' : results.tilesStatus === 'cancelled' ? 'simplifying cancelled' : 'not simplified'}"
+            errorTitleTemplate="Map overlay not simplified: see Maps › Layers" linkTemplate="/qapps/maps/Browse"/>
+    <moqui.service.job.ServiceJob jobName="MapOverlayTiles" description="Simplify a map overlay into vector tiles"
+            serviceName="org.moqui.maps.MapSourceServices.build#OverlayTiles" topic="MapOverlayTiles" transactionTimeout="3600"/>
 </entity-facade-xml>

@@ -15,12 +15,17 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- Map archives (plans/Maps.md §4.1, §5; docs/tools/Maps.md "Archives"): a PMTiles archive registered as a layer's revision,
     the access check of the map-source transition (tools screen/Maps/LocalMap.xml source), the archives Configuration lists
     and their readiness; a user's geographic file read as an overlay (convert#Overlay, P3); and a proxied map provider's
-    assets for the LocalMap providerProxy transition (get#ProviderAsset, MapProviders.js). The logic is MapSources.js; the header is read in Rust (moqui-tools maps_archive.rs, over moqui-lib pmtiles.rs), and an overlay
+    assets for the LocalMap providerProxy transition (get#ProviderAsset, MapProviders.js); one Z/X/Y tile of an archive for the LocalMap
+    tile transition (get#ArchiveTile, read in Rust by read#ArchiveTile: moqui-tools maps_tiles.rs); and a user's overlay too large to
+    draw whole simplified into vector tiles beside its file (generalize#Overlay in Rust, moqui-tools maps_simplify.rs, run by
+    build#OverlayTiles in the MapOverlayTiles ServiceJob, cancel#OverlayTiles; MapOverlays.js). The logic is MapSources.js; the header is read in Rust (moqui-tools maps_archive.rs, over moqui-lib pmtiles.rs), and an overlay
     (moqui-tools maps_overlay.rs, over moqui-lib geo/overlay.rs). Grants (tools data/MapsSecurityData.xml): get#SourceAccess
     and get#ProviderAsset are MAPS_DIALOG's (every signed-in user: each checks the layer or provider and the access itself),
     check#ArchiveReadiness MAPS_READINESS's (it checks ADMIN_OVERVIEW_VIEW itself), convert#Overlay no group's (MapOverlays.js
     calls it after its own check), the rest MAPS_ADMIN's; read#ArchiveHeader and convert#Overlay are not remote, since each
-    reads whatever location it is given. No Java counterpart. -->
+    reads whatever location it is given. get#ArchiveTile is MAPS_DIALOG's (it checks the layer or overlay itself); read#ArchiveTile is no
+    group's and not remote; generalize#Overlay and build#OverlayTiles are no group's (the job runs as the user and checks the
+    overlay's owner), cancel#OverlayTiles MAPS_APP_SERVICES'. No Java counterpart. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
     <service verb="read" noun="ArchiveHeader" type="rust" location="moqui_tools::maps_archive::read_archive_header" allow-remote="false">
@@ -81,6 +86,89 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
 
+    <service verb="generalize" noun="Overlay" type="rust" location="moqui_tools::maps_simplify::generalize_overlay" allow-remote="false">
+        <description>A GeoJSON, GPX or KML file too large to draw whole cut into vector tiles (plans/Maps.md §7; moqui-lib
+            geo/tiles.rs over geo/simplify.rs and geo/mvt.rs, moqui-tools maps_simplify.rs): read and sanitized as
+            convert#Overlay reads it but with up to maxFeatures (250,000) features, projected to Web Mercator, and for each
+            zoom from 0 simplified (Douglas–Peucker to half a pixel), clipped to each tile with a small buffer, points thinned
+            to one a pixel, written as one MVT layer overlay with each feature's label and description, until a zoom keeps
+            everything (from zoom 12), maxZoom (14), or before a zoom that would pass maxTiles (50,000) or maxArchiveBytes
+            (64 MiB); answered as a PMTiles archive (bytes; tiles and directories gzipped). Each zoom made is written to
+            overlayId's row as tilesProgress (in its own transaction) and its tilesCancel read, so a cancel stops it
+            (CANCELLED, cancelled true). Refusals: the overlay reader's reasons, NOT_FOUND, NOT_READ, NOT_TEXT,
+            TOO_LARGE_TO_TILE (zoom 0 alone passes the limits), NO_TILES. Writes nothing but the progress. It reads whatever
+            location it is given, so no group is granted it: build#OverlayTiles calls it after its own check.</description>
+        <in-parameters>
+            <parameter name="location" required="true"/>
+            <parameter name="format"/>
+            <parameter name="fileName"/>
+            <parameter name="overlayId"/>
+            <parameter name="maxBytes" type="Long"/>
+            <parameter name="maxFeatures" type="Integer"/>
+            <parameter name="maxTiles" type="Integer"/>
+            <parameter name="maxArchiveBytes" type="Long"/>
+            <parameter name="maxZoom" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="valid" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="cancelled" type="Boolean"/>
+            <parameter name="bytes" type="byte[]"/>
+            <parameter name="size" type="Long"/>
+            <parameter name="maxZoom" type="Integer"/>
+            <parameter name="tileCount" type="Integer"/>
+            <parameter name="featureCount" type="Integer"/>
+            <parameter name="rejectedCount" type="Integer"/>
+            <parameter name="bounds" type="List"/>
+            <parameter name="notes" type="List"/>
+        </out-parameters>
+    </service>
+
+    <service verb="build" noun="OverlayTiles" allow-remote="false">
+        <description>The MapOverlayTiles ServiceJob's run (store#Overlay with generalize starts it, as the user): the user's
+            own overlay overlayId, pending or running, simplified into vector tiles (generalize#Overlay) and the archive
+            written beside its file in its drive as "name.tiles.pmtiles" (FileServices upload#Resource, replacing an earlier
+            one: the drive's own write check, quota and versions), its version and content address recorded on the row
+            (tilesStatus ready, tilesPath, tilesRevision, tilesTag, tilesSize, tilesMaxZoom), so LocalMap's tile transition
+            draws it with the file's own access. A file no longer readable, a refusal, a write refused, an archive the drive
+            keeps in git outside LFS and a cancel end it failed or cancelled with tilesNote, written in a transaction of its
+            own; the overlay removed or its run ended meanwhile writes nothing. An earlier archive is replaced only when it
+            is this overlay's own (its tilesPath); another file of that name is kept and the new one named "name (2)".
+            Another user's overlay changes nothing. Out: the row's label, tilesStatus and
+            reason, for the job's notification.</description>
+        <in-parameters><parameter name="overlayId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="label"/>
+            <parameter name="tilesStatus"/>
+            <parameter name="reason"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapOverlays.js').execute('buildTiles', context))</script></actions>
+    </service>
+
+    <service verb="cancel" noun="OverlayTiles">
+        <description>Stop the simplifying of one of the signed-in user's overlays (tilesStatus pending or running): its run stops
+            within a second (between tiles) and ends cancelled, the overlay left as it was; a run that ended without saying
+            so (its ServiceJobRun gone or ended, or older than the job's transaction) is ended at once. Another user's
+            overlay, one not there and one not being simplified are RECORD_UNAVAILABLE. MAPS_APP_SERVICES, as the other overlay services.</description>
+        <in-parameters><parameter name="overlayId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapOverlays.js').execute('cancelTiles', context))</script></actions>
+    </service>
+
+    <service verb="get" noun="OverlayTilesStatus">
+        <description>The simplifying of the signed-in user's own overlays overlayIds (at most 100; another user's is left out):
+            each one's tilesStatus and tilesProgress, for Browse's poll while a run goes on. Changes nothing.
+            MAPS_APP_SERVICES, as the other overlay services.</description>
+        <in-parameters><parameter name="overlayIds" type="List" required="true"/></in-parameters>
+        <out-parameters><parameter name="statusList" type="List"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapOverlays.js').execute('tilesStatus', context))</script></actions>
+    </service>
+
     <service verb="register" noun="ArchiveLayer">
         <description>Register the archive of a PMTiles layer (format MLF_PMTILES_VECTOR or MLF_PMTILES_RASTER), at
             resourceLocation (the layer's own when empty), as the revision maps read. On storage that keeps versions
@@ -132,7 +220,9 @@ along with this software (see the LICENSE.md file). If not, see
         <description>One asset of a proxied map provider (proxyRequests Y; plans/Maps.md §4.2) for the LocalMap
             providerProxy transition: its style, a TileJSON, a tile or a sprite at a path a rule its last passing test recorded
             matches (proxyPaths: an exact document path, a sprite with its suffixes, a tile template), asked of the
-            provider's origin with that rule's query (never the browser's) and its key added here, never returned; within
+            provider's origin with that rule's query (never the browser's, but for an OGC rule, wms, wmts or wfs, the
+            parameters its kind's requests carry, each checked against the recorded capabilities, MapOgc.js proxyQuery:
+            QUERY_NOT_ALLOWED, 400, otherwise) and its key added here, never returned; within
             its requestsPerSecond and requestsPerDay (RATE_LIMITED, DAILY_LIMIT: 429). For a caller who may be
             offered one of its layers (enabled, its viewPermission held, the basemap or a layer of an enabled profile whose
             viewPermission they hold), while outside requests are on (EXTERNAL_REQUESTS_OFF, 403) and the provider enabled,
@@ -187,6 +277,72 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="fileName"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapSources.js').execute('sourceAccess', context))</script></actions>
+    </service>
+
+    <service verb="get" noun="ArchiveTile">
+        <description>One Z/X/Y tile of a registered PMTiles archive (plans/Maps.md §5: a client with no PMTiles reader) for the
+            LocalMap tile transition, on every request, writing nothing: layerId a registered layer, checked as
+            get#SourceAccess checks it (SOURCE_MISSING, SOURCE_NOT_REGISTERED, PROVIDER_DISABLED 404; SOURCE_NOT_PERMITTED
+            403; REVISION_CHANGED, SOURCE_CHANGED 409), or overlay:ID, a user's overlay generalized on the server
+            (build#OverlayTiles), read only by a reader of its file in its drive now (OVERLAY_MISSING 404; another revision
+            409). Then read#ArchiveTile reads the tile by range. status 200 with the tile's bytes, its content type and
+            contentEncoding gzip when the archive's tiles are gzipped and the client takes it (else decompressed), 204 for no
+            tile of a vector archive (an empty tile), 304 for an ifNoneMatch naming its ETag, 404 for no tile of an image
+            archive or one not read (TILE_MISSING). etag is strong (the registered tag, the tile ID, the encoding);
+            cacheControl private for resource-facade@pinned-max-age, immutable (the revision is in the URL). Every signed-in
+            user may call it (MAPS_DIALOG): it checks the layer or the overlay and the access itself.</description>
+        <in-parameters>
+            <parameter name="layerId" required="true"/>
+            <parameter name="revision" required="true"/>
+            <parameter name="z" required="true"/>
+            <parameter name="x" required="true"/>
+            <parameter name="y" required="true"><description>May end in the tile's extension (.mvt, .pbf, .png)</description></parameter>
+            <parameter name="acceptGzip" type="Boolean" default="false"/>
+            <parameter name="ifNoneMatch"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="ok" type="Boolean"/>
+            <parameter name="status" type="Integer"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="bytes" type="byte[]"/>
+            <parameter name="contentType"/>
+            <parameter name="contentEncoding"/>
+            <parameter name="etag"/>
+            <parameter name="cacheControl"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapSources.js').execute('archiveTile', context))</script></actions>
+    </service>
+
+    <service verb="read" noun="ArchiveTile" type="rust" location="moqui_tools::maps_tiles::read_archive_tile" allow-remote="false">
+        <description>Tile z/x/y of the PMTiles archive at location (location#versionName on storage that keeps versions),
+            registered as tag of size bytes (moqui-tools maps_tiles.rs over moqui-lib pmtiles.rs): the header, the root and
+            the leaf directories the lookup goes through (run lengths included) and the tile, each read by range as the
+            framework; the header and the decoded directories kept by the tag, within a bound (256 directories, about two
+            million entries). status 200 (bytes, contentType, contentEncoding gzip or empty, etag), 204 (no tile of a vector
+            archive), 304 (ifNoneMatch names its etag), 404 (no tile of an image archive, a tile not read, with reason), 409
+            (content that is no longer that tag and size); cacheControl. Writes nothing. It reads whatever location it is
+            given, so no group is granted it and it is not remote: get#ArchiveTile calls it after its check of the
+            caller.</description>
+        <in-parameters>
+            <parameter name="location" required="true"/>
+            <parameter name="tag" required="true"/>
+            <parameter name="size" type="Long" required="true"/>
+            <parameter name="z" required="true"/>
+            <parameter name="x" required="true"/>
+            <parameter name="y" required="true"/>
+            <parameter name="acceptGzip" type="Boolean" default="false"/>
+            <parameter name="ifNoneMatch"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="status" type="Integer"/>
+            <parameter name="reason"/>
+            <parameter name="bytes" type="byte[]"/>
+            <parameter name="contentType"/>
+            <parameter name="contentEncoding"/>
+            <parameter name="etag"/>
+            <parameter name="cacheControl"/>
+        </out-parameters>
     </service>
 
     <service verb="find" noun="ArchiveLayers">

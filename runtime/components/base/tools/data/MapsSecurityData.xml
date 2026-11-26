@@ -48,6 +48,9 @@ along with this software (see the LICENSE.md file). If not, see
         <!-- a registered map archive read by range (LocalMap.xml source): the service checks the layer, its viewPermission and
             the drive's access to it itself, on every request -->
         <artifacts artifactName="org.moqui.maps.MapSourceServices.get#SourceAccess" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+        <!-- one Z/X/Y tile of an archive or a generalized overlay (LocalMap.xml tile): the service checks the layer or the
+            overlay's file and its drive's access itself, on every request -->
+        <artifacts artifactName="org.moqui.maps.MapSourceServices.get#ArchiveTile" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
         <!-- a proxied map provider's assets (LocalMap.xml providerProxy): the service checks that the caller may be offered one
             of the provider's layers and that the path is one the provider's test recorded, on every request -->
         <artifacts artifactName="org.moqui.maps.MapSourceServices.get#ProviderAsset" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
@@ -68,6 +71,8 @@ along with this software (see the LICENSE.md file). If not, see
         <artifacts artifactName="org.moqui.maps.MapServices.delete#Overlay" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
         <artifacts artifactName="org.moqui.maps.MapServices.find#Overlays" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
         <artifacts artifactName="org.moqui.maps.MapServices.get#OverlayContent" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+        <artifacts artifactName="org.moqui.maps.MapSourceServices.cancel#OverlayTiles" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+        <artifacts artifactName="org.moqui.maps.MapSourceServices.get#OverlayTilesStatus" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
         <artifacts artifactName="org.moqui.maps.MapServices.store#Place" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
         <artifacts artifactName="org.moqui.maps.MapServices.delete#Place" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
         <artifacts artifactName="org.moqui.maps.MapServices.find#Places" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
@@ -98,6 +103,8 @@ along with this software (see the LICENSE.md file). If not, see
         <!-- Configuration's profiles and layers; each also checks that its caller may open Configuration -->
         <artifacts artifactName="org.moqui.maps.MapServices.find#Configuration" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
         <artifacts artifactName="org.moqui.maps.MapServices.store#ProfileSettings" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+        <artifacts artifactName="org.moqui.maps.MapServices.get#OgcLayerOptions" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+        <artifacts artifactName="org.moqui.maps.MapServices.store#OgcLayer" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
         <!-- map archives (MapSourceServices): registering one also checks that its caller may change Configuration -->
         <artifacts artifactName="org.moqui.maps.MapSourceServices.read#ArchiveHeader" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
         <artifacts artifactName="org.moqui.maps.MapSourceServices.register#ArchiveLayer" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>

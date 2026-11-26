@@ -4,14 +4,20 @@
 // maps@max-features features), an upload is kept in Maps/overlays of the personal drive with its bad feature counted and
 // its KML network link and script not passed on; the overlay transition answers the owner and a holder of the file's
 // share, and refuses a non-holder and the holder once the share is revoked, writing no ResourceRecent; saved places are a
-// GeoJSON file of the personal drive, found by Browse's search. The converter's own rules (geometry, CRS, caps,
-// sanitizing) are moqui-lib geo/overlay_tests.rs.
+// GeoJSON file of the personal drive, found by Browse's search; a file past maps@max-features is offered simplifying on the
+// server, and with generalize is kept and cut into tiles beside it (the MapOverlayTiles job) that the tile transition
+// answers its owner and refuses a non-holder. The converter's own rules (geometry, CRS, caps, sanitizing) are moqui-lib
+// geo/overlay_tests.rs, the tiler's geo/tiles_tests.rs.
 // Run: ./moq test framework --spec MapsOverlays
 const S = "org.moqui.maps.MapServices."
 const OWNER = "MAPS_OVL_OWNER"
 const READER = "MAPS_OVL_READER"
 const OTHER = "MAPS_OVL_OTHER"
 const SHARE = "MAPS_OVL_SHARE"
+const FILE_SHARE = "MAPS_OVL_FILE_SHARE"
+const FAKE_RUN = "MAPS_OVL_RUN"
+// a pause of the thread, for the job a feature waits on
+const pause = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
 const users = [OWNER, READER, OTHER]
 const usernameOf = userId => userId.toLowerCase().replace(/_/g, ".")
 const make = (entity, fields) => ec.entity.makeValue(entity).setAll(fields).createOrUpdate()
@@ -95,7 +101,8 @@ spec({
         ec.artifactExecution.disableAuthz()
         const del = (entity, field, values) => ec.entity.find(entity).condition(field, "in", values).deleteAll()
         del("moqui.maps.MapOverlay", "ownerUserId", users)
-        del("moqui.resource.ResourceShare", "shareId", [SHARE])
+        del("moqui.resource.ResourceShare", "shareId", [SHARE, FILE_SHARE])
+        del("moqui.service.job.ServiceJobRun", "jobRunId", [FAKE_RUN])
         del("moqui.resource.ResourceRecent", "userId", users)
         for (const drive of Array.from(
             ec.entity.find("moqui.resource.ResourceDrive").condition("ownerUserId", "in", users).list()
@@ -231,5 +238,91 @@ feature("saved places are a GeoJSON file of the personal drive, refused out of r
         out.found.length == 1
         out.found[0].placeId == out.saved.placeId
         out.found[0].precisionEnumId == "GPP_USER_CONFIRMED"
+    }
+})
+
+// the tile transition as the user, at a tile URL of the overlay (its template filled): its status
+function tile(userId, url, zxy) {
+    return as(userId, () => {
+        const path = String(url || "/apps/maps/LocalMap/tile/none/none/{z}/{x}/{y}").replace(/^\//, "").replace("{z}/{x}/{y}", zxy)
+        const res = ec.screen.makeTest().rootScreen("component://webroot/screen/webroot.xml").render(path, {}, "get")
+        return {status: res.status, type: String(res.header("Content-Type") || "")}
+    })
+}
+
+feature("a file too large to draw whole is offered simplifying, and its tiles are made beside it for its readers", {
+    when() {
+        const out = {}
+        withConf("maps@max-features", "2", () => {
+            out.offered = as(OWNER, () => invoke(S + "store#Overlay", {file: uploadedFile("many.geojson", geojson(3))}))
+            out.added = as(OWNER, () =>
+                invoke(S + "store#Overlay", {file: uploadedFile("many.geojson", geojson(3)), generalize: true})
+            )
+        })
+        // the MapOverlayTiles job runs after the add commits
+        const row = () =>
+            ec.entity
+                .find("moqui.maps.MapOverlay")
+                .condition("overlayId", out.added.overlayId || "_NA_")
+                .disableAuthz()
+                .one()
+        const deadline = Date.now() + 10000
+        while (Date.now() < deadline && !["ready", "failed", "cancelled"].includes(String(row()?.tilesStatus))) pause(50)
+        out.row = row() || {}
+        out.listed =
+            (as(OWNER, () => invoke(S + "find#Overlays").overlayList) || []).find(entry => entry.overlayId == out.added.overlayId) || {}
+        out.owner = tile(OWNER, out.listed.tileUrl, "0/0/0")
+        out.other = tile(OTHER, out.listed.tileUrl, "0/0/0")
+        out.cancel = as(OWNER, () => invoke("org.moqui.maps.MapSourceServices.cancel#OverlayTiles", {overlayId: out.added.overlayId}))
+        ec.artifactExecution.disableAuthz()
+        const drive = ownerDrive()
+        out.archive = !!out.row.tilesPath && ec.resource.getLocationReference(drive.rootLocation + "/" + out.row.tilesPath).getExists()
+        // a holder of the file's share reads its tiles, and may not simplify it (no file of theirs can go beside it)
+        make("moqui.resource.ResourceShare", {
+            shareId: FILE_SHARE,
+            driveId: drive.driveId,
+            path: "Maps/overlays/many.geojson",
+            sharedWithUserId: READER,
+            permissionEnumId: "RspView",
+            createdByUserId: OWNER,
+            createdDate: ec.user.nowTimestamp
+        })
+        out.holder = tile(READER, out.listed.tileUrl, "0/0/0")
+        const pick = {driveId: drive.driveId, path: "Maps/overlays/many.geojson", generalize: true}
+        out.notWritable = withConf("maps@max-features", "2", () => as(READER, () => invoke(S + "store#Overlay", pick)))
+        ec.artifactExecution.disableAuthz()
+        const share = ec.entity.find("moqui.resource.ResourceShare").condition("shareId", FILE_SHARE).one()
+        share.set("revokedDate", ec.user.nowTimestamp)
+        share.update()
+        out.revoked = tile(READER, out.listed.tileUrl, "0/0/0")
+        // a run in progress (its job run not ended) refuses the file again; once its run is gone a cancel ends it
+        ec.artifactExecution.disableAuthz()
+        make("moqui.service.job.ServiceJobRun", {jobRunId: FAKE_RUN, jobName: "MapOverlayTiles", startTime: ec.user.nowTimestamp})
+        ec.entity
+            .makeValue("moqui.maps.MapOverlay")
+            .setAll({overlayId: out.added.overlayId, tilesStatus: "running", tilesJobRunId: FAKE_RUN})
+            .update()
+        out.running = withConf("maps@max-features", "2", () => as(OWNER, () => invoke(S + "store#Overlay", pick)))
+        ec.artifactExecution.disableAuthz()
+        ec.entity.find("moqui.service.job.ServiceJobRun").condition("jobRunId", FAKE_RUN).deleteAll()
+        out.ended = as(OWNER, () => invoke("org.moqui.maps.MapSourceServices.cancel#OverlayTiles", {overlayId: out.added.overlayId}))
+        out.endedRow = row() || {}
+        return out
+    },
+    then(out) {
+        out.offered.applied == false && out.offered.reasonCode == "TOO_MANY_FEATURES" && out.offered.canGeneralize == true
+        out.added.applied == true && out.added.generalizing == true && out.added.featureCount == 3
+        out.row.tilesStatus == "ready"
+        out.row.tilesPath == "Maps/overlays/many.tiles.pmtiles" && out.archive
+        out.listed.tileUrl.startsWith("/apps/maps/LocalMap/tile/overlay:" + out.added.overlayId + "/")
+        out.owner.status == 200 && out.owner.type.startsWith("application/vnd.mapbox-vector-tile")
+        out.other.status == 404
+        // a run that has ended is not cancelled
+        out.cancel.reasonCode == "RECORD_UNAVAILABLE"
+        out.holder.status == 200
+        out.notWritable.reasonCode == "TILES_NOT_WRITABLE"
+        out.revoked.status == 404
+        out.running.reasonCode == "TILES_RUNNING"
+        out.ended.applied == true && out.endedRow.tilesStatus == "cancelled"
     }
 })

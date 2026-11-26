@@ -52,7 +52,7 @@ fn refusal(mut out: Out, code: &str, reason: impl Into<String>) -> Result<Out, L
 
 /// The bytes at `location`, read a window at a time as the framework (the caller checked the user's access), at most
 /// `max` of them: `Ok(None)` when nothing is there, `Err((code, reason))` when it cannot be read or is larger.
-fn read_location(location: &str, max: u64) -> Result<Option<Vec<u8>>, (&'static str, String)> {
+pub(crate) fn read_location(location: &str, max: u64) -> Result<Option<Vec<u8>>, (&'static str, String)> {
     let opened = ExecutionContext::with_current(|ec| {
         let _authz = ec.disable_authz();
         ec.factory().resource().open(location)

@@ -5,7 +5,9 @@
 // archive in one action (the light and dark styles of an extract); the map-source transition answers a
 // holder of the drive's share a range (206) with the registered strong ETag and private caching, writing no ResourceRecent,
 // and refuses a non-holder, a revoked share and a stale revision (409); the effective configuration hands the same-origin
-// URL only to a user the transition lets read. The archive is a tiny valid PMTiles version 3 file made here.
+// URL only to a user the transition lets read; the Z/X/Y tile transition answers a holder one tile with its strong ETag
+// (and 304, and 204 for no tile) and refuses a non-holder and a stale revision. The archive is a tiny valid PMTiles
+// version 3 file made here.
 // Run: ./moq test framework --spec MapsSource
 const S = "org.moqui.maps.MapSourceServices."
 const HOLDER = "MAPS_SRC_HOLDER"
@@ -79,6 +81,20 @@ function source(userId, layerId, revision, range) {
             contentRange: res.header("Content-Range"),
             cacheControl: String(res.header("Cache-Control") || ""),
             length: String(res.output || "").length
+        }
+    })
+}
+// the tile transition as the user (tile/{layerId}/{revision}/{zxy}), with the request's headers: status and its headers
+function tile(userId, layerId, revision, zxy, headers = {}) {
+    return as(userId, () => {
+        let test = ec.screen.makeTest().rootScreen("component://webroot/screen/webroot.xml")
+        for (const [name, value] of Object.entries(headers)) test = test.header(name, value)
+        const res = test.render("apps/maps/LocalMap/tile/" + layerId + "/" + revision + "/" + zxy, {}, "get")
+        return {
+            status: res.status,
+            etag: res.header("ETag"),
+            type: String(res.header("Content-Type") || ""),
+            cacheControl: String(res.header("Cache-Control") || "")
         }
     })
 }
@@ -258,6 +274,33 @@ feature("a stale revision is 409, and a revoked share is refused at the next req
         plain.status == 206 && plain.contentRange.startsWith("bytes 127-200/")
         revoked.status == 403
         changed.status == 409
+    }
+})
+
+feature("the tile transition answers a holder a tile with its ETag, and refuses a non-holder and a stale revision", {
+    when() {
+        const row = layerRow(layers.drive)
+        const before = recentCount()
+        const holder = tile(HOLDER, layers.drive, row.sourceRevision, "0/0/0.mvt")
+        return {
+            row,
+            holder,
+            again: tile(HOLDER, layers.drive, row.sourceRevision, "0/0/0", {"If-None-Match": holder.etag || "none"}),
+            none: tile(HOLDER, layers.drive, row.sourceRevision, "1/0/0"),
+            other: tile(OTHER, layers.drive, row.sourceRevision, "0/0/0"),
+            stale: tile(HOLDER, layers.drive, "0".repeat(64), "0/0/0"),
+            recent: recentCount() - before
+        }
+    },
+    then({row, holder, again, none, other, stale, recent}) {
+        holder.status == 200 && holder.type.startsWith("application/vnd.mapbox-vector-tile")
+        holder.etag == '"' + row.sourceTag + '.0"'
+        holder.cacheControl.includes("private") && holder.cacheControl.includes("immutable")
+        again.status == 304
+        none.status == 204
+        other.status == 403 && other.etag == null
+        stale.status == 409
+        recent == 0
     }
 })
 

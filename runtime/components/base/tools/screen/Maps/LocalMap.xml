@@ -87,6 +87,52 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
+    <!-- One Z/X/Y tile of a registered map archive (plans/Maps.md §5: a client with no PMTiles reader, such as OpenLayers'
+        XYZ vector tile source or a terminal), at tile/{layerId}/{revision}/{z}/{x}/{y} (y may end in .mvt, .pbf or .png):
+        layerId a registered PMTiles layer, or overlay:ID, a user's overlay generalized on the server. Each request checks the
+        caller again, as source does, and writes nothing (MapSourceServices.get#ArchiveTile: the layer, its viewPermission
+        and its drive's access, or the overlay file's access in its drive); a revision that is no longer the registered one
+        is 409. The tile is read by range in Rust (the header and directories kept by the archive's revision) and sent with
+        its type, gzipped as stored when the client takes it (Content-Encoding gzip) or decompressed, a strong ETag of the
+        revision and the tile (304 for If-None-Match), Cache-Control private for resource-facade@pinned-max-age, immutable;
+        no such tile is 204 for vector tiles (an empty tile) and 404 for images. -->
+    <transition name="tile" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const extra = Array.from(sri.getScreenUrlInfo().extraPathNameList || []).map(String)
+            const header = name => String(ec.web.request?.getHeader(name) ?? '')
+            // gzip (or *) in Accept-Encoding with no q=0
+            const acceptGzip = header('Accept-Encoding').split(',').some(part => {
+                const [name, ...params] = part.split(';').map(piece => piece.trim().toLowerCase())
+                const q = params.find(param => param.startsWith('q='))
+                return (name === 'gzip' || name === '*') && !(q && Number(q.slice(2)) === 0)
+            })
+            const out = extra.length === 5 ? ec.service.sync().name('org.moqui.maps.MapSourceServices.get#ArchiveTile')
+                .parameters({layerId: extra[0], revision: extra[1], z: extra[2], x: extra[3], y: extra[4], acceptGzip,
+                    ifNoneMatch: header('If-None-Match')}).call() : null
+            if (ec.message.hasError() || !out?.ok) {
+                const status = ec.message.hasError() || !out ? 404 : Number(out.status) || 404
+                ec.message.clearErrors()
+                ec.web.sendJsonError(status, status === 409 ? 'The map archive changed: load the map again' : 'Map tile not available')
+            } else {
+                const response = ec.web.response
+                const headers = () => {
+                    response.setHeader('Cache-Control', out.cacheControl)
+                    response.setHeader('Vary', 'Accept-Encoding')
+                    if (out.etag) response.setHeader('ETag', out.etag)
+                }
+                if (out.status === 200) {
+                    headers()
+                    response.setHeader('X-Content-Type-Options', 'nosniff')
+                    if (out.contentEncoding) response.setHeader('Content-Encoding', out.contentEncoding)
+                    ec.web.sendBytesResponse(out.bytes, out.contentType, true)
+                } else {
+                    response.setStatus(out.status)
+                    headers()
+                }
+            }
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
     <!-- A proxied map provider's style, TileJSON, tiles and sprites (proxyRequests Y; plans/Maps.md §4.2): the effective
         configuration hands a map providerProxy/{providerId}/{the provider's own path} in place of the provider's URLs, and a
         rewritten style or TileJSON names only such paths. Each GET checks the caller and the path again

@@ -238,6 +238,92 @@ function sourceAccess(p) {
         : {ok: false, status: out.status, reasonCode: out.reasonCode, reason: out.reason}
 }
 
+// ===== get#ArchiveTile: the tile transition, every request (plans/Maps.md §5, a Z/X/Y endpoint) =====
+// One tile of a registered archive, or of a user's overlay generalized into one on the server (overlay:ID, MapOverlays.js
+// buildTiles), for a client with no PMTiles reader. The same check as the map-source transition, on every request: a layer
+// by check() above; an overlay by its file's own access, the reader's in its drive at its path now (a revoked share or a
+// removed member is refused at the next request), as the overlay transition decides it. Then the tile is read by range in
+// Rust (read#ArchiveTile: the header and directories kept by the archive's tag), writing nothing.
+const TILE_PATH = "/apps/maps/LocalMap/tile/"
+const OVERLAY = "moqui.maps.MapOverlay"
+const cleanPath = value =>
+    String(value ?? "")
+        .split("/")
+        .filter(part => part && part !== ".")
+        .join("/")
+// The tile URL template of a layer or an overlay at a revision: {z}, {x} and {y} left for the client
+const tileUrl = (layerId, revision) =>
+    TILE_PATH + encodeURIComponent(layerId).replace(/%3A/g, ":") + "/" + encodeURIComponent(revision) + "/{z}/{x}/{y}"
+// {ok, location, tag, size} of an overlay's generalized archive for the current user, or the refusal
+function overlayArchive(overlayId, revision) {
+    const missing = refusal("OVERLAY_MISSING", L("The overlay is not available"), 404)
+    const row = overlayId ? ec.entity.find(OVERLAY).condition({overlayId}).disableAuthz().one() : null
+    if (!row || !text(ec.user.userId)) return missing
+    if (text(row.tilesStatus) !== "ready" || !text(row.tilesRevision) || !text(row.tilesPath) || row.tilesSize == null)
+        return missing
+    const drive = text(row.driveId) ? one(DRIVE, {driveId: row.driveId}) : null
+    const root = drive ? text(drive.rootLocation).replace(/\/+$/, "") : ""
+    if (!root || !cleanPath(row.path)) return missing
+    // the overlay's access: its file's, for the reader, at its path, now (the owner as anyone); a reader it is not shared
+    // with is told nothing of it
+    if (driveLevel({driveId: row.driveId, root, path: cleanPath(row.path)}) < 1) return missing
+    if (text(revision) !== text(row.tilesRevision))
+        return refusal("REVISION_CHANGED", L("The overlay was simplified again: load the map again"), 409)
+    const location = root + "/" + cleanPath(row.tilesPath)
+    // an archive in a drive on the server's disk has no content address: one whose size or modification time changed
+    // is not the recorded one, as check() decides for a registered file
+    if (row.tilesModifiedDate != null) {
+        const stat = statOf(location)
+        if (!stat || stat.size !== num(row.tilesSize) || !sameSecond(stat.modified, millis(row.tilesModifiedDate)))
+            return refusal("SOURCE_CHANGED", L("The overlay's simplified copy changed: add the file again"), 409)
+    }
+    return {
+        ok: true,
+        location: text(row.tilesVersionName) ? location + "#" + text(row.tilesVersionName) : location,
+        tag: text(row.tilesTag),
+        size: num(row.tilesSize)
+    }
+}
+function archiveTile(p) {
+    const layerId = text(p.layerId)
+    const revision = text(p.revision)
+    let target
+    if (layerId.startsWith("overlay:")) target = overlayArchive(layerId.slice("overlay:".length), revision)
+    else target = check(layerId ? one(LAYER, {layerId}) : null, layerId || "(none)", revision)
+    if (!target.ok) return {ok: false, status: target.status, reasonCode: target.reasonCode, reason: target.reason}
+    // the caller was checked above; the archive's storage is read as the framework
+    const read = quietly(() =>
+        ec.service
+            .sync()
+            .name("org.moqui.maps.MapSourceServices.read#ArchiveTile")
+            .parameters({
+                location: target.location,
+                tag: target.tag,
+                size: target.size,
+                z: text(p.z),
+                x: text(p.x),
+                y: text(p.y),
+                acceptGzip: p.acceptGzip === true || p.acceptGzip === "true",
+                ifNoneMatch: text(p.ifNoneMatch)
+            })
+            .disableAuthz()
+            .call()
+    )
+    if (ec.message.hasError() || !read) return {ok: false, status: 404, reasonCode: "TILE_UNREAD", reason: L("The tile could not be read")}
+    const status = Number(read.status) || 404
+    return {
+        ok: [200, 204, 304].includes(status),
+        status,
+        reasonCode: status === 409 ? "REVISION_CHANGED" : status === 404 ? "TILE_MISSING" : null,
+        reason: text(read.reason) || null,
+        bytes: read.bytes ?? null,
+        contentType: text(read.contentType) || null,
+        contentEncoding: text(read.contentEncoding) || null,
+        etag: text(read.etag) || null,
+        cacheControl: text(read.cacheControl) || null
+    }
+}
+
 // For MapConfig.js: the URL a map reads a layer's archive at, or the refusal
 function servedUrl(layer) {
     const out = check(layer, layer?.layerId || "(none)", null)
@@ -675,7 +761,7 @@ function readiness(p) {
     return {checks}
 }
 
-const operations = {sourceAccess, register, findArchives, readiness}
+const operations = {sourceAccess, archiveTile, register, findArchives, readiness}
 ;({
     execute: (op, parameters) => {
         if (!Object.hasOwn(operations, op)) throw new Error("Unknown map source operation " + op)
@@ -683,5 +769,6 @@ const operations = {sourceAccess, register, findArchives, readiness}
     },
     // for the effective configuration (MapConfig.js)
     servedUrl,
+    tileUrl,
     SOURCE_PATH
 })

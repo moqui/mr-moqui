@@ -675,7 +675,7 @@
       "source": "https://registry.npmjs.org/ol/-/ol-10.11.0.tgz",
       "npm": "ol@10.11.0",
       "tarballIntegrity": "sha512-OJ+lrx7kx/1O7Xx18Ff9QkVnwZIEL0OuhJQSy2sYgzzDvyZ2qHvuZEGAajbSstUyBwaS1OtQ4RWnY84tRMDdqg==",
-      "build": "esbuild --bundle --minify --format=iife --global-name=MoquiOl --platform=browser --target=es2020 --legal-comments=none of an entry (OPENLAYERS_ENTRY) that exports Map, View, Overlay, Geolocation, Feature, Collection, unByKey, the projection and extent helpers, the Tile, Vector, VectorTile and Group layers, the XYZ, Vector and VectorTile sources, the GeoJSON, GPX, KML, TopoJSON and MVT formats, Point and polygonFromExtent, the controls, the interactions, the style classes, ol-mapbox-style's apply, applyStyle and applyBackground, PMTilesVectorSource and PMTilesRasterSource, and PMTiles, FetchSource and FileSource. Exposes the global MoquiOl. The build fails when the bundle holds an unreviewed package, evaluates code, or names an unreviewed host.",
+      "build": "esbuild --bundle --minify --format=iife --global-name=MoquiOl --platform=browser --target=es2020 --legal-comments=none of an entry (OPENLAYERS_ENTRY) that exports Map, View, Overlay, Geolocation, Feature, Collection, unByKey, the projection and extent helpers, the Tile, Vector, VectorTile, Image and Group layers, the XYZ, Vector, VectorTile, TileWMS, ImageWMS and WMTS sources, the WMTS tile grid from a recorded matrix set, the bbox loading strategy, the GeoJSON, GPX, KML, TopoJSON and MVT formats, Point and polygonFromExtent, the controls, the interactions, the style classes, ol-mapbox-style's apply, applyStyle and applyBackground, PMTilesVectorSource and PMTilesRasterSource, and PMTiles, FetchSource and FileSource. Exposes the global MoquiOl. The build fails when the bundle holds an unreviewed package, evaluates code, or names an unreviewed host.",
       "files": [
         {
           "path": "openlayers/ol.css",
@@ -686,8 +686,8 @@
         {
           "path": "openlayers/ol-map.min.js",
           "from": "build",
-          "size": 687879,
-          "sha256": "dda7a6540250b26645cab973e52f9b0d4bf63c31ea0f85be56e149cbddd2e537"
+          "size": 698706,
+          "sha256": "2b1f9063efed2841fa93721d10485027fcdd7496950d4da2c7ffa9dfc1b547cd"
         }
       ]
     },
