@@ -100,7 +100,7 @@ fn git_runs_in_a_canonical_root_and_its_output_parses() {
             .stdout
     };
     let write = |relative: &str, text: &str| {
-        let resolved = confine::resolve(&root, &runtime, relative).unwrap();
+        let resolved = confine::resolve(&root, &runtime, &[], relative).unwrap();
         assert!(confine::inside(&resolved.path, &root), "{}", resolved.path.display());
         std::fs::create_dir_all(resolved.path.parent().unwrap()).unwrap();
         std::fs::write(&resolved.path, text).unwrap();
