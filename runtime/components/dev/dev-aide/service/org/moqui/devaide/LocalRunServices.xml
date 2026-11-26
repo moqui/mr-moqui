@@ -14,7 +14,8 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- Run locally (plans/design-dev-aide.md 21.5, question 20), implemented in the dev-aide crate (src/local_run.rs):
     one job of the working tree's ci.xml, its script steps and its variables, run in a host session of the Terminal on
-    this machine, not in the job's image, with none of its secrets. -->
+    this machine, not in the job's image, with none of its secrets. And Rebuild (6.5, src/rebuild.rs): ./moq build in a
+    host session of the Terminal, which the restart banner follows. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
     <service verb="get" noun="LocalJobs" type="rust" location="dev_aide::local_run::get_local_jobs" allow-remote="false" read-only="true">
         <description>The jobs of the working tree's ci.xml (or why there are none: no file, an error with its line):
@@ -48,6 +49,31 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="script"/>
             <parameter name="note"/>
             <parameter name="reasonCode"/>
+        </out-parameters>
+    </service>
+
+    <!-- Rebuild from the app (plans/design-dev-aide.md 6.5), src/rebuild.rs. -->
+    <service verb="rebuild" noun="Server" type="rust" location="dev_aide::rebuild::rebuild_server" allow-remote="false">
+        <description>./moq build of the package this server runs (--debug for target/debug/moqui, and so on), typed into
+            a new host session of the Terminal in the checkout, the shell ending with the build's exit status. The full
+            tier's, audited (DAA_BUILD); only where the runtime has moq beside it; from a session only. Restart
+            (org.moqui.dev.DevToolsServices.restart#Server) runs the new binary once the session ended with 0.</description>
+        <out-parameters>
+            <parameter name="sessionId"/>
+            <parameter name="command"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="Rebuild" type="rust" location="dev_aide::rebuild::get_rebuild" allow-remote="false" read-only="true">
+        <description>Whether this runtime can rebuild (available: it has moq, and the user the full tier), and a rebuild's
+            session (sessionId, else the user's last): state running, succeeded (ended with 0), failed or gone (no longer
+            listed), and its exitStatus.</description>
+        <in-parameters><parameter name="sessionId"/></in-parameters>
+        <out-parameters>
+            <parameter name="available" type="Boolean"/>
+            <parameter name="sessionId"/>
+            <parameter name="state"/>
+            <parameter name="exitStatus" type="Integer"/>
         </out-parameters>
     </service>
 </services>

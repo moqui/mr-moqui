@@ -46,6 +46,17 @@
     pure.isDirty = (tab) => !!tab && tab.text !== tab.saved;
     // A tab or any of its view's companion buffers has unsaved text.
     pure.isDirtyAll = (tab) => pure.isDirty(tab) || !!(tab && (tab.companions || []).some((buffer) => buffer.text !== buffer.saved));
+    // The restart banner's word on a rebuild (6.5): where it stands, and whether Rebuild is offered (moq is there and no
+    // build runs), and Restart (not while one runs).
+    pure.rebuildNote = (rebuild) => {
+        if (!rebuild) return "";
+        if (rebuild.state === "running") return "Building in the Terminal (./moq build)…";
+        if (rebuild.state === "succeeded") return "The build succeeded: restart to run it.";
+        if (rebuild.state === "failed") return "The build failed (status " + rebuild.exitStatus + "): its output is in the Terminal.";
+        if (rebuild.needed) return "A Rust change needs a rebuild first" + (rebuild.available ? "." : ": ./moq build.");
+        return "";
+    };
+    pure.rebuildOffered = (rebuild) => !!(rebuild && rebuild.needed && rebuild.available && rebuild.state !== "running");
 
     // The changed files of a status as the Changes tab groups them.
     pure.groupChanges = (entries) => {
@@ -299,6 +310,8 @@
                 roots: [], rootId: null, tier: "view", gitAvailable: false, upstreamEdits: false, shared: false,
                 status: null, tab: "code", rail: "files", treeKey: 0, selected: null,
                 tabs: [], active: null, cursor: { line: 1, column: 1 }, lastReload: "", restartNeeded: false,
+                // a Rust change's rebuild (6.5): ./moq build in a host session of the Terminal, followed until it ends
+                rebuild: { needed: false, available: false, sessionId: "", state: "", exitStatus: null },
                 search: { query: "", regex: false, caseSensitive: false, pathFilter: "", results: [], running: false, truncated: false },
                 diff: null, commitForm: { summary: "", body: "", amend: false, signOff: false, skipHooks: false, task: "" },
                 log: [], commitDetail: null, goto: { open: false, filter: "", files: [], loading: false, error: "" }, busy: "", schemas: {},
@@ -400,6 +413,7 @@
             if (this.offSaved) this.offSaved();
             if (this.offProgress) this.offProgress();
             clearInterval(this.presenceTimer);
+            clearInterval(this.rebuildTimer);
             Object.values(this.outlineTimers || {}).forEach(clearTimeout);
             this.rememberNow();
             root.removeEventListener("pagehide", this.rememberNow);
@@ -730,6 +744,7 @@
                     if (answer.conflict) throw { errors: buffer.path + " changed on disk since the view read it; reopen the view" };
                     buffer.saved = buffer.text; buffer.base = answer.hash; buffer.missing = false;
                     if (answer.restart) this.restartNeeded = true;
+                    if (answer.rebuild) this.needRebuild();
                     return answer;
                 });
             },
@@ -752,6 +767,7 @@
                     const summary = files.map((file) => file.summary).join("; ");
                     this.lastReload = "Saved" + (summary ? " · " + summary : "") + (answer.reload ? " · " + answer.reload.millis + " ms" : "");
                     if (answer.restart) this.restartNeeded = true;
+                    if (answer.rebuild) this.needRebuild();
                     this.note(this.lastReload, tab.problems.some((problem) => problem.severity === "error") ? "warning" : "positive");
                     this.treeKey++;
                     this.refreshStatus();
@@ -800,6 +816,7 @@
                 if (!paths.length) return;
                 this.lastReload = (report.files || []).map((file) => file.path.split(/[\\/]/).pop() + ": " + file.summary).join("; ");
                 if (report.restart) this.restartNeeded = true;
+                if (report.rebuild) this.needRebuild();
                 for (const tab of this.tabs) if (paths.indexOf(tab.path) >= 0 && !tab.saving) this.reloadTab(tab);
                 clearTimeout(this.reloadTimer);
                 this.reloadTimer = setTimeout(() => { this.treeKey++; this.refreshStatus(); }, 300);
@@ -1328,6 +1345,29 @@
                     this.diff = { path: file.path, original: answer.original || "", modified: answer.modified || "" };
                 }, this.fail);
             },
+            // 6.5: offered where the runtime has moq; the session is followed until it ends, then Restart runs the build
+            rebuildNote() { return pure.rebuildNote(this.rebuild); },
+            rebuildOffered() { return pure.rebuildOffered(this.rebuild); },
+            needRebuild() {
+                if (this.rebuild.needed) return;
+                this.rebuild.needed = true;
+                this.get("rebuildStatus", {}).then((answer) => { this.rebuild.available = !!answer.available; }, () => {});
+            },
+            rebuildNow() {
+                this.$q.dialog({ title: moqui.l10n.localize("Rebuild?"), message: "./moq build runs in a terminal on this machine; restart once it succeeds.", cancel: true })
+                    .onOk(() => this.post("rebuild").then((answer) => {
+                        if (!answer.sessionId) return;
+                        Object.assign(this.rebuild, { sessionId: answer.sessionId, state: "running", exitStatus: null });
+                        const terminal = moqui.terminal;
+                        if (terminal && terminal.refresh && terminal.showSomewhere) terminal.refresh().then(() => terminal.showSomewhere(answer.sessionId));
+                        clearInterval(this.rebuildTimer);
+                        this.rebuildTimer = setInterval(() => this.get("rebuildStatus", { sessionId: this.rebuild.sessionId }).then((status) => {
+                            if (status.state === "running") return;
+                            clearInterval(this.rebuildTimer);
+                            Object.assign(this.rebuild, { state: status.state, exitStatus: status.exitStatus });
+                        }, () => clearInterval(this.rebuildTimer)), 3000);
+                    }, this.fail));
+            },
             restart() {
                 this.$q.dialog({ title: moqui.l10n.localize("Restart the server?"), message: "Sessions and the sim overlay are lost; the open tabs come back.", cancel: true })
                     .onOk(() => this.post("restart").then(() => { this.note(moqui.l10n.localize("Restarting…"), "warning"); this.restartNeeded = false; }, this.fail));
@@ -1399,7 +1439,8 @@
   <q-banner v-if="root && root.worktreeOf" dense class="bg-blue-1 text-black" id="DevWorktreeBanner">A worktree of {{(roots.find((item) => item.id === root.worktreeOf) || {}).label || root.worktreeOf}}
     for an Assist session: not loaded, so the server keeps running the main tree. Check and commit here; a session that needs to run what it changes works in the main tree.</q-banner>
   <q-banner v-if="restartNeeded" dense class="bg-amber-2 text-black" id="DevRestartBanner">{{ t('A change needs a restart to apply') }}.
-    <template v-slot:action><q-btn dense flat no-caps label="Restart" @click="restart"></q-btn><q-btn dense flat no-caps label="Later" @click="restartNeeded = false"></q-btn></template>
+    <span v-if="rebuildNote()"> {{ rebuildNote() }}</span>
+    <template v-slot:action><q-btn v-if="rebuildOffered()" dense flat no-caps label="Rebuild" @click="rebuildNow" id="DevRebuild"></q-btn><q-btn v-if="rebuild.state !== 'running'" dense flat no-caps label="Restart" @click="restart"></q-btn><q-btn dense flat no-caps label="Later" @click="restartNeeded = false"></q-btn></template>
   </q-banner>
   <q-tabs v-if="!guided" dense align="left" no-caps v-model="tab" class="m-dev-tabs">
     <q-tab name="code" label="Code"></q-tab>
