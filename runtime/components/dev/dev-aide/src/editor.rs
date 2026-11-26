@@ -13,11 +13,12 @@
  */
 
 //! The editor settings (plans/design-dev-aide.md 5.1, 16): the user's `DEV_AIDE_EDITOR` preference, JSON of the font
-//! size, the tab size (none: CodeMirror's), wrap, white space shown, the keymap, and the keys of the code editor's
-//! commands a user rebound. The Workspace hands them to the dev-aide's `m-code-editor`s
-//! (`moqui.codeEditor.setSettings`, `WebrootCode.js`), which apply the keys over CodeMirror's keymap. The Workspace's
-//! own commands (Go to file, Go to artifact, Search in files, Save) are shell key map actions (`moqui.keymap`), rebound
-//! by the shell's `KEYMAP` preference (§3.5); Save is set there alone, the text editor taking its keys from it.
+//! size, the tab size (none: CodeMirror's), wrap, white space shown, the keymap (CodeMirror's, VS Code's or Vim), and the
+//! keys of the code editor's commands a user rebound.
+//! The Workspace hands them to the dev-aide's `m-code-editor`s (`moqui.codeEditor.setSettings`, `WebrootCode.js`), which
+//! apply the keys over CodeMirror's keymap. The Workspace's own commands (Go to file, Go to artifact, Search in files,
+//! Save) are shell key map actions (`moqui.keymap`), rebound by the shell's `KEYMAP` preference (§3.5); Save is set there
+//! alone, the text editor taking its keys from it.
 //! dev/Settings has the form.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -43,9 +44,9 @@ pub(crate) fn register(registry: &mut NativeRegistry) -> Result<(), Error> {
 /// The preference that holds a user's editor settings.
 pub const EDITOR: &str = "DEV_AIDE_EDITOR";
 
-/// The keymaps a user picks from, the names of `moqui.codeEditor.KEYMAPS`. A keymap that needs a library of its own
-/// (Vim) is added here and there with the library.
-pub(crate) const KEYMAPS: &[&str] = &["default"];
+/// The keymaps a user picks from, the names of `moqui.codeEditor.KEYMAPS`: CodeMirror's, the VS Code bindings (made from
+/// CodeMirror's commands) and Vim (`@replit/codemirror-vim`, its library loaded only for a user who picks it).
+pub(crate) const KEYMAPS: &[&str] = &["default", "vscode", "vim"];
 
 /// A command of the code editor a key row rebinds (`moqui.codeEditor.COMMANDS`).
 pub(crate) struct Command {

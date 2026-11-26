@@ -97,7 +97,7 @@ along with this software (see the LICENSE.md file). If not, see
         <set field="editorSettings" from="Object.assign({}, editor.settings || {}, {wrap: editor.settings &amp;&amp; editor.settings.wrap ? 'true' : 'false',
             whitespace: editor.settings &amp;&amp; editor.settings.whitespace ? 'true' : 'false'})"/>
         <set field="editorCommands" from="editor.commands || []"/>
-        <set field="keymapOptions" from="(editor.keymaps || ['default']).map((name) => ({key: name, text: name == 'default' ? 'Default (CodeMirror)' : name}))"/>
+        <set field="keymapOptions" from="(editor.keymaps || ['default']).map((name) => ({key: name, text: ({default: 'Default (CodeMirror)', vscode: 'VS Code', vim: 'Vim'})[name] || name}))"/>
         <service-call name="org.moqui.devaide.HostingServices.get#Servers" out-map="hosting"/>
         <set field="servers" from="(hosting.servers || []).map((server) => Object.assign({}, server, {
             offered: [server.offer &amp;&amp; server.offer.git ? 'git' : null, server.offer &amp;&amp; server.offer.gateway &amp;&amp; server.offer.gateway.enabled ? 'LLM gateway' : null,

@@ -197,8 +197,8 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
     <!-- a user's own preference: the view tier sets it too, so the action is view -->
     <service verb="store" noun="EditorSettings" authz-action="view" type="rust" location="dev_aide::editor::store_editor_settings" allow-remote="false">
-        <description>The user's font size (8 to 32), tab size (1 to 8), wrap, white space shown and keymap; the keys
-            are kept. Refused out of range or for an unknown keymap.</description>
+        <description>The user's font size (8 to 32), tab size (1 to 8), wrap, white space shown and keymap (default,
+            vscode or vim); the keys are kept. Refused out of range or for an unknown keymap.</description>
         <in-parameters>
             <parameter name="fontSize"/>
             <parameter name="tabSize"/>
