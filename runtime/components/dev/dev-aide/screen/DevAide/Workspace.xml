@@ -144,6 +144,8 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="startLocalRun"><service-call name="org.moqui.devaide.LocalRunServices.start#LocalRun" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
     <!-- worktrees for agents' sessions (21.8, P13) -->
+    <transition name="hostedRoot" read-only="true"><service-call name="org.moqui.devaide.HostedRootServices.get#HostedRoot" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
     <transition name="worktrees" read-only="true"><service-call name="org.moqui.devaide.WorktreeServices.get#Worktrees" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
     <transition name="createWorktree"><service-call name="org.moqui.devaide.WorktreeServices.create#Worktree" in-map="true" web-send-json-response="true"/>
@@ -252,6 +254,8 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="checkData"><service-call name="org.moqui.devaide.EntityServices.check#DataFile" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
     <transition name="exportRecords" read-only="true"><service-call name="org.moqui.devaide.EntityServices.export#Records" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="planDataLoad" read-only="true"><service-call name="org.moqui.devaide.EntityServices.plan#DataLoad" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
     <transition name="loadChanged"><service-call name="org.moqui.devaide.EntityServices.load#ChangedRecords" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
