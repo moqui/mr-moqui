@@ -396,3 +396,31 @@ test("m-map builds its WMS, WMTS and WFS layers only for the URL it was given, w
     assert.ok(/is not a host of the map's profile/.test(built.X), "a layer of a host the profile does not name is refused");
     assert.equal(map.ogcCrossOrigin(page + "/apps/x", { cors: true }, page), undefined, "this server's proxy is asked with the session");
 });
+
+test("an edit is saved as plain GeoJSON: WGS84 to seven decimals, plain text, unique ids; a keyboard shape needs its vertices", () => {
+    const edited = map.editedCollection({ type: "FeatureCollection", features: [
+        { type: "Feature", id: "a", geometry: { type: "Point", coordinates: [190.123456789, 10] },
+            properties: { label: "<b>Spring</b>", other: "dropped", description: "Fresh <script>alert(1)</script>water" } },
+        { type: "Feature", id: "a", geometry: { type: "LineString", coordinates: [[0, 0], [1, 1]] }, properties: { name: "Trail" } },
+        { type: "Feature", geometry: { type: "GeometryCollection", geometries: [] } },
+        { type: "Feature", id: "<x>", geometry: { type: "Polygon", coordinates: [[[0, 0], [1, 0], [1, 1], [0, 0]]] }, properties: {} },
+        { type: "Feature", id: "bad", geometry: { type: "Point", coordinates: ["a", 1] } }] });
+    assert.deepEqual(edited.features.map((feature) => feature.id), ["a", "f2", "f4"], "a used or unplain id is made from its number");
+    assert.deepEqual(edited.features[0].geometry.coordinates, [-169.8765432, 10], "a wrapped longitude back in range");
+    assert.deepEqual(edited.features[0].properties, { label: "Spring", description: "Fresh water" });
+    assert.deepEqual(edited.features[1].properties, { label: "Trail" });
+    assert.deepEqual(map.editedCollection(null), { type: "FeatureCollection", features: [] });
+    // from the keyboard: a point of one vertex, a line of two, an area of three, closed
+    assert.deepEqual(map.sketchGeometry("Point", [[1, 2]]), { type: "Point", coordinates: [1, 2] });
+    assert.equal(map.sketchGeometry("LineString", [[1, 2]]), null);
+    assert.deepEqual(map.sketchGeometry("Polygon", [[0, 0], [1, 0], [1, 1]]).coordinates, [[[0, 0], [1, 0], [1, 1], [0, 0]]]);
+    assert.equal(map.sketchGeometry("Polygon", [[0, 0], [1, 0]]), null);
+    assert.equal(map.sketchGeometry("Circle", [[0, 0]]), null);
+    // only one's own overlay drawn whole is edited
+    const own = { overlayId: "7", isOwn: true, kind: "geojson" };
+    assert.equal(map.canEditOverlay(own), true);
+    assert.equal(map.canEditOverlay(Object.assign({}, own, { isOwn: false })), false, "shared with the user");
+    assert.equal(map.canEditOverlay(Object.assign({}, own, { tilesStatus: "ready", kind: "mvt" })), false, "simplified into tiles");
+    assert.equal(map.canEditOverlay({ id: "PARKS", kind: "geojson" }), false, "a profile's layer");
+    assert.ok(typeof MoquiOl.Snap === "function" && typeof MoquiOl.Draw === "function" && typeof MoquiOl.Modify === "function", "the bundle has the editing interactions");
+});

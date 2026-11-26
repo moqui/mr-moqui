@@ -12,8 +12,9 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.maps.MapSourceServices.convert#Overlay` (plans/Maps.md §4.1, §8): a GeoJSON, GPX or KML file, at a
-//! resource location or given as text, read and checked by [`moqui_lib::geo::overlay`] and answered as a sanitized
+//! `org.moqui.maps.MapSourceServices.convert#Overlay` (plans/Maps.md §4.1, §8): a geographic file of one of the formats
+//! [`moqui_lib::geo::overlay`] reads (GeoJSON, TopoJSON, EsriJSON, GPX, KML, GML, WKT, WKB, delimited text, a zipped
+//! shapefile), at a resource location or given as text or bytes, read and checked there and answered as a sanitized
 //! GeoJSON FeatureCollection in WGS84 with its feature count, bounds, CRS and notes. It writes nothing. It reads any
 //! location it is given, so no group is granted it: the overlay services (MapOverlays.js) call it after their own
 //! check of the caller's drive access.
@@ -21,7 +22,7 @@
 use std::collections::BTreeMap;
 
 use moqui_lib::error::Error as LibError;
-use moqui_lib::geo::overlay::{convert_overlay, OverlayFormat, OverlayLimits};
+use moqui_lib::geo::overlay::{convert_overlay_bytes, OverlayFormat, OverlayLimits};
 use moqui_lib::object::Value;
 
 use moqui_core::context::ExecutionContext;
@@ -83,11 +84,16 @@ pub(crate) fn read_location(location: &str, max: u64) -> Result<Option<Vec<u8>>,
     Ok(Some(bytes))
 }
 
-/// `convert#Overlay`. In: `location` or `text`, `format` (MLF_GEOJSON, MLF_GPX, MLF_KML, or by `fileName`'s extension),
-/// `maxBytes`, `maxFeatures`, `summaryOnly` (no `geojson` text). Out: `valid`; when not, `reasonCode` and `reason`
-/// (FORMAT_UNKNOWN, NOT_FOUND, NOT_READ, NOT_TEXT, or the reader's: TOO_LARGE, NOT_PARSED, NOT_FORMAT, CRS_UNSUPPORTED,
-/// TOO_MANY_FEATURES, NO_FEATURES); when it is, `format`, `featureCount`, `rejectedCount`, `bounds` [west, south, east,
-/// north], `crs`, `notes`, `size` and `geojson`.
+/// The formats named in a refusal of a file of another.
+pub(crate) const FORMATS_READ: &str = "GeoJSON, TopoJSON, EsriJSON, GPX, KML, GML, WKT, WKB, CSV with a WKT, WKB or \
+    latitude and longitude column, or a zipped shapefile (.geojson, .json, .topojson, .esrijson, .gpx, .kml, .gml, .wkt, \
+    .wkb, .csv, .zip)";
+
+/// `convert#Overlay`. In: `location`, `text` or `bytes` (one of them), `format` (an MLF_ enum ID, or by `fileName`'s
+/// extension), `maxBytes`, `maxFeatures`, `summaryOnly` (no `geojson` text). Out: `valid`; when not, `reasonCode` and
+/// `reason` (FORMAT_UNKNOWN, NOT_FOUND, NOT_READ, NOT_TEXT, or the reader's: TOO_LARGE, NOT_PARSED, NOT_FORMAT,
+/// CRS_UNSUPPORTED, TOO_MANY_FEATURES, NO_FEATURES); when it is, `format`, `featureCount`, `rejectedCount`, `bounds`
+/// [west, south, east, north], `crs`, `notes`, `size` and `geojson`.
 pub(crate) fn convert_overlay_service(
     parameters: &BTreeMap<String, Value>,
     _facade: &EntityFacade,
@@ -97,50 +103,39 @@ pub(crate) fn convert_overlay_service(
     let format =
         OverlayFormat::parse(&format_name).or_else(|| OverlayFormat::of_file_name(&text(parameters, "fileName")));
     let Some(format) = format else {
-        return refusal(
-            out,
-            "FORMAT_UNKNOWN",
-            "the file is not GeoJSON, GPX or KML (.geojson, .json, .gpx or .kml)",
-        );
+        return refusal(out, "FORMAT_UNKNOWN", format!("the file is not {FORMATS_READ}"));
     };
     let max_bytes = number(parameters, "maxBytes")
         .filter(|max| *max > 0)
         .unwrap_or(DEFAULT_MAX_BYTES);
     let max_features = number(parameters, "maxFeatures").filter(|max| *max > 0).unwrap_or(5000);
     let location = text(parameters, "location");
-    let given;
-    let read;
-    let content: &str = if location.is_empty() {
-        given = text(parameters, "text");
-        if given.len() as u64 > max_bytes {
-            return refusal(
-                out,
-                "TOO_LARGE",
-                format!(
-                    "the file is {} bytes, more than the {max_bytes} an overlay may be",
-                    given.len()
-                ),
-            );
-        }
-        &given
-    } else {
+    let content: Vec<u8> = if !location.is_empty() {
         match read_location(&location, max_bytes) {
-            Ok(Some(bytes)) => match String::from_utf8(bytes) {
-                Ok(found) => {
-                    read = found;
-                    &read
-                }
-                Err(_) => return refusal(out, "NOT_TEXT", "the file is not UTF-8 text"),
-            },
+            Ok(Some(bytes)) => bytes,
             Ok(None) => return refusal(out, "NOT_FOUND", "there is no file there"),
             Err((code, reason)) => return refusal(out, code, reason),
         }
+    } else if let Some(Value::Bytes(bytes)) = parameters.get("bytes") {
+        bytes.clone()
+    } else {
+        text(parameters, "text").into_bytes()
     };
+    if content.len() as u64 > max_bytes {
+        return refusal(
+            out,
+            "TOO_LARGE",
+            format!(
+                "the file is {} bytes, more than the {max_bytes} an overlay may be",
+                content.len()
+            ),
+        );
+    }
     let limits = OverlayLimits {
         max_bytes: usize::try_from(max_bytes).unwrap_or(usize::MAX),
         max_features: usize::try_from(max_features).unwrap_or(usize::MAX),
     };
-    let overlay = match convert_overlay(content, format, &limits) {
+    let overlay = match convert_overlay_bytes(&content, format, &limits) {
         Ok(overlay) => overlay,
         Err(err) => return refusal(out, err.code, err.message),
     };

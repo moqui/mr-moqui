@@ -558,11 +558,13 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- ========== Overlays and saved places (P3; MapOverlays.js) ========== -->
 
     <service verb="store" noun="Overlay">
-        <description>Add a GeoJSON, GPX or KML file as one of the signed-in user's map overlays: an upload (file), kept as it was
+        <description>Add a geographic file (GeoJSON, TopoJSON, EsriJSON, GPX, KML, GML, WKT, WKB, CSV with a WKT, WKB or
+            latitude and longitude column, or a zipped shapefile) as one of the signed-in user's map overlays: an upload (file), kept as it was
             sent in Maps/overlays of their personal drive (a name already there gets "name (2).ext"), or a file of a drive
             they read (driveId, path), which stays where it is. The file is read first (MapSourceServices.convert#Overlay: at
             most maps@overlay-max-bytes within maps@import-max-bytes, at most maps@max-features features (5000 when that is
-            0), WGS84 or a declared EPSG:3857, at most 4 MiB of characters as GeoJSON) and, when it cannot be drawn,
+            0), WGS84 or a declared EPSG:3857 (another CRS is refused until reprojection is built), at most 4 MiB of
+            characters as GeoJSON) and, when it cannot be drawn,
             refused with nothing written (FORMAT_UNKNOWN, TOO_LARGE, NOT_PARSED, NOT_FORMAT, CRS_UNSUPPORTED,
             TOO_MANY_FEATURES, NO_FEATURES, TOO_LARGE_TO_DRAW; NOT_FOUND for a file the user does not read). A feature whose
             geometry is not sane is left out and counted (rejectedCount, notes), as is what is not read (network links,
@@ -631,6 +633,56 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="geojson"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapOverlays.js').execute('overlayContent', context))</script></actions>
+    </service>
+    <service verb="get" noun="OverlayEdit">
+        <description>One of the signed-in user's own overlays to edit on the map (P4b; MapOverlays.js editOverlay): its
+            sanitized GeoJSON as a map draws it, the version of its file (version, which a save names) and where a save
+            writes (editPath; inPlace true only when a save over the file changes nothing of it but the edit: a GeoJSON
+            file that is exactly what the converter makes of it, the user's places, or an edited copy; else the edit is
+            written beside it as name.edited.geojson and the original kept). Refused: another user's overlay or none (RECORD_UNAVAILABLE), one
+            simplified into tiles (NOT_EDITABLE), a file the user may not write or add a file beside (NOT_WRITABLE), a file
+            gone (FILE_GONE) or no longer drawn (the reader's reason, TOO_LARGE_TO_DRAW). Writes nothing.</description>
+        <in-parameters><parameter name="overlayId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="overlayId"/>
+            <parameter name="geojson"/>
+            <parameter name="version"/>
+            <parameter name="isPlaces" type="Boolean"/>
+            <parameter name="editPath"/>
+            <parameter name="inPlace" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapOverlays.js').execute('editOverlay', context))</script></actions>
+    </service>
+    <service verb="store" noun="OverlayEdit">
+        <description>Save an edit of one of the signed-in user's own overlays (P4b; MapOverlays.js saveEdit): geojson, a
+            FeatureCollection, read by MapSourceServices.convert#Overlay as any overlay is (its bounds, maps@max-features,
+            plain-text labels and descriptions, nothing else of a feature kept) and written through FileServices.save#Text
+            as the user (the drive's write check, quota and versions) to the overlay's file when get#OverlayEdit's rule holds
+            for the file as it is now, else beside it as name.edited.geojson (upload#Resource, keepBoth: no file replaced),
+            which the overlay then draws (sourcePath, sourceCrs and importNotes keep the original's). The overlay's row
+            is locked, and the save refused when the file is not the version the edit started from (baseVersion:
+            STALE_VERSION). Refused as get#OverlayEdit refuses, and: not a FeatureCollection (NOT_FORMAT), no feature
+            (NO_FEATURES, saved places excepted), a geometry that is not valid (INVALID_GEOMETRY, with notes), past what a map
+            draws (TOO_LARGE_TO_DRAW, TOO_MANY_FEATURES), a saved place that is not a point (POINTS_ONLY).</description>
+        <in-parameters>
+            <parameter name="overlayId" required="true"/>
+            <parameter name="geojson" required="true" allow-html="any"/>
+            <parameter name="baseVersion"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="notes" type="List"/>
+            <parameter name="overlayId"/>
+            <parameter name="version"/>
+            <parameter name="path"/>
+            <parameter name="featureCount" type="Integer"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapOverlays.js').execute('saveEdit', context))</script></actions>
     </service>
     <service verb="store" noun="Place">
         <description>Save a named point to the signed-in user's places: Maps/places.geojson of their personal drive (written

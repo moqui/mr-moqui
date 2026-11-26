@@ -169,6 +169,7 @@ export { defaults as defaultInteractions } from 'ol/interaction/defaults.js';
 export { default as Select } from 'ol/interaction/Select.js';
 export { default as Modify } from 'ol/interaction/Modify.js';
 export { default as Draw } from 'ol/interaction/Draw.js';
+export { default as Snap } from 'ol/interaction/Snap.js';
 export { default as Style } from 'ol/style/Style.js';
 export { default as Fill } from 'ol/style/Fill.js';
 export { default as Stroke } from 'ol/style/Stroke.js';
@@ -646,7 +647,7 @@ licenses/Unicode-3.0.txt, from ${UNICODE_URL}.
       'Collection, unByKey, the projection and extent helpers, the Tile, Vector, VectorTile, Image and Group layers, the ' +
       'XYZ, Vector, VectorTile, TileWMS, ImageWMS and WMTS sources, the WMTS tile grid from a recorded matrix set, the bbox ' +
       'loading strategy, the GeoJSON, GPX, KML, TopoJSON and MVT formats, Point and polygonFromExtent, the ' +
-      'controls, the interactions, the style classes, ol-mapbox-style\'s apply, applyStyle and applyBackground, ' +
+      'controls, the interactions (Select, Modify, Draw and Snap among them), the style classes, ol-mapbox-style\'s apply, applyStyle and applyBackground, ' +
       'PMTilesVectorSource and PMTilesRasterSource, and PMTiles, FetchSource and FileSource. Exposes the global MoquiOl. ' +
       'The build fails when the bundle holds an unreviewed package, evaluates code, or names an unreviewed host.',
     produce: (ctx) => [['openlayers/ol-map.min.js', ctx.esbuildOpenLayers()]],

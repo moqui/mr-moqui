@@ -71,6 +71,8 @@ along with this software (see the LICENSE.md file). If not, see
         <artifacts artifactName="org.moqui.maps.MapServices.delete#Overlay" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
         <artifacts artifactName="org.moqui.maps.MapServices.find#Overlays" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
         <artifacts artifactName="org.moqui.maps.MapServices.get#OverlayContent" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+        <artifacts artifactName="org.moqui.maps.MapServices.get#OverlayEdit" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+        <artifacts artifactName="org.moqui.maps.MapServices.store#OverlayEdit" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
         <artifacts artifactName="org.moqui.maps.MapSourceServices.cancel#OverlayTiles" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
         <artifacts artifactName="org.moqui.maps.MapSourceServices.get#OverlayTilesStatus" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
         <artifacts artifactName="org.moqui.maps.MapServices.store#Place" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>

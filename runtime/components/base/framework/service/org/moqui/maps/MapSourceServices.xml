@@ -52,9 +52,12 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="convert" noun="Overlay" type="rust" location="moqui_tools::maps_overlay::convert_overlay_service" allow-remote="false">
-        <description>A GeoJSON, GPX or KML file read as a map overlay (plans/Maps.md §4.1, §8; moqui-lib geo/overlay.rs): at a
-            resource location (read as the framework) or given as text, at most maxBytes, at most maxFeatures features,
-            WGS84 or a GeoJSON file's declared EPSG:3857 (converted; any other CRS refused), each feature's geometry checked
+        <description>A geographic file read as a map overlay (plans/Maps.md §4.1, §8; moqui-lib geo/overlay.rs and its
+            readers): GeoJSON, TopoJSON, EsriJSON, GPX, KML, GML, WKT, WKB, delimited text with a WKT, WKB or latitude and
+            longitude column, or a zipped shapefile, at a resource location (read as the framework) or given as text or
+            bytes, at most maxBytes, at most maxFeatures features, WGS84 or a declared EPSG:3857 (a GeoJSON or TopoJSON crs,
+            an EsriJSON spatialReference, a GML srsName, an EWKT or EWKB SRID, a shapefile's .prj; converted; any other CRS
+            refused), each feature's geometry checked
             by itself (one that is not sane is left out, counted and named in notes), labels and descriptions made plain
             text, and no KML network link, image overlay, style, icon or other reference followed (each counted in
             notes). Answers a sanitized GeoJSON FeatureCollection (geojson, unless summaryOnly) with featureCount,
@@ -65,7 +68,10 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters>
             <parameter name="location"/>
             <parameter name="text" allow-html="any"/>
-            <parameter name="format"><description>MLF_GEOJSON, MLF_GPX or MLF_KML; else by fileName's extension</description></parameter>
+            <parameter name="bytes" type="Object"><description>The file's bytes (an upload of a binary format: WKB, a zipped
+                shapefile)</description></parameter>
+            <parameter name="format"><description>An MLF_ enum ID of a format read (MLF_GEOJSON, MLF_TOPOJSON, MLF_ESRIJSON,
+                MLF_GPX, MLF_KML, MLF_GML, MLF_WKT, MLF_WKB, MLF_CSV, MLF_SHAPEFILE); else by fileName's extension</description></parameter>
             <parameter name="fileName"/>
             <parameter name="maxBytes" type="Long"/>
             <parameter name="maxFeatures" type="Integer"/>
@@ -87,7 +93,7 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="generalize" noun="Overlay" type="rust" location="moqui_tools::maps_simplify::generalize_overlay" allow-remote="false">
-        <description>A GeoJSON, GPX or KML file too large to draw whole cut into vector tiles (plans/Maps.md §7; moqui-lib
+        <description>An overlay file (any format convert#Overlay reads) too large to draw whole cut into vector tiles (plans/Maps.md §7; moqui-lib
             geo/tiles.rs over geo/simplify.rs and geo/mvt.rs, moqui-tools maps_simplify.rs): read and sanitized as
             convert#Overlay reads it but with up to maxFeatures (250,000) features, projected to Web Mercator, and for each
             zoom from 0 simplified (Douglas–Peucker to half a pixel), clipped to each tile with a small buffer, points thinned

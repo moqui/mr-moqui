@@ -1,6 +1,7 @@
 // Users' overlays and saved places of org.moqui.maps.MapServices (plans/Maps.md §4.1, §4.2, §8; docs/tools/Maps.md
-// "Overlays and places"): a GeoJSON, GPX or KML file added as a personal overlay, the overlay transition's access check
-// and content, the overlays a user owns or reads through a share, and the saved places file.
+// "Overlays and places"): a geographic file (GeoJSON, TopoJSON, EsriJSON, GPX, KML, GML, WKT, WKB, delimited text, a
+// zipped shapefile) added as a personal overlay, the overlay transition's access check and content, the overlays a user
+// owns or reads through a share, the saved places file, and the editing of one's own overlay (editOverlay, saveEdit).
 //
 // A file is the user's: an upload goes to Maps/overlays in their personal drive (ensure#PersonalDrive) as it was sent, and
 // a file picked from a drive stays where it is. Adding one reads it first (MapSourceServices.convert#Overlay, in Rust:
@@ -85,16 +86,31 @@ const find = (entity, conditions) =>
         .condition(conditions || {})
         .disableAuthz()
 const one = (entity, conditions) => find(entity, conditions).one()
+// A file's format by its extension, as moqui-lib geo/overlay's of_file_name reads it (.esri.json before .json; a shapefile
+// is a .zip of it)
+const FORMATS = [
+    [/\.esri\.json$|\.esrijson$/, "MLF_ESRIJSON"],
+    [/\.(geojson|json)$/, "MLF_GEOJSON"],
+    [/\.topojson$/, "MLF_TOPOJSON"],
+    [/\.gpx$/, "MLF_GPX"],
+    [/\.kml$/, "MLF_KML"],
+    [/\.gml$/, "MLF_GML"],
+    [/\.wkt$/, "MLF_WKT"],
+    [/\.wkb$/, "MLF_WKB"],
+    [/\.(csv|tsv)$/, "MLF_CSV"],
+    [/\.zip$/, "MLF_SHAPEFILE"]
+]
 const formatOf = name => {
     const lower = text(name).toLowerCase()
-    return /\.(geojson|json)$/.test(lower)
-        ? "MLF_GEOJSON"
-        : lower.endsWith(".gpx")
-          ? "MLF_GPX"
-          : lower.endsWith(".kml")
-            ? "MLF_KML"
-            : null
+    const found = FORMATS.find(([pattern]) => pattern.test(lower))
+    return found ? found[1] : null
 }
+const FORMATS_TEXT = "GeoJSON, TopoJSON, EsriJSON, GPX, KML, GML, WKT, WKB, CSV or a zipped shapefile"
+// the file of an overlay edited on the map whose own file is not GeoJSON the map reads whole: written beside it
+const EDITED_SUFFIX = ".edited.geojson"
+// The version of a file a reader saw: its drive's version name, size and modification time (a drive on the server's disk
+// keeps no version name); what an edit's save compares before it writes
+const versionOf = change => (change ? [text(change.versionName), text(change.size), text(change.date)].join("|") : "")
 const fileNameOf = path => text(path).split("/").pop()
 // a label as one line of plain text
 const labelText = (value, max) =>
@@ -225,13 +241,19 @@ function storeOverlay(p) {
     let path = cleanPath(p.path)
     let fileName = file ? text(file.fileName || file.name) : fileNameOf(path)
     const format = formatOf(fileName)
-    if (!format) return refused("FORMAT_UNKNOWN", L("An overlay is a GeoJSON, GPX or KML file (.geojson, .json, .gpx or .kml)"))
+    if (!format)
+        return refused(
+            "FORMAT_UNKNOWN",
+            /\.gpkg$/i.test(fileName)
+                ? L("A GeoPackage is not read here: export its layer as GeoJSON or a zipped shapefile and add that")
+                : say("An overlay is a ${formats} file", {formats: FORMATS_TEXT})
+        )
     const limit = maxBytes()
     let reading
     if (file) {
         if (Number(file.size) > limit)
             return refused("TOO_LARGE", say("The file is larger than the ${limit} bytes an overlay may be", {limit}))
-        reading = convert({text: file.getString("UTF-8"), format})
+        reading = convert({bytes: file.getInputStream().readAllBytes(), format})
     } else {
         // a '..' or a '#' would reach another file
         const unsafe = String(p.path ?? "").includes("..") || path.includes("#")
@@ -259,7 +281,7 @@ function storeOverlay(p) {
               )
     if (tiling) {
         const parameters = {summaryOnly: true, maxFeatures: TILE_FEATURES, format}
-        if (file) parameters.text = file.getString("UTF-8")
+        if (file) parameters.bytes = file.getInputStream().readAllBytes()
         else parameters.location = driveRoot(driveId) + "/" + path
         reading = quietly(() => convert(parameters))
         if (!reading.valid)
@@ -529,6 +551,199 @@ function deleteOverlay(p) {
     return {applied: true, reasonCode: null, reason: null, overlayId}
 }
 
+// ===== get#OverlayEdit and store#OverlayEdit: editing one's own overlay on the map =====
+// Only the owner edits an overlay, and only one drawn whole (not simplified into tiles). The map edits what it draws, the
+// sanitized GeoJSON, and a save writes that, read again by the converter: as a new version of the overlay's own file only
+// when nothing of the file would change but the edit (a GeoJSON file that is what the converter makes of it, compared
+// as JSON, the user's saved places or an edited copy made here), through FileServices.save#Text (the drive's write check,
+// quota and versions); else as "name.edited.geojson" beside it (FileServices.upload#Resource, which never replaces a file
+// there), which the overlay draws from then on, the original kept as it was (sourcePath) with what reading it found
+// (sourceCrs, importNotes). A save names the version of the file it started from and is refused when the file has
+// changed since (STALE_VERSION); a write to the file by other means between that check and the save is not told apart,
+// and the drive keeps both versions. A reader of the original through a share of that file alone does not read the
+// edited copy: a share of the folder reaches both. Saved places are edited the same way, points only.
+
+// Whether two JSON values are the same, the order of an object's keys aside
+function sameJson(left, right) {
+    if (left === right) return true
+    if (typeof left !== "object" || typeof right !== "object" || left === null || right === null) return false
+    if (Array.isArray(left) !== Array.isArray(right)) return false
+    const leftKeys = Object.keys(left)
+    if (leftKeys.length !== Object.keys(right).length) return false
+    return leftKeys.every(key => Object.hasOwn(right, key) && sameJson(left[key], right[key]))
+}
+// Whether the file at location is what the converter made of it (reading): a GeoJSON file of only what a map keeps, so a
+// save over it loses nothing
+function roundTrips(row, location, reading) {
+    if (text(row.formatEnumId) !== "MLF_GEOJSON") return false
+    try {
+        const raw = quietly(() => ec.resource.getLocationReference(location).getText())
+        return raw != null && sameJson(JSON.parse(String(raw)), JSON.parse(String(reading.geojson)))
+    } catch (err) {
+        return false
+    }
+}
+// Where a save writes, from the file as it is now: {path, inPlace}
+function editTarget(row, location, reading) {
+    const path = cleanPath(row.path)
+    if (row.isPlaces === "Y" || text(row.sourcePath) || roundTrips(row, location, reading)) return {path, inPlace: true}
+    const folder = path.includes("/") ? path.slice(0, path.lastIndexOf("/") + 1) : ""
+    return {path: folder + fileNameOf(path).replace(/\.[^.]*$/, "") + EDITED_SUFFIX, inPlace: false}
+}
+// The user's level in a whole drive (a file at its root is written beside in the drive itself)
+function driveLevel(driveId) {
+    const access = probe("org.moqui.resource.FileServices.get#DriveAccess", {driveId})
+    return access && access.drive && access.drive.driveKindEnumId !== "RdkRecords" ? Number(access.level) || 0 : 0
+}
+const geojsonMaxFeatures = row => (row.isPlaces === "Y" ? Math.min(MAX_PLACES, maxFeatures()) : maxFeatures())
+// The overlay a user may edit now, read as it is: {row, location, version, reading, target} or a refusal
+function editable(overlayId, forUpdate) {
+    if (!text(ec.user.userId)) throw new Error(L("Sign in to edit an overlay"))
+    const row = overlayId ? find(OVERLAY, {overlayId}).forUpdate(!!forUpdate).one() : null
+    if (!row || row.ownerUserId !== ec.user.userId) return refused("RECORD_UNAVAILABLE", L("The overlay is not available"))
+    if (text(row.tilesStatus))
+        return refused("NOT_EDITABLE", L("This overlay is simplified on the server for drawing: edit its file, then add it again"))
+    const location = locationOf(row)
+    const change = location ? quietly(() => ec.resource.getLastChange(location)) : null
+    if (!change || change.isFile === false) return refused("FILE_GONE", L("The overlay's file is gone"))
+    if (Number(change.size) > maxBytes()) return refused("TOO_LARGE", L("The overlay's file is larger than an overlay may be"))
+    const reading = quietly(() => convert({location, format: row.formatEnumId, maxFeatures: geojsonMaxFeatures(row)}))
+    if (!reading.valid)
+        return refused(text(reading.reasonCode) || "NOT_READ", text(reading.reason) || L("The overlay's file cannot be drawn"))
+    if (String(reading.geojson || "").length > GEOJSON_MAX_CHARS)
+        return refused("TOO_LARGE_TO_DRAW", L("The overlay's file has more than a map draws at once"))
+    const target = editTarget(row, location, reading)
+    const folder = target.path.includes("/") ? target.path.slice(0, target.path.lastIndexOf("/")) : ""
+    const level = target.inPlace ? levelAt(row.driveId, target.path) : folder ? levelAt(row.driveId, folder) : driveLevel(row.driveId)
+    if (level < 2) return refused("NOT_WRITABLE", L("You may not change this overlay's file or add a file beside it"))
+    return {row, location, version: versionOf(change), reading, target}
+}
+
+function editOverlay(p) {
+    const found = editable(text(p.overlayId), false)
+    if (!found.row) return found
+    const {row, version, reading, target} = found
+    return {
+        applied: true,
+        reasonCode: null,
+        reason: null,
+        overlayId: String(row.overlayId),
+        geojson: String(reading.geojson),
+        version,
+        isPlaces: row.isPlaces === "Y",
+        editPath: target.path,
+        inPlace: target.inPlace
+    }
+}
+
+// A free name beside the file for its edited copy: "name.edited.geojson", else "name.edited (2).geojson" and on, a name
+// with no file and no overlay of the owner's
+function besidePath(row, wanted) {
+    const root = driveRoot(row.driveId)
+    const stem = wanted.slice(0, wanted.length - ".geojson".length)
+    for (let n = 1; n < 100; n++) {
+        const path = n === 1 ? wanted : stem + " (" + n + ").geojson"
+        const there = quietly(() => ec.resource.getLastChange(root + "/" + path))
+        const rowThere = find(OVERLAY, {ownerUserId: row.ownerUserId, driveId: row.driveId, path}).one()
+        if (!there && !rowThere) return path
+    }
+    return null
+}
+
+function saveEdit(p) {
+    // the row locked, and the file read as it is now: its version and where a save goes
+    const found = editable(text(p.overlayId), true)
+    if (!found.row) return found
+    const {row, version, target} = found
+    if (version !== text(p.baseVersion))
+        return refused("STALE_VERSION", L("The overlay's file changed after you started editing: open it again and redo your changes"))
+    const given = String(p.geojson ?? "")
+    if (given.length > maxBytes()) return refused("TOO_LARGE", say("The overlay is larger than the ${limit} bytes an overlay may be", {limit: maxBytes()}))
+    let submitted = null
+    try {
+        submitted = JSON.parse(given)
+    } catch (err) {
+        submitted = null
+    }
+    if (!submitted || submitted.type !== "FeatureCollection" || !Array.isArray(submitted.features))
+        return refused("NOT_FORMAT", L("The edit is not a GeoJSON FeatureCollection"))
+    const isPlaces = row.isPlaces === "Y"
+    let saved
+    if (!submitted.features.length) {
+        // places may all be removed, as delete#Place may remove the last; an overlay with nothing is removed instead
+        if (!isPlaces) return refused("NO_FEATURES", L("An overlay needs a feature: remove the overlay from the map instead"))
+        saved = {valid: true, geojson: JSON.stringify({type: "FeatureCollection", features: []}), featureCount: 0, rejectedCount: 0, notes: []}
+    } else {
+        // read as any overlay: the same bounds, checks and plain text; a geometry that is not sane refuses the save
+        saved = convert({text: given, format: "MLF_GEOJSON", maxFeatures: geojsonMaxFeatures(row)})
+        if (!saved.valid)
+            return refused(text(saved.reasonCode) || "NOT_READ", text(saved.reason) || L("The edit cannot be drawn"), {notes: Array.from(saved.notes || [])})
+        if (Number(saved.rejectedCount) > 0)
+            return refused(
+                "INVALID_GEOMETRY",
+                say("${count} features have a geometry that is not valid: fix them before saving", {count: Number(saved.rejectedCount)}),
+                {notes: Array.from(saved.notes || []).slice(0, 10)}
+            )
+        if (String(saved.geojson || "").length > GEOJSON_MAX_CHARS)
+            return refused("TOO_LARGE_TO_DRAW", L("The overlay would have more than a map draws at once"))
+        if (isPlaces && JSON.parse(saved.geojson).features.some(feature => feature?.geometry?.type !== "Point"))
+            return refused("POINTS_ONLY", L("Your places are points only"))
+    }
+    const body = JSON.stringify(JSON.parse(saved.geojson), null, 1)
+    const errors = []
+    let path
+    if (target.inPlace) {
+        path = target.path
+        const written = probe(
+            "org.moqui.resource.FileServices.save#Text",
+            {driveId: row.driveId, path, text: body, versionNote: L("Edited on the map")},
+            errors
+        )
+        if (!written) return refused("NOT_SAVED", errors[0] || L("The overlay was not saved"))
+    } else {
+        // a new file beside the original: written only where no file is (keepBoth takes the next free name if one appeared)
+        const wanted = besidePath(row, target.path)
+        if (!wanted) return refused("NOT_SAVED", L("No free name for the edited copy beside the file"))
+        const folder = wanted.includes("/") ? wanted.slice(0, wanted.lastIndexOf("/")) : ""
+        const uploaded = probe(
+            "org.moqui.resource.FileServices.upload#Resource",
+            {
+                driveId: row.driveId,
+                path: folder,
+                fileList: [body],
+                relativePathList: [fileNameOf(wanted)],
+                conflictPolicy: "keepBoth",
+                versionNote: say("Edited on the map from ${file}", {file: fileNameOf(row.path)})
+            },
+            errors
+        )
+        const written = Array.from(uploaded?.uploadedList || []).find(entry => entry.outcome !== "failed" && entry.outcome !== "skipped")
+        if (!written) return refused("NOT_SAVED", errors[0] || L("The overlay was not saved"))
+        path = cleanPath(written.path)
+    }
+    const kept = {sourceCrs: row.sourceCrs, importNotes: row.importNotes}
+    if (path !== cleanPath(row.path)) {
+        row.set("sourcePath", cleanPath(row.path))
+        row.set("path", path)
+        row.set("formatEnumId", "MLF_GEOJSON")
+    }
+    // the file now holds the converter's output, nothing of it left out; an edited copy keeps what reading its original
+    // found (its CRS and notes), the provenance of what it was made from
+    recordReading(row, Object.assign({}, saved, {rejectedCount: 0, notes: []}))
+    if (text(row.sourcePath)) row.setAll(kept)
+    writeRow(row, false)
+    const after = quietly(() => ec.resource.getLastChange(driveRoot(row.driveId) + "/" + path))
+    return {
+        applied: true,
+        reasonCode: null,
+        reason: null,
+        overlayId: String(row.overlayId),
+        version: versionOf(after),
+        path,
+        featureCount: Number(saved.featureCount) || 0
+    }
+}
+
 // ===== find#Overlays =====
 // The drives where another user's overlay may be readable to the current user: those with a share to them (the user,
 // one of their groups, their party) or a membership of theirs
@@ -575,6 +790,8 @@ function overlayEntry(row, isOwn) {
         ownerName: isOwn ? "" : ownerName(row.ownerUserId),
         fileName: fileNameOf(row.path),
         path: isOwn ? cleanPath(row.path) : null,
+        // the file an edit on the map was made from, kept beside the edited copy the overlay draws
+        sourcePath: isOwn && text(row.sourcePath) ? cleanPath(row.sourcePath) : null,
         formatEnumId: text(row.formatEnumId) || null,
         featureCount: Number(row.featureCount) || 0,
         rejectedCount: Number(row.rejectedCount) || 0,
@@ -849,6 +1066,8 @@ function overlayLayerReadable(layerId) {
 
 const operations = {
     storeOverlay,
+    editOverlay,
+    saveEdit,
     buildTiles,
     cancelTiles,
     tilesStatus,

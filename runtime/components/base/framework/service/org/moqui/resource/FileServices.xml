@@ -1326,7 +1326,9 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="save" noun="Text">
-        <description>Write a text file of a drive (a new note, or an edit) with a version note. Edit permission.</description>
+        <description>Write a text file of a drive (a new note, or an edit) with a version note. Edit permission. Refused when
+            the drive has a quota the write would pass (the text's UTF-8 bytes less the file it replaces, as upload#Resource
+            counts, a personal drive's owner's call recordings included).</description>
         <in-parameters>
             <parameter name="driveId" required="true"/>
             <parameter name="path" required="true"/>
@@ -1344,7 +1346,26 @@ along with this software (see the LICENSE.md file). If not, see
             if (!access.drive || access.level < 1) { ec.message.addError(ec.l10n.localize('File not found')); return }
             if (!access.canWrite) { ec.message.addError(ec.l10n.localize('You may not change this file')); return }
             const root = access.drive.rootLocation.replace(/\/+$/, '')
-            const result = ec.resource.makeChangeSet(root).write(path, text == null ? '' : String(text)).commit(versionNote || null)
+            const body = text == null ? '' : String(text)
+            if (access.drive.quotaBytes != null) {
+                // the text's UTF-8 bytes, less the file it replaces, as upload#Resource counts a write
+                let newBytes = 0
+                for (const ch of body) { const code = ch.codePointAt(0); newBytes += code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4 }
+                const existing = ec.resource.getLastChange(`${root}/${path}`)
+                const replacedBytes = existing && existing.isFile !== false ? Number(existing.size) || 0 : 0
+                if (newBytes > replacedBytes) {
+                    // a personal drive's owner's call recordings count toward its quota (CallRecordings.js)
+                    const used = ec.resource.getTreeSize(root) + (access.drive.driveKindEnumId === 'RdkPersonal' && access.drive.ownerUserId
+                        ? Number(ec.service.sync().name('org.moqui.call.CallRecordingServices.get#RecordingBytes')
+                            .parameter('userId', access.drive.ownerUserId).disableAuthz().call()?.recordingBytes || 0) : 0)
+                    if (used - replacedBytes + newBytes > access.drive.quotaBytes) {
+                        ec.message.addError(ec.l10n.localize('Save refused: it would pass the quota of drive') +
+                                ` ${access.drive.driveName} (${access.drive.quotaBytes} bytes; ${used} used, ${newBytes - replacedBytes} more)`)
+                        return
+                    }
+                }
+            }
+            const result = ec.resource.makeChangeSet(root).write(path, body).commit(versionNote || null)
             if (result.failures.length) { ec.message.addError(result.failures[0].error); return }
             const change = ec.resource.getLastChange(`${root}/${path}`)
             versionName = result.versionName ?? (change ? change.versionName : null)

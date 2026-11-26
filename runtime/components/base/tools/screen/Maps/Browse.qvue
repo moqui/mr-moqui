@@ -20,7 +20,12 @@ along with this software (see the LICENSE.md file). If not, see
     shown named with Retry, and a cut feature list said), Saved views (Save view saves where the map is) and the selected
     feature's details (a place's or a record's, or an overlay's feature with its label and plain-text description and its
     overlay; the record's links a registered route resolves; Save place, Remove place). Add overlay takes an upload or a file
-    chosen with the drive picker (pickerData, pickerFolder, pickerSearch: GeoJSON, GPX and KML files only). Below 600 px the panel is a bottom sheet over the map. Full screen is the browser's, on request. The last view
+    chosen with the drive picker (pickerData, pickerFolder, pickerSearch: the formats an overlay reads only). Edit, on one of
+    the user's own overlays drawn whole (their places among them), opens the Edit panel: m-map's editing (editCommand,
+    edit-change: draw points, lines and areas, move the selected feature's vertices, delete it, give it a label and
+    description as plain text; from the keyboard a vertex at the map's center), saved through saveOverlayEdit as a new version
+    of the file (or of name.edited.geojson beside a file of another format), refused when the file changed since it was
+    opened. Below 600 px the panel is a bottom sheet over the map. Full screen is the browser's, on request. The last view
     is posted (rememberView) only when the user turned Restore my last view on. Brand color names and Quasar classes
     only. -->
 <template><div ref="frame" class="m-maps-browse column no-wrap" :class="fullscreen ? ($q.dark.isActive ? 'bg-dark' : 'bg-white') : ''">
@@ -32,6 +37,9 @@ along with this software (see the LICENSE.md file). If not, see
                 dense outlined clearable style="min-width:120px" :label="t('Postal country')" id="MapsPostalCountry"></q-select>
         <q-btn id="MapsSearchButton" dense flat no-caps icon="sym_o_search" :label="phone ? '' : t('Search')" :aria-label="t('Search')" @click="runSearch"></q-btn>
         <q-space></q-space>
+        <q-btn v-if="editing" dense flat no-caps icon="sym_o_edit" :label="phone ? '' : t('Editing')" :aria-label="t('Editing') + ': ' + editing.label"
+                :class="panel === 'edit' ? 'm-tonal text-primary' : 'text-positive'" :aria-pressed="panel === 'edit' ? 'true' : 'false'" @click="togglePanel('edit')"
+                id="MapsEditingButton"></q-btn>
         <q-btn dense flat no-caps icon="sym_o_layers" :label="phone ? '' : t('Layers')" :aria-label="t('Layers')" :class="panel === 'layers' ? 'm-tonal text-primary' : ''"
                 :aria-pressed="panel === 'layers' ? 'true' : 'false'" @click="togglePanel('layers')">
             <q-badge v-if="problemCount" floating color="warning" rounded>{{problemCount}}</q-badge>
@@ -114,6 +122,12 @@ along with this software (see the LICENSE.md file). If not, see
                             <q-item-label caption>{{overlayCaption(layer)}}</q-item-label>
                             <q-item-label v-if="layer.rejectedCount" caption class="text-warning">{{layer.rejectedCount}} {{t('features left out: their geometry is not valid')}}</q-item-label>
                         </q-item-section>
+                        <q-item-section side v-if="canEdit(layer)">
+                            <q-btn dense flat round size="sm" icon="sym_o_edit" :aria-label="t('Edit') + ' ' + layer.label" @click="startEdit(layer)"
+                                    :data-maps-edit="layer.overlayId" :disable="editLoading">
+                                <q-tooltip>{{t('Edit on the map')}}</q-tooltip>
+                            </q-btn>
+                        </q-item-section>
                         <q-item-section side v-if="layer.isOwn && tilesBusy(layer)">
                             <q-btn dense flat round size="sm" icon="sym_o_cancel" :aria-label="t('Stop simplifying')" @click="cancelTiles(layer)" data-maps-cancel-tiles="true">
                                 <q-tooltip>{{t('Stop simplifying')}}</q-tooltip>
@@ -126,7 +140,7 @@ along with this software (see the LICENSE.md file). If not, see
                         </q-item-section>
                     </q-item>
                 </q-list>
-                <div v-else class="text-caption m-muted">{{t('Add a GeoJSON, GPX or KML file. Share its file in Files to show it to others.')}}</div>
+                <div v-else class="text-caption m-muted">{{t('Add a GeoJSON, KML, GPX, shapefile or other geographic file. Share its file in Files to show it to others.')}}</div>
                 <div v-if="layerErrors.length" class="q-mt-sm m-maps-layer-errors">
                     <div class="text-caption m-muted">{{t('Not shown')}}</div>
                     <div v-for="layerError in layerErrors" :key="layerError.id" class="row items-start no-wrap q-py-xs" :data-maps-layer-error="layerError.id">
@@ -161,6 +175,39 @@ along with this software (see the LICENSE.md file). If not, see
                 <a class="text-caption q-mt-sm block" :href="siblingUrl('Views')" @click.prevent="$root.setUrl(siblingUrl('Views'))">{{t('Manage saved views')}}</a>
             </template>
 
+            <template v-if="panel === 'edit' && editing">
+                <div class="text-body1 text-weight-medium">{{editing.label}}</div>
+                <div class="text-caption m-muted" id="MapsEditWhere">{{editing.inPlace
+                    ? t('Saving writes a new version of its file; the earlier ones stay in its versions.')
+                    : t('Saving writes') + ' ' + editing.editPath + ' ' + t('beside its file, which stays as it is, and the overlay draws that from then on.')}}</div>
+                <div class="text-caption m-muted q-mt-sm">{{t('Draw')}}</div>
+                <q-btn-toggle v-model="editing.drawType" dense no-caps unelevated toggle-color="primary" :options="drawOptions" @update:model-value="setDraw"
+                        id="MapsEditDraw"></q-btn-toggle>
+                <div class="text-caption m-muted q-mt-xs">{{editing.drawType
+                    ? t('Click the map to place each vertex; a double click ends a line or an area. From the keyboard: Enter on the map adds a vertex at its center.')
+                    : t('Click a feature to select it, then drag its vertices to move them (they snap to the other features). From the keyboard: Enter on the map selects the feature at its center, Delete removes it.')}}</div>
+                <div v-if="editing.drawType" class="row q-gutter-xs q-mt-xs">
+                    <q-btn dense flat no-caps icon="sym_o_add_location" :label="editing.drawType === 'Point' ? t('Add a point at the center') : t('Add a vertex at the center')"
+                            @click="editCommand('enter')"></q-btn>
+                    <q-btn v-if="editing.drawType !== 'Point'" dense flat no-caps icon="sym_o_done" :label="t('Finish the shape')" :disable="!editState.sketch"
+                            @click="editCommand('finish')"></q-btn>
+                </div>
+                <div v-if="editState.selected" class="q-mt-sm m-tonal q-pa-sm" id="MapsEditSelected">
+                    <m-text-line v-model="editLabel" name="editLabel" id="MapsEditLabel" :label="t('Name')" @update:model-value="applyDetails"></m-text-line>
+                    <q-input v-model="editDescription" type="textarea" dense outlined autogrow :label="t('Description')" class="q-mt-xs" id="MapsEditDescription"
+                            @update:model-value="applyDetails"></q-input>
+                    <div class="text-caption m-muted">{{t('Plain text: markup is not kept.')}}</div>
+                    <q-btn dense flat no-caps icon="sym_o_delete" :label="t('Delete this feature')" class="q-mt-xs" @click="editCommand('delete')"></q-btn>
+                </div>
+                <div class="text-caption q-mt-sm">{{editState.count}} {{t('features')}}<span v-if="editState.dirty" class="text-warning"> · {{t('Not saved')}}</span></div>
+                <ul v-if="editNotes.length" class="text-caption text-negative q-my-xs q-pl-md" id="MapsEditNotes"><li v-for="note in editNotes" :key="note">{{note}}</li></ul>
+                <div class="row justify-end q-mt-sm q-gutter-sm">
+                    <q-btn v-if="editStale" dense flat no-caps :label="t('Open it again')" @click="reopenEdit"></q-btn>
+                    <q-btn dense flat no-caps :label="t('Close')" @click="stopEdit()"></q-btn>
+                    <q-btn dense unelevated no-caps color="primary" :label="t('Save')" :loading="editSaving" :disable="!editState.dirty" @click="saveEdit" id="MapsEditSave"></q-btn>
+                </div>
+            </template>
+
             <template v-if="panel === 'details' && selected">
                 <div class="text-body1 text-weight-medium">{{selected.label || t('Place')}}</div>
                 <div class="text-caption m-muted" v-if="selectedLayerLabel">{{selectedLayerLabel}}</div>
@@ -178,7 +225,8 @@ along with this software (see the LICENSE.md file). If not, see
         </component>
 
         <div class="col" ref="mapHolder" style="min-width:0">
-            <m-map v-if="mapConfig" id="MapsBrowseMap" :config="mapConfig" :height="mapPx + 'px'" @select="onSelect" @view-change="onViewChange"></m-map>
+            <m-map v-if="mapConfig" ref="map" id="MapsBrowseMap" :config="mapConfig" :height="mapPx + 'px'" @select="onSelect" @view-change="onViewChange"
+                    @edit-change="onEditChange"></m-map>
             <div v-else class="flex flex-center" :style="{height: mapPx + 'px'}"><q-spinner size="2em"></q-spinner></div>
         </div>
     </div>
@@ -200,10 +248,10 @@ along with this software (see the LICENSE.md file). If not, see
 
     <m-dialog v-model="addShown" :title="t('Add overlay')" width="480">
         <div>
-            <div class="text-caption m-muted">{{t('A GeoJSON, GPX or KML file of at most 10 MB. It is kept in Maps/overlays of your files, checked, and drawn only by this server: links, icons and scripts in it are not followed.')}}</div>
-            <q-file v-model="addFile" dense outlined clearable accept=".geojson,.json,.gpx,.kml" :label="t('Upload a file')" class="q-mt-sm" id="MapsOverlayFile" @update:model-value="addOffer = false"></q-file>
+            <div class="text-caption m-muted">{{t('A GeoJSON, TopoJSON, EsriJSON, GPX, KML, GML, WKT, WKB or CSV file, or a shapefile zipped with its .dbf and .prj, of at most 10 MB, in WGS84 or Web Mercator. It is kept in Maps/overlays of your files, checked, and drawn only by this server: links, icons and scripts in it are not followed.')}}</div>
+            <q-file v-model="addFile" dense outlined clearable :accept="OVERLAY_ACCEPT" :label="t('Upload a file')" class="q-mt-sm" id="MapsOverlayFile" @update:model-value="addOffer = false"></q-file>
             <div v-if="picker.drives.length" class="q-mt-sm" id="MapsOverlayPicker">
-                <div class="text-caption m-muted">{{t('Or a GeoJSON, GPX or KML file of a drive you may open')}}</div>
+                <div class="text-caption m-muted">{{t('Or a file of a drive you may open')}}</div>
                 <div class="row items-center q-gutter-xs">
                     <q-chip v-for="drive in picker.drives" :key="drive.driveId" dense square clickable
                             :class="picker.driveId === drive.driveId && !picker.searching ? 'm-tonal text-primary' : ''"
@@ -229,7 +277,7 @@ along with this software (see the LICENSE.md file). If not, see
                             <q-item-label caption class="ellipsis" v-if="pickerCaption(row)">{{pickerCaption(row)}}</q-item-label>
                         </q-item-section>
                     </q-item>
-                    <q-item v-if="!picker.loading && !picker.rows.length"><q-item-section class="text-caption m-muted">{{t('No GeoJSON, GPX or KML file here')}}</q-item-section></q-item>
+                    <q-item v-if="!picker.loading && !picker.rows.length"><q-item-section class="text-caption m-muted">{{t('No geographic file here')}}</q-item-section></q-item>
                 </q-list>
             </div>
             <m-text-line v-model="addLabel" name="label" id="MapsOverlayLabel" :label="t('Name (the file name when empty)')" class="q-mt-sm"></m-text-line>
@@ -258,6 +306,7 @@ along with this software (see the LICENSE.md file). If not, see
 
 <script>
 const t = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
+const OVERLAY_ACCEPT = '.geojson,.json,.topojson,.esrijson,.gpx,.kml,.gml,.wkt,.wkb,.csv,.tsv,.zip';
 const PRECISION = { GPP_USER_CONFIRMED: 'User-confirmed point', GPP_ADDRESS_MATCH: 'Address match', GPP_STREET_RANGE: 'Street-range interpolation',
     GPP_POSTAL_AREA: 'Postal-area representative point', GPP_PLACE_ESTIMATE: 'Place estimate' };
 
@@ -268,7 +317,9 @@ module.exports = {
         return { effective: null, error: '', panel: '', query: '', results: [], postalCountries: [], postalCountry: null, postalNote: '', searching: false, savedViews: [], hidden: {}, basemapId: '',
             view: null, lastView: null, marker: null, selected: null, mapPx: 480, phone: false, fullscreen: false, saveShown: false,
             saveName: '', saveShared: 'N', saving: false, restoreLastView: false, geocoder: null, addShown: false, addFile: null, addPick: null,
-            addLabel: '', adding: false, addOffer: false, placeShown: false, placeName: '',
+            addLabel: '', adding: false, addOffer: false, placeShown: false, placeName: '', OVERLAY_ACCEPT,
+            editing: null, editState: { count: 0, dirty: false, selected: null, sketch: 0 }, editLabel: '', editDescription: '', editNotes: [],
+            editSaving: false, editLoading: false, editStale: false,
             picker: { drives: [], driveId: null, crumbs: [], rows: [], loading: false, text: '', searching: false } };
     },
     computed: {
@@ -284,7 +335,13 @@ module.exports = {
         layerErrors() { return this.effective ? this.effective.layerErrors || [] : []; },
         problemCount() { return this.layerErrors.length + (this.effective && this.effective.featuresTruncated ? 1 : 0); },
         panelTitle() {
-            return { search: t('Search results'), layers: t('Layers'), views: t('Saved views'), details: t('Selected') }[this.panel] || '';
+            return { search: t('Search results'), layers: t('Layers'), views: t('Saved views'), details: t('Selected'), edit: t('Edit') }[this.panel] || '';
+        },
+        // a saved place is a point: its file draws nothing else
+        drawOptions() {
+            const none = { label: t('Select'), value: '' };
+            const point = { label: t('Point'), value: 'Point' };
+            return this.editing && this.editing.isPlaces ? [none, point] : [none, point, { label: t('Line'), value: 'LineString' }, { label: t('Area'), value: 'Polygon' }];
         },
         sheetStyle() { return { position: 'fixed', left: '0', right: '0', bottom: '0', maxHeight: '55vh', zIndex: 2000 }; },
         // the record's links a registered route resolved to a screen the user may open (get#EffectiveConfig), on its place
@@ -595,6 +652,77 @@ module.exports = {
                 this.watchTiles();
             }, () => this.watchTiles());
         },
+        // ---- editing one's own overlay (m-map's editCommand; MapOverlays.js editOverlay and saveEdit) ----
+        canEdit(layer) { return !!(moqui.map && moqui.map.canEditOverlay ? moqui.map.canEditOverlay(layer) : layer.isOwn && !layer.tilesStatus && layer.kind === 'geojson'); },
+        editCommand(name, value) { return this.$refs.map && this.$refs.map.editCommand ? this.$refs.map.editCommand(name, value) : null; },
+        startEdit(layer) {
+            if (this.editing && !this.stopEdit()) return;
+            this.editLoading = true;
+            this.request('overlayEdit', { params: { overlayId: layer.overlayId } }).then((json) => {
+                if (!json.applied) { moqui.notifyMessages(null, [json.reason || t('The overlay cannot be edited')]); return; }
+                let collection = null;
+                try { collection = JSON.parse(json.geojson); } catch (err) { collection = null; }
+                if (!collection) { moqui.notifyMessages(null, [t('The overlay cannot be edited')]); return; }
+                this.editing = { overlayId: json.overlayId, layerId: layer.id, label: layer.label, version: json.version, isPlaces: json.isPlaces,
+                    editPath: json.editPath, inPlace: json.inPlace, drawType: '' };
+                this.editNotes = [];
+                this.editStale = false;
+                this.editState = { count: collection.features.length, dirty: false, selected: null, sketch: 0 };
+                // the overlay is shown, so its features are there to edit (m-map hides it while its copy is edited)
+                if (!this.layerShown(layer)) { this.keepView(); this.hidden = Object.assign({}, this.hidden, { [layer.id]: false }); }
+                this.editCommand('start', { layerId: layer.id, collection, pointsOnly: json.isPlaces });
+                this.panel = 'edit';
+            }, (err) => moqui.notifyMessages(null, [String(err && err.message || err)])).then(() => { this.editLoading = false; });
+        },
+        setDraw(type) { this.editCommand('draw', type || ''); },
+        onEditChange(state) {
+            if (!state) return;
+            const before = this.editState.selected;
+            this.editState = state;
+            if (this.editing && state.drawType !== undefined) this.editing.drawType = state.drawType;
+            // the fields follow the selection, not each change they make themselves
+            if (state.selected && (!before || before.id !== state.selected.id)) { this.editLabel = state.selected.label || ''; this.editDescription = state.selected.description || ''; }
+        },
+        applyDetails() { this.editCommand('details', { label: this.editLabel, description: this.editDescription }); },
+        saveEdit() {
+            if (!this.editing || this.editSaving) return;
+            const collection = this.editCommand('collection');
+            if (!collection) return;
+            this.editSaving = true;
+            this.editNotes = [];
+            const params = { overlayId: this.editing.overlayId, geojson: JSON.stringify(collection), baseVersion: this.editing.version };
+            this.request('saveOverlayEdit', { method: 'POST', params }).then((json) => {
+                if (json.applied) {
+                    this.editing.version = json.version;
+                    this.editing.editPath = json.path;
+                    this.editing.inPlace = true;
+                    this.editCommand('saved');
+                    moqui.notifyMessages([{ type: 'success', message: t('Overlay saved') + ': ' + json.featureCount + ' ' + t('features') + '.' }], null);
+                } else {
+                    this.editNotes = json.notes || [];
+                    this.editStale = json.reasonCode === 'STALE_VERSION';
+                    moqui.notifyMessages(null, [json.reason || t('The overlay was not saved')]);
+                }
+            }, (err) => moqui.notifyMessages(null, [String(err && err.message || err)])).then(() => { this.editSaving = false; });
+        },
+        // ends the editing (asking first when there are changes not saved); false when the user keeps editing
+        stopEdit(force) {
+            if (!this.editing) return true;
+            if (!force && this.editState.dirty && !window.confirm(t('Close without saving your changes?'))) return false;
+            this.editCommand('stop');
+            this.editing = null;
+            this.editState = { count: 0, dirty: false, selected: null, sketch: 0 };
+            if (this.panel === 'edit') this.panel = 'layers';
+            this.keepView();
+            this.load();
+            return true;
+        },
+        // the file changed meanwhile: what is being edited is let go and the file's version now opened
+        reopenEdit() {
+            const layer = this.overlays.find((one) => this.editing && one.id === this.editing.layerId);
+            this.stopEdit(true);
+            if (layer) this.startEdit(layer);
+        },
         removeOverlay(layer) {
             this.request('removeOverlay', { method: 'POST', params: { overlayId: layer.overlayId } }).then((json) => {
                 if (!json.applied) { moqui.notifyMessages(null, [json.reason || t('The overlay was not removed')]); return; }
@@ -662,6 +790,7 @@ module.exports = {
         this.loadPreferences();
     },
     beforeUnmount() {
+        if (this.editing) this.editCommand('stop');
         window.removeEventListener('resize', this.onResize);
         document.removeEventListener('fullscreenchange', this.onFullscreenChange);
         clearTimeout(this.rememberTimer);

@@ -16,7 +16,8 @@ along with this software (see the LICENSE.md file). If not, see
     configuration (getConfig: org.moqui.maps.MapServices.get#EffectiveConfig, with a record's adapterKey and recordKey when
     LocalMap's Open in Maps sent them, and the user's own and shared overlays: MapOverlays.js), with the search and results,
     layers (record layers and overlays among them, a layer that is not shown named with Retry, Add overlay), saved views and
-    the selected feature's details (Save place) beside it, a bottom sheet on a phone.
+    the selected feature's details (Save place) beside it, a bottom sheet on a phone, and the editing of the user's own
+    overlays and places (overlayEdit, saveOverlayEdit).
     Browse.tui.json is the terminal's: the map component over terminalMap (the places of the saved views and the record
     layers, the notices and the attribution). A qvue screen only: asked for in html under /apps it opens at the same path
     under /qapps (screen/render.rs). Search reads saved views and places and the permitted records of the record layers
@@ -57,7 +58,8 @@ along with this software (see the LICENSE.md file). If not, see
                         id: entry.layerId, label: entry.label, kind: entry.tileUrl ? 'mvt' : 'geojson', url: entry.tileUrl || entry.url,
                         maxZoom: entry.tilesMaxZoom, tilesStatus: entry.tilesStatus, tilesProgress: entry.tilesProgress, tilesNote: entry.tilesNote,
                         visible: !(entry.tilesStatus && !entry.tileUrl), attribution: '', overlayId: entry.overlayId,
-                        isOwn: entry.isOwn, isPlaces: entry.isPlaces, ownerName: entry.ownerName, fileName: entry.fileName, featureCount: entry.featureCount,
+                        isOwn: entry.isOwn, isPlaces: entry.isPlaces, ownerName: entry.ownerName, fileName: entry.fileName, path: entry.path,
+                        sourcePath: entry.sourcePath, formatEnumId: entry.formatEnumId, featureCount: entry.featureCount,
                         rejectedCount: entry.rejectedCount, notes: entry.notes, bounds: entry.bounds})))
                 } catch (err) {
                     ec.logger.warn('Maps Browse: the overlays were not listed: ' + (err?.message ?? err))
@@ -93,6 +95,28 @@ along with this software (see the LICENSE.md file). If not, see
             else ec.web.sendJsonResponse({applied: out.applied, reasonCode: out.reasonCode, reason: out.reason, overlayId: out.overlayId,
                 featureCount: out.featureCount, rejectedCount: out.rejectedCount, notes: out.notes || [], canGeneralize: out.canGeneralize === true,
                 generalizing: out.generalizing === true})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- Editing one of the user's own overlays on the map (P4b): its GeoJSON and file version to edit (get#OverlayEdit,
+        read-only), and the save of an edit (store#OverlayEdit: the converter's checks, the version check, FileServices
+        save#Text as the user) -->
+    <transition name="overlayEdit" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.maps.MapServices.get#OverlayEdit').parameters({overlayId: String(overlayId ?? '')}).call()
+            if (ec.message.hasError()) { const errors = ec.message.getErrorsString(); ec.message.clearErrors(); ec.web.sendJsonResponse({errors}) }
+            else ec.web.sendJsonResponse({applied: out.applied === true, reasonCode: out.reasonCode, reason: out.reason, overlayId: out.overlayId,
+                geojson: out.geojson, version: out.version, isPlaces: out.isPlaces === true, editPath: out.editPath, inPlace: out.inPlace === true})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="saveOverlayEdit" method="post">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.maps.MapServices.store#OverlayEdit').requireNewTransaction(true)
+                .parameters({overlayId: String(overlayId ?? ''), geojson: String(context.geojson ?? ''), baseVersion: String(context.baseVersion ?? '')}).call()
+            if (ec.message.hasError()) { const errors = ec.message.getErrorsString(); ec.message.clearErrors(); ec.web.sendJsonResponse({errors}) }
+            else ec.web.sendJsonResponse({applied: out.applied === true, reasonCode: out.reasonCode, reason: out.reason, notes: out.notes || [],
+                overlayId: out.overlayId, version: out.version, path: out.path, featureCount: out.featureCount})
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
@@ -132,7 +156,7 @@ along with this software (see the LICENSE.md file). If not, see
         the file chosen again, and reads it, before anything is kept -->
     <transition name="pickerData" method="get" read-only="true">
         <actions><script><![CDATA[
-            const overlayFile = row => row?.isDirectory === true || /\.(geojson|json|gpx|kml)$/i.test(String(row?.name || ''))
+            const overlayFile = row => row?.isDirectory === true || /\.(geojson|json|topojson|esrijson|gpx|kml|gml|wkt|wkb|csv|tsv|zip)$/i.test(String(row?.name || ''))
             const out = ec.service.sync().name('org.moqui.comms.FilePickerServices.get#PickerData').parameter('recentLimit', 40)
                 .requireNewTransaction(true).call()
             if (ec.message.hasError()) { ec.message.clearErrors(); ec.web.sendJsonResponse({hasDrive: false, driveList: [], recentList: []}) }
@@ -143,7 +167,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="pickerFolder" method="get" read-only="true">
         <actions><script><![CDATA[
-            const overlayFile = row => row?.isDirectory === true || /\.(geojson|json|gpx|kml)$/i.test(String(row?.name || ''))
+            const overlayFile = row => row?.isDirectory === true || /\.(geojson|json|topojson|esrijson|gpx|kml|gml|wkt|wkb|csv|tsv|zip)$/i.test(String(row?.name || ''))
             const out = ec.service.sync().name('org.moqui.comms.FilePickerServices.list#PickerFolder').parameters({driveId: driveId || '', path: path || ''})
                 .requireNewTransaction(true).call()
             if (ec.message.hasError()) { ec.message.clearErrors(); ec.web.sendJsonResponse({fileList: [], breadcrumbList: []}) }
@@ -153,7 +177,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="pickerSearch" method="get" read-only="true">
         <actions><script><![CDATA[
-            const overlayFile = row => row?.isDirectory !== true && /\.(geojson|json|gpx|kml)$/i.test(String(row?.name || ''))
+            const overlayFile = row => row?.isDirectory !== true && /\.(geojson|json|topojson|esrijson|gpx|kml|gml|wkt|wkb|csv|tsv|zip)$/i.test(String(row?.name || ''))
             const out = ec.service.sync().name('org.moqui.comms.FilePickerServices.find#PickerFiles').parameters({text: text || '', limit: 50})
                 .requireNewTransaction(true).call()
             if (ec.message.hasError()) { ec.message.clearErrors(); ec.web.sendJsonResponse({fileList: []}) }

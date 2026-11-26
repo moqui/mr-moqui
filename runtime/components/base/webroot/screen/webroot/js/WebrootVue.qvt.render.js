@@ -8766,7 +8766,7 @@
               ], 10, ["id", "data-view"]))
             }
         } },
-        "m-map": { hash: "f53316c7", make: function (Vue) {
+        "m-map": { hash: "a563f059", make: function (Vue) {
             const { renderSlot: _renderSlot, resolveDynamicComponent: _resolveDynamicComponent, withCtx: _withCtx, createSlots: _createSlots, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, toDisplayString: _toDisplayString, createElementBlock: _createElementBlock, resolveComponent: _resolveComponent, createVNode: _createVNode, normalizeStyle: _normalizeStyle, renderList: _renderList, Fragment: _Fragment, createElementVNode: _createElementVNode, createTextVNode: _createTextVNode } = Vue
 
             return function render(_ctx, _cache) {
@@ -8775,6 +8775,7 @@
               return (_ctx.view)
                 ? (_openBlock(), _createBlock(_resolveDynamicComponent(_ctx.view), {
                     key: 0,
+                    ref: "view",
                     id: _ctx.id,
                     config: _ctx.config,
                     "config-url": _ctx.configUrl,
@@ -8783,7 +8784,8 @@
                     "library-error": _ctx.libraryError,
                     onPick: $event => (_ctx.$emit('pick', $event)),
                     onSelect: $event => (_ctx.$emit('select', $event)),
-                    onViewChange: $event => (_ctx.$emit('view-change', $event))
+                    onViewChange: $event => (_ctx.$emit('view-change', $event)),
+                    onEditChange: $event => (_ctx.$emit('edit-change', $event))
                   }, _createSlots({ _: 2 }, [
                     (_ctx.$slots.notice)
                       ? {
@@ -8794,7 +8796,7 @@
                           key: "0"
                         }
                       : undefined
-                  ]), 1064, ["id", "config", "config-url", "height", "pick", "library-error", "onPick", "onSelect", "onViewChange"]))
+                  ]), 1064, ["id", "config", "config-url", "height", "pick", "library-error", "onPick", "onSelect", "onViewChange", "onEditChange"]))
                 : (_openBlock(), _createElementBlock("div", {
                     key: 1,
                     class: "m-map m-map-waiting",

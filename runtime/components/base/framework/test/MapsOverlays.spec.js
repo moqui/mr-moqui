@@ -6,8 +6,11 @@
 // share, and refuses a non-holder and the holder once the share is revoked, writing no ResourceRecent; saved places are a
 // GeoJSON file of the personal drive, found by Browse's search; a file past maps@max-features is offered simplifying on the
 // server, and with generalize is kept and cut into tiles beside it (the MapOverlayTiles job) that the tile transition
-// answers its owner and refuses a non-holder. The converter's own rules (geometry, CRS, caps, sanitizing) are moqui-lib
-// geo/overlay_tests.rs, the tiler's geo/tiles_tests.rs.
+// answers its owner and refuses a non-holder; a delimited text and a binary WKB upload are read by their own readers; and
+// an overlay edited on the map is saved by its owner only, beside a KML file as name.edited.geojson, refused for a
+// geometry that is not valid and for a file changed since the edit began. The converter's own rules (geometry, CRS, caps,
+// sanitizing, each format's reader) are moqui-lib geo/overlay_tests.rs and geo/overlay/formats_tests.rs, the tiler's
+// geo/tiles_tests.rs.
 // Run: ./moq test framework --spec MapsOverlays
 const S = "org.moqui.maps.MapServices."
 const OWNER = "MAPS_OVL_OWNER"
@@ -238,6 +241,94 @@ feature("saved places are a GeoJSON file of the personal drive, refused out of r
         out.found.length == 1
         out.found[0].placeId == out.saved.placeId
         out.found[0].precisionEnumId == "GPP_USER_CONFIRMED"
+    }
+})
+
+// A little-endian WKB point as the characters of an uploadedFile's binary bytes
+const wkbPoint = (lon, lat) => {
+    const view = new DataView(new ArrayBuffer(21))
+    view.setUint8(0, 1)
+    view.setUint32(1, 1, true)
+    view.setFloat64(5, lon, true)
+    view.setFloat64(13, lat, true)
+    return String.fromCharCode(...new Uint8Array(view.buffer))
+}
+
+feature("a delimited text and a binary WKB upload are read by their own readers", {
+    when() {
+        return as(OWNER, () => ({
+            csv: invoke(S + "store#Overlay", {file: uploadedFile("stops.csv", "name,lat,lon,route\nNorth,42.37,-71.05,1\nSouth,42.33,-71.06,1\n")}),
+            wkb: invoke(S + "store#Overlay", {file: uploadedFile("spot.wkb", wkbPoint(-71.06, 42.36), "application/octet-stream", true)}),
+            gpkg: invoke(S + "store#Overlay", {file: uploadedFile("layers.gpkg", "SQLite format 3")})
+        }))
+    },
+    then(out) {
+        out.csv.applied == true && out.csv.featureCount == 2
+        out.csv.notes.some(note => note.includes("other properties"))
+        out.wkb.applied == true && out.wkb.featureCount == 1
+        out.gpkg.reasonCode == "FORMAT_UNKNOWN" && out.gpkg.reason.includes("GeoPackage")
+    }
+})
+
+feature("an overlay is edited on the map by its owner only: saved beside its KML file, refused when invalid or stale", {
+    when() {
+        const out = {}
+        const edit = (userId, params) => as(userId, () => invoke(S + "store#OverlayEdit", params))
+        out.opened = as(OWNER, () => invoke(S + "get#OverlayEdit", {overlayId: state.overlayId}))
+        out.otherOpened = as(OTHER, () => invoke(S + "get#OverlayEdit", {overlayId: state.overlayId}))
+        const collection = JSON.parse(out.opened.geojson || '{"features":[]}')
+        collection.features.push({
+            type: "Feature",
+            id: "nwalk",
+            geometry: {type: "LineString", coordinates: [[-71.07, 42.35], [-71.06, 42.36]]},
+            properties: {label: "<b>New</b> walk", other: "dropped"}
+        })
+        const given = {overlayId: state.overlayId, geojson: JSON.stringify(collection), baseVersion: out.opened.version}
+        out.other = edit(READER, given)
+        const broken = JSON.parse(given.geojson)
+        broken.features[0].geometry = {type: "Point", coordinates: [-71, 95]}
+        out.invalid = edit(OWNER, Object.assign({}, given, {geojson: JSON.stringify(broken)}))
+        out.saved = edit(OWNER, given)
+        out.stale = edit(OWNER, given)
+        out.again = edit(OWNER, Object.assign({}, given, {baseVersion: out.saved.version}))
+        ec.artifactExecution.disableAuthz()
+        const drive = ownerDrive()
+        out.original = fileText(drive, "Maps/overlays/trip.kml")
+        out.edited = JSON.parse(fileText(drive, "Maps/overlays/trip.edited.geojson") || "{}")
+        out.row = ec.entity.find("moqui.maps.MapOverlay").condition("overlayId", state.overlayId).one() || {}
+        // a GeoJSON file is saved over only when it is what the map makes of it; one with a name property is not
+        const one = props => JSON.stringify({type: "FeatureCollection", features: [
+            {type: "Feature", id: "a", geometry: {type: "Point", coordinates: [1, 2]}, properties: props}]})
+        out.exact = as(OWNER, () => {
+            const added = invoke(S + "store#Overlay", {file: uploadedFile("exact.geojson", one({label: "A"}))})
+            return invoke(S + "get#OverlayEdit", {overlayId: added.overlayId})
+        })
+        out.named = as(OWNER, () => {
+            const added = invoke(S + "store#Overlay", {file: uploadedFile("named.geojson", one({name: "A"}))})
+            return invoke(S + "get#OverlayEdit", {overlayId: added.overlayId})
+        })
+        return out
+    },
+    then(out) {
+        out.opened.applied == true && out.opened.inPlace == false
+        out.opened.editPath == "Maps/overlays/trip.edited.geojson"
+        out.otherOpened.reasonCode == "RECORD_UNAVAILABLE"
+        out.other.reasonCode == "RECORD_UNAVAILABLE"
+        out.invalid.reasonCode == "INVALID_GEOMETRY"
+        out.saved.applied == true && out.saved.featureCount == 3
+        out.saved.path == "Maps/overlays/trip.edited.geojson"
+        out.stale.reasonCode == "STALE_VERSION"
+        out.again.applied == true
+        // the original kept as it was, the edit beside it in plain text, and the overlay drawn from the edit
+        out.original == KML
+        out.edited.features.length == 3
+        out.edited.features[2].properties.label == "New walk" && out.edited.features[2].properties.other === undefined
+        out.row.path == "Maps/overlays/trip.edited.geojson" && out.row.sourcePath == "Maps/overlays/trip.kml"
+        out.row.formatEnumId == "MLF_GEOJSON" && out.row.featureCount == 3
+        // the original's provenance kept
+        String(out.row.importNotes).includes("network links") && out.row.sourceCrs == "EPSG:4326"
+        out.exact.inPlace == true && out.exact.editPath == "Maps/overlays/exact.geojson"
+        out.named.inPlace == false && out.named.editPath == "Maps/overlays/named.edited.geojson"
     }
 })
 

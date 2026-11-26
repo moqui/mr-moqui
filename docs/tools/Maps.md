@@ -14,7 +14,7 @@ searches.
 
 | Screen | What it is |
 | --- | --- |
-| Browse (`Maps/Browse.xml`, `Browse.qvue`, `Browse.tui.json`) | The map filling the page, with optional browser full screen. One panel at a time beside it, a bottom sheet on a phone: Search (saved views and places, the permitted records of the record layers shown, postal codes and, when one is enabled, the geocoder's addresses), Layers (the basemap, overlays and record layers, and the user's own and shared overlays with Add overlay ([below](#overlays-and-places)); a layer that is not shown is named with Retry; a record layer cut to `maps@max-features` says so), Saved views (and Save view, which keeps where the map is, its basemap and its layers) and the selected feature's details: a place's, a record's (with its [links](#record-links)) or an overlay's feature, selected by a click or by Enter on the map for the feature at its center, with its label and description as plain text, its overlay and its coordinates (Save place; Remove place on one of one's own places). The scale, attribution, coordinate readout and Locate me are the map's. A qvue screen: under `/apps` it opens at the same path under `/qapps`. In the terminal, the `map` component over `terminalMap`: a postal search's places (`s`: a code and its country, the local Geo data's approximate place), the saved places (own and, read-only, shared), the saved views' and the records' places as a list over the braille land mask, then the overlays, own and shared, the notices and the attribution |
+| Browse (`Maps/Browse.xml`, `Browse.qvue`, `Browse.tui.json`) | The map filling the page, with optional browser full screen. One panel at a time beside it, a bottom sheet on a phone: Search (saved views and places, the permitted records of the record layers shown, postal codes and, when one is enabled, the geocoder's addresses), Layers (the basemap, overlays and record layers, and the user's own and shared overlays with Add overlay and, on one's own, Edit ([below](#overlays-and-places)); a layer that is not shown is named with Retry; a record layer cut to `maps@max-features` says so), Saved views (and Save view, which keeps where the map is, its basemap and its layers) and the selected feature's details: a place's, a record's (with its [links](#record-links)) or an overlay's feature, selected by a click or by Enter on the map for the feature at its center, with its label and description as plain text, its overlay and its coordinates (Save place; Remove place on one of one's own places). The scale, attribution, coordinate readout and Locate me are the map's. A qvue screen: under `/apps` it opens at the same path under `/qapps`. In the terminal, the `map` component over `terminalMap`: a postal search's places (`s`: a code and its country, the local Geo data's approximate place), the saved places (own and, read-only, shared), the saved views' and the records' places as a list over the braille land mask, then the overlays, own and shared, the notices and the attribution |
 | Saved views (`Maps/Views.xml`) | The user's saved views and those others shared, each with its place, owner and whether its layers are all available; Share, Stop sharing and Delete for one's own, View map for any. Below them the user's overlays and saved places and, read-only, those shared with them, with Remove for one's own |
 | Preferences (`Maps/Preferences.xml`) | The user's map profile, basemap, initial area, units, the layers shown and Restore my last view. Only what an administrator enabled is offered, and a profile's `allowedOverrides` decide what a preference changes. No location is asked for unless Locate me is pressed, and the last view is kept only while its restoring is on |
 | Configuration (`Maps/Configuration.xml`, route key `mapsConfiguration`) | For `MAPS_ADMIN`: readiness, the outside-request policy and limits (read from the conf), map providers (connections of the `mapProvider` kind: a provider's page is `Configuration/ConnectionDetail` over `tools/template/ConnectionParts.xml`), profiles (enable, disable, make the installation default) and layers; Archives (`Configuration/Archives.xml`, [below](#archives)); and Geo data (`Configuration/GeoData.xml`, [below](#geo-data)). Its settings index entry is `maps.configuration` |
@@ -237,19 +237,45 @@ range the browser has read is not asked again while it keeps it.
 
 ## Overlays and places
 
-A user adds a GeoJSON, GPX or KML file as a personal overlay with Add overlay under Browse › Layers: an upload, kept as it
-was sent in `Maps/overlays` of their personal drive ("My files"; a name already there gets "name (2).ext"), or a file
-chosen with the drive picker (basic-comms' `FilePickerServices` through Browse's `pickerData`, `pickerFolder` and
-`pickerSearch`: the drives they may open, their folders, recent files and a search by name, listing only GeoJSON, GPX
-and KML files), which stays where it is (`MapServices.store#Overlay`, `MapOverlays.js`). The file is read before anything is
-kept (`MapSourceServices.convert#Overlay`, in Rust: `moqui-lib` `geo/overlay.rs`):
+A user adds a geographic file (the formats below) as a personal overlay with Add overlay under Browse › Layers: an
+upload, kept as it was sent in `Maps/overlays` of their personal drive ("My files"; a name already there gets "name
+(2).ext"), or a file chosen with the drive picker (basic-comms' `FilePickerServices` through Browse's `pickerData`,
+`pickerFolder` and `pickerSearch`: the drives they may open, their folders, recent files and a search by name, listing only
+files of those formats), which stays where it is (`MapServices.store#Overlay`, `MapOverlays.js`). The file is read before
+anything is kept (`MapSourceServices.convert#Overlay`, in Rust: `moqui-lib` `geo/overlay.rs` and a reader a format in
+`geo/overlay/`), an upload as its bytes, so a binary format arrives whole:
 
-- At most `maps@overlay-max-bytes` (10 MiB, within `maps@import-max-bytes`), and at most 4 MiB of characters as the
+| Format | Extension | What is read |
+| --- | --- | --- |
+| GeoJSON | `.geojson`, `.json` | Features, a FeatureCollection or a bare geometry (a GeometryCollection's members each a feature); a `.json` that is TopoJSON or EsriJSON is read as that |
+| TopoJSON | `.topojson` | Every object's geometries, lines and rings stitched from the shared arcs through the topology's transform; the positions stitching makes are bounded in all (`overlay-max-bytes` / 4), since features may share an arc any number of times |
+| EsriJSON | `.esrijson`, `.esri.json` | A FeatureSet (or one feature): points, multipoints, polylines, polygons (clockwise outer rings, counterclockwise holes), `attributes` as properties; curves are not read |
+| GPX | `.gpx` | Waypoints, routes, tracks |
+| KML | `.kml` | Placemarks with their geometries (MultiGeometry, gx:Track); network links, image overlays, styles and icons counted, never fetched |
+| GML | `.gml` | GML 3.2 simple features (3.1 and 2 too), as a WFS answer or an OGR export has them: each child of a `featureMember`, `featureMembers` or `member`, its first geometry (points, lines, rings, polygons, their multi forms, a Curve of line segments, a Surface of polygon patches; `pos`, `posList` by `srsDimension`, GML 2's `coordinates`) and its simple properties; arcs and other curves are not read |
+| WKT | `.wkt` | One geometry a line (empty and `#` lines passed over), with no label: POINT, LINESTRING, POLYGON, their MULTI forms and GEOMETRYCOLLECTION, Z, M and ZM dropped, EWKT's `SRID=n;` |
+| WKB | `.wkb` | OGC, ISO and EWKB geometries one after another, binary, or hex text one a line; every count checked against the bytes left before anything is kept |
+| Delimited text | `.csv`, `.tsv` | A header row, then a feature a row (comma, semicolon or tab, quoted as RFC 4180 has it; UTF-8, or read as Windows-1252, noted, when it is not): the geometry from a column named WKT, geometry, geom, the_geom, shape or WKB (WKT, EWKT or hex WKB), or from latitude (lat) and longitude (lon, lng, long) columns |
+| Shapefile | `.zip` | The zip's one `.shp` record by record (the `.shx` is not needed), the `.dbf` record of each as its properties (dBASE III or IV; a dBASE 7 table is not read, noted), decoded as its `.cpg` says (UTF-8 or Windows-1252; with none, Windows-1252 where a field is not UTF-8; a field of another code page that is not UTF-8 is left out and counted, not mis-read), the `.prj` (WKT1, or WKT2's GEOGCRS) for its CRS: points, multipoints, polylines, polygons, with Z and M dropped; at most 64 entries, inflated to at most four times `overlay-max-bytes` in all and a hundred times each member's compressed size; one geometry of at most 10,000 rings, whose holes are grouped within a bounded work |
+
+A **GeoPackage** (`.gpkg`) is not read, and says so: it is an SQLite database, and the server links no SQLite reader
+(`rusqlite` with its bundled C SQLite is in the browser and client crates only); export its layer as GeoJSON or a zipped
+shapefile. Each reader is our own: the formats are small (a few fixed headers, a grammar, an XML or JSON shape), each
+reader's bounds are its own to keep, and the `shapefile` crate (MIT, with `dbase`) and GDAL's bindings would add
+dependencies for what a few hundred lines do. The rules every format shares:
+
+- At most `maps@overlay-max-bytes` (10 MiB, within `maps@import-max-bytes`), and at most a position for every four of its
+  bytes in all its features, whatever the format (only a format whose features share parts could pass it), and at most 4 MiB of characters as the
   GeoJSON it is served as: an overlay is drawn whole in the browser. At most `maps@max-features` features (5000 when that
   is 0, which turns only record layers off); a file with more is refused, not cut. A label or description is read from at
   most eight times its kept length, so a large field costs no more than a short one.
-- Coordinates WGS84 (GPX and KML always are); a GeoJSON file's pre-2016 `crs` may name EPSG:4326 or CRS84, or EPSG:3857,
-  which is converted. Any other CRS is refused (`CRS_UNSUPPORTED`): no reprojection is made.
+- Coordinates WGS84 (GPX and KML always are) or Web Mercator, converted: a GeoJSON or TopoJSON file's pre-2016 `crs`, an
+  EsriJSON `spatialReference` (WKID 4326, or 3857, 102100 and Web Mercator's other codes; none is WGS84, noted), a GML
+  geometry's `srsName` or the nearest one above it (EPSG:4326 as a URN or an `opengis.net/def/crs` URL is latitude first,
+  as GML 3.2 has it, the short `EPSG:4326` and `CRS:84` longitude first; a member geometry's own must be its geometry's
+  CRS; none is WGS84 longitude first, noted), an EWKT or EWKB SRID (none is WGS84, noted), or a shapefile's `.prj` (a GEOGCS of the WGS 84 datum, or Web or Pseudo Mercator; with no `.prj` the
+  coordinates are read as WGS84 when the file's box is within degrees). Any other CRS is refused by its name
+  (`CRS_UNSUPPORTED`, NAD83 and UTM among them): no reprojection is made until P4c. The CRS recorded is the file's first.
 - Each feature's geometry is checked by itself (positions in range and numbers, a line of two positions or more, a ring
   of four or more, closed when it was not): one that fails is left out and counted, with the first ten named, and the rest
   are kept. A file with none left is refused.
@@ -303,6 +329,30 @@ ended without saying so (its run gone or ended, or older than the job's hour-lon
 simplifying or by adding the file again, and the outcome is written in a transaction of its own. Adding the file again simplifies it again; until then a change of the file does not change its
 tiles. The MVT writer, the simplification and the clipping are our own, not the `mvt` or `geo` crates (MIT or
 Apache-2.0), which bring a protobuf runtime or a dozen geometry crates for these few functions.
+
+**Editing.** Edit, beside one of the user's own overlays under Layers (not one shared with them, not one simplified into
+tiles; their saved places too), opens the Edit panel and edits the overlay on the map (`m-map`'s editing, `WebrootMap.js`):
+the overlay's features in a layer of their own while the overlay is hidden, read through Browse's `overlayEdit`
+(`MapServices.get#OverlayEdit`: the sanitized GeoJSON a map draws and the version of the file). Draw makes points, lines
+and areas (a saved place is a point only) with OpenLayers' Draw; a click selects a feature, whose vertices are then dragged
+(Modify) and snap to the other features (Snap), and the panel gives its label and description (plain text) and Delete. From
+the keyboard, with the map focused: Enter selects the feature at the center, or, while drawing, adds a vertex there (a
+point at once; Finish the shape ends a line or an area), Delete removes the selected feature and Escape lets go. Moving a
+vertex needs a pointer. Save (`saveOverlayEdit`, `store#OverlayEdit`) sends the FeatureCollection with the version it
+started from: the overlay's row is locked, and a file changed since is refused (`STALE_VERSION`, with Open it again; a
+write to the file by other means in the moment between that check and the save is not told apart, and the drive keeps
+both versions); the edit is read by `convert#Overlay` as any overlay (a geometry that is not valid refuses the save,
+`INVALID_GEOMETRY` with its notes; only labels and descriptions are kept, as plain text). Where it goes is decided from
+the file as it is at the save: the overlay's own file gets the edit as its new version (`FileServices.save#Text` as the
+user: the drive's write check, quota and versions) only when nothing of it would change but the edit, that is a GeoJSON
+file that is exactly what the map makes of it (compared as JSON), the user's saved places, or an edited copy made here.
+Any other file (another format, a `.json` that is TopoJSON or EsriJSON, GeoJSON with a `name`, other properties, markup,
+a declared CRS or anything the map does not keep) stays as it is, and the edit is written beside it as
+`name.edited.geojson` (or the next free `name.edited (2).geojson`; `FileServices.upload#Resource` with `keepBoth`, so no
+file there is replaced), which the overlay draws from then on, its row keeping the original as `sourcePath` with what
+reading the original found (its CRS and notes). A reader of the original through a share of that file alone does not
+read the edited copy; a share of the folder reaches both. An overlay with no feature left is refused (remove it
+instead); places may all be removed. A WFS layer is not edited (WFS-T, plans/Maps.md §4.1).
 
 **Saved places** are named points in one GeoJSON file, `Maps/places.geojson` of the personal drive: Save place on the
 selected place or search result (`store#Place`, written through `FileServices.save#Text`, so the drive keeps each change
@@ -563,12 +613,17 @@ app's route, else one of no app, and left out for a non-holder), and the archive
 directories' and the archive writer's in Rust (`moqui-lib` `pmtiles_tests.rs`) and the tile reader's (`moqui-tools`
 `maps_tiles_tests.rs`: gzip or plain by the client, a missing tile, `If-None-Match`, a changed archive, the cache's
 bound). Overlays and places: `framework/test/MapsOverlays.spec.js`
-(a file refused before it is kept, an upload kept with its bad feature counted, the overlay transition for the owner, a
+(a file refused before it is kept, an upload kept with its bad feature counted, a delimited text and a binary WKB upload
+read, a GeoPackage refused, an edit saved by the owner beside its KML file and refused to another user, for a geometry
+that is not valid and for a stale version, the overlay transition for the owner, a
 share holder, a non-holder and a revoked share, saved places, and a file past `maps@max-features` offered simplifying and
 then cut into tiles beside it that its owner and a holder of its share read and a non-holder and a revoked share do not,
 `TILES_NOT_WRITABLE` for a reader, `TILES_RUNNING` while its run goes on, and a run that ended without saying so ended
 by Stop simplifying), with the converter's rules in Rust
-(`moqui-lib` `geo/overlay_tests.rs`: geometry, CRS, caps, KML sanitizing, GPX) and the tiler's (`geo/tiles_tests.rs`:
+(`moqui-lib` `geo/overlay_tests.rs`: geometry, CRS, caps, KML sanitizing, GPX; `geo/overlay/formats_tests.rs`: each
+other format's reader, its CRS and axis order, and its malformed and oversized inputs: shared TopoJSON arcs, claimed WKB
+and shapefile counts, a zip that inflates too far, nested collections, a geometry of thousands of rings, the positions
+bound, code pages and CRS names) and the tiler's (`geo/tiles_tests.rs`:
 the budgets against a pathological file, a stop within a zoom, points, the poles and the antimeridian;
 `geo/simplify_tests.rs`, `geo/mvt_tests.rs`); the geocoder: `framework/test/MapsGeocoder.spec.js`
 (nothing sent untested or with outside requests off, the test's fixed address, the Census answer through `HttpFixtures`,
@@ -592,7 +647,8 @@ screen and its Import `tools/test/MapsGeoData.spec.js`, with the parsers, the cr
 (`moqui-lib` `geo/tests.rs`); the real US import, with its times and counts, is the acceptance test `GeoDataUsaImport`
 (`./moq accept framework --spec GeoDataUsaImport`), a queue of three GeoNames countries with the largest, Portugal, `GeoDataEveryCountry`, and a real
 import cancelled between batches and run again `GeoDataImportCancel`.
-m-map's feature selection (plain-text details, the feature nearest the center) is a page test,
+m-map's feature selection (plain-text details, the feature nearest the center) and its editing helpers (the edited
+FeatureCollection, a keyboard shape, which overlays are editable) are a page test,
 `webroot/test/client/pages/WebrootMap.page.js`, a dashboard geomap's link into Maps `WebrootReport.page.js`, and the terminal's postal search and overlays `moqui-tui`
 `components/map_tests.rs`. The acceptance walks are `MapsBrowseWalk` and `MapsDialogWalk` (browser, desktop and phone width) and
 `MapsTerminalWalk`, with their fixture `MapsWalkFixtures`: `./moq accept tools --spec MapsBrowseWalk`.

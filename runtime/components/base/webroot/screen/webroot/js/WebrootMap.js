@@ -60,6 +60,16 @@
  * not is asked as a plain image, which a fetched WFS cannot be). Locate me asks the browser for the position only when
  * pressed, and the position is neither kept nor sent.
  *
+ * Editing (plans/Maps.md §4.1, P4b; Browse's own overlays): editCommand(name, value) of the component (m-map passes it on)
+ * edits a FeatureCollection in a layer of its own over the map while the overlay it came from is hidden: start {layerId,
+ * collection (GeoJSON, WGS84), pointsOnly}, draw ("Point", "LineString", "Polygon" or "" for none: OpenLayers' Draw), with
+ * the selected feature's vertices moved by Modify and snapped to the others' (Snap); from the keyboard Enter adds a vertex at
+ * the map's center (a point at once), finish ends the shape and Enter with no shape being drawn selects the feature at the
+ * center; delete (also the Delete key) removes the selected feature, details {label, description} sets its plain text,
+ * collection answers the edited FeatureCollection in WGS84 (map.editedCollection), saved marks it unchanged and stop ends the
+ * editing. It emits edit-change ({count, dirty, selected: {id, label, description} or null, sketch, drawType}). The map drawn
+ * again (another configuration) keeps the editing, its changes and all.
+ *
  * Events: pick ({lon, lat}, also the DOM event m-map-pick with that detail, which bubbles), select (a place or a feature:
  * {id, lon, lat, label}, with layerId for a record layer's feature; an overlay layer's feature is kind "overlay" with its
  * layerId, layerLabel and description, label and description plain text (map.plainText), shown as text, never as markup)
@@ -487,6 +497,61 @@
         return best;
     };
 
+    // ---- editing helpers ----
+
+    // A feature collection as an edit saves it: each feature with a geometry of GeoJSON's simple types, its positions in
+    // WGS84 (a longitude brought back into -180 to 180, seven decimals), its id (unique: one used already or missing is made
+    // from its number) and only its label and description, as plain text. What the server reads again by the same rules.
+    const GEOMETRY_TYPES = ["Point", "MultiPoint", "LineString", "MultiLineString", "Polygon", "MultiPolygon"];
+    const round7 = (value) => Math.round(value * 1e7) / 1e7;
+    const editedPositions = (value, depth) => {
+        if (depth === 0) {
+            if (!Array.isArray(value) || value.length < 2) return null;
+            const lon = num(value[0]), lat = num(value[1]);
+            return lon === null || lat === null ? null : [round7(map.wrapLongitude(lon)), round7(lat)];
+        }
+        if (!Array.isArray(value)) return null;
+        const out = value.map((item) => editedPositions(item, depth - 1));
+        return out.some((item) => item === null) ? null : out;
+    };
+    map.editedCollection = (collection) => {
+        const given = collection && Array.isArray(collection.features) ? collection.features : [];
+        const depth = { Point: 0, MultiPoint: 1, LineString: 1, MultiLineString: 2, Polygon: 2, MultiPolygon: 3 };
+        const used = new Set();
+        const features = [];
+        given.forEach((feature, index) => {
+            const geometry = feature && feature.geometry;
+            if (!geometry || !GEOMETRY_TYPES.includes(geometry.type)) return;
+            const coordinates = editedPositions(geometry.coordinates, depth[geometry.type]);
+            if (!coordinates) return;
+            let id = text(feature.id);
+            if (!id || used.has(id) || !/^[A-Za-z0-9_.:-]{1,64}$/.test(id)) {
+                let n = index + 1;
+                while (used.has("f" + n)) n++;
+                id = "f" + n;
+            }
+            used.add(id);
+            const details = map.featureDetails(feature.properties);
+            const properties = {};
+            if (details.label) properties.label = details.label;
+            if (details.description) properties.description = details.description;
+            features.push({ type: "Feature", id, geometry: { type: geometry.type, coordinates }, properties });
+        });
+        return { type: "FeatureCollection", features };
+    };
+    // The geometry of a shape made from the keyboard, vertex by vertex ([lon, lat] each, in order): a point of its one vertex,
+    // a line of two or more, an area of three or more (its ring closed); null when it has too few
+    map.sketchGeometry = (type, vertices) => {
+        const points = (vertices || []).filter((vertex) => Array.isArray(vertex) && vertex.length >= 2);
+        if (type === "Point") return points.length ? { type: "Point", coordinates: points[points.length - 1] } : null;
+        if (type === "LineString") return points.length >= 2 ? { type: "LineString", coordinates: points } : null;
+        if (type === "Polygon") return points.length >= 3 ? { type: "Polygon", coordinates: [points.concat([points[0].slice()])] } : null;
+        return null;
+    };
+    // Whether an overlay of Browse's layers is one its user may edit: their own, drawn whole from its GeoJSON (not
+    // simplified into tiles), not another user's shared with them
+    map.canEditOverlay = (layer) => !!(layer && layer.overlayId && layer.isOwn === true && !layer.tilesStatus && layer.kind === "geojson");
+
     // A choice put in the latitude and longitude fields of the page's form named pickForm (the shell's registered m-forms, by
     // their name or id), six decimals; false when there is no such form.
     map.fillPickForm = (pickForm, point) => {
@@ -513,10 +578,10 @@
     const mapView = {
         name: "mMapView",
         props: { id: String, config: [Object, String], configUrl: String, height: String, pick: Boolean, libraryError: String },
-        emits: ["pick", "select", "view-change"],
+        emits: ["pick", "select", "view-change", "edit-change"],
         data() {
             return { effective: null, loadError: "", fallback: "", drawn: false, layerStatus: [], readout: "", picked: null, pickText: "", pickError: "",
-                locating: false, located: "", basemapId: "", selectedId: "", announced: "", focused: false };
+                locating: false, located: "", basemapId: "", selectedId: "", announced: "", focused: false, editing: false };
         },
         computed: {
             local() {
@@ -535,7 +600,7 @@
             config(value, before) { if (JSON.stringify(value) !== JSON.stringify(before)) this.load(); }
         },
         mounted() { this.load(); },
-        beforeUnmount() { this.teardown(); },
+        beforeUnmount() { this.editSnapshot = null; this.editor = null; this.teardown(); },
         methods: {
             pageOrigin() { return root.location.origin; },
             webfonts() { return map.webfonts(this.pageOrigin()); },
@@ -572,6 +637,8 @@
                 });
             },
             teardown() {
+                // the map drawn again keeps what is being edited (build starts it again)
+                if (this.editor) { this.editSnapshot = this.editSnapshotOf(); this.editor = null; }
                 if (this.olMap) { this.olMap.setTarget(null); this.olMap.dispose(); this.olMap = null; }
                 this.drawn = false;
                 this.layerStatus = [];
@@ -618,7 +685,14 @@
                     const at = this.toLonLat(event.coordinate);
                     this.readout = map.formatCoordinates(at.lon, at.lat);
                 });
+                if (this.editSnapshot) {
+                    const snapshot = this.editSnapshot;
+                    this.editSnapshot = null;
+                    this.startEditor(O, snapshot);
+                }
                 olMap.on("singleclick", (event) => {
+                    // while editing, a click is the editor's (its Select and Draw)
+                    if (this.editor) return;
                     // a place, a record's or a record layer's feature, or a feature of an overlay layer (not the basemap's)
                     const hit = olMap.forEachFeatureAtPixel(event.pixel, (found, layer) => (found.get("place") || found.get("recordFeature") ||
                         (layer && layer.get("overlayLayerId")) ? { feature: found, layer } : null), { hitTolerance: 4 });
@@ -1107,10 +1181,19 @@
             },
             onCanvasKey(event) {
                 // only on the map itself: Enter on one of OpenLayers' controls inside it is that control's. Enter chooses the
-                // center on a map that asks for a choice, and selects the feature there on any other
-                if (event.key !== "Enter" || event.target !== event.currentTarget) return;
+                // center on a map that asks for a choice, and selects the feature there on any other; while editing, Enter adds
+                // a vertex at the center when a shape is drawn, Delete removes the selected feature and Escape lets go of the
+                // shape being drawn, or else of the selection
+                if (event.target !== event.currentTarget) return;
+                if (this.editor && (event.key === "Delete" || event.key === "Escape")) {
+                    event.preventDefault();
+                    this.editCommand(event.key === "Delete" ? "delete" : "escape");
+                    return;
+                }
+                if (event.key !== "Enter") return;
                 event.preventDefault();
-                if (this.shown.pick) this.chooseCenter();
+                if (this.editor) this.editCommand("enter");
+                else if (this.shown.pick) this.chooseCenter();
                 else this.selectAtCenter();
             },
             onCanvasFocus(event) {
@@ -1120,6 +1203,190 @@
                 this.focused = visible;
                 const center = this.olMap && this.olMap.getView().getCenter();
                 if (center) { const at = this.toLonLat(center); this.readout = map.formatCoordinates(at.lon, at.lat); }
+            },
+            // ---- editing ----
+            // One command of the editing (the header above has them); answers what the command gives (collection: the
+            // FeatureCollection; others nothing)
+            editCommand(name, value) {
+                const O = root.MoquiOl;
+                if (name === "start") {
+                    if (!O || !this.olMap) { this.editSnapshot = { layerId: text(value.layerId), collection: value.collection, pointsOnly: !!value.pointsOnly, dirty: false }; return null; }
+                    this.startEditor(O, { layerId: text(value.layerId), collection: value.collection, pointsOnly: !!value.pointsOnly, dirty: false });
+                    return null;
+                }
+                const editor = this.editor;
+                if (name === "collection") return editor ? this.editedOf(editor) : this.editSnapshot ? map.editedCollection(this.editSnapshot.collection) : null;
+                if (name === "stop") { this.stopEditor(); return null; }
+                if (!editor) return null;
+                if (name === "draw") this.setDrawType(value);
+                else if (name === "enter") this.editEnter();
+                else if (name === "finish") this.finishSketch();
+                else if (name === "escape") {
+                    if (editor.sketch.length) { editor.sketch = []; this.drawSketch(); }
+                    else editor.select.getFeatures().clear();
+                } else if (name === "delete") {
+                    const selected = editor.select.getFeatures().getArray().slice();
+                    editor.select.getFeatures().clear();
+                    selected.forEach((feature) => { if (editor.source.hasFeature(feature)) editor.source.removeFeature(feature); });
+                    this.announced = selected.length ? L("Feature deleted") : L("No feature is selected");
+                } else if (name === "details") {
+                    const feature = editor.select.getFeatures().item(0);
+                    if (feature) {
+                        feature.set("label", map.plainText(value && value.label, 200));
+                        feature.set("description", map.plainText(value && value.description, 2000));
+                    }
+                } else if (name === "saved") editor.dirty = false;
+                this.editChanged();
+                return null;
+            },
+            editSnapshotOf() {
+                const editor = this.editor;
+                return { layerId: editor.layerId, collection: this.editedOf(editor), pointsOnly: editor.pointsOnly, dirty: editor.dirty, drawType: editor.drawType };
+            },
+            editedOf(editor) {
+                const written = new root.MoquiOl.GeoJSON().writeFeaturesObject(editor.source.getFeatures(), { dataProjection: "EPSG:4326", featureProjection: this.projection() });
+                return map.editedCollection(written);
+            },
+            startEditor(O, options) {
+                this.stopEditor(true);
+                const olMap = this.olMap;
+                const format = new O.GeoJSON();
+                const features = format.readFeatures(map.editedCollection(options.collection), { dataProjection: "EPSG:4326", featureProjection: this.projection() });
+                const source = new O.VectorSource({ features });
+                const sketchSource = new O.VectorSource();
+                const layer = new O.VectorLayer({ source, style: (feature) => this.editStyle(O, feature), zIndex: 20 });
+                const sketchLayer = new O.VectorLayer({ source: sketchSource, style: () => this.editStyle(O, null), zIndex: 21 });
+                // the overlay drawn from its file is hidden while its features are edited here
+                const hidden = this.overlayGroup.getLayers().getArray().filter((group) => group.get("layerId") === options.layerId && group.getVisible());
+                hidden.forEach((group) => group.setVisible(false));
+                const select = new O.Select({ layers: [layer], style: (feature) => this.editStyle(O, feature, true), hitTolerance: 4 });
+                // only the selected feature's vertices move, so a drag of the map does not change a feature by mistake
+                const modify = new O.Modify({ features: select.getFeatures() });
+                olMap.addLayer(layer);
+                olMap.addLayer(sketchLayer);
+                olMap.addInteraction(select);
+                olMap.addInteraction(modify);
+                const editor = { layerId: options.layerId, pointsOnly: options.pointsOnly, source, sketchSource, layer, sketchLayer, select, modify, snap: null,
+                    draw: null, drawType: "", sketch: [], hidden, dirty: !!options.dirty, made: 0 };
+                this.editor = editor;
+                this.editing = true;
+                this.addSnap(O);
+                const changed = () => { editor.dirty = true; this.editChanged(); };
+                source.on("addfeature", changed);
+                source.on("removefeature", changed);
+                source.on("changefeature", changed);
+                select.on("select", () => this.editChanged());
+                if (options.drawType) this.setDrawType(options.drawType);
+                this.editChanged();
+            },
+            // Snap last, so it sees what Draw and Modify do (OpenLayers' order); without the bundle's Snap, none
+            addSnap(O) {
+                const editor = this.editor;
+                if (!editor || !O.Snap) return;
+                if (editor.snap) this.olMap.removeInteraction(editor.snap);
+                editor.snap = new O.Snap({ source: editor.source });
+                this.olMap.addInteraction(editor.snap);
+            },
+            setDrawType(type) {
+                const O = root.MoquiOl;
+                const editor = this.editor;
+                const allowed = editor.pointsOnly ? ["Point"] : ["Point", "LineString", "Polygon"];
+                const wanted = allowed.includes(type) ? type : "";
+                if (editor.draw) { this.olMap.removeInteraction(editor.draw); editor.draw = null; }
+                editor.drawType = wanted;
+                editor.sketch = [];
+                this.drawSketch();
+                // a click draws while a shape is drawn, and selects otherwise
+                editor.select.setActive(!wanted);
+                if (!wanted) return;
+                editor.draw = new O.Draw({ source: editor.source, type: wanted });
+                editor.draw.on("drawend", (event) => this.madeFeature(event.feature));
+                this.olMap.addInteraction(editor.draw);
+                this.addSnap(O);
+            },
+            // a feature drawn (by Draw or from the keyboard): its id, no text yet, and selected so its label can be given
+            madeFeature(feature) {
+                const editor = this.editor;
+                editor.made += 1;
+                feature.setId("n" + Date.now().toString(36) + editor.made);
+                feature.set("label", "");
+                const selected = editor.select.getFeatures();
+                selected.clear();
+                selected.push(feature);
+                this.announced = L("Feature added: give it a name, or draw another");
+                this.$nextTick(() => this.editChanged());
+            },
+            // Enter while editing: a vertex at the center for the shape being drawn (a point is made at once), else the feature
+            // at the center selected
+            editEnter() {
+                const editor = this.editor;
+                const view = this.olMap && this.olMap.getView();
+                const center = view && view.getCenter();
+                if (!center) return;
+                if (!editor.drawType) {
+                    const hit = map.nearestFeature([{ source: editor.source, layer: editor.layer }], center, (view.getResolution() || 1) * 12);
+                    const selected = editor.select.getFeatures();
+                    selected.clear();
+                    if (hit) { selected.push(hit.feature); this.announced = L("Selected") + ": " + (map.plainText(hit.feature.get("label"), 200) || L("Feature")); }
+                    else this.announced = L("No feature at the map's center");
+                    return;
+                }
+                const at = this.toLonLat(center);
+                editor.sketch.push([at.lon, at.lat]);
+                if (editor.drawType === "Point") { this.finishSketch(); return; }
+                this.announced = L("Vertex added") + " (" + editor.sketch.length + "): " + map.formatCoordinates(at.lon, at.lat);
+                this.drawSketch();
+            },
+            finishSketch() {
+                const O = root.MoquiOl;
+                const editor = this.editor;
+                const geometry = map.sketchGeometry(editor.drawType, editor.sketch);
+                if (!geometry) { this.announced = L("A line needs two vertices and an area three"); return; }
+                const feature = new O.GeoJSON().readFeature({ type: "Feature", geometry, properties: {} }, { dataProjection: "EPSG:4326", featureProjection: this.projection() });
+                editor.sketch = [];
+                this.drawSketch();
+                editor.source.addFeature(feature);
+                this.madeFeature(feature);
+            },
+            // the shape being drawn from the keyboard, shown as its vertices joined
+            drawSketch() {
+                const editor = this.editor;
+                editor.sketchSource.clear();
+                if (!editor.sketch.length) return;
+                const geometry = editor.sketch.length === 1 ? { type: "Point", coordinates: editor.sketch[0] } : { type: "LineString", coordinates: editor.sketch };
+                editor.sketchSource.addFeature(new root.MoquiOl.GeoJSON().readFeature({ type: "Feature", geometry, properties: {} },
+                    { dataProjection: "EPSG:4326", featureProjection: this.projection() }));
+            },
+            // keep: the overlay stays hidden (another editing starts at once)
+            stopEditor(keep) {
+                const editor = this.editor;
+                this.editSnapshot = null;
+                if (!editor) return;
+                this.editor = null;
+                this.editing = false;
+                if (this.olMap) {
+                    [editor.select, editor.modify, editor.draw, editor.snap].forEach((interaction) => { if (interaction) this.olMap.removeInteraction(interaction); });
+                    this.olMap.removeLayer(editor.layer);
+                    this.olMap.removeLayer(editor.sketchLayer);
+                }
+                if (!keep) editor.hidden.forEach((group) => group.setVisible(true));
+                this.$emit("edit-change", null);
+            },
+            editChanged() {
+                const editor = this.editor;
+                if (!editor) return;
+                const feature = editor.select.getFeatures().item(0);
+                const selected = feature ? Object.assign({ id: String(feature.getId() === undefined ? "" : feature.getId()) }, map.featureDetails(feature.getProperties())) : null;
+                this.$emit("edit-change", { count: editor.source.getFeatures().length, dirty: editor.dirty, selected, sketch: editor.sketch.length, drawType: editor.drawType });
+            },
+            editStyle(O, feature, selected) {
+                const [solid, light] = selected ? ["rgba(239,108,0,0.95)", "rgba(239,108,0,0.25)"] : ["rgba(46,125,50,0.9)", "rgba(46,125,50,0.15)"];
+                const label = feature ? map.plainText(feature.get("label"), 200) : "";
+                return new O.Style({
+                    image: new O.CircleStyle({ radius: selected ? 7 : 5, fill: new O.Fill({ color: solid }), stroke: new O.Stroke({ color: "#fff", width: 1.5 }) }),
+                    stroke: new O.Stroke({ color: solid, width: selected ? 3 : 2, lineDash: feature ? undefined : [6, 4] }), fill: new O.Fill({ color: light }),
+                    text: label ? this.labelText(O, label) : undefined
+                });
             },
             // ---- render ----
             placeItem(place) {
@@ -1160,7 +1427,9 @@
             const noticeSlot = this.$slots.notice ? this.$slots.notice() : null;
             const notice = noticeSlot || (this.notice ? [this.notice.text, this.notice.href ?
                 [" ", h("a", { href: this.notice.href, class: "m-map-notice-link" }, this.notice.linkText || L("Configuration"))] : null] : null);
-            const canvasLabel = L("Map") + ": " + L("arrow keys move it, + and - zoom") + ", " + (shown.pick ? L("Enter chooses the center") : L("Enter selects the feature at the center"));
+            const canvasLabel = L("Map") + ": " + L("arrow keys move it, + and - zoom") + ", " + (this.editing
+                ? L("Enter adds a vertex at the center while drawing, else selects the feature there; Delete removes it")
+                : shown.pick ? L("Enter chooses the center") : L("Enter selects the feature at the center"));
             return h("div", { class: "m-map", id: this.id }, [
                 notice ? h("div", { class: "m-map-notice", role: "note" }, notice) : null,
                 this.loadError ? h("div", { class: "m-map-status m-map-status-failed", role: "status" }, this.loadError) : null,
@@ -1169,7 +1438,7 @@
                         h("div", { ref: "canvas", class: "m-map-canvas", tabindex: 0, role: "application", "aria-label": canvasLabel,
                             onKeydown: this.onCanvasKey, onFocus: this.onCanvasFocus, onBlur: () => { this.focused = false; } }),
                         // the center a choice or a keyboard selection takes
-                        shown.pick || this.focused ? h("div", { class: "m-map-crosshair", "aria-hidden": "true" }) : null,
+                        shown.pick || this.focused || this.editing ? h("div", { class: "m-map-crosshair", "aria-hidden": "true" }) : null,
                         this.toolbar(),
                         this.readout ? h("div", { class: "m-map-readout", "aria-hidden": "true" }, this.readout) : null,
                         h("div", { class: "m-map-announce", "aria-live": "polite" }, this.announced)

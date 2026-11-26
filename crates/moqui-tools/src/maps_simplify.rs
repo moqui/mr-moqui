@@ -26,7 +26,7 @@ use std::collections::BTreeMap;
 use std::io::Write;
 
 use moqui_lib::error::Error as LibError;
-use moqui_lib::geo::overlay::{convert_overlay, OverlayFormat, OverlayLimits};
+use moqui_lib::geo::overlay::{convert_overlay_bytes, OverlayFormat, OverlayLimits};
 use moqui_lib::geo::tiles::{build_tiles, Progress, TileFeature, TilerLimits, LAYER, MAX_ZOOM};
 use moqui_lib::object::{to_plain_string, Value};
 use moqui_lib::pmtiles::{write_archive, ArchiveOptions, Compression, TileType};
@@ -35,7 +35,7 @@ use moqui_core::entity::EntityFacade;
 use moqui_core::transaction::TransactionAttribute;
 
 use crate::group_db::{number, text, Out};
-use crate::maps_overlay::read_location;
+use crate::maps_overlay::{read_location, FORMATS_READ};
 
 const OVERLAY: &str = "moqui.maps.MapOverlay";
 /// The file's size when the caller names none (it names maps@overlay-max-bytes, as store#Overlay reads it), and the
@@ -95,7 +95,7 @@ fn report(facade: &EntityFacade, overlay_id: &str, progress: i64) -> bool {
     !cancelled
 }
 
-/// `generalize#Overlay`. In: `location`, `format` (MLF_GEOJSON, MLF_GPX, MLF_KML, else by `fileName`), `maxBytes`
+/// `generalize#Overlay`. In: `location`, `format` (an MLF_ enum ID convert#Overlay reads, else by `fileName`), `maxBytes`
 /// (the file: the caller's maps@overlay-max-bytes, 10 MiB when none), `maxFeatures`, `maxTiles`, `maxArchiveBytes`,
 /// `maxZoom` and `maxWork` (each at most its default: 250,000 and [`TilerLimits::standard`]'s), `overlayId` (the row
 /// its progress is written to and its cancel read from). Out: `valid`; when not, `reasonCode` and `reason` (the overlay
@@ -110,7 +110,7 @@ pub(crate) fn generalize_overlay(
     let format = OverlayFormat::parse(&text(parameters, "format"))
         .or_else(|| OverlayFormat::of_file_name(&text(parameters, "fileName")));
     let Some(format) = format else {
-        return refusal(out, "FORMAT_UNKNOWN", "the file is not GeoJSON, GPX or KML");
+        return refusal(out, "FORMAT_UNKNOWN", format!("the file is not {FORMATS_READ}"));
     };
     // the caller's limit of the file as it is (store#Overlay read the file within the same one), else the default
     let max_bytes = number(parameters, "maxBytes")
@@ -119,10 +119,7 @@ pub(crate) fn generalize_overlay(
         .unwrap_or(DEFAULT_MAX_BYTES);
     let location = text(parameters, "location");
     let content = match read_location(&location, max_bytes) {
-        Ok(Some(bytes)) => match String::from_utf8(bytes) {
-            Ok(content) => content,
-            Err(_) => return refusal(out, "NOT_TEXT", "the file is not UTF-8 text"),
-        },
+        Ok(Some(bytes)) => bytes,
         Ok(None) => return refusal(out, "NOT_FOUND", "there is no file there"),
         Err((code, reason)) => return refusal(out, code, reason),
     };
@@ -130,7 +127,7 @@ pub(crate) fn generalize_overlay(
         max_bytes: usize::try_from(max_bytes).unwrap_or(usize::MAX),
         max_features: usize::try_from(limit(parameters, "maxFeatures", DEFAULT_MAX_FEATURES)).unwrap_or(usize::MAX),
     };
-    let overlay = match convert_overlay(&content, format, &limits) {
+    let overlay = match convert_overlay_bytes(&content, format, &limits) {
         Ok(overlay) => overlay,
         Err(err) => return refusal(out, err.code, err.message),
     };
