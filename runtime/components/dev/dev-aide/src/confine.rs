@@ -16,7 +16,8 @@
 //! the root's canonical directory or not at all: no absolute path (`/x`, `C:\x`, `\\server\share`, `\\?\`), no `..`, no
 //! symlink that leads out, nothing under `.git`, and nothing on the deny list (the runtime's database and its saved
 //! copies, logs, transaction log, temporary files, `.env` and its copies, certificates, SFTP root and installed
-//! programs, and a root's `target`). The runtime's conf files are for the full tier only.
+//! programs, and a root's `target`, though not the loaded runtime or components when they sit there). The runtime's conf
+//! files are for the full tier only.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -63,12 +64,13 @@ pub struct Resolved {
     pub real: String,
 }
 
-/// Resolve `relative` (with `/` or `\` separators) in `root`, a canonical directory.
+/// Resolve `relative` (with `/` or `\` separators) in `root`, a canonical directory. `components` are the loaded
+/// components' directories, which are not build output though a root's `target` holds them ([`build_output`]).
 ///
 /// # Errors
 ///
 /// Returns an error naming the rule a path breaks.
-pub fn resolve(root: &Path, runtime: &Path, relative: &str) -> Result<Resolved, Error> {
+pub fn resolve(root: &Path, runtime: &Path, components: &[&Path], relative: &str) -> Result<Resolved, Error> {
     let parts = parts(relative)?;
     let mut path = root.to_path_buf();
     for part in &parts {
@@ -98,6 +100,7 @@ pub fn resolve(root: &Path, runtime: &Path, relative: &str) -> Result<Resolved, 
     if !inside(&canonical, root) {
         return Err(Error::new(format!("{relative} leads outside its root")));
     }
+    let runtime = runtime.canonicalize().ok();
     if let Ok(after_root) = canonical.strip_prefix(root) {
         if after_root
             .components()
@@ -107,15 +110,11 @@ pub fn resolve(root: &Path, runtime: &Path, relative: &str) -> Result<Resolved, 
                 "{relative} is under .git, which the dev-aide does not open"
             )));
         }
-        if after_root
-            .components()
-            .next()
-            .is_some_and(|first| first.as_os_str() == "target")
-        {
-            return Err(Error::new(format!("{relative} is a build output (target)")));
-        }
     }
-    if let Ok(runtime) = runtime.canonicalize() {
+    if build_output(&canonical, root, runtime.as_deref(), components) {
+        return Err(Error::new(format!("{relative} is a build output (target)")));
+    }
+    if let Some(runtime) = runtime {
         for denied in DENIED_RUNTIME {
             if inside(&canonical, &runtime.join(denied)) {
                 return Err(Error::new(format!(
@@ -151,6 +150,33 @@ pub fn resolve(root: &Path, runtime: &Path, relative: &str) -> Result<Resolved, 
         relative: parts.join("/"),
         real,
     })
+}
+
+/// Whether `path` (canonical, in `root`) is build output: under the root's `target`. The loaded runtime and components
+/// are not, though they sit there: a disposable runtime under the repository's `target` (the testing skill's), or the
+/// components a test run links into its scratch runtime from one, which the repository holds as their root
+/// (crate::roots). A path in one of them is measured from the deepest that holds it, so only that one's own `target`
+/// is refused. `runtime` and `path` are canonical (`path` up to its deepest existing part) and the components are made
+/// so, so a symlink in one of them that leads to the root's other build output is measured from the root and refused.
+fn build_output(path: &Path, root: &Path, runtime: Option<&Path>, components: &[&Path]) -> bool {
+    let under_target = |base: &Path| {
+        path.strip_prefix(base)
+            .ok()
+            .and_then(|after| after.components().next())
+            .is_some_and(|first| first.as_os_str() == "target")
+    };
+    if !under_target(root) {
+        return false;
+    }
+    let target = root.join("target");
+    let loaded = components.iter().filter_map(|dir| dir.canonicalize().ok());
+    let base = runtime
+        .map(Path::to_path_buf)
+        .into_iter()
+        .chain(loaded)
+        .filter(|dir| inside(dir, &target) && !inside(&target, dir) && inside(path, dir))
+        .max_by_key(|dir| dir.components().count());
+    base.is_none_or(|base| under_target(&base))
 }
 
 /// Whether `path` (canonical) is a name at the top of `runtime` (canonical) that starts with [`ENV_PREFIX`], or under one.

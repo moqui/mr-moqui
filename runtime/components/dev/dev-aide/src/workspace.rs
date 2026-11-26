@@ -106,7 +106,9 @@ impl Context {
 
     /// `relative` of `root`, confined ([`confine::resolve`]); the runtime's conf files only at the full tier.
     pub(crate) fn resolve(&self, root: &Root, relative: &str) -> Result<confine::Resolved, LibError> {
-        let resolved = confine::resolve(&root.path, self.factory.runtime_dir(), relative)?;
+        let components = self.factory.components();
+        let loaded: Vec<&Path> = components.iter().map(|component| component.location.as_path()).collect();
+        let resolved = confine::resolve(&root.path, self.factory.runtime_dir(), &loaded, relative)?;
         if self.tier != Tier::Full && confine::hidden_below_full(&resolved.path, self.factory.runtime_dir()) {
             return Err(LibError::new(format!(
                 "{relative} is runtime/{}, which only the full tier opens",

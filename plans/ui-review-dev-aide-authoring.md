@@ -452,7 +452,7 @@ The authoring runtime marked the two copied components as site-owned. As John Do
 
 FindItem’s designer opened the generated consumer in its canvas with the fixture grant. Editing NewItemDialog’s button-text to “New review item” enabled Save, and the unsaved canvas displayed it. The saved XML, reopened Properties and the consumer all carried that value. The disabled Save symptom did not recur. See `designer-staged.json`, `canvas-before-save.json`, `property-reopened.json` and `designer-consumer.jpg`. Both original findings now have live evidence on the populated fixture.
 
-Eight guided/TUI assertions failed with the fixtures under target. Workspace reported that the target directory was build output. With the copied components outside target, all eight passed (area-checks.txt and area-retry.txt).
+Eight guided/TUI assertions failed with the fixtures under target. Workspace reported that the target directory was build output. With the copied components outside target, all eight passed (area-checks.txt and area-retry.txt). **Fixed 2026-11-25:** the guard now exempts the loaded runtime and the loaded components when they sit in a root's `target` (a test run links the components into a scratch runtime elsewhere, so the components are what it sees), with their own `target/` and the root's other build output still refused (dev-aide `confine_tests.rs`: `a_runtime_under_a_root_s_target_is_not_build_output`, `a_component_loaded_from_under_a_root_s_target_is_not_build_output`, `build_output_beside_or_inside_that_runtime_stays_refused` and `a_symlink_from_that_runtime_into_build_output_is_refused`).
 
 Local evidence is under `plans/ui-refinement-evidence/closeout-d10e22f/`.
 
