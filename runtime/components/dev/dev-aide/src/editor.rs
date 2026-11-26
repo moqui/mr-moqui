@@ -16,8 +16,9 @@
 //! size, the tab size (none: CodeMirror's), wrap, white space shown, the keymap, and the keys of the code editor's
 //! commands a user rebound. The Workspace hands them to the dev-aide's `m-code-editor`s
 //! (`moqui.codeEditor.setSettings`, `WebrootCode.js`), which apply the keys over CodeMirror's keymap. The Workspace's
-//! own commands (Go to file, Go to artifact, Search in files, Save in a visual view) are shell key map actions
-//! (`moqui.keymap`), rebound by the shell's `KEYMAP` preference (§3.5). dev/Settings has the form.
+//! own commands (Go to file, Go to artifact, Search in files, Save) are shell key map actions (`moqui.keymap`), rebound
+//! by the shell's `KEYMAP` preference (§3.5); Save is set there alone, the text editor taking its keys from it.
+//! dev/Settings has the form.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -58,9 +59,9 @@ const fn command_of(name: &'static str, label: &'static str, keys: &'static str)
     Command { name, label, keys }
 }
 
-/// The commands a user rebinds, with their default keys (CodeMirror's).
+/// The commands a user rebinds, with their default keys (CodeMirror's). Save is not one: it is the shell action
+/// `devSave`, in the text editor too.
 pub(crate) const COMMANDS: &[Command] = &[
-    command_of("save", "Save", "Mod-s"),
     command_of("find", "Find in the file", "Mod-f"),
     command_of("toggleComment", "Comment the lines", "Mod-/"),
     command_of("completion", "Complete", "Ctrl-Space"),

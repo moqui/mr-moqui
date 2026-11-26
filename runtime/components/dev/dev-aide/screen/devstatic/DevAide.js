@@ -339,6 +339,16 @@
     };
     // The Workspace's own commands as shell key map actions (moqui.keymap, scope "dev-aide"): the shell's KEYMAP
     // preference rebinds them by their action ({"dev-aide": {"devGotoFile": "Mod+E"}}) and its ? overlay lists them.
+    // Save is set there alone: the text editor takes devSave's keys (codeMirrorKeys), so Mod-S, or what KEYMAP makes it,
+    // saves in Text as in a visual view.
+    // A shell key map's keys ("Mod+Shift+S", the chord "g s") as CodeMirror writes them ("Mod-Shift-s", "g s").
+    pure.codeMirrorKeys = (keys) => String(keys || "").trim().split(/\s+/).filter((step) => step).map((step) => {
+        const plus = step.length > 1 && step.endsWith("++");
+        const parts = plus ? step.slice(0, -2).split("+").concat(["+"]) : step.split("+");
+        const key = parts.pop();
+        const name = key.length === 1 ? key.toLowerCase() : /^esc(ape)?$/i.test(key) ? "Escape" : key;
+        return parts.concat([name]).join("-");
+    }).join(" ");
     pure.WORKSPACE_KEYS = Object.freeze([
         { action: "devGotoFile", keys: "Mod+P", label: "Go to file", run: "openGoto" },
         { action: "devGotoArtifact", keys: "Mod+Shift+O", label: "Go to artifact", run: "openArtifactGoto" },
@@ -548,8 +558,8 @@
             this.presenceTimer = setInterval(() => this.tellPresence(true), 60000);
             this.onResize = () => { this.narrow = root.innerWidth < 1024; };
             root.addEventListener("resize", this.onResize);
-            this.loadEditorSettings();
             this.keysOff = this.registerKeys();
+            this.loadEditorSettings();
             this.loadRoots();
             const assist = moqui.assist;
             if (assist) {
@@ -1645,10 +1655,14 @@
             // The user's editor settings (DEV_AIDE_EDITOR) to the editors of this page, as long as it is here: an app page
             // opened after it in the same window has CodeMirror's (setSettings(null) as the Workspace goes).
             loadEditorSettings() {
-                return this.get("editorSettings").then((answer) => {
+                const apply = (settings) => {
                     if (this.unmounted) return;
-                    this.setEditorSettings(pure.editorSettingsOf(answer));
-                }, () => { /* the defaults */ });
+                    // Save's keys are the shell action's (devSave), in the text editor too
+                    const save = this.saveKeys();
+                    if (save) settings.keys = Object.assign({}, settings.keys, { save });
+                    this.setEditorSettings(settings);
+                };
+                return this.get("editorSettings").then((answer) => apply(pure.editorSettingsOf(answer)), () => apply({ keys: {} }));
             },
             setEditorSettings(settings) {
                 const codeEditor = moqui.codeEditor || (moqui.codeEditor = {});
@@ -1659,8 +1673,15 @@
             registerKeys() {
                 const keymap = moqui.keymap;
                 if (!keymap || !keymap.registerScope) return null;
-                return keymap.registerScope("dev-aide", pure.WORKSPACE_KEYS.map((command) => ({ keys: command.keys, action: command.action,
-                    label: moqui.l10n.localize(command.label), run: () => { this[command.run](); return true; } })));
+                this.keyBindings = pure.WORKSPACE_KEYS.map((command) => ({ keys: command.keys, action: command.action,
+                    label: moqui.l10n.localize(command.label), run: () => { this[command.run](); return true; } }));
+                return keymap.registerScope("dev-aide", this.keyBindings);
+            },
+            // devSave's keys as the KEYMAP preference makes them, in CodeMirror's form; null with no shell key map
+            saveKeys() {
+                const keymap = moqui.keymap;
+                const binding = (this.keyBindings || []).find((item) => item.action === "devSave");
+                return keymap && keymap.keysOf && binding ? pure.codeMirrorKeys(keymap.keysOf("dev-aide", binding)) || null : null;
             },
             showSearch() { this.tab = "code"; this.rail = "search"; },
             saveCurrent() { if (this.current) this.save(this.current); },

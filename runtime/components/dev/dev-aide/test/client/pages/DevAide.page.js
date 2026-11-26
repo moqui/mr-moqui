@@ -351,17 +351,33 @@ test("a commit names an issue by its number, else its key; Amend drops only that
 test("the editor settings: the code editor's rebound keys, and the Workspace's own commands as key map actions", () => {
     const answer = { settings: { fontSize: 16, tabSize: null, wrap: true, whitespace: false, keymap: "default", keys: { find: "Alt-f" } },
         commands: [
-            { command: "save", defaultKeys: "Mod-s", keys: "Alt-s" },
+            { command: "toggleComment", defaultKeys: "Mod-/", keys: "Alt-c" },
             { command: "find", defaultKeys: "Mod-f", keys: "Alt-f" },
             { command: "undo", defaultKeys: "Mod-z", keys: "Mod-z" }] };
     assert.deepEqual(pure.editorSettingsOf(answer), { fontSize: 16, tabSize: null, wrap: true, whitespace: false, keymap: "default",
-        keys: { save: "Alt-s", find: "Alt-f" } });
+        keys: { toggleComment: "Alt-c", find: "Alt-f" } });
     assert.deepEqual(pure.editorSettingsOf(null), { keys: {} });
     // Go to file, Go to artifact, Search in files and Save: shell actions, each run by a Workspace method
     assert.deepEqual(pure.WORKSPACE_KEYS.map((command) => command.action + " " + command.keys),
         ["devGotoFile Mod+P", "devGotoArtifact Mod+Shift+O", "devSearchFiles Mod+Shift+F", "devSave Mod+S"]);
     const methods = moqui.devAide.components["m-dev-workspace"].methods;
     for (const command of pure.WORKSPACE_KEYS) assert.equal(typeof methods[command.run], "function", command.run);
+    // Save's keys in the text editor are devSave's, as CodeMirror writes them
+    assert.equal(pure.codeMirrorKeys("Mod+S"), "Mod-s");
+    assert.equal(pure.codeMirrorKeys("Mod+Shift+S"), "Mod-Shift-s");
+    assert.equal(pure.codeMirrorKeys("Ctrl++"), "Ctrl-+");
+    assert.equal(pure.codeMirrorKeys("g s"), "g s");
+    assert.equal(pure.codeMirrorKeys("Esc"), "Escape");
+    assert.equal(pure.codeMirrorKeys(""), "");
+    const previous = moqui.keymap;
+    try {
+        moqui.keymap = { keysOf: (scope, binding) => scope === "dev-aide" && binding.action === "devSave" ? "Mod+Alt+S" : binding.keys };
+        assert.equal(methods.saveKeys.call({ keyBindings: [{ action: "devSave", keys: "Mod+S" }] }), "Mod-Alt-s");
+        moqui.keymap = undefined;
+        assert.equal(methods.saveKeys.call({ keyBindings: [] }), null);
+    } finally {
+        moqui.keymap = previous;
+    }
 });
 
 test("Replace sends the chosen matches with each file's hash, and refuses a file with unsaved changes in any open buffer", () => {

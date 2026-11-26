@@ -93,6 +93,42 @@ pub(crate) fn numbered_groups(replacement: &str) -> String {
     out
 }
 
+/// The regular expression a query is, as Replace and Search in files read it: the text itself, or with `regex` a
+/// regular expression over the whole text (`^` and `$` at each line, a CRLF line's too, `\n` across lines), ignoring
+/// case unless `case_sensitive`.
+pub(crate) fn compile(query: &str, regex: bool, case_sensitive: bool) -> Result<Regex, String> {
+    let pattern = if regex { query.to_string() } else { regex::escape(query) };
+    RegexBuilder::new(&pattern)
+        .case_insensitive(!case_sensitive)
+        .multi_line(true)
+        .crlf(true)
+        .build()
+        .map_err(|err| format!("the regular expression: {err}"))
+}
+
+/// The lines of `text` a match starts on, each once and in order, at most `limit`: its number from 1 and the line
+/// (cut at [`SHOWN_CHARS`]); an empty match is passed over, as Replace passes it over.
+pub(crate) fn matched_lines(regex: &Regex, text: &str, limit: usize) -> Vec<(usize, String)> {
+    let mut out: Vec<(usize, String)> = Vec::new();
+    let (mut counted_to, mut line) = (0, 1);
+    for found in regex.find_iter(text).filter(|found| !found.is_empty()) {
+        line += text[counted_to..found.start()].matches('\n').count();
+        counted_to = found.start();
+        if out.last().is_some_and(|(last, _)| *last == line) {
+            continue;
+        }
+        if out.len() >= limit {
+            break;
+        }
+        let start = text[..found.start()].rfind('\n').map_or(0, |at| at + 1);
+        let end = text[found.start()..]
+            .find('\n')
+            .map_or(text.len(), |at| found.start() + at);
+        out.push((line, shown(text[start..end].trim_end_matches('\r'), SHOWN_CHARS)));
+    }
+    out
+}
+
 /// At most `most` characters of `text`, with an ellipsis when it had more.
 fn shown(text: &str, most: usize) -> String {
     match text.char_indices().nth(most) {
@@ -115,13 +151,7 @@ impl Replacer {
         if replacement.len() > MAX_REPLACEMENT_BYTES {
             return Err(format!("the replacement is over {MAX_REPLACEMENT_BYTES} bytes"));
         }
-        let pattern = if regex { query.to_string() } else { regex::escape(query) };
-        let compiled = RegexBuilder::new(&pattern)
-            .case_insensitive(!case_sensitive)
-            .multi_line(true)
-            .crlf(true)
-            .build()
-            .map_err(|err| format!("the regular expression: {err}"))?;
+        let compiled = compile(query, regex, case_sensitive)?;
         if compiled.is_match("") {
             return Err(
                 "the regular expression matches an empty text, so it would replace between every character".into(),

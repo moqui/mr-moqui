@@ -57,13 +57,14 @@ fn a_preference_that_is_not_settings_is_the_defaults_and_bad_parts_are_left_out(
     );
     let settings = EditorSettings::parse(Some(
         r#"{"fontSize": 99, "tabSize": 2, "wrap": true, "keymap": "emacs",
-            "keys": {"undo": "Mod-u", "nothing": "Mod-q", "save": "Hyper-s", "find": "mod-F"}}"#,
+            "keys": {"undo": "Mod-u", "nothing": "Mod-q", "save": "Alt-s", "redo": "Hyper-y", "find": "mod-F"}}"#,
     ));
     assert_eq!(settings.font_size, 13);
     assert_eq!(settings.tab_size, Some(2));
     assert!(settings.wrap && !settings.whitespace);
     assert_eq!(settings.keymap, "default");
-    // an unknown command, keys not in the editor's form, and a row the same as its default are dropped
+    // an unknown command (save is the shell's), keys not in the editor's form, and a row the same as its default are
+    // dropped
     assert_eq!(
         settings.keys.into_iter().collect::<Vec<_>>(),
         vec![("undo".to_string(), "Mod-u".to_string())]
@@ -79,11 +80,15 @@ fn a_command_rebound_its_default_back_and_a_key_another_command_has_refused() {
     // the old key of a rebound command is free, its new one is taken, however it is written
     settings.rebind("find", "Mod-z").unwrap();
     for taken in ["mod-e", "Ctrl-e", "Cmd-E"] {
-        let refused = settings.rebind("save", taken).unwrap_err();
+        let refused = settings.rebind("redo", taken).unwrap_err();
         assert!(refused.contains("Undo"), "{taken}: {refused}");
     }
     // a default key is taken too, unless its command was rebound away from it
-    assert!(settings.rebind("redo", "Mod-s").unwrap_err().contains("Save"));
+    assert!(settings.rebind("redo", "Mod-/").unwrap_err().contains("Comment"));
+    assert!(settings
+        .rebind("save", "Mod-s")
+        .unwrap_err()
+        .contains("no editor command"));
     assert!(settings.rebind("undo", "Mod-Shift-").is_err());
     assert!(settings
         .rebind("nothing", "Mod-q")
@@ -101,7 +106,7 @@ fn a_command_rebound_its_default_back_and_a_key_another_command_has_refused() {
 #[test]
 fn the_answer_has_every_command_with_its_keys_now() {
     let mut settings = EditorSettings::default();
-    settings.rebind("save", "Alt-s").unwrap();
+    settings.rebind("toggleComment", "Alt-c").unwrap();
     let out = settings.answer();
     let Some(Value::List(commands)) = out.get("commands") else {
         panic!("no commands: {out:?}")
@@ -110,11 +115,11 @@ fn the_answer_has_every_command_with_its_keys_now() {
     let json = moqui_lib::json::to_json(&Value::List(commands.clone()));
     let save = json
         .as_array()
-        .and_then(|rows| rows.iter().find(|row| row["command"] == "save"))
+        .and_then(|rows| rows.iter().find(|row| row["command"] == "toggleComment"))
         .cloned()
         .unwrap_or_default();
-    assert_eq!(save["keys"], "Alt-s");
-    assert_eq!(save["defaultKeys"], "Mod-s");
+    assert_eq!(save["keys"], "Alt-c");
+    assert_eq!(save["defaultKeys"], "Mod-/");
     // the default keys are distinct, so no default is refused as another's
     for (index, command) in COMMANDS.iter().enumerate() {
         assert!(

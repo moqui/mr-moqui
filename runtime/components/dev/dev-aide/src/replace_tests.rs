@@ -132,3 +132,23 @@ fn the_query_the_replacement_and_the_result_are_bounded() {
     assert_eq!(hits[0].text.chars().count(), SHOWN_CHARS + 1);
     assert!(hits[0].text.ends_with('…') && hits[0].after.ends_with('…'));
 }
+
+#[test]
+fn search_answers_by_line_what_replace_matches_over_the_whole_text() {
+    let crlf = "<a/>\r\n<b id=\"x\"/>\r\n<c id=\"x\"/> <d id=\"x\"/>\n";
+    // across lines, as Replace matches: the line a match starts on
+    let across = compile(r"/>\r?\n<b", true, true).unwrap();
+    assert_eq!(matched_lines(&across, crlf, 10), vec![(1, "<a/>".to_string())]);
+    // a line with two matches is answered once; $ holds before a CRLF
+    let ids = compile(r#"id="x"/>$"#, true, true).unwrap();
+    assert_eq!(
+        matched_lines(&ids, crlf, 10),
+        vec![
+            (2, "<b id=\"x\"/>".to_string()),
+            (3, "<c id=\"x\"/> <d id=\"x\"/>".to_string())
+        ]
+    );
+    assert_eq!(matched_lines(&compile("id=", false, true).unwrap(), crlf, 1).len(), 1);
+    // an empty match is no match, in Search as in Replace
+    assert!(matched_lines(&compile(r"\b", true, true).unwrap(), crlf, 10).is_empty());
+}

@@ -1049,11 +1049,8 @@ fn search_files(
             }
         }
     } else {
-        let pattern = if regex { query.clone() } else { regex::escape(&query) };
-        let matcher = regex::RegexBuilder::new(&pattern)
-            .case_insensitive(!case)
-            .build()
-            .map_err(|err| LibError::new(format!("the regular expression: {err}")))?;
+        // over the whole text, as Replace across files matches (`\n` across lines), answered by line
+        let matcher = crate::replace::compile(&query, regex, case).map_err(LibError::new)?;
         'files: for path in root_files(&context, root, 20_000) {
             if !filter.is_empty() && !path.contains(filter.trim_matches('*')) {
                 continue;
@@ -1074,12 +1071,10 @@ fn search_files(
             let Some((body, _)) = decode(&bytes) else {
                 continue;
             };
-            for (index, line) in body.lines().enumerate() {
-                if matcher.is_match(line) {
-                    results.push(serde_json::json!({ "path": path, "line": index + 1, "text": line }));
-                    if results.len() >= LIMIT {
-                        break 'files;
-                    }
+            for (line, text) in crate::replace::matched_lines(&matcher, &body, LIMIT - results.len()) {
+                results.push(serde_json::json!({ "path": path, "line": line, "text": text }));
+                if results.len() >= LIMIT {
+                    break 'files;
                 }
             }
         }

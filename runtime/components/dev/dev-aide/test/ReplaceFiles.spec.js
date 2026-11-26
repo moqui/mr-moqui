@@ -135,3 +135,20 @@ feature("a regular expression replaces with its groups, $1a as group 1 then a, a
         text == "<services>\r\n    <m code=\"k5\"/>\n    <m code=\"k6a\"/>\r\n</services>\n"
     }
 })
+
+feature("Search in files and Replace read a regular expression alike, across lines too, Search answering by line", {
+    when() {
+        const query = {query: "</service>\\r?\\n    <service verb=\"put\"", regex: true, caseSensitive: true, pathFilter: "Orders"}
+        const searched = ec.service.sync().name("org.moqui.devaide.WorkspaceServices.search#Files")
+            .parameters(Object.assign({rootId: ROOT}, query)).call() || {}
+        ec.message.clearErrors()
+        const preview = replace(query)
+        return {searched, preview}
+    },
+    then({searched, preview}) {
+        searched.results.length == 1
+        searched.results[0].path == "service/a/Orders.xml"
+        searched.results[0].line == 2
+        preview.out.files[0].matches[0].line == 2
+    }
+})

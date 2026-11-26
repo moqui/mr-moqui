@@ -250,6 +250,33 @@ feature("an entity's element, Add field's naming and kinds, and a data file's ta
     }
 })
 
+feature("the twin's parameter rows show what the definition adds inside a declared Map, not to be edited", {
+    when() {
+        const edit = ec.resource.script("component://dev-aide/service/org/moqui/devaide/GuidedEdit.js")
+        // order (a Map) declares items; its definition adds fromAuto (its auto-parameters) and an implied partyId
+        const node = el("service", [0], [], [
+            el("in-parameters", [0, 0], [], [
+                el("parameter", [0, 0, 0], [["name", "order"], ["type", "Map"]], [el("parameter", [0, 0, 0, 0], [["name", "items"]])])
+            ])
+        ])
+        const defined = [
+            {name: "order", type: "Map", implied: false, children: [{name: "items", children: []}, {name: "fromAuto", children: [{name: "deep", children: []}]}]},
+            {name: "partyId", implied: true, children: [{name: "inner", children: []}]}
+        ]
+        const service = {ops: guided(), view: {service: {inParameters: defined}}, node, serviceFile: {staged: true}}
+        const staged = edit.parameterRows(service, "in-parameters")
+        const plain = edit.parameterRows(Object.assign({}, service, {serviceFile: {staged: false}}), "in-parameters")
+        return {staged, plain}
+    },
+    then({staged, plain}) {
+        staged.map(row => row.path + (row.editable ? "" : " (auto)")).join(", ") ==
+            "order, order.items, order.fromAuto (auto), order.fromAuto.deep (auto), partyId (auto), partyId.inner (auto)"
+        staged.find(row => row.path == "order.fromAuto").parentPath == "order"
+        // from the definition alone, an implied parameter's children are not editable either
+        plain.filter(row => !row.editable).map(row => row.path).join(", ") == "partyId, partyId.inner"
+    }
+})
+
 feature("a parameter, a SECA rule and a Try's parameters as the service writer writes them", {
     when() {
         const {service: ops} = guided()

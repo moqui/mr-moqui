@@ -140,10 +140,11 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
     <service verb="search" noun="Files" type="rust" location="dev_aide::workspace::search_files" allow-remote="false" read-only="true">
-        <description>Lines matching a text or a regular expression (git grep in a repository, a walk of a plain root), at most 500.</description>
+        <description>Lines matching a text (git grep in a repository) or a regular expression (Rust's over the whole text of
+            each file, as replace#Files reads it, answered by line), at most 500; a plain root is walked.</description>
         <in-parameters>
             <parameter name="rootId" required="true"/>
-            <parameter name="query" required="true"/>
+            <parameter name="query" required="true" allow-html="any"><description>Text, not shown as HTML: a search for a tag is a search</description></parameter>
             <parameter name="regex" type="Boolean"/>
             <parameter name="caseSensitive" type="Boolean"/>
             <parameter name="pathFilter"/>
