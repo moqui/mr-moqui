@@ -54,6 +54,7 @@ mod tasks;
 mod template;
 pub mod tier;
 mod try_overlay;
+mod types;
 mod vcs;
 pub(crate) mod workspace;
 mod worktree;
@@ -76,6 +77,7 @@ fn register(registry: &mut NativeRegistry) -> Result<(), Error> {
     docs::register(registry)?;
     editor::register(registry)?;
     coedit::register(registry)?;
+    types::register(registry)?;
     replace::register(registry)?;
     entities::register(registry)?;
     data_load::register(registry)?;

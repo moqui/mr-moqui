@@ -33,3 +33,9 @@ browser.runInPage({
     test: "/files/component/dev-aide/test/client/pages/DevAideCoedit.page.js",
 })
 
+// The TypeScript checker (DevAideTypes.js, 5.4): its pure parts, and its worker on the vendored compiler.
+
+browser.runInPage({
+    scripts: ["/files/component/dev-aide/screen/devstatic/DevAideTypes.js"],
+    test: "/files/component/dev-aide/test/client/pages/DevAideTypes.page.js",
+})

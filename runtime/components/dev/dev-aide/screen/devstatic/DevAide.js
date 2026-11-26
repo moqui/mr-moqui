@@ -9,7 +9,8 @@
  * Compare; a reload report (the DevReload notification) refreshes the tree and the status and the clean tabs, and marks
  * a tab with edits "Changed on disk". Unsaved text is kept in the browser (IndexedDB) by root and path until saved.
  * On a shared dev server each tab of a file the user may write is co-edited with the others who have it open
- * (DevAideCoedit.js, F15: their carets and selections by name; Save stays each user's, by hash).
+ * (DevAideCoedit.js, F15: their carets and selections by name; Save stays each user's, by hash); with the editor
+ * setting typeCheck a server script's tab is checked by TypeScript in a worker (DevAideTypes.js, 5.4).
  *
  * The pure parts are moqui.devAide.pure, which test/client/pages/DevAide.page.js runs in the page.
  */
@@ -46,6 +47,8 @@
         return { tabs: rest, active: next };
     };
     pure.isDirty = (tab) => !!tab && tab.text !== tab.saved;
+    // A server script, which the TypeScript check takes (DevAideTypes.js isScript): a JavaScript file under script/.
+    pure.isScript = (path) => /(^|\/)script\/(.+\/)?[^/]+\.(js|qjs|mjs|cjs)$/i.test(String(path || ""));
     // A tab or any of its view's companion buffers has unsaved text.
     pure.isDirtyAll = (tab) => pure.isDirty(tab) || !!(tab && (tab.companions || []).some((buffer) => buffer.text !== buffer.saved));
     // The restart banner's word on a rebuild (6.5): where it stands, and whether Rebuild is offered (moq is there and no
@@ -507,6 +510,8 @@
                 narrow: !!(root.innerWidth && root.innerWidth < 1024), offReload: null, reloadTimer: null,
                 // shared mode (D19): the other users with files of this root open
                 editors: [],
+                // the editor setting typeCheck: a server script's tab checked by TypeScript (5.4)
+                typeCheck: false,
                 // the task panel (14): the user's open tasks from their source, and the open issues of the root's
                 // hosted repository (21.6)
                 taskList: { tasks: [], loading: false, error: "", sourceLabel: "", issues: [], issueProjects: [], numbered: false,
@@ -613,6 +618,7 @@
             if (this.offSaved) this.offSaved();
             if (this.offProgress) this.offProgress();
             if (this.coeditSessions) this.coeditSessions.destroy();
+            if (this.typeChecker) this.typeChecker.stop();
             clearInterval(this.presenceTimer);
             clearInterval(this.rebuildTimer);
             Object.values(this.outlineTimers || {}).forEach(clearTimeout);
@@ -971,10 +977,31 @@
                 } else close();
             },
             lintOf(tab) {
+                if (this.typeCheck && pure.isScript(tab.path)) return (text) => this.typeProblems(tab, text);
                 if (!/\.xml$/i.test(tab.path)) return null;
                 return (text) => this.post("check", { rootId: this.rootId, path: tab.path, text }).then((answer) => {
                     if (tab.text === text) tab.problems = answer.problems || [];
                     return answer.problems || [];
+                });
+            },
+            // The TypeScript checker's problems of a script's buffer (DevAideTypes.js, loaded with the first one), in
+            // Problems too; none when the checker could not run (said once).
+            typeProblems(tab, text) {
+                const ready = devAide.types && devAide.types.loaded ? Promise.resolve()
+                    : moqui.loadScript("/devstatic/DevAideTypes.js", null, () => !!(devAide.types && devAide.types.loaded));
+                return ready.then(() => {
+                    if (!this.typeChecker) {
+                        this.typeChecker = new devAide.types.Checker({ worker: "/devstatic/DevAideTsWorker.js",
+                            compiler: "/libs/typescript/typescript.min.js", libs: "/libs/typescript/lib-es2023.js",
+                            declarations: (knownHash) => this.get("typeDeclarations", knownHash ? { knownHash } : {}) });
+                    }
+                    return this.typeChecker.check(text);
+                }).then((problems) => {
+                    if (tab.text === text) tab.problems = problems;
+                    return problems;
+                }, (error) => {
+                    if (!this.typeCheckFailed) { this.typeCheckFailed = true; this.note("The type check could not run: " + pure.errorText(error), "warning"); }
+                    return [];
                 });
             },
             // ---- co-editing (F15): each tab of a file the user may write, on its room, in shared mode ----
@@ -1764,7 +1791,11 @@
                     if (save) settings.keys = Object.assign({}, settings.keys, { save });
                     this.setEditorSettings(settings);
                 };
-                return this.get("editorSettings").then((answer) => apply(pure.editorSettingsOf(answer)), () => apply({ keys: {} }));
+                return this.get("editorSettings").then((answer) => {
+                    // the TypeScript check of a script (5.4) is the Workspace's: the editor takes its problems as lint
+                    this.typeCheck = !!(answer && answer.settings && answer.settings.typeCheck);
+                    apply(pure.editorSettingsOf(answer));
+                }, () => apply({ keys: {} }));
             },
             setEditorSettings(settings) {
                 const codeEditor = moqui.codeEditor || (moqui.codeEditor = {});

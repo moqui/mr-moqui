@@ -14,7 +14,8 @@ The assisted IDE of mr-moqui (`plans/design-dev-aide.md`), at `/qapps/dev` on a 
   git status, files in the CodeMirror editor with schema completion and checks, Save that reloads what the file defines,
   Search in files with Replace (a preview of each file's matches to choose from, written as Save writes), Changes
   (stage, unstage, discard, commit with the task trailer), Commits, Fetch, Pull, Push and Publish. The editor's
-  settings (Settings › Editor) pick CodeMirror's, VS Code's or Vim's keys. On a shared dev
+  settings (Settings › Editor) pick CodeMirror's, VS Code's or Vim's keys, and turn on a TypeScript check of server
+  scripts (a worker of the browser over the project's `moqui types` declarations, off by default). On a shared dev
   server (`dev-aide shared="true"`) the users with one file open edit it together, each seeing the others' carets and
   selections by name, the file a writer may save seeded into its room and Save still each user's own, by hash. In the
   terminal (`moqui tui`) it is a simpler form, `WorkspaceTui.xml`: the tree, Go to file and Search, one file in the
