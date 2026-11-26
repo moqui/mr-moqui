@@ -3,8 +3,8 @@
 // does not relabel it), is a root of kind hosted with no working tree. Its tree, a file, Go to file and search read the
 // branch; a Save is a commit by the user with its message (Edit <path> by default) and the task trailer; a Save over a
 // file the branch moved past since it was opened is a conflict with the branch's text, which a Save at that blob then
-// commits over; a new file, a new folder, a move and a delete are commits too, and the first Save of an empty
-// repository makes its branch; a branch whose rules refuse a direct commit refuses the Save and the root says why; the
+// commits over; a new file, a new folder, a move and a delete are commits too (a folder of more than 2,000 files is
+// not deleted), and the first Save of an empty repository makes its default branch; a branch whose rules refuse a direct commit refuses the Save and the root says why; the
 // git commands of a working tree and Replace across files are refused. Repositories' Add hosted root is checked
 // through its transition and get#HostedRepositories (WorkspaceTui renders the screen).
 // Run: ./moq test dev-aide --spec HostedRoot
@@ -162,17 +162,25 @@ feature("a user who may not view the repository is not shown the root, and one w
         const mine = (call(WS + "get#Roots").out.roots || []).find(item => item.id === rootId) || {}
         ec.user.internalLoginUser("spec.hosted.outsider")
         const outsider = (call(WS + "get#Roots").out.roots || []).some(item => item.id === rootId)
+        // every listing and lookup answers as if it were not there
+        const outsiderListed = (call("org.moqui.devaide.VcsServices.list#Repositories").out.repositories || []).some(
+            item => item.rootId === rootId
+        )
+        const outsiderRoot = call(HOSTED + "get#HostedRoot", {rootId})
         ec.user.internalLoginUser("spec.hosted.peer")
         const peer = (call(WS + "get#Roots").out.roots || []).some(item => item.id === rootId)
         const relabel = call(HOSTED + "store#HostedRoot", {repositoryId: REPO, branch: "main", label: "Taken"})
         login("john.doe")
-        return {posted, label: mine.label, outsider, peer, relabel}
+        return {posted, label: mine.label, outsider, outsiderListed, outsiderRoot, peer, relabel}
     },
-    then({posted, label, outsider, peer, relabel}) {
+    then({posted, label, outsider, outsiderListed, outsiderRoot, peer, relabel}) {
         posted.status == 302
         posted.errorMessages.length == 0
         label == "Spec hosted"
         outsider == false
+        outsiderListed == false
+        outsiderRoot.errors.includes("no root " + rootId)
+        !outsiderRoot.errors.includes("Spec hosted")
         peer == true
         relabel.errors.includes("added by another user")
     }
@@ -318,15 +326,32 @@ feature("a new file, a new folder, a move and a delete are commits; the git comm
     }
 })
 
+feature("a folder of more than 2,000 files is not deleted", {
+    when() {
+        const many = {}
+        for (let at = 0; at <= 2000; at++) many["many/f" + at + ".txt"] = String(at)
+        asSystem(() => call(GIT + "commit#GitFiles", {repositoryId: REPO, message: "Many", fileMap: many}))
+        const refused = call(WS + "delete#Path", {rootId, path: "many"})
+        return {refused, still: (call(WS + "list#Directory", {rootId, path: "many"}).out.entries || []).length}
+    },
+    then({refused, still}) {
+        refused.errors.includes("more than 2000 files")
+        still == 2001
+    }
+})
+
 feature("the first Save of an empty repository makes its branch", {
     when() {
+        // an empty repository's root is at its default branch, which its first commit makes
+        const elsewhere = call(HOSTED + "store#HostedRoot", {repositoryId: EMPTY, branch: "other"})
         const added = call(HOSTED + "store#HostedRoot", {repositoryId: EMPTY})
         const empty = added.out.rootId
         const opened = call(WS + "get#File", {rootId: empty, path: "README.md", missingOk: "true"}).out
         const saved = call(WS + "save#File", {rootId: empty, path: "README.md", text: "First\n", baseHash: ""})
-        return {added, opened, saved, now: call(WS + "get#File", {rootId: empty, path: "README.md"}).out}
+        return {elsewhere, added, opened, saved, now: call(WS + "get#File", {rootId: empty, path: "README.md"}).out}
     },
-    then({added, opened, saved, now}) {
+    then({elsewhere, added, opened, saved, now}) {
+        elsewhere.errors.includes("its first commit makes its default branch")
         added.errors == ""
         opened.missing == true
         saved.errors == ""

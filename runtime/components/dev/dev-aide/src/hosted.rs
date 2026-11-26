@@ -668,8 +668,8 @@ pub(crate) fn rename_path(
     Ok(out)
 }
 
-/// `delete#Path` of a hosted root: a commit removing a file, or every file of a folder ("Delete <path>"); a folder
-/// with more than [`MAX_DELETED`] files, or one whose files the walk did not all read, is refused.
+/// `delete#Path` of a hosted root: a commit removing a file, or every file of a folder ("Delete <path>"), as
+/// [`under`] reads it whole or refuses.
 pub(crate) fn delete_path(
     context: &Context,
     root: &Root,
@@ -683,16 +683,10 @@ pub(crate) fn delete_path(
     let Some((_, entry)) = entry_at(hosted, &hosted.branch, &path, true)? else {
         return Err(LibError::new(format!("{path} is not there")));
     };
-    let removes = if item_text(&entry, "type") == "dir" {
-        let walked = files(hosted, &path, MAX_DELETED + 1);
-        if walked.capped || walked.files.len() > MAX_DELETED {
-            return Err(LibError::new(format!(
-                "{path} has more than {MAX_DELETED} files: delete it from a clone"
-            )));
-        }
-        walked.files.into_iter().map(|(file, _)| file).collect()
-    } else {
-        vec![path.clone()]
+    let removes = match item_text(&entry, "type").as_str() {
+        "dir" => under(hosted, &path)?,
+        "submodule" => return Err(LibError::new(format!("{path} is a submodule: delete it from a clone"))),
+        _ => vec![path.clone()],
     };
     let change = Change {
         removes,
@@ -709,6 +703,51 @@ pub(crate) fn delete_path(
     );
     let mut out = Parameters::new();
     out.insert("reload".into(), Value::Null);
+    Ok(out)
+}
+
+/// Every path a delete of the folder `dir` removes, read at one commit: its files, executables and symbolic links. A
+/// folder that cannot be read whole (a listing that fails, the time budget), that holds a submodule, or that has more
+/// than [`MAX_DELETED`] of them is refused, never deleted in part.
+fn under(hosted: &HostedBranch, dir: &str) -> Result<Vec<String>, LibError> {
+    let started = Instant::now();
+    let mut commit = String::new();
+    let mut out = Vec::new();
+    let mut pending = vec![dir.to_string()];
+    while let Some(at) = pending.pop() {
+        if started.elapsed() > MAX_SCAN_TIME {
+            return Err(LibError::new(format!(
+                "{dir} was not read whole in time: delete it from a clone"
+            )));
+        }
+        let revision = if commit.is_empty() {
+            hosted.branch.clone()
+        } else {
+            commit.clone()
+        };
+        let found = listing(hosted, &revision, &at)
+            .map_err(|err| LibError::new(format!("{dir} was not read whole ({at}: {err}): nothing was deleted")))?;
+        if commit.is_empty() {
+            commit = found.commit;
+        }
+        for entry in &found.entries {
+            let path = format!("{at}/{}", item_text(entry, "name"));
+            match item_text(entry, "type").as_str() {
+                "dir" => pending.push(path),
+                "submodule" => {
+                    return Err(LibError::new(format!(
+                        "{dir} holds the submodule {path}: delete it from a clone"
+                    )))
+                }
+                _ => out.push(path),
+            }
+            if out.len() > MAX_DELETED {
+                return Err(LibError::new(format!(
+                    "{dir} has more than {MAX_DELETED} files: delete it from a clone"
+                )));
+            }
+        }
+    }
     Ok(out)
 }
 
@@ -983,10 +1022,15 @@ fn store_hosted_root(
     let (default, names) = branches(&repository_id)?;
     let branch = Some(text(parameters, "branch").trim().to_string())
         .filter(|branch| !branch.is_empty())
-        .unwrap_or(default);
-    // an empty repository has no branch yet: its default one is made by the first commit
+        .unwrap_or_else(|| default.clone());
     if branch.is_empty() || (!names.is_empty() && !names.contains(&branch)) {
         return Err(LibError::new(format!("{repository_id} has no branch {branch}")));
+    }
+    // an empty repository has no branch yet: its first commit makes the default one, so the root is at that branch
+    if names.is_empty() && branch != default {
+        return Err(LibError::new(format!(
+            "{repository_id} is empty: its first commit makes its default branch, {default}, the one a hosted root of it is at"
+        )));
     }
     let user = moqui_core::user::current_user_id().ok().flatten().unwrap_or_default();
     let label = text(parameters, "label").trim().to_string();

@@ -679,9 +679,11 @@
                 this.loadPlan = { running: true };
                 this.ctx.post("planDataLoad", { rootId: this.ctx.rootId, path: this.tab.path }).then((answer) => {
                     const choices = {};
-                    for (const record of answer.records || []) if (["conflict", "remove", "differs"].includes(record.action)) choices[record.key] = "database";
+                    // a conflict starts at Keep database; a removal or a record not compared has no choice until one is made, and
+                    // the baseline holds over it (offered again by the next load)
+                    for (const record of answer.records || []) choices[record.key] = record.action === "conflict" ? "database" : null;
                     this.loadPlan = { counts: answer.counts || {}, records: answer.records || [], skipped: answer.skipped || [], truncated: !!answer.truncated,
-                        baseFrom: answer.baseFrom, baseHash: answer.baseHash, fileHash: answer.fileHash, choices, loading: false };
+                        baseFrom: answer.baseFrom, baseHash: answer.baseHash, fileHash: answer.fileHash, note: answer.note || "", choices, loading: false };
                 }, (error) => { this.loadPlan = null; this.ctx.fail(error); });
             },
             planRecords(action) { return ((this.loadPlan && this.loadPlan.records) || []).filter((record) => record.action === action); },
@@ -689,7 +691,9 @@
             runLoad() {
                 const plan = this.loadPlan;
                 plan.loading = true;
-                this.ctx.post("loadChanged", { rootId: this.ctx.rootId, path: this.tab.path, choices: JSON.stringify(plan.choices),
+                const chosen = {};
+                for (const key of Object.keys(plan.choices)) if (plan.choices[key]) chosen[key] = plan.choices[key];
+                this.ctx.post("loadChanged", { rootId: this.ctx.rootId, path: this.tab.path, choices: JSON.stringify(chosen),
                     baseHash: plan.baseHash, fileHash: plan.fileHash }).then((answer) => {
                     this.loadPlan = null;
                     const parts = [answer.written + " written"];
@@ -813,6 +817,7 @@
           <div v-for="record in planRecords('write')" :key="record.key" class="text-caption">{{record.entity}} {{planPk(record)}}<span class="m-muted">{{record.fields.length ? ': ' + record.fields.map((field) => field.name).join(', ') : ''}}</span></div>
         </q-expansion-item>
         <div v-if="loadPlan.truncated" class="text-caption m-muted">The first 500 records are listed.</div>
+        <div v-if="loadPlan.note" class="text-caption m-muted" id="DevLoadPlanNote">{{loadPlan.note}}</div>
         <div v-for="(why, i) in loadPlan.skipped" :key="'s' + i" class="text-caption text-warning">Passed over: {{why}}</div>
         <div class="row q-mt-sm"><q-space></q-space>
           <q-btn unelevated no-caps color="primary" :loading="loadPlan.loading" id="DevLoadPlanRun"

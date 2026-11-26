@@ -4,8 +4,9 @@
 // writes nothing for, and the choices settle it (Keep database, Take file deleting a removed record); a load whose
 // baseline was lost finds what it wrote already applied; a load needs the plan's hashes and refuses another text; a
 // password or encrypted field is neither compared nor shown, and for a reader of Dev AIDE's view tier a credential
-// entity's record only differs (the plan) or has a field that did not match (the data check), with no values; removed
-// records are deleted the last first, so a type goes after its values; a load that passed over an element keeps the
+// entity's record only differs (the plan) or is not checked (the data check); a removal left without a choice holds
+// the baseline, and removed records are deleted the last first, so a type goes after its values; a load that passed
+// over an element keeps the
 // baseline; a date and a time stamp compare with the database across a change of the user's time zone; the terminal's
 // Load the changed records loads when nothing needs a choice and names the conflicts otherwise. The pure rules
 // are the crate's (data_load_tests.rs).
@@ -269,19 +270,23 @@ feature("a reader of the view tier sees only that a credential entity's record d
         ec.user.internalLoginUser(READER)
         const plan = call("plan#DataLoad", {text: SOURCE("Other", "guess-token-" + RUN)}).out
         const checked = call("check#DataFile", {text: SOURCE("Other", "guess-token-" + RUN)})
+        const rightGuess = call("check#DataFile", {text: SOURCE("Spec", "db-token-" + RUN)})
         // a password hash is never compared: a guess at it gives no message, right or wrong
         const account = call("check#DataFile", {
             text: '<entity-facade-xml>\n    <moqui.security.UserAccount userId="EX_JOHN_DOE" currentPassword="guess"/>\n</entity-facade-xml>\n'
         })
         ec.user.internalLoginUser("john.doe")
-        return {source: sourceOf(plan), plan: JSON.stringify(plan), checked, account}
+        return {source: sourceOf(plan), plan: JSON.stringify(plan), checked, rightGuess, account}
     },
-    then({source, plan, checked, account}) {
+    then({source, plan, checked, rightGuess, account}) {
         source.action == "differs"
         source.fields.length == 0
         !plan.includes("Other") && !plan.includes("token-" + RUN)
         checked.errors == ""
-        checked.out.messages.some(message => message.includes("DevAideTaskSource.label did not match (its values are not shown)"))
+        // not checked at all: the same one line whatever the database has
+        checked.out.messages.includes("Entity moqui.dev.DevAideTaskSource: not checked for you")
+        JSON.stringify(checked.out.messages) == JSON.stringify(rightGuess.out.messages)
+        checked.out.fieldsChecked == rightGuess.out.fieldsChecked
         !JSON.stringify(checked.out).includes("token-" + RUN)
         !JSON.stringify(checked.out).includes("[Spec]")
         account.errors == ""
@@ -300,6 +305,13 @@ feature("removed records are deleted the last first, so a type goes after its va
             choices: JSON.stringify({[byKey(settle, "B").key]: "database"})
         })
         fixture().write(ROOT, PATH, '<entity-facade-xml type="seed">\n</entity-facade-xml>\n')
+        // the removals left without a choice: kept, and the baseline holds so they are offered again
+        const first = call("plan#DataLoad").out
+        const unchosen = call("load#ChangedRecords", {
+            baseHash: first.baseHash,
+            fileHash: first.fileHash,
+            choices: JSON.stringify({[byKey(first, "B").key]: "database"})
+        })
         const plan = call("plan#DataLoad").out
         const choices = {}
         for (const record of plan.records || []) choices[record.key] = "file"
@@ -309,9 +321,14 @@ feature("removed records are deleted the last first, so a type goes after its va
             choices: JSON.stringify(choices)
         })
         const type = asSystem(() => ec.entity.find("moqui.basic.EnumerationType").condition("enumTypeId", TYPE).count())
-        return {plan, loaded, rows: ["A", "B", "D"].map(description), type}
+        return {first, unchosen, plan, loaded, rows: ["A", "B", "D"].map(description), type}
     },
-    then({plan, loaded, rows, type}) {
+    then({first, unchosen, plan, loaded, rows, type}) {
+        unchosen.errors == ""
+        unchosen.out.deleted == 0
+        unchosen.out.baselineMoved == false
+        unchosen.out.baselineNote.includes("had no choice")
+        plan.baseHash == first.baseHash
         plan.counts.remove == 3
         plan.counts.conflict == 1
         loaded.errors == ""

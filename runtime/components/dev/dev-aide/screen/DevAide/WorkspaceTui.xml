@@ -152,22 +152,22 @@ along with this software (see the LICENSE.md file). If not, see
         <error-response url="../Workspace"><parameter name="rootId"/><parameter name="path"/></error-response>
     </transition>
     <!-- Load the changed records (plans/design-dev-aide.md 12), three ways as the browser's: planned, then loaded with the
-        plan's hashes when nothing needs a choice; a conflict, or a record not compared for this user, is never settled
-        here by default, so the answer names them for the browser's data file view; a removal is kept -->
+        plan's hashes when nothing needs a choice; a conflict, a removal or a record not compared for this user is never
+        settled here by default, so the answer names them for the browser's data file view -->
     <transition name="loadChangedRecords">
         <actions><script><![CDATA[
             const plan = ec.service.sync().name('org.moqui.devaide.EntityServices.plan#DataLoad').parameters({rootId, path}).call() || {}
             if (!ec.message.hasError()) {
                 const counts = plan.counts || {}
-                if (counts.conflict || counts.differs) {
-                    ec.message.addMessage((counts.conflict || 0) + ' ' + ec.l10n.localize('in conflict') + ', ' + (counts.differs || 0) + ' '
-                        + ec.l10n.localize('not compared') + ': ' + ec.l10n.localize('choose Keep database or Take file for each in the browser\'s data file view'), 'warning')
+                if (counts.conflict || counts.differs || counts.remove) {
+                    ec.message.addMessage((counts.conflict || 0) + ' ' + ec.l10n.localize('in conflict') + ', ' + (counts.remove || 0) + ' '
+                        + ec.l10n.localize('removed from the file') + ', ' + (counts.differs || 0) + ' ' + ec.l10n.localize('not compared') + ': '
+                        + ec.l10n.localize('choose Keep database, Take file or Delete for each in the browser\'s data file view'), 'warning')
                 } else {
                     const out = ec.service.sync().name('org.moqui.devaide.EntityServices.load#ChangedRecords')
                         .parameters({rootId, path, baseHash: plan.baseHash, fileHash: plan.fileHash}).call() || {}
                     if (!ec.message.hasError()) ec.message.addMessage(ec.l10n.localize('Loaded the changed records') + ': ' + out.written + ' '
-                        + ec.l10n.localize('written') + (counts.remove ? ', ' + counts.remove + ' ' + ec.l10n.localize('removed from the file kept') : '')
-                        + (out.baselineNote ? '; ' + out.baselineNote : ''), out.baselineMoved === false ? 'warning' : 'success')
+                        + ec.l10n.localize('written') + (out.baselineNote ? '; ' + out.baselineNote : ''), out.baselineMoved === false ? 'warning' : 'success')
                 }
             }
         ]]></script></actions>

@@ -364,6 +364,9 @@ pub(crate) struct Resolved<'a> {
     pub deletes: Vec<&'a Planned>,
     /// Conflicts and removals kept as the database has them.
     pub kept: usize,
+    /// Removals and differing records kept because nothing was chosen for them: the baseline holds over them, so they
+    /// are offered again.
+    pub unchosen: usize,
 }
 
 /// The writes and deletes of `planned` with `choices`, or the keys of the conflicts that have no choice (the plan the
@@ -383,7 +386,11 @@ pub(crate) fn resolve<'a>(planned: &'a [Planned], choices: &Choices) -> Result<R
                 resolved.deletes.push(item)
             }
             (Action::Differs, Some("file")) => resolved.writes.push(item),
-            (Action::Remove | Action::Differs, _) => resolved.kept += 1,
+            (Action::Remove | Action::Differs, Some("database")) => resolved.kept += 1,
+            (Action::Remove | Action::Differs, _) => {
+                resolved.kept += 1;
+                resolved.unchosen += 1;
+            }
             (Action::Keep | Action::Applied | Action::Gone | Action::Skip, _) => {}
         }
     }
@@ -720,10 +727,17 @@ fn sides<'a>(
     let location = resolved.path.display().to_string();
     let mut skipped = Vec::new();
     let (base_records, file) = moqui_core::l10n::with_time_zone(&zone, || {
-        let base_records: Vec<Record> = records(guard, &location, &base.text, &mut Vec::new())
+        // an element of the base that does not read holds the baseline too, as one of the file's does
+        let mut base_skipped = Vec::new();
+        let base_records: Vec<Record> = records(guard, &location, &base.text, &mut base_skipped)
             .into_iter()
             .map(|(record, _)| record)
             .collect();
+        skipped.extend(
+            base_skipped
+                .into_iter()
+                .map(|why| format!("the last load's text: {why}")),
+        );
         (base_records, records(guard, &location, &file_text, &mut skipped))
     });
     Ok(Sides {
@@ -782,8 +796,14 @@ fn plan_data_load(
         ),
     );
     out.insert("skipped".into(), json_value(&sides.skipped));
+    out.insert("note".into(), Value::string(HIDDEN_NOTE));
     Ok(out)
 }
+
+/// What a plan says of the fields it never compares.
+const HIDDEN_NOTE: &str =
+    "A change only to a password or encrypted field is not picked up (Load this file loads it); a \
+    record that is written writes the file's values of those fields too.";
 
 /// The `choices` parameter: a map, or its JSON text, of a record's key to `file` or `database`.
 fn choices_of(parameters: &Parameters) -> Result<Choices, LibError> {
@@ -809,6 +829,8 @@ struct Loaded {
     conflicts: usize,
     /// Records of the file not compared or written (no whole primary key, a read that failed).
     passed_over: usize,
+    /// Removals and differing records nothing was chosen for.
+    unchosen: usize,
 }
 
 /// Write the file's record `value` as the data loader writes an XML record: the entity-auto store (`store#<entity>`,
@@ -901,6 +923,7 @@ fn load_changed_records(
                 unchanged: count(Action::Keep),
                 conflicts: count(Action::Conflict),
                 passed_over: count(Action::Skip),
+                unchosen: resolved.unchosen,
             })
         });
     audit::record(
@@ -921,15 +944,19 @@ fn load_changed_records(
     );
     let loaded = done.map_err(|err| LibError::new(err.to_string()))?;
     // the baseline moves only over a file all of whose records were settled: a change passed over stays to load
-    let baseline = if loaded.passed_over > 0 || !sides.skipped.is_empty() {
+    // and a removal or a differing record nothing was chosen for is offered again, not lost
+    let held = loaded.passed_over + sides.skipped.len();
+    let baseline = if held > 0 {
         Err(format!(
-            "{} record{} of the file were passed over, so the next load compares with the same base",
-            loaded.passed_over + sides.skipped.len(),
-            if loaded.passed_over + sides.skipped.len() == 1 {
-                ""
-            } else {
-                "s"
-            }
+            "{held} record{} of the file were passed over, so the next load compares with the same base",
+            if held == 1 { "" } else { "s" }
+        ))
+    } else if loaded.unchosen > 0 {
+        Err(format!(
+            "{} removed or not compared record{} had no choice, so the next load offers {} again",
+            loaded.unchosen,
+            if loaded.unchosen == 1 { "" } else { "s" },
+            if loaded.unchosen == 1 { "it" } else { "them" }
         ))
     } else {
         store_baseline(&context, sides.root, &sides.relative, &sides.file_text, &sides.zone)

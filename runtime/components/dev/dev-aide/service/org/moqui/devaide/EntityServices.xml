@@ -118,7 +118,10 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="records" type="List"><description>Maps: key, entity, pk, change (added, changed, removed),
                 action (write, applied, conflict, remove, skip, differs), fields (name, base, file, db); at most 500</description></parameter>
             <parameter name="truncated" type="Boolean"/>
-            <parameter name="skipped" type="List"><description>The elements that did not read, with why</description></parameter>
+            <parameter name="skipped" type="List"><description>The elements that did not read, with why (the file's,
+                and the last load's text's)</description></parameter>
+            <parameter name="note"><description>That a change only to a password or encrypted field is not picked up,
+                and a written record writes the file's values of them too</description></parameter>
         </out-parameters>
     </service>
     <service verb="load" noun="ChangedRecords" type="rust" location="dev_aide::data_load::load_changed_records" allow-remote="false">
@@ -128,7 +131,9 @@ along with this software (see the LICENSE.md file). If not, see
             record; database: Keep database), each removal chosen (file) deleted, the last first. A conflict the choices
             do not name refuses the load, as do baseHash and fileHash (required, checked in the transaction) when they are
             not the plan's. Once it committed the text is the file's baseline for the next load, unless an element or a
-            record of it was passed over; a retry finds what was written already applied. Audited.</description>
+            record of it (or of the last load's text) was passed over, or a removal or a differing record had no choice:
+            those are offered again. A retry finds what was written already applied. The entity-auto store runs the
+            SECA rules of store#[entity], which Load this file does not. Audited.</description>
         <in-parameters>
             <parameter name="rootId" required="true"/>
             <parameter name="path" required="true"/>

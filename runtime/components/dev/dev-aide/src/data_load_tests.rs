@@ -276,6 +276,8 @@ fn choices_settle_the_conflicts_and_removals_and_none_is_settled_by_default() {
     assert_eq!(keys(&resolved.writes), [key("A"), key("N")]);
     assert_eq!(keys(&resolved.deletes), [key("S")]);
     assert_eq!(resolved.kept, 2);
+    // R, a removal nothing was chosen for, holds the baseline; B was chosen
+    assert_eq!(resolved.unchosen, 1);
     let mut with_removal = choices.clone();
     with_removal.insert(key("R"), "file".to_string());
     assert_eq!(
@@ -316,6 +318,7 @@ fn a_record_the_caller_may_not_read_differs_from_its_base_only_and_is_written_on
     assert!(plan.iter().all(|item| item.fields.is_empty()));
     // kept unless chosen; Take file writes, or deletes the removed one
     assert_eq!(resolve(&plan, &Choices::new()).unwrap().kept, 3);
+    assert_eq!(resolve(&plan, &Choices::new()).unwrap().unchosen, 3);
     let choices: Choices = [(key("A"), "file".to_string()), (key("R"), "file".to_string())]
         .into_iter()
         .collect();

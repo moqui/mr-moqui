@@ -89,7 +89,10 @@ impl Context {
         crate::notify::ensure(&factory);
         let facade = factory.entity().ok_or_else(|| LibError::new("no entity facade"))?;
         let settings = Settings::of(&factory, Some(&facade));
-        let roots = roots::roots(&factory, &settings, Some(&facade));
+        let mut roots = roots::roots(&factory, &settings, Some(&facade));
+        // a hosted root only for a user who may view its repository (crate::hosted): every listing and `root` of this
+        // context answers alike, as if the others were not there
+        roots.retain(|root| root.hosted_branch.as_ref().is_none_or(crate::hosted::visible));
         Ok(Self {
             factory,
             facade,
@@ -297,13 +300,7 @@ fn get_roots(
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::View)?;
     let mut out = Parameters::new();
-    // a hosted root only for a user who may view its repository (crate::hosted)
-    let roots: Vec<&Root> = context
-        .roots
-        .iter()
-        .filter(|root| root.hosted_branch.as_ref().is_none_or(crate::hosted::visible))
-        .collect();
-    out.insert("roots".into(), json_value(&roots));
+    out.insert("roots".into(), json_value(&context.roots));
     out.insert("gitAvailable".into(), Value::Bool(context.git().available()));
     out.insert("tier".into(), Value::string(context.tier.name()));
     out.insert("siteComponents".into(), json_value(&context.settings.site_components));

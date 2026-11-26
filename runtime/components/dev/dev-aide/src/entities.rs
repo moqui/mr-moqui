@@ -57,8 +57,9 @@ const MAX_EXPORT: i64 = 1000;
 /// `check#DataFile`: a data file's records (the buffer's `text`, or the file) against the database, as `checkData`
 /// reports them (12): each record not found and each field that differs. It is a restricted check
 /// (`restrictSensitiveEntities`): an entity no generic read takes is refused, and a password or encrypted field is not
-/// compared; and of an entity whose records export#Records refuses the caller it says only which field differs, never
-/// the values (plans/Security-Review.md SEC-DEV-01).
+/// compared. An element with a record of an entity whose records export#Records refuses the caller is not checked at
+/// all, so nothing of the answer (a message, a row, the count of fields compared) depends on that entity's rows: one
+/// line names it (plans/Security-Review.md SEC-DEV-01).
 fn check_data_file(
     ec: &ExecutionContext,
     _service: &ServiceInfo<'_>,
@@ -71,47 +72,28 @@ fn check_data_file(
         .filter(|body| !body.is_empty())
         .map_or_else(|| std::fs::read_to_string(&resolved.path), Ok)
         .map_err(|err| LibError::new(format!("{}: {err}", resolved.relative)))?;
+    let location = resolved.path.display().to_string();
+    let (checked_text, unchecked) = without_refused(&context, &location, &body);
     let checked = moqui_core::entity::load_feed::check_entity_xml_text(
         &context.facade,
-        &resolved.path.display().to_string(),
-        &body,
+        &location,
+        &checked_text,
         &moqui_core::entity::load_feed::LoadOptions {
             restrict_sensitive_entities: true,
             ..moqui_core::entity::load_feed::LoadOptions::default()
         },
     )?;
-    let mut refused: BTreeMap<String, bool> = BTreeMap::new();
-    let mut is_refused = |entity: &str| {
-        *refused
-            .entry(entity.to_string())
-            .or_insert_with(|| export_refused(&context, entity).is_some())
-    };
     let diffs: Vec<Json> = checked
         .diff_info
         .into_iter()
         .map(|row| moqui_json(&Value::Map(row)))
-        .map(|mut row| {
-            if is_refused(row["entity"].as_str().unwrap_or_default()) {
-                for key in ["value", "dbValue", "createValues"] {
-                    if let Some(map) = row.as_object_mut() {
-                        map.remove(key);
-                    }
-                }
-            }
-            row
-        })
         .collect();
-    let messages: Vec<String> = checked
-        .messages
-        .into_iter()
-        .map(|message| match checked_entity(&message) {
-            Some((entity, field)) if is_refused(&entity) => match field {
-                Some(field) => format!("Field {entity}.{field} did not match (its values are not shown)"),
-                None => format!("Entity {entity}: a record was not found (its values are not shown)"),
-            },
-            _ => message,
-        })
-        .collect();
+    let mut messages = checked.messages;
+    messages.extend(
+        unchecked
+            .iter()
+            .map(|entity| format!("Entity {entity}: not checked for you")),
+    );
     let mut out = Parameters::new();
     out.insert("messages".into(), json_value(&messages));
     out.insert("differences".into(), json_value(&diffs));
@@ -122,17 +104,56 @@ fn check_data_file(
     Ok(out)
 }
 
-/// The entity (and field) a data check's message is of: `Field <entity>.<field> did not match; ...` or `Entity
-/// <entity> record not found ...`.
-fn checked_entity(message: &str) -> Option<(String, Option<String>)> {
-    if let Some(rest) = message.strip_prefix("Field ") {
-        let (name, _) = rest.split_once(" did not match")?;
-        let (entity, field) = name.rsplit_once('.')?;
-        return Some((entity.to_string(), Some(field.to_string())));
+/// A data file's text without its top-level elements that hold a record of an entity `export_refused` refuses the
+/// caller, and those entities (full names). An element that does not read is kept, for the check to report.
+fn without_refused(context: &Context, location: &str, body: &str) -> (String, std::collections::BTreeSet<String>) {
+    let mut unchecked = std::collections::BTreeSet::new();
+    let Ok(doc) = moqui_lib::xml_edit::Doc::parse(body) else {
+        return (body.to_string(), unchecked);
+    };
+    let Some(root) = doc.root() else {
+        return (body.to_string(), unchecked);
+    };
+    let mut kept = Vec::new();
+    for element in doc.elements(root) {
+        let element_text = doc.slice(&doc.nodes[element].span);
+        let wrapped = format!("<entity-facade-xml>\n{element_text}\n</entity-facade-xml>\n");
+        let listed = moqui_core::entity::load_feed::list_with(|| {
+            moqui_core::entity::load_feed::load_entity_xml_text(
+                &context.facade,
+                location,
+                &wrapped,
+                &moqui_core::entity::load_feed::LoadOptions::default(),
+            )
+        });
+        let refused: Vec<String> = match listed {
+            Ok((_, result)) => result
+                .values
+                .iter()
+                .map(|value| value.entity_name().to_string())
+                .filter(|entity| export_refused(context, entity).is_some())
+                .map(|entity| full_name_of(context, &entity))
+                .collect(),
+            Err(_) => Vec::new(),
+        };
+        if refused.is_empty() {
+            kept.push(element_text.to_string());
+        } else {
+            unchecked.extend(refused);
+        }
     }
-    let rest = message.strip_prefix("Entity ")?;
-    let (entity, _) = rest.split_once(" record not found")?;
-    Some((entity.to_string(), None))
+    (
+        format!("<entity-facade-xml>\n{}\n</entity-facade-xml>\n", kept.join("\n")),
+        unchecked,
+    )
+}
+
+/// An entity's full name, or `name` when the model does not know it.
+fn full_name_of(context: &Context, name: &str) -> String {
+    info::definition_info(&context.facade, name)
+        .and_then(|detail| detail.get("fullEntityName").map(moqui_lib::object::to_plain_string))
+        .filter(|full| !full.is_empty())
+        .unwrap_or_else(|| name.to_string())
 }
 
 /// Entities whose rows hold credentials, which only the full tier with `ADMIN` exports (get#Credentials and
