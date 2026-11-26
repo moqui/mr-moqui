@@ -1,5 +1,7 @@
 # MR Moqui — UI review: Dev AIDE workspace and collaboration
 
+**Review update — 2026-11-25.** DEVW-B02 records the latest live evidence. The activity ledger identifies the branches still open.
+
 **Status — 2026-11-25, refinement.** All three DEVW-B01 findings are fixed (DEVW-UI-001–003).
 
 **Previous status — 2026-11-25.** First live review (DEVW-B01). The disposable Git fixture reached a verified commit, local push, conflict abort and session-worktree cleanup. Three findings are open. Hosted collaboration and the remaining role, mode and recovery branches are listed below.
@@ -351,11 +353,11 @@ execution records it; “exercised” never implies that all modes and recovery 
 | DEVW-06 — Inspect history and recover a conflict | exercised · partial | Inspected README.md at e5e6c6b and its two-sided diff. Merging compare produced a non-fast-forward prompt and an actual conflict. Abort restored clean main. Resolution/continue, blame, cherry-pick and revert remain open. | merge.jpg |
 | DEVW-07 — Synchronize and publish to a local remote | exercised · partial | Fetch, Push and Pull reported operation-specific results. The bare remote contained 2a2c81b and the local branch tracked origin/main. Site Publish, cancellation and rejected push remain open. | DEVW-B01 |
 | DEVW-08 — Keep task context through a branch and commit | exercised · partial | Tasks displayed 0 open tasks from No task source. Source selection, quick create and a current-task commit require a populated task provider. | tasks.jpg |
-| DEVW-09 — Connect a local group server and inspect owned setup | exercised · partial | Settings offered Connect and Paste an access token and showed an empty connection list. A local authenticated hosting fixture is needed for offer/apply/remove and credential ownership. | DEVW-B01 |
-| DEVW-10 — Review a local merge request and its discussion | blocked | Workspace Settings → Find on the server reported No connected server hosts it. No hosted repository or second contributor was available for merge requests, threads or agreements. | DEVW-B01 |
-| DEVW-11 — Explain a failed check and run its safe local counterpart | blocked | Commits listed local revisions without a hosted check. The fixture has no CI job or check result. Rerun, failed-test link and local-job terminal handoff remain open. | DEVW-B01 |
+| DEVW-09 — Connect a local group server and inspect owned setup | exercised · partial | Connected to the local group server as John Doe and resolved review-hosted from Workspace Settings. Credential rotation and offer/apply/remove remain open. | DEVW-B01; DEVW-B02 |
+| DEVW-10 — Review a local merge request and its discussion | exercised — partial | Opened hosted MR !1 and inspected both README revisions. The peer reported no review threads. Repeat with discussion storage and an independent reviewer. | DEVW-B01; DEVW-B02 |
+| DEVW-11 — Explain a failed check and run its safe local counterpart | exercised — partial | Ran the previewed local CI job in a terminal and verified its worktree marker. Supply a failed hosted job to inspect its logs, source and rerun. | DEVW-B02 |
 | DEVW-12 — Review an Assist change in an isolated session worktree | exercised · partial | Created agent/review-session and removed its clean worktree. The UI named the retained branch and explained live-root separation. Bound Assist conversations and proposed changes were unavailable. | sessions.jpg |
-| DEVW-13 — Reconcile tiers, TUI and hidden endpoints | exercised · partial | Viewer sign-in showed disabled Git/write controls and an unreadable tree error. Browser-hosted Apps TUI opened Dev AIDE Home and the devw-git Workspace tree with its explicit browser delegation. Standard Home’s Workspace link returned 404. The separate review.dev.extender identity edited scratch.txt on the same site root, saved and received acknowledgement; disk readback preserved its line. Endpoint-level refusals, TUI commits and live theme changes remain open. | DEVW-UI-002, DEVW-UI-003; tui-workspace.jpg |
+| DEVW-13 — Reconcile tiers, TUI and hidden endpoints | exercised · partial | Viewer sign-in showed disabled Git/write controls and an unreadable tree error. Browser-hosted Apps TUI opened Dev AIDE Home and the devw-git Workspace tree with its explicit browser delegation. Standard Home’s Workspace link returned 404. The separate review.dev.extender identity edited scratch.txt on the same site root, saved and received acknowledgement; disk readback preserved its line. Endpoint-level refusals, TUI commits and live theme changes remain open. Scoped viewer opened the copied app tree from the Standard entry; also sampled the TUI Workspace controls. | DEVW-UI-002, DEVW-UI-003; tui-workspace.jpg; DEVW-B02 |
 
 ### Findings register
 
@@ -385,6 +387,34 @@ For each later batch record:
 - Git setup used a dedicated devw-git repository, separate from the generated app, and a local bare remote. Compared e5e6c6b on main with 7768f38 on compare. Saved scratch.txt, retained the peer revision after conflict, staged and committed it, then verified 2a2c81b in the bare remote. After the deliberately conflicting merge and Abort, Git reported clean main tracking origin/main. Removing the clean session worktree retained its named branch as the UI promised.
 - Material, Standard and the browser-hosted terminal were exercised. The measured default viewport was 1280×720. The requested width overrides did not establish a measured 390px or 1920px workspace. Light/dark and outstanding tier, hosting, task, Assist and recovery branches remain unverified. No automated or acceptance suites ran.
 - Local screenshot evidence is under `plans/ui-refinement-evidence/devw-20261125/`. The coordinator owns the isolated instance and retained fixture repositories.
+
+### DEVW-B02 — November 25 continuation
+
+review.dev.viewer, with DEV_AIDE_VIEW and the view grants, opened the copied round-review-app root through Standard. The redirect retained rootId. Material showed the locked root, data, entity, screen, service and test directories, and named files including component.xml. DEVW-UI-002 and the hosted viewer branch of DEVW-UI-003 passed. A separate live TUI session opened Workspace and exposed the Files tree, Go to file and Search controls. Evidence is in `workspace-viewer.json`, `workspace-viewer.jpg` and `tui.txt`.
+
+John Doe connected Workspace to the second local server and found the disposable DB Git repository review-hosted. Workspace listed MR !1 from review-change to main. The README diff showed Base revision and Comparison revision. The review panel reported that the server keeps no review threads. Discussion persistence and an independent reviewer decision remain open. The localJobs and startLocalRun transitions ran the working tree’s review/readme job in a terminal. The job checked README.md and wrote a marker which was independently read. A hosted failed job, log and rerun remain open. See group-server-connected.json, hosted-file.json and ci-local.json.
+
+Local evidence is under `plans/ui-refinement-evidence/closeout-d10e22f/`.
+
+#### Remaining branches
+
+The ledger records the strongest observed outcome. The remaining steps, recovery paths and modes in each section 4 activity are deferred to the fixture and next check below. An explicitly blocked or failed result keeps that status.
+
+| Activity | Required setup and next observation |
+|---|---|
+| DEVW-01 | Create a site component under a non-admin creator and reopen it after reload. |
+| DEVW-02 | Repeat edit/reload with an external file writer and inspect the downstream consumer. |
+| DEVW-03 | Cause two edits to the same saved file and inspect the retained alternatives through resolution. |
+| DEVW-04 | Stage one hunk as a contributor and verify the commit and linked task independently. |
+| DEVW-05 | Recover the same fixture change after a branch switch, tag and conflicting stash application. |
+| DEVW-06 | Resolve a diverged merge and verify both commits and resulting file through history. |
+| DEVW-07 | Introduce remote divergence between two disposable clones and verify the recovery and push. |
+| DEVW-08 | Switch between two task branches and reopen the linked commit from each task. |
+| DEVW-09 | Disconnect or expire the local group credential and verify reconnect and repository visibility. |
+| DEVW-10 | Use a thread-capable peer and second contributor for comment, reply, resolution and reviewer decision. |
+| DEVW-11 | Supply a hosted failed job with a test location, follow its log and source, then rerun it. |
+| DEVW-12 | Start an Assist task in a disposable worktree, review its proposed diff and confirm its disposition. |
+| DEVW-13 | Repeat the same valid Workspace write across View, Edit and host-local grants through browser and TUI. |
 
 ## 7. Decisions
 

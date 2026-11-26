@@ -709,7 +709,7 @@
       <div class="row q-gutter-x-sm q-mt-xs">
         <q-btn dense unelevated no-caps color="primary" size="sm" label="Run in a terminal" @click="startLocal" id="DevRunLocallyStart"></q-btn>
         <q-btn v-if="localContainer" dense outline no-caps color="primary" size="sm" :disable="!!localContainer.refusal"
-            :label="'Run in the job\'s image (' + localContainer.engine + ')'"
+            :label="'Run in the job\\'s image (' + localContainer.engine + ')'"
             @click="startInImage" id="DevRunInImage"></q-btn>
         <q-btn dense flat no-caps size="sm" label="Cancel" @click="local = null; localJobs = null"></q-btn></div>
     </template>

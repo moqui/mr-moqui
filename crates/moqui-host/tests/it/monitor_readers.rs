@@ -192,6 +192,19 @@ fn verify_readers(opensearch_url: Option<&str>) {
     for at in 0..3 {
         assert!(context.contains(&format!("readermarker line {at}")), "{context}");
     }
+    // DASH-UI-005: the Time cell is the hit's time in the viewer's zone, not its raw ISO text (which the entry's dialog
+    // keeps); the fixture's ISO text is UTC and john.doe's zone America/Chicago
+    let local_same = jiff::Timestamp::from_millisecond(now - 3000)
+        .unwrap()
+        .to_zoned(jiff::tz::TimeZone::get("America/Chicago").unwrap())
+        .strftime("%Y-%m-%d %H:%M:%S%.3f")
+        .to_string();
+    let context_row = context
+        .split("</tr>")
+        .find(|row| row.contains("readermarker line 1") && row.contains("<td"))
+        .expect("context row");
+    assert!(context_row.contains(&local_same), "{local_same}: {context_row}");
+    assert!(context.contains("Times shown in America/Chicago."), "{context}");
     let report = read("/apps/gallery/Report.html?artifactName=reader.artifact");
     assert!(
         report.contains("reader.artifact") && report.contains("live artifact metric intervals"),

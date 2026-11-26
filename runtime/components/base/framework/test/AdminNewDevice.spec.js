@@ -47,8 +47,8 @@ function signIn(n, user, successful = "Y", secondsAgo = 0) {
     ec.message.clearErrors()
     return error
 }
-// the notice asked for directly, in a transaction of its own as the EECA asks (a notification whose email cannot be sent
-// marks its transaction, and the spec's database has no sender address)
+// the notice asked for directly, in a transaction of its own as the EECA asks: stored in it, and out (socket, email,
+// push) once it commits; the spec's database has no sender address, so the email fails then and is logged
 function notify(user, n) {
     const out = ec.service
         .sync()

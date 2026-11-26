@@ -273,6 +273,60 @@ feature("a call rings its callee’s registered phone and socket only after its 
     }
 })
 
+feature("a mention notifies its user, on the socket, in the list and by push, only after its message's transaction commits", {
+    when() {
+        const chat = "org.moqui.chat.ChatServices."
+        const token = TOKEN_PREFIX + "mention"
+        setConf("push/fcm@service-account", ACCOUNT)
+        setConf("push/fcm@base-url", FCM_BASE)
+        const registration = register(token, deviceKey("Mention phone").key)
+        ec.user.internalLoginUser("pushdevice.spec.other")
+        const room = sys(() => call(chat + "create#Room", {roomTypeEnumId: "CrtPrivate", roomName: "Push spec mentions", memberUserIdList: [JOHN]}))
+        const chatRoomId = room.chatRoomId
+        http.enable()
+        http.add(tokenAnswer)
+        http.add(fcmAnswer(200, {name: "projects/demo-project/messages/mention"}))
+        const capture = ec.factory.getTool("NotificationCapture")
+        capture.enable()
+        capture.clear()
+        const body = '<p>for you <span data-mention-id="' + JOHN + '">@John</span></p>'
+        const send = () => sys(() => call(chat + "send#Message", {chatRoomId, body})).eventSeq
+        const count = (entity, conditions) => sys(() => ec.entity.find(entity).condition(conditions).count())
+        const notices = () => capture.getMessages("ChatMention").filter(row => row.message && row.message.chatRoomId === chatRoomId)
+        const stored = () => count("moqui.security.user.NotificationMessage", {topic: "ChatMention", recordId: chatRoomId})
+        const phones = () => http.requests().filter(request => request.url === SEND_URL && JSON.parse(request.body).message.token === token)
+        try {
+            const began = ec.transaction.begin(null)
+            let rolledBack
+            try { rolledBack = send() }
+            finally { ec.transaction.rollback(began, "Roll back the mention", null) }
+            const drainedRollback = ec.factory.waitWorkerPoolEmpty(50)
+            const rollback = {notices: notices().length, stored: stored(), phones: phones().length,
+                mentions: count("moqui.chat.ChatEventMention", {chatRoomId}), jobs: count("moqui.chat.ChatPushJob", {chatRoomId})}
+            const committed = send()
+            const drainedCommit = ec.factory.waitWorkerPoolEmpty(50)
+            const commit = {notices: notices(), stored: stored(),
+                mentions: count("moqui.chat.ChatEventMention", {chatRoomId, eventSeq: committed})}
+            return {registered: registration.json.registered, chatRoomId, rolledBack, drainedRollback, rollback, committed,
+                drainedCommit, commit}
+        } finally {
+            capture.disable()
+            capture.clear()
+        }
+    },
+    then({registered, chatRoomId, rolledBack, drainedRollback, rollback, committed, drainedCommit, commit}) {
+        registered === true && chatRoomId != null
+        rolledBack != null && drainedRollback
+        rollback.notices === 0 && rollback.stored === 0 && rollback.phones === 0
+        rollback.mentions === 0 && rollback.jobs === 0
+        committed != null && drainedCommit
+        commit.notices.length === 1
+        commit.notices[0].userIds.length === 1 && commit.notices[0].userIds[0] === JOHN
+        commit.stored === 1
+        commit.mentions === 1
+    }
+})
+
 feature("a ring goes to FCM as a high-priority data message, and a token FCM answers UNREGISTERED is disabled", {
     when() {
         setConf("push/fcm@service-account", ACCOUNT)

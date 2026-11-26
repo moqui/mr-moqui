@@ -1,5 +1,7 @@
 # MR Moqui — UI review: Shared shell and Gallery
 
+**Review update — 2026-11-25.** SH-B04 records the latest live evidence. The activity ledger identifies the branches still open.
+
 **Status — 2026-11-25.** [SH-B03](#sh-b03--post-cleanup-recheck-2026-11-25) rechecked all seven historical findings. Six passed their live checks. The export link and bytes passed, while in-browser download activation remains unverified in this curl-transfer workflow. The activity ledger records the scope of each walk.
 
 Contents: [scope](#1-purpose-scope-and-sources) · [method](#2-review-method-and-refinement-criteria) ·
@@ -594,22 +596,22 @@ execution records it; “exercised” never implies that all modes and recovery 
 | --- | --- | --- | --- |
 | SH-01 — Sign in, recover and continue to the intended work | exercised — partial | Protected Gallery deep link, wrong password/retry and protected-route refusal after logout passed in browser. Recovery mail, MFA, expired password, SSO, initial setup, ReAuth, narrow login and TUI remain pending. | SH-B01; `20-signed-out-protected-route.txt` |
 | SH-02 — Find work and keep a reliable navigation history | exercised — partial | Launcher, desktop/narrow menus, filtered list/detail and Back/Forward exercised. SH-B03 confirmed Site Map navigation in both shells. Restricted users, new tab, missing/deleted routes, expired session and TUI remain pending. | SH-B01; SH-UI-004/005; `12-list-back.txt`; see SH-B03 for the current recheck. |
-| SH-03 — Choose an appearance and read every state | exercised — partial | Light/dark, reload persistence, live Appearance dialog switch and compact/comfortable exercised. SH-B03 confirmed complete Compact Task text in both themes at 390. Locked policy, full contrast measurements, other appearance controls, save failure and terminal branches pending. | SH-B01; SH-UI-003; screenshots `01`–`03`, `10`–`11`; see SH-B03 for the current recheck. |
-| SH-04 — Find a record, save the view and resume it | exercised — partial | Landing count → filtered List → Detail → Back, Find Options/Escape, no-match search and reset exercised. SH-B02 exercised Saved Find create/default/update/reload/clear/delete-cancel/delete, keyboard Columns reorder/hide/save/reload/reset and descending sort/page. SH-B03 confirmed exported IDs, State and sort order; direct browser download activation remains unverified this round. Edit dialogs, invalid filters, expired choices, 390 and other modes pending. | SH-B01/B02; SH-UI-006/007; batch-02 evidence `01`–`05`; SH-B03 |
-| SH-05 — Understand and act on a record | inspected — partial | Opened STRT_APPEARANCE_POLICY Detail and checked identity/context at 1280. Actions, editing, related records, 360/Contact, history, refusal and all other modes pending. | SH-B01; `13-detail-1280.jpg` |
+| SH-03 — Choose an appearance and read every state | exercised — partial | Earlier appearance checks are in SH-B01/B03. The current Gallery Task sample measured dark desktop and phone, then light phone and 1280px. ThemeLayout exercised selected and feedback text in both themes. | SH-B01; SH-B03; SH-B04 |
+| SH-04 — Find a record, save the view and resume it | exercised — partial | Landing count → filtered List → Detail → Back, Find Options/Escape, no-match search and reset exercised. SH-B02 exercised Saved Find create/default/update/reload/clear/delete-cancel/delete, keyboard Columns reorder/hide/save/reload/reset and descending sort/page. SH-B03 confirmed exported IDs, State and sort order; direct browser download activation remains unverified this round. Edit dialogs, invalid filters, expired choices, 390 and other modes pending. Native Chrome download and filtered bytes passed. | SH-B01/B02; SH-UI-006/007; batch-02 evidence `01`–`05`; SH-B03; SH-B04 |
+| SH-05 — Understand and act on a record | inspected — partial | Opened STRT_APPEARANCE_POLICY Detail and checked identity/context at 1280. Actions, editing, related records, 360/Contact, history, refusal and all other modes pending. In the live TUI, Find RDR_E2 and Right opened that record with its ID, type, code and sequence. | SH-B01; `13-detail-1280.jpg`; SH-B04 |
 | SH-06 — Complete and recover shared forms | exercised — partial | Widgets Equipment required-Serial refusal and corrected demo submit, Part conditional field change, server-search selection and Markdown preview exercised. All other control families, settings persistence, nested dialogs, cancellation/refusal, dark/narrow/TUI/Standard remain pending. | SH-B02; evidence `06`–`07` |
 | SH-07 — Leave and resume a multi-step task | exercised — partial | Empty-name validation, Back draft retention, normal finish/reset and skipped-Options deep link exercised; SH-B03 confirmed refusal with the incomplete draft and successful recovery. Cancel/navigation-away, invalid Options, stale/repeated finish, dark/narrow and other modes pending. | SH-B01; SH-UI-001; evidence `04`–`06`; see SH-B03 for the current recheck. |
 | SH-08 — Move work across boards, calendars and trees | exercised — partial | Calendar month rendering, quick-create demo, invalid month and Today recovery, 390 layout exercised. Views/Board/tree, persistence, drag/keyboard moves, date-range validation, day/week fallback and other modes pending. | SH-B01; SH-UI-002; `07-calendar-invalid-month.jpg`, `08-calendar-390.jpg`; see SH-B03 for the current recheck. |
 | SH-09 — Finish a scan-driven task | exercised — partial | At 390: unmatched scan, ambiguous chooser cancellation, single match, put-away confirmation, Task Enter-confirm and Skip through final boundary exercised. Choosing among matches, GS1, duplicate/error/quantity branches, Short, dark, desktop and TUI pending. No business persistence exists in these demos. | SH-B01; SH-UI-003; evidence `09`–`11`; see SH-B03 for the current recheck. |
-| SH-10 — Edit content and inspect its retained versions | pending | All steps, modes and recovery branches pending. | — |
-| SH-11 — Attach evidence and discuss it in context | pending | All steps, modes and recovery branches pending. | — |
-| SH-12 — Use shell shortcuts without losing the task | pending | All steps, modes and recovery branches pending. | — |
-| SH-13 — Ask for help, inspect a proposed action and recover | pending | All steps, modes and recovery branches pending. | — |
-| SH-14 — Keep a terminal task alive across navigation | pending | All steps, modes and recovery branches pending. | — |
-| SH-15 — Read, compare and export without losing the selection | pending | All steps, modes and recovery branches pending. | — |
-| SH-16 — Use a bounded public or shared-device entry | pending | All steps, modes and recovery branches pending. | — |
+| SH-10 — Edit content and inspect its retained versions | exercised — partial | Saved versions One and Two, compared their content and restored One as version 03. Publish, second-session consumption and failure recovery remain open. | SH-B04 |
+| SH-11 — Attach evidence and discuss it in context | inspected — partial | Opened the Gallery RecordFiles stand-in without a record key. No file contents or sharing result observed. | SH-B04 |
+| SH-12 — Use shell shortcuts without losing the task | exercised — partial | Entered a QuickNote in the live TUI and received its demo-only Save acknowledgement. | SH-B04 |
+| SH-13 — Ask for help, inspect a proposed action and recover | inspected — partial | Opened Assist on Gallery Task. No model response or approval decision was observed. | SH-B04 |
+| SH-14 — Keep a terminal task alive across navigation | exercised — partial | Floated a live shell, navigated, reloaded, redocked, typed again and closed it. Scoped restrictions and interrupted-session recovery remain open. | SH-B04 |
+| SH-15 — Read, compare and export without losing the selection | exercised — partial | Exercised the filtered CSV branch in Material. Remaining steps and recovery branches are open. | SH-B04 |
+| SH-16 — Use a bounded public or shared-device entry | exercised — partial | Anonymous guest joined the admitted call and received the unavailable page on revocation. Device registration and wrong or spent code remain open. | SH-B04 |
 | SH-17 — Reconcile cross-app shell behavior and remaining modes | exercised — partial | Standard launcher and Site Map checks. SH-B03 confirmed the visible Material → Standard switch and Show All in both shells. Cross-app consumers, remaining helpers and TUI pending. | SH-B01; SH-UI-004/005; evidence `16`–`19`; see SH-B03 for the current recheck. |
-| SH-18 — Maintain personal Assist memory and reusable skills | pending | All steps, modes and recovery branches pending. | — |
+| SH-18 — Maintain personal Assist memory and reusable skills | exercised — partial | Added a temporary memory, edited its text and expiry, then forgot it using the Assist client. A fresh memories read showed it absent. | SH-B04 |
 
 ### Findings register
 
@@ -828,6 +830,72 @@ Not rechecked live:
 The slow `tools_screens` test passes in full, including its Analysis ungrouped-count assertion (9526ed139). Two of
 its earlier checks had fallen behind security rules: the fixture's DataDocument now has an ADMIN user group, so
 Datasets offers it (SEC-TLS-92), and the export filter is a JSON object (SEC-TLS-01).
+
+### SH-B04 — November 25 continuation
+
+John Doe used Material at 1920×1080 on the disposable instance. The Invoice description filter showed no results. Clicking Export → CSV completed a 62-byte header-only download. Filtering to RdrFixture and sorting ID descending showed five rows. Chrome downloaded 391 bytes and stayed on List. The CSV contained RDR_E5 through RDR_E1 in displayed order and Child in all five State cells. This closes the native activation gap for SH-UI-006 and confirms the filtered contents for SH-UI-007. Evidence includes `downloads.json`, `EnumList.csv`, `gallery-list.json` and the empty control in `gallery-empty/`. A separate 110×34 TUI sign-in opened the same list, found RDR_E2 and followed the row to Detail (`tui.txt`).
+
+In Standard, John Doe saved two versions of EXAMPLE/Closeout, compared the single changed line and restored One as version 03. The real TUI QuickNote acknowledged its demo-only save. The terminal walk kept shell output through float, navigation, reload and redock. ThemeLayout exercised keyboard navigation and field contrast in light and dark. The BasicComms public entry admitted an anonymous guest and showed “Link not available” after revocation. See editor-compare.json, editor-restored.json, guest-recheck.json, tui-writes.txt, walk-checks.txt and core-checks.txt.
+
+The Assist client added, edited and forgot an expiring memory. An independent client read confirmed its removal (assist-memory.json). The measured Gallery Task sample covered Material dark at 1920×1080 and 390×844, then light at 390×844 and 1280×800 (theme-roundtrip.json).
+
+Local evidence is under `plans/ui-refinement-evidence/closeout-d10e22f/`.
+
+#### Nine-plan result on the disposable runtime
+
+All 147 activities have an owning ledger row, a last observed result, and a next check. None has evidence for every planned branch. The count below groups activities by their strongest ledger disposition. A partially exercised activity can contain both passing checks and deferred branches.
+
+| Area | Partial | Inspection only | Blocked | Failed | Deferred | Total |
+|---|---:|---:|---:|---:|---:|---:|
+| Shared shell and Gallery | 15 | 3 | 0 | 0 | 0 | 18 |
+| System | 8 | 12 | 0 | 0 | 0 | 20 |
+| Tools | 10 | 7 | 0 | 0 | 0 | 17 |
+| Monitor | 7 | 5 | 0 | 0 | 0 | 12 |
+| Dashboards | 13 | 0 | 0 | 0 | 0 | 13 |
+| Dev AIDE Workspace | 13 | 0 | 0 | 0 | 0 | 13 |
+| Dev AIDE Authoring | 14 | 0 | 0 | 0 | 0 | 14 |
+| System AI and integrations | 17 | 3 | 1 | 1 | 0 | 22 |
+| BasicComms | 13 | 4 | 0 | 0 | 1 | 18 |
+| Total | 110 | 34 | 1 | 1 | 1 | 147 |
+
+| Priority | Finding and affected consumer | Evidence |
+|---|---|---|
+| P1 · AI-UI-004 | Entity Sync advances the success time beyond a selected row with a 60-second split. The operator sees Complete and the receiving database lacks the row. **Fixed 2026-11-25**, not rechecked live. | [Integration register](ui-review-system-ai-integrations.md), sync-window-loss.json |
+| P2 · AI-UI-005 | System Entity Sync Detail omits its primary key on update. An operator cannot repair the split or delay on that form. **Fixed 2026-11-25**, not rechecked live. | [Integration register](ui-review-system-ai-integrations.md), sync-set-window.json |
+| P3 · DASH-UI-005 | Report Definition history presents change dates as epoch milliseconds. Authors cannot read the time of a version in their zone. **Fixed 2026-11-25**, with the same fault in Log context, Releases and Fleet; not rechecked live. | [Dashboard register](ui-review-dashboards.md), panel-folder.json |
+
+The scoped Analysis panel, nonempty Git push, guided Seed edit, designer Save, View-tier Workspace tree, controlled sync redirect and corrected delivery, Remote Agent and MCP creation, connection/relay accessible names and native filtered Gallery export all have current runtime evidence in their owning batches. The earlier 302 source remains unknown. BasicComms retains three original behaviors without direct verification and eleven with partial evidence. Ten design decisions retain separate accounting.
+
+The four browser runs passed 81 features. Separate service and screen checks passed 81 features plus one targeted ring rollback check. A broader run passed 189 of 198. The eight Dev AIDE failures passed after relocating the fixture outside the guarded build directory. The remaining SQL statistics assertion passed in the development configuration that enables pg_stat_statements. Results and retries are recorded in the evidence directory. Automated checks support the named branches only.
+
+The executable was an existing maximal build with on-disk component overrides. Its SHA-256, features, scoped actors, fixture names and listener roles are in [runtime.json](ui-refinement-evidence/closeout-d10e22f/runtime.json). [coverage.json](ui-refinement-evidence/closeout-d10e22f/coverage.json) joins each result to its original actor, steps, recovery criteria, modes and next check. Native clients, registered SIP endpoints, retained recording playback, trusted edge pairing, hosted failed-job recovery and several multi-party workflows still require their named fixtures. The local evidence directory is ignored by Git.
+
+The Git sync was disabled, the temporary memory was forgotten, and light mode was restored. The three disposable servers stopped. The scratch databases contained all grants, account changes, keys, scheduled jobs and peer records for this batch. The loopback services and media socket had no remaining listeners.
+
+#### Remaining branches
+
+The ledger records the strongest observed outcome. The remaining steps, recovery paths and modes in each section 4 activity are deferred to the fixture and next check below. An explicitly blocked or failed result keeps that status.
+
+| Activity | Required setup and next observation |
+|---|---|
+| SH-01 | With an enrolled MFA account and captured reset mail, recover the protected deep link and retry an expired challenge. |
+| SH-02 | With a restricted account and a removed fixture route, retry the saved link and follow Back in both shells. |
+| SH-03 | Measure the remaining error and disabled states at 1280px with keyboard focus and enlarged text. |
+| SH-04 | With independent owner and reader sessions, reopen the saved filter after editing permissions. |
+| SH-05 | Repeat the record action as its grant holder and as its reader, then reopen the stored result. |
+| SH-06 | With an unsaved invalid field, exercise validation, cancellation and keyboard recovery in the other offered mode. |
+| SH-07 | Resume a saved wizard draft after an interrupted transition and compare its stored step. |
+| SH-08 | Move a fixture card and calendar entry across a stale second session, then verify both consumers. |
+| SH-09 | Use a scan-capable device for the camera path and recover from permission denial. |
+| SH-10 | Publish the restored page and read it from a second session and the Git-backed space. |
+| SH-11 | Upload a versioned file from a real record and compare the second user's bytes before and after share revocation. |
+| SH-12 | With an unsaved record, use QuickCreate and the tray, then verify opener focus and draft preservation. |
+| SH-13 | Carry an approval-required local Assist action through refusal and successful recovery with a disposable tool. |
+| SH-14 | Interrupt an owned terminal, reattach as its owner and check refusal from a separate account. |
+| SH-15 | Repeat a selected print/output path and check its bytes after returning to the original list. |
+| SH-16 | Use a registered display and expired registration code for the remaining shared-device branches. |
+| SH-17 | Carry the same scoped context through a second app and its offered alternate mode. |
+| SH-18 | Use a completed harmless run and a skill author to share a personal skill for review and verify the administrator's copy. |
 
 ## 7. Decisions
 

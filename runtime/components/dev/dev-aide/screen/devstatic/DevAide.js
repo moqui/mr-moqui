@@ -2190,8 +2190,10 @@
       <m-diff-view v-if="diff && !tree" class="col" :original="diff.original" :modified="diff.modified" :file-name="diff.path"></m-diff-view>
     </div>
   </div>
-  <q-dialog :model-value="!!checksCommit" @update:model-value="(open) => { if (!open) checksCommit = null; }">
-    <q-card style="width: 52rem; max-width: 95vw"><m-dev-git-checks v-if="checksCommit && gitLoaded" :ws="this" :commit-id="checksCommit" @close="checksCommit = null"></m-dev-git-checks></q-card>
+  <!-- made once DevAideGit.js has loaded: a stable slot resolves its components once, so one made before would keep
+      m-dev-git-checks an unknown element -->
+  <q-dialog v-if="gitLoaded" :model-value="!!checksCommit" @update:model-value="(open) => { if (!open) checksCommit = null; }">
+    <q-card style="width: 52rem; max-width: 95vw"><m-dev-git-checks v-if="checksCommit" :ws="this" :commit-id="checksCommit" @close="checksCommit = null"></m-dev-git-checks></q-card>
   </q-dialog>
   <q-dialog v-model="artifactGoto.open" aria-labelledby="DevGotoArtifactTitle">
     <q-card style="width: 44rem; max-width: 95vw">

@@ -1,5 +1,7 @@
 # MR Moqui — UI review: System administration
 
+**Review update — 2026-11-25.** SYS-B03 records the latest live evidence. The activity ledger identifies the branches still open.
+
 **Status — 2026-11-25.** Both historical findings passed the [SYS-B02 recheck](#sys-b02--post-cleanup-recheck-2026-11-25). The active exporter had dropped records, and the conf filter retained its accessible name. The wider administration review remains in progress.
 
 **Original review — 2026-11-16:** review pass started. Batch 01 exercised bounded read-only administration paths in Material
@@ -610,23 +612,23 @@ execution records it; “exercised” never implies that all modes and recovery 
 | SYS-01 — Assess the instance and follow a readiness problem | exercised — partial | Home, Health state filter/recheck, Support summary and telemetry Fix handoff exercised. SYS-B02 observed an explicit local-exporter loss warning after recheck and confirmed dropped records on Sources. Other filters, refresh authorization, JSON/print and remaining modes pending. | Batch 01: 01–04, 12; SYS-B02; SYS-UI-001 |
 | SYS-02 — Manage a disposable account through its lifecycle | exercised — partial | Username no-match search/reset, existing John Doe detail and membership navigation exercised. Disposable creation, validation, lifecycle, audit/password/factor actions, scoped actors and remaining modes pending. | Batch 01: 05–07 |
 | SYS-03 — Grant a coherent capability and inspect its scope | exercised — partial | Existing ADMIN group, sealed-grant explanation, members and return to John Doe inspected. Groups search, capabilities comparison, row rules, every grant/change/refusal branch and remaining modes pending. | Batch 01: 06–07 |
-| SYS-04 — Configure sign-in and revoke a selected session | pending | All steps, modes and recovery branches pending. | — |
+| SYS-04 — Configure sign-in and revoke a selected session | inspected — partial | Opened /qapps/system/Security/Sessions as John Doe. Visible controls included Collapse section, Row Actions. | SYS-B03; entry-SYS-04.json |
 | SYS-05 — Change a registered setting and localize its consumer | exercised — partial | Effective value/source table inspected; Instance name draft closed without Save and blank value verified on return/reopen. Save, invalid/stale input, consumer localization, restricted actors and remaining modes pending. | Batch 01: 08–09, 13 |
 | SYS-06 — Inspect, validate and reload configuration | exercised — partial | Settings → Open the conf, merged-source search for telemetry_enabled and Runtime source entry exercised; editor opened without edits. SYS-B02 verified the accessible filter name, no-match state and Clear recovery. Validation/save/reload/conflict/Logging handoff, full keyboard walk and other modes pending. | Batch 01: 10; SYS-B02; SYS-UI-002 |
 | SYS-07 — Deploy and remove a disposable component | inspected — partial | Loaded six-component inventory and empty deployment history inspected. Fetch/preview/deploy/load/remove, failure recovery, refusal and remaining modes pending. | Batch 01: 11 |
-| SYS-08 — Manage an instance definition and its actual lifecycle | pending | All steps, modes and recovery branches pending. | — |
-| SYS-09 — Inspect cache and thread pressure | pending | All steps, modes and recovery branches pending. | — |
-| SYS-10 — Configure a safe job and explain its partial run | pending | All steps, modes and recovery branches pending. | — |
-| SYS-11 — Set notification defaults and confirm the audience | pending | All steps, modes and recovery branches pending. | — |
-| SYS-12 — Inspect an import and retry only failed rows | pending | All steps, modes and recovery branches pending. | — |
-| SYS-13 — Export registered data and follow its retained delivery | pending | All steps, modes and recovery branches pending. | — |
-| SYS-14 — Request a backup and understand its coverage | pending | All steps, modes and recovery branches pending. | — |
-| SYS-15 — Trace an administrative change to evidence | pending | All steps, modes and recovery branches pending. | — |
-| SYS-16 — Maintain a local Git resource | pending | All steps, modes and recovery branches pending. | — |
-| SYS-17 — Follow a print job to a confirmed outcome | pending | All steps, modes and recovery branches pending. | — |
-| SYS-18 — End the intended terminal session | pending | All steps, modes and recovery branches pending. | — |
-| SYS-19 — Inspect certificates and web-protection state | pending | All steps, modes and recovery branches pending. | — |
-| SYS-20 — Reconcile raw controls, helper access and companion context | pending | All steps, modes and recovery branches pending. | — |
+| SYS-08 — Manage an instance definition and its actual lifecycle | inspected — partial | Inspected the Fleet entry and its related administration mounts on an empty fleet. Remaining steps and recovery branches are open. | SYS-B03 |
+| SYS-09 — Inspect cache and thread pressure | exercised — partial | Filtered 75 caches to one named InstanceSetting cache and inspected its counters. Remaining steps and recovery branches are open. | SYS-B03 |
+| SYS-10 — Configure a safe job and explain its partial run | exercised — partial | TUI opened the selected daily telemetry job and its filtered Runs. Configure a disposable job and inspect a partial run next. | SYS-B03 |
+| SYS-11 — Set notification defaults and confirm the audience | inspected — partial | TUI opened ChatMention from Topics. Change defaults and verify delivery to scoped recipients next. | SYS-B03 |
+| SYS-12 — Inspect an import and retry only failed rows | inspected — partial | Opened /qapps/system/Data/Imports as John Doe. Visible controls included Find, Collapse Import targets. | SYS-B03; entry-SYS-12.json |
+| SYS-13 — Export registered data and follow its retained delivery | inspected — partial | Opened /qapps/system/Data/Exports as John Doe. Visible controls included Find, Collapse Export targets. | SYS-B03; entry-SYS-13.json |
+| SYS-14 — Request a backup and understand its coverage | inspected — partial | TUI opened the backup confirmation, read exclusions and cancelled. A requested backup and stored result remain open. | SYS-B03 |
+| SYS-15 — Trace an administrative change to evidence | inspected — partial | Opened /qapps/system/Audit/AuditChanges as John Doe. Visible controls included Find, Expand "Export". | SYS-B03; entry-SYS-15.json |
+| SYS-16 — Maintain a local Git resource | exercised — partial | Created the local hosted repository in Standard and verified its contents through the Workspace MR diff. Administrative audit and recovery remain open. | SYS-B03 |
+| SYS-17 — Follow a print job to a confirmed outcome | inspected — partial | Opened /qapps/system/Print/PrintJob as John Doe. Visible controls included Content Type, Find. | SYS-B03; entry-SYS-17.json |
+| SYS-18 — End the intended terminal session | inspected — partial | Terminal Sessions listed the disposable local CI job alongside separate command sessions. The End transition returned HTTP 200. Client disconnect and the neighbouring session’s continued operation remain unverified. | SYS-B03; entry-SYS-18.json |
+| SYS-19 — Inspect certificates and web-protection state | inspected — partial | Opened /qapps/system/Certificates as John Doe. Visible controls included Collapse What an ACME certificate is and is not, Collapse section. | SYS-B03; entry-SYS-19.json |
+| SYS-20 — Reconcile raw controls, helper access and companion context | inspected — partial | Opened /qapps/system/Access/AccessReview as John Doe. Visible controls included Choose time for As of, Show. | SYS-B03; entry-SYS-20.json |
 
 ### Findings register
 
@@ -734,6 +736,43 @@ The coordinator walked both findings as `john.doe` in the built-in browser, Mate
 | SYS-UI-002 / SYS-06 | On Conf → View, the empty filter exposed the accessible name “Search settings”. Entering `zz-review-no-such-attribute` produced the no-match state while retaining that textbox name. The separate Clear button restored the settings sections. No conf value was changed. |
 
 Both historical findings passed in the observed states. The active zero-loss, disabled-telemetry, restricted-reader and alternate-mode branches retain their prior coverage. The two fixture roles available to companion reviewers are `sec.view.only` (SEC_VIEW_GROUP) and `sec.none.only` (SEC_NONE_GROUP). The System recheck used the administrator. The source comparison belongs to [Monitor](ui-review-system-monitoring.md); this register owns the readiness finding.
+
+### SYS-B03 — November 25 continuation
+
+As John Doe, Cache List named the platform limitation for process memory and thread metrics. Filtering by the InstanceSetting cache name reduced 75 entries to one. The row showed one cached entry, one put and 21 hits. The Fleet navigation exposed Fleet, Instances, Environments, Hosts, Images, Database Hosts, Kinds and Rotation. Empty Fleet supplies no lifecycle evidence. See `cache.json`, `cache-filtered.json` and `fleet.json`. SYS-08 retains all seven newer surfaces in its inventory.
+
+The operator opened the seven added Fleet surfaces, including the seeded Kinds and empty lists (fleet.json and instance-*.json). In the TUI, opening clean_TelemetryData_daily led to its filtered Runs, ChatMention opened from Topics, and the backup dialog showed its exclusions before cancellation. The second local server created review-hosted, which Workspace read as its Git host. See tui-writes.txt, tui-operations.txt and hosted-file.json. Independent service fixtures exercised failed-only import retry and test-print setup (supporting-checks.txt).
+
+Local evidence is under `plans/ui-refinement-evidence/closeout-d10e22f/`.
+
+Follow-up, 2026-11-25 (with DASH-UI-005): a probe spec render showed Fleet's Last deploy as epoch milliseconds before its status; it is now a date in the viewer's zone, with the zone named once. HostedInstances checks the shown date. Not rechecked live.
+
+#### Remaining branches
+
+The ledger records the strongest observed outcome. The remaining steps, recovery paths and modes in each section 4 activity are deferred to the fixture and next check below. An explicitly blocked or failed result keeps that status.
+
+| Activity | Required setup and next observation |
+|---|---|
+| SYS-01 | Follow a known readiness failure into Monitor and verify that recovery clears it. |
+| SYS-02 | Use an active disposable session to verify disable, restore and audit under separate operators. |
+| SYS-03 | Compare one granted operation before and after removing its row scope in a second session. |
+| SYS-04 | With two active sessions revoke one, retry both and audit the selected session. |
+| SYS-05 | Change one registered localized setting and read its consumer as a second user. |
+| SYS-06 | Stage an invalid then valid configuration and verify reload and rollback in the live consumer. |
+| SYS-07 | Deploy a removable component, exercise its screen and verify disappearance after removal. |
+| SYS-08 | Provision an isolated managed instance, follow its logs and verify actual stop and deletion. |
+| SYS-09 | Generate bounded pressure and compare cache before and after an authorized clear. |
+| SYS-10 | Run a disposable job with one failing item and reconcile run history and audit. |
+| SYS-11 | Change a notification default and inspect eligible and excluded recipients. |
+| SYS-12 | Stage one good row and one bad row in the registered importer and retry only the bad row through its screen. |
+| SYS-13 | Deliver a registered export to a local destination and inspect its retained bytes as the reader. |
+| SYS-14 | Complete a backup at a writable local destination and verify its manifest against the stated exclusions. |
+| SYS-15 | Follow a known administrative mutation to its audit row as both auditor and restricted reader. |
+| SYS-16 | Change and restore one hosted resource and verify its revision and audit. |
+| SYS-17 | Use a local print consumer to acknowledge a job and compare retained output. |
+| SYS-18 | End an attached shell and check its client disconnects while the neighbouring shell survives. |
+| SYS-19 | With an isolated certificate and test trust store, inspect renewal and failure without affecting other identities. |
+| SYS-20 | Use the same group and effective time in Capabilities and Access Review to reconcile a concrete decision. |
 
 ## 7. Decisions
 

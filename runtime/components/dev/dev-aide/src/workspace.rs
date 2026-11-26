@@ -135,7 +135,9 @@ impl Context {
                 root.label
             )));
         }
-        let resolved = confine::resolve(&root.path, self.factory.runtime_dir(), relative)?;
+        let components = self.factory.components();
+        let loaded: Vec<&Path> = components.iter().map(|component| component.location.as_path()).collect();
+        let resolved = confine::resolve(&root.path, self.factory.runtime_dir(), &loaded, relative)?;
         if self.tier != Tier::Full && confine::hidden_below_full(&resolved.path, self.factory.runtime_dir()) {
             return Err(LibError::new(format!(
                 "{relative} is runtime/{}, which only the full tier opens",
@@ -1381,6 +1383,16 @@ fn store_root(
     let roots: Vec<&Path> = context.roots.iter().map(|root| root.path.as_path()).collect();
     if !confine::root_location_open(&location, context.factory.runtime_dir(), &roots) {
         require_admin("A root outside the runtime and the repositories")?;
+    }
+    // nor a root in build output under a root's target, which that root does not open, unless it is the loaded runtime
+    // or a loaded component ([`confine::in_build_output`])
+    let components = context.factory.components();
+    let loaded: Vec<&Path> = components.iter().map(|component| component.location.as_path()).collect();
+    if confine::in_build_output(&location, context.factory.runtime_dir(), &loaded, &roots) {
+        return Err(LibError::new(format!(
+            "{} is a build output (target), not a root",
+            location.display()
+        )));
     }
     let mut row = match roots::root_row(&context.facade, &location) {
         Some(row) => row,

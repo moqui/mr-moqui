@@ -7,9 +7,10 @@
 # The tests marked `#[ignore = "slow: ..."]`, which the default `cargo test` skips: the all-screens render, the REST restart gate,
 # the xlsx and print tools, the screen report, the notification socket and group revocation under load (`authz_revocation`,
 # `#[ignore = "acceptance: ..."]`), and a managed instance's sealed start by its manager's transit (`managed_sealed_start`,
-# ManagedSealedStart). `cargo test -- --include-ignored` runs everything.
+# ManagedSealedStart), and the terminal sweep of every monitoring and report screen (`monitor_tui`). `cargo test --
+# --include-ignored` runs everything.
 # The binary's `lint --screens --qvt-static` (the same report through the command) is `cargo test -p moqui --test cli -- --ignored`.
-test-slow = "test -p moqui-host --test it -- --ignored tools_screens:: gate2:: tool_components:: qvt_report:: notws:: git_storage:: factory_restart:: authz_revocation:: managed_sealed_start::"
+test-slow = "test -p moqui-host --test it -- --ignored tools_screens:: gate2:: tool_components:: qvt_report:: notws:: git_storage:: factory_restart:: authz_revocation:: managed_sealed_start:: monitor_tui::"
 # rustc warnings plus Clippy. The default Clippy set is already deny
 # in the workspace lints.
 lint = "clippy --workspace --all-targets -- -D warnings"

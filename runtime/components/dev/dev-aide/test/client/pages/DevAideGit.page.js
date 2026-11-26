@@ -104,3 +104,31 @@ test("Open on the server fills the server's page templates, each value as path p
     assert.equal(pure.serverBranch("fork/feature", "origin"), "");
     assert.equal(pure.serverBranch(null, "origin"), "");
 });
+
+// DevAideGit.js loads after the Workspace's first render. A component of it in a slot of another component (a q-dialog,
+// a q-card) is resolved when that slot is made, and a stable slot is not made again: it stays an unknown element (the
+// Checks dialog of a commit's chip once rendered empty). So the component that holds it is made only once DevAideGit.js
+// has loaded: a v-if with gitLoaded on it or above it.
+test("each git component of the Workspace is in a slot made after DevAideGit.js loaded", () => {
+    const template = moqui.devAide.components["m-dev-workspace"].template;
+    const html = template.replace(/<template\b/g, "<m-tpl").replace(/<\/template>/g, "</m-tpl>");
+    const doc = new DOMParser().parseFromString("<body>" + html + "</body>", "text/html");
+    const isComponent = (el) => el.tagName.indexOf("-") > 0 && el.tagName !== "M-TPL";
+    const loaded = (el) => /\bgitLoaded\b/.test(el.getAttribute("v-if") || "");
+    const names = Object.keys(moqui.devAide.gitComponents);
+    const stale = [];
+    let found = 0;
+    for (const name of names) {
+        for (const el of doc.querySelectorAll(name)) {
+            found++;
+            let holder = el.parentElement;
+            while (holder && !isComponent(holder)) holder = holder.parentElement;
+            if (!holder) continue;
+            let made = holder;
+            while (made && !loaded(made)) made = made.parentElement;
+            if (!made) stale.push(name + " in " + holder.tagName.toLowerCase());
+        }
+    }
+    assert.ok(found >= names.length, "the Workspace uses each git component");
+    assert.deepEqual(stale, []);
+});

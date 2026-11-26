@@ -153,10 +153,12 @@
                     <field name="delete"><default-field title=""><submit text="Delete definition" confirmation="Delete this definition and all its versions? Definitions that still use it must drop it first; git syncs remove its file."/></default-field></field>
                 </form-single>
             </widgets></section>
+            <!-- changedDate comes as epoch milliseconds: a date format shows it in the user's zone (plans/ui-review-dashboards.md DASH-UI-005) -->
+            <label condition="versionList.length" text="Times shown in ${ec.user.timeZone}." type="p" style="m-muted"/>
             <form-list name="DefinitionVersions" list="versionList" skip-form="true">
                 <field name="version"><default-field><display/></default-field></field>
                 <field name="note"><default-field><display/></default-field></field>
-                <field name="changedDate"><default-field><display/></default-field></field>
+                <field name="changedDate"><default-field><display format="yyyy-MM-dd HH:mm:ss"/></default-field></field>
             </form-list>
             <label text="Used in" type="h5"/>
             <form-list name="DefinitionUsedIn" list="usedIn" skip-form="true" paginate="false">

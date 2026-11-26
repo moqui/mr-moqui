@@ -1,5 +1,7 @@
 # MR Moqui — UI review: System monitoring and recovery
 
+**Review update — 2026-11-25.** MON-B03 records the latest live evidence. The activity ledger identifies the branches still open.
+
 **Status — 2026-11-25.** The [MON-B02 browser recheck](#mon-b02--post-cleanup-recheck-2026-11-25) confirmed both historical fixes, including the fingerprint fallback for a group with blank message and type. The System readiness comparison is recorded under SYS-UI-001.
 
 **Original review — 2026-11-16:** review pass started. MON-B01 exercised the initial diagnostic navigation and error-recovery
@@ -345,15 +347,15 @@ execution records it; “exercised” never implies that all modes and recovery 
 | MON-01 — Start from a symptom and retain its investigation range | exercised — partial | Overview range/panel notices, populated error groups and System Health → Sources entry inspected. Known latency fixture, instance/range changes, chart drill/export, failed-panel recovery, dark/narrow/TUI/Standard remain pending. | MON-B01; MON-UI-002; SYS-UI-001 handoff |
 | MON-02 — Follow a log to its trace and surrounding context | exercised — partial | Logs invalid-query recovery → real local log/context → trace selection/raw span → filtered logs, then invalid-duration/recovery in Traces. Trace/range retained. MON-B02 confirmed histogram total, partial-interval notice, zero-match and recovery. Split, controlled multi-service fixture, retention/missing-span/refusal/fetch-failure and alternate modes pending. | MON-B01/B02; MON-UI-001; evidence 02–08 |
 | MON-03 — Explain an error group and its affected work | exercised — partial | MON-B02 opened a deliberately unnamed Overview group by its generated label and verified its full fingerprint, range and occurrences on ErrorDetail. Dedicated Errors, controlled repeated/unrelated errors, stack/release handoffs and recovery/mode branches pending. | MON-B01/B02; MON-UI-002; 01-overview |
-| MON-04 — Compare a metric over meaningful ranges | pending | All steps, modes and recovery branches pending. | — |
-| MON-05 — Move from service pressure to a specific operation | pending | All steps, modes and recovery branches pending. | — |
-| MON-06 — Replay a captured browser failure safely | pending | All steps, modes and recovery branches pending. | — |
-| MON-07 — Admit a telemetry source and revoke its key | inspected — partial | Sources counters and active/stale local instances inspected; Health Fix reached Sources. MON-B02 corroborated the local loss warning using the dropped counter. No key issued/revoked, ingestion fixture or authorization comparison. All source-admission/key/rotation/error/mode branches pending. | MON-B01; 09-sources, 10-health-fix-sources; SYS-UI-001 |
-| MON-08 — Run a synthetic check and follow its result | pending | All steps, modes and recovery branches pending. | — |
-| MON-09 — Review a release regression and open an evidence-based incident | pending | All steps, modes and recovery branches pending. | — |
-| MON-10 — Apply an expiring diagnostic setting and restore the baseline | pending | All steps, modes and recovery branches pending. | — |
-| MON-11 — Approve and verify a bounded recovery | pending | All steps, modes and recovery branches pending. | — |
-| MON-12 — Reconcile alternate mounts and restricted diagnostics | pending | All steps, modes and recovery branches pending. | — |
+| MON-04 — Compare a metric over meaningful ranges | exercised — partial | Charted a populated metric grouped by an attribute through the picker. Comparison of the same known series across windows and exported values remains open. | MON-B03; core-checks.txt |
+| MON-05 — Move from service pressure to a specific operation | inspected — partial | Observed the populated Services and Instances aggregates in Material and opened Services in the live TUI. Remaining steps and recovery branches are open. | MON-B03 |
+| MON-06 — Replay a captured browser failure safely | inspected — partial | Opened /qapps/system/Monitor/Replays as John Doe. Visible controls included Find, Collapse Replays. | MON-B03; entry-MON-06.json |
+| MON-07 — Admit a telemetry source and revoke its key | exercised — partial | The browser created an ingest key and saw its single-display message. The fixture posted all three OTLP signals. Ingestion after revocation remains open. | MON-B03; core-checks.txt |
+| MON-08 — Run a synthetic check and follow its result | exercised — partial | Created a Standard synthetic check and ran it from Material. Followed the passing result to a 3 ms trace and its 2.97 ms HTTP GET. Failed and recovered runs remain open. | MON-B03 |
+| MON-09 — Review a release regression and open an evidence-based incident | inspected — partial | Opened /qapps/system/Monitor/Incidents as John Doe. Visible controls included Find, Collapse Matching incidents. | MON-B03; entry-MON-09.json |
+| MON-10 — Apply an expiring diagnostic setting and restore the baseline | exercised — partial | MonitorSettings exercised a change and revert by the holder and a refusal by the reader. Expiry and consumer readback remain open. | MON-B03 |
+| MON-11 — Approve and verify a bounded recovery | inspected — partial | Opened /qapps/system/Monitor/Recovery as John Doe. Visible controls included Collapse Adapters, Collapse Newest actions. | MON-B03; entry-MON-11.json |
+| MON-12 — Reconcile alternate mounts and restricted diagnostics | inspected — partial | Opened /qapps/system/Monitor/AgentTraces as John Doe. Visible controls included Through, Search. | MON-B03; entry-MON-12.json |
 
 ### Findings register
 
@@ -438,6 +440,35 @@ The coordinator operated the built-in browser as `john.doe` in Material light at
 - **MON-UI-001 passed.** On Logs, the `otel_logs` search from `now-7d` to `now` initially returned 1–19 of 3,026. On the next observation the chart inspector reported a final bucket of 3,130 and the list showed 1–19 of 3,130, with the partial-interval notice and partial flags on the interval edges. A nonmatching body search showed “No matching telemetry observations”, “No data in this time range” and “No results found” together. Clearing the query restored 1–19 of 3,136 with the partial-interval notice. The totals changed on this actively logging runtime.
 - **MON-UI-002 passed.** A disposable fixture used the search facade to index and read back one `otel_errors` group with blank message/type, fingerprint `b0301125abcdef01`, service `review-monitor` and count 9,000 (fixture setup 1/1 passed). In Overview the coordinator clicked “Error group b0301125”. ErrorDetail retained the full fingerprint, `from=2026-11-25T11:35:45.39Z` and `thru=now`, repeated the label in the heading, and showed 9,000 occurrences. The seed is synthetic and remains confined to the disposable database.
 - **System handoff.** While Sources showed 1,349 exported and 4,267 dropped alongside a recent and a stale publisher, System Health explicitly reported local exporter loss. [SYS-UI-001](ui-review-system.md#findings-register) owns the interpretation of these counters.
+
+### MON-B03 — November 25 continuation
+
+John Doe opened Metrics with 239 records. Services attributed 274 requests to a named instance with p95 latency 0.1847 s, and the heatmap separately displayed its empty state. A 110×34 live TUI opened Services. In Standard the operator created closeout-status for the isolated peer’s /status route. Material Run now reported a pass and trace 7a4509ee5f9aea9b0ff4f65b64611950. Evidence is in `monitor.json`, `service-pressure.json`, `synthetic-run.json` and `tui.txt`.
+
+Following the synthetic result opened its trace with a 3 ms check, 2.97 ms HTTP GET and flame graph (synthetic-trace.json). The browser walks also sent local telemetry, applied filters, opened surrounding logs, charted grouped metrics and exported an overview panel (core-checks.txt). Replay and incident page renders establish entry only.
+
+Local evidence is under `plans/ui-refinement-evidence/closeout-d10e22f/`.
+
+Follow-up, 2026-11-25 (with DASH-UI-005): per the code and a probe spec render, Releases showed Released as raw UTC date text; it is now shown in the viewer's zone, with the zone named once, as ReleaseDetail shows it. Log context's times likewise. The regression test `monitor_tui::releases_show_times_in_the_viewer_s_zone` renders Releases once in the terminal and checks the Chicago text and "Times shown in America/Chicago.", and monitor_readers checks Log context's in html (it has no terminal template); the terminal sweep of every monitoring screen moved to acceptance (`cargo test-slow`). Not rechecked live.
+
+#### Remaining branches
+
+The ledger records the strongest observed outcome. The remaining steps, recovery paths and modes in each section 4 activity are deferred to the fixture and next check below. An explicitly blocked or failed result keeps that status.
+
+| Activity | Required setup and next observation |
+|---|---|
+| MON-01 | Produce a timed symptom, carry the exact range to its related view and return. |
+| MON-02 | Use a scoped diagnostic reader to follow a selected log into its trace and neighbouring rows. |
+| MON-03 | Generate a recurring fixture error and verify its grouping by release and service. |
+| MON-04 | Compare a known series across two time windows and verify its downloaded values. |
+| MON-05 | Follow an individual slow operation from the service aggregate to its actual trace. |
+| MON-06 | Enable sampling on a synthetic browser, produce a masked replay and check access as a second user. |
+| MON-07 | Revoke a disposable source key and compare denied ingestion with an active key. |
+| MON-08 | Make the check fail once, follow that trace, restore the endpoint and inspect recovered history. |
+| MON-09 | Use two tagged releases and an induced regression to create and resolve an attributable incident. |
+| MON-10 | Apply a short-lived diagnostic override and verify its consumer after expiry. |
+| MON-11 | Use a disposable recovery adapter and separate approver to verify the target symptom before and after approval. |
+| MON-12 | Compare alternate diagnostic mounts under a restricted reader and its grant holder. |
 
 ## 7. Decisions
 
