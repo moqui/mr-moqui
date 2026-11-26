@@ -347,3 +347,19 @@ test("a commit names an issue by its number, else its key; Amend drops only that
     assert.equal(pure.withoutTrailer("Fixes typo", "PROJ-12"), "Fixes typo");
     assert.equal(pure.withoutTrailer("Why\n\nTask: OTHER-1", "PROJ-12"), "Why\n\nTask: OTHER-1");
 });
+
+test("the editor settings: the editor's rebound keys to m-code-editor, the Workspace's own keys to the Workspace", () => {
+    const answer = { settings: { fontSize: 16, tabSize: 2, wrap: true, whitespace: false, keymap: "default", keys: { gotoFile: "Mod-e", find: "Alt-f" } },
+        commands: [
+            { command: "gotoFile", scope: "workspace", defaultKeys: "Mod-p", keys: "Mod-e" },
+            { command: "gotoArtifact", scope: "workspace", defaultKeys: "Mod-Shift-o", keys: "Mod-Shift-o" },
+            { command: "save", scope: "editor", defaultKeys: "Mod-s", keys: "Alt-s" },
+            { command: "find", scope: "editor", defaultKeys: "Mod-f", keys: "Alt-f" },
+            { command: "undo", scope: "editor", defaultKeys: "Mod-z", keys: "Mod-z" }] };
+    const { settings, workspaceKeys } = pure.editorSettingsOf(answer);
+    assert.deepEqual(settings, { fontSize: 16, tabSize: 2, wrap: true, whitespace: false, keymap: "default", keys: { save: "Alt-s", find: "Alt-f" } });
+    // Save is the Workspace's too, for a visual view; a command the answer leaves out keeps its default
+    assert.deepEqual(workspaceKeys, { gotoFile: "Mod-e", gotoArtifact: "Mod-Shift-o", searchFiles: "Mod-Shift-f", save: "Alt-s" });
+    assert.deepEqual(pure.editorSettingsOf(null).workspaceKeys, pure.WORKSPACE_KEYS);
+});
+

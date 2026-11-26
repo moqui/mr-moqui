@@ -323,6 +323,22 @@
         if (last && last === trailer) lines.pop();
         return lines.join("\n").replace(/\n+$/, "");
     };
+    // The editor settings (get#EditorSettings, the DEV_AIDE_EDITOR preference, 5.1) as the Workspace uses them: what
+    // m-code-editor takes (moqui.codeEditor.setSettings, with the keys of the editor's commands a user rebound) and the
+    // keys of the Workspace's own commands and of Save in a visual view, their defaults where none came.
+    pure.WORKSPACE_KEYS = Object.freeze({ gotoFile: "Mod-p", gotoArtifact: "Mod-Shift-o", searchFiles: "Mod-Shift-f", save: "Mod-s" });
+    pure.editorSettingsOf = (answer) => {
+        const settings = Object.assign({}, (answer && answer.settings) || {});
+        const editorKeys = {};
+        const workspaceKeys = Object.assign({}, pure.WORKSPACE_KEYS);
+        for (const row of (answer && answer.commands) || []) {
+            if (!row.keys) continue;
+            if (Object.prototype.hasOwnProperty.call(workspaceKeys, row.command)) workspaceKeys[row.command] = row.keys;
+            if (row.scope === "editor" && row.keys !== row.defaultKeys) editorKeys[row.command] = row.keys;
+        }
+        settings.keys = editorKeys;
+        return { settings, workspaceKeys };
+    };
 
     // The unsaved drafts (a whole file each, by root and path) in IndexedDB, where a few large files do not fill the
     // origin's few MB of localStorage: store's API, each call a promise (set and drop answer whether they were written).
@@ -420,6 +436,7 @@
                 status: null, tab: "code", rail: "files", treeKey: 0, selected: null,
                 tabs: [], active: null, cursor: { line: 1, column: 1 }, lastReload: "", restartNeeded: false,
                 search: { query: "", regex: false, caseSensitive: false, pathFilter: "", results: [], running: false, truncated: false },
+                workspaceKeys: null,
                 diff: null, commitForm: { summary: "", body: "", amend: false, signOff: false, skipHooks: false, task: "" },
                 log: [], commitDetail: null, goto: { open: false, filter: "", files: [], loading: false, error: "" }, busy: "", schemas: {},
                 refs: { title: "", items: [], loading: false }, artifactGoto: { open: false, text: "", results: [], loading: false, error: "" },
@@ -494,6 +511,7 @@
             this.presenceTimer = setInterval(() => this.tellPresence(true), 60000);
             this.onResize = () => { this.narrow = root.innerWidth < 1024; };
             root.addEventListener("resize", this.onResize);
+            this.loadEditorSettings();
             this.loadRoots();
             const assist = moqui.assist;
             if (assist) {
@@ -1530,26 +1548,41 @@
             },
             isDirtyAll(tab) { return pure.isDirtyAll(tab); },
             trailerOf(key) { return pure.trailerOf(key); },
-            // Mod+Z, Mod+Shift+Z and Mod+S in a visual view: the buffer's undo and redo, and Save
+            // The user's editor settings (DEV_AIDE_EDITOR): to every m-code-editor of the page, and the keys of the
+            // Workspace's own commands.
+            loadEditorSettings() {
+                return this.get("editorSettings").then((answer) => {
+                    const { settings, workspaceKeys } = pure.editorSettingsOf(answer);
+                    this.workspaceKeys = workspaceKeys;
+                    const codeEditor = moqui.codeEditor || (moqui.codeEditor = {});
+                    if (codeEditor.setSettings) codeEditor.setSettings(settings);
+                    else codeEditor.settings = settings;
+                }, () => { /* the defaults */ });
+            },
+            // Whether a keydown is the keys of a Workspace command (Mod is Cmd on a Mac)
+            isKey(event, command) {
+                const keys = (this.workspaceKeys || pure.WORKSPACE_KEYS)[command];
+                const codeEditor = moqui.codeEditor;
+                const mac = !!(moqui.keymap && moqui.keymap.isMac);
+                return !!(keys && codeEditor && codeEditor.keyMatches && codeEditor.keyMatches(event, keys, mac));
+            },
+            // Mod+Z, Mod+Shift+Z and Save's keys (Mod+S) in a visual view: the buffer's undo and redo, and Save
             onViewKey(event, tab) {
+                if (this.isKey(event, "save")) { event.preventDefault(); this.save(tab); return; }
                 const mod = event.ctrlKey || event.metaKey;
                 if (!mod) return;
                 const target = event.target;
                 // a field of the view keeps its own undo
-                if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
-                    if (event.key.toLowerCase() === "s") { event.preventDefault(); this.save(tab); }
-                    return;
-                }
+                if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return;
                 const key = event.key.toLowerCase();
                 if (key === "z") { event.preventDefault(); if (event.shiftKey) this.redo(tab); else this.undo(tab); }
                 else if (key === "y") { event.preventDefault(); this.redo(tab); }
-                else if (key === "s") { event.preventDefault(); this.save(tab); }
             },
+            // Go to artifact, Go to file and Search in files, by the keys the user set (Mod+Shift+O, Mod+P, Mod+Shift+F)
             onKey(event) {
-                const mod = event.ctrlKey || event.metaKey;
-                if (mod && event.shiftKey && event.key.toLowerCase() === "o") { event.preventDefault(); this.openArtifactGoto(); }
-                else if (mod && event.key.toLowerCase() === "p") { event.preventDefault(); this.openGoto(); }
-                else if (mod && event.shiftKey && event.key.toLowerCase() === "f") { event.preventDefault(); this.tab = "code"; this.rail = "search"; }
+                if (this.isKey(event, "gotoArtifact")) { event.preventDefault(); this.openArtifactGoto(); }
+                else if (this.isKey(event, "gotoFile")) { event.preventDefault(); this.openGoto(); }
+                else if (this.isKey(event, "searchFiles")) { event.preventDefault(); this.tab = "code"; this.rail = "search"; }
             }
         },
         template: `

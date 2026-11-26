@@ -67,6 +67,10 @@ along with this software (see the LICENSE.md file). If not, see
         to when the root has none in Settings, `{user}` the username, as `review/{user}`. -->
     <moqui.basic.Enumeration enumId="DEV_AIDE_PUBLISH_BRANCH" enumTypeId="UserPreferenceKey"
             description="Dev AIDE publish branch ({user} is the username)"/>
+    <!-- A user's editor settings (src/editor.rs EDITOR), JSON that Dev AIDE › Settings › Editor writes: fontSize, tabSize,
+        wrap, whitespace, keymap, and keys (a command's keys by its name, over the keymap). -->
+    <moqui.basic.Enumeration enumId="DEV_AIDE_EDITOR" enumTypeId="UserPreferenceKey"
+            description="Dev AIDE editor settings (JSON: font size, tab size, wrap, white space, keymap, keys)"/>
 
     <moqui.security.user.NotificationTopic topic="DevReload" description="Dev AIDE reload" typeString="info" showAlert="N"
             persistOnSend="N"/>

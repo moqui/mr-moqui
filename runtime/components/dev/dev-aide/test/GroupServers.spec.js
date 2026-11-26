@@ -89,6 +89,10 @@ feature("Settings shows the group servers and the plan of one", {
         page.output.includes("Sign in with Team IdP")
         page.output.includes("Sign in with Team&#39;s own login") || page.output.includes("Sign in with Team's own login")
         !page.output.includes("spec-s3cret-key")
+        // the one render of Settings carries the editor's checks too (EditorSettings.spec.js has the rules): its form
+        // and a row a command with its default keys
+        page.output.includes("Show white space")
+        page.output.includes("Editor keys") && page.output.includes("Go to file") && page.output.includes("Mod-Shift-o")
     }
 })
 

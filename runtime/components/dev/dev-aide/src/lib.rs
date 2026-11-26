@@ -28,6 +28,7 @@ mod buffers;
 mod changeset;
 pub mod confine;
 mod docs;
+mod editor;
 mod entities;
 pub mod git;
 mod hosting;
@@ -64,6 +65,7 @@ fn register(registry: &mut NativeRegistry) -> Result<(), Error> {
     browser::register(registry)?;
     changeset::register(registry)?;
     docs::register(registry)?;
+    editor::register(registry)?;
     entities::register(registry)?;
     screens::register(registry)?;
     services::register(registry)?;
