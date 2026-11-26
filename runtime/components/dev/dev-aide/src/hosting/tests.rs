@@ -567,21 +567,31 @@ fn threads_of_an_unsigned_diff_lose_its_code() {
 #[test]
 fn an_issue_is_read_by_its_id_alone() {
     use super::review::issue_path;
+    let mantle = "/rest/s1/mantle/gitRepositories/{repositoryId}/issues/{id}";
     assert_eq!(
-        issue_path("", "PROJ-12").as_deref(),
-        Some("/rest/s1/mantle/workEfforts/PROJ-12")
+        issue_path("", "my-site", "PROJ-12"),
+        Some(("/rest/s1/mantle/workEfforts/PROJ-12".to_string(), false))
+    );
+    // a key #12 is the repository's issue 12, by its number
+    assert_eq!(
+        issue_path(mantle, "my site", "#12"),
+        Some(("/rest/s1/mantle/gitRepositories/my%20site/issues/12".to_string(), true))
     );
     assert_eq!(
-        issue_path("/rest/s1/smithy/issues/{id}", "#12").as_deref(),
-        Some("/rest/s1/smithy/issues/12")
+        issue_path(mantle, "my-site", "PROJ-12"),
+        Some((
+            "/rest/s1/mantle/gitRepositories/my-site/issues/PROJ-12".to_string(),
+            false
+        ))
     );
     assert_eq!(
-        issue_path("https://elsewhere/{id}", "12").as_deref(),
-        Some("/rest/s1/mantle/workEfforts/12")
+        issue_path("https://elsewhere/{id}", "my-site", "12"),
+        Some(("/rest/s1/mantle/workEfforts/12".to_string(), false))
     );
-    assert!(issue_path("", "../x").is_none());
-    assert!(issue_path("", "a/b").is_none());
-    assert!(issue_path("", "").is_none());
+    assert!(issue_path(mantle, "my-site", "#12a").is_none());
+    assert!(issue_path("", "my-site", "../x").is_none());
+    assert!(issue_path("", "my-site", "a/b").is_none());
+    assert!(issue_path("", "my-site", "").is_none());
 }
 
 /// A repository's issues are read only at a path on the server that names the repository; each issue has its number's

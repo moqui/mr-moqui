@@ -307,12 +307,12 @@
         return "Task: " + text;
     };
     // A commit's body for Amend without the trailer the commit will get again: the last line only when it is exactly
-    // the task's trailer, or an issue's Fixes #12; a line of the user's own ("Fixes typo") stays.
+    // the task's trailer; a line of the user's own ("Fixes typo") or another task's stays.
     pure.withoutTrailer = (body, task) => {
         const lines = String(body || "").replace(/\n+$/, "").split("\n");
         const last = (lines[lines.length - 1] || "").trim();
         const trailer = String(task || "").trim() ? pure.trailerOf(task) : null;
-        if (last && (last === trailer || /^Fixes #\d+$/.test(last))) lines.pop();
+        if (last && last === trailer) lines.pop();
         return lines.join("\n").replace(/\n+$/, "");
     };
 
@@ -612,7 +612,10 @@
             rememberLocally() {
                 if (!this.rootId) return;
                 const keep = (rootId, buffer) => {
-                    if (buffer.text !== buffer.saved) drafts.setNow(pure.storageKey(rootId, "draft:" + buffer.path), { base: buffer.base, text: buffer.text });
+                    const key = pure.storageKey(rootId, "draft:" + buffer.path);
+                    // a draft offered back waits for the user's answer, as remember leaves it
+                    if (this.draftsOffered && this.draftsOffered.has(key)) return;
+                    if (buffer.text !== buffer.saved) drafts.setNow(key, { base: buffer.base, text: buffer.text });
                 };
                 for (const tab of this.tabs) {
                     if (tab.loading) continue;

@@ -140,7 +140,9 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
     <service verb="get" noun="Issue" type="rust" location="dev_aide::hosting::review::get_issue" allow-remote="false" read-only="true">
         <description>An issue (a work item) on the hosted repository's server by its id: issueId, title, status, type,
-            description, url. The offer's tasks.issuePath with {id}, else Mantle's workEfforts/{id}.</description>
+            description, url, and number where it has one. The offer's tasks.issuePath with {repositoryId} and {id} (Mantle's
+            gitRepositories/{repositoryId}/issues/{id}; a key #12 is asked by its number, byNumber), else Mantle's
+            workEfforts/{id}.</description>
         <in-parameters>
             <parameter name="rootId" required="true"/>
             <parameter name="issueId" required="true"/>

@@ -1074,7 +1074,7 @@ fn set_current_task(
     let context = Context::of(ec, Tier::View)?;
     let root = context.root(&text(parameters, "rootId"))?;
     let task = text(parameters, "task").trim().to_string();
-    if task.chars().any(char::is_control) || task.len() > 100 {
+    if !task.is_empty() && !git::task_key_valid(&task) {
         return Err(LibError::new("a task key is one short line"));
     }
     moqui_core::user::set_preference(

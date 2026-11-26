@@ -339,7 +339,10 @@ test("a commit names an issue by its number, else its key; Amend drops only that
     assert.equal(pure.trailerOf("Closes PROJ-3"), "Closes PROJ-3");
     assert.equal(pure.trailerOf("#12a"), "Task: #12a");
     assert.equal(pure.withoutTrailer("Why\n\nTask: PROJ-12\n", "PROJ-12"), "Why");
-    assert.equal(pure.withoutTrailer("Why\n\nFixes #12", ""), "Why");
+    assert.equal(pure.withoutTrailer("Why\n\nFixes #12", "#12"), "Why");
+    // another issue's Fixes stays
+    assert.equal(pure.withoutTrailer("Why\n\nFixes #3", "#12"), "Why\n\nFixes #3");
+    assert.equal(pure.withoutTrailer("Why\n\nFixes #12", ""), "Why\n\nFixes #12");
     // the user's own last line stays
     assert.equal(pure.withoutTrailer("Fixes typo", "PROJ-12"), "Fixes typo");
     assert.equal(pure.withoutTrailer("Why\n\nTask: OTHER-1", "PROJ-12"), "Why\n\nTask: OTHER-1");

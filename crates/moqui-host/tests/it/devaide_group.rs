@@ -60,6 +60,7 @@ const STUB_REST: &str = r#"<resource name="reviewstub">
     <resource name="repositories"><id name="repositoryId"><resource name="issues">
         <method type="get"><service name="reviewstub.Stub.get#Issues"/></method>
         <method type="post"><service name="reviewstub.Stub.create#Issue"/></method>
+        <id name="issueId"><method type="get"><service name="reviewstub.Stub.get#Issue"/></method></id>
     </resource></id></resource>
 </resource>"#;
 const STUB_ENTITIES: &str = r#"<entities>
@@ -116,6 +117,7 @@ const STUB_SERVICES: &str = r#"<services>
         <actions><script><![CDATA[
             offer = Object.assign({}, offer, {tasks: {kind: 'moqui-rest', path: '/rest/s1/reviewstub/my/tasks',
                 issuesPath: '/rest/s1/reviewstub/repositories/{repositoryId}/issues',
+                issuePath: '/rest/s1/reviewstub/repositories/{repositoryId}/issues/{id}',
                 app: {name: 'stub', title: 'Stub Projects', taskPath: '/qapps/stub/Task?taskId={taskId}',
                     projectPath: '/qapps/stub/Project?projectId={projectId}'}}})
         ]]></script></actions>
@@ -137,6 +139,17 @@ const STUB_SERVICES: &str = r#"<services>
                 rootWorkEffortId: 'SITEPROJ', projectName: 'Site'}]
             projectList = [{workEffortId: 'SITEPROJ', workEffortName: 'Site'}]
             numbered = true
+        ]]></script></actions>
+    </service>
+    <service verb="get" noun="Issue">
+        <in-parameters><parameter name="repositoryId" required="true"/><parameter name="issueId" required="true"/>
+            <parameter name="byNumber" type="Boolean" default="false"/></in-parameters>
+        <out-parameters><parameter name="issue" type="Map"/></out-parameters>
+        <actions><script><![CDATA[
+            // issue 12 by its number, or its task SITEPROJ-5
+            if (repositoryId !== 'my-site' || !(byNumber ? issueId === '12' : issueId === 'SITEPROJ-5')) { ec.message.addError('Issue not found'); return }
+            issue = {workEffortId: 'SITEPROJ-5', issueNumber: 12, workEffortName: 'Totals are wrong', statusId: 'WeInPlanning',
+                description: 'The total is off by one'}
         ]]></script></actions>
     </service>
     <service verb="create" noun="Issue">
@@ -1503,6 +1516,33 @@ fn a_dev_instance_connects_to_its_group_server_and_opens_merge_requests() {
     )
     .unwrap();
     assert_eq!(json(&viewer_panel, "issues")[0]["key"], "#12", "{viewer_panel:?}");
+    // one issue by its key, through the offer's issuePath: #12 by its number, else by its task's id
+    for key in ["#12", "SITEPROJ-5"] {
+        let one = call(
+            &factory,
+            "dev.viewer",
+            &format!("{HS}get#Issue"),
+            &[("rootId", "my-site"), ("issueId", key)],
+        )
+        .unwrap();
+        assert_eq!(json(&one, "issue")["title"], "Totals are wrong", "{key}: {one:?}");
+        assert_eq!(json(&one, "issue")["number"], 12, "{key}: {one:?}");
+    }
+    // a branch's task key is one short line too
+    let forged_branch = call(
+        &factory,
+        "john.doe",
+        &format!("{TASKS}create#TaskBranch"),
+        &[
+            ("rootId", "my-site"),
+            ("taskId", "SITEPROJ-5\nSigned-off-by: x"),
+            ("title", "x"),
+        ],
+    );
+    assert!(
+        matches!(&forged_branch, Err(err) if err.contains("one short line")),
+        "{forged_branch:?}"
+    );
     // Branch names a branch for the issue by its id, and its commits close it by its number
     git(&site, &["switch", "-q", "main"]);
     let branched = call(

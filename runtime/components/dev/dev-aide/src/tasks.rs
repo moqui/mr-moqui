@@ -715,7 +715,15 @@ fn create_task_branch(
     let context = Context::of(ec, Tier::Extend)?;
     let _authz = ec.disable_authz();
     let root = crate::vcs::git_write_root(&context, parameters, "makes branches")?;
-    let key = text(parameters, "taskId");
+    let key = text(parameters, "taskId").trim().to_string();
+    // the trailer its commits get: the task's key, or what names an issue in its repository (`#12`); each one short
+    // line, or a commit would get lines of its own
+    let trailer = Some(text(parameters, "trailer").trim().to_string())
+        .filter(|trailer| !trailer.is_empty())
+        .unwrap_or_else(|| key.clone());
+    if !crate::git::task_key_valid(&key) || !crate::git::task_key_valid(&trailer) {
+        return Err(LibError::new("a task key is one short line"));
+    }
     let name = branch_name(&key, &text(parameters, "title"));
     crate::vcs::valid_branch(&name)?;
     let output = context
@@ -723,11 +731,6 @@ fn create_task_branch(
         .run(&root.path, Mode::Write, &["switch", "-c", &name], &[], None)?
         .checked("switch -c")?;
     crate::vcs::audit_git(&context, root, "branch", json!({ "branch": name, "task": key }));
-    // the trailer its commits get: the task's key, or what names an issue in its repository (`#12`)
-    let trailer = Some(text(parameters, "trailer"))
-        .map(|trailer| trailer.trim().to_string())
-        .filter(|trailer| !trailer.is_empty() && trailer.len() <= 100 && !trailer.chars().any(char::is_control))
-        .unwrap_or_else(|| key.clone());
     moqui_core::user::set_preference(
         &format!("{}.{}", crate::vcs::CURRENT_TASK, root.id),
         Some(trailer.as_str()),

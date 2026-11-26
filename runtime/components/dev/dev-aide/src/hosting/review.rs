@@ -544,10 +544,13 @@ fn get_merge_request(
     Ok(out)
 }
 
-/// The REST path of an issue (a work item) on a group server: the offer's `tasks.issuePath` with `{id}`, else
-/// Mantle's work effort (`/rest/s1/mantle/workEfforts/{id}`). `None` for an id that is not one.
+/// The REST path of an issue (a work item) on a group server, and whether it names the issue by its number: the offer's
+/// `tasks.issuePath` with `{repositoryId}` and `{id}` (Mantle's `gitRepositories/{repositoryId}/issues/{id}`), else
+/// Mantle's work effort (`/rest/s1/mantle/workEfforts/{id}`). A key `#12` is the repository's issue 12, asked with
+/// `byNumber`; any other is the work item's id. `None` for an id that is not one.
 #[must_use]
-pub fn issue_path(template: &str, id: &str) -> Option<String> {
+pub fn issue_path(template: &str, repository_id: &str, id: &str) -> Option<(String, bool)> {
+    let by_number = id.trim().starts_with('#');
     let id = id.trim().trim_start_matches('#');
     if id.is_empty()
         || id.len() > 60
@@ -557,10 +560,18 @@ pub fn issue_path(template: &str, id: &str) -> Option<String> {
     {
         return None;
     }
+    if by_number && !id.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
     let template = Some(template)
-        .filter(|template| template.starts_with('/') && template.contains("{id}"))
+        .filter(|template| template.starts_with('/') && !template.starts_with("//") && template.contains("{id}"))
         .unwrap_or("/rest/s1/mantle/workEfforts/{id}");
-    Some(template.replace("{id}", &query_text(id)))
+    Some((
+        template
+            .replace("{repositoryId}", &query_text(repository_id))
+            .replace("{id}", &query_text(id)),
+        by_number,
+    ))
 }
 
 /// `get#Issue`: an issue (a work item) of the hosted repository's server by its id: its title, status, type and text.
@@ -574,10 +585,18 @@ fn get_issue(
     let root = git_root(&context, parameters)?;
     let hosted = need_hosted(&context, root)?;
     let id = text(parameters, "issueId");
-    let path = issue_path(&hosted.server.offered("tasks.issuePath"), &id)
+    let (path, by_number) = issue_path(&hosted.server.offered("tasks.issuePath"), &hosted.id(), &id)
         .ok_or_else(|| LibError::new(format!("{id} is not an issue's id")))?;
-    let answer = hosted.server.get(&path, &[])?;
+    let answer = hosted
+        .server
+        .get(&path, &[("byNumber", if by_number { "true" } else { "" })])?;
+    // Mantle's get#RepositoryIssue answers it as issue; a work effort's REST, as itself
     let item = client::result_of(&answer);
+    let item = if item["issue"].is_object() {
+        &item["issue"]
+    } else {
+        item
+    };
     let pick = |keys: &[&str]| -> Json {
         keys.iter()
             .map(|key| &item[*key])
@@ -587,6 +606,7 @@ fn get_issue(
     };
     let issue = json!({
         "issueId": pick(&["workEffortId", "issueId", "number", "id"]),
+        "number": pick(&["issueNumber", "number"]),
         "title": pick(&["workEffortName", "title", "name"]),
         "status": pick(&["statusId", "state", "status"]),
         "type": pick(&["workEffortTypeEnumId", "type"]),
