@@ -165,6 +165,22 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="note"/>
         </out-parameters>
     </service>
+    <service verb="try" noun="Rule" type="rust" location="dev_aide::eca_specs::try_rule" allow-remote="false">
+        <description>A rule's trigger run in the sim with a context, traced, nothing written (a SECA's service call, an
+            EECA's entity operation; a gitECA rule's condition alone): the run's messages, rows and trace, which marks the
+            rule's actions in the composer. The extend tier.</description>
+        <in-parameters>
+            <parameter name="kind" required="true"><description>seca, eeca or giteca</description></parameter>
+            <parameter name="target"><description>The rule's service (seca) or entity (eeca).</description></parameter>
+            <parameter name="operation"><description>An EECA rule's: create, update or delete.</description></parameter>
+            <parameter name="condition" allow-html="any"><description>A gitECA rule's: an expression or a condition element.</description></parameter>
+            <parameter name="context" type="Object" allow-html="any"><description>The trigger's context: a JSON object.</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="result" type="Map"/>
+            <parameter name="note"/>
+        </out-parameters>
+    </service>
     <service verb="get" noun="PushContexts" type="rust" location="dev_aide::services::get_push_contexts" allow-remote="false" read-only="true">
         <description>A gitECA rule's condition against a push of the push log (10): the hosted repositories the user
             sees that the rule's repository-pattern takes, the latest changes of the one chosen, and with an update the

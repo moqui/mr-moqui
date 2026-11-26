@@ -2241,7 +2241,7 @@ fn a_try_saved_as_a_spec_passes() {
         "{spec}"
     );
     assert!(
-        spec.contains("<upapp.Widget widgetId=\"W-TRY\" widgetName=\"From a try\"/>"),
+        spec.contains(r#"<upapp.Widget widgetId=\"W-TRY\" widgetName=\"From a try\"/>"#),
         "{spec}"
     );
     let ran = call(
@@ -2386,6 +2386,52 @@ fn a_rules_fixture_becomes_a_spec_that_passes() {
     let listed = moqui_lib::json::to_json(&listed["fixtures"]);
     assert_eq!(listed[0]["name"], "widget-one", "{listed}");
     assert_eq!(listed[0]["context"]["widgetName"], "From a fixture", "{listed}");
+    // a fixture that is a link out of the root is not read
+    #[cfg(unix)]
+    {
+        std::fs::write(gate.runtime.join("outside.json"), r#"{"secret": "outside the root"}"#).unwrap();
+        std::os::unix::fs::symlink(gate.runtime.join("outside.json"), site.join("test/fixtures/leak.json")).unwrap();
+        let listed = call(
+            &factory,
+            "john.doe",
+            &format!("{WRITER}list#RuleFixtures"),
+            &[("rootId", "my-site"), ("path", "service/MySite.secas.xml")],
+        )
+        .unwrap();
+        let listed = moqui_lib::json::to_json(&listed["fixtures"]).to_string();
+        assert!(
+            !listed.contains("outside the root") && !listed.contains("leak"),
+            "{listed}"
+        );
+        std::fs::remove_file(site.join("test/fixtures/leak.json")).unwrap();
+    }
+
+    // the rule's trigger in the sim, traced: the rule's own actions are a block of the trace, by its rules file
+    let tried = call(
+        &factory,
+        "john.doe",
+        &format!("{WRITER}try#Rule"),
+        &[
+            ("kind", "seca"),
+            ("target", "upapp.WidgetServices.make#Widget"),
+            ("context", r#"{"widgetId": "W-T1"}"#),
+        ],
+    )
+    .unwrap();
+    let tried = moqui_lib::json::to_json(&tried["result"]);
+    assert!(
+        tried["messages"].to_string().contains("the site rule ran for W-T1"),
+        "{tried}"
+    );
+    let rule_block = tried["trace"]["blocks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|block| block["path"] == "service/MySite.secas.xml")
+        .cloned()
+        .unwrap_or_else(|| panic!("no block of the rule: {tried}"));
+    assert_eq!(rule_block["line"], 3, "{rule_block}");
+    assert_eq!(rule_block["elements"]["0"]["count"], 1, "{rule_block}");
 
     let spec = |rules: &str, parameters: &[(&str, &str)]| {
         let mut all = vec![("rootId", "my-site"), ("path", rules)];
@@ -2432,7 +2478,7 @@ fn a_rules_fixture_becomes_a_spec_that_passes() {
         "ec.resource.getLocationText(\"component://my-site/test/fixtures/widget-one.json\")",
         "const out = call(\"upapp.WidgetServices.make#Widget\", fixture)",
         "messages.includes(\"the site rule ran for W-F1\")",
-        "<upapp.Widget widgetId=\"W-F1\" widgetName=\"From a fixture\"/>",
+        r#"<upapp.Widget widgetId=\"W-F1\" widgetName=\"From a fixture\"/>"#,
     ] {
         assert!(written.contains(expected), "{expected}: {written}");
     }

@@ -80,7 +80,7 @@ fn a_rules_feature_runs_its_trigger_with_the_fixture_and_checks_what_it_did() {
         "{feature}"
     );
     assert!(
-        feature.contains("<up.Widget widgetId=\"W-1\" note=\"set by the rule\"/>"),
+        feature.contains(r#"<up.Widget widgetId=\"W-1\" note=\"set by the rule\"/>"#),
         "{feature}"
     );
     let nothing = trigger_feature("x", "component://s/test/fixtures/x.json", "", &[], &[]);

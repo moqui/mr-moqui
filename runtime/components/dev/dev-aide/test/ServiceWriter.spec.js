@@ -229,22 +229,48 @@ feature("a Try's trace answers each element's count and values, and the element 
     },
 })
 
-feature("a Try over unsaved text needs the extend tier", {
+// what a viewer asks of a Try, as the view tier: its refusal, or its result
+const asViewer = (parameters) => {
+    ec.user.internalLoginUser("spec.dev.viewer")
+    try {
+        const answer = svc("try#Service", parameters)
+        return { result: answer?.result, refusal: String(ec.message.getErrorsString() || "") }
+    } catch (error) {
+        return { refusal: String(error) }
+    } finally {
+        ec.message.clearAll()
+        ec.user.internalLoginUser("john.doe")
+    }
+}
+
+feature("a Try over unsaved text, or traced, needs the extend tier", {
     when() {
         const { files } = bufferedExample()
-        ec.user.internalLoginUser("spec.dev.viewer")
+        const name = "example.ExampleServices.greet#WithTool"
+        return { over: asViewer({ serviceName: name, parameters: "{}", files }), traced: asViewer({ serviceName: name, parameters: "{}", trace: true }) }
+    },
+    then({ over, traced }) {
+        over.result == null
+        over.refusal.includes("extend tier")
+        traced.result == null
+        traced.refusal.includes("extend tier")
+    },
+})
+
+feature("a real run over unsaved text is refused", {
+    when() {
+        const { files } = bufferedExample()
         try {
-            const answer = svc("try#Service", { serviceName: "example.ExampleServices.greet#WithTool", parameters: "{}", files })
+            const answer = svc("try#Service", { serviceName: "example.ExampleServices.greet#WithTool", parameters: "{}", files, real: true, confirm: true })
             return { result: answer?.result, refusal: String(ec.message.getErrorsString() || "") }
         } catch (error) {
             return { refusal: String(error) }
         } finally {
             ec.message.clearAll()
-            ec.user.internalLoginUser("john.doe")
         }
     },
     then({ result, refusal }) {
         result == null
-        refusal.includes("extend tier")
+        refusal.includes("runs in the sim only")
     },
 })

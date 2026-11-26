@@ -38,7 +38,8 @@ use crate::workspace::{json_value, text, Context};
 pub(crate) fn register(registry: &mut NativeRegistry) -> Result<(), Error> {
     registry.service_function(moqui_core::service_location!(save_rule_fixture), save_rule_fixture)?;
     registry.service_function(moqui_core::service_location!(list_rule_fixtures), list_rule_fixtures)?;
-    registry.service_function(moqui_core::service_location!(save_rule_spec), save_rule_spec)
+    registry.service_function(moqui_core::service_location!(save_rule_spec), save_rule_spec)?;
+    registry.service_function(moqui_core::service_location!(try_rule), try_rule)
 }
 
 /// The most fixtures listed, and the largest one read.
@@ -178,10 +179,18 @@ fn list_rule_fixtures(
                 continue;
             };
             let relative = format!("{dir}/{name}.json");
-            let read = std::fs::metadata(file)
+            // confined as an open is: a link out of the root is not read
+            let confined = match context.resolve(root, &relative) {
+                Ok(confined) => confined,
+                Err(err) => {
+                    tracing::warn!("fixture {relative} is not read: {err}");
+                    continue;
+                }
+            };
+            let read = std::fs::metadata(&confined.path)
                 .ok()
                 .filter(|meta| meta.len() <= MAX_FIXTURE_BYTES)
-                .and_then(|_| std::fs::read_to_string(file).ok());
+                .and_then(|_| std::fs::read_to_string(&confined.path).ok());
             let mut entry = json!({ "name": name, "rootId": root_id, "path": relative,
                 "location": location(&context, &root_id, &relative).ok() });
             match read.as_deref().map(serde_json::from_str::<Json>) {
@@ -259,6 +268,131 @@ fn condition_feature(title: &str, fixture_location: &str, expression: &str, hold
 /// A rule's feature, made once the fixture's location is known.
 type FeatureOf = Box<dyn Fn(&str) -> String>;
 
+/// A rule as Save as spec and Try the rule take it: its kind, its service or entity, an EECA rule's operation, a gitECA
+/// rule's condition, the fixture as the trigger's context, and the name a feature calls the fixture by.
+struct RuleAsked<'a> {
+    kind: &'a str,
+    target: &'a str,
+    operation: &'a str,
+    condition: &'a str,
+    fixture: &'a serde_json::Map<String, Json>,
+    title: &'a str,
+}
+
+/// A rule's trigger run in the sim with a fixture: what the run came to (with its trace when asked), the feature a
+/// spec of it is, and what to say of the feature.
+struct Trial {
+    feature: FeatureOf,
+    run: Json,
+    note: Option<&'static str>,
+}
+
+/// The run in the sim of a rule's trigger with its fixture (a SECA's service call, an EECA's entity operation, a gitECA
+/// rule's condition alone), within `caller`'s frame, traced when `trace`.
+fn rule_trial(context: &Context, caller: &str, asked: &RuleAsked<'_>, trace: bool) -> Result<Trial, LibError> {
+    let (kind, target, name, fixture) = (asked.kind, asked.target, asked.title, asked.fixture);
+    match kind {
+        "seca" | "eeca" => {
+            if target.trim().is_empty() {
+                return Err(LibError::new("name the rule's service or entity"));
+            }
+            let in_sim_js = trigger_js(kind, target, asked.operation, false)?;
+            let in_spec_js = trigger_js(kind, target, asked.operation, true)?;
+            let body = format!("const fixture = {};\n{in_sim_js}", Json::Object(fixture.clone()));
+            let actions = crate::services::snippet_actions("javascript", &body, &serde_json::Map::new());
+            moqui_core::script::check_actions(&actions)?;
+            let label = format!("A {kind} rule's trigger on {target}");
+            let over = Over { overlay: None, trace };
+            let run = in_sim(context, caller, &label, over, move || {
+                moqui_core::script::run_actions(&actions).map_err(|err| LibError::new(err.to_string()))?;
+                Ok(std::collections::BTreeMap::new())
+            });
+            let messages: Vec<Json> = run["messages"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|message| message.as_str().is_some_and(|text| !text.starts_with("result: ")))
+                .collect();
+            let rows: Vec<Json> = run["rows"].as_array().cloned().unwrap_or_default();
+            let title = format!("the {kind} rule on {target} against {name}");
+            Ok(Trial {
+                feature: Box::new(move |location: &str| {
+                    trigger_feature(&title, location, &in_spec_js, &messages, &rows)
+                }),
+                run,
+                note: None,
+            })
+        }
+        "giteca" => {
+            let condition = asked.condition.trim().to_string();
+            let expression = if condition.is_empty() {
+                "true".to_string()
+            } else if condition.starts_with('<') {
+                moqui_core::script::condition_source(&format!("<condition>{condition}</condition>"))?
+            } else {
+                condition.clone()
+            };
+            let actions = crate::services::condition_actions(&condition, fixture);
+            moqui_core::script::check_actions(&actions)?;
+            let run = in_sim(
+                context,
+                caller,
+                "A gitECA rule's condition",
+                Over::default(),
+                move || {
+                    moqui_core::script::run_actions(&actions).map_err(|err| LibError::new(err.to_string()))?;
+                    Ok(std::collections::BTreeMap::new())
+                },
+            );
+            let holds = condition.is_empty()
+                || run["messages"]
+                    .as_array()
+                    .is_some_and(|messages| messages.iter().any(|text| text == "the condition holds"));
+            let title = format!("the giteca rule's condition against {name} (a spec does not replay a push)");
+            Ok(Trial {
+                feature: Box::new(move |location: &str| condition_feature(&title, location, &expression, holds)),
+                run,
+                note: Some("A spec does not replay a push, so the feature checks the rule's condition against the fixture only."),
+            })
+        }
+        "emeca" => Err(LibError::new(
+            "an EmECA rule runs on a received message, which a spec does not make: try its condition",
+        )),
+        other => Err(LibError::new(format!("no rule kind {other}"))),
+    }
+}
+
+/// `try#Rule`: a rule's trigger run in the sim with a context (`context`), traced, nothing written: what the run came
+/// to, its messages and rows, and the trace the ECA view marks the rule's actions with (a gitECA rule's condition
+/// alone). The extend tier, as Save as spec.
+fn try_rule(ec: &ExecutionContext, service: &ServiceInfo<'_>, parameters: &Parameters) -> Result<Parameters, LibError> {
+    let context = Context::of(ec, Tier::Extend)?;
+    if !moqui_llm::approval::preview::available(&context.facade) {
+        return Err(LibError::new(
+            "a rule's trigger runs in the sim, which this server has not (it needs embedded Postgres)",
+        ));
+    }
+    let fixture = crate::services::object_in(parameters, "context");
+    let trial = rule_trial(
+        &context,
+        service.name,
+        &RuleAsked {
+            kind: &text(parameters, "kind"),
+            target: &text(parameters, "target"),
+            operation: &text(parameters, "operation"),
+            condition: &text(parameters, "condition"),
+            fixture: &fixture,
+            title: "the context",
+        },
+        true,
+    )?;
+    let mut out = Parameters::new();
+    out.insert("result".into(), json_value(&trial.run));
+    out.insert("note".into(), trial.note.map_or(Value::Null, Value::string));
+    Ok(out)
+}
+
 /// `save#RuleSpec`: Save as spec on a rule (10) of the rules file (`rootId`, `path`, saved: the trigger runs the rules
 /// the server holds): `kind` seca, eeca or giteca; `target` its service or entity; `operation` an EECA's (create,
 /// update or delete); `condition` a gitECA rule's (an expression or a condition element); `fixture` the name its
@@ -290,87 +424,29 @@ fn save_rule_spec(
     if spec.is_empty() {
         return Err(LibError::new(format!("no spec name for {rules_name}")));
     }
-    let (feature_of, trial, note): (FeatureOf, Json, Option<&str>) = match kind.as_str() {
-        "seca" | "eeca" => {
-            if target.trim().is_empty() {
-                return Err(LibError::new("name the rule's service or entity"));
-            }
-            let operation = text(parameters, "operation");
-            let in_sim_js = trigger_js(&kind, &target, &operation, false)?;
-            let in_spec_js = trigger_js(&kind, &target, &operation, true)?;
-            let body = format!("const fixture = {};\n{in_sim_js}", Json::Object(fixture.clone()));
-            let actions = crate::services::snippet_actions("javascript", &body, &serde_json::Map::new());
-            moqui_core::script::check_actions(&actions)?;
-            let label = format!("Save as spec of a {kind} rule on {target}");
-            let trial = in_sim(&context, service.name, &label, Over::default(), move || {
-                moqui_core::script::run_actions(&actions).map_err(|err| LibError::new(err.to_string()))?;
-                Ok(std::collections::BTreeMap::new())
-            });
-            if let Some(failed) = trial["failed"].as_str() {
-                return Err(LibError::new(format!(
-                    "the trigger failed in the sim, so nothing was written: {failed}"
-                )));
-            }
-            let messages: Vec<Json> = trial["messages"]
-                .as_array()
-                .cloned()
-                .unwrap_or_default()
-                .into_iter()
-                .filter(|message| message.as_str().is_some_and(|text| !text.starts_with("result: ")))
-                .collect();
-            let rows: Vec<Json> = trial["rows"].as_array().cloned().unwrap_or_default();
-            let title = format!("the {kind} rule on {target} against {name}");
-            (
-                Box::new(move |location: &str| trigger_feature(&title, location, &in_spec_js, &messages, &rows)),
-                trial,
-                None,
-            )
-        }
-        "giteca" => {
-            let condition = text(parameters, "condition");
-            let condition = condition.trim().to_string();
-            let expression = if condition.is_empty() {
-                "true".to_string()
-            } else if condition.starts_with('<') {
-                moqui_core::script::condition_source(&format!("<condition>{condition}</condition>"))?
-            } else {
-                condition.clone()
-            };
-            let actions = crate::services::condition_actions(&condition, &fixture);
-            moqui_core::script::check_actions(&actions)?;
-            let trial = in_sim(
-                &context,
-                service.name,
-                "Save as spec of a gitECA rule",
-                Over::default(),
-                move || {
-                    moqui_core::script::run_actions(&actions).map_err(|err| LibError::new(err.to_string()))?;
-                    Ok(std::collections::BTreeMap::new())
-                },
-            );
-            if let Some(failed) = trial["failed"].as_str() {
-                return Err(LibError::new(format!(
-                    "the condition failed in the sim, so nothing was written: {failed}"
-                )));
-            }
-            let holds = condition.is_empty()
-                || trial["messages"]
-                    .as_array()
-                    .is_some_and(|messages| messages.iter().any(|text| text == "the condition holds"));
-            let title = format!("the giteca rule's condition against {name} (a spec does not replay a push)");
-            (
-                Box::new(move |location: &str| condition_feature(&title, location, &expression, holds)),
-                trial,
-                Some("A spec does not replay a push, so the feature checks the rule's condition against the fixture only."),
-            )
-        }
-        "emeca" => {
-            return Err(LibError::new(
-                "an EmECA rule runs on a received message, which a spec does not make: try its condition",
-            ))
-        }
-        other => return Err(LibError::new(format!("no rule kind {other}"))),
-    };
+    let trial = rule_trial(
+        &context,
+        service.name,
+        &RuleAsked {
+            kind: &kind,
+            target: &target,
+            operation: &text(parameters, "operation"),
+            condition: &text(parameters, "condition"),
+            fixture: &fixture,
+            title: &name,
+        },
+        false,
+    )?;
+    if let Some(failed) = trial.run["failed"].as_str() {
+        return Err(LibError::new(format!(
+            "the trigger failed in the sim, so nothing was written: {failed}"
+        )));
+    }
+    let Trial {
+        feature: feature_of,
+        run: trial,
+        note,
+    } = trial;
     let _authz = ec.disable_authz();
     let saved = write_fixture(&context, &rules, &name, &fixture)?;
     let location = saved["location"].as_str().unwrap_or_default().to_string();
@@ -381,9 +457,10 @@ fn save_rule_spec(
         "the rules file is upstream and there is no site component to write its spec in",
     )?;
     let header = format!(
-        "// Specs of the rules of {rules_name}, from Save as spec in Dev AIDE (plans/design-dev-aide.md 10): each runs a\n\
+        "// Specs of the rules of {}, from Save as spec in Dev AIDE (plans/design-dev-aide.md 10): each runs a\n\
          // rule's trigger with a fixture of test/fixtures and checks what the rule did when it was saved; trim what a run\n\
-         // makes anew (generated ids, stamps) before relying on them.\n// Run: ./moq test <component> --spec {spec}\n"
+         // makes anew (generated ids, stamps) before relying on them.\n// Run: ./moq test <component> --spec {spec}\n",
+        crate::services::comment_text(&rules_name)
     );
     let mut answer = crate::services::append_feature(
         &context,

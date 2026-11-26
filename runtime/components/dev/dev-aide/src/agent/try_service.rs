@@ -31,7 +31,7 @@ use moqui_llm::tools::{caps, AgentTool, Classification, ToolInput, ToolOutcome, 
 use serde::Deserialize;
 use serde_json::{json, Value as Json};
 
-use super::{arg, context};
+use super::{arg, session_context};
 use crate::tier::Tier;
 
 pub struct TryServiceTool(ToolSpec);
@@ -183,15 +183,18 @@ fn run(ctx: &mut TurnContext<'_>, args: &Json) -> Result<ToolOutcome, ToolError>
     let service = arg(args, "service")
         .ok_or_else(|| ToolError::new("no_service", "Name the service to run."))?
         .to_string();
-    let context = context(Tier::View)?;
-    let overlay = proposed(&context, args)?;
+    // a session with worktrees reads its proposal's files there (21.8)
+    let context = session_context(ctx, Tier::View)?;
+    let asks_proposal = arg(args, "changeSet").is_some_and(|id| !id.trim().is_empty())
+        || args.get("files").is_some_and(|files| !files.is_null());
     // proposed text is code run in the server: the extend tier, as a snippet (SEC-DEV-02)
-    if overlay.is_some() && context.tier == Tier::View {
+    if asks_proposal && context.tier == Tier::View {
         return Err(ToolError::new(
             "not_allowed",
             "Trying proposed text needs the extend tier of Dev AIDE.",
         ));
     }
+    let overlay = proposed(&context, args)?;
     let defined_here = overlay.as_ref().is_some_and(|overlay| overlay.defines(&service));
     if !defined_here && !moqui_core::service::is_service_defined(&service, Some(&context.facade)) {
         return Err(ToolError::new("not_found", format!("No service is named {service}."))
@@ -207,7 +210,8 @@ fn run(ctx: &mut TurnContext<'_>, args: &Json) -> Result<ToolOutcome, ToolError>
         .hint("Leave real out to try the proposal, or leave changeSet and files out to run the saved files."));
     }
     if !real_run {
-        if let Some(why) = sim_refusal(&service) {
+        // judged as the proposal defines it, so a proposed definition cannot carry a refused one past the check
+        if let Some(why) = crate::try_overlay::over(overlay.clone(), || sim_refusal(&service)) {
             return Err(ToolError::new("not_in_sim", why).hint("Run it with real=true, which the user approves."));
         }
     }

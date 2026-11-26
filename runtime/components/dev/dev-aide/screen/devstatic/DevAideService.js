@@ -658,7 +658,8 @@
                 this.trying = true;
                 const parameters = ops.tryParameters(this.values, this.inParameters);
                 const asked = { serviceName: this.name, parameters: JSON.stringify(parameters), real, confirm: real };
-                if (!real) Object.assign(asked, { files: JSON.stringify(this.overFiles()), trace: true });
+                // over the unsaved buffers, and traced: the extend tier's, as a snippet is
+                if (!real && this.ctx.tier !== "view") Object.assign(asked, { files: JSON.stringify(this.overFiles()), trace: true });
                 this.ctx.post("tryService", asked).then((answer) => {
                     this.trying = false;
                     this.result = Object.assign({ parameters }, answer.result || {});
@@ -833,6 +834,7 @@
         props: { ctx: { type: Object, required: true }, tab: { type: Object, required: true }, outline: Object },
         data() {
             return { selected: null, schema: null, tryContext: "", conditionResult: null, fixtures: [], fixtureName: "", ruleSpec: null, ruleSpecRun: null,
+                ruleRun: null,
                 push: { repositories: [], repositoryId: "", updates: [], updateId: "", contexts: [], loading: false, loaded: false } };
         },
         computed: {
@@ -842,13 +844,18 @@
             actions() { return this.rule ? children(this.rule, ["actions"])[0] || null : null; },
             conditionNode() { const condition = this.rule ? children(this.rule, ["condition"])[0] : null; return condition ? children(condition)[0] || null : null; },
             spec() { return this.rule && this.schema ? (this.schema.elements || []).find((element) => element.name === this.rule.name) || null : null; },
-            canEdit() { return this.ctx.canWrite; }
+            canEdit() { return this.ctx.canWrite; },
+            // the last run of the rule's trigger, traced, on its actions' blocks
+            ruleTrace() {
+                const run = this.ruleRun && this.ruleRun.result;
+                return run && run.trace && this.actions ? ops.traceBlock(run.trace, this.ctx.rootId, this.tab.path, this.actions.line) : null;
+            }
         },
         watch: {
             // another rule: its own pushes, by its patterns and event
             selected() {
                 this.push = { repositories: [], repositoryId: "", updates: [], updateId: "", contexts: [], loading: false, loaded: false };
-                this.ruleSpec = null; this.ruleSpecRun = null;
+                this.ruleSpec = null; this.ruleSpecRun = null; this.ruleRun = null;
             }
         },
         mounted() {
@@ -925,6 +932,14 @@
                     this.ctx.note("Saved as a feature of " + answer.path);
                     this.loadFixtures();
                 }, (error) => this.ctx.fail(error));
+            },
+            // the rule's trigger in the sim with the context, traced: its messages and rows, and its actions marked
+            runTrigger() {
+                if (pure.isDirty(this.tab)) { this.ctx.note(this.t("Save the rules file first: the trigger runs the rules the server has"), "warning"); return; }
+                this.ruleRun = { running: true };
+                this.ctx.post("tryRule", Object.assign(ops.ruleSpecQuery(this.rule, this.conditionText()), { context: this.tryContext || "{}" }))
+                    .then((answer) => { this.ruleRun = { result: answer.result || {}, note: answer.note || "" }; },
+                        (error) => { this.ruleRun = null; this.ctx.fail(error); });
             },
             runRuleSpec() {
                 const spec = this.ruleSpec;
@@ -1022,9 +1037,17 @@
             :label="t('A saved fixture')" @update:model-value="useFixture" id="DevRuleFixturePick"></q-select>
         <q-input dense outlined v-model="fixtureName" :label="t('Fixture name')" style="width: 11rem" for="DevRuleFixtureName"></q-input>
         <q-btn dense flat no-caps icon="sym_o_save" :label="t('Save as fixture')" :disable="!canEdit || !fixtureName" @click="saveFixture" id="DevRuleFixtureSave"></q-btn>
+        <q-btn dense flat no-caps icon="sym_o_play_circle" :label="t('Run the trigger in sim')" :disable="!canEdit || rule.name === 'emeca'" :loading="ruleRun && ruleRun.running"
+            @click="runTrigger" id="DevRuleRunTrigger"><q-tooltip>{{ t('Runs the rule\'s trigger with the context in the sim and marks its actions') }}</q-tooltip></q-btn>
         <q-btn dense flat no-caps icon="sym_o_note_add" :label="t('Save as spec')" :disable="!canEdit || !fixtureName || rule.name === 'emeca'" @click="saveRuleSpec" id="DevRuleSaveSpec">
           <q-tooltip>{{ t('Runs the rule\'s trigger with the fixture in the sim, and writes a feature that runs it again and checks what it did') }}</q-tooltip></q-btn>
         <q-btn v-if="ruleSpec" dense flat no-caps icon="sym_o_play_arrow" :label="'Run spec ' + ruleSpec.name" :loading="ruleSpecRun && ruleSpecRun.running" @click="runRuleSpec" id="DevRuleRunSpec"></q-btn>
+      </div>
+      <div v-if="ruleRun && ruleRun.result" class="text-caption q-mt-xs" id="DevRuleRun">
+        <span v-if="ruleRun.result.failed" class="text-negative">{{ruleRun.result.failed}}</span>
+        <span v-else>{{ t('In sim, nothing kept') }} · {{(ruleRun.result.messages || []).length}} {{ t('messages') }} · {{(ruleRun.result.rows || []).length}} {{ t('rows') }}</span>
+        <div v-for="(text, i) in (ruleRun.result.messages || [])" :key="i">{{text}}</div>
+        <div v-if="ruleRun.note" class="m-muted">{{ruleRun.note}}</div>
       </div>
       <div v-if="ruleSpec && ruleSpec.note" class="text-caption m-muted" id="DevRuleSpecNote">{{ruleSpec.note}}</div>
       <div v-if="ruleSpecRun && !ruleSpecRun.running" class="q-mt-xs" id="DevRuleSpecRun">
@@ -1033,7 +1056,7 @@
         <div v-for="item in ruleSpecRun.cases" :key="item.name" class="text-caption">{{item.outcome}} · {{item.name}}<span v-if="item.message" class="text-negative"> · {{item.message}}</span></div>
       </div>
     </q-expansion-item>
-    <m-dev-composer :ctx="ctx" :actions="actions" :read-only="!canEdit" :in-parameters="[]" :apply="apply" :text="tab.text"></m-dev-composer>
+    <m-dev-composer :ctx="ctx" :actions="actions" :read-only="!canEdit" :in-parameters="[]" :apply="apply" :text="tab.text" :trace="ruleTrace"></m-dev-composer>
   </div>
 </div>`
     };

@@ -73,10 +73,27 @@ pub(crate) fn proposed_files(
     let prepared = crate::agent::propose::prepare(context, set).map_err(|err| LibError::new(err.instruction))?;
     Ok(prepared
         .into_iter()
-        .map(|file| OverlayFile {
-            location: file.location,
-            path: file.named.path.clone(),
-            text: file.new_text,
+        .map(|file| {
+            // a session's worktree file stands at its main tree's place, where the running server reads that file's
+            // services and scripts, so its service group is the loaded one (21.8)
+            let main = file
+                .named
+                .root
+                .worktree_of
+                .as_deref()
+                .and_then(|main| context.root(main).ok());
+            match main {
+                Some(main) => OverlayFile {
+                    location: crate::screens::location_of(main, &file.named.relative).unwrap_or(file.location),
+                    path: main.path.join(&file.named.relative),
+                    text: file.new_text,
+                },
+                None => OverlayFile {
+                    location: file.location,
+                    path: file.named.path.clone(),
+                    text: file.new_text,
+                },
+            }
         })
         .collect())
 }

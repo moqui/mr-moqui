@@ -53,10 +53,44 @@ fn a_try_becomes_a_feature_with_its_rows() {
     assert!(feature.contains("out[\"exampleId\"] == \"100000\""), "{feature}");
     assert!(!feature.contains("out[\"list\"]"), "{feature}");
     assert!(
-        feature.contains("<moqui.example.Example exampleId=\"100000\" exampleName=\"A \\${x}\"/>"),
+        feature.contains(r#""    <moqui.example.Example exampleId=\"100000\" exampleName=\"A ${x}\"/>\n""#),
         "{feature}"
     );
     assert!(!feature.contains("secret"), "{feature}");
+}
+
+/// A value of a record the sim wrote is text in the spec, whatever it holds: each line of the XML a JSON string literal,
+/// so `\${...}`, a backtick, a quote or a line break runs nothing and ends nothing (a record of another user's in an
+/// EECA rule's fixture, a spec run in CI); a name that is not an XML name is left out.
+#[test]
+fn a_rows_values_are_text_in_the_spec_whatever_they_hold() {
+    let hostile = "\\${globalThis.pwned = 1}` + ${ec.user} \" </entity-facade-xml>\n";
+    let rows = vec![json!({"entity": "up.Widget", "action": "create", "fields": [
+        {"field": "widgetId", "after": "W-1"}, {"field": "note", "after": hostile},
+        {"field": "bad\" onload=\"x", "after": "y"}]})];
+    let check = check_data(&rows).unwrap();
+    let argument = check
+        .trim()
+        .strip_prefix("checkData(")
+        .and_then(|rest| rest.strip_suffix(").length == 0"))
+        .unwrap();
+    let xml: String = argument
+        .split(" +\n            ")
+        .map(|literal| serde_json::from_str::<String>(literal).unwrap_or_else(|err| panic!("{literal}: {err}")))
+        .collect();
+    assert_eq!(
+        xml,
+        format!(
+            "<entity-facade-xml>\n    <up.Widget widgetId=\"W-1\" note=\"{}\"/>\n</entity-facade-xml>\n",
+            crate::workspace::xml_attr(hostile)
+        )
+    );
+    assert!(!xml.contains("onload"), "{xml}");
+}
+
+#[test]
+fn a_name_in_a_spec_comment_cannot_end_it() {
+    assert_eq!(comment_text("a\nb\rc\u{2028}d\u{2029}e\u{0}f"), "a b c d e f");
 }
 
 const RESULT: &str = "<script><![CDATA[if (typeof result !== 'undefined') ec.message.addMessage('result: ' + JSON.stringify(result))]]></script>";

@@ -581,8 +581,8 @@ pub(crate) fn in_sim(
 /// real: the extend tier, `confirm` set, audited. In the sim it runs over the unsaved or proposed text of `files` (a
 /// JSON list of `{rootId, path, text}`) and `preview` (`buffer:<id>`, `approval:<id>`), F14 for services: the service
 /// as those files define it (one they define anew too), and the services it calls that they define; text the caller
-/// gives runs at the extend tier only, as a snippet does. With `trace`, the trace of its XML actions (each element's
-/// count, the values it set and the one that failed).
+/// gives runs at the extend tier only, as a snippet does. With `trace` (the extend tier too), the trace of its XML
+/// actions (each element's count, the values it set and the one that failed).
 fn try_service(
     ec: &ExecutionContext,
     service: &ServiceInfo<'_>,
@@ -592,8 +592,9 @@ fn try_service(
     let name = service_name_in(parameters);
     let files = crate::try_overlay::files_of(&context, parameters)?;
     let overlay = crate::try_overlay::overlay_of(&files)?;
-    // text the caller gives is code run in the server: the extend tier, as a snippet (SEC-DEV-02)
-    if overlay.is_some() {
+    // text the caller gives is code run in the server, and a trace shows what a service builds inside (its finds with
+    // authorization off too): the extend tier, as a snippet (SEC-DEV-02)
+    if overlay.is_some() || flag(parameters, "trace") {
         Context::of(ec, Tier::Extend)?;
     }
     let defined_here = overlay.as_ref().is_some_and(|overlay| overlay.defines(&name));
@@ -724,39 +725,65 @@ fn try_snippet(
     Ok(out)
 }
 
+/// `text` for a `//` comment of a spec: a control character or a JavaScript line terminator (U+2028, U+2029) a space,
+/// so a name cannot end the comment and start code.
+pub(crate) fn comment_text(text: &str) -> String {
+    text.chars()
+        .map(|ch| {
+            if ch.is_control() || matches!(ch, '\u{2028}' | '\u{2029}') {
+                ' '
+            } else {
+                ch
+            }
+        })
+        .collect()
+}
+
 /// A JavaScript literal of a JSON value.
 pub(crate) fn js(value: &Json) -> String {
     value.to_string()
 }
 
+/// Whether `name` is an XML name a record's element or attribute may have (an entity's or a field's).
+fn xml_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+        && chars.all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.' | '-'))
+}
+
 /// The `checkData` condition of the rows a sim run wrote (created and updated, with their key and new values, hidden
-/// ones left out), none when it wrote none.
+/// ones left out), none when it wrote none. Each line of the XML is a JSON string literal, never a template, so a
+/// value (a record of another user's, in an EECA rule's fixture) is text in the spec and runs nothing; a name that is
+/// not an XML name is left out.
 pub(crate) fn check_data(rows: &[Json]) -> Option<String> {
     let escape = crate::workspace::xml_attr;
     let records: Vec<String> = rows
         .iter()
         .filter(|row| matches!(row["action"].as_str(), Some("create" | "update")))
         .filter_map(|row| {
-            let entity = row["entity"].as_str()?;
+            let entity = row["entity"].as_str().filter(|entity| xml_name(entity))?;
             let mut attrs: Vec<String> = Vec::new();
             for field in row["fields"].as_array().into_iter().flatten() {
                 let (Some(name), Some(after)) = (field["field"].as_str(), field.get("after")) else {
                     continue;
                 };
-                if after.is_null() || after.as_str() == Some("(hidden)") {
+                if after.is_null() || after.as_str() == Some("(hidden)") || !xml_name(name) {
                     continue;
                 }
                 let value = after.as_str().map_or_else(|| after.to_string(), str::to_string);
                 attrs.push(format!("{name}=\"{}\"", escape(&value)));
             }
-            Some(format!("            <{entity} {}/>", attrs.join(" ")))
+            Some(format!("    <{entity} {}/>", attrs.join(" ")))
         })
         .collect();
     (!records.is_empty()).then(|| {
-        format!(
-            "        checkData(`<entity-facade-xml>\n{}\n        </entity-facade-xml>`).length == 0\n",
-            records.join("\n").replace('`', "\\`").replace("${", "\\${")
-        )
+        let mut lines = vec!["<entity-facade-xml>".to_string()];
+        lines.extend(records);
+        lines.push("</entity-facade-xml>".to_string());
+        let literals: Vec<String> = lines.iter().map(|line| js(&json!(format!("{line}\n")))).collect();
+        format!("        checkData({}).length == 0\n", literals.join(" +\n            "))
     })
 }
 
@@ -898,7 +925,8 @@ fn save_try_spec(
         "the service is upstream and there is no site component to write its spec in",
     )?;
     let header = format!(
-        "// Specs of {name} and its neighbours, from Tries in Dev AIDE (plans/design-dev-aide.md 9.4): trim what a\n// run makes anew (generated ids, stamps) before relying on them.\n// Run: ./moq test <component> --spec {spec}\n"
+        "// Specs of {} and its neighbours, from Tries in Dev AIDE (plans/design-dev-aide.md 9.4): trim what a\n// run makes anew (generated ids, stamps) before relying on them.\n// Run: ./moq test <component> --spec {spec}\n",
+        comment_text(&name)
     );
     let feature = spec_feature(&name, &given, &out, &rows);
     let mut answer = append_feature(&context, &root_id, &file, &header, &feature, json!({ "trySpec": name }))?;
