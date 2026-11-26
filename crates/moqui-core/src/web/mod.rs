@@ -824,6 +824,25 @@ pub(crate) fn set_status(status: u16) {
     });
 }
 
+/// The answer of a page whose path screen failed in place ([`crate::screen::render::note_path_failure`]): `status`
+/// and `Cache-Control: no-store`, while the response is held. A response already committed to the client keeps the head
+/// it sent, its body with the error text in place; a status of 400 or more the screen set itself stays.
+pub(crate) fn fail_held_response(status: u16) {
+    WEB.with(|slot| {
+        if let Some(web) = slot.borrow_mut().as_mut() {
+            if web.stream.is_some() || web.streaming.as_ref().is_some_and(stream::Streaming::is_committed) {
+                return;
+            }
+            if web.status < 400 {
+                web.status = status;
+            }
+            web.headers
+                .retain(|(key, _)| !key.eq_ignore_ascii_case("cache-control"));
+            web.headers.push(("Cache-Control".to_string(), "no-store".to_string()));
+        }
+    });
+}
+
 /// The servlet API's `setHeader`: replace every value of `name`, or remove them with None.
 pub(crate) fn set_header(name: &str, value: Option<&str>) {
     WEB.with(|slot| {
