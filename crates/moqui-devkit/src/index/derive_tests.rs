@@ -1028,6 +1028,52 @@ fn a_parameter_declared_twice_merges_twice_and_an_implemented_auto_reads_its_nou
     );
 }
 
+/// Of two implemented services, the second's parameter of a name the first gives only by its auto-parameters merges
+/// into the field, as the runtime keeps the first's as its auto element; a reverse relationship is found by its source
+/// entity's full name, or a short name only one source entity has.
+#[test]
+fn a_second_implemented_parameter_merges_into_the_firsts_auto_field() {
+    let services = r#"<services>
+    <service verb="define" noun="Auto" type="interface"><in-parameters><auto-parameters entity-name="c.Example" include="nonpk"/></in-parameters></service>
+    <service verb="define" noun="Named" type="interface"><in-parameters><parameter name="name" type="Long"/></in-parameters></service>
+    <service verb="save" noun="Both">
+        <implements service="c.PairServices.define#Auto"/><implements service="c.PairServices.define#Named"/>
+    </service>
+</services>"#;
+    let entities = r#"<entities>
+    <entity entity-name="Status" package="c"><field name="statusId" type="id" is-pk="true"/></entity>
+    <entity entity-name="Order" package="a"><field name="orderId" type="id" is-pk="true"/><field name="statusId" type="id"/>
+        <relationship type="one" related="c.Status"/></entity>
+    <entity entity-name="Order" package="b"><field name="orderId" type="id" is-pk="true"/><field name="statusId" type="id"/>
+        <relationship type="one" related="c.Status"/></entity>
+    <view-entity entity-name="ByShort" package="c">
+        <member-entity entity-alias="S" entity-name="c.Status"/>
+        <member-relationship entity-alias="O" join-from-alias="S" relationship="Order"/><alias entity-alias="O" name="orderId"/>
+    </view-entity>
+    <view-entity entity-name="ByFull" package="c">
+        <member-entity entity-alias="S" entity-name="c.Status"/>
+        <member-relationship entity-alias="O" join-from-alias="S" relationship="b.Order"/><alias entity-alias="O" name="orderId"/>
+    </view-entity>
+</entities>"#;
+    let index = index_of(&[
+        (ArtifactKind::Entity, "component://c/entity/Entities.xml", ENTITIES),
+        (ArtifactKind::Entity, "component://c/entity/Orders.xml", entities),
+        (
+            ArtifactKind::Service,
+            "component://c/service/c/PairServices.xml",
+            services,
+        ),
+    ]);
+    let summary = |id: &str| index.describe(id).map(|row| row.summary);
+    assert_eq!(
+        summary("parameter:service:c.PairServices.save#Both@in.name").as_deref(),
+        Some("in Long, required=false")
+    );
+    // two source entities named Order: the short name is no one's
+    assert_eq!(summary("field:c.ByShort.orderId").as_deref(), Some(""));
+    assert_eq!(summary("field:c.ByFull.orderId").as_deref(), Some("id, pk"));
+}
+
 /// A view's member-relationship by the related entity's short name, and by an auto-reverse relationship moqui-db adds
 /// to the related entity for another's relationship to it.
 #[test]

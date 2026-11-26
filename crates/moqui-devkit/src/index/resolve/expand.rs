@@ -72,8 +72,10 @@ pub(super) struct Param {
     given: Option<Vec<String>>,
     /// Its summary as its row has it, which [`Expansion::summaries`] writes again when the merge changes it.
     stored: String,
-    /// Its line: a name declared twice (before and after an `auto-parameters`) is two declarations, merged in order.
+    /// Its line and column: a name declared twice (before and after an `auto-parameters`) is two declarations, merged
+    /// in order.
     line: u32,
+    column: u32,
 }
 
 /// A field a form declares, in the file `path`.
@@ -441,6 +443,7 @@ fn declared_param(path: &str, direction: &str, name: &str, summary: &str, given:
         given,
         stored: summary.to_string(),
         line: 0,
+        column: 0,
     }
 }
 
@@ -515,12 +518,14 @@ impl Resolver {
                     });
                 let mut param = declared_param(&artifact.path, direction, name, &artifact.summary, given);
                 param.line = artifact.line;
+                param.column = artifact.column;
                 let params = self.params.entry(owner.to_string()).or_default();
                 params.retain(|known| {
                     !(known.path == param.path
                         && known.direction == direction
                         && known.name == name
-                        && known.line == param.line)
+                        && known.line == param.line
+                        && known.column == param.column)
                 });
                 params.push(param);
             }
@@ -584,6 +589,7 @@ impl Resolver {
                             && param.direction == direction
                             && param.name == name
                             && param.line == artifact.line
+                            && param.column == artifact.column
                     });
                 }
             }
@@ -1147,6 +1153,11 @@ impl Resolver {
             return out;
         }
         let marks = self.marks_of(service);
+        // the names an earlier implemented service gave only by its auto-parameters: the runtime keeps those as the
+        // auto element, not a named parameter, so a later implemented service's parameter of the name is not dropped
+        // but merged into the field at the expansion (`moqui_core::service::define`'s `implemented`)
+        let mut auto_only: HashSet<String> = HashSet::new();
+        let auto_given = ["type".to_string(), "required".to_string()];
         for mark in &marks {
             let Mark::Implements {
                 service: target,
@@ -1161,22 +1172,40 @@ impl Resolver {
             if !visited.insert(target.clone()) {
                 continue;
             }
+            let named_before: HashSet<String> = out
+                .iter()
+                .filter(|known| !auto_only.contains(&known.name))
+                .map(|known| known.name.clone())
+                .collect();
+            let auto_before = auto_only.clone();
             for mut param in self.full_params(&target, direction, visited, depth + 1, target_noun) {
-                if param.required == "disabled" || out.iter().any(|known| known.name == param.name) {
+                if param.required == "disabled" || named_before.contains(&param.name) {
                     continue;
                 }
+                let from_auto = param.origin == "auto-parameters";
                 if let Some(required) = required {
                     param.required = required.to_string();
                 }
                 param.origin = "implements";
                 param.stored = None;
                 param.from = vec![parameter_id(&target, direction, &param.name)];
+                if auto_before.contains(&param.name) {
+                    if !from_auto {
+                        auto_only.remove(&param.name);
+                    }
+                    let given = from_auto.then_some(&auto_given[..]);
+                    merge_into(&mut out, param, given);
+                    continue;
+                }
+                if from_auto {
+                    auto_only.insert(param.name.clone());
+                }
                 out.push(param);
             }
         }
         let mut declared = self.declared_params(service, direction);
         // in the order written: a name declared before and after an auto-parameters is two merges
-        declared.sort_by_key(|param| param.line);
+        declared.sort_by_key(|param| (param.line, param.column));
         let declared_full = |param: &Param| FullParam {
             name: param.name.clone(),
             kind: param.kind.clone(),
@@ -1189,7 +1218,6 @@ impl Resolver {
         // the declarations merged so far, by their place in `declared`: of a name an auto-parameters' `before` lists n
         // times, the first n declarations go before it
         let mut merged: Vec<bool> = vec![false; declared.len()];
-        let auto_given = ["type".to_string(), "required".to_string()];
         for mark in &marks {
             let Mark::AutoParameters {
                 direction: of,

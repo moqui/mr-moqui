@@ -430,19 +430,37 @@ impl Resolver {
         if let Some(relation) = own {
             return Some(related_of(relation));
         }
-        // an auto-reverse relationship: another entity's relationship to this one, named by that entity
+        // an auto-reverse relationship: another entity's relationship to this one. moqui-db names it
+        // `[title#]<that entity's full name>` and matches it by that name, or with no title by that entity's name as
+        // written: a titled one by its full name only; an untitled one by its full name, else by a short name only
+        // one such entity has
         let (title, source) = match name.split_once('#') {
             Some((title, source)) => (Some(title), source),
             None => (None, name),
         };
-        self.relationships.iter().find_map(|(from, relations)| {
-            let named = from == source || short(from) == source || self.entity(source).as_deref() == Some(from);
-            let back = relations.iter().any(|relation| {
-                let relation_title = relation.key.split_once('#').map(|(title, _)| title);
-                relation_title == title && related_of(relation) == entity
-            });
-            (named && back).then(|| from.clone())
-        })
+        let mut sources: Vec<&String> = self
+            .relationships
+            .iter()
+            .filter(|(_, relations)| {
+                relations.iter().any(|relation| {
+                    let relation_title = relation.key.split_once('#').map(|(title, _)| title);
+                    relation_title == title && related_of(relation) == entity
+                })
+            })
+            .map(|(from, _)| from)
+            .collect();
+        sources.sort();
+        if let Some(exact) = sources.iter().find(|from| from.as_str() == source) {
+            return Some((*exact).clone());
+        }
+        if title.is_some() {
+            return None;
+        }
+        let by_short: Vec<&&String> = sources.iter().filter(|from| short(from) == source).collect();
+        match by_short.as_slice() {
+            [only] => Some((**only).clone()),
+            _ => None,
+        }
     }
 
     /// The location of a screen named by its location, or by a location whose component differs but whose path under
