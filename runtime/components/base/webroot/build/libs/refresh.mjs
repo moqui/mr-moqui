@@ -125,9 +125,9 @@ export { Awareness, encodeAwarenessUpdate, applyAwarenessUpdate, removeAwareness
 const Y_CODEMIRROR_ENTRY = `export { yCollab, ySync, ySyncFacet, ySyncAnnotation, yRemoteSelections, yRemoteSelectionsTheme, yUndoManagerKeymap,
   YRange } from 'y-codemirror.next';
 `;
-// What the Vim bundle exports as the global CodeMirrorVim (against the global CodeMirror): the extension, and Vim for
-// its ex commands and mappings.
-const CODEMIRROR_VIM_ENTRY = `export { vim, Vim, getCM } from '@replit/codemirror-vim';
+// What the Vim bundle exports as the global CodeMirrorVim (against the global CodeMirror): the extension, Vim for its ex
+// commands and mappings, and its CodeMirror adapter, whose commands undo and redo a shared text's editor takes over.
+const CODEMIRROR_VIM_ENTRY = `export { vim, Vim, getCM, CodeMirror } from '@replit/codemirror-vim';
 `;
 
 // What the Tiptap bundle exports as the global Tiptap: the editor and the extensions m-rich-text uses, and for m-coedit the
@@ -709,7 +709,7 @@ licenses/Unicode-3.0.txt, from ${UNICODE_URL}.
     noticePackages: CODEMIRROR_VIM_PACKAGES,
     noticeDedupe: true,
     build: 'esbuild --bundle --minify --format=iife --global-name=CodeMirrorVim --platform=browser --target=es2020 ' +
-      '--legal-comments=none of an entry (CODEMIRROR_VIM_ENTRY) that exports vim, Vim and getCM, with @codemirror/* aliased ' +
+      '--legal-comments=none of an entry (CODEMIRROR_VIM_ENTRY) that exports vim, Vim, getCM and CodeMirror, with @codemirror/* aliased ' +
       'to shims that read the global CodeMirror. Exposes the global CodeMirrorVim.',
     produce: (ctx) => [['codemirror/vim.min.js', ctx.esbuildCodeMirrorVim()]],
   },

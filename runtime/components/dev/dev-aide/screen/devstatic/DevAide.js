@@ -955,10 +955,13 @@
                 });
             },
             undo(tab) {
+                // a co-edited tab's history is Yjs': this user's own edits, the editor shown or not
+                if (tab && tab.collab && tab.collab.undoManager) { tab.collab.undoManager.undo(); return; }
                 const CM = root.CodeMirror;
                 if (this.current === tab && this.liveEditorView() && CM && CM.undo) CM.undo(this.liveEditorView());
             },
             redo(tab) {
+                if (tab && tab.collab && tab.collab.undoManager) { tab.collab.undoManager.redo(); return; }
                 const CM = root.CodeMirror;
                 if (this.current === tab && this.liveEditorView() && CM && CM.redo) CM.redo(this.liveEditorView());
             },

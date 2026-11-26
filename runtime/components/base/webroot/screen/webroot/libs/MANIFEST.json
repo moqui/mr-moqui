@@ -713,13 +713,13 @@
       "source": "https://registry.npmjs.org/@replit/codemirror-vim/-/codemirror-vim-6.4.0.tgz",
       "npm": "@replit/codemirror-vim@6.4.0",
       "tarballIntegrity": "sha512-t9UMDNhkmeAkl0uRbiJVotv97bGD6mf4GyJJoEbrjUqa/Pov0s9eL+4AaI0Xto3OGri17i9qwIpT0JbVlVXt8A==",
-      "build": "esbuild --bundle --minify --format=iife --global-name=CodeMirrorVim --platform=browser --target=es2020 --legal-comments=none of an entry (CODEMIRROR_VIM_ENTRY) that exports vim, Vim and getCM, with @codemirror/* aliased to shims that read the global CodeMirror. Exposes the global CodeMirrorVim.",
+      "build": "esbuild --bundle --minify --format=iife --global-name=CodeMirrorVim --platform=browser --target=es2020 --legal-comments=none of an entry (CODEMIRROR_VIM_ENTRY) that exports vim, Vim, getCM and CodeMirror, with @codemirror/* aliased to shims that read the global CodeMirror. Exposes the global CodeMirrorVim.",
       "files": [
         {
           "path": "codemirror/vim.min.js",
           "from": "build",
-          "size": 125047,
-          "sha256": "42879ed59dd1922e1cb09001e385c9c899d9e3aaca13d7143055e68d6f4d72a8"
+          "size": 125064,
+          "sha256": "959a815bb8657f54b8cb283acbc649b81da1938a621fd59d42be25b56610d761"
         }
       ]
     },

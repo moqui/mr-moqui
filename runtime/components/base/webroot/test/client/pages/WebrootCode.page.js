@@ -264,6 +264,12 @@ test("a co-edited editor takes the shared text, its undo is Yjs', and two editor
         assert.deepEqual(parts.history(), []);
         const bindings = CM.EditorState.create({ doc: "", extensions: [parts.keys()] }).facet(CM.keymap).flat();
         assert.ok(bindings.some((binding) => binding.key === "Mod-z" && globalThis.YCodeMirror.yUndoManagerKeymap.some((y) => y.run === binding.run)));
+        // an undo the user rebound runs Yjs' too, and not on Mod-z
+        vm.effectiveSettings = () => editor.normalizeSettings({ keys: { undo: "Alt-u" } });
+        const rebound = CM.EditorState.create({ doc: "", extensions: [methods.parts.call(vm, CM).keys()] }).facet(CM.keymap).flat();
+        assert.ok(rebound.some((binding) => binding.key === "Alt-u" && binding.run === globalThis.YCodeMirror.yUndoManagerKeymap[0].run));
+        assert.ok(!rebound.some((binding) => binding.key === "Mod-z"));
+        vm.effectiveSettings = () => editor.normalizeSettings(null);
         const parent = document.createElement("div");
         document.body.appendChild(parent);
         return new CM.EditorView({ parent, state: CM.EditorState.create({ doc: ytext.toString(), extensions: [parts.collab(), parts.history(), parts.keys()] }) });
@@ -273,6 +279,15 @@ test("a co-edited editor takes the shared text, its undo is Yjs', and two editor
         views[1].dispatch({ changes: { from: views[1].state.doc.length, insert: "two" } });
         assert.equal(views[0].state.doc.toString(), "one shared\ntwo");
         assert.equal(views[1].state.doc.toString(), "one shared\ntwo");
+        // Vim's undo in a shared text's editor is Yjs': only this editor's own edit goes
+        const vim = globalThis.CodeMirrorVim;
+        editor.KEYMAPS.vim(CM);
+        let undone = 0;
+        const shared = { undoManager: { undo: () => { undone++; }, redo: () => {} } };
+        methods.markShared.call({ view: views[0], collab: shared });
+        vim.CodeMirror.commands.undo({ cm6: views[0] });
+        assert.equal(undone, 1);
+        assert.ok(editor.sharedOf(views[0]) === shared && editor.sharedOf(views[1]) === null);
     } finally {
         views.forEach((view) => { view.dom.parentNode.remove(); view.destroy(); });
         sides.forEach((doc) => doc.destroy());

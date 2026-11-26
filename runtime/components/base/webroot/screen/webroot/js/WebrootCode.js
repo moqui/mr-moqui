@@ -184,9 +184,31 @@
     // it is not vendored); "vim" is @replit/codemirror-vim, its library (KEYMAP_LIBRARIES) loaded when it is picked.
     editor.KEYMAPS = editor.KEYMAPS || { default: () => [] };
     editor.KEYMAPS.vscode = (CM, rebound) => editor.vscodeKeymap(CM, rebound);
-    editor.KEYMAPS.vim = () => (root.CodeMirrorVim ? root.CodeMirrorVim.vim() : []);
+    editor.KEYMAPS.vim = () => { if (!root.CodeMirrorVim) return []; editor.vimHistory(); return root.CodeMirrorVim.vim(); };
     // A keymap's library, loaded the first time it is picked, after which the editors on the page take it.
     editor.KEYMAP_LIBRARIES = { vim: { url: "/libs/codemirror/vim.min.js", ready: () => !!root.CodeMirrorVim } };
+    // The views whose text is a shared Y.Text, with their collab ({undoManager}), for Vim's undo and redo.
+    const sharedViews = new WeakMap();
+    editor.sharedOf = (view) => sharedViews.get(view) || null;
+    // Vim's u, Ctrl-R, :undo and :redo run its CodeMirror.commands undo and redo, which use CodeMirror's history: in a
+    // shared text's editor they are Yjs' (this user's own edits), elsewhere as Vim has them. Once a page.
+    editor.vimHistory = () => {
+        const vim = root.CodeMirrorVim;
+        if (!vim || !vim.CodeMirror || vim.historyShared) return;
+        vim.historyShared = true;
+        const commands = vim.CodeMirror.commands;
+        for (const name of ["undo", "redo"]) {
+            const own = commands[name];
+            commands[name] = (cm) => {
+                const shared = cm && sharedViews.get(cm.cm6);
+                if (shared && shared.undoManager) shared.undoManager[name]();
+                else own(cm);
+            };
+        }
+        // the ex commands took the functions when Vim started: defined again over the ones above
+        vim.Vim.defineEx("undo", "u", (cm) => commands.undo(cm));
+        vim.Vim.defineEx("redo", "red", (cm) => commands.redo(cm));
+    };
     // The commands a key row rebinds (DEV_AIDE_EDITOR keys), each the bundle's function its default bindings run, which
     // finds them; save is the editor's own (Mod-S emits `save`).
     editor.COMMANDS = {
@@ -272,7 +294,8 @@
             { key: "Mod-k Mod-j", run: CM.unfoldAll, preventDefault: true },
             { key: "Mod-Shift-[", run: CM.foldCode, preventDefault: true },
             { key: "Mod-Shift-]", run: CM.unfoldCode, preventDefault: true },
-            { key: "Mod-g", run: CM.gotoLine, preventDefault: true },
+            // on a Mac Cmd-G is find next, as in VS Code: go to a line is Ctrl-G there
+            { key: "Mod-g", mac: "Ctrl-g", run: CM.gotoLine, preventDefault: true },
             { key: "Mod-h", run: CM.openSearchPanel, preventDefault: true },
             { key: "F3", run: CM.findNext, shift: CM.findPrevious, preventDefault: true },
             { key: "F8", run: CM.nextDiagnostic, shift: CM.previousDiagnostic, preventDefault: true },
@@ -448,6 +471,8 @@
         const commands = {};
         for (const [name, of] of Object.entries(editor.COMMANDS)) if (of) commands[name] = of(CM);
         const shared = collab && root.YCodeMirror;
+        // a rebound undo or redo of a shared text runs Yjs' (yUndoManagerKeymap: undo, then redo)
+        if (shared) { commands.undo = root.YCodeMirror.yUndoManagerKeymap[0].run; commands.redo = root.YCodeMirror.yUndoManagerKeymap[1].run; }
         const base = [].concat(CM.closeBracketsKeymap, CM.defaultKeymap, CM.searchKeymap, shared ? root.YCodeMirror.yUndoManagerKeymap : CM.historyKeymap,
             CM.foldKeymap, CM.completionKeymap, CM.lintKeymap, [CM.indentWithTab]);
         const keymap = editor.KEYMAPS[settings.keymap] || editor.KEYMAPS.default;
@@ -607,6 +632,7 @@
                     if (text !== now) this.view.dispatch({ changes: editor.textChange(now, text) });
                 }
                 ["collab", "history", "keys"].forEach((key) => this.reconfigure(key));
+                this.markShared();
             }
         },
         mounted() {
@@ -634,6 +660,12 @@
             // the settings this editor follows: its own, else the page's
             effectiveSettings() { return this.settings ? editor.normalizeSettings(this.settings) : editor.settings; },
             applySettings() { ["settings", "keys", "wrap"].forEach((key) => this.reconfigure(key)); },
+            // the view's shared text, for Vim's undo and redo
+            markShared() {
+                if (!this.view) return;
+                if (this.collab && this.collab.undoManager && root.YCodeMirror) sharedViews.set(this.view, this.collab);
+                else sharedViews.delete(this.view);
+            },
             // a language of the second bundle: the bundle, then the language (plain text until it loads, or if it fails)
             takeLanguage() {
                 if (!editor.LEGACY_LANGUAGES[this.resolvedLanguage] || root.CodeMirrorLegacy) return;
@@ -677,6 +709,7 @@
                     this.view = new CM.EditorView({ state: kept.state, parent: this.$refs.host });
                     ["language", "theme", "readOnly", "wrap", "accessibility", "highlight", "blame", "settings", "keys", "history", "collab"].forEach((key) => this.reconfigure(key));
                     if (this.autofocus) this.view.focus();
+                    this.markShared();
                     this.ready = true;
                     this.reveal();
                     this.$emit("ready", this.view);
@@ -718,6 +751,7 @@
                     parent: this.$refs.host
                 });
                 if (this.autofocus) this.view.focus();
+                this.markShared();
                 this.ready = true;
                 this.reveal();
                 this.$emit("ready", this.view);
