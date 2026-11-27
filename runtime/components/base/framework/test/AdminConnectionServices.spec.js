@@ -588,3 +588,36 @@ feature("a relay's link base URL is on one of the instance's own names", {
         out.row.webBaseUrl === "https://localhost/app"
     }
 })
+
+// SEC-ADM-88: a kind marked not creatable starts no connection, also when the save names a key that loads nothing
+feature("a key that names no connection starts none of a kind that is not creatable", {
+    when() {
+        const out = {}
+        const adapter = () => ec.entity.find("moqui.server.ConnectionAdapter").condition({adapterKey: "printer"}).disableAuthz().one()
+        const flag = adapter().creatable
+        const set = value => {
+            const row = adapter()
+            row.creatable = value
+            row.update()
+        }
+        set("N")
+        try {
+            asRecent(users.manage, () => {
+                out.ghost = invoke(C + "store#Connection", {
+                    adapterKey: "printer",
+                    connectionKey: "SPEC_CONN_GHOST",
+                    values: {connectionId: "SPEC_CONN_GHOST", description: "Ghost", serverHost: "print.example.com", printerName: "ghost"}
+                })
+            })
+        } finally {
+            set(flag)
+        }
+        out.row = one(PRINTER, {networkPrinterId: "SPEC_CONN_GHOST"})
+        return out
+    },
+    then(out) {
+        out.ghost.reasonCode === "NOT_CREATABLE"
+        out.row == null
+    }
+})
+

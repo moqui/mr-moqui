@@ -551,3 +551,22 @@ feature("a restricted column is shown only to a holder of its permission and cle
         out.viewer.report.reportCsv.includes("Spec restricted bad")
     }
 })
+
+// SEC-ADM-86: a translation with markup is refused by the import's row services as store#LocalizedMessage refuses it,
+// though their rowValues map is not looked inside by the parameter check
+feature("a translation with markup is refused by the import's row services", {
+    when() {
+        const rowValues = {original: "Spec transfer markup", locale: "es", localized: "<img src=x onerror=alert(1)>"}
+        const prefix = "org.moqui.admin.ConfigurationServices."
+        return {
+            validated: invoke(prefix + "validate#MessageTranslationRow", {rowValues}),
+            applied: invoke(prefix + "apply#MessageTranslationRow", {rowValues})
+        }
+    },
+    then({validated, applied}) {
+        validated.valid == false
+        has(Array.from(validated.errors || []).join(" "), /markup/)
+        applied.applied == false
+        translation("Spec transfer markup", "es") == null
+    }
+})
