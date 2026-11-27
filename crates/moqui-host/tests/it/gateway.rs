@@ -673,6 +673,19 @@ fn the_gateway_passes_calls_through_with_keys_quotas_and_usage_on_postgres() {
     anonymous.read_exact(&mut first).unwrap();
     assert_eq!(&first, b"HTTP/1.1 401", "{}", String::from_utf8_lossy(&first));
     drop(anonymous);
+    // and a credential that does not open the gateway: its head is checked before more than 64 KiB is read
+    let mut wrong = TcpStream::connect(address).unwrap();
+    wrong.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+    write!(
+        wrong,
+        "POST /llm/v1/chat/completions HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer x\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{{",
+        16 * 1024 * 1024
+    )
+    .unwrap();
+    let mut first = [0u8; 12];
+    wrong.read_exact(&mut first).unwrap();
+    assert_eq!(&first, b"HTTP/1.1 401", "{}", String::from_utf8_lossy(&first));
+    drop(wrong);
     let (status, _, _) = send(
         address,
         "Bearer 0123456789012345678901234567890123456789",

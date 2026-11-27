@@ -972,6 +972,22 @@ fn route(method: &str, path: &str) -> Result<Route, Reply> {
 
 /// Serve a request under `/llm/v1` (`request.path` is the rest) on a request worker: authenticate it, check it, take
 /// the host's room for it (`open`), and hand the model call to the host. 404 while the gateway is off.
+/// Whether the request's credentials open the gateway, its body not read yet: the head of a request whose body may be
+/// larger than a host reads before it knows the caller (SEC-AI-88). The login ends here; [`serve`] makes its own.
+///
+/// # Errors
+///
+/// The reply [`serve`] would send for these credentials (off, 401, 403).
+pub fn authenticate_head(factory: &Arc<ExecutionContextFactory>, request: &HttpRequest) -> Result<(), Reply> {
+    if !enabled(factory) {
+        return Err(off());
+    }
+    let facade = super::run::facade_of(factory).map_err(|error| internal(&error, "a request"))?;
+    let caller = authenticate(factory, &facade, request);
+    let _ = moqui_core::user::logout_local();
+    caller.map(drop)
+}
+
 pub fn serve(factory: &Arc<ExecutionContextFactory>, request: &HttpRequest, open: Open<'_>) -> Answer {
     if !enabled(factory) {
         return Answer::Reply(off());
