@@ -776,7 +776,7 @@
       "source": "https://registry.npmjs.org/ol/-/ol-10.11.0.tgz",
       "npm": "ol@10.11.0",
       "tarballIntegrity": "sha512-OJ+lrx7kx/1O7Xx18Ff9QkVnwZIEL0OuhJQSy2sYgzzDvyZ2qHvuZEGAajbSstUyBwaS1OtQ4RWnY84tRMDdqg==",
-      "build": "geotiff's dist-module/worker/create.js replaced by patches/geotiff-3.1.0-beta.0-worker-create.js (its original's SHA-256 checked first), then esbuild --bundle --minify --splitting --format=esm --platform=browser --target=es2020 --legal-comments=none of three entries, ol-map (OPENLAYERS_ENTRY), ol-raster (RASTER_ENTRY: the GeoTIFF source, the WebGL tile layer, proj4 and its register, the projection lookup refused) and ol-tiff-decoder (TIFF_WORKER_ENTRY, a module worker), into shared chunks under openlayers/chunks/, every file named by its hash ([name]-[hash].min.js), with openlayers/ol-map.json naming the three entries. ol-map is an entry (OPENLAYERS_ENTRY) that exports Map, View, Overlay, Geolocation, Feature, Collection, unByKey, the projection and extent helpers, the Tile, Vector, VectorTile, Image and Group layers, the XYZ, Vector, VectorTile, TileWMS, ImageWMS and WMTS sources, the WMTS tile grid from a recorded matrix set, the bbox loading strategy, the GeoJSON, GPX, KML, TopoJSON and MVT formats, Point and polygonFromExtent, the controls, the interactions (Select, Modify, Draw and Snap among them), the style classes, ol-mapbox-style's apply, applyStyle and applyBackground, PMTilesVectorSource and PMTilesRasterSource, and PMTiles, FetchSource and FileSource; m-map sets it as the global MoquiOl. The build fails when the bundle holds an unreviewed package, evaluates code, or names an unreviewed host.",
+      "build": "geotiff's dist-module/worker/create.js replaced by patches/geotiff-3.1.0-beta.0-worker-create.js (its original's SHA-256 checked first), then esbuild --bundle --minify --splitting --format=esm --platform=browser --target=es2020 --legal-comments=none of three entries, ol-map (OPENLAYERS_ENTRY), ol-raster (RASTER_ENTRY: the GeoTIFF source, the WebGL tile layer, proj4 and its register, the projection lookup refused) and ol-tiff-decoder (TIFF_WORKER_ENTRY, a module worker), into shared chunks under openlayers/chunks/, every file named by its hash ([name]-[hash].min.js), with openlayers/ol-map.json naming the three entries and openlayers/parts.json the files of the main part (its entry and the chunks it imports, ol.css and ol-map.json), which the desktop and mobile shell bundles alone. ol-map is an entry (OPENLAYERS_ENTRY) that exports Map, View, Overlay, Geolocation, Feature, Collection, unByKey, the projection and extent helpers, the Tile, Vector, VectorTile, Image and Group layers, the XYZ, Vector, VectorTile, TileWMS, ImageWMS and WMTS sources, the WMTS tile grid from a recorded matrix set, the bbox loading strategy, the GeoJSON, GPX, KML, TopoJSON and MVT formats, Point and polygonFromExtent, the controls, the interactions (Select, Modify, Draw and Snap among them), the style classes, ol-mapbox-style's apply, applyStyle and applyBackground, PMTilesVectorSource and PMTilesRasterSource, and PMTiles, FetchSource and FileSource; m-map sets it as the global MoquiOl. The build fails when the bundle holds an unreviewed package, evaluates code, or names an unreviewed host.",
       "patches": [
         {
           "path": "patches/geotiff-3.1.0-beta.0-worker-create.js",
@@ -897,6 +897,12 @@
           "from": "build",
           "size": 432,
           "sha256": "46c538800133d9fc90d3062b0008d311479fa4d29023b31e2d64f348ed550f5e"
+        },
+        {
+          "path": "openlayers/parts.json",
+          "from": "build",
+          "size": 121,
+          "sha256": "9980e0b069f9e0e9cf2000336f6a5cc6a85cb4e1c02345c3e2ccc8cc18a69386"
         }
       ]
     },

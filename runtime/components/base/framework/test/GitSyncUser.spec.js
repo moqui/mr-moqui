@@ -37,6 +37,8 @@ feature("a sync runs as another user only for a holder of ADMIN_LOGIN_AS", {
             make("moqui.security.ArtifactGroup", {artifactGroupId: "GSU_SYNCERS", description: "Git sync spec"})
             make("moqui.security.ArtifactGroupMember", {artifactGroupId: "GSU_SYNCERS", artifactName: "org.moqui.report.gitSync", artifactTypeEnumId: "AT_SERVICE"})
             make("moqui.security.ArtifactGroupMember", {artifactGroupId: "GSU_SYNCERS", artifactName: STORE, artifactTypeEnumId: "AT_SERVICE"})
+            // the repository the syncs read and write (SEC-TLS-108)
+            make("moqui.security.ArtifactGroupMember", {artifactGroupId: "GSU_SYNCERS", artifactName: "git-sync-spec", artifactTypeEnumId: "AT_GIT_REPOSITORY"})
             make("moqui.security.ArtifactAuthz", {artifactAuthzId: "GSU_SYNCERS", artifactGroupId: "GSU_SYNCERS", userGroupId: "GSU_SYNCERS",
                 authzTypeEnumId: "AUTHZT_ALLOW", authzActionEnumId: "AUTHZA_ALL"})
         })
@@ -86,5 +88,27 @@ feature("a sync runs as another user only while its storer still holds ADMIN_LOG
     },
     then({error}) {
         error.includes("no longer holds ADMIN_LOGIN_AS")
+    },
+})
+
+// SEC-TLS-108: a sync reads and writes its repository through git:// resources, which check no access of their own, so
+// storing one asks the caller's update of the repository, and a run asks its user's (update to push, view to pull)
+feature("a sync of a repository its storer or its user may not write is refused", {
+    when() {
+        sys(() => make("moqui.resource.GitRepository", {repositoryId: "git-sync-closed"}))
+        const stored = storeAs("gsu.syncer", {syncId: "GSU_CLOSED", userId: "GSU_SYNCER", repositoryId: "git-sync-closed"})
+        sys(() => make("moqui.report.DefinitionGitSync", {syncId: "GSU_CLOSED_RUN", folder: "GitSyncSpec", repositoryId: "git-sync-closed",
+            userId: "GSU_SYNCER", storedByUserId: "GSU_SYNCER", enabled: "Y"}))
+        let pushed = ""
+        try { call("org.moqui.report.ReportServices.push#DefinitionGitSync", {syncId: "GSU_CLOSED_RUN"}) } catch (e) { pushed = String(e.message) }
+        pushed += ec.message.getErrorsString()
+        ec.message.clearErrors()
+        const row = sys(() => ec.entity.find("moqui.report.DefinitionGitSync").condition("syncId", "GSU_CLOSED").one())
+        return {stored, pushed, row}
+    },
+    then({stored, pushed, row}) {
+        stored.includes("git-sync-closed")
+        row == null
+        pushed.includes("git-sync-closed")
     },
 })

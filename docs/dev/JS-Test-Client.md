@@ -453,7 +453,7 @@ feature.
 
 | Page | |
 |---|---|
-| `goto(path)` | Navigate, wait for the load event (for the page's timeout, and at least 30 s), then settle. `{ status, url }` of the document response. On an offline page a path is on `https://moqui.test` |
+| `goto(path)` | Navigate, wait for the load event (for the page's timeout, and at least 30 s), then settle. `{ status, url, headers }` of the document response: `headers` an object of its headers by name in lower case (`res.headers["referrer-policy"]`), a repeated header's values joined by a line break, empty when no response came. On an offline page a path is on `https://moqui.test` |
 | `setContent(html)` | Offline only. The document at `https://moqui.test/`, so `/js`, `/css` and `/libs` resolve on that origin |
 | `addScript(path \| { content })`, `addStyle(path \| { content })` | A path on the page's origin, waited on until it loads, or an inline script or stylesheet |
 | `keyboard.type(text)`, `keyboard.press(key)` | `type` sends key events, one character at a time. `fill` inserts text and does not send keys |

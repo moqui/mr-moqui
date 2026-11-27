@@ -772,6 +772,17 @@ fn a_section_include_inside_an_included_section_finds_the_nested_sections_of_wha
     }
 }
 
+/// SEC-SCR-88: a field's widgets are one cell, guarded and quoted once: a second widget's comma and formula stay inside
+/// the quoted cell, and a cell that starts as a formula gets its apostrophe whichever widget wrote it.
+#[test]
+fn csv_guards_and_quotes_a_cell_of_two_widgets_once() {
+    let context = ExecutionContextFactory::test_context();
+    assert_eq!(
+        body(context.factory(), "/CsvGuardPair.csv", &[]),
+        "Code,After\n\"A12x,=1+cmd|' /C calc'!A0,y\",after\n'=B1plain,after\n"
+    );
+}
+
 #[test]
 fn csv_guards_formula_text_and_quotes_a_carriage_return() {
     let context = ExecutionContextFactory::test_context();

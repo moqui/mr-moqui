@@ -477,6 +477,77 @@ fn a_server_not_allowed_the_private_network_is_refused_on_production_and_credent
     );
 }
 
+/// COM-UI-040: a password refused by a POP3, IMAP or SMTP server was shown as "the connection was refused".
+#[test]
+fn a_refused_sign_in_is_shown_as_such_whatever_its_text_or_host() {
+    // the kind for POP3, IMAP and SMTP though the text says "refused", and a host named for TLS is not a TLS failure
+    assert_eq!(
+        super::test_failure_kind(
+            "POP3 pop.example.com refused the sign-in: mail server rejected the command: -ERR [AUTH] bad password"
+        ),
+        "the sign-in was refused"
+    );
+    assert_eq!(
+        super::test_failure_kind("IMAP imap.example.com refused the sign-in: No Response: LOGIN failed"),
+        "the sign-in was refused"
+    );
+    assert_eq!(
+        super::test_failure_kind("permanent error (535): 5.7.8 Authentication failed"),
+        "the sign-in was refused"
+    );
+    assert_eq!(
+        super::test_failure_kind("POP3 ssl.example.com refused the sign-in: mail server rejected the command: -ERR no"),
+        "the sign-in was refused"
+    );
+    assert_eq!(
+        super::test_failure_kind("IMAP ssl.example.com:993 sign-in: Connection refused (os error 61)"),
+        "the connection was refused"
+    );
+    assert_eq!(
+        super::test_failure_kind("POP3 mail.example.com: invalid peer certificate: UnknownIssuer"),
+        "TLS failed"
+    );
+    assert_eq!(
+        super::sign_in_failure("t", "tls.example.com:995", "POP3 tls.example.com refused: -ERR x", &[]),
+        "the sign-in was refused"
+    );
+    // an SMTP reply code of a refused sign-in is read before the network words of its text
+    assert_eq!(
+        super::test_failure_kind("permanent error (535): 5.7.8 TLS session ended, connection reset"),
+        "the sign-in was refused"
+    );
+    // 530 asking for STARTTLS is a TLS failure, not a refused sign-in
+    assert_eq!(
+        super::test_failure_kind("permanent error (530): 5.7.0 Must issue a STARTTLS command first"),
+        "TLS failed"
+    );
+    assert_eq!(
+        super::test_failure_kind("permanent error (530): 5.7.0 Authentication required"),
+        "the sign-in was refused"
+    );
+    assert_eq!(
+        super::test_failure_kind("SMTP auth.example.com:587: connection timed out"),
+        "the connection timed out"
+    );
+}
+
+/// COM-UI-040 review: a busy or failing POP3 server, and a refused STLS, are not a refused sign-in.
+#[cfg(feature = "imap")]
+#[test]
+fn a_busy_pop3_server_is_not_a_refused_sign_in() {
+    use crate::sync::{pop_failure, SyncFailure};
+    let auth = |text: &str| matches!(pop_failure("pop.example.com", text), SyncFailure::Auth(_));
+    assert!(auth("mail server rejected the command: -ERR [AUTH] invalid password"));
+    assert!(!auth("mail server rejected the command: -ERR [IN-USE] mailbox locked"));
+    assert!(!auth("mail server rejected the command: -ERR [SYS/TEMP] try later"));
+    assert!(!auth("mail server rejected the command: -ERR [login-delay] wait"));
+    assert!(!auth("POP3 server refused STLS"));
+    assert_eq!(
+        super::test_failure_kind(&pop_failure("pop.example.com", "POP3 server refused STLS").to_string()),
+        "TLS failed"
+    );
+}
+
 #[test]
 fn host_suffix_matches_on_a_dot_boundary() {
     assert!(host_in("", "smtp.example.com"));

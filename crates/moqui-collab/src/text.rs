@@ -450,6 +450,15 @@ pub(crate) fn apply(key: &str, user_id: &str, update: &[u8]) -> Result<(), Refus
             "the server co-edits as many bytes of files as it may: save the file and open it again",
         ));
     }
+    // the one text and nothing nested in it, before anything of it is applied (SEC-TLS-118)
+    let shape = crate::nesting::Shape {
+        roots: &[TEXT_NAME],
+        nested: crate::nesting::Nested::None,
+    };
+    crate::nesting::Nesting::default()
+        .check(&room.doc, shape, update)
+        .map(drop)
+        .map_err(|(status, why)| Refusal::new(status, why))?;
     let size = update.len();
     let update = Update::decode_v1(update).map_err(|err| Refusal::new(400, format!("not a Yjs update: {err}")))?;
     room.doc

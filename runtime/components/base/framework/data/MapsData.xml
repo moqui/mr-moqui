@@ -128,7 +128,7 @@ along with this software (see the LICENSE.md file). If not, see
             errorTitleTemplate="Map overlay not simplified: see Maps › Layers" linkTemplate="/qapps/maps/Browse"/>
     <moqui.service.job.ServiceJob jobName="MapOverlayTiles" description="Simplify a map overlay into vector tiles"
             serviceName="org.moqui.maps.MapSourceServices.build#OverlayTiles" topic="MapOverlayTiles" transactionTimeout="3600"/>
-    <!-- an offline map package built from what its owner may see (MapPackages.js buildPackage, plans/Maps-Offline.md §2.2):
+    <!-- an offline map package built from what its owner may see (MapPackages.js buildPackage, plans/archive/Maps-Offline.md §2.2):
         started by whichever request or build's end found the installation room for it, so the run signs in as the
         package's owner, and the owner alone is told when it ends (the build sends the topic's notification itself, directly
         to them: the job has no topic, which would tell the user who started it). A regional cut may take long, so its

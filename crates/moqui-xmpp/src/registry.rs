@@ -17,6 +17,8 @@
 //! - **Chat pushes.** The host subscribes to the notification bus as `/notws` does and hands each chat push here
 //!   ([`Registry::deliver_notice`]): the same `chatRoom:`, `chatUser:` and `userStatus` messages the web client gets,
 //!   to every session of the users the push names. So web and XMPP see the same events, from one source.
+//!   A location share's positions for its XMPP contacts come the same way, on `locationShareXmpp:<shareId>` to those
+//!   contacts' users only (plans/archive/Location-Sharing.md §3.6).
 //! - **Between sessions.** A stanza to another local user's full JID (Jingle, a PEP notification) goes to that session.
 //! - **Resumption.** A session whose connection dropped with stream management on waits, detached, for
 //!   [`crate::Config::resume_timeout`]; a new connection takes it over by its id ([`Registry::take_detached`]).
@@ -33,6 +35,8 @@ use moqui_lib::sync::lock;
 use serde_json::Value as Json;
 use tokio::sync::{mpsc, oneshot, Notify};
 
+/// The topic prefix of a location share's pushes to its XMPP contacts (`locationShareXmpp:<shareId>`, LocationShares.js).
+pub const LOCATION_TOPIC: &str = "locationShareXmpp:";
 /// How many pushes may wait for one session before it is closed as too slow (the client resumes or reconnects).
 pub const QUEUE: usize = 512;
 /// How many detached sessions one user may have waiting for resumption; a session dropped past this ends.
@@ -148,7 +152,14 @@ impl Registry {
         let Some(topic) = body.get("topic").and_then(Json::as_str) else {
             return;
         };
-        if !(topic.starts_with("chatRoom:") || topic.starts_with("chatUser:") || topic == "userStatus") {
+        // a location share's positions and its end for its XMPP contacts, and the owner's headline
+        // (plans/archive/Location-Sharing.md §3.6): the same users' browsers that follow every topic (WebrootChat.js registers
+        // ALL) get them too, as theirs
+        if !(topic.starts_with("chatRoom:")
+            || topic.starts_with("chatUser:")
+            || topic == "userStatus"
+            || topic.starts_with(LOCATION_TOPIC))
+        {
             return;
         }
         let users: HashSet<&str> = body

@@ -149,6 +149,10 @@ class MainActivity : TauriActivity() {
   override fun onResume() {
     super.onResume()
     ChatNotifications.foreground = true
+    // a live location share is started only from the app in front (LocationShare.start); one paused for an audience
+    // that grew after the person's Send is asked again here
+    LocationShare.foreground = true
+    LocationShare.confirmPaused(this)
     // the screen off at the ear follows the app coming to the front
     CallAudio.changed(null)
     // the contacts allowed in Android's settings while the app was away: the page names its phone rooms again
@@ -159,6 +163,7 @@ class MainActivity : TauriActivity() {
 
   override fun onPause() {
     ChatNotifications.foreground = false
+    LocationShare.foreground = false
     // and the app going to the back: the lock goes
     CallAudio.changed(null)
     super.onPause()
@@ -169,6 +174,7 @@ class MainActivity : TauriActivity() {
     super.onRequestPermissionsResult(requestCode, permissions, grantResults)
     if (requestCode == ASK_CALLS) askForFullScreenOnce()
     if (requestCode == PhoneBook.ASK_CONTACTS) PhoneBook.answered(this)
+    if (requestCode == LocationShare.ASK_LOCATION) LocationShare.answered()
   }
 
   private companion object {

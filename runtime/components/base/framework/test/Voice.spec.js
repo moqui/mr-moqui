@@ -151,9 +151,15 @@ feature("a trunk moved to another host, port, transport or user keeps no passwor
         const user = admin("store#VoiceTrunk", {voiceTrunkId: trunkId, username: "taker"})
         const afterUser = password()
         admin("store#VoiceTrunk", {voiceTrunkId: trunkId, username: "spec", password: "secret-1"})
-        return {renamed, keptOnRename, movedWith, keptWithPassword, moved, afterMove, user, afterUser}
+        // SEC-OUT-86: another provider profile is another way of signing in
+        const profile = admin("store#VoiceTrunk", {voiceTrunkId: trunkId, providerProfileEnumId: "VppPlainLan"})
+        const afterProfile = password()
+        admin("store#VoiceTrunk", {voiceTrunkId: trunkId, providerProfileEnumId: "VppGeneric", password: "secret-1"})
+        return {renamed, keptOnRename, movedWith, keptWithPassword, moved, afterMove, user, afterUser, profile, afterProfile}
     },
-    then({renamed, keptOnRename, movedWith, keptWithPassword, moved, afterMove, user, afterUser}) {
+    then({renamed, keptOnRename, movedWith, keptWithPassword, moved, afterMove, user, afterUser, profile, afterProfile}) {
+        profile.passwordCleared == true
+        afterProfile == null
         renamed.passwordCleared == false
         keptOnRename == "secret-1"
         movedWith.passwordCleared == false

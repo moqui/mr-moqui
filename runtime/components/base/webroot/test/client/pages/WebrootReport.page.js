@@ -1040,7 +1040,55 @@ test('a geomap country or point opens Maps there only where the dashboard offers
         // without the link the geomap is as it was: nothing to follow
         assert.equal(plain.target.querySelector('svg [data-country="250"]').getAttribute('role'),null);
         assert.equal(plain.target.querySelectorAll('svg [data-maps-url]').length,0);
-    } finally {report.navigate=navigate;for(const each of [offered,points,plain]){each.app.unmount();each.target.remove();}}
+    } finally {report.navigate=navigate;sessionStorage.removeItem(report.geomapReturnKey);for(const each of [offered,points,plain]){each.app.unmount();each.target.remove();}}
+});
+test('Back from Maps focuses the geomap country that opened it once the outline has drawn it again (MAP-UI-001)',async()=>{
+    const saved=(await report.loadOutline(),[report.outline,report.outlineLoading]),fetch=window.fetch,navigate=report.navigate,navigationType=report.navigationType,visited=[];
+    report.navigate=href=>visited.push(href);
+    // the page loading again: how it came, then the read its script makes as it loads
+    const load=type=>{report.navigationType=()=>type;report.takeGeomapReturn();};
+    const frame={fields:[{name:'countryGeoId',type:'string',values:['FJI']},{name:'sales',type:'number',values:[3]}]},mounted=[];
+    const mount=async(panelId)=>{const target=document.createElement('div');document.body.appendChild(target);
+        const app=Vue.createApp(moqui.qvtComponents['m-report-panel'],{frame,panel:{visualization:'geomap'},panelId,appLinks:{maps:'/apps/maps/Browse'}});app.mount(target);await Vue.nextTick();mounted.push({target,app});return target;};
+    const fiji=target=>target.querySelector('svg [data-country="242"]');
+    let release=()=>{};
+    try {
+        const left=await mount('sales');
+        fiji(left).focus();fiji(left).dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));
+        assert.equal(visited.length,1);
+        mounted.pop().app.unmount();left.remove();
+        // Maps loads this script too: the place stays for the dashboard
+        assert.ok(sessionStorage.getItem(report.geomapReturnKey));
+        // the page comes again (Back), and its outline after it: nothing to focus until the outline draws the country
+        load('back_forward');
+        assert.equal(sessionStorage.getItem(report.geomapReturnKey),null,'the place is read once, as the page loads');
+        const held=new Promise(resolve=>{release=resolve;});
+        report.outline=null;report.outlineLoading=null;window.fetch=(...args)=>held.then(()=>fetch(...args));
+        const other=await mount('other'),back=await mount('sales');
+        assert.equal(fiji(back),null);assert.equal(document.activeElement,document.body);
+        release();await report.loadOutline();await Vue.nextTick();
+        assert.equal(document.activeElement,fiji(back),'the country that opened Maps has the focus');
+        assert.notEqual(document.activeElement,fiji(other));
+        // Enter opens it again
+        document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));
+        assert.deepEqual(visited,[visited[0],visited[0]]);
+        const unfocused=async(note)=>{document.activeElement.blur();const panel=await mount('sales');assert.ok(fiji(panel));assert.equal(document.activeElement,document.body,note);};
+        // the same dashboard reached later by a link is no return: the place left for it is dropped, not focused
+        load('navigate');
+        assert.equal(sessionStorage.getItem(report.geomapReturnKey),null);
+        await unfocused('a visit by a link');
+        // a panel drawn after the viewer acted takes no focus
+        fiji(back).dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));load('back_forward');
+        window.dispatchEvent(new PointerEvent('pointerdown'));
+        await unfocused('a panel drawn after a click');
+        // a place left from another page is not taken here, and stays for that page
+        sessionStorage.setItem(report.geomapReturnKey,JSON.stringify({page:'/apps/other/Dashboard',panel:'sales',country:'242'}));
+        load('back_forward');
+        await unfocused('another page');
+        assert.notEqual(sessionStorage.getItem(report.geomapReturnKey),null);
+    } finally {window.fetch=fetch;release();report.outline=saved[0];report.outlineLoading=saved[1];report.navigate=navigate;report.navigationType=navigationType;
+        sessionStorage.removeItem(report.geomapReturnKey);report.clearGeomapReturn();
+        for(const each of mounted){each.app.unmount();each.target.remove();}}
 });
 test('a repeated copy shows its own variable value and edits the panel it repeats',async()=>{
     const target=document.createElement('div');document.body.appendChild(target);const navigate=report.navigate,visited=[];report.navigate=href=>visited.push(href);

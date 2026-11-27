@@ -1978,4 +1978,55 @@ test("with no host, as on the web, a message's changes are asked of the server a
         window.moquiDesktop = desktop;
     }
 });
+
+test("a live location's card (plans/archive/Location-Sharing.md §3.5): its position and age from liveLocation, moved by its share's pushes, and Live location ended at its end; the owner's says whom it was shared with", async () => {
+    const vm = await openRoom();
+    const thruDate = Date.now() + 3600000;
+    answers["/apps/BasicComms/Chat/liveLocation"] = (params) => (Number(params.eventSeq) === 40
+        ? { state: "live", owner: false, share: { shareId: "LS1", label: "Bob", thruDate, approximate: false },
+            latest: { latitude: 40.7452, longitude: -111.875, accuracy: 9, ageSeconds: 120 } }
+        : { state: "live", owner: true, share: { shareId: "LS2", label: "Ann", thruDate, approximate: false, sentFromDevice: false, audienceCount: 1,
+            leftRoomNames: ["Cat"], intervalSeconds: 5 }, latest: null });
+    // the messages carry their shares' ids, never a position
+    push(message(40, "Live location: Bob, until 15:30", { location: { liveShareId: "LS1", label: "Bob", thruDate, source: "live" } }));
+    push(message(41, "Live location: Ann, until 15:30", { senderUserId: "ann", senderName: "Ann", location: { liveShareId: "LS2", label: "Ann", thruDate, source: "live" } }));
+    const coordinates = await until(() => document.querySelector(".m-chat-live[data-live-state='live'] .m-chat-location-coordinates"), "the live card's position");
+    const card = coordinates.closest(".m-chat-live");
+    assert.ok(coordinates.textContent.includes("40.7452, -111.875"), coordinates.textContent);
+    assert.ok(card.querySelector(".m-chat-live-age").textContent.includes("2 min ago"), card.textContent);
+    assert.ok(card.querySelector(".m-chat-location-open"), "Open in maps while it is live");
+    assert.ok(!card.querySelector(".m-chat-live-stop"), "no Stop for a viewer");
+    // the share's topic is followed while it is live; a push of it moves the position and makes it fresh
+    const client = root.notificationClient;
+    await until(() => (client.topicListeners["locationShare:LS1"] || []).length, "the share's topic followed");
+    const share = (message) => socket.onmessage({ data: JSON.stringify({ topic: "locationShare:LS1", message }) });
+    share({ shareId: "LS1", event: "position", latitude: 40.75, longitude: -111.88, accuracy: 5, observedDate: Date.now() });
+    await until(() => card.querySelector(".m-chat-location-coordinates").textContent.includes("40.75, -111.88"), "the pushed position");
+    assert.ok(card.querySelector(".m-chat-live-age").textContent.includes("just now"), card.textContent);
+    // the owner's card: whom it was shared with, where it is sent from, Stop
+    const own = await until(() => Array.from(document.querySelectorAll(".m-chat-live")).find((el) => el.querySelector(".m-chat-live-audience")), "the owner's card");
+    assert.ok(own.textContent.includes("Shared with the members of the room when you started it"), own.textContent);
+    assert.ok(own.querySelector(".m-chat-live-stop") && own.querySelector(".m-chat-live-here"), "Stop and Send from here");
+    assert.ok(own.querySelector(".m-chat-live-left").textContent.includes("No longer in the room, still sees it: Cat"), own.textContent);
+    // deleting the owner's message says the share goes on, and offers to stop it too
+    vm.redact({ eventSeq: 41, event: eventOf(vm, 41) });
+    const asking = await until(() => document.querySelector(".q-dialog .m-chat-live-delete, .q-dialog"), "the delete dialog");
+    await until(() => asking.textContent.includes("does not stop sharing your live location"), "the note that the share goes on");
+    assert.ok(asking.textContent.includes("Also stop sharing my live location"), asking.textContent);
+    // Delete with it chosen (the default): the share is stopped too
+    answers["/apps/BasicComms/Chat/stopLiveLocation"] = () => ({ applied: true });
+    await answerDialog("Delete");
+    const stops = await until(() => asked("/apps/BasicComms/Chat/stopLiveLocation", "POST").length && asked("/apps/BasicComms/Chat/stopLiveLocation", "POST"),
+        "the share stopped with its message");
+    assert.equal(stops[0].params.shareId, "LS2");
+    delete answers["/apps/BasicComms/Chat/stopLiveLocation"];
+    // its end: Live location ended, nothing to open, the topic let go
+    share({ shareId: "LS1", event: "ended" });
+    await until(() => card.getAttribute("data-live-state") === "ended", "the ended card");
+    assert.ok(card.textContent.includes("Live location ended"), card.textContent);
+    assert.ok(!card.querySelector(".m-chat-location-open"), "nothing to open once it ended");
+    await until(() => !client.topicListeners["locationShare:LS1"], "the topic let go");
+    assert.ok(vm.events.some((event) => Number(event.eventSeq) === 40));
+    delete answers["/apps/BasicComms/Chat/liveLocation"];
+});
 })();

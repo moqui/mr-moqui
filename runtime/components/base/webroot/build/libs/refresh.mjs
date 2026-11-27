@@ -278,6 +278,11 @@ const GEOTIFF_WORKER_CREATE = 'patches/geotiff-3.1.0-beta.0-worker-create.js';
 // with a fixed name is this map of the entries, openlayers/ol-map.json ({main, raster, decoder}), which m-map fetches with
 // cache: "no-cache" (revalidated each time, a 304 when it is unchanged) before it imports the main entry by its name.
 const OPENLAYERS_FILES = 'openlayers/ol-map.json';
+// The files of each part a client bundles alone (plans/archive/Maps-Offline.md §2.5): {main: [...]}, each path relative to
+// openlayers/, the main entry with every chunk it imports (statically or dynamically) and ol.css and ol-map.json. The
+// desktop and mobile shell stages only these (crates/moqui-desktop/shell/libs.txt "openlayers main"): no COG layer is
+// packaged, so the raster part and its decoders stay out.
+const OPENLAYERS_PARTS = 'openlayers/parts.json';
 const GEOTIFF_WORKER_CREATE_ORIGINAL = '22990a381113766c0fd034548948f3de3ae4de4c392d278304b33fd1634078bd';
 // lerc's package carries no license file: the notice of its LercDecode.js, and the Apache License 2.0's text, which is the
 // web-worker package's LICENSE file in the same tree (the license itself, unchanged)
@@ -844,7 +849,8 @@ licenses/Unicode-3.0.txt, from ${UNICODE_URL}.
       '--legal-comments=none of three entries, ol-map (OPENLAYERS_ENTRY), ol-raster (RASTER_ENTRY: the GeoTIFF source, the ' +
       'WebGL tile layer, proj4 and its register, the projection lookup refused) and ol-tiff-decoder (TIFF_WORKER_ENTRY, a ' +
       'module worker), into shared chunks under openlayers/chunks/, every file named by its hash ([name]-[hash].min.js), ' +
-      'with openlayers/ol-map.json naming the three entries. ol-map is an entry (OPENLAYERS_ENTRY) that exports Map, View, Overlay, Geolocation, Feature, ' +
+      'with openlayers/ol-map.json naming the three entries and openlayers/parts.json the files of the main part (its entry and ' +
+      'the chunks it imports, ol.css and ol-map.json), which the desktop and mobile shell bundles alone. ol-map is an entry (OPENLAYERS_ENTRY) that exports Map, View, Overlay, Geolocation, Feature, ' +
       'Collection, unByKey, the projection and extent helpers, the Tile, Vector, VectorTile, Image and Group layers, the ' +
       'XYZ, Vector, VectorTile, TileWMS, ImageWMS and WMTS sources, the WMTS tile grid from a recorded matrix set, the bbox ' +
       'loading strategy, the GeoJSON, GPX, KML, TopoJSON and MVT formats, Point and polygonFromExtent, the ' +
@@ -1191,6 +1197,20 @@ export const atob = typeof globalThis.atob === 'function' ? globalThis.atob.bind
       }
       if (!entryNames.main || !entryNames.raster || !entryNames.decoder) throw new Error('the OpenLayers build lacks an entry');
       files.push([OPENLAYERS_FILES, Buffer.from(JSON.stringify(entryNames) + '\n')]);
+      // the main part: its entry and what it imports, by esbuild's own account of the outputs (OPENLAYERS_PARTS)
+      const mainOut = Object.keys(outputs).find((outPath) => outputs[outPath].entryPoint === 'ol-entry.js' && outPath.endsWith('.js'));
+      const mainFiles = new Set();
+      const visit = (outPath) => {
+        const name = relative(outdir, join(build, outPath)).split(sep).join('/');
+        if (mainFiles.has(name)) return;
+        if (!outputs[outPath]) throw new Error(`the OpenLayers main part imports ${outPath}, which the build did not write`);
+        mainFiles.add(name);
+        for (const imported of outputs[outPath].imports || []) if (!imported.external) visit(imported.path);
+      };
+      visit(mainOut);
+      if ([...mainFiles].some((name) => name === entryNames.raster || name === entryNames.decoder)) throw new Error('the OpenLayers main part imports the raster part');
+      const parts = { main: ['ol-map.json', 'ol.css', ...[...mainFiles].sort()] };
+      files.push([OPENLAYERS_PARTS, Buffer.from(JSON.stringify(parts) + '\n')]);
       if (unreviewed.size) throw new Error(`the OpenLayers bundle holds ${[...unreviewed].join(', ')}: review each license and add it`);
       for (const [name, bytes] of files) if (name.endsWith('.js')) checkOpenLayersText(name, bytes);
       files.sort((a, b) => a[0].localeCompare(b[0]));

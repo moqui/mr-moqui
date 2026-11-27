@@ -161,6 +161,9 @@ pub struct ServerSync {
     pub internal_send_ref: bool,
     /// `server.features.mailChangesUncovered`: the Inbox stores (`internal`) the mail change cursor does not cover.
     pub mail_uncovered: Vec<String>,
+    /// `server.features.placeRef`: Maps' `savePlace` keeps a place once by its `clientRef`, so a place saved offline
+    /// may be queued (`map-place`, plans/archive/Maps-Offline.md §2.5).
+    pub place_ref: bool,
 }
 
 impl ServerSync {
@@ -171,6 +174,7 @@ impl ServerSync {
         Self {
             client_api: server_client_api(config),
             internal_send_ref: features["internalSendRef"].as_bool() == Some(true),
+            place_ref: features["placeRef"].as_bool() == Some(true),
             mail_uncovered: features["mailChangesUncovered"]
                 .as_array()
                 .into_iter()
@@ -191,6 +195,12 @@ impl ServerSync {
     #[must_use]
     pub fn internal_send(&self) -> bool {
         self.syncs() && self.internal_send_ref
+    }
+
+    /// Whether a place saved offline may be queued (`map-place`).
+    #[must_use]
+    pub fn place_queue(&self) -> bool {
+        self.syncs() && self.place_ref
     }
 }
 

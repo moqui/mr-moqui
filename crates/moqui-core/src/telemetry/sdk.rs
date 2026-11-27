@@ -615,16 +615,29 @@ impl OwnedSpan {
         }
         if let Some(root) = self.root.take() {
             let tail = close_tail(&root.trace);
-            let keep = root.sampled || self.error || root.started.elapsed() > root.slow || tail.important;
+            let keep = root.sampled || self.error || root.started.elapsed() > root.slow || tail.spans.has_important();
+            let dropped = tail.spans.dropped();
+            let spans = tail.spans.into_spans();
+            // the root says how many spans of its trace this thread dropped (MON-UI-003): past the bound, or, with
+            // the trace not kept here, all of them, which counts only if the export keeps the trace for an error
+            // on another thread
+            let (key, lost) = if keep {
+                (super::DROPPED_SPANS, dropped)
+            } else {
+                (super::UNKEPT_SPANS, dropped + spans.len() as u64)
+            };
+            if lost > 0 {
+                self.span.set_attribute(KeyValue::new(key, i64::try_from(lost).unwrap_or(i64::MAX)));
+            }
             if keep {
                 root.shared
                     .counters
                     .dropped
-                    .fetch_add(tail.dropped, std::sync::atomic::Ordering::Relaxed);
+                    .fetch_add(dropped, std::sync::atomic::Ordering::Relaxed);
                 // the failed and slow spans first: the export's tail buffer, shared with the trace's spans of other
                 // threads and bounded as a whole, then drops ordinary ones when it is full
                 let (important, ordinary): (Vec<DoneSpan>, Vec<DoneSpan>) =
-                    tail.spans.into_iter().partition(|span| span.important);
+                    spans.into_iter().partition(|span| span.important);
                 for span in important.into_iter().chain(ordinary) {
                     span.materialize(&root.tracer);
                 }
@@ -726,6 +739,12 @@ impl Drop for PendingSpan {
     }
 }
 
+impl super::tail::Waiting for DoneSpan {
+    fn important(&self) -> bool {
+        self.important
+    }
+}
+
 impl DoneSpan {
     /// The span it would have been: its ids, times, attributes and error, unsampled at the head.
     fn materialize(self, tracer: &SdkTracer) {
@@ -748,17 +767,14 @@ impl DoneSpan {
 
 /// The spans waiting under a root open on this thread, by trace, at most `limit` of them: the export's tail buffer
 /// keeps no more of a trace (telemetry tail-trace-spans), and a long root holding every span under it held a record of
-/// each of its frames for its whole life, about 2 KB a row of a Geo data import (plans/archive/Maps.md §6.3).
+/// each of its frames for its whole life, about 2 KB a row of a Geo data import (plans/archive/Maps.md §6.3). The
+/// spans past `limit` are counted as dropped when the trace is kept. A failed or slow span keeps the trace when the
+/// buffer holds one, which it always does once one came, as the conf's floor for the bound is one.
 #[derive(Default)]
 struct Tail {
     trace: [u8; 16],
-    important: bool,
     limit: usize,
-    /// The spans past `limit`, counted as dropped when the trace is kept.
-    dropped: u64,
-    /// How many of `spans` are not important: none, and a full tail has no room to make.
-    ordinary: usize,
-    spans: Vec<DoneSpan>,
+    spans: super::tail::TraceBuffer<DoneSpan>,
 }
 
 thread_local! {
@@ -800,19 +816,8 @@ fn add_to_tail(done: DoneSpan) -> Option<DoneSpan> {
     let trace = done.trace.to_bytes();
     TAILS.with_borrow_mut(|tails| match tails.iter_mut().rev().find(|tail| tail.trace == trace) {
         Some(tail) => {
-            tail.important |= done.important;
-            if tail.spans.len() < tail.limit {
-                tail.ordinary += usize::from(!done.important);
-                tail.spans.push(done);
-            } else {
-                tail.dropped += 1;
-                if done.important && tail.ordinary > 0 {
-                    if let Some(at) = tail.spans.iter().rposition(|span| !span.important) {
-                        tail.spans[at] = done;
-                        tail.ordinary -= 1;
-                    }
-                }
-            }
+            let room = tail.spans.len() < tail.limit;
+            tail.spans.add(done, room, |_| true);
             None
         }
         None => Some(done),

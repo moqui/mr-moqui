@@ -899,6 +899,13 @@ fn menu_include_of(value: Option<&str>, at: &str) -> (bool, Option<String>) {
     (true, Some(text.to_string()))
 }
 
+/// Whether `location` names another server (`http`, `https`, `ftp`, `ftps`): no screen definition is read from one. The
+/// scheme is read as the resource facade reads it (before the first `:`, so `http:host/x.xml` is one), in any case.
+pub(crate) fn remote_location(location: &str) -> bool {
+    let scheme = crate::context::scheme_of(location.trim_start()).to_ascii_lowercase();
+    matches!(scheme.as_str(), "http" | "https" | "ftp" | "ftps")
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Subscreens {
     pub default_item: Option<String>,
@@ -1318,6 +1325,13 @@ impl ScreenDef {
         if depth > MAX_INCLUDE_DEPTH {
             return Err(Error::new(format!(
                 "screen includes are nested too deeply at {location}"
+            )));
+        }
+        // a screen holds actions, so its text is code: never fetched from another server (SEC-SCR-11)
+        if remote_location(location) {
+            return Err(Error::new(format!(
+                "screen {location} is not loaded: a screen is read from this server's files or database, not from \
+                 another server"
             )));
         }
         let resource = factory.resource().get(location)?;

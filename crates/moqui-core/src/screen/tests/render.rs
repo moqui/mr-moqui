@@ -2031,7 +2031,7 @@ fn a_restricted_host_refuses_the_framework_routes_but_not_the_static_ones() {
         "Root.xml",
         r#"<screen require-authentication="false"><widgets><subscreens-active/></widgets></screen>"#,
     );
-    for name in ["apps", "libs"] {
+    for name in ["apps", "libs", "plain"] {
         write(
             &format!("Root/{name}.xml"),
             &format!(
@@ -2045,7 +2045,7 @@ fn a_restricted_host_refuses_the_framework_routes_but_not_the_static_ones() {
             <in-parameters><parameter name="siteId"/><parameter name="hostname"/><parameter name="path"/></in-parameters>
             <out-parameters><parameter name="restricted" type="Boolean"/></out-parameters>
             <actions><script>if (hostname === 'fail.test') throw new Error('the check is down')
-                restricted = siteId === 'SHOP' &amp;&amp; hostname === 'preview.test'</script></actions>
+                restricted = siteId === 'SHOP' &amp;&amp; (hostname === 'preview.test' || hostname === 'mounted.test')</script></actions>
         </service></services>"#,
     );
     let site = |host: &str| {
@@ -2054,8 +2054,13 @@ fn a_restricted_host_refuses_the_framework_routes_but_not_the_static_ones() {
                 host-check-service="check#PreviewHost"><mount path="/" screen="Shop"/></public-site>"#
         )
     };
+    // a restricted site mounted below the root: the root's own paths are the framework's there (SEC-RTE-11)
+    let mounted = r#"<public-site host="mounted.test" site-id="SHOP" screen-location="component://none/Shop.xml"
+        host-check-service="check#PreviewHost"><mount path="/shop" screen="Shop"/></public-site>"#;
+    let token_route = r#"<token-route name="tk" screen-location="component://none/Shared.xml"
+        token-service="none.check#Token"/>"#;
     let world = World::open(&format!(
-        r#"<moqui-conf><webapp-list><webapp name="webroot">{}{}{}</webapp></webapp-list></moqui-conf>"#,
+        r#"<moqui-conf><webapp-list><webapp name="webroot">{}{}{}{mounted}{token_route}</webapp></webapp-list></moqui-conf>"#,
         site("preview.test"),
         site("shop.test"),
         site("fail.test")
@@ -2089,6 +2094,25 @@ fn a_restricted_host_refuses_the_framework_routes_but_not_the_static_ones() {
         assert_eq!(super::header_value(&response, "Set-Cookie"), None, "{path}: the refusal makes no session");
     }
     assert_eq!(get("preview.test", "/libs/x/../.").status, 200, "still the libs");
+    // SEC-RTE-11: on a restricted host every path its mounts do not take is refused, not only the reserved list (a root
+    // screen or transition, a `//name` search), and a token route is refused before its token check, mounted or not
+    for path in ["/plain", "//plain", "/tk/SomeToken0123"] {
+        let response = get("mounted.test", path);
+        assert_eq!(response.status, 404, "{path}: {}", response.body_text());
+        assert!(!response.body_text().contains("plain here"), "{path}");
+        assert!(
+            !response.body_text().to_lowercase().contains("expired"),
+            "{path}: refused before the token check"
+        );
+    }
+    let token = get("preview.test", "/tk/SomeToken0123");
+    assert!(
+        !token.body_text().to_lowercase().contains("expired"),
+        "{}",
+        token.body_text()
+    );
+    assert_eq!(get("mounted.test", "/libs").status, 200, "the static files still");
+    assert_eq!(get("other.test", "/plain").status, 200, "a host with no site");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -3286,5 +3310,41 @@ fn a_previewed_screen_writes_its_unencoded_text_encoded_and_a_label_type_is_a_ta
         assert!(plain.contains(editable), "{mode}: {plain}");
         assert!(!previewed.contains(editable), "{mode}: {previewed}");
     }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// SEC-RTE-18: `tokenRoute` is set only by a token route's dispatch; one a request sends as a JSON object never reaches
+/// a screen (`/PublicShell` built its base path and context from it).
+#[test]
+fn a_requests_own_token_route_parameter_never_reaches_a_screen() {
+    let dir = std::env::temp_dir().join(format!("moqui-screen-token-route-param-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("Root")).unwrap();
+    std::fs::write(
+        dir.join("Root.xml"),
+        r#"<screen require-authentication="false"><widgets><subscreens-active/></widgets></screen>"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("Root/Echo.xml"),
+        r#"<screen require-authentication="false"><widgets>
+            <label text="route ${(typeof tokenRoute === 'undefined' || !tokenRoute) ? 'none' : tokenRoute.basePath}"/>
+            <label text="other ${typeof other === 'undefined' ? 'none' : other.basePath}"/></widgets></screen>"#,
+    )
+    .unwrap();
+    let world = World::open("");
+    let root = dir.join("Root.xml").to_string_lossy().into_owned();
+    let mut post = request("POST", "/Echo");
+    post.set_header("content-type", "application/json");
+    post.body = br#"{"tokenRoute": {"basePath": "/planted"}, "other": {"basePath": "/kept"}}"#.to_vec();
+    let response = serve_at(&world.factory, post, &root);
+    let body = response.body_text();
+    assert_eq!(response.status, 200, "{body}");
+    assert!(body.contains("route none"), "{body}");
+    assert!(!body.contains("/planted"), "{body}");
+    assert!(
+        body.contains("other /kept"),
+        "another JSON object parameter is still bound: {body}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }

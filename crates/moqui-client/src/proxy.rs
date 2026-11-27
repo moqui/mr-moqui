@@ -116,6 +116,11 @@ impl Upstream {
         self.response.copy_to(out).map_err(|err| Error::new(crate::http::transport(err)))
     }
 
+    /// The body as a stream, for a reader that bounds what it takes (an offline map's range, `crate::packages`).
+    pub fn into_reader(self) -> Box<dyn std::io::Read + Send> {
+        Box::new(self.response)
+    }
+
     /// The file name of an attachment (`Content-Disposition: attachment`), which the host saves itself rather than
     /// hand the page a whole download in memory.
     pub fn attachment_name(&self) -> Option<String> {

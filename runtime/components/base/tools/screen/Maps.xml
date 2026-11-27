@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- Maps (plans/archive/Maps.md §3.1; docs/tools/Maps.md): the framework's map app, beside Dashboards, System and Tools. Browse (the
     full-screen map), Views (saved views), Preferences (the user's own defaults), Offline (the user's offline map packages,
-    plans/Maps-Offline.md), Configuration (providers, profiles, layers,
+    plans/archive/Maps-Offline.md), Configuration (providers, profiles, layers,
     the outside-request policy and readiness: MAPS_ADMIN, by the user's own grant) and LocalMap, the record dialog any app
     opens (MAPS_DIALOG, every signed-in user, default-menu-include false). The root is MAPS_APP's (MAPS_USERS and ADMIN, data/MapsSecurityData.xml).
     No always-actions: a render of LocalMap runs the always-actions of the screens above it without their own check

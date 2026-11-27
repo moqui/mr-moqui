@@ -125,6 +125,19 @@ pub fn sim_refusal(service: &str) -> Option<String> {
             "{service} is a Terminal service that starts programs on the host: the sim cannot hold that"
         ));
     }
+    // the framework's development tools that write the host with the file system or restart it (save#ConfFile,
+    // remove#Component, apply#XmlOps, restart#Server), which no fence holds: only their reads run in a sim (SEC-DEV-81)
+    let verb = service
+        .rsplit('.')
+        .next()
+        .and_then(|name| name.split('#').next())
+        .unwrap_or_default();
+    let reads = matches!(verb, "get" | "find" | "check" | "preview" | "scan");
+    if text("location").starts_with("moqui_devkit::") && !read_only && !reads {
+        return Some(format!(
+            "{service} is a development tool that writes the server's files or restarts it: the sim cannot hold that"
+        ));
+    }
     // one not found is judged by its name: never let through unread
     let own = service.starts_with("org.moqui.devaide.") || text("location").starts_with("dev_aide::");
     (own && !read_only).then(|| {
@@ -282,6 +295,11 @@ fn run(ctx: &mut TurnContext<'_>, args: &Json) -> Result<ToolOutcome, ToolError>
 
 /// The approved real run.
 fn real(ctx: &mut TurnContext<'_>, approval_id: &str, service: &str, parameters: &Json) -> ToolOutcome {
+    // asked again at the approved run, as propose_edit's accept asks: a user who lost the extend tier, or an instance no
+    // longer dev, since the approval was asked gets no real run (SEC-DEV-85)
+    if let Err(error) = super::context(crate::tier::Tier::Extend) {
+        return error.outcome();
+    }
     if let Err(why) = approval::begin(ctx, approval_id, parameters) {
         return ToolOutcome::text(why);
     }

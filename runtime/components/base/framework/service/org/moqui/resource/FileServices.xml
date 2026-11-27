@@ -2481,7 +2481,8 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Remove the temporary files of drives older than maxAgeHours (a day by default): the zips of
             download#Zip and download#PublicShare (runtime://tmp/drive-zip), the exports export#Drive leaves there
             (drive-export), the previews of get#Preview (runtime://tmp/preview, made again when next asked for), the
-            extracted text of extract#DriveFileText (runtime://tmp/file-text, extracted again when next indexed) and any
+            extracted text of extract#DriveFileText (runtime://tmp/file-text, extracted again when next indexed), the private
+            files of ec.resource.writePrivateFile a job left when it never ran (runtime://tmp/private, SEC-DAT-96) and any
             other runtime://tmp/drive-* folder an application keeps copies in, with the folders they leave empty. A file
             that cannot be removed is logged and the others go on. The clean_DriveTempFiles_hourly ServiceJob runs it.</description>
         <in-parameters><parameter name="maxAgeHours" type="Integer" default="24"/></in-parameters>
@@ -2516,7 +2517,7 @@ along with this software (see the LICENSE.md file). If not, see
                 return false
             }
             for (const folder of tmp.getDirectoryEntries()) {
-                if (!folder.directory || !(['preview', 'file-text'].includes(String(folder.fileName)) || String(folder.fileName).startsWith('drive-'))) continue
+                if (!folder.directory || !(['preview', 'file-text', 'private'].includes(String(folder.fileName)) || String(folder.fileName).startsWith('drive-'))) continue
                 try { sweep(folder, 0) }
                 catch (e) { ec.logger.warn(`Drive temporary folder ${folder.location} not cleaned: ${e}`) }
             }

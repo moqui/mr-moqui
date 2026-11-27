@@ -1,4 +1,4 @@
-// Shared live location (plans/Location-Sharing.md §1, §3.2; LocationServices.xml): the owner's shares, the reads of
+// Shared live location (plans/archive/Location-Sharing.md §1, §3.2; LocationServices.xml): the owner's shares, the reads of
 // their current audience, the reports and the hourly clean. Every function checks the caller itself: the owner for a
 // change or a report, the current audience (a user whose entry is not revoked, a member of a group whose entry is not
 // revoked whom the owner's adding of the group reached, while that membership row is current) for a read, and answers
@@ -11,6 +11,7 @@ const AUDIENCE_MEMBER = "moqui.maps.LocationShareAudienceMember"
 const OWNER_LOCK = "moqui.maps.LocationShareOwner"
 const LATEST = "moqui.maps.LocationLatest"
 const TRAIL = "moqui.maps.LocationTrailPoint"
+const XMPP_LATEST = "moqui.maps.LocationXmppLatest"
 const ACCOUNT = "moqui.security.UserAccount"
 const GROUP_MEMBER = "moqui.security.UserGroupMember"
 const HOUR = 3600000
@@ -29,6 +30,11 @@ const MINUTE = 60000
 const CLEAN_BATCH = 500
 const CLEAN_STAGE_MILLIS = 2 * 60000
 const PRECISIONS = ["LspExact", "LspApproximate"]
+// a guest link (plans/archive/Location-Sharing.md §3.7): the public page's route (tools MoquiConf.xml token-route location), the
+// selector's length, and what a selector or a secret may be (randomString's URL-safe letters)
+const LINK_ROUTE = "/location/"
+const LINK_SELECTOR_LENGTH = 16
+const LINK_PART = /^[A-Za-z0-9_-]{8,64}$/
 
 const find = entity => ec.entity.find(entity).disableAuthz()
 const blank = value => value == null || String(value).trim() === ""
@@ -67,6 +73,26 @@ function endOf(share) {
 }
 const isActive = (share, now) =>
     share != null && share.revokedDate == null && share.endedDate == null && millis(share.thruDate) > now
+
+/**
+ * The device this request comes from: the id of the device key that signed it in (ec.user.loginKeyId, the key's stored
+ * hash, never the key), or null for any other login (a browser page). A share records the device it is sent from, and
+ * takes reports from that device's requests only (plans/archive/Location-Sharing.md §3.1, §3.4).
+ */
+function deviceKeyId() {
+    return text(ec.user.loginKeyKind) === "device" ? text(ec.user.loginKeyId) || null : null
+}
+
+/** The name the owner gave the device a share is sent from (UserLoginKey.deviceName), or null. */
+function deviceNameOf(userLoginKeyId) {
+    if (!userLoginKeyId) return null
+    const row = find("moqui.security.UserLoginKey").condition("loginKey", userLoginKeyId).selectField("deviceName").one()
+    return row ? text(row.deviceName) || null : null
+}
+
+/** A report from a device (or a page) the share is not sent from. */
+const refuseOther = () =>
+    refuse("OTHER_DEVICE", "Another device sends this share's location: choose Send from this device to send it from here", 409)
 
 /** The caller's own share, else null: another person's share is the same as none. */
 function ownShare(shareId, forUpdate) {
@@ -151,11 +177,21 @@ function snapshotGroup(share, row) {
         if (ec.message.hasError()) return false
         refused = new Set(Array.from((out && out.refusedUserIdList) || []).map(String))
     }
+    // when each member was first reached by this entry, kept for one already in its snapshot by the same membership row:
+    // a person who left and came back by a new row is reached again from now, so a position reported before a person
+    // was reached (or while they were out) never reaches them (plans/archive/Location-Sharing.md §3.4)
+    const reached = {}
+    for (const held of find(AUDIENCE_MEMBER).condition("shareId", share.shareId).condition("audienceSeqId", row.audienceSeqId)
+        .selectField("userId,memberFromDate,reachedDate").list())
+        if (held.reachedDate != null && since[held.userId] != null && millis(held.memberFromDate) === millis(since[held.userId]))
+            reached[held.userId] = held.reachedDate
+    const now = new Date(nowMillis())
     find(AUDIENCE_MEMBER).condition("shareId", share.shareId).condition("audienceSeqId", row.audienceSeqId).deleteAll()
     for (const userId of members.filter(id => !refused.has(id)))
         ec.entity
             .makeValue(AUDIENCE_MEMBER)
-            .setAll({shareId: share.shareId, audienceSeqId: row.audienceSeqId, userId, memberFromDate: since[userId]})
+            .setAll({shareId: share.shareId, audienceSeqId: row.audienceSeqId, userId, memberFromDate: since[userId],
+                reachedDate: reached[userId] || now})
             .create()
     return true
 }
@@ -172,14 +208,79 @@ function currentUserIds(share) {
     return Array.from(ids)
 }
 
-/** Whether the share's current audience holds the user, checked at each read. */
-function inAudience(share, userId) {
-    if (!userId || userId === share.ownerUserId) return false
-    const rows = activeAudience(share.shareId)
-    if (rows.some(row => row.audienceTypeEnumId === "LsaUser" && row.userId === userId)) return true
-    return rows.some(
-        row => row.audienceTypeEnumId === "LsaUserGroup" && row.userGroupId && groupEntryUserIds(row, userId).length > 0
+/**
+ * When the share's current audience first reached the user, epoch millis, or null when it does not: the earliest of
+ * its entries that reach them (a person's entry when it was added; a group's snapshot when it first held them). A viewer
+ * sees the latest position and the trail only from then on, so no position reported before a person was added reaches
+ * them (plans/archive/Location-Sharing.md §3.4).
+ */
+function reachedAt(share, userId) {
+    if (!userId || userId === share.ownerUserId) return null
+    let earliest = null
+    const sooner = at => {
+        if (at != null && (earliest == null || at < earliest)) earliest = at
+    }
+    for (const row of activeAudience(share.shareId)) {
+        if (row.audienceTypeEnumId === "LsaUser" && row.userId === userId) sooner(millis(row.fromDate) ?? nowMillis())
+        if (row.audienceTypeEnumId === "LsaUserGroup" && row.userGroupId && groupEntryUserIds(row, userId).length) {
+            const held = find(AUDIENCE_MEMBER).condition({shareId: share.shareId, audienceSeqId: row.audienceSeqId, userId}).one()
+            sooner(held && held.reachedDate != null ? millis(held.reachedDate) : millis(row.fromDate) ?? nowMillis())
+        }
+    }
+    return earliest
+}
+
+/**
+ * A latest position as a viewer reached at `reached` may see it: only one the server received from then on (its
+ * receive time, never the device's observedDate: an approximate share's minute and a device's fast clock would both
+ * shift that), shown with its observedDate as ever.
+ */
+function latestSince(latest, reached) {
+    if (!latest || reached == null || latest.receivedDate == null || latest.receivedDate < reached) return null
+    const shown = Object.assign({}, latest)
+    delete shown.receivedDate
+    return shown
+}
+
+/**
+ * The users of a share's XMPP contacts, of the entries given (LsaXmpp, each with the contact's userId, written when the
+ * owner added the JID from their roster) or else of its entries not revoked, the owner never among them.
+ */
+function xmppUserIds(share, rows) {
+    return Array.from(
+        new Set(
+            (rows || activeAudience(share.shareId))
+                .filter(
+                    row =>
+                        row.audienceTypeEnumId === "LsaXmpp" &&
+                        row.revokedDate == null &&
+                        row.userId &&
+                        row.userId !== share.ownerUserId
+                )
+                .map(row => row.userId)
+        )
     )
+}
+
+/**
+ * A share's position or end for its XMPP contacts (plans/archive/Location-Sharing.md §3.6): on locationShareXmpp:<shareId> to
+ * those contacts' users only, which the XMPP server (moqui-xmpp session/geoloc.rs) sends to each of their sessions that
+ * asked for user location as a geoloc event from the owner, and an empty geoloc item for an end. The same values the
+ * share's audience is sent (an approximate share's cell), at the time of the report, so a contact added later gets only
+ * positions received after it was added. Sent when the transaction commits, never saved or sent to a phone. A browser
+ * of the same user whose notification socket follows every topic (WebrootChat.js registers ALL) gets it too: it is that
+ * contact's own, and no web screen reads it.
+ */
+function pushXmpp(share, userIds, message) {
+    if (!userIds.length) return
+    ec.makeNotificationMessage()
+        .topic("locationShareXmpp:" + share.shareId)
+        .userIds(userIds)
+        .directOnly()
+        .persistOnSend(false)
+        .showAlert(false)
+        .message(Object.assign({shareId: share.shareId, ownerUserId: share.ownerUserId}, message))
+        .send()
 }
 
 /** A push on the share's topic to these users only: sent when the transaction commits, never saved or sent to a phone. */
@@ -211,8 +312,11 @@ function untilWords(thru, now, timeZone) {
     return ec.l10n.format(new Date(thru), day(thru) === day(now) ? "HH:mm" : "EEE HH:mm", null, timeZone)
 }
 
-/** Each user added is told who shares with them and until when, in their own time zone: no position. */
-function notifyShared(share, userIds, now) {
+/**
+ * Each user added is told who shares with them and until when, in their own time zone: no position. On topic
+ * LocationShared, or LocationSharedXmpp for the share's XMPP contacts (whose XMPP app gets the positions).
+ */
+function notifyShared(share, userIds, now, topic) {
     const ids = userIds.filter(id => id && id !== share.ownerUserId)
     if (!ids.length) return
     const people = namesOf(ids.concat([share.ownerUserId]))
@@ -225,7 +329,7 @@ function notifyShared(share, userIds, now) {
     for (const zone of Object.keys(byZone)) {
         const untilText = untilWords(millis(share.thruDate), now, zone || null)
         ec.makeNotificationMessage()
-            .topic("LocationShared")
+            .topic(topic || "LocationShared")
             .userIds(byZone[zone])
             .directOnly()
             .message({shareId: share.shareId, ownerName, label: share.label || ownerName, untilText})
@@ -263,7 +367,12 @@ function checkUsers(userIds, now) {
     return {}
 }
 
-/** Whether the owner may share with these groups: groups the owner is in now, never every user or a group of external users. */
+/**
+ * Whether the owner may share with these groups: groups the owner is in now, never every user or a group of external users,
+ * and none whose current membership rows number more than four times location@max-audience, refused before its snapshot
+ * so that a huge group costs no inserts the cap would roll back (plans/archive/Location-Sharing.md §3.2; checkReach, after the
+ * writes, stays the cap that counts).
+ */
 function checkGroups(groupIds) {
     if (!groupIds.length) return {}
     const mine = new Set(currentGroupIds(ec.user.userId, groupIds))
@@ -277,30 +386,48 @@ function checkGroups(groupIds) {
     ).map(row => row.userGroupId)
     if (groupIds.some(id => id === "ALL_USERS" || !mine.has(id) || outside.includes(id)))
         return refuse("GROUP_NOT_ALLOWED", "Share with a group only when you are in it")
+    const max = setting("max-audience", 50)
+    for (const userGroupId of groupIds) {
+        const members = find(GROUP_MEMBER)
+            .condition("userGroupId", userGroupId)
+            .conditionDate("fromDate", "thruDate", null)
+            .count()
+        if (members > max * 4) return refuse("AUDIENCE_TOO_LARGE", `A share is seen by at most ${max} people and links`)
+    }
     return {}
 }
 
-/** Whether these bare JIDs are contacts of the owner's XMPP roster (the other people of the owner's direct rooms). */
+/** A JID's localpart as a username: XEP-0106's escapes undone (jane\40example.com is jane@example.com), in lower case. */
+function jidUsername(local) {
+    const escapes = {"20": " ", "22": '"', "26": "&", "27": "'", "2f": "/", "3a": ":", "3c": "<", "3e": ">", "40": "@"}
+    escapes["5c"] = "\\"
+    return local.replace(/\\(20|22|26|27|2f|3a|3c|3e|40|5c)/gi, (_, code) => escapes[code.toLowerCase()]).toLowerCase()
+}
+
+/**
+ * Whether these bare JIDs are contacts of the owner's XMPP roster (the other people of the owner's direct rooms): local
+ * users of this server's XMPP domain only, since the XMPP server has no federation (C3b) to reach another server's.
+ * Out jidUsers, each JID's userId, which its entry keeps so the share's positions reach that user's XMPP sessions.
+ */
 function checkJids(jids) {
-    if (!jids.length) return {}
+    if (!jids.length) return {jidUsers: {}}
     const domain = text(ec.factory.getConfValue("xmpp-server@domain")).toLowerCase()
     if (!domain) return refuse("XMPP_OFF", "This server has no XMPP")
     const roster = ec.service.sync().name("org.moqui.chat.XmppServices.get#Roster").call()
     if (ec.message.hasError()) return {reasonCode: "XMPP_NOT_CONTACT"}
     const contactIds = Array.from((roster && roster.userIdList) || [])
-    const usernames = new Set(
-        contactIds.length
-            ? Array.from(find(ACCOUNT).condition("userId", "in", contactIds).selectField("username").list()).map(row =>
-                  text(row.username).toLowerCase()
-              )
-            : []
-    )
+    const contacts = {}
+    if (contactIds.length)
+        for (const row of find(ACCOUNT).condition("userId", "in", contactIds).selectField("userId,username").list())
+            contacts[text(row.username).toLowerCase()] = row.userId
+    const jidUsers = {}
     for (const jid of jids) {
         const parts = /^([^@/\s]+)@([^@/\s]+)$/.exec(jid)
-        if (!parts || parts[2] !== domain || !usernames.has(parts[1]))
-            return refuse("XMPP_NOT_CONTACT", "Share over XMPP only with a contact of yours")
+        const userId = parts && parts[2] === domain ? contacts[jidUsername(parts[1])] : null
+        if (!userId) return refuse("XMPP_NOT_CONTACT", "Share over XMPP only with a contact of yours")
+        jidUsers[jid] = userId
     }
-    return {}
+    return {jidUsers}
 }
 
 /** The audience entries asked for, checked by the rules of who an owner may share with. */
@@ -326,20 +453,24 @@ function checkAudience(list, now) {
     }
     if (links > 1) return refuse("ONE_LINK", "A share has one guest link")
     const of = type => entries.filter(entry => entry.type === type).map(entry => entry.key)
-    for (const check of [
-        () => checkUsers(of("LsaUser"), now),
-        () => checkGroups(of("LsaUserGroup")),
-        () => checkJids(of("LsaXmpp"))
-    ]) {
+    for (const check of [() => checkUsers(of("LsaUser"), now), () => checkGroups(of("LsaUserGroup"))]) {
         const out = check()
         if (out.reasonCode) return out
     }
+    const jids = checkJids(of("LsaXmpp"))
+    if (jids.reasonCode) return jids
+    for (const entry of entries) if (entry.type === "LsaXmpp") entry.userId = jids.jidUsers[entry.key]
     return {entries}
 }
 
-/** The entries written: a link's token made here, returned once, and only its digest kept. */
+/**
+ * The entries written: a link's token made here, returned once, and only its digest and selector kept. The token is the
+ * selector, a dot and the secret; the guest page's link is linkPath, /location/<selector>#<secret>, the secret in the
+ * fragment only, which the page posts and no request line, log or Referer carries (plans/archive/Location-Sharing.md §3.7).
+ */
 function addAudience(share, entries, now) {
     let linkToken = null
+    let linkPath = null
     for (const entry of entries) {
         const fields = {shareId: share.shareId, audienceTypeEnumId: entry.type, fromDate: new Date(now)}
         if (entry.type === "LsaUser") {
@@ -347,16 +478,23 @@ function addAudience(share, entries, now) {
         } else if (entry.type === "LsaUserGroup") {
             fields.userGroupId = entry.key
         } else if (entry.type === "LsaXmpp") {
+            // the contact's user, whose XMPP sessions get the share's positions (plans/archive/Location-Sharing.md §3.6); never
+            // a reader of the share on the web, which reads LsaUser and group entries only
             fields.jid = entry.key
+            fields.userId = entry.userId
         } else if (entry.type === "LsaLink") {
-            linkToken = ec.user.randomString(32)
+            const selector = ec.user.randomString(LINK_SELECTOR_LENGTH)
+            const secret = ec.user.randomString(32)
+            linkToken = selector + "." + secret
+            linkPath = LINK_ROUTE + selector + "#" + secret
+            fields.tokenSelector = selector
             fields.tokenDigest = ec.user.singleUseCodeHash(linkToken)
             fields.failedTries = 0
         }
         const row = ec.entity.makeValue(AUDIENCE).setAll(fields).setSequencedIdSecondary().create()
         if (entry.type === "LsaUserGroup" && !snapshotGroup(share, row)) return groupCheckFailed()
     }
-    return {linkToken}
+    return {linkToken, linkPath}
 }
 
 /**
@@ -373,23 +511,32 @@ function checkReach(share) {
 
 /**
  * The owner's lock row (LocationShareOwner, which no foreign key names, so no audience insert's key check waits on it
- * on any database), made on first use in its own transaction, then locked for the rest of the caller's.
+ * on any database), made on first use in its own transaction, then locked for the rest of the caller's. It fails closed
+ * (plans/archive/Location-Sharing.md §3.2, the LL1 review): the first look is a plain read, a missing row is made in its own
+ * transaction, where only another request's making it at the same moment (the row there after the failure: a duplicate
+ * key) is passed over and any other failure is logged; false when the row cannot then be locked, which the caller refuses.
  */
 function lockOwner(userId) {
-    if (find(OWNER_LOCK).condition("ownerUserId", userId).forUpdate(true).one()) return
-    ec.message.pushErrors()
-    try {
-        ec.transaction.runRequireNew(10, "Could not make a location share lock row", () => {
-            if (!find(OWNER_LOCK).condition("ownerUserId", userId).one())
-                ec.entity.makeValue(OWNER_LOCK).setAll({ownerUserId: userId, createdDate: ec.user.nowTimestamp}).create()
-        })
-    } catch (err) {
-        // another request made it at the same moment
-    } finally {
-        ec.message.clearErrors()
-        ec.message.popErrors()
+    const lockRow = () => find(OWNER_LOCK).condition("ownerUserId", userId)
+    if (!lockRow().one()) {
+        let failure = null
+        ec.message.pushErrors()
+        try {
+            ec.transaction.runRequireNew(10, "Could not make a location share lock row", () => {
+                if (!lockRow().one())
+                    ec.entity.makeValue(OWNER_LOCK).setAll({ownerUserId: userId, createdDate: ec.user.nowTimestamp}).create()
+            })
+            if (ec.message.hasError()) failure = ec.message.getErrorsString()
+        } catch (err) {
+            failure = String(err && err.message ? err.message : err)
+        } finally {
+            ec.message.clearErrors()
+            ec.message.popErrors()
+        }
+        if (failure != null && !lockRow().one())
+            ec.logger.error(`Could not make the location share lock row of user ${userId}: ${failure}`)
     }
-    find(OWNER_LOCK).condition("ownerUserId", userId).forUpdate(true).one()
+    return lockRow().forUpdate(true).one() != null
 }
 
 function checkTrail(p) {
@@ -415,9 +562,11 @@ function create(p) {
     const audience = checkAudience(p.audienceList, now)
     if (audience.reasonCode) return audience
     if (!audience.entries.length) return refuse("AUDIENCE_EMPTY", "Choose who sees your location")
+    // the XMPP app's location goes to the share's XMPP contacts only: with none, there is no one to choose it for
+    if (yes(p.takeXmppLocation) && !audience.entries.some(entry => entry.type === "LsaXmpp")) return refuseNoContact()
     const maxShares = setting("max-active-shares", 20)
     // counted under the owner's lock row, so two creates at once cannot both pass the cap
-    lockOwner(me)
+    if (!lockOwner(me)) return refuse("SHARE_LOCK_FAILED", "Your location could not be shared now: try again")
     const active = find(SHARE)
         .condition("ownerUserId", me)
         .condition("revokedDate", null)
@@ -431,13 +580,20 @@ function create(p) {
         .makeValue(SHARE)
         .setAll({
             ownerUserId: me,
+            // the app's device that started it, or none for a browser page (plans/archive/Location-Sharing.md §3.4)
+            userLoginKeyId: deviceKeyId(),
             label: text(p.label) || ownerName,
             purposeText: text(p.purposeText) || null,
             fromDate: new Date(now),
             thruDate: new Date(until.until),
             precisionEnumId,
             keepTrail: trail.keepTrail,
-            trailKeepDays: trail.trailKeepDays
+            trailKeepDays: trail.trailKeepDays,
+            // the owner's XMPP app's location feeds it too, to its XMPP contacts only, only by the owner's choice here
+            // (plans/archive/Location-Sharing.md §3.6)
+            takeXmppLocation: yes(p.takeXmppLocation) ? "Y" : "N",
+            // raised by every change of the audience that can reach someone new (plans/archive/Location-Sharing.md §3.4)
+            audienceVersion: 1
         })
         .setSequencedIdPrimary()
         .create()
@@ -446,25 +602,52 @@ function create(p) {
     const reach = checkReach(share)
     if (reach.reasonCode) return reach
     notifyShared(share, currentUserIds(share), now)
+    notifyShared(share, xmppUserIds(share), now, "LocationSharedXmpp")
     push(share, [me], {event: "started", thruDate: until.until})
-    return {shareId: share.shareId, thruDate: until.until, linkToken: added.linkToken}
+    return {shareId: share.shareId, thruDate: until.until, linkToken: added.linkToken, linkPath: added.linkPath}
 }
+
+/** The owner's XMPP app's location asked for a share with no XMPP contact, which it would go to. */
+const refuseNoContact = () =>
+    refuse("XMPP_NO_CONTACT", "Your XMPP app's location goes to your XMPP contacts only: add an XMPP contact to the share first")
 
 /** update#Share: an active share of the caller's own, extended, shortened, relabeled or given more audience. */
 function update(p) {
-    const now = nowMillis()
     const share = ownShare(p.shareId, true)
+    // the time read once the share's lock is held, so a report committed before this change is never stamped after it
+    const now = nowMillis()
     if (!share) return notFound()
     if (!isActive(share, now)) return refuse("SHARE_ENDED", "This share has ended: start a new one")
     if (!blank(p.thruDate)) {
         const until = checkUntil(p.thruDate, now)
         if (until.reasonCode) return until
+        // a share for a record ends no later than the record's end, as its component stored it (store#ShareRecord;
+        // plans/archive/Location-Sharing.md §3.7)
+        if (share.recordThruDate != null && until.until > millis(share.recordThruDate))
+            return refuse("AFTER_RECORD_END", "A share for a record ends no later than the record's planned end")
         share.thruDate = new Date(until.until)
     }
     if (p.label != null) share.label = text(p.label) || share.label
     if (p.purposeText != null) share.purposeText = text(p.purposeText) || null
-    let added = {linkToken: null}
+    // Send from here (a browser page: no device) or Send from this device (the app): the reports of the device that
+    // sent it until now are refused from here on as another device's, which stops it (plans/archive/Location-Sharing.md §3.4)
+    const moved = yes(p.sendFromHere) && (share.userLoginKeyId || null) !== deviceKeyId()
+    if (moved) {
+        share.userLoginKeyId = deviceKeyId()
+        share.renewedFromKeyId = null
+    }
+    // the owner's XMPP app's location fed to it too (to its XMPP contacts only): turned on, it reaches them from a
+    // source the device's person did not confirm, so the audience version is raised
+    if (p.takeXmppLocation != null && !blank(p.takeXmppLocation)) {
+        const take = yes(p.takeXmppLocation) ? "Y" : "N"
+        if (take === "Y" && share.takeXmppLocation !== "Y") share.audienceVersion = (Number(share.audienceVersion) || 0) + 1
+        // turned off: the XMPP app's last position goes with it
+        if (take === "N" && share.takeXmppLocation === "Y") find(XMPP_LATEST).condition("shareId", share.shareId).deleteAll()
+        share.takeXmppLocation = take
+    }
+    let added = {linkToken: null, linkPath: null}
     const before = currentUserIds(share)
+    const contactsBefore = xmppUserIds(share)
     if (Array.from(p.addAudienceList || []).length) {
         const audience = checkAudience(p.addAudienceList, now)
         if (audience.reasonCode) return audience
@@ -482,6 +665,7 @@ function update(p) {
         if (audience.entries.some(entry => entry.type === "LsaLink") && rows.some(row => row.audienceTypeEnumId === "LsaLink"))
             return refuse("ONE_LINK", "A share has one guest link")
         // a group added again is stamped now: its members who joined since the owner last added it are let in, and told
+        let restamped = 0
         for (const row of rows)
             if (
                 row.audienceTypeEnumId === "LsaUserGroup" &&
@@ -490,12 +674,20 @@ function update(p) {
                 row.fromDate = new Date(now)
                 row.update()
                 if (!snapshotGroup(share, row)) return groupCheckFailed()
+                restamped++
             }
         added = addAudience(share, fresh, now)
         if (added.reasonCode) return added
         const reach = checkReach(share)
         if (reach.reasonCode) return reach
+        // an entry added, or a group added again (its row stamped again, its snapshot written again): the audience the
+        // person's device confirmed is not this one, so its reports are refused until it confirms this version; a person
+        // or contact already there, given again, changes nothing
+        if (fresh.length || restamped) share.audienceVersion = (Number(share.audienceVersion) || 0) + 1
     }
+    // the opt-in asked for a share with no XMPP contact, its adds counted: refused, nothing written
+    if (yes(p.takeXmppLocation) && !activeAudience(share.shareId).some(row => row.audienceTypeEnumId === "LsaXmpp"))
+        return refuseNoContact()
     share.update()
     const reached = currentUserIds(share)
     const fresh = reached.filter(id => !before.includes(id))
@@ -507,18 +699,28 @@ function update(p) {
         {event: "revoked"}
     )
     notifyShared(share, fresh, now)
+    const contacts = xmppUserIds(share)
+    notifyShared(
+        share,
+        contacts.filter(id => !contactsBefore.includes(id)),
+        now,
+        "LocationSharedXmpp"
+    )
     const people = namesOf(fresh)
     const addedUserList = fresh.map(userId => ({userId, userName: (people[userId] || {}).name || userId}))
     const thruDate = millis(share.thruDate)
     push(share, reached, {event: "changed", thruDate})
-    // the owner's devices are told whom the change lets in
-    push(share, [share.ownerUserId], {event: "changed", thruDate, addedUserList})
-    return {thruDate, linkToken: added.linkToken, addedUserList}
+    // the XMPP contacts' sessions keep the end, to send the empty item when it comes
+    pushXmpp(share, contacts, {event: "changed", thruDate})
+    // the owner's devices are told whom the change lets in, and when another device sends it now
+    push(share, [share.ownerUserId], Object.assign({event: "changed", thruDate, addedUserList}, moved ? {sentFromMoved: true} : {}))
+    return {thruDate, linkToken: added.linkToken, linkPath: added.linkPath, addedUserList}
 }
 
 /** A share's end acted on: its latest position deleted, the audience and the owner told. */
 function endShare(share, now) {
     const userIds = currentUserIds(share)
+    const contacts = xmppUserIds(share)
     share.endedDate = new Date(now)
     if (share.keepTrail === "Y") {
         const maxDays = setting("trail-max-days", 30)
@@ -527,7 +729,10 @@ function endShare(share, now) {
     }
     share.update()
     find(LATEST).condition("shareId", share.shareId).deleteAll()
+    find(XMPP_LATEST).condition("shareId", share.shareId).deleteAll()
     push(share, userIds.concat([share.ownerUserId]), {event: "ended"})
+    // the XEP-0080 "stopped": an empty geoloc item to the share's XMPP contacts
+    pushXmpp(share, contacts, {event: "ended"})
 }
 
 /** stop#Share: the caller's own share ended now. */
@@ -548,12 +753,75 @@ function revoke(p) {
     if (!share) return notFound()
     const row = find(AUDIENCE).condition("shareId", share.shareId).condition("audienceSeqId", text(p.audienceSeqId)).one()
     if (!row || row.revokedDate != null) return refuse("AUDIENCE_NOT_FOUND", "That person or link is not in this share")
+    revokeRows(share, [row], now)
+    return {}
+}
+
+/** Audience entries of a share revoked now: the users it no longer reaches, and the owner, told on its topic. */
+function revokeRows(share, rows, now) {
     const before = currentUserIds(share)
-    row.revokedDate = new Date(now)
-    row.update()
+    const contactsBefore = xmppUserIds(share)
+    for (const row of rows) {
+        row.revokedDate = new Date(now)
+        row.update()
+    }
     const after = new Set(currentUserIds(share))
     push(share, before.filter(id => !after.has(id)).concat([share.ownerUserId]), {event: "revoked"})
-    return {}
+    // an XMPP contact taken out gets an empty geoloc item (one still in the share by another entry does not)
+    const contactsAfter = new Set(xmppUserIds(share))
+    pushXmpp(share, contactsBefore.filter(id => !contactsAfter.has(id)), {event: "revoked"})
+    // this revoke took out the last XMPP contact: the owner's XMPP app's location goes nowhere now, so the opt-in goes
+    // with it (a contact added later does not bring it back unasked), and the XMPP latest with it, its audit row saying
+    // why; the version is not raised by an end. A person, group or link taken out leaves it as the owner chose
+    if (share.takeXmppLocation === "Y" && contactsBefore.length && !contactsAfter.size) {
+        share.takeXmppLocation = "N"
+        // the audit row's reason for this write alone: a reason the caller had in the context is put back after
+        const REASON = "takeXmppLocation_changeReason"
+        const had = ec.context.containsKey(REASON)
+        const callers = had ? ec.context.get(REASON) : null
+        ec.context.put(REASON, "last XMPP contact revoked")
+        try {
+            share.update()
+        } finally {
+            if (had) ec.context.put(REASON, callers)
+            else ec.context.remove(REASON)
+        }
+        find(XMPP_LATEST).condition("shareId", share.shareId).deleteAll()
+    }
+}
+
+/**
+ * revoke#ChatAudience (internal, plans/archive/Location-Sharing.md §3.5): a person's own entry (LsaUser) taken out of the active
+ * shares named, as revoke#Audience takes one out, whoever the caller is: Chat calls it when a member is taken out of a
+ * room by another, or blocked by a share's owner, for that room's live shares (moqui.chat.ChatLiveShare). It only narrows
+ * who sees a share. Each share in a transaction of its own: one that fails is logged by its id and the rest go on.
+ */
+function revokeChatAudience(p) {
+    const userId = text(p.userId)
+    let revokedCount = 0
+    if (!userId) return {revokedCount}
+    const seen = new Set()
+    for (const given of Array.from(p.shareList || [])) {
+        const shareId = text(given && given.shareId)
+        const ownerUserId = text(given && given.ownerUserId)
+        if (!shareId || !ownerUserId || seen.has(shareId)) continue
+        seen.add(shareId)
+        try {
+            const count = ec.transaction.runRequireNew(30, "Could not take a person out of location share " + shareId, () => {
+                const now = nowMillis()
+                // the share of the owner the chat row names, only: a row that names another owner takes nobody out
+                const share = shareOf(shareId, true, ownerUserId)
+                if (!isActive(share, now) || share.ownerUserId === userId) return 0
+                const rows = activeAudience(share.shareId).filter(row => row.audienceTypeEnumId === "LsaUser" && row.userId === userId)
+                if (rows.length) revokeRows(share, rows, now)
+                return rows.length
+            })
+            revokedCount += Number(count) || 0
+        } catch (err) {
+            ec.logger.error(`A person was not taken out of location share ${shareId}: ${err && err.message ? err.message : err}`)
+        }
+    }
+    return {revokedCount}
 }
 
 const numberOf = value => (blank(value) ? null : Number(String(value).trim()))
@@ -581,8 +849,8 @@ function checkPosition(p, now, share) {
 }
 
 const wrapLongitude = longitude => ((((longitude + 180) % 360) + 360) % 360) - 180
-// the longitude width of a cell at a latitude: about the same width in km, wider in degrees toward a pole, one cell at
-// it
+// the longitude width of a cell at a latitude: about the same width in km, wider in degrees toward a pole, and one cell
+// around the whole circle at a pole
 function longitudeStep(latitude) {
     const cos = Math.cos((latitude * Math.PI) / 180)
     return cos > APPROXIMATE_DEGREES ? APPROXIMATE_DEGREES / cos : 360
@@ -601,7 +869,7 @@ function cellOf(latitude, longitude) {
 }
 
 /**
- * An approximate share's position (plans/Location-Sharing.md §1, "Approximate when chosen"): the centre of a cell of
+ * An approximate share's position (plans/archive/Location-Sharing.md §1, "Approximate when chosen"): the centre of a cell of
  * about 1 km on the fixed grid; the last cell reported is kept until a fix is more than a quarter of a cell inside
  * another one, so jitter at a line does not flip cells (a change of cell still shows that the person crossed a line
  * 0.75 cell from the old centre, within what they move in one approximate-interval-seconds); the stored and answered
@@ -654,11 +922,63 @@ function lastCellOf(share, now) {
 
 /** report#Position: from the owner, for an active share, at most one a min-interval-seconds; rounded here when approximate. */
 function report(p) {
-    const now = nowMillis()
     const share = ownShare(p.shareId, true)
+    // received once the share's lock is held: an audience added before it commits is stamped before this report
+    const now = nowMillis()
     if (!share) return notFound(404)
     if (!isActive(share, now)) return {statusCode: 410, reasonCode: "SHARE_ENDED"}
+    // a share sent from a device takes that device's reports only, and one sent from a browser page (no device) no
+    // device's: the owner on another device, or in a browser, is told another device sends it, and stops; update#Share's
+    // sendFromHere moves it (plans/archive/Location-Sharing.md §3.4)
+    // a renewed device key's predecessor is taken while it still signs in (its few minutes' grace): a report on its way as
+    // the key was renewed is the same device's
+    const device = deviceKeyId()
+    const renewed = device != null && share.renewedFromKeyId != null && share.renewedFromKeyId === device
+    if ((share.userLoginKeyId || null) !== device && !renewed)
+        return refuseOther()
+    // a share sent from a device is sent to the audience its person confirmed there (the app's own dialog): a report
+    // with another version, or none, is refused before anything is written or pushed, and the phone pauses the share
+    // until the person confirms whom it reaches now; a browser page's share (no device) is not checked
+    if (share.userLoginKeyId && text(p.audienceVersion) !== String(Number(share.audienceVersion) || 0))
+        return {statusCode: 409, reasonCode: "AUDIENCE_CHANGED"}
+
     const latest = find(LATEST).condition("shareId", share.shareId).one()
+    const taken = takePosition(share, p, now, latest, () => lastCellOf(share, now) || latest)
+    if (!taken.position) return taken
+    const {position, values, approximated} = taken
+    ec.entity
+        .makeValue(LATEST)
+        .setAll(
+            Object.assign(
+                {shareId: share.shareId, observedDate: new Date(position.observed), receivedDate: new Date(now)},
+                values
+            )
+        )
+        .createOrUpdate()
+    if (share.keepTrail === "Y")
+        ec.entity
+            .makeValue(TRAIL)
+            .setAll(
+                Object.assign(
+                    {shareId: share.shareId, observedDate: new Date(position.observed), receivedDate: new Date(now)},
+                    values
+                )
+            )
+            .createOrUpdate()
+    const reached = currentUserIds(share)
+    push(share, reached, Object.assign({event: "position", observedDate: position.observed, approximate: approximated}, values))
+    // its XMPP contacts as they are at this report: one added later gets only what is received after
+    pushXmppPosition(share, position)
+    return {statusCode: 200}
+}
+
+/**
+ * A report's position as a share takes it, against the latest one it holds (`latest`, LocationLatest or, for the
+ * owner's XMPP app, LocationXmppLatest): at most one a min-interval-seconds (429), its values checked, not older than the
+ * latest (STALE), and an approximate share's cell made from `cellBase()`'s last cell. Out {position, values,
+ * approximated} or the refusal.
+ */
+function takePosition(share, p, now, latest, cellBase) {
     const approximated = share.precisionEnumId === "LspApproximate"
     const minimum = setting("min-interval-seconds", 5)
     // an approximate share takes a position less often, so its cell changes tell less of a path
@@ -679,7 +999,7 @@ function report(p) {
         (approximated ? checked.position.observed < latestObserved : checked.position.observed <= latestObserved)
     )
         return {statusCode: 409, reasonCode: "STALE"}
-    const position = approximated ? approximate(checked.position, lastCellOf(share, now) || latest) : checked.position
+    const position = approximated ? approximate(checked.position, cellBase()) : checked.position
     const values = {
         latitude: position.latitude,
         longitude: position.longitude,
@@ -687,26 +1007,145 @@ function report(p) {
         heading: position.heading,
         speed: position.speed
     }
+    return {position, values, approximated}
+}
+
+/** A position the share took, to its XMPP contacts as they are now, with the share's end (for the session's own end). */
+function pushXmppPosition(share, position) {
+    pushXmpp(share, xmppUserIds(share), {
+        event: "position",
+        thruDate: millis(share.thruDate),
+        observedDate: position.observed,
+        latitude: position.latitude,
+        longitude: position.longitude,
+        accuracy: position.accuracy
+    })
+}
+
+/** Whom a share's XMPP contacts are, in words: their JIDs, "jane@example.org and 2 more". */
+function xmppWords(share) {
+    const jids = activeAudience(share.shareId)
+        .filter(row => row.audienceTypeEnumId === "LsaXmpp")
+        .map(row => row.jid)
+        .filter(Boolean)
+    if (!jids.length) return ec.l10n.localize("nobody now")
+    const and = " " + ec.l10n.localize("and") + " "
+    if (jids.length <= 3) return jids.slice(0, -1).join(", ") + (jids.length > 1 ? and : "") + jids[jids.length - 1]
+    return jids.slice(0, 3).join(", ") + and + (jids.length - 3) + " " + ec.l10n.localize("more")
+}
+
+/**
+ * A position from the owner's XMPP app for one share that takes it (takeXmppLocation Y): the share's own rules (the
+ * rate, the values, staleness, an approximate share's cell) against its XMPP latest, kept in LocationXmppLatest and
+ * pushed to the share's XMPP contacts only, never to its users, groups or link, never its LocationLatest or trail
+ * (plans/archive/Location-Sharing.md §3.6). The first one a share takes tells the owner's XMPP sessions that their XMPP app's
+ * location is shared, with whom and until when.
+ */
+function takeXmpp(shareId, p) {
+    const share = ownShare(shareId, true)
+    // received once the share's lock is held, as report#Position takes its time
+    const now = nowMillis()
+    if (!share) return notFound(404)
+    if (!isActive(share, now)) return {statusCode: 410, reasonCode: "SHARE_ENDED"}
+    if (share.takeXmppLocation !== "Y") return {statusCode: 403, reasonCode: "NO_XMPP_SHARE"}
+    const latest = find(XMPP_LATEST).condition("shareId", share.shareId).one()
+    const taken = takePosition(share, p, now, latest, () => latest || lastCellOf(share, now))
+    if (!taken.position) return taken
+    const {position, approximated} = taken
+    // kept for the rate and staleness: no coordinates for an exact share, only the cell an approximate one holds (the
+    // base of its next cell)
     ec.entity
-        .makeValue(LATEST)
-        .setAll(
-            Object.assign(
-                {shareId: share.shareId, observedDate: new Date(position.observed), receivedDate: new Date(now)},
-                values
-            )
-        )
+        .makeValue(XMPP_LATEST)
+        .setAll({
+            shareId: share.shareId,
+            latitude: approximated ? position.latitude : null,
+            longitude: approximated ? position.longitude : null,
+            accuracy: approximated ? position.accuracy : null,
+            observedDate: new Date(position.observed),
+            receivedDate: new Date(now)
+        })
         .createOrUpdate()
-    if (share.keepTrail === "Y")
-        ec.entity
-            .makeValue(TRAIL)
-            .setAll(Object.assign({shareId: share.shareId, observedDate: new Date(position.observed)}, values))
-            .createOrUpdate()
-    push(
-        share,
-        currentUserIds(share),
-        Object.assign({event: "position", observedDate: position.observed, approximate: approximated}, values)
-    )
+    pushXmppPosition(share, position)
+    if (!latest) {
+        const owner = namesOf([share.ownerUserId])[share.ownerUserId] || {}
+        pushXmpp(share, [share.ownerUserId], {
+            event: "feeding",
+            thruDate: millis(share.thruDate),
+            text:
+                ec.l10n.localize("Your XMPP app's location is shared with") +
+                " " +
+                xmppWords(share) +
+                " " +
+                ec.l10n.localize("until") +
+                " " +
+                untilWords(millis(share.thruDate), now, owner.timeZone || null)
+        })
+    }
     return {statusCode: 200}
+}
+
+/** One share's take of an XMPP position, its refusal's error kept out of the caller's messages: its outcome alone. */
+function takeXmppQuiet(shareId, parameters) {
+    ec.message.pushErrors()
+    try {
+        return takeXmpp(shareId, parameters) || {}
+    } finally {
+        ec.message.clearErrors()
+        ec.message.popErrors()
+    }
+}
+
+/**
+ * report#XmppPosition (plans/archive/Location-Sharing.md §3.6, LL5): a user location publish (XEP-0080) from the caller's own
+ * XMPP client, taken by each of the caller's active shares whose owner turned on takeXmppLocation and that has an XMPP
+ * contact in its audience (takeXmpp: to those contacts only). None: NO_XMPP_SHARE, so a client's setting never starts a
+ * share or feeds one the owner did not choose. A client clock more than a minute ahead is taken again with the server's
+ * time, as a browser page does. Out the outcome of the best of them: 200 when one took it, else 429 when one was too
+ * soon, else STALE, else the first refusal.
+ */
+function xmppReport(p) {
+    const me = ec.user.userId
+    const now = nowMillis()
+    const noShare = {statusCode: 403, reasonCode: "NO_XMPP_SHARE"}
+    if (!me) return noShare
+    const shareIds = Array.from(
+        find(SHARE)
+            .condition("ownerUserId", me)
+            .condition("takeXmppLocation", "Y")
+            .condition("revokedDate", null)
+            .condition("endedDate", null)
+            .condition("thruDate", "greater", new Date(now))
+            .selectField("shareId")
+            .orderBy("shareId")
+            .list()
+    ).map(row => row.shareId)
+    if (!shareIds.length) return noShare
+    const withXmpp = new Set(
+        Array.from(
+            find(AUDIENCE)
+                .condition("shareId", "in", shareIds)
+                .condition("audienceTypeEnumId", "LsaXmpp")
+                .condition("revokedDate", null)
+                .selectField("shareId")
+                .list()
+        ).map(row => row.shareId)
+    )
+    const outcomes = []
+    for (const shareId of shareIds.filter(id => withXmpp.has(id))) {
+        const asked = {latitude: p.latitude, longitude: p.longitude, accuracy: p.accuracy}
+        const observed = blank(p.observedMillis) ? null : new Date(Number(p.observedMillis))
+        let out = takeXmppQuiet(shareId, Object.assign({observedDate: observed}, asked))
+        if (out.reasonCode === "CLOCK_AHEAD") out = takeXmppQuiet(shareId, asked)
+        outcomes.push(out)
+    }
+    if (!outcomes.length) return noShare
+    const first = test => outcomes.find(test)
+    const best =
+        first(out => out.statusCode === 200) ||
+        first(out => out.statusCode === 429) ||
+        first(out => out.reasonCode === "STALE") ||
+        outcomes[0]
+    return {statusCode: best.statusCode, reasonCode: best.reasonCode || null, retryAfterSeconds: best.retryAfterSeconds || null}
 }
 
 function positionOf(row, now) {
@@ -721,6 +1160,13 @@ function positionOf(row, now) {
         observedDate: observed,
         ageSeconds: observed == null ? null : Math.max(0, Math.round((now - observed) / 1000))
     }
+}
+
+/** A latest row's position with when the server received it, for a viewer's check ([latestSince]), which drops it. */
+function receivedPositionOf(row, now) {
+    const position = positionOf(row, now)
+    if (position) position.receivedDate = millis(row.receivedDate)
+    return position
 }
 
 function latestByShare(shareIds, now) {
@@ -746,7 +1192,8 @@ function ownerView(share, now) {
         audienceSeqId: row.audienceSeqId,
         audienceTypeEnumId: row.audienceTypeEnumId,
         userId: row.userId || null,
-        userName: row.userId ? (people[row.userId] || {}).name || row.userId : null,
+        // a person's name; an XMPP contact is named by its JID
+        userName: row.audienceTypeEnumId === "LsaUser" && row.userId ? (people[row.userId] || {}).name || row.userId : null,
         userGroupId: row.userGroupId || null,
         groupName: row.userGroupId ? groups[row.userGroupId] || row.userGroupId : null,
         jid: row.jid || null,
@@ -761,8 +1208,37 @@ function ownerView(share, now) {
         revokedDate: millis(share.revokedDate),
         endedDate: millis(share.endedDate),
         active: isActive(share, now),
+        // where it is sent from: a device of the owner's (its name, and whether it is this request's) or a browser page;
+        // never the device key's id
+        sentFromDevice: !!share.userLoginKeyId,
+        deviceName: deviceNameOf(share.userLoginKeyId),
+        fromThisDevice: !!share.userLoginKeyId && share.userLoginKeyId === deviceKeyId(),
+        audienceVersion: Number(share.audienceVersion) || 0,
         audienceList
-    })
+    }, lastSourceOf(share, now))
+}
+
+/**
+ * For the owner: whether the owner's XMPP app feeds the share (takeXmppLocation), the age of its last position from
+ * there (never the position), and where the share's last position came from, by the server's receive time: "xmpp"
+ * (the owner's XMPP app, to its XMPP contacts only) or "device" (a page or the phone), or null for none yet.
+ */
+function lastSourceOf(share, now) {
+    const take = share.takeXmppLocation === "Y"
+    if (!isActive(share, now)) return {takeXmppLocation: take, xmppAgeSeconds: null, lastSource: null}
+    const xmpp = find(XMPP_LATEST).condition("shareId", share.shareId).selectField("observedDate,receivedDate").one()
+    const latest = find(LATEST).condition("shareId", share.shareId).selectField("receivedDate").one()
+    const xmppReceived = xmpp ? millis(xmpp.receivedDate) : null
+    const received = latest ? millis(latest.receivedDate) : null
+    const observed = xmpp ? millis(xmpp.observedDate) : null
+    let lastSource = null
+    if (xmppReceived != null && (received == null || xmppReceived > received)) lastSource = "xmpp"
+    else if (received != null) lastSource = "device"
+    return {
+        takeXmppLocation: take,
+        xmppAgeSeconds: observed == null ? null : Math.max(0, Math.round((now - observed) / 1000)),
+        lastSource
+    }
 }
 
 /** A share as its audience reads it. */
@@ -809,13 +1285,20 @@ function findShared() {
     const me = ec.user.userId
     const now = nowMillis()
     const ids = new Set()
+    // when each share's audience first reached the caller: a person's entry by its fromDate, a group's by its snapshot
+    const reach = {}
+    const sooner = (shareId, at) => {
+        if (at != null && (reach[shareId] == null || at < reach[shareId])) reach[shareId] = at
+    }
     for (const row of find(AUDIENCE)
         .condition("audienceTypeEnumId", "LsaUser")
         .condition("userId", me)
         .condition("revokedDate", null)
-        .selectField("shareId")
-        .list())
+        .selectField("shareId,fromDate")
+        .list()) {
         ids.add(row.shareId)
+        sooner(row.shareId, millis(row.fromDate) ?? now)
+    }
     // a group entry whose snapshot holds the caller by a membership row of the group that is still current
     const memberships = Array.from(
         find(GROUP_MEMBER)
@@ -826,18 +1309,23 @@ function findShared() {
     )
     const current = new Set(memberships.map(member => member.userGroupId + "|" + millis(member.fromDate)))
     const snapshots = Array.from(
-        find(AUDIENCE_MEMBER).condition("userId", me).selectField("shareId,audienceSeqId,memberFromDate").list()
+        find(AUDIENCE_MEMBER).condition("userId", me).selectField("shareId,audienceSeqId,memberFromDate,reachedDate").list()
     )
     if (memberships.length && snapshots.length) {
         const held = {}
-        for (const row of snapshots) held[row.shareId + "|" + row.audienceSeqId] = millis(row.memberFromDate)
+        for (const row of snapshots) held[row.shareId + "|" + row.audienceSeqId] = row
         const rows = find(AUDIENCE)
             .condition("shareId", "in", Array.from(new Set(snapshots.map(row => row.shareId))))
             .condition("audienceTypeEnumId", "LsaUserGroup")
             .condition("revokedDate", null)
-            .selectField("shareId,audienceSeqId,userGroupId")
-        for (const row of rows.list())
-            if (current.has(row.userGroupId + "|" + held[row.shareId + "|" + row.audienceSeqId])) ids.add(row.shareId)
+            .selectField("shareId,audienceSeqId,userGroupId,fromDate")
+        for (const row of rows.list()) {
+            const snapshot = held[row.shareId + "|" + row.audienceSeqId]
+            if (snapshot && current.has(row.userGroupId + "|" + millis(snapshot.memberFromDate))) {
+                ids.add(row.shareId)
+                sooner(row.shareId, snapshot.reachedDate != null ? millis(snapshot.reachedDate) : millis(row.fromDate) ?? now)
+            }
+        }
     }
     if (!ids.size) return {shareList: []}
     const shares = Array.from(
@@ -851,15 +1339,14 @@ function findShared() {
             .limit(LIST_MAX)
             .list()
     )
-    const latest = latestByShare(
-        shares.map(share => share.shareId),
-        now
-    )
+    const latest = {}
+    for (const row of find(LATEST).condition("shareId", "in", shares.map(share => share.shareId)).list())
+        latest[row.shareId] = receivedPositionOf(row, now)
     const owners = namesOf(Array.from(new Set(shares.map(share => share.ownerUserId))))
     const shareList = shares.map(share =>
         Object.assign(viewerView(share, now), {
             ownerName: (owners[share.ownerUserId] || {}).name || share.ownerUserId,
-            latest: latest[share.shareId] || null
+            latest: latestSince(latest[share.shareId] || null, reach[share.shareId])
         })
     )
     return {shareList}
@@ -870,16 +1357,21 @@ function get(p) {
     const now = nowMillis()
     const share = shareOf(p.shareId)
     const owner = share != null && share.ownerUserId === ec.user.userId
-    if (!share || (!owner && !(isActive(share, now) && inAudience(share, ec.user.userId)))) return notFound()
+    // a viewer is one the share's current audience reaches (reachedAt is that check too), and sees what the server
+    // received from when it first reached them on; the owner sees everything
+    const reached = !share || owner || !isActive(share, now) ? null : reachedAt(share, ec.user.userId)
+    if (!share || (!owner && reached == null)) return notFound()
     const view = owner ? ownerView(share, now) : viewerView(share, now)
     if (!owner) view.ownerName = (namesOf([share.ownerUserId])[share.ownerUserId] || {}).name || share.ownerUserId
-    const latest = isActive(share, now) ? latestByShare([share.shareId], now)[share.shareId] || null : null
+    const latestRow = isActive(share, now) ? find(LATEST).condition("shareId", share.shareId).one() : null
+    const latest = owner ? positionOf(latestRow, now) : latestSince(receivedPositionOf(latestRow, now), reached)
     const pageSize = Math.max(1, Math.min(TRAIL_PAGE_MAX, Number(p.trailPageSize) || 500))
     const pageIndex = Math.max(0, Number(p.trailPageIndex) || 0)
     let trailList = []
     let trailCount = 0
     if (share.keepTrail === "Y") {
-        const trail = find(TRAIL).condition("shareId", share.shareId)
+        let trail = find(TRAIL).condition("shareId", share.shareId)
+        if (!owner) trail = trail.condition("receivedDate", "greater-equals", new Date(reached))
         trailCount = trail.count()
         trailList = Array.from(
             trail
@@ -960,6 +1452,20 @@ function eachShare(makeFind, orderField, counts, countName, work) {
     for (const shareId of failed) run(shareId, true)
 }
 
+/**
+ * A removed share's chat links (moqui.chat.ChatLiveShare, plans/archive/Location-Sharing.md §3.5: a live location message's room),
+ * in a transaction of their own: chat housekeeping never fails the clean, a failure is logged and the clean goes on. An
+ * ended share keeps its links until it is removed here; Chat's revoke skips a share that is not on.
+ */
+function dropChatLinks(shareId) {
+    try {
+        ec.transaction.runRequireNew(30, "Could not delete the chat links of location share " + shareId, () =>
+            find("moqui.chat.ChatLiveShare").condition("shareId", shareId).deleteAll())
+    } catch (err) {
+        ec.logger.error(`The chat links of location share ${shareId} were not deleted: ${err && err.message ? err.message : err}`)
+    }
+}
+
 /** clean#LocationShares, hourly: the shares past their end ended, the trails past their days deleted, old shares removed. */
 function clean() {
     const now = nowMillis()
@@ -1001,7 +1507,9 @@ function clean() {
         "removedCount",
         shareId => {
             if (find(TRAIL).condition("shareId", shareId).count() > 0) return 0
+            dropChatLinks(shareId)
             find(LATEST).condition("shareId", shareId).deleteAll()
+            find(XMPP_LATEST).condition("shareId", shareId).deleteAll()
             find(AUDIENCE_MEMBER).condition("shareId", shareId).deleteAll()
             find(AUDIENCE).condition("shareId", shareId).deleteAll()
             find(SHARE).condition("shareId", shareId).deleteAll()
@@ -1015,7 +1523,324 @@ function clean() {
     return counts
 }
 
-const operations = {create, update, stop, revoke, report, findMine, findShared, get, deleteTrail, clean}
+/**
+ * get#ShellIndicator, the shell-indicator provider the framework's conf registers for every signed-in user (plans/archive/Location-Sharing.md §1 "Visible to everyone it
+ * concerns", §3.3): while the caller has any active share of their own, the app bar's "Sharing location" chip on every
+ * screen, to Maps › My location shares (every signed-in user opens it). A count of the caller's own shares, no audience or position read; asked
+ * again by the shell at the soonest end and on the owner's own pushes of a share's start, change or end.
+ */
+function indicator() {
+    const me = ec.user.userId
+    // read again on the owner's own pushes of a start, change or end, whether or not a share is on now
+    const refreshOn = [{topicPrefix: "locationShare:", events: ["started", "changed", "ended"]}]
+    if (!me) return {indicators: [], refreshOn}
+    const now = nowMillis()
+    const ends = Array.from(
+        find(SHARE)
+            .condition("ownerUserId", me)
+            .condition("revokedDate", null)
+            .condition("endedDate", null)
+            .condition("thruDate", "greater", new Date(now))
+            .selectField("thruDate")
+            .list()
+    ).map(row => millis(row.thruDate))
+    if (!ends.length) return {indicators: [], refreshOn}
+    const label = ec.l10n.localize("Sharing location") + (ends.length > 1 ? " (" + ends.length + ")" : "")
+    return {
+        indicators: [
+            {
+                key: "locationSharing",
+                label,
+                icon: "sym_o_share_location",
+                tone: "positive",
+                title: ec.l10n.localize("Who sees my location"),
+                // My location shares, which every signed-in user may open (Maps users get Open in Maps there)
+                url: "/qapps/maps/MyShares",
+                refreshInSeconds: Math.max(0, Math.ceil((Math.min(...ends) - now) / 1000))
+            }
+        ],
+        refreshOn
+    }
+}
+
+/**
+ * Whom an own share is with, in words the owner can check, for the app's own confirmation and notification: each person
+ * by name and unique username ("Sam Smith (sam)"), a group by its name and how many members its snapshot reaches
+ * ("Family (4 members)"), an XMPP contact by JID, the link as "anyone with the guest link"; at most three, then how many
+ * more. Its revoked entries are left out.
+ */
+function audienceWords(share) {
+    const rows = activeAudience(share.shareId)
+    const userIds = rows.filter(row => row.audienceTypeEnumId === "LsaUser" && row.userId).map(row => row.userId)
+    const accounts = {}
+    if (userIds.length)
+        for (const row of find(ACCOUNT).condition("userId", "in", userIds).selectField("userId,userFullName,username").list())
+            accounts[row.userId] = row
+    const groupIds = rows.filter(row => row.userGroupId).map(row => row.userGroupId)
+    const groups = {}
+    if (groupIds.length)
+        for (const row of find("moqui.security.UserGroup").condition("userGroupId", "in", groupIds).selectField("userGroupId,description").list())
+            groups[row.userGroupId] = row.description || row.userGroupId
+    const words = rows.map(row => {
+        switch (row.audienceTypeEnumId) {
+            case "LsaUser": {
+                const account = accounts[row.userId] || {}
+                const name = account.userFullName || account.username || row.userId
+                return account.username && account.username !== name ? `${name} (${account.username})` : name
+            }
+            case "LsaUserGroup": {
+                const members = find(AUDIENCE_MEMBER).condition({shareId: share.shareId, audienceSeqId: row.audienceSeqId}).count()
+                return `${groups[row.userGroupId] || row.userGroupId} (${members} ${ec.l10n.localize(members === 1 ? "member" : "members")})`
+            }
+            case "LsaXmpp":
+                return row.jid
+            case "LsaLink":
+                return ec.l10n.localize("anyone with the guest link")
+            default:
+                return null
+        }
+    }).filter(Boolean)
+    if (!words.length) return ec.l10n.localize("nobody now")
+    if (words.length <= 3) return words.slice(0, -1).join(", ") + (words.length > 1 ? " " + ec.l10n.localize("and") + " " : "") + words[words.length - 1]
+    return words.slice(0, 3).join(", ") + " " + ec.l10n.localize("and") + " " + (words.length - 3) + " " + ec.l10n.localize("more")
+}
+
+/**
+ * get#AppShare: an active share of the caller's own as the Android app confirms and shows it before it sends it
+ * (plans/archive/Location-Sharing.md §3.4): whom with, until when (untilText, in the caller's zone, with the weekday when not
+ * today), exact or approximate, its report interval, its audience's revision, and whether this request's device sends
+ * it; from the server, never the page's words.
+ */
+function appShare(p) {
+    const now = nowMillis()
+    const share = ownShare(p.shareId, false)
+    if (!share) return notFound()
+    if (!isActive(share, now)) return refuse("SHARE_ENDED", "This share has ended: start a new one")
+    const view = ownerView(share, now)
+    const approximate = share.precisionEnumId === "LspApproximate"
+    const minimum = setting("min-interval-seconds", 5)
+    const thru = millis(share.thruDate)
+    return {
+        share: Object.assign(
+            {
+                shareId: share.shareId,
+                thruDate: thru,
+                untilText: untilWords(thru, now, ec.user.timeZone),
+                approximate,
+                intervalSeconds: approximate ? Math.max(minimum, setting("approximate-interval-seconds", 60)) : minimum,
+                // the owner's XMPP app's location goes to the share's XMPP contacts too (plans/archive/Location-Sharing.md §3.6):
+                // the app's dialog and notification say so, from these words, which they put mid-sentence ("to ... until
+                // 15:30"), so as a parenthetical; the version raised by turning it on asks for that confirmation
+                audienceText:
+                    audienceWords(share) +
+                    (share.takeXmppLocation === "Y" && xmppUserIds(share).length
+                        ? " (" + ec.l10n.localize("your XMPP app's location also goes to your XMPP contacts") + ")"
+                        : ""),
+                audienceVersion: Number(share.audienceVersion) || 0,
+                fromThisDevice: view.fromThisDevice
+            }
+        )
+    }
+}
+
+/**
+ * stop#DeviceShares: a device key revoked (its owner's sign-out, the device list, an administrator ending it): every
+ * active share it sends is stopped, as stop#Share does, so none stays on with nothing sending it, also when the device
+ * could not tell the server itself (plans/archive/Location-Sharing.md §3.4). Called by the framework (login.rs, Identity.js)
+ * with the key's stored hash, in a transaction of its own (force-new) so it never touches the revoke's. Each share in a
+ * transaction of its own too; one not of the key's own user (data that does not hold together) is refused by name and
+ * left as it is, and the rest go on.
+ */
+function deviceShares(p) {
+    const id = text(p.userLoginKeyId)
+    // the key's user as the revoke knows it: the key's row is the revoke's to write, never read here
+    const keyUserId = text(p.ownerUserId)
+    if (!id || !keyUserId) return {stoppedCount: 0}
+    let stoppedCount = 0
+    for (const listed of Array.from(find(SHARE).condition("userLoginKeyId", id).condition("endedDate", null).selectField("shareId,ownerUserId").list())) {
+        if (listed.ownerUserId !== keyUserId) {
+            ec.message.addError(ec.l10n.localize("Location share") + " " + listed.shareId + ": " + ec.l10n.localize("not the device key's user's, left as it is"))
+            continue
+        }
+        // each on its own: one that fails is logged by its id and the rest go on
+        try {
+            let ended = false
+            ec.transaction.runRequireNew(30, "Error stopping location share " + listed.shareId, () => {
+                const now = nowMillis()
+                const share = find(SHARE).condition("shareId", listed.shareId).forUpdate(true).one()
+                if (!share || share.endedDate != null) return
+                if (share.revokedDate == null && millis(share.thruDate) > now) share.revokedDate = new Date(now)
+                endShare(share, now)
+                ended = true
+            })
+            // counted once its transaction committed
+            if (ended) stoppedCount++
+        } catch (err) {
+            ec.logger.error(`Location share ${listed.shareId} of a revoked device key was not stopped: ${err && err.message ? err.message : err}`)
+        }
+    }
+    return {stoppedCount}
+}
+
+/**
+ * get#ShareStatus (internal): whether a share of this owner is active, and nothing else of it; for Chat's live location
+ * card (plans/archive/Location-Sharing.md §3.5), which says "Live location ended" rather than "not shared with you" to a member of
+ * the room the share's message is in, once get#Share has refused them. A share of another owner answers as none.
+ */
+function status(p) {
+    const ownerUserId = text(p.ownerUserId)
+    const share = ownerUserId ? shareOf(p.shareId, false, ownerUserId) : null
+    return {found: !!share, active: isActive(share, nowMillis())}
+}
+
+// ----- guest links (plans/archive/Location-Sharing.md §3.7): the public page Maps/SharedLocation.xml at /location/<selector>, its
+// secret in the link's fragment, posted by the page. The page answers the share's label, its purpose text and its latest
+// position with its age, on the outline or a basemap the installation marks public, and nothing else. -----
+
+/** A link's row by its selector, or null; a selector that is not one is none. */
+function linkRow(selector, forUpdate) {
+    const key = text(selector)
+    if (!LINK_PART.test(key)) return null
+    const found = Array.from(
+        find(AUDIENCE).condition("tokenSelector", key).condition("audienceTypeEnumId", "LsaLink").forUpdate(!!forUpdate).limit(2).list()
+    )
+    return found.length === 1 ? found[0] : null
+}
+
+/** A wrong credential, counted against the client by the web protection as a wrong password is; nothing outside a request. */
+function noteAuthFailure() {
+    if (ec.web && typeof ec.web.noteAuthFailure === "function") ec.web.noteAuthFailure()
+}
+
+/**
+ * check#LinkKey, the token check of the /location/<selector> route: valid when the selector names a guest link that is
+ * there, active or not, so that the page can say a share has ended; nothing of it is answered (routeContext is empty).
+ * A selector that names none is a wrong credential to the route, which counts it.
+ */
+function linkCheck(p) {
+    return {valid: linkRow(p.token, false) != null, routeContext: {}}
+}
+
+/** The guest page's answer for a refused read: a status and a reason, no error (the counts written stay). */
+const linkRefused = (statusCode, reasonCode, extra) => Object.assign({statusCode, reasonCode}, extra || {})
+
+/**
+ * get#LinkShare, the guest page's read: the link by its selector, its secret checked against the token's digest (a wrong
+ * one counted on the link, failedTries, and against the client; the link refused from location@link-max-failed-tries
+ * on), refused once the share has ended or the link was taken out, and at most location@link-max-views-per-minute
+ * reads a minute. A position received before the link was added is not answered (the reach rule), and an approximate
+ * share's is its cell, as it was stored. Never an error message: a refusal is its status and reason only, and nothing
+ * here logs the selector, the secret or a position.
+ */
+function linkRead(p) {
+    const now = nowMillis()
+    const secret = text(p.linkSecret)
+    const row = linkRow(p.linkKey, true)
+    if (!row || !LINK_PART.test(secret)) {
+        noteAuthFailure()
+        return linkRefused(404, "LINK_NOT_FOUND")
+    }
+    const maxFailed = setting("link-max-failed-tries", 10)
+    if ((Number(row.failedTries) || 0) >= maxFailed) return linkRefused(403, "LINK_LOCKED")
+    if (ec.user.singleUseCodeHash(row.tokenSelector + "." + secret) !== row.tokenDigest) {
+        row.failedTries = (Number(row.failedTries) || 0) + 1
+        row.update()
+        noteAuthFailure()
+        return linkRefused(row.failedTries >= maxFailed ? 403 : 404, row.failedTries >= maxFailed ? "LINK_LOCKED" : "LINK_NOT_FOUND")
+    }
+    const share = shareOf(row.shareId)
+    if (row.revokedDate != null || !isActive(share, now)) return linkRefused(410, "SHARE_ENDED")
+    // the reads of the current minute, on the link's own row
+    const maxViews = setting("link-max-views-per-minute", 30)
+    const windowStart = millis(row.viewMinuteDate)
+    if (windowStart != null && now - windowStart < MINUTE) {
+        if ((Number(row.viewMinuteCount) || 0) >= maxViews)
+            return linkRefused(429, "RATE_LIMITED", {retryAfterSeconds: Math.max(1, Math.ceil((windowStart + MINUTE - now) / 1000))})
+        row.viewMinuteCount = (Number(row.viewMinuteCount) || 0) + 1
+    } else {
+        row.viewMinuteDate = new Date(now)
+        row.viewMinuteCount = 1
+    }
+    row.lastViewedDate = new Date(now)
+    row.update()
+    // the reach rule: what the server received from when the link was added on
+    const latestRow = find(LATEST).condition("shareId", share.shareId).one()
+    const latest = latestSince(receivedPositionOf(latestRow, now), millis(row.fromDate) ?? now)
+    return {
+        statusCode: 200,
+        share: {
+            label: share.label || null,
+            purposeText: share.purposeText || null,
+            approximate: share.precisionEnumId === "LspApproximate"
+        },
+        latest: latest
+            ? {latitude: latest.latitude, longitude: latest.longitude, accuracy: latest.accuracy, ageSeconds: latest.ageSeconds}
+            : null,
+        // the outline, or the one basemap the installation marks public (MapConfig.js publicBasemap)
+        map: ec.resource.script("component://framework/service/org/moqui/maps/MapConfig.js").publicBasemap()
+    }
+}
+
+/**
+ * store#ShareRecord: the record a guest share is for (recordAdapterKey and recordKey, as MapAdapter names records) and
+ * the record's end (recordThruDate, which the share's end, now and when extended, does not pass), on a share of the
+ * caller's own; called only by a service that has checked the caller may act on the record (Mantle's
+ * create#RecordGuestShare), never remotely (plans/archive/Location-Sharing.md §3.1, §3.7).
+ */
+function shareRecord(p) {
+    const share = ownShare(p.shareId, true)
+    if (!share) return notFound()
+    if (blank(p.recordAdapterKey) || blank(p.recordKey)) return refuse("BAD_RECORD", "A guest share names its record")
+    const recordThru = millis(p.recordThruDate)
+    if (recordThru == null) return refuse("BAD_RECORD", "A guest share names its record's end")
+    if (millis(share.thruDate) > recordThru)
+        return refuse("AFTER_RECORD_END", "A share for a record ends no later than the record's planned end")
+    share.recordAdapterKey = text(p.recordAdapterKey)
+    share.recordKey = text(p.recordKey)
+    // update#Share extends it no later than this
+    share.recordThruDate = new Date(recordThru)
+    share.update()
+    return {}
+}
+
+/**
+ * stop#RecordShares: every active share for a record (recordAdapterKey and recordKey) stopped as stop#Share does, when
+ * the record completes or is cancelled (Mantle's EECA; plans/archive/Location-Sharing.md §3.7). Each share in a transaction of
+ * its own: one that fails is logged by its id and the rest go on.
+ */
+function recordShares(p) {
+    if (blank(p.recordAdapterKey) || blank(p.recordKey)) return {stoppedCount: 0}
+    let stoppedCount = 0
+    const listed = Array.from(
+        find(SHARE)
+            .condition("recordAdapterKey", text(p.recordAdapterKey))
+            .condition("recordKey", text(p.recordKey))
+            .condition("endedDate", null)
+            .selectField("shareId")
+            .limit(LIST_MAX)
+            .list()
+    )
+    for (const each of listed) {
+        try {
+            let ended = false
+            ec.transaction.runRequireNew(30, "Error stopping location share " + each.shareId, () => {
+                const now = nowMillis()
+                const share = shareOf(each.shareId, true)
+                if (!share || share.endedDate != null) return
+                if (share.revokedDate == null && millis(share.thruDate) > now) share.revokedDate = new Date(now)
+                endShare(share, now)
+                ended = true
+            })
+            if (ended) stoppedCount++
+        } catch (err) {
+            ec.logger.error(`Location share ${each.shareId} of an ended record was not stopped: ${err && err.message ? err.message : err}`)
+        }
+    }
+    return {stoppedCount}
+}
+
+const operations = {create, update, stop, revoke, report, xmppReport, findMine, findShared, get, deleteTrail, clean, indicator, appShare, deviceShares, status,
+    chatAudience: revokeChatAudience, linkCheck, linkRead, shareRecord, recordShares}
 
 function execute(op, parameters) {
     if (!operations[op]) throw new Error("Unknown location share operation " + op)

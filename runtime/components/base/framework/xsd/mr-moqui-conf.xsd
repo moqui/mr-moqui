@@ -1087,8 +1087,8 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:annotation><xs:documentation>Minimum number of other (non-alpha/numeric, not letters or digits) characters in the password</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="history-limit" type="xs:nonNegativeInteger" default="5">
                 <xs:annotation><xs:documentation>Number of old passwords to save that cannot be reused (0 means don't save any history)</xs:documentation></xs:annotation></xs:attribute>
-            <xs:attribute name="change-weeks" type="xs:decimal" default="12">
-                <xs:annotation><xs:documentation>Require password change after this many months (0 means don't ever require change)</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="change-weeks" type="xs:decimal" default="104">
+                <xs:annotation><xs:documentation>Require password change after this many weeks (0 means don't ever require change)</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="email-require-change" type="boolean" default="false">
                 <xs:annotation><xs:documentation>Require password change after a password reset email?</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="email-expire-hours" type="xs:nonNegativeInteger" default="48">
@@ -1118,7 +1118,7 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:complexType>
             <xs:attribute name="max-failures" type="xs:nonNegativeInteger" default="3">
                 <xs:annotation><xs:documentation>Account is disabled after max failures</xs:documentation></xs:annotation></xs:attribute>
-            <xs:attribute name="disable-minutes" type="xs:nonNegativeInteger" default="30">
+            <xs:attribute name="disable-minutes" type="xs:nonNegativeInteger" default="5">
                 <xs:annotation><xs:documentation>How long to disable the account (0 means no limit, ie forever)</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="history-store" type="boolean" default="true">
                 <xs:annotation><xs:documentation>Store records of login attempts?</xs:documentation></xs:annotation></xs:attribute>
@@ -1356,14 +1356,24 @@ along with this software (see the LICENSE.md file). If not, see
                     <xs:annotation><xs:documentation>Providers of the hooks the framework asks for whoever acts, the system
                         with no user included, registered by a component apart from any app root (an app root's
                         shell-providers are in mr-xml-screen.xsd): asked by call#Providers after the apps' providers, for
-                        every caller, with authorization disabled, since this conf names them. Only sms-consent; another
-                        element is logged and left out. Merged by hook and name. No Java counterpart.</xs:documentation></xs:annotation>
+                        every caller, with authorization disabled, since this conf names them. Only sms-consent and
+                        shell-indicator; another element is logged and left out. Merged by hook and name. No Java
+                        counterpart.</xs:documentation></xs:annotation>
                     <xs:sequence>
                         <xs:element minOccurs="0" maxOccurs="unbounded" name="sms-consent"><xs:complexType>
                             <xs:annotation><xs:documentation>Whether a promotional text may go from one of our numbers to a
                                 number (org.moqui.comms.ProviderInterfaces.sms#Consent): consent true or false; one false
                                 refuses it, and with none saying true it is refused. Mantle answers from its consent
                                 records.</xs:documentation></xs:annotation>
+                            <xs:attribute name="name" type="xs:string" use="required"/>
+                            <xs:attribute name="service" type="xs:string" use="required"/>
+                            <xs:attribute name="sequence" type="xs:integer"/>
+                        </xs:complexType></xs:element>
+                        <xs:element minOccurs="0" maxOccurs="unbounded" name="shell-indicator"><xs:complexType>
+                            <xs:annotation><xs:documentation>Indicators of the shell's app bar for every signed-in user, whatever
+                                apps they may open (the provider hook of mr-xml-screen.xsd's shell-indicator). Run with
+                                authorization disabled, so its service reads only the caller's own rows: the framework's
+                                answers live location's "Sharing location".</xs:documentation></xs:annotation>
                             <xs:attribute name="name" type="xs:string" use="required"/>
                             <xs:attribute name="service" type="xs:string" use="required"/>
                             <xs:attribute name="sequence" type="xs:integer"/>
@@ -1715,6 +1725,9 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:attribute name="lease-seconds" type="xs:string" default="60"/>
                 <xs:attribute name="heartbeat-seconds" type="xs:string" default="15"/>
                 <xs:attribute name="event-text-flush-ms" type="xs:string" default="300"/>
+                <xs:attribute name="user-open-runs" type="xs:string" default="4">
+                    <xs:annotation><xs:documentation>The most agent runs of one user waiting or working at once, so one user
+                        does not fill the node's agent workers; a start past it is refused (429). 0 is no limit.</xs:documentation></xs:annotation></xs:attribute>
             </xs:complexType></xs:element>
             <xs:element name="content-log" minOccurs="0"><xs:complexType>
                 <xs:annotation><xs:documentation>Keep the request and response of each call in LlmCall. Off by default;
@@ -1918,6 +1931,10 @@ along with this software (see the LICENSE.md file). If not, see
                 The most rows of a find made from a request's search parameters with pageNoLimit=true (a screen's CSV,
                 XLSX, print or text export): pageNoLimit asks for no page, and gets this many rows at most (SEC-DAT-09).
                 No Java counterpart.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="max-reply-bytes" type="non-neg-int-expandable" default="1073741824"><xs:annotation><xs:documentation>
+                The most bytes of rows one Postgres reply may bring to this server: past it the rest of the reply is read
+                and dropped and the query fails, so a server (or a query) cannot hold this process's memory with one
+                result (SEC-DAT-94). Read when a connection opens. No Java counterpart.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
 
@@ -2407,7 +2424,7 @@ along with this software (see the LICENSE.md file). If not, see
                 so an import reads a few row groups of a few files.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="package-max-bytes" type="non-neg-int-expandable" default="2147483648"><xs:annotation><xs:documentation>
                 The largest offline map package a user may build, in bytes (2 GiB): a package whose estimate passes it is
-                refused before anything is cut (plans/Maps-Offline.md).</xs:documentation></xs:annotation></xs:attribute>
+                refused before anything is cut (plans/archive/Maps-Offline.md).</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="package-user-max-bytes" type="non-neg-int-expandable" default="8589934592"><xs:annotation><xs:documentation>
                 The most bytes one user's offline map packages may hold in all, in bytes (8 GiB): their ready packages and
                 the new one's estimate; a package past it is refused at its estimate.</xs:documentation></xs:annotation></xs:attribute>
@@ -2421,7 +2438,7 @@ along with this software (see the LICENSE.md file). If not, see
         </xs:complexType>
     </xs:element>
     <xs:element name="location">
-        <xs:annotation><xs:documentation>Shared live location (plans/Location-Sharing.md §3.1): the limits of the shares a
+        <xs:annotation><xs:documentation>Shared live location (plans/archive/Location-Sharing.md §3.1): the limits of the shares a
             person starts (org.moqui.maps.LocationServices). The shares, their audiences, the latest positions and the kept
             trails are entity rows, not settings.</xs:documentation></xs:annotation>
         <xs:complexType>
@@ -2444,6 +2461,9 @@ along with this software (see the LICENSE.md file). If not, see
                 has.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="link-max-views-per-minute" type="non-neg-int-expandable" default="30"><xs:annotation><xs:documentation>
                 The most reads a minute of a guest link's page, for one link.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="link-max-failed-tries" type="non-neg-int-expandable" default="10"><xs:annotation><xs:documentation>
+                The wrong secrets given with a guest link's selector after which the link is refused (plans/archive/Location-Sharing.md
+                §3.7); its owner adds a new link.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
     <xs:element name="cluster-member">
@@ -3108,6 +3128,10 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="store-max-mb" type="xs:string" default="512"><xs:annotation><xs:documentation>The
                 size cap of an account's store on the device, in MB; past it the least recently read cached data goes
                 (never unsent items or drafts). At least 1.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="packages-max-mb" type="xs:string" default="4096"><xs:annotation><xs:documentation>The
+                size cap of an account's offline map packages on the device, in MB, outside store-max-mb
+                (plans/archive/Maps-Offline.md §2.4): a download that would pass it is refused. At least 1.</xs:documentation>
+                </xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
 

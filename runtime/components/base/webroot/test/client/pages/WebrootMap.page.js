@@ -2,8 +2,10 @@
 
 // m-map's pure helpers in the page (moqui.map of /js/WebrootMap.js), and its list of places when the map cannot be drawn. The
 // OpenLayers bundle (an ES module, imported as m-map imports it) is loaded for its formats and vector sources only, and its
-// raster part for the projections and the lookup it refuses: drawing the map is a browser walk, not a regression test. The
-// page is https://moqui.test.
+// raster part for the projections and the lookup it refuses: drawing a server's map is a browser walk, not a regression
+// test. The live layer (plans/archive/Location-Sharing.md §3.3) is its features on a vector source, with a stand-in notification
+// socket for its topics. Package mode (plans/archive/Maps-Offline.md §2.5) is checked here, its one map drawn from a package's
+// files that the test answers as the apps' scheme does. The page is https://moqui.test.
 "use strict";
 
 const map = moqui.map;
@@ -380,8 +382,8 @@ test("m-map builds its WMS, WMTS and WFS layers only for the URL it was given, w
         { id: "X", kind: "wms", url: "https://elsewhere.example/wms", ogc: { params: { LAYERS: "roads" } } }] });
     const statuses = [];
     // a stand-in for the component: its own methods, the profile's origins, no map drawn
-    const self = { origins: map.allowedOrigins(config, page), pageOrigin: () => page, status: (...args) => statuses.push(args), watchSource: () => {},
-        featureStyle: () => null };
+    const self = { origins: map.allowedOrigins(config, page), pageOrigin: () => page, packageBase: () => "", status: (...args) => statuses.push(args),
+        watchSource: () => {}, featureStyle: () => null };
     for (const name of ["checkUrl", "ogcOf", "ogcCrossOrigin", "wmsLayer", "wmtsLayer", "wfsLayer"]) self[name] = methods[name].bind(self);
     self.origins.delete("https://elsewhere.example");
     const built = {};
@@ -525,5 +527,343 @@ test("the build's files are named by their hash, and its decoder worker inflates
         assert.deepEqual(Array.from(new Uint8Array(answer.decoded)), Array.from(pixels));
     } finally {
         worker.terminate();
+    }
+});
+
+// ---- the live layer (plans/archive/Location-Sharing.md §3.3) ----
+
+// A stand-in for the shell's notification socket: listeners by topic, and a push that calls them as MoquiLib's does.
+const fakeNotifications = () => {
+    const listeners = {};
+    return {
+        registerListener(topic, callback) {
+            (listeners[topic] = listeners[topic] || []).push(callback);
+            return () => { listeners[topic] = (listeners[topic] || []).filter((one) => one !== callback); if (!listeners[topic].length) delete listeners[topic]; };
+        },
+        push(topic, message) { (listeners[topic] || []).slice().forEach((callback) => callback({ topic, message: JSON.stringify(message) })); },
+        topics() { return Object.keys(listeners).sort(); }
+    };
+};
+const liveConfig = (ageSeconds) => [
+    { shareId: "S1", role: "viewer", label: "Sam <b>Lee</b>", ownerName: "Sam Lee", thruDate: Date.now() + 3600000, keepTrail: true,
+        latest: { latitude: 45.5, longitude: -122.6, accuracy: 30, ageSeconds }, trail: [[-122.61, 45.49], [-122.6, 45.5]] },
+    { shareId: "S2", role: "owner", label: "Me", thruDate: Date.now() + 3600000, latest: null },
+    { shareId: "", label: "no id" }, { shareId: "S3", latest: { latitude: 95, longitude: 0 } }];
+
+test("a live share is checked: its label plain text, a position in range, its age from the read, stale past five minutes", () => {
+    const now = 1764000000000;
+    const shares = map.normalizeLiveShares(liveConfig(30), now);
+    assert.deepEqual(shares.map((share) => share.shareId), ["S1", "S2", "S3"], "a share with no id is left out");
+    assert.equal(shares[0].label, "Sam Lee", "markup is not kept");
+    assert.deepEqual(shares[0].latest, { lon: -122.6, lat: 45.5, accuracy: 30, observedDate: null });
+    assert.equal(shares[0].seenAt, now - 30000);
+    assert.equal(shares[0].trail.length, 2);
+    assert.equal(shares[2].latest, null, "a latitude out of range is no position");
+    assert.equal(map.liveAgeText(map.liveAgeSeconds(shares[0], now)), "just now");
+    assert.equal(map.liveAgeText(map.liveAgeSeconds(shares[0], now + 5 * 60000)), "5 min ago");
+    assert.equal(map.liveStale(shares[0], now + 4 * 60000), false);
+    assert.equal(map.liveStale(shares[0], now + 6 * 60000), true);
+    assert.equal(map.liveAgeText(map.liveAgeSeconds(shares[1], now)), "No position yet");
+    // a ring of the accuracy, closed, the metres north as degrees of latitude
+    const ring = map.accuracyRing(-122.6, 45.5, 1113.2, 4);
+    assert.equal(ring.length, 5);
+    assert.deepEqual(ring[0], ring[4]);
+    assert.ok(Math.abs(ring[1][1] - 45.51) < 1e-9);
+});
+
+test("a share read at 200 s old goes stale after 300 s, however often its configuration is read or normalized again", () => {
+    const readAt = 1764000000000;
+    const row = { shareId: "S9", role: "viewer", label: "Quiet", latest: { latitude: 45.5, longitude: -122.6, observedDate: readAt - 200000, ageSeconds: 200 } };
+    let held = [];
+    const stale = [];
+    // the same read normalized again every 30 s (a parent's render, a report of another share, a layer shown), with its
+    // ageSeconds unchanged: the position's first-seen time stays
+    for (let step = 0; step <= 5; step++) {
+        const now = readAt + step * 30000;
+        held = map.mergeLiveShares(held, map.normalizeLiveShares([row], now), new Set());
+        stale.push(map.liveStale(held[0], now));
+    }
+    assert.deepEqual(stale, [false, false, false, false, true, true], "past 300 s at 120 s after the read");
+    assert.equal(held[0].seenAt, readAt - 200000);
+    // a parent's stamp at its read is the time used, wherever it is normalized again
+    const stamped = map.normalizeLiveShares([Object.assign({}, row, { latest: Object.assign({}, row.latest, { seenAt: readAt - 200000 }) })], readAt + 600000)[0];
+    assert.equal(stamped.seenAt, readAt - 200000);
+    assert.equal(map.liveStale(stamped, readAt + 150000), true);
+    // a newer position read takes over
+    const moved = Object.assign({}, row, { latest: { latitude: 45.6, longitude: -122.6, observedDate: readAt + 170000, ageSeconds: 10 } });
+    held = map.mergeLiveShares(held, map.normalizeLiveShares([moved], readAt + 180000), new Set());
+    assert.equal(held[0].seenAt, readAt + 170000);
+    assert.equal(map.liveStale(held[0], readAt + 180000), false);
+});
+
+test("the live layer follows each share's topic: a push moves its marker, a stale one is drawn grey, ended takes it off", async () => {
+    const O = await olLoad;
+    const methods = map.components["m-map-view"].methods;
+    const client = fakeNotifications();
+    const emitted = [];
+    // a stand-in for the component: its own methods, a vector source as the drawn map's, no map drawn
+    const self = { liveShares: [], liveNow: Date.now(), liveSource: new O.VectorSource(), $root: { notificationClient: client },
+        $emit: (name, value) => emitted.push([name, value]), projection: () => "EPSG:3857", toMap: (lon, lat) => O.fromLonLat([lon, lat], "EPSG:3857") };
+    for (const name of ["liveClient", "setLiveShares", "liveChanged", "syncLiveTopics", "onLivePush", "stopLive", "drawLive", "liveShare", "liveStyle", "labelText"])
+        self[name] = methods[name].bind(self);
+    try {
+        self.setLiveShares(map.normalizeLiveShares(liveConfig(10)));
+        assert.deepEqual(client.topics(), ["locationShare:S1", "locationShare:S2", "locationShare:S3"]);
+        const at = (id) => self.liveSource.getFeatureById(id).getGeometry().getCoordinates();
+        const near = (a, b) => Math.abs(a[0] - b[0]) < 1e-6 && Math.abs(a[1] - b[1]) < 1e-6;
+        assert.ok(near(at("live:S1"), O.fromLonLat([-122.6, 45.5])));
+        assert.equal(self.liveSource.getFeatureById("live:S2"), null, "a share with no position yet has no marker");
+        const kinds = () => self.liveSource.getFeatures().filter((feature) => feature.get("shareId") === "S1").map((feature) => feature.get("liveKind")).sort();
+        assert.deepEqual(kinds(), ["accuracy", "marker", "trail"]);
+        const marker = () => self.liveStyle(O, self.liveSource.getFeatureById("live:S1"));
+        assert.equal(marker().getText().getText(), "Sam Lee · just now", "the label and the age, as canvas text");
+        assert.equal(marker().getImage().getFill().getColor(), "rgba(0,121,107,1)");
+        assert.equal(emitted[emitted.length - 1][0], "live-change");
+        // a position pushed: the marker moves, the trail grows
+        client.push("locationShare:S1", { shareId: "S1", event: "position", latitude: 45.6, longitude: -122.5, accuracy: 8 });
+        assert.ok(near(at("live:S1"), O.fromLonLat([-122.5, 45.6])));
+        assert.equal(self.liveShare("S1").trail.length, 3);
+        assert.equal(self.liveShare("S1").latest.accuracy, 8);
+        client.push("locationShare:S1", { shareId: "S2", event: "ended" });
+        assert.ok(self.liveShare("S2"), "a message for another share on this topic is not taken");
+        // no report for over five minutes: grey and dashed
+        self.liveShares = self.liveShares.map((share) => (share.shareId === "S1" ? Object.assign({}, share, { seenAt: Date.now() - 6 * 60000 }) : share));
+        assert.equal(marker().getImage().getFill().getColor(), "rgba(117,117,117,0.6)");
+        assert.deepEqual(marker().getImage().getStroke().getLineDash(), [3, 3]);
+        assert.ok(/6 min ago$/.test(marker().getText().getText()));
+        // revoked tells the owner of an entry gone, not the share; ended takes it off, and so does revoked for a viewer
+        client.push("locationShare:S2", { shareId: "S2", event: "revoked" });
+        assert.ok(self.liveShare("S2"));
+        client.push("locationShare:S1", { shareId: "S1", event: "ended" });
+        assert.equal(self.liveShare("S1"), null);
+        assert.equal(self.liveSource.getFeatureById("live:S1"), null);
+        // live-change names the share an ended push took off; a read that lists fewer shares names none
+        assert.deepEqual(emitted[emitted.length - 1][1].removed, ["S1"]);
+        self.setLiveShares(self.liveShares.filter((share) => share.shareId !== "S3"));
+        assert.deepEqual(emitted[emitted.length - 1][1].removed, []);
+        self.setLiveShares(map.normalizeLiveShares(liveConfig(10)).filter((share) => share.shareId !== "S1"));
+        assert.deepEqual(client.topics(), ["locationShare:S2", "locationShare:S3"], "its topic is no longer followed");
+        client.push("locationShare:S3", { shareId: "S3", event: "revoked" });
+        assert.deepEqual(client.topics(), ["locationShare:S2"]);
+        // a read again that still lists an ended share does not bring it back; a pushed position newer than the read's is kept
+        client.push("locationShare:S2", { shareId: "S2", event: "position", latitude: 10, longitude: 20 });
+        self.setLiveShares(map.normalizeLiveShares(liveConfig(600)));
+        assert.deepEqual(self.liveShares.map((share) => share.shareId), ["S2"]);
+        assert.deepEqual(self.liveShare("S2").latest, { lon: 20, lat: 10, accuracy: null, observedDate: null });
+    } finally {
+        self.stopLive();
+    }
+    assert.deepEqual(client.topics(), [], "every topic is let go when the map unmounts");
+});
+
+test("the live shares are listed under the map as text, followed while it is mounted and let go when it unmounts", async () => {
+    const client = fakeNotifications();
+    const before = moqui.webrootVue;
+    moqui.webrootVue = { notificationClient: client };
+    const holder = document.createElement("div");
+    document.body.appendChild(holder);
+    const app = Vue.createApp({ render: () => Vue.h(map.components["m-map-view"], { id: "Live", libraryError: "fixture bundle unavailable",
+        config: { locationShares: [{ shareId: "L1", role: "viewer", label: "<img src=x onerror=alert(1)>Pat & Co", approximate: true,
+            latest: { latitude: 41.8781, longitude: -87.6298, ageSeconds: 0 } }] } }) });
+    try {
+        app.mount(holder);
+        await Vue.nextTick();
+        await Vue.nextTick();
+        const item = () => holder.querySelector("#Live .m-map-live-share");
+        assert.equal(item().querySelector(".m-map-live-label").textContent, "Pat & Co");
+        assert.equal(holder.querySelector("#Live .m-map-live img"), null, "a label is never markup");
+        assert.equal(item().querySelector(".m-map-live-coordinates").textContent, "41.87810, -87.62980");
+        assert.ok(item().textContent.includes("approximate"));
+        assert.deepEqual(client.topics(), ["locationShare:L1"]);
+        client.push("locationShare:L1", { shareId: "L1", event: "position", latitude: 41.9, longitude: -87.7 });
+        await Vue.nextTick();
+        assert.equal(item().querySelector(".m-map-live-coordinates").textContent, "41.90000, -87.70000");
+        client.push("locationShare:L1", { shareId: "L1", event: "ended" });
+        await Vue.nextTick();
+        assert.equal(item(), null);
+        app.unmount();
+        assert.deepEqual(client.topics(), []);
+    } finally {
+        moqui.webrootVue = before;
+        holder.remove();
+    }
+});
+
+// ---- package mode (plans/archive/Maps-Offline.md §2.5): an offline map package on the device, at its path on the shell's origin ----
+
+const PACKAGE = "/__moqui-app/maps/P7/";
+// a manifest as OF1's MapPackages.js writes it: the frozen configuration with package-relative URLs, the sources with an
+// archive's own notice (HTML), and a notice
+const packageManifest = () => ({
+    schemaVersion: 1,
+    package: { packageId: "P7", name: "Harbor", bbox: [-71.2, 42.2, -70.9, 42.5], minZoom: 0, maxZoom: 14, revision: 3, builtDate: "2026-11-27T10:00:00.000Z" },
+    configuration: {
+        profileId: "LOCAL_PROTOMAPS",
+        profile: { profileId: "LOCAL_PROTOMAPS", basemap: "LIGHT", allowedOrigins: ["https://tiles.example.org"],
+            notice: { text: "Offline", href: "/qapps/maps/Configuration", linkText: "Configure" },
+            basemaps: [
+                { id: "LIGHT", label: "Light", kind: "pmtiles", url: "basemap/LIGHT.pmtiles", styleUrl: "style/light.json",
+                    attribution: "Protomaps\n© OpenStreetMap", attributionUrls: ["https://protomaps.com", "https://www.openstreetmap.org/copyright"] },
+                { id: "OUTLINE_NE110", label: "Country outlines", kind: "outline", url: "outline.json", attribution: "Natural Earth",
+                    attributionUrls: ["https://www.naturalearthdata.com/"] }] },
+        layers: [{ id: "places", label: "My places", kind: "geojson", url: "places.geojson", visible: true },
+            { id: "tiles", label: "Tiles", kind: "pmtiles", url: "overlays/7.pmtiles", styleUrl: "style/overlay.json" },
+            { id: "styled", label: "Styled", kind: "pmtiles", url: "overlays/8.pmtiles", styleUrl: "https://evil.example/style.json" },
+            { id: "out", label: "Out", kind: "geojson", url: "../P8/places.geojson" },
+            { id: "abs", label: "Abs", kind: "geojson", url: "https://evil.example/x.json" },
+            { id: "rooted", label: "Rooted", kind: "geojson", url: "/libs/naturalearth/countries-110m.json" }],
+        externalRequests: false, extent: [-71.2, 42.2, -70.9, 42.5], recordKey: { partyId: "P1" }, adapter: "party"
+    },
+    sources: [{ kind: "basemap", member: "basemap/LIGHT.pmtiles", attribution: "Protomaps",
+        sourceAttribution: '<a href="https://www.openstreetmap.org/copyright" target="_blank">&copy; OpenStreetMap</a> <img src=x onerror="window.packageAttack=1">',
+        license: "ODbL-1.0" },
+    { kind: "postal", member: "postal.json", licenses: [{ dataSetId: "GEONAMES", license: "CC-BY-4.0" }] },
+    { kind: "overture", member: "overture-places.json", imports: [{ importId: "I1", licenses: [{ name: "CDLA-Permissive-2.0" }, "<b>ODbL</b>"] }] }],
+    members: [{ path: "basemap/LIGHT.pmtiles", size: 10, sha256: "a" }, { path: "outline.json", size: 10, sha256: "b" }],
+    notice: "This package holds what its owner could read when it was built."
+});
+
+test("a package's manifest is its map's configuration: every URL the package's, its path the only one asked, its attribution text", () => {
+    assert.equal(map.packageBase("P7"), PACKAGE);
+    for (const bad of ["", "..", "a/b", "a b", "x".repeat(65)]) assert.equal(map.packageBase(bad), "", bad);
+    const config = map.normalizeConfig({ packageBase: PACKAGE, manifest: packageManifest(), zoom: 12 });
+    assert.equal(config.packageBase, PACKAGE);
+    assert.deepEqual(config.profile.basemaps.map((basemap) => [basemap.url, basemap.styleUrl]),
+        [[PACKAGE + "basemap/LIGHT.pmtiles", PACKAGE + "style/light.json"], [PACKAGE + "outline.json", ""]]);
+    assert.deepEqual(config.layers.map((layer) => [layer.id, layer.url]),
+        [["places", PACKAGE + "places.geojson"], ["tiles", PACKAGE + "overlays/7.pmtiles"], ["styled", PACKAGE + "overlays/8.pmtiles"], ["out", ""], ["abs", ""],
+            ["rooted", ""]], "a URL that is not a plain path of the package is dropped");
+    assert.deepEqual(config.layers.slice(1, 3).map((layer) => layer.styleUrl), [PACKAGE + "style/overlay.json", ""], "a layer's style is the package's too");
+    assert.deepEqual(config.profile.allowedOrigins, [], "no host the profile named");
+    assert.equal(config.profile.notice.href, "", "no link of the server's");
+    assert.deepEqual(config.extent, [-71.2, 42.2, -70.9, 42.5], "the view is the package's region");
+    assert.equal(config.zoom, 12, "the page's own view wins");
+    assert.equal(config.adapter, "", "no record of the server's");
+    // the archive's own notice, HTML in its metadata, joins the attribution as plain text
+    const light = config.profile.basemaps[0];
+    assert.equal(light.attribution, "Protomaps\n© OpenStreetMap", "a notice already named is not added twice");
+    const html = map.attributionHtml(light.attribution, light.attributionUrls);
+    assert.ok(!/<img|onerror/.test(html), html);
+    const other = map.normalizeConfig({ packageBase: PACKAGE, manifest: Object.assign(packageManifest(), { sources: [{ kind: "basemap", member: "outline.json",
+        sourceAttribution: "<b>Made</b> with <script>x()</script>Natural Earth data" }] }) });
+    assert.equal(other.profile.basemaps[1].attribution, "Natural Earth\nMade with Natural Earth data");
+    // the one origin, and on it the package's path only
+    const origins = map.allowedOrigins(config, page);
+    assert.deepEqual([...origins], [page]);
+    const allowed = (url) => map.urlAllowed(url, origins, page, PACKAGE);
+    assert.ok(allowed(PACKAGE + "basemap/LIGHT.pmtiles"));
+    assert.ok(allowed(page + PACKAGE + "fonts/noto-sans/400.css"));
+    for (const url of ["/libs/naturalearth/countries-110m.json", "/__moqui-app/maps/P8/outline.json", PACKAGE + "../P8/outline.json",
+        PACKAGE + "x.json?a=1", "https://tiles.example.org" + PACKAGE + "a", "mapbox://styles/x"]) assert.ok(!allowed(url), url);
+    // a manifest with no usable base asks nothing
+    assert.equal(map.normalizeConfig({ packageBase: "/elsewhere/", manifest: packageManifest() }).profile.basemaps[0].url, "");
+    // no basemap at all: the package's own outline
+    assert.equal(map.normalizeConfig({ packageBase: PACKAGE, manifest: { configuration: {} } }).profile.basemaps[0].url, PACKAGE + "outline.json");
+});
+
+test("a package's style takes its sprite and fonts from the package, and names no other host", () => {
+    const style = map.packageStyle({ version: 8, sprite: "sprites/light", sources: { protomaps: { type: "vector", url: "pmtiles://basemap/LIGHT.pmtiles" } } }, page, PACKAGE);
+    assert.equal(style.sprite, page + PACKAGE + "sprites/light");
+    const origins = map.allowedOrigins(map.normalizeConfig({ packageBase: PACKAGE, manifest: packageManifest() }), page);
+    assert.deepEqual(map.refusedStyleUrls(style, PACKAGE + "style/light.json", origins, page, ["protomaps"], PACKAGE), []);
+    assert.deepEqual(map.refusedStyleUrls({ sprite: "https://cdn.example/sprite", sources: { s: { type: "geojson", data: "data/x.json" } } },
+        PACKAGE + "style/light.json", origins, page, null, PACKAGE), ["https://cdn.example/sprite"], "a relative URL is the package's, resolved from its root");
+    assert.equal(map.packageStyle({ sprite: "../../sprite" }, page, PACKAGE).sprite, undefined, "a sprite outside the package is dropped");
+    assert.deepEqual(map.packageStyle({ sprite: [{ id: "a", url: "sprites/a" }, { id: "b", url: "https://cdn.example/b" }] }, page, PACKAGE).sprite,
+        [{ id: "a", url: page + PACKAGE + "sprites/a" }]);
+    assert.equal(map.packageFonts(page, PACKAGE), page + PACKAGE + "fonts/{font-family}/{fontweight}{-fontstyle}.css");
+    // the sources the offline screen lists: text only, an archive's notice and the licenses
+    const sources = map.packageSources(packageManifest());
+    assert.deepEqual(sources.map((source) => source.kind), ["basemap", "postal", "overture"]);
+    assert.equal(sources[0].sourceAttribution, "© OpenStreetMap");
+    assert.deepEqual(sources[0].licenses, ["ODbL-1.0"]);
+    assert.deepEqual(sources[1].licenses, ["CC-BY-4.0"]);
+    assert.deepEqual(sources[2].licenses, ["CDLA-Permissive-2.0", "ODbL"]);
+});
+
+test("a package's map is drawn from its files alone: no outside request, its attribution shown as text", async () => {
+    await olLoad;
+    // the package's files, answered here as the app's scheme answers them; every request the page makes is noted
+    const topology = { type: "Topology", arcs: [[[-71.2, 42.2], [-70.9, 42.2], [-70.9, 42.5], [-71.2, 42.5], [-71.2, 42.2]]],
+        objects: { countries: { type: "GeometryCollection", geometries: [{ type: "Polygon", arcs: [[0]], properties: { name: "Harbor" } }] } } };
+    const places = { type: "FeatureCollection", features: [{ type: "Feature", id: "p1", geometry: { type: "Point", coordinates: [-71.05, 42.36] },
+        properties: { name: "Ferry dock" } }] };
+    const files = { "outline.json": JSON.stringify(topology), "places.geojson": JSON.stringify(places) };
+    const ranges = [];
+    const asked = [];
+    const realFetch = window.fetch;
+    window.fetch = (input, init) => {
+        const url = new URL(typeof input === "string" ? input : input.url, location.href);
+        asked.push(url.href);
+        const body = url.origin === page && url.pathname.startsWith(PACKAGE) ? files[url.pathname.slice(PACKAGE.length)] : undefined;
+        const range = /^bytes=(\d+)-(\d+)$/.exec(new Headers((init && init.headers) || {}).get("Range") || "");
+        // the places as the app's scheme answers a file past its slice: 206 slices (of 64 bytes here), each saying the whole
+        if (body !== undefined && range && url.pathname.endsWith("places.geojson")) {
+            const bytes = new TextEncoder().encode(body);
+            const start = Number(range[1]), end = Math.min(Number(range[2]), start + 63, bytes.length - 1);
+            ranges.push(start);
+            return Promise.resolve(new Response(bytes.slice(start, end + 1), { status: 206, headers: { "Content-Range": "bytes " + start + "-" + end + "/" + bytes.length } }));
+        }
+        if (body !== undefined) return Promise.resolve(new Response(body, { status: 200, headers: { "Content-Type": "application/json" } }));
+        if (url.origin === page && url.pathname.startsWith(PACKAGE)) return Promise.resolve(new Response("Not in this offline map", { status: 404 }));
+        return realFetch(input, init);
+    };
+    const before = performance.getEntriesByType("resource").length;
+    const manifest = packageManifest();
+    // the outline alone, with its source's notice HTML: drawn and attributed as text
+    manifest.configuration.profile.basemaps = manifest.configuration.profile.basemaps.slice(1);
+    manifest.configuration.profile.basemap = "OUTLINE_NE110";
+    manifest.configuration.layers = [{ id: "places", label: "My places", kind: "geojson", url: "places.geojson", visible: true }];
+    manifest.sources = [{ kind: "basemap", member: "outline.json", sourceAttribution: '<b>Natural Earth</b> data <img src=x onerror="window.packageAttack=1">' }];
+    const holder = document.createElement("div");
+    holder.style.width = "480px";
+    // the map's canvas fills its frame (WebrootVue.qvt.css, not loaded here)
+    const sheet = document.createElement("style");
+    sheet.textContent = ".m-map-frame { position: relative; } .m-map-canvas { position: absolute; inset: 0; }";
+    document.head.appendChild(sheet);
+    document.body.appendChild(holder);
+    let view = null;
+    const app = Vue.createApp({ render: () => Vue.h(map.components["m-map-view"], { id: "PackageMap", config: { packageBase: PACKAGE, manifest },
+        ref: (vm) => { view = vm; } }) });
+    try {
+        app.mount(holder);
+        const until = async (check, what) => {
+            const end = Date.now() + 8000;
+            for (;;) {
+                if (check()) return;
+                if (Date.now() > end) throw new Error("waited for " + what + ": " + JSON.stringify(view && view.layerStatus) + " " + asked.join(", ") + " " + (view && view.fallback));
+                await new Promise((resolve) => setTimeout(resolve, 20));
+            }
+        };
+        await until(() => view && view.layerStatus.some((status) => status.id === "OUTLINE_NE110" && status.state === "ready"), "the outline");
+        await until(() => holder.querySelector(".ol-attribution li"), "the attribution");
+        await until(() => view.layerStatus.some((status) => status.id === "places" && status.state === "ready"), "the places");
+        assert.ok(ranges.length > 1 && ranges[0] === 0, "a GeoJSON member read by range, slice by slice: " + ranges.join(","));
+        const attribution = holder.querySelector(".ol-attribution ul");
+        assert.ok(attribution.textContent.includes("Natural Earth data"), attribution.textContent);
+        assert.equal(attribution.querySelector("img"), null, "the notice is text, never markup");
+        assert.equal(window.packageAttack, undefined);
+        assert.ok(asked.length > 0 && asked.every((url) => url.startsWith(page + PACKAGE)), asked.join(", "));
+        // a place found by a page's search is marked and shown
+        view.showPlace({ lon: -71.05, lat: 42.36, label: "<b>Dock</b>" });
+        assert.ok(view.announced.startsWith("Dock: 42.36000"), view.announced);
+        const outside = performance.getEntriesByType("resource").slice(before).map((entry) => entry.name)
+            .filter((name) => !name.startsWith(page + PACKAGE) && !name.startsWith(page + "/libs/openlayers/"));
+        assert.deepEqual(outside, [], "no request but the package's (and the map's own library)");
+    } finally {
+        window.fetch = realFetch;
+        app.unmount();
+        holder.remove();
+        sheet.remove();
+    }
+});
+
+test("a package file's slice that does not say the whole length is an error, never a file cut short", async () => {
+    const realFetch = window.fetch;
+    window.fetch = () => Promise.resolve(new Response('{"rows":', { status: 206 }));
+    try {
+        await assert.rejects(map.readPackageFile(page + PACKAGE + "postal.json"), /Content-Range/);
+    } finally {
+        window.fetch = realFetch;
     }
 });

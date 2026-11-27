@@ -256,20 +256,7 @@ fn url_host(url: &str) -> Option<(String, u16)> {
     Some((host.trim_matches(['[', ']']).to_string(), port))
 }
 
-/// A component name as a directory and a repository id may hold it.
-fn check_name(name: &str) -> Result<(), String> {
-    let good = !name.is_empty()
-        && name.len() <= 100
-        && !name.starts_with('.')
-        && name
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'));
-    if good {
-        Ok(())
-    } else {
-        Err(format!("{name:?} is not a component name a deploy takes"))
-    }
-}
+pub(crate) use super::load::{check_name, component_location};
 
 fn provider(factory: &ExecutionContextFactory) -> Result<GitProvider, String> {
     moqui_git::provider(factory).ok_or_else(|| "the git resources are not installed".to_string())
@@ -427,7 +414,10 @@ pub fn deploy(factory: &Arc<ExecutionContextFactory>, name: &str, mode: Mode, da
     if let Err(err) = gate_commit(factory, name, &text(&row, "commitId")) {
         return failed(err);
     }
-    let location = PathBuf::from(text(&row, "location"));
+    let location = match component_location(name, &text(&row, "location"), None) {
+        Ok(location) => location,
+        Err(err) => return failed(err),
+    };
     let staged = location
         .parent()
         .map(|parent| parent.join(format!(".staging-{name}")))
@@ -469,7 +459,7 @@ pub fn discard(factory: &Arc<ExecutionContextFactory>, name: &str) -> Result<(),
     let Some(row) = row else {
         return Err(format!("{name} is not staged"));
     };
-    let location = PathBuf::from(text(&row, "location"));
+    let location = component_location(name, &text(&row, "location"), None)?;
     if let Some(parent) = location.parent() {
         let _ = std::fs::remove_dir_all(parent.join(format!(".staging-{name}")));
     }
@@ -509,7 +499,8 @@ pub fn preview_update_at(
         .filter(|row| text(row, "source") == "git" && text(row, "status") == "deployed")
         .ok_or_else(|| format!("{name} was not deployed from git"))?;
     let storage = Storage::parse(&text(&row, "storage")).unwrap_or_default();
-    let location = PathBuf::from(text(&row, "location"));
+    // only the component's own directory (SEC-TLS-104)
+    let location = super::load::deployed_location(factory, name, &text(&row, "location"))?;
     let from = text(&row, "commitId");
     let mut preview = UpdatePreview {
         component: name.to_string(),
@@ -658,7 +649,14 @@ pub fn update_at(
         }
     };
     let storage = Storage::parse(&text(&row, "storage")).unwrap_or_default();
-    let location = PathBuf::from(text(&row, "location"));
+    // only the component's own directory (SEC-TLS-104)
+    let location = match super::load::deployed_location(factory, name, &text(&row, "location")) {
+        Ok(location) => location,
+        Err(err) => {
+            report.problems.push(err);
+            return report;
+        }
+    };
     let applied = reload::with_reload_lock(factory, || {
         update_held(
             factory,

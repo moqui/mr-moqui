@@ -439,6 +439,24 @@ function resolveLayer(layer, layerId, asBasemap) {
     const origins = [urls.url, urls.styleUrl].flatMap(originsOf)
     return {ok: true, entry, origins}
 }
+// The basemap of a page a visitor opens with no sign-in, a guest location link's (Maps/SharedLocation.xml;
+// plans/archive/Location-Sharing.md §3.7): the first enabled basemap the installation marks public (MapLayer isPublic Y) that has
+// no viewPermission, no registered resource (its map-source transition is a signed-in user's), no proxied provider
+// (the proxy is for signed-in users) and no provider on a private network (allowPrivateNetwork Y: an address inside this
+// installation's network is not a guest's to reach), resolved as for anyone (resolveLayer: outside requests and the provider's test
+// hold); else the built-in country outline. Nothing of the installation's profiles, other layers or providers is
+// answered: {basemaps: [entry], basemap, allowedOrigins}.
+function publicBasemap() {
+    for (const layer of find(LAYER, {isPublic: "Y", isBasemap: "Y"}).orderBy("layerId").limit(20).list()) {
+        if (layer.disabled === "Y" || text(layer.viewPermission) || text(layer.resourceLocation)) continue
+        const provider = text(layer.providerId) ? one(PROVIDER, {providerId: layer.providerId}) : null
+        if (provider && (provider.proxyRequests === "Y" || provider.allowPrivateNetwork === "Y")) continue
+        const resolved = resolveLayer(layer, layer.layerId, true)
+        if (!resolved.ok || resolved.entry.kind === "cog") continue
+        return {basemaps: [resolved.entry], basemap: resolved.entry.id, allowedOrigins: Array.from(new Set(resolved.origins))}
+    }
+    return {basemaps: [Object.assign({}, BUILT_IN_OUTLINE)], basemap: BUILT_IN_OUTLINE.id, allowedOrigins: []}
+}
 // ===== projections and rasters (P4c) =====
 // A projection a map may be drawn in or read a COG in: EPSG:3857 and EPSG:4326, which every map has, or an enabled row of
 // the registry with a definition; null otherwise. The rows a configuration uses are collected for its projections list.
@@ -1165,7 +1183,132 @@ function effectiveConfig(p) {
     config.fallbacks = fallbacks
     config.layerErrors = layerErrors
     config.externalRequests = !offline()
+    if (yes(p.locationShares)) {
+        const live = liveShares()
+        config.locationShares = live.locationShares
+        // a read that failed is said for each half (the own shares, those shared with the user), so a page keeps what it had
+        if (live.mineFailed) config.locationSharesMineFailed = true
+        if (live.theirsFailed) config.locationSharesTheirsFailed = true
+    }
     return {config}
+}
+
+// ===== live location (plans/archive/Location-Sharing.md §3.3) =====
+// The viewer's own active shares and those shared with them, for m-map's live layer, Browse's panels and the terminal. Read
+// only through org.moqui.maps.LocationServices, whose reads check the caller against each share's current audience
+// (find#MyShares, find#SharedWithMe, get#Share for a kept trail): no entity of a share is read here. Nothing of it is
+// logged or cached, and a failed read leaves that part out.
+const LIVE_SERVICES = "org.moqui.maps.LocationServices."
+// the most points of a trail handed to a map, its latest ones, and the most shares whose trail is read
+const LIVE_TRAIL_POINTS = 500
+const LIVE_TRAIL_SHARES = 10
+const wholeSetting = (name, fallback) => {
+    const number = Number(text(ec.factory.getConfValue("location@" + name)))
+    return Number.isInteger(number) && number >= 0 ? number : fallback
+}
+function livePosition(row) {
+    if (!row || row.latitude == null || row.longitude == null) return null
+    return {
+        latitude: Number(row.latitude),
+        longitude: Number(row.longitude),
+        accuracy: row.accuracy == null ? null : Number(row.accuracy),
+        heading: row.heading == null ? null : Number(row.heading),
+        speed: row.speed == null ? null : Number(row.speed),
+        observedDate: row.observedDate == null ? null : Number(row.observedDate),
+        ageSeconds: row.ageSeconds == null ? null : Number(row.ageSeconds)
+    }
+}
+// a share's kept trail as [longitude, latitude] pairs, its latest LIVE_TRAIL_POINTS in time order (get#Share's pages)
+function liveTrail(shareId, knownCount) {
+    const page = (index, size) => {
+        const found = probe(LIVE_SERVICES + "get#Share", {shareId, trailPageIndex: index, trailPageSize: size})
+        return found.failed || found.out.reasonCode ? null : found.out
+    }
+    let count = knownCount
+    if (count == null) {
+        const head = page(0, 1)
+        if (!head) return []
+        count = Number(head.trailCount) || 0
+    }
+    if (!count) return []
+    let rows = []
+    if (count <= LIVE_TRAIL_POINTS) rows = Array.from(page(0, LIVE_TRAIL_POINTS)?.trailList || [])
+    else {
+        const last = Math.floor((count - 1) / LIVE_TRAIL_POINTS)
+        for (const index of [last - 1, last]) rows = rows.concat(Array.from(page(index, LIVE_TRAIL_POINTS)?.trailList || []))
+        rows = rows.slice(-LIVE_TRAIL_POINTS)
+    }
+    return rows
+        .map(livePosition)
+        .filter(point => point)
+        .map(point => [point.longitude, point.latitude])
+}
+// who an own share is with, as names: its entries that are not revoked
+function audienceNames(list) {
+    return Array.from(list || [])
+        .filter(row => row && !row.revoked)
+        .map(row => ({
+            audienceSeqId: row.audienceSeqId,
+            audienceTypeEnumId: row.audienceTypeEnumId,
+            userGroupId: row.userGroupId || null,
+            name:
+                row.audienceTypeEnumId === "LsaLink"
+                    ? L("A guest link")
+                    : text(row.userName || row.groupName || row.jid || row.userId || row.userGroupId)
+        }))
+}
+function liveShares() {
+    if (!ec.user.userId) return {locationShares: []}
+    const minimum = wholeSetting("min-interval-seconds", 5)
+    const approximate = Math.max(minimum, wholeSetting("approximate-interval-seconds", 60))
+    const shares = []
+    const mine = probe(LIVE_SERVICES + "find#MyShares", {})
+    for (const share of mine.failed ? [] : Array.from(mine.out.shareList || []))
+        shares.push({
+            shareId: share.shareId,
+            role: "owner",
+            label: text(share.label),
+            purposeText: share.purposeText || null,
+            fromDate: share.fromDate,
+            thruDate: share.thruDate,
+            approximate: share.approximate === true,
+            keepTrail: share.keepTrail === true,
+            trailKeepDays: share.trailKeepDays ?? null,
+            trailCount: Number(share.trailCount) || 0,
+            audience: audienceNames(share.audienceList),
+            reportIntervalSeconds: share.approximate === true ? approximate : minimum,
+            // where it is sent from (plans/archive/Location-Sharing.md §3.4): a device of the owner's by its name, and whether
+            // that is this request's (the app's Send from this device), or a browser page
+            sentFromDevice: share.sentFromDevice === true,
+            deviceName: share.deviceName || null,
+            fromThisDevice: share.fromThisDevice === true,
+            audienceVersion: Number(share.audienceVersion) || 0,
+            // the owner's XMPP app feeds it too (to its XMPP contacts only), the age of its last position from there, and
+            // where the last position came from (plans/archive/Location-Sharing.md §3.6)
+            takeXmppLocation: share.takeXmppLocation === true,
+            xmppAgeSeconds: share.xmppAgeSeconds ?? null,
+            lastSource: share.lastSource || null,
+            latest: livePosition(share.latest)
+        })
+    const theirs = probe(LIVE_SERVICES + "find#SharedWithMe", {})
+    // a read that failed is said, so a page does not take its empty list for the user's having no share
+    const failed = mine.failed || theirs.failed
+    for (const share of theirs.failed ? [] : Array.from(theirs.out.shareList || []))
+        shares.push({
+            shareId: share.shareId,
+            role: "viewer",
+            label: text(share.label) || text(share.ownerName),
+            ownerName: text(share.ownerName),
+            purposeText: share.purposeText || null,
+            fromDate: share.fromDate,
+            thruDate: share.thruDate,
+            approximate: share.approximate === true,
+            keepTrail: share.keepTrail === true,
+            latest: livePosition(share.latest)
+        })
+    for (const share of shares.filter(one => one.keepTrail).slice(0, LIVE_TRAIL_SHARES))
+        share.trail = liveTrail(share.shareId, share.role === "owner" ? share.trailCount : null)
+    return {locationShares: shares, failed, mineFailed: mine.failed, theirsFailed: theirs.failed}
 }
 
 // ===== get#Preferences and store#Preferences =====
@@ -1914,6 +2057,7 @@ const operations = {
     ogcLayerOptions,
     storeOgcLayer,
     effectiveConfig,
+    liveShares,
     getPreferences,
     storePreferences,
     storeSavedView,
@@ -1932,6 +2076,8 @@ const operations = {
     // for the readiness checks and the provider kind (MapProviders.js)
     resolveProfile,
     resolveLayer,
+    // a guest location link's page (LocationShares.js linkRead)
+    publicBasemap,
     installationProfileId,
     originOf,
     templateUrls,

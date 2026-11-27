@@ -60,6 +60,16 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.security.ArtifactAuthz artifactAuthzId="DriveDeviceServicesALL" userGroupId="ALL_USERS" artifactGroupId="DriveDeviceServices"
             authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
 
+    <!-- The shell's indicators of the app bar for the signed-in user (ShellServices.get#ShellIndicators, the /shellIndicators
+        transition): inheritable so its call#Providers is authorized, which runs each shell-indicator provider as its app by
+        the user's own authorization records, so an app the user may not open answers nothing (docs/ui/Qvt-Client.md, Shell
+        indicators) -->
+    <moqui.security.ArtifactGroup artifactGroupId="ShellIndicatorServices" description="The shell's indicators for the current user"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="ShellIndicatorServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="N"
+            artifactName="org.moqui.ui.ShellServices.get#ShellIndicators"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="ShellIndicatorServicesALL" userGroupId="ALL_USERS" artifactGroupId="ShellIndicatorServices"
+            authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
+
     <!-- Special Permissions -->
     <!-- An outside user (an app's client contacts, a vendor's or partner's users): no room bound to a record (not as a
         member either), no public room but as a member, no other user's presence, no records drive (screens, WebDAV, SFTP),

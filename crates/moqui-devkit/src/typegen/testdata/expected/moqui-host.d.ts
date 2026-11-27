@@ -799,6 +799,8 @@ interface MoquiResourceFacade {
     hmac(key: string, message: string | null, encoding?: "hex" | "base64url" | null): string;
     /** A signed grant for subject, valid ttlSeconds (3600); checkGrant verifies it with the same key. */
     makeGrant(key: string, subject: string, ttlSeconds?: number | null): string;
+    /** Text in a new file of the server's user alone (0600, a random name under runtime/tmp/private); its runtime:// location. For text a job reads and deletes, never its parameters. */
+    writePrivateFile(text: string | null, extension: string): string;
     checkGrant(key: string, subject: string, token: string | null): boolean;
 }
 
@@ -923,8 +925,8 @@ interface MoquiUserFacade {
     getVisitorId(): string | null;
     /** The user of the visit, which a later login in the same visit does not change. */
     getVisitUserId(): string | null;
-    /** Whether the login key logged its user in; a key that does not adds an error message. */
-    loginUserKey(loginKey: string): boolean;
+    /** Whether the login key logged its user in; a key that does not adds an error message. With `scope` (`git`), a key made for that scope logs in too, and a key of another scope does not. */
+    loginUserKey(loginKey: string, scope?: string): boolean;
     /** The old password of a password change, behind the login gate: true when it is the current password or the reset password still in date. A null or unknown userId, a locked or terminated account and a wrong password are all false and take as long; a wrong one counts as a failed login. */
     checkOldPassword(userId: string | null, oldPassword: string | null): boolean;
     /** A second factor's code that stands in for a login (validate#UserAuthcFactorCode with countFailure), behind the login gate: the id of the factor it verified, else null. A still disabled account is counted and its code not checked, no more of a user's codes are compared at once than the failures the account has left (one past them is counted and not compared), and a wrong code counts as a failed login. */
@@ -964,6 +966,9 @@ interface MoquiUserFacade {
     /** The kind of login key this request's user signed in with (the `api_key` or `login_key` header, or `loginUserKey`): `device` (a device's key), `token` (an access token or a key for git alone, which only git over HTTP and the REST resources that declare `key-scope` git take), `session` (a `getLoginKey` key) or `scoped` (a key for one service, tasks or the gateway, which only that service's login and the REST resources that declare its `key-scope` take); null for any other login. A key made for one service signs in its request alone, never the web session. */
     readonly loginKeyKind: "device" | "token" | "session" | "scoped" | null;
     getLoginKeyKind(): "device" | "token" | "session" | "scoped" | null;
+    /** The id of the `UserLoginKey` this request's user signed in with, with `loginKeyKind` (its stored hash, as the device list names a device; never the key itself); null for any other login. For this request only. */
+    readonly loginKeyId: string | null;
+    getLoginKeyId(): string | null;
     /** The `moqui.server.Visit` id of this session, null outside one. */
     readonly visitId: string | null;
     getVisitId(): string | null;
@@ -1876,6 +1881,10 @@ interface MoquiStringUtilities {
     cleanChatHtml(text: string | null): string;
     /** Markdown with its raw HTML cleaned to the safe set and the markdown around it kept. */
     cleanMarkdown(text: string | null): string;
+    /** Whether text has a match of pattern, matched in linear time (the Rust `regex` syntax: no back-references or look-around); throws for a pattern over 1000 characters or one that does not compile. */
+    regexTest(pattern: string, text: string | null, ignoreCase?: boolean | null): boolean;
+    /** Text with each character of each match of pattern replaced by mask's first character (`*` by default), matched as regexTest matches. */
+    regexMask(pattern: string, text: string | null, mask?: string | null, ignoreCase?: boolean | null): string;
     urlEncodeIfNeeded(text: string | null): string;
     encodeAsciiFilename(filename: string | null): string;
     /** A formatter of a mask (`#` digit, `U`/`L` letter, `A` letter or digit, `?` letter, `H` hex, `*` any), or null for no mask. */

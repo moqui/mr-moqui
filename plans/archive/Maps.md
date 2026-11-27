@@ -2,15 +2,15 @@
 
 > Archived 2026-11-26: built (P0–P4, O1 and O2, and the leftovers of November 26). Open items are in
 > [Remaining-Work](../Remaining-Work.md#maps), [Future-Plans](../Future-Plans.md#maps) and [Testing-Needed](../Testing-Needed.md#maps);
-> offline packages are [Maps-Offline](../Maps-Offline.md) and live location [Location-Sharing](../Location-Sharing.md); guide
+> offline packages are [Maps-Offline](Maps-Offline.md) and live location [Location-Sharing](Location-Sharing.md); guide
 > [Maps](../../docs/tools/Maps.md).
 
 November 1, 2026 — initial design. Built P0 to P3 on November 25, 2026, and P4 and the optional O1 and O2 on
 November 26, 2026 (each stage's row in §9 says what was built; Overture's own plan is [Maps-Overture](Maps-Overture.md)).
 P3's HOME mount and walks are mr-home's H1c. The leftovers were built November 26, 2026 (the terminal geomap's link to
 Maps, archive space in readiness, a COG provider tested by a range read and `MapsCogPublic`, the memory a Geo job held,
-§6.3); offline packages and shared live location moved to [Maps-Offline](../Maps-Offline.md) and
-[Location-Sharing](../Location-Sharing.md), and the rest of §9's later research to Future-Plans. Reviewed November 25, 2026
+§6.3); offline packages and shared live location moved to [Maps-Offline](Maps-Offline.md) and
+[Location-Sharing](Location-Sharing.md), and the rest of §9's later research to Future-Plans. Reviewed November 25, 2026
 against the code, the sibling plans and the outside projects it relies on: paths, settings and existing mechanisms
 are named as they are today, and what is still to build is marked proposed. The selected browser renderer is
 OpenLayers. This plan owns the framework Maps app, reusable map interface, configuration, resource delivery and
@@ -796,8 +796,8 @@ prepared downloads. This keeps a HOME installation practical without a large geo
 2026). |
 | Optional O1 — Overture Places and Buildings | After the shared source/import foundation, add selected regional Places search and Buildings overlays with attribution, pinned releases and staged updates. Initial Maps remains usable without these datasets. Built (November 26, 2026; [Maps-Overture](Maps-Overture.md), [Maps › Overture](../../docs/tools/Maps.md#overture-places-and-buildings)): the `moqui-maps` crate (host feature `overture`) with its GeoParquet reader and STAC client; regions of at most `maps@overture-max-area` km², a theme imported as a run of the `OvertureImport` ServiceJob pinned to a release and its schema 2.x, read by range (only the items, row groups and columns that meet the region), staged, checked (rows, licenses by source, a new one held for review) and activated with the previous release kept for rollback; Places as `moqui.maps.OverturePlace` searched in Browse after the postal codes, Buildings as a PMTiles layer registered per region with the theme's attribution; Configuration › Overture and the `maps.overture` readiness. Regression `MapsOverture`; acceptance `OvertureRegionImport`. |
 | Optional O2 — Overture regional addresses | After O1, evaluate and index regional address points; exercise ambiguous, missing and approximate matches plus refresh reconciliation. Retain postal/manual fallback and the existing record-save authority. Built (November 26, 2026; [Maps-Overture §8](Maps-Overture.md#8-o2-regional-addresses), [Maps › Overture addresses](../../docs/tools/Maps.md#overture-addresses)): the evaluation (Boston's Back Bay, central Florence, downtown Austin, central Amsterdam: coverage, field completeness, same-number spread, licenses); the `ADDRESSES` theme imported by O1's run (license review per source, the acknowledgement covering none at first) into `moqui.maps.OvertureAddress` (indexed street and number keys, at most 1,000,000 rows a run), a refresh activated as a whole and compared by address (added, removed, moved, unchanged), never by ID, nothing outside its rows touched; `moqui-maps` `address.rs` (parsing, normalization by the country's languages, ranking, choices within a margin, estimates) and `search#OvertureAddresses`; the local geocoder `MPK_GEOCODER_OVERTURE` (seeded disabled `OVERTURE_ADDRESSES`: no URL, tested by its own data, asked with outside requests off only while addresses are active), its misses answered by the postal lookup; Browse's geocoder slot and the record chain (the record's point, the address match, the postal area, a chosen point; saves through the adapter only). Regression `MapsOvertureAddresses`, `address_tests.rs`, `address_service_tests.rs`; acceptance `OvertureAddressLookup`. |
-| Later research | Routing, Google/other external maps, device integrations and “find my XYZ”, explicitly shared person-location feeds ([Location-Sharing](../Location-Sharing.md)) and offline mobile packages
-([Maps-Offline](../Maps-Offline.md)). Reuse the interface without treating approximate postal positions as navigation or tracking evidence. |
+| Later research | Routing, Google/other external maps, device integrations and “find my XYZ”, explicitly shared person-location feeds ([Location-Sharing](Location-Sharing.md)) and offline mobile packages
+([Maps-Offline](Maps-Offline.md)). Reuse the interface without treating approximate postal positions as navigation or tracking evidence. |
 
 Follow-ups to P0–P3, built November 26, 2026: the FIPS to ISO 3166-2 first-level crosswalk for GeoNames (`moqui-lib`
 `geo/admin1_iso.tsv`, CC BY 4.0 from GeoNames joined with Wikidata); the importer's memory fixes and a queued

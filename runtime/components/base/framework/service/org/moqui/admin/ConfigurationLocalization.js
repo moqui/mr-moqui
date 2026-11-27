@@ -95,6 +95,9 @@ function originalProblem(original) {
 function translationProblem(original, localized) {
     if (localized.length > maxTranslation) return "The translation is longer than " + maxTranslation + " characters"
     if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(localized)) return ec.l10n.localize("The translation has a control character")
+    // plain text, as store#LocalizedMessage's localized parameter: here so the import's row services hold it too, whose
+    // rowValues map the parameter check does not look inside (SEC-ADM-86)
+    if (localized.includes("<")) return ec.l10n.localize("The translation may not have markup (<)")
     if (linkLike(localized)) return ec.l10n.localize("The translation may not be a link or a path")
     const expected = placeholders(original).list || []
     const found = placeholders(localized)

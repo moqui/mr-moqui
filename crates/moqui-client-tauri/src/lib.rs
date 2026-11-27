@@ -25,6 +25,7 @@
 //! - [`commands`]: the shell's commands (the accounts, sign-in and SSO, sign-out), [`outbox`]: the outbox and drafts,
 //!   [`sockets`]: the sockets of a page whose sockets are all the server's (the mobile app; the desktop app has its
 //!   own, with the node's in process).
+//! - [`packages`]: the offline map packages' commands (plans/archive/Maps-Offline.md §2.4); their files are the schemes'.
 //! - [`vault`]: the page's vault, the module run natively for it (`moquiDesktop.vault`, plans/archive/Vault-Instances.md V5).
 //!
 //! The commands are `pub` at the crate root, where `tauri::command` puts the macros `generate_handler!` looks for, so an
@@ -32,6 +33,7 @@
 
 pub mod commands;
 pub mod outbox;
+pub mod packages;
 pub mod scheme;
 pub mod shell_load;
 pub mod sockets;
@@ -54,6 +56,9 @@ pub use commands::{
 pub use outbox::{
     draft_get, draft_list, draft_put, draft_remove, file_save, outbox_add, outbox_discard, outbox_kinds, outbox_list,
     outbox_retry, outbox_unsent,
+};
+pub use packages::{
+    packages_addresses, packages_cancel, packages_delete, packages_download, packages_list, packages_status,
 };
 pub use sockets::{socket_close, socket_open, socket_send};
 pub use vault::{vault_call, vault_memory};
@@ -139,6 +144,36 @@ pub trait ShellHost: Send + Sync {
     /// clears that origin's storage, so one account's pages leave nothing for another's (plans/Security-Review-Medium.md
     /// SEC-CLI-81). The desktop gives each account's app windows a browser profile of their own, and does nothing here.
     fn clear_page_storage(&self) {}
+
+    /// Start the download of `revision` of an account's offline map package, queued already
+    /// (plans/archive/Maps-Offline.md §2.4): by default a task of the host, a thread ([`packages::run_task`], the desktop's);
+    /// the mobile app hands it to its `PackageDownloadWorker` (WorkManager), on an unmetered network with `wifi_only`.
+    ///
+    /// # Errors
+    ///
+    /// Returns why it did not start.
+    fn start_package_download(
+        &self,
+        core: &Arc<Client>,
+        host: &Arc<dyn ClientHost>,
+        account: &str,
+        package_id: &str,
+        revision: i64,
+        wifi_only: bool,
+    ) -> Result<(), String> {
+        let _ = wifi_only;
+        packages::run_task(core, host, account, package_id, revision)
+    }
+
+    /// A package's download was cancelled or the package deleted: the mobile app cancels its worker too.
+    fn cancel_package_download(&self, account: &str, package_id: &str) {
+        let _ = (account, package_id);
+    }
+
+    /// An account's packages are forgotten (its data deleted): the mobile app cancels its workers of them.
+    fn cancel_package_downloads(&self, account: &str) {
+        let _ = account;
+    }
 }
 
 /// The shell's own files, as the scheme serves them: from disk ([`Assets`], the desktop) or from the app's embedded

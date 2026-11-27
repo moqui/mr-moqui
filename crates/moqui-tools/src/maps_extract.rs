@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.maps.MapSourceServices.estimate#PackageExtract` and `build#PackageExtract` (plans/Maps-Offline.md §2.2;
+//! `org.moqui.maps.MapSourceServices.estimate#PackageExtract` and `build#PackageExtract` (plans/archive/Maps-Offline.md §2.2;
 //! docs/tools/Maps.md "Offline packages"): a region of a registered PMTiles archive, a box and a zoom range, cut into
 //! an archive of its own for an offline map package (MapPackages.js, the MapPackageBuild ServiceJob).
 //!
@@ -28,8 +28,9 @@
 //! The archive is pinned: its size and tag (a content address) are checked when the cut starts and again when it ends,
 //! and a file on disk by its modification time too, so an archive replaced while it was cut ends the run as failed,
 //! never a mixed extract. The run's progress is written to its package's row in a transaction of its own between
-//! batches (at most once a second), and the row's cancel read then. Both read whatever location they are given, so they
-//! are no group's and not remote: MapPackages.js calls them after its check of the package's owner.
+//! tiles (asked at most once a second, written when its percent changes or about a minute has passed), and the row's
+//! cancel read then. Both read whatever location they are given, so they are no group's and not remote: MapPackages.js
+//! calls them after its check of the package's owner.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{Read, Write};
@@ -60,8 +61,11 @@ const METADATA_MAX: u64 = 16 * 1024 * 1024;
 /// A batch of tiles read at once: at most this many bytes, and tiles at most this far apart.
 const BATCH_MAX: u64 = 4 * 1024 * 1024;
 const BATCH_GAP: u64 = 64 * 1024;
-/// How often at most a run writes its progress (and reads its cancel).
+/// How often at most a run reads its cancel (and writes its progress when its percent changed).
 const REPORT_EVERY: std::time::Duration = std::time::Duration::from_secs(1);
+/// How often a run writes its row with no change of percent: its `progressDate`, by which a stalled run is told
+/// (MapPackages.js runEnded), so a slow zoom is no silence and a fast one no write a second.
+const WORD_EVERY: std::time::Duration = std::time::Duration::from_secs(60);
 /// Where an extract is written: the package builds' folder of the runtime.
 const TARGET_ROOT: &str = "runtime://tmp/map-packages/";
 /// The latitude Web Mercator tiles end at.
@@ -537,8 +541,8 @@ impl<W: Write> Cutter<W> {
 /// Cut `cut` of the archive `source` (pinned as `tag` of `size` bytes) into a new archive at `target` (a file path):
 /// its tiles as stored, the source's metadata JSON whole, directories gzipped; one zoom found and written at a time.
 /// `still_pinned` is asked when the cut ends whether the location is still that content (reopened, its size, tag and
-/// time); `progress(done, total)` (the tiles of the box walked, of all it covers) is called before the first read and
-/// after each batch, and stops the cut when it answers false. A cut past `cut.max_bytes` stops as TOO_LARGE. A cut that
+/// time); `progress(done, total)` (the tiles of the box walked, of all it covers) is called before the first read,
+/// after each tile walked and after each zoom, and stops the cut when it answers false. A cut past `cut.max_bytes` stops as TOO_LARGE. A cut that
 /// does not end leaves no file.
 pub(crate) fn extract(
     source: &dyn ByteSource,
@@ -610,25 +614,25 @@ pub(crate) fn extract(
     for z in zooms.0..=zooms.1 {
         let walked = finder.zoom(&cut.bbox, z, &mut |_, found| {
             done += 1;
-            let Some(tile) = found else {
-                return Ok(true);
-            };
-            let reads = cutter.reads;
-            cutter.add(source, tile)?;
-            // a batch was handed to the writer: its size so far, and the progress
-            if cutter.reads != reads {
-                let writer = &cutter.writer;
-                if let Some(refusal) = too_large(
-                    archive_bytes(&header, writer.tile_count(), writer.data_len()),
-                    cut.max_bytes,
-                ) {
-                    stop = Some(refusal);
-                    return Ok(false);
+            if let Some(tile) = found {
+                let reads = cutter.reads;
+                cutter.add(source, tile)?;
+                // a batch was handed to the writer: its size so far
+                if cutter.reads != reads {
+                    let writer = &cutter.writer;
+                    if let Some(refusal) = too_large(
+                        archive_bytes(&header, writer.tile_count(), writer.data_len()),
+                        cut.max_bytes,
+                    ) {
+                        stop = Some(refusal);
+                        return Ok(false);
+                    }
                 }
-                if !progress(done, total) {
-                    stop = Some(cancelled());
-                    return Ok(false);
-                }
+            }
+            // every tile walked, found or not: a walk of empty tiles with no batch still reports (the closure throttles)
+            if !progress(done, total) {
+                stop = Some(cancelled());
+                return Ok(false);
             }
             Ok(true)
         })?;
@@ -896,18 +900,18 @@ fn not_read() -> Refusal {
     refused("NOT_READ", "the map archive could not be read")
 }
 
-/// Write `percent` onto package `package_id` in a transaction of its own, and answer whether to go on: its
-/// `cancelRequested` is not Y, and with `build_key` the row is still that build's (a run the package no longer holds,
-/// one ended as stale and built again, stops and writes nothing). A row that cannot be read or written is logged and
-/// the run goes on.
-fn report(facade: &EntityFacade, package_id: &str, build_key: &str, percent: i64) -> bool {
+/// Read package `package_id`'s cancel in a transaction of its own and, when `write`, put `percent` and the time
+/// (`progressDate`, the build's last word) on it; answer whether to go on: its `cancelRequested` is not Y, and with
+/// `build_key` the row is still that build's (a run the package no longer holds, one ended as stale and built again,
+/// stops and writes nothing). A row that cannot be read or written is logged and the run goes on.
+fn report(facade: &EntityFacade, package_id: &str, build_key: &str, percent: i64, write: bool) -> bool {
     let mut cancelled = false;
     let written = facade.transactions_for(PACKAGE).and_then(|tx| {
         tx.run(TransactionAttribute::ForceNew, None, || {
             let Some(mut row) = facade
                 .find(PACKAGE)?
                 .eq("packageId", Value::string(package_id))
-                .for_update(true)
+                .for_update(write)
                 .one()?
             else {
                 cancelled = true;
@@ -919,6 +923,9 @@ fn report(facade: &EntityFacade, package_id: &str, build_key: &str, percent: i64
                 return Ok(());
             }
             cancelled = field("cancelRequested") == "Y";
+            if !write {
+                return Ok(());
+            }
             row.set("progress", Value::I64(percent));
             // the build's last word, by which a stalled run is told (MapPackages.js runEnded)
             row.set("progressDate", Value::Timestamp(jiff::Timestamp::now()));
@@ -966,6 +973,8 @@ pub(crate) fn build_package_extract(
     let from = number(parameters, "progressFrom").unwrap_or(0).clamp(0, 100);
     let to = number(parameters, "progressTo").unwrap_or(100).clamp(from, 100);
     let mut last_report: Option<std::time::Instant> = None;
+    // the last percent written and when: the row is written again only when the percent changes or WORD_EVERY passed
+    let mut last_written: Option<(i64, std::time::Instant)> = None;
     let mut progress = |done: u64, total: u64| {
         if package_id.is_empty() {
             return true;
@@ -973,12 +982,17 @@ pub(crate) fn build_package_extract(
         if done < total && last_report.is_some_and(|last| last.elapsed() < REPORT_EVERY) {
             return true;
         }
-        last_report = Some(std::time::Instant::now());
+        let now = std::time::Instant::now();
+        last_report = Some(now);
         let share = if total == 0 { 1.0 } else { done as f64 / total as f64 };
         // a percent from 0 to 100
         #[allow(clippy::cast_possible_truncation)]
-        let percent = from + ((to - from) as f64 * share).round() as i64;
-        report(facade, &package_id, &build_key, percent.clamp(from, to))
+        let percent = (from + ((to - from) as f64 * share).round() as i64).clamp(from, to);
+        let write = last_written.is_none_or(|(written, at)| written != percent || at.elapsed() >= WORD_EVERY);
+        if write {
+            last_written = Some((percent, now));
+        }
+        report(facade, &package_id, &build_key, percent, write)
     };
     let mut still_pinned = || matches!(open_pinned(&location, &tag, size, modified), Ok(Ok(_)));
     let made = extract(

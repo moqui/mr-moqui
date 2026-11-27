@@ -40,6 +40,7 @@ mod dial;
 mod host;
 mod join;
 mod keystore;
+mod location;
 mod native;
 mod push;
 mod scheme;
@@ -123,6 +124,12 @@ pub fn run() {
             moqui_client_tauri::file_save,
             moqui_client_tauri::vault_call,
             moqui_client_tauri::vault_memory,
+            moqui_client_tauri::packages_list,
+            moqui_client_tauri::packages_download,
+            moqui_client_tauri::packages_cancel,
+            moqui_client_tauri::packages_delete,
+            moqui_client_tauri::packages_status,
+            moqui_client_tauri::packages_addresses,
             scheme::scheme_fetch,
             commands::client_show_shell,
             commands::open_in_shell,
@@ -150,7 +157,11 @@ pub fn run() {
             commands::call_dial_choice,
             commands::call_dial_from,
             commands::contacts_search,
-            commands::contact_names
+            commands::contact_names,
+            commands::location_allow,
+            commands::location_share_start,
+            commands::location_share_stop,
+            commands::location_share_status
         ])
         .setup(move |app| {
             let embedded = files.take().ok_or("the app was set up twice")?;
