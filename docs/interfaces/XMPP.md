@@ -210,7 +210,8 @@ the owner shares a room with, `whitelist` the owner alone. A publish notifies th
 the node and asked for it (`<node>+notify` in the capabilities, XEP-0115, which the server resolves by asking the
 client). The bookmarks node lists the user's rooms too, with autojoin, so an app shows them. User location (XEP-0080,
 `http://jabber.org/protocol/geoloc`) is refused (`forbidden`) until Moqui's live location sharing maps it: nothing is
-stored, served or pushed, and no `+notify` interest in it is kept (`REFUSED_NODES` in `session/pep.rs`).
+stored, served or pushed, and no `+notify` interest in it is kept (`REFUSED_NODES` in `session/pep.rs`, and the
+services' `get#PepNodeRefused`, both comparing the name trimmed and in any ASCII case).
 
 ## Files
 

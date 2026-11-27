@@ -721,15 +721,27 @@ async fn pep_refuses_the_user_location_node_and_keeps_the_others() {
             )],
         ),
     );
-    for (who, to) in [(&mut jane, " to='john.doe@moqui.local'"), (&mut john, "")] {
+    // in any spelling: a case-insensitive collation would find the row by a variant of the name
+    for (owner, node) in [
+        (false, GEOLOC),
+        (true, GEOLOC),
+        (false, " HTTP://Jabber.org/protocol/GEOLOC "),
+    ] {
+        let (who, to) = if owner {
+            (&mut john, "")
+        } else {
+            (&mut jane, " to='john.doe@moqui.local'")
+        };
         let out = text_of(
             &who.send(&format!(
-                "<iq type='get' id='g'{to}><pubsub xmlns='http://jabber.org/protocol/pubsub'><items node='{GEOLOC}'/></pubsub></iq>"
+                "<iq type='get' id='g'{to}><pubsub xmlns='http://jabber.org/protocol/pubsub'><items node='{node}'/></pubsub></iq>"
             ))
             .await,
         );
-        assert!(out.contains("<forbidden") && !out.contains("<lat>"), "{out}");
+        assert!(out.contains("<forbidden") && !out.contains("<lat>"), "{node}: {out}");
     }
+    assert!(super::pep::refused_node("\tHttp://JABBER.org/protocol/geoloc\n"));
+    assert!(!super::pep::refused_node("http://jabber.org/protocol/geoloc+notify"));
     // an ordinary node is stored and pushed as before
     let out = text_of(
         &john

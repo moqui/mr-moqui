@@ -35,12 +35,15 @@ use crate::registry::Inbound;
 /// The nodes this service does not keep (a PEP service may restrict its nodes, XEP-0163 §4). User location (XEP-0080)
 /// would otherwise be stored and pushed to everyone the user shares a room with (a new node's access is `presence`):
 /// a location share the user can neither see nor revoke in Moqui. Refused until Moqui's own live location sharing maps
-/// the node (plans/Location-Sharing.md).
+/// the node (plans/Location-Sharing.md). The services refuse the same list (`get#PepNodeRefused` in XmppServices.xml).
 const REFUSED_NODES: &[&str] = &["http://jabber.org/protocol/geoloc"];
 
-/// Whether `node` is one this service refuses: no publish, fetch, configure or delete, and no `+notify` interest.
+/// Whether `node` is one this service refuses: no publish, fetch, configure or delete, and no `+notify` interest. It is
+/// compared trimmed and in any ASCII case, so a variant spelling cannot reach a stored row on a case-insensitive
+/// collation.
 pub(super) fn refused_node(node: &str) -> bool {
-    REFUSED_NODES.contains(&node)
+    let node = node.trim();
+    REFUSED_NODES.iter().any(|refused| refused.eq_ignore_ascii_case(node))
 }
 
 impl Session {
