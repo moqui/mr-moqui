@@ -12,23 +12,22 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Shared live location (plans/Location-Sharing.md §3.1): a share a person starts, with its audience, its latest position
-    and, only when its owner chose it, a trail. Read and written only by org.moqui.maps.LocationServices
-    (service/org/moqui/maps/LocationServices.xml, LocationShares.js), for the owner and the share's current audience: the
-    generic tools, REST and agents do not read these entities, an ADMIN's included (moqui-entity sensitive.rs). No row is
-    cached. The positions are in LocationLatest and LocationTrailPoint only, and no field of theirs is audited; the
-    settings are the conf's location element. -->
+<!-- Shared live location (plans/Location-Sharing.md §3.1): a share a person starts, with its audience, its latest
+    position and, only when its owner chose it, a trail. Read and written only by org.moqui.maps.LocationServices
+    (service/org/moqui/maps/LocationServices.xml, LocationShares.js), for the owner and the share's current audience:
+    the generic tools, REST and agents do not read these entities, an ADMIN's included (moqui-entity sensitive.rs). No
+    row is cached. The positions are in LocationLatest and LocationTrailPoint only, and no field of theirs is audited;
+    the settings are the conf's location element. -->
 <entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-entity-definition.xsd">
 
-    <!-- A share: its owner's, started by the owner only, until thruDate (at most location@max-share-hours from its start or
-        its last extension). Ended when thruDate passes, or at once by stop#Share (revokedDate); endedDate is when the
-        share's end was acted on (its latest position deleted, the audience told). Its start, extension and stop are in
-        the entity audit log (thruDate, revokedDate), never a position. keepTrail Y keeps each position as a
-        LocationTrailPoint for trailKeepDays (at most location@trail-max-days) after the share ends, until trailPurgeDate. An
-        approximate share's positions are cells of one fixed grid that every share uses (LocationShares.js). A guest share
-        for a
-        record names it as MapAdapter does (recordAdapterKey, recordKey), set only by the service that checks the
-        caller may act on the record. -->
+    <!-- A share: its owner's, started by the owner only, until thruDate (at most location@max-share-hours from its
+        start or its last extension). Ended when thruDate passes, or at once by stop#Share (revokedDate); endedDate is
+        when the share's end was acted on (its latest position deleted, the audience told). Its start, extension and
+        stop are in the entity audit log (thruDate, revokedDate), never a position. keepTrail Y keeps each position as a
+        LocationTrailPoint for trailKeepDays (at most location@trail-max-days) after the share ends, until
+        trailPurgeDate. An approximate share's positions are cells of one fixed grid that every share uses
+        (LocationShares.js). A guest share for a record names it as MapAdapter does (recordAdapterKey, recordKey), set
+        only by the service that checks the caller may act on the record. -->
     <entity entity-name="LocationShare" package="moqui.maps" use="transactional" cache="never">
         <field name="shareId" type="id" is-pk="true"/>
         <field name="ownerUserId" type="id" not-null="true"/>
@@ -59,12 +58,11 @@ along with this software (see the LICENSE.md file). If not, see
     </entity>
 
     <!-- Who a share is for: a user (LsaUser) the owner may message, a group (LsaUserGroup) the owner is in, read by its
-        members who were members when the entry was added and still are (a membership begun by fromDate and last written
-        before the entry's lastUpdatedStamp; fromDate is stamped again, and audited, when the owner adds the group again),
-        an XMPP contact of the owner's roster (LsaXmpp, jid; delivered by the XMPP server) or a guest link
-        (LsaLink), whose token is shown once and kept only as its digest (tokenDigest, as ResourceShare's linkTokenHash).
-        Every read rechecks the audience: a row revoked, or a group the viewer has left, reads nothing. The audience
-        added and revoked is in the entity audit log. -->
+        members of its snapshot (LocationShareAudienceMember) who are still members now (fromDate is stamped again, and
+        audited, when the owner adds the group again), an XMPP contact of the owner's roster (LsaXmpp, jid; delivered by
+        the XMPP server) or a guest link (LsaLink), whose token is shown once and kept only as its digest (tokenDigest,
+        as ResourceShare's linkTokenHash). Every read rechecks the audience: a row revoked, or a group the viewer has
+        left, reads nothing. The audience added and revoked is in the entity audit log. -->
     <entity entity-name="LocationShareAudience" package="moqui.maps" use="transactional" cache="never">
         <field name="shareId" type="id" is-pk="true"/>
         <field name="audienceSeqId" type="id" is-pk="true"/>
@@ -88,9 +86,27 @@ along with this software (see the LICENSE.md file). If not, see
         <index name="LOC_SHARE_AUD_TOKEN"><index-field name="tokenDigest"/></index>
     </entity>
 
-    <!-- A share's latest position, one row a share, replaced by each report and deleted when the share ends. accuracy is
-        in metres as the device gives it (at least 1000 for an approximate share), heading in degrees from north, speed in
-        metres a second; an approximate share has neither. Never cached, never audited, never in a log. -->
+    <!-- The members a group entry reached at the owner's act: written only by create#Share and by update#Share when the
+        owner adds the group again (which replaces it), as the group's current members but the owner, less those the
+        chat directory keeps the owner from (one who blocked the owner), at most location@max-audience. A group entry
+        reaches a user only while they are in its snapshot and that same membership row is current, so a membership
+        written by anyone else, with whatever dates, adds no one, and a member removed and put back by a new row is out
+        until the owner adds the group again. Read and written only by LocationServices (moqui-entity
+        sensitive.rs). -->
+    <entity entity-name="LocationShareAudienceMember" package="moqui.maps" use="transactional" cache="never">
+        <field name="shareId" type="id" is-pk="true"/>
+        <field name="audienceSeqId" type="id" is-pk="true"/>
+        <field name="userId" type="id" is-pk="true"/>
+        <field name="memberFromDate" type="date-time"><description>The fromDate of the membership row that made the user
+            a member at the snapshot: the user reaches the share only while that row is current</description></field>
+        <relationship type="one" related="moqui.maps.LocationShareAudience"/>
+        <relationship type="one" related="moqui.security.UserAccount"/>
+        <index name="LOC_SHARE_AUD_MEMBER_USER"><index-field name="userId"/></index>
+    </entity>
+
+    <!-- A share's latest position, one row a share, replaced by each report and deleted when the share ends. accuracy
+        is in metres as the device gives it (at least 1000 for an approximate share), heading in degrees from north,
+        speed in metres a second; an approximate share has neither. Never cached, never audited, never in a log. -->
     <entity entity-name="LocationLatest" package="moqui.maps" use="transactional" cache="never">
         <field name="shareId" type="id" is-pk="true"/>
         <field name="latitude" type="number-float" ai-opt-out="true"/>
@@ -105,9 +121,9 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="one" related="moqui.maps.LocationShare"/>
     </entity>
 
-    <!-- A position of a share whose owner chose to keep a trail (keepTrail Y), by when the device took it; read in bounded
-        pages, deleted by the owner's delete#Trail at any time and by clean#LocationShares past the share's trailKeepDays
-        after it ends. Never cached, never audited, never in a log. -->
+    <!-- A position of a share whose owner chose to keep a trail (keepTrail Y), by when the device took it; read in
+        bounded pages, deleted by the owner's delete#Trail at any time and by clean#LocationShares past the share's
+        trailKeepDays after it ends. Never cached, never audited, never in a log. -->
     <entity entity-name="LocationTrailPoint" package="moqui.maps" use="transactional" cache="never">
         <field name="shareId" type="id" is-pk="true"/>
         <field name="observedDate" type="date-time" is-pk="true" ai-opt-out="true"/>

@@ -108,6 +108,7 @@ const AUDIT_ENTITY_KEYS: &[&str] = &[
     // the owner and the current audience; no generic tool, REST resource or agent reads them, an ADMIN's included
     "locationshare",
     "locationshareaudience",
+    "locationshareaudiencemember",
     "locationlatest",
     "locationtrailpoint",
 ];
@@ -700,6 +701,7 @@ mod tests {
         for name in [
             "moqui.maps.LocationShare",
             "moqui.maps.LocationShareAudience",
+            "moqui.maps.LocationShareAudienceMember",
             "moqui.maps.LocationLatest",
             "moqui.maps.LocationTrailPoint",
         ] {

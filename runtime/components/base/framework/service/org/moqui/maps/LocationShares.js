@@ -1,11 +1,12 @@
 // Shared live location (plans/Location-Sharing.md §1, §3.2; LocationServices.xml): the owner's shares, the reads of their
 // current audience, the reports and the hourly clean. Every function checks the caller itself: the owner for a change or
-// a report, the current audience (a user whose entry is not revoked, a member of a group whose entry is not revoked who
-// was a member when the owner added the group and still is) for a read, and answers anyone else, an ADMIN included, as not found. No position goes to a log, an error
+// a report, the current audience (a user whose entry is not revoked, a member of a group whose entry is not revoked whom
+// the owner's adding of the group reached and who is still a member) for a read, and answers anyone else, an ADMIN included, as not found. No position goes to a log, an error
 // message, an audited field or a cache: a refusal names its reason only.
 
 const SHARE = "moqui.maps.LocationShare"
 const AUDIENCE = "moqui.maps.LocationShareAudience"
+const AUDIENCE_MEMBER = "moqui.maps.LocationShareAudienceMember"
 const LATEST = "moqui.maps.LocationLatest"
 const TRAIL = "moqui.maps.LocationTrailPoint"
 const ACCOUNT = "moqui.security.UserAccount"
@@ -73,46 +74,84 @@ function ownShare(shareId, forUpdate) {
     return share && share.ownerUserId === me ? share : null
 }
 
-/** The current group memberships of a user (userGroupId, fromDate, lastUpdatedStamp): those in effect now. */
-function currentMemberships(userId, groupIds) {
+/** The groups a user is a member of now. */
+function currentGroupIds(userId, groupIds) {
     if (!userId || (groupIds && !groupIds.length)) return []
     let members = find(GROUP_MEMBER).condition("userId", userId).conditionDate("fromDate", "thruDate", null)
     if (groupIds) members = members.condition("userGroupId", "in", groupIds)
-    return Array.from(members.selectField("userGroupId,fromDate,lastUpdatedStamp").list())
+    return Array.from(new Set(Array.from(members.selectField("userGroupId").list()).map(row => row.userGroupId)))
 }
-const currentGroupIds = (userId, groupIds) =>
-    Array.from(new Set(currentMemberships(userId, groupIds).map(row => row.userGroupId)))
 
 const activeAudience = shareId => Array.from(find(AUDIENCE).condition("shareId", shareId).condition("revokedDate", null).list())
 
 /**
- * The users a group entry reaches: the group's members who were members when the owner added the group and still are,
- * so whoever runs a group's membership (an administrator, an app or household organizer) gives nobody a share until its
- * owner adds the group again. A membership counts only when it began by the entry's fromDate and its row was last
- * written before the entry's (both lastUpdatedStamp, the time the writing transaction began): an add with a backdated
- * fromDate and an ended row reopened are written after the entry, so both fail closed, as does a row edited after it
- * for any other reason. With userId, that user only.
+ * The users a group entry reaches: those of its snapshot (LocationShareAudienceMember, the members the owner's adding of
+ * the group reached, written only by create#Share and update#Share) who are still members now. So whoever runs a
+ * group's membership (an administrator, an app or household organizer, whatever dates or stamps a row is given) adds
+ * nobody to a share; a member taken out of the group drops out at once, and one put back in only when the owner adds
+ * the group again. With userId, that user only.
  */
 function groupEntryUserIds(row, userId) {
-    let members = find(GROUP_MEMBER)
+    let snapshot = find(AUDIENCE_MEMBER).condition("shareId", row.shareId).condition("audienceSeqId", row.audienceSeqId)
+    if (userId) snapshot = snapshot.condition("userId", userId)
+    const held = new Set(Array.from(snapshot.selectField("userId,memberFromDate").list()).map(heldKey))
+    if (!held.size) return []
+    const current = find(GROUP_MEMBER)
         .condition("userGroupId", row.userGroupId)
-        .condition("fromDate", "less-equals", row.fromDate)
-        .condition("lastUpdatedStamp", "less", row.lastUpdatedStamp)
+        .condition(
+            "userId",
+            "in",
+            Array.from(held).map(key => key.split("|")[0])
+        )
         .conditionDate("fromDate", "thruDate", null)
-        .selectField("userId")
-    if (userId) members = members.condition("userId", userId)
-    return Array.from(members.list())
-        .map(member => member.userId)
-        .filter(id => id)
-}
-/** Whether one of the user's current memberships of the entry's group counts for it, as groupEntryUserIds has it. */
-const memberSince = (memberships, row) =>
-    memberships.some(
-        member =>
-            member.userGroupId === row.userGroupId &&
-            millis(member.fromDate) <= millis(row.fromDate) &&
-            millis(member.lastUpdatedStamp) < millis(row.lastUpdatedStamp)
+        .selectField("userId,fromDate")
+        .list()
+    return Array.from(
+        new Set(
+            Array.from(current)
+                .filter(member => held.has(memberKey(member)))
+                .map(member => member.userId)
+        )
     )
+}
+// a snapshot row and the membership row it names, by the user and the membership's fromDate (its key in the group)
+const heldKey = row => row.userId + "|" + millis(row.memberFromDate)
+const memberKey = row => row.userId + "|" + millis(row.fromDate)
+
+/**
+ * The snapshot of a group entry, written at the owner's act: the group's current members but the owner, each with the
+ * membership row that makes them one (its fromDate), less those the chat directory keeps the owner from
+ * (ChatServices.get#RefusedUsers with blocks: one who blocked the owner is never reached, told or named). It replaces an
+ * earlier snapshot of the entry. The caller is the owner. A member reaches the share only while that same membership row
+ * is current: one removed and put back by a new row is not, until the owner adds the group again.
+ */
+function snapshotGroup(share, row) {
+    const since = {}
+    for (const member of find(GROUP_MEMBER)
+        .condition("userGroupId", row.userGroupId)
+        .conditionDate("fromDate", "thruDate", null)
+        .selectField("userId,fromDate")
+        .orderBy("fromDate")
+        .list())
+        if (member.userId && member.userId !== share.ownerUserId && !(member.userId in since))
+            since[member.userId] = member.fromDate
+    const members = Object.keys(since)
+    let refused = new Set()
+    if (members.length) {
+        const out = ec.service
+            .sync()
+            .name("org.moqui.chat.ChatServices.get#RefusedUsers")
+            .parameters({userIdList: members, blocks: true, answerWithAuthzOff: true})
+            .call()
+        refused = new Set(Array.from((out && out.refusedUserIdList) || []).map(String))
+    }
+    find(AUDIENCE_MEMBER).condition("shareId", share.shareId).condition("audienceSeqId", row.audienceSeqId).deleteAll()
+    for (const userId of members.filter(id => !refused.has(id)))
+        ec.entity
+            .makeValue(AUDIENCE_MEMBER)
+            .setAll({shareId: share.shareId, audienceSeqId: row.audienceSeqId, userId, memberFromDate: since[userId]})
+            .create()
+}
 
 /** The users a share reaches now: its users whose entries are not revoked and its groups' members as above, but its owner. */
 function currentUserIds(share) {
@@ -306,7 +345,8 @@ function addAudience(share, entries, now) {
             fields.tokenDigest = ec.user.singleUseCodeHash(linkToken)
             fields.failedTries = 0
         }
-        ec.entity.makeValue(AUDIENCE).setAll(fields).setSequencedIdSecondary().create()
+        const row = ec.entity.makeValue(AUDIENCE).setAll(fields).setSequencedIdSecondary().create()
+        if (entry.type === "LsaUserGroup") snapshotGroup(share, row)
     }
     return {linkToken}
 }
@@ -363,8 +403,9 @@ function create(p) {
     const size = checkAudienceSize(null, audience.entries)
     if (size.reasonCode) return size
     const maxShares = setting("max-active-shares", 20)
-    // counted under a lock of the owner's account row, so two creates at once cannot both pass the cap
-    find(ACCOUNT).condition("userId", me).forUpdate(true).one()
+    // counted under a lock of the owner's account row, so two creates at once cannot both pass the cap; FOR NO KEY UPDATE,
+    // which the foreign key check of another share's audience row naming this user (FOR KEY SHARE) does not wait on
+    find(ACCOUNT).condition("userId", me).forNoKeyUpdate(true).one()
     const active = find(SHARE)
         .condition("ownerUserId", me)
         .condition("revokedDate", null)
@@ -435,6 +476,7 @@ function update(p) {
             ) {
                 row.fromDate = new Date(now)
                 row.update()
+                snapshotGroup(share, row)
             }
         added = addAudience(share, fresh, now)
     }
@@ -566,6 +608,26 @@ function approximate(position, latest) {
     }
 }
 
+/**
+ * The cell the owner's approximate shares last reported: the newest latest position of the owner's active approximate
+ * shares, this one among them, so that every approximate share of a person keeps one cell (a new share does not snap to
+ * the cell beside a line while another is still held).
+ */
+function lastCellOf(share, now) {
+    const shareIds = Array.from(
+        find(SHARE)
+            .condition("ownerUserId", share.ownerUserId)
+            .condition("precisionEnumId", "LspApproximate")
+            .condition("revokedDate", null)
+            .condition("endedDate", null)
+            .condition("thruDate", "greater", new Date(now))
+            .selectField("shareId")
+            .list()
+    ).map(row => row.shareId)
+    if (!shareIds.length) return null
+    return Array.from(find(LATEST).condition("shareId", "in", shareIds).orderBy("-receivedDate").limit(1).list())[0] || null
+}
+
 /** report#Position: from the owner, for an active share, at most one a min-interval-seconds; rounded here when approximate. */
 function report(p) {
     const now = nowMillis()
@@ -593,7 +655,7 @@ function report(p) {
         (approximated ? checked.position.observed < latestObserved : checked.position.observed <= latestObserved)
     )
         return {statusCode: 409, reasonCode: "STALE"}
-    const position = approximated ? approximate(checked.position, latest) : checked.position
+    const position = approximated ? approximate(checked.position, lastCellOf(share, now) || latest) : checked.position
     const values = {
         latitude: position.latitude,
         longitude: position.longitude,
@@ -730,15 +792,28 @@ function findShared() {
         .selectField("shareId")
         .list())
         ids.add(row.shareId)
-    const memberships = currentMemberships(me, null)
-    const groups = Array.from(new Set(memberships.map(member => member.userGroupId)))
-    if (groups.length) {
+    // a group entry whose snapshot holds the caller by a membership row of the group that is still current
+    const memberships = Array.from(
+        find(GROUP_MEMBER)
+            .condition("userId", me)
+            .conditionDate("fromDate", "thruDate", null)
+            .selectField("userGroupId,fromDate")
+            .list()
+    )
+    const current = new Set(memberships.map(member => member.userGroupId + "|" + millis(member.fromDate)))
+    const snapshots = Array.from(
+        find(AUDIENCE_MEMBER).condition("userId", me).selectField("shareId,audienceSeqId,memberFromDate").list()
+    )
+    if (memberships.length && snapshots.length) {
+        const held = {}
+        for (const row of snapshots) held[row.shareId + "|" + row.audienceSeqId] = millis(row.memberFromDate)
         const rows = find(AUDIENCE)
+            .condition("shareId", "in", Array.from(new Set(snapshots.map(row => row.shareId))))
             .condition("audienceTypeEnumId", "LsaUserGroup")
-            .condition("userGroupId", "in", groups)
             .condition("revokedDate", null)
-            .selectField("shareId,userGroupId,fromDate,lastUpdatedStamp")
-        for (const row of rows.list()) if (memberSince(memberships, row)) ids.add(row.shareId)
+            .selectField("shareId,audienceSeqId,userGroupId")
+        for (const row of rows.list())
+            if (current.has(row.userGroupId + "|" + held[row.shareId + "|" + row.audienceSeqId])) ids.add(row.shareId)
     }
     if (!ids.size) return {shareList: []}
     const shares = Array.from(
@@ -813,12 +888,15 @@ function deleteTrail(p) {
  * transaction: a failure is logged by the share's id, the clean goes on, and the shares that failed are tried once more
  * after the rest. A stage ends at a short batch, or after CLEAN_STAGE_MILLIS of the clock.
  */
-function eachShare(makeFind, orderField, counts, work) {
+function eachShare(makeFind, orderField, counts, countName, work) {
     const started = Date.now()
     const failed = []
+    // work answers how many it did; that is counted only once its transaction has committed
     const run = (shareId, last) => {
         try {
-            ec.transaction.runRequireNew(60, "Could not clean a location share", () => work(shareId))
+            counts[countName] += Number(
+                ec.transaction.runRequireNew(60, "Could not clean a location share", () => work(shareId)) || 0
+            )
             return true
         } catch (err) {
             if (last) {
@@ -867,23 +945,26 @@ function clean() {
         () => find(SHARE).condition("endedDate", null).condition("thruDate", "less-equals", new Date(now)),
         "thruDate",
         counts,
+        "endedCount",
         shareId => {
             const share = shareOf(shareId, true)
-            if (!share || share.endedDate != null) return
+            if (!share || share.endedDate != null) return 0
             endShare(share, now)
-            counts.endedCount++
+            return 1
         }
     )
     eachShare(
         () => find(SHARE).condition("trailPurgeDate", "less-equals", new Date(now)),
         "trailPurgeDate",
         counts,
+        "trailDeletedCount",
         shareId => {
             const share = shareOf(shareId, true)
-            if (!share) return
-            counts.trailDeletedCount += find(TRAIL).condition("shareId", shareId).deleteAll()
+            if (!share) return 0
+            const deleted = find(TRAIL).condition("shareId", shareId).deleteAll()
             share.trailPurgeDate = null
             share.update()
+            return deleted
         }
     )
     eachShare(
@@ -893,12 +974,14 @@ function clean() {
                 .condition("endedDate", "less", new Date(now - maxDays * DAY)),
         "endedDate",
         counts,
+        "removedCount",
         shareId => {
-            if (find(TRAIL).condition("shareId", shareId).count() > 0) return
+            if (find(TRAIL).condition("shareId", shareId).count() > 0) return 0
             find(LATEST).condition("shareId", shareId).deleteAll()
+            find(AUDIENCE_MEMBER).condition("shareId", shareId).deleteAll()
             find(AUDIENCE).condition("shareId", shareId).deleteAll()
             find(SHARE).condition("shareId", shareId).deleteAll()
-            counts.removedCount++
+            return 1
         }
     )
     if (counts.endedCount || counts.trailDeletedCount || counts.removedCount || counts.failedCount)
