@@ -863,6 +863,83 @@ fallback), and a refresh is compared by address, not by ID.
   record keeps its own point, and Choose location saves through the adapter: the record's point, then an address match,
   then the postal area, then a point chosen by hand.
 
+## Live location
+
+A person shares where they are, until a time they choose, with people they choose; nothing else starts a share
+([plans/Location-Sharing.md](../../plans/Location-Sharing.md)). The server side is built: the services
+`org.moqui.maps.LocationServices` (`framework/service/org/moqui/maps/LocationServices.xml`, `LocationShares.js`), the
+entities `LocationShare`, `LocationShareAudience`, `LocationShareAudienceMember`, `LocationShareOwner` (the lock of an
+owner's share count), `LocationLatest` and `LocationTrailPoint` (`moqui.maps`,
+`framework/entity/MapLocationEntities.xml`) and the hourly clean. The Maps live layer and panels, the Android app's
+background sharing, chat's live location, XMPP and the guest page for a link are still to come, so a share is started
+and read through the services only.
+
+- **The owner's acts.** `create#Share` (the audience, the end, exact or approximate, a trail or not), `update#Share`
+  (extend or shorten, add to the audience, change the label or purpose), `stop#Share`, `revoke#Audience` (one person,
+  group, XMPP contact or the link), `report#Position` and `delete#Trail` are the owner's alone; another person's share,
+  an administrator's request included, answers `SHARE_NOT_FOUND`. Every signed-in user may call them for their own
+  shares (`LocationShareServices`, framework `data/MapsLocationData.xml`).
+- **Who a share is for.** A user the owner may message (the chat directory's rule, `ChatServices.get#RefusedUsers`: a
+  user it refuses, or one who blocked the owner, answers as one that does not exist), a group the owner is in now (never
+  `ALL_USERS` or a group of external users), a contact of the owner's XMPP roster (`username@xmpp-server@domain`, a
+  person of one of the owner's direct rooms; kept for the XMPP server to deliver to), or one guest link a share, whose
+  token is answered once by the call that makes it and kept only as its digest (as `ResourceShare`'s link). Each person
+  added is told who shares with them and until when (the `LocationShared` notification, in their own time zone). A
+  person has at most `location@max-active-shares` shares on at once, and a share at most `location@max-audience` people
+  (a group's members counted each), contacts and links.
+- **Who reads it.** `find#MyShares` (the owner's shares with their audiences), `find#SharedWithMe` and `get#Share` (the
+  latest position, and a kept trail in pages of up to 1000 points) answer the owner and the share's current audience
+  only: a user whose entry is not revoked, or a member of a group whose entry is not revoked who is in the entry's
+  snapshot and whose membership row of the snapshot is still current, checked again at every read and every push. The
+  snapshot (`LocationShareAudienceMember`) is the group's members when the owner adds the group, each with the
+  membership row that makes them one, less every one the chat directory refuses the owner at that act (its hooks, the
+  external-caller rule, the people who blocked the owner; a block made later applies at the next re-add, as for a direct
+  user), written only by `create#Share` and by `update#Share` when the owner adds the group again. A person taken out of
+  a group sees nothing of it from then on, and one put into it later, by anyone and with whatever dates (an
+  administrator, an app or a household organizer; a backdated, reopened or new membership, a member removed and given a
+  new row) sees nothing and gets no push until the owner adds the group again, which lets in and tells its new members,
+  names them to the owner, and tells anyone it leaves out. The one way back without the owner: a snapshot member's own
+  row, ended and reopened, or deleted and made again with the same `fromDate` (an administrator can do either in System
+  › Access), lets that same person back. No grant of these services reads another person's shares, and the generic
+  entity tools, entity REST, entity-auto services and the agents' `data` tool refuse these six entities, an
+  administrator's included (`moqui-entity` `sensitive.rs`).
+- **What the server's operator can still reach.** These services keep a share from other users, not from whoever runs
+  the server: an administrator who signs in as the person (`ADMIN_LOGIN_AS`) sees what that person sees; a holder of the
+  Tools SQL runner reads the tables; any server script can turn on the `NotificationCapture` tool (meant for specs, not
+  gated) and see pushes in transit; and the database, its backups and its own logs hold what the tables hold. Who shared
+  with whom and until when (never a position) stays in the entity audit log and in the `LocationShared` notification
+  rows of the people told, under their own retention.
+- **Reports.** From the owner only, for an active share: the values checked (latitude and longitude in range, accuracy,
+  heading and speed, a time not before the share began and later than the latest), at most one a
+  `location@min-interval-seconds`, or `location@approximate-interval-seconds` for an approximate share (a sooner one is
+  dropped with 429), 410 for a share that has ended or was stopped, which stops a device, and 409 `CLOCK_AHEAD` for a
+  time more than a minute ahead of the server's clock. An approximate share's position is made here, before it is stored
+  or sent: the centre of a cell of about 1 km on one fixed grid that every share uses (so two shares of one person at
+  one place show the same cell), the last cell kept until a fix is more than a quarter of a cell inside another one, for
+  the person rather than the share (a new share starts from the cell the person's other approximate shares hold, so they
+  show one cell; once none is active the next starts afresh), an accuracy of 1000 m (a device's coarser one rounded up
+  to the next 1000), no heading or speed. Keeping the cell stops jitter at a line flipping it, but a change of cell
+  still shows that the person crossed a line 0.75 cell from the old centre, to within what they move in one
+  `location@approximate-interval-seconds` (not to within the cell). The stored and answered `observedDate` is rounded
+  down to the minute; the push itself goes out when the report comes, so its arrival tells the time. Each report
+  replaces the share's latest position, adds a trail point when the share keeps a trail, and goes out on the topic
+  `locationShare:<shareId>` to the audience's current users only, never saved as a notification or pushed to a phone. On
+  the same topic the owner's other devices are told when a share starts, and the owner and the audience when it changes
+  or ends; a revoked entry's people (and the owner) are told it was revoked. The audience learns of a start by the
+  `LocationShared` notification.
+- **Retention.** A share ends at its end (at most `location@max-share-hours` from its start or last extension) or when
+  stopped: reads stop then, and its latest position is deleted at once by a stop, and up to an hour after an end by time
+  (the hourly job). A trail is kept only when the owner chose it for that share, for its days after the share ends (at
+  most `location@trail-max-days`), and the owner deletes it at any time. The hourly job `clean_LocationShares_hourly`
+  (`clean#LocationShares`) ends the shares past their end, deletes the trails whose purge date has come
+  (`trailPurgeDate`, set when the share ends) and removes the shares ended more than `location@trail-max-days` ago.
+  Start, extension, stop and an audience added or revoked are in the entity audit log (who, when, the audience), never a
+  position. Positions never go to a log, a telemetry attribute, an error message or a cache.
+- **Settings**, on the conf's `location` element (`moqui_conf__location__max_share_hours` and the rest):
+  `location@max-share-hours` (24), `location@trail-max-days` (30), `location@min-interval-seconds` (5),
+  `location@approximate-interval-seconds` (60), `location@max-active-shares` (20), `location@max-audience` (50) and
+  `location@link-max-views-per-minute` (30, the reads a minute of a guest link's page).
+
 ## Tests
 
 The regression spec is `tools/test/MapsScreens.spec.js` (Browse in tui, its terminal's overlays, postal search and the
@@ -947,3 +1024,16 @@ area, nothing saved; a refresh that moves one address and removes one, counted b
 untouched), with the parsing, keys and ranking in Rust (`moqui-maps` `address_tests.rs`, `address_service_tests.rs`), and
 the real release for central Florence and part of Boston's Back Bay with sample lookups, the acceptance test
 `OvertureAddressLookup`.
+
+Live location: `framework/test/LocationShares.spec.js` (by the real grants, with authorization on: a share read and
+pushed to its audience alone, another user and an administrator refused; a blocked user, an audience past `max-audience`
+(on create, on update and on a group added again) and a share past `max-active-shares` refused; a group member taken out
+losing it at the next read and the pushes, and a membership given a caller's dates and stamp, a backdated add, an ended
+membership reopened, an ended one with a new row and a member removed and added again getting nothing until the owner
+adds the group again, which names and tells only those it lets in and is audited; a member who blocked the owner never
+reached; the rate and its 429, a clock ahead and a time before the share; an approximate share's cell made before it is
+stored or sent, the same for two shares at one place, kept through jitter at a cell line, its accuracy 1000 m or the
+device's rounded up and its time to the minute; an ended share hidden, 410 to a report and its latest position cleaned;
+a trail kept only when chosen, deleted by its owner and purged past its days; the audit rows with no position; a link's
+token answered once and only its digest kept), with the generic tools' refusal of the six entities in Rust
+(`moqui-entity` `sensitive.rs`) and the agents' `data` tool's (`moqui-llm` `core_tests.rs`).

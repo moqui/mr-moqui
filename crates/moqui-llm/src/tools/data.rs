@@ -21,7 +21,9 @@
 //!   not page is cut here).
 //! - An entity of the conf's `data-entity` patterns (`entity`; by default the `moqui.basic` package: enumerations,
 //!   status items, units, geos), read directly with authorization off as Java's `find_basic`, encrypted and
-//!   `ai-opt-out` fields never.
+//!   `ai-opt-out` fields never, and never an entity the generic tools keep from a request, or a view over one
+//!   (`sensitive::is_restricted_entity_or_view`: group membership, secrets, the audit, shared live locations), whatever
+//!   the patterns say.
 //! - A spilled result of the conversation (`artifact`): its lines from `offset`, or the lines that hold `grep`; a text
 //!   file the user attached to the conversation (`F12`) the same way.
 //!
@@ -491,6 +493,7 @@ fn read_entity(ctx: &TurnContext<'_>, entity: &str, read: &Read<'_>) -> Result<S
         .filter(|name| {
             let (package, short) = name.rsplit_once('.').unwrap_or(("", name));
             conf.conf().data_entity_readable(package, short)
+                && !moqui_core::entity::sensitive::is_restricted_entity_or_view(&facade, name)
         })
         .collect();
     let short_names: Vec<&str> = readable.iter().map(String::as_str).collect();
@@ -510,6 +513,7 @@ fn read_entity(ctx: &TurnContext<'_>, entity: &str, read: &Read<'_>) -> Result<S
     if !conf
         .conf()
         .data_entity_readable(&text_of("packageName"), &text_of("entityName"))
+        || moqui_core::entity::sensitive::is_restricted_entity_or_view(&facade, &full)
     {
         return Err(ToolError::new(
             "entity_not_readable",

@@ -162,6 +162,16 @@
     <maps external-requests="true" import-max-bytes="536870912" max-features="5000" overlay-max-bytes="10485760"
             overture-catalog="https://stac.overturemaps.org/catalog.json" overture-max-area="2500"/>
 
+    <!-- Shared live location (plans/Location-Sharing.md §3.1; org.moqui.maps.LocationServices). max-share-hours is the
+        longest a share runs from its start or its owner's last extension (24); trail-max-days the longest a trail its owner
+        chose to keep stays after its share ends (30); min-interval-seconds the shortest time between two positions a
+        share takes (5: a sooner one is answered 429 and dropped), approximate-interval-seconds that of an approximate
+        share (60); max-active-shares the most shares one person has on at once (20); max-audience the most people (a
+        group's members counted each), XMPP contacts and links one share has (50); link-max-views-per-minute the most reads
+        a minute of a guest link's page (30). -->
+    <location max-share-hours="24" trail-max-days="30" min-interval-seconds="5" approximate-interval-seconds="60"
+            max-active-shares="20" max-audience="50" link-max-views-per-minute="30"/>
+
     <!-- This server as a cluster member (plans/archive/Cluster.md). tls-cert and tls-key: the cluster TLS pair, base64 DER
         on one line each, generated together into runtime/.env (moqui_conf__cluster_member__tls_cert and _tls_key) and
         shared by provisioning, distinct from the session cookie key; set one, set both. https-port: the cluster port
@@ -1762,6 +1772,7 @@
         <load-data location="component://framework/data/MapsSetupData.xml"/>
         <load-data location="component://framework/data/MapsOvertureData.xml"/>
         <load-data location="component://framework/data/MapsProjectionData.xml"/>
+        <load-data location="component://framework/data/MapsLocationData.xml"/>
     </entity-facade>
     <database-list>
         <dictionary-type type="id" java-type="String" default-sql-type="VARCHAR(40)"/>
