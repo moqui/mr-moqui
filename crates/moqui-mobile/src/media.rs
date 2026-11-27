@@ -212,12 +212,20 @@ pub(crate) fn relay(request: &tauri::http::Request<Vec<u8>>) -> Response<Vec<u8>
 }
 
 fn relay_fetch(mut url: Url, allowed: &[String], from: u64, to: u64) -> Result<Response<Vec<u8>>, String> {
-    let client = reqwest::blocking::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(RELAY_TIMEOUT_SECONDS))
-        .connect_timeout(Duration::from_secs(10))
-        .build()
-        .map_err(|err| format!("HTTP client: {err}"))?;
+    // one client for every range: its connections stay open, so a range does not wait for a new TLS handshake
+    static CLIENT: std::sync::OnceLock<Result<reqwest::blocking::Client, String>> = std::sync::OnceLock::new();
+    let client = CLIENT
+        .get_or_init(|| {
+            reqwest::blocking::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .timeout(Duration::from_secs(RELAY_TIMEOUT_SECONDS))
+                .connect_timeout(Duration::from_secs(10))
+                .pool_idle_timeout(Duration::from_secs(60))
+                .build()
+                .map_err(|err| format!("HTTP client: {err}"))
+        })
+        .as_ref()
+        .map_err(Clone::clone)?;
     for _ in 0..=crate::web::REDIRECTS_MAX {
         let response = client
             .get(url.clone())
