@@ -7,8 +7,10 @@
 // active imports, each in a small region of Boston's harbor; and the user's package of that region (OF1), built by the
 // MapPackageBuild job as the Offline screen's Build asks it. Its feature checks the package is ready and that its
 // manifest lists the basemap's extract with its style, sprites and fonts, the outline, the places, the postal codes and
-// the Overture rows. Each row is made when it is missing, and nothing is removed: the walk downloads the package from
-// this database after the spec (a scratch database, gone with the server).
+// the Overture rows. Each row is made when it is missing. Served (`moqui test --serve`, the walk), nothing is removed:
+// the walk downloads the package from this database after the spec (a scratch database, gone with the server). Run
+// otherwise (./moq accept tools), its cleanup removes what it made, so no other spec of the run meets the user, the
+// layer, the Overture region or the package.
 // Run alone: ./moq accept tools --spec MapsOfflinePackage; the walk: scripts/android-maps-offline.sh
 const PASSWORD = "MapsOffline1!!"
 const USER = "MAPS_OFFLINE_USER"
@@ -55,6 +57,31 @@ function as(username, action) {
     }
 }
 const call = (name, parameters) => ec.service.sync().name(name).parameters(parameters).call()
+// Whether this run serves its database after the specs: `moqui test --serve` turns the webroot's https off for its
+// plain HTTP listener before the boot (moqui-host test_cmd/serve.rs), where the dev conf of ./moq test has it on
+const served = () => String(ec.factory.getConfValue("webapp-list/webapp[webroot]@https-enabled")) === "false"
+// rows removed by their fields (or one field in values), each entity on its own: one that fails is logged, the rest go on
+function del(entityName, fields, values) {
+    try {
+        const find = ec.entity.find(entityName).disableAuthz()
+        if (values) find.condition(fields, "in", values)
+        else find.condition(fields)
+        find.deleteAll()
+    } catch (err) {
+        ec.message.clearErrors()
+        ec.logger.warn("MapsOfflinePackage cleanup: " + entityName + " not removed: " + (err?.message ?? err))
+    }
+}
+function removeTree(location) {
+    try {
+        const ref = location ? ec.resource.getLocationReference(location) : null
+        if (!ref || !ref.getExists()) return
+        if (ref.isDirectory()) for (const child of Array.from(ref.getDirectoryEntries() || [])) removeTree(child.location)
+        ref.delete()
+    } catch (err) {
+        ec.logger.warn("MapsOfflinePackage cleanup: " + location + " not removed: " + (err?.message ?? err))
+    }
+}
 // manifest.json of a package's zip, whose members are all stored: found by the central directory, written to SCRATCH
 function manifestOf(location) {
     const bytes = ec.resource.getLocationReference(location).openStream().readAllBytes()
@@ -280,6 +307,75 @@ spec({
         const deadline = Date.now() + 60000
         while (Date.now() < deadline && ["MapPkgPending", "MapPkgBuilding"].includes(String(packageOf()?.statusId))) sleep(200)
         ec.artifactExecution.disableAuthz()
+    },
+    cleanupSpec() {
+        if (served()) return
+        ec.message.clearErrors()
+        ec.artifactExecution.disableAuthz()
+        // the package as its owner deletes it: its row, its download records and its file
+        const row = packageOf()
+        if (row) {
+            const out = as(USERNAME, () => call(S + "delete#Package", {packageId: row.packageId}))
+            if (!out.applied)
+                ec.logger.warn(
+                    "MapsOfflinePackage cleanup: package " + row.packageId + " not deleted: " + (out.reason || out.error)
+                )
+        }
+        removeTree(SCRATCH)
+        removeTree(LOCATION)
+        // the user's places: their overlay rows and their personal drive with its files
+        const drives = Array.from(ec.entity.find("moqui.resource.ResourceDrive").condition("ownerUserId", USER).list())
+        for (const drive of drives) removeTree(String(drive.rootLocation || ""))
+        const driveIds = drives.map(drive => drive.driveId)
+        del("moqui.maps.MapOverlay", {ownerUserId: USER})
+        if (driveIds.length)
+            for (const entity of [
+                "ResourceDriveMember",
+                "ResourceFavorite",
+                "ResourceRecent",
+                "ResourceShare",
+                "ResourceTagMember",
+                "ResourceTrash"
+            ])
+                del("moqui.resource." + entity, "driveId", driveIds)
+        del("moqui.resource.ResourceDrive", {ownerUserId: USER})
+        del("moqui.maps.OverturePlace", {importId: "MAPS_OFFLINE_WALK_PLACES"})
+        del("moqui.maps.OvertureAddress", {importId: "MAPS_OFFLINE_WALK_ADDRESSES"})
+        del("moqui.maps.OvertureRegionTheme", {regionId: "MAPS_OFFLINE_WALK"})
+        del("moqui.maps.OvertureImport", {regionId: "MAPS_OFFLINE_WALK"})
+        del("moqui.maps.OvertureRegion", {regionId: "MAPS_OFFLINE_WALK"})
+        del("moqui.basic.GeoPostalCodePlace", {geoId: "USA_Z_02110", sourceKey: "GN_POSTAL", placeName: "Boston"})
+        del("moqui.basic.GeoPointAssoc", {geoId: "USA_Z_02110", geoPointId: "USA_Z_02110_CENSUS_ZCTA"})
+        del("moqui.basic.GeoPoint", {geoPointId: "USA_Z_02110_CENSUS_ZCTA"})
+        del("moqui.basic.GeoPostalCode", {geoId: "USA_Z_02110"})
+        del("moqui.basic.Geo", {geoId: "USA_Z_02110"})
+        del("moqui.security.UserPreference", {userId: USER})
+        del("moqui.maps.MapProfile", {profileId: PROFILE})
+        del("moqui.maps.MapLayer", {layerId: LAYER})
+        const notices = Array.from(
+            ec.entity.find("moqui.security.user.NotificationMessageUser").condition("userId", USER).list()
+        ).map(notice => notice.notificationMessageId)
+        del("moqui.security.user.NotificationMessageUser", {userId: USER})
+        if (notices.length) del("moqui.security.user.NotificationMessage", "notificationMessageId", notices)
+        del("moqui.security.UserGroupMember", {userId: USER})
+        del("moqui.security.UserAccount", {userId: USER})
+        ec.message.clearErrors()
+        ec.cache.getCache("maps.postal.lookup").clear()
+        const left = [
+            ["moqui.security.UserAccount", {userId: USER}],
+            ["moqui.maps.MapPackage", {ownerUserId: USER}],
+            ["moqui.maps.MapLayer", {layerId: LAYER}],
+            ["moqui.maps.OvertureRegion", {regionId: "MAPS_OFFLINE_WALK"}],
+            ["moqui.resource.ResourceDrive", {ownerUserId: USER}]
+        ].filter(([entityName, fields]) => Number(ec.entity.find(entityName).condition(fields).disableAuthz().count()) > 0)
+        if (left.length || ec.resource.getLocationReference(LOCATION).getExists())
+            ec.logger.warn(
+                "MapsOfflinePackage cleanup: left " +
+                    JSON.stringify(left.map(([entityName]) => entityName)) +
+                    ", archive " +
+                    LOCATION
+            )
+        else ec.logger.info("MapsOfflinePackage cleanup: its user, layer, Overture region, package and archive removed")
     }
 })
 

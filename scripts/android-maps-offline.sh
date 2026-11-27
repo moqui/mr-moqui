@@ -31,8 +31,9 @@ app=org.moqui.mobile
 serial=${ANDROID_SERIAL:-$("$adb_bin" devices | sed -n 's/^\([^[:space:]]*\)[[:space:]]*device$/\1/p' | head -1)}
 [ -n "$serial" ] || { echo "no device: ./moq android emulator, or a phone over adb" >&2; exit 1; }
 [ -f "$apk" ] || { echo "no APK at $apk: ./moq android build --target x86_64 --apk" >&2; exit 1; }
-python3 -c 'import websocket' 2>/dev/null || { echo "python3 needs websocket-client (pip install websocket-client)" >&2; exit 1; }
-adb() { "$adb_bin" -s "$serial" "$@"; }
+python3 -P -c 'import websocket' 2>/dev/null || { echo "python3 needs websocket-client (pip install websocket-client)" >&2; exit 1; }
+# fd 3 (the server's standard input, below) closed for each child, so none holds it open past this script
+adb() { "$adb_bin" -s "$serial" "$@" 3>&-; }
 elapsed() { echo "$(($(date +%s) - started))"; }
 
 rm -rf "$out"
@@ -44,13 +45,24 @@ echo "== the server half: moqui test framework tools --acceptance --spec MapsOff
     --serve "127.0.0.1:$port" --ready-file "$out/ready" <"$out/stdin" >"$out/server.log" 2>&1 &
 server=$!
 exec 3>"$out/stdin"
+# however the script ends (a signal to the walk too): the device's network on again, the forwards gone, and the server
+# stopped by the end of its standard input, or killed when it has not stopped in 30 seconds
 cleanup() {
     exec 3>&-
+    adb shell cmd connectivity airplane-mode disable >/dev/null 2>&1 || true
+    adb shell svc wifi enable >/dev/null 2>&1 || true
+    adb shell svc data enable >/dev/null 2>&1 || true
     adb reverse --remove "tcp:$port" >/dev/null 2>&1 || true
     adb forward --remove "tcp:$devtools" >/dev/null 2>&1 || true
+    for _ in $(seq 1 30); do
+        kill -0 "$server" 2>/dev/null || break
+        sleep 1
+    done
+    kill "$server" 2>/dev/null || true
     wait "$server" 2>/dev/null || true
 }
 trap cleanup EXIT
+trap 'exit 1' INT TERM HUP
 # a first run loads the data into a snapshot (minutes); later ones restore it (seconds)
 for _ in $(seq 1 1800); do
     [ -s "$out/ready" ] && break
@@ -58,7 +70,7 @@ for _ in $(seq 1 1800); do
     sleep 1
 done
 [ -s "$out/ready" ] || { echo "FAILED: the server did not start in 30 minutes" >&2; exit 1; }
-grep -E 'MapsOfflinePackage|PASSED|FAILED' "$out/server.log" | grep -v '^\s*$' | tail -5 | sed 's/^/   /' >&2
+grep -E 'MapsOfflinePackage|PASSED|FAILED' "$out/server.log" | grep -v '^\s*$' | tail -5 | sed 's/^/   /' >&2 || true
 echo "   serving $(head -1 "$out/ready") after $(elapsed) s" >&2
 
 echo "== installing $apk on $serial, its data cleared" >&2
@@ -78,8 +90,8 @@ adb shell pidof "$app" >/dev/null || { echo "FAILED: the app is not running" >&2
 
 echo "== the device half (after $(elapsed) s)" >&2
 status=0
-python3 scripts/android-maps-offline.py --devtools "$devtools" --serial "$serial" --adb "$adb_bin" --port "$port" \
-    --user maps.offline --password 'MapsOffline1!!' || status=$?
+python3 -P scripts/android-maps-offline.py --devtools "$devtools" --serial "$serial" --adb "$adb_bin" --port "$port" \
+    --user maps.offline --password 'MapsOffline1!!' 3>&- || status=$?
 adb exec-out screencap -p >"$out/last.png" || true
 if [ "$status" -ne 0 ]; then
     adb logcat -d -s moqui-mobile | grep -E ' [EW] ' | tail -20 | sed 's/^/    /' >&2 || true
