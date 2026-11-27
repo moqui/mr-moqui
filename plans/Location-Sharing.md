@@ -106,7 +106,8 @@ group takes a new snapshot of it (LL1 review).
   shows it.
 - Browse gets **Shared with me** (each person, the age, Show on map, Directions in the phone's maps app by `geo:`) and
   **Share my location** (audience, until, exact or approximate, keep a trail), and **Who sees my location** (each share
-  with its audience and end, Stop, Extend, Delete trail). The tray shows an active share of the user's own with Stop.
+  with its audience and end, Stop, Extend, Delete trail). An app-bar chip on every screen (the shell indicator hook) shows the user's own active shares and opens Browse's
+  live panel, where Stop is.
 - In a browser, a share sends while its page is open (`watchPosition`), with a banner on the page saying so; when the
   page closes the share stays active but goes stale, and the audience sees its age.
 - The terminal lists shares with their ages and coordinates, and Stop.
