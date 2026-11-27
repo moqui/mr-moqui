@@ -578,6 +578,8 @@ impl Session {
             .children()
             .filter(|feature| feature.is("feature", ns::DISCO_INFO))
             .filter_map(|feature| attr(feature, "var").strip_suffix("+notify").map(str::to_string))
+            // no interest is kept in a node the service refuses (user location, pep::REFUSED_NODES)
+            .filter(|node| !super::pep::refused_node(node))
             .collect();
         *moqui_lib::sync::lock(&self.notify) = wanted;
     }

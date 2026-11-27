@@ -664,6 +664,85 @@ async fn pep_keeps_omemo_device_lists_in_both_namespaces_and_notifies_who_asked(
     assert!(text_of(&out).contains("precondition-not-met"), "{}", text_of(&out));
 }
 
+/// User location (XEP-0080) is refused until live location sharing maps it (plans/Location-Sharing.md): nothing is
+/// stored or pushed, a location kept earlier is not served, and the other PEP nodes work as before.
+#[tokio::test]
+async fn pep_refuses_the_user_location_node_and_keeps_the_others() {
+    const GEOLOC: &str = "http://jabber.org/protocol/geoloc";
+    let (server, fake) = server();
+    let (mut john, _) = sign_in(&server, "john.doe", JOHN_PASSWORD, "phone").await;
+    let (mut jane, _) = sign_in(&server, "jane", JANE_PASSWORD, "laptop").await;
+    // jane's client asks for location and device list notifications
+    let asked = jane
+        .send("<presence><c xmlns='http://jabber.org/protocol/caps' hash='sha-1' node='https://dino.im' ver='abc='/></presence>")
+        .await;
+    let id = find(&asked, "iq", ns::CLIENT).unwrap().attr("id").unwrap().to_string();
+    jane.send(&format!(
+        "<iq type='result' id='{id}' to='jane@moqui.local'><query xmlns='http://jabber.org/protocol/disco#info'>\
+         <feature var='{GEOLOC}+notify'/><feature var='urn:xmpp:omemo:2:devices+notify'/></query></iq>"
+    ))
+    .await;
+    let wanted: Vec<String> = server
+        .registry
+        .sessions_of("U2")
+        .iter()
+        .flat_map(|entry| moqui_lib::sync::lock(&entry.notify).iter().cloned().collect::<Vec<_>>())
+        .collect();
+    assert_eq!(
+        wanted,
+        ["urn:xmpp:omemo:2:devices"],
+        "no interest in the location node is kept"
+    );
+    let calls = fake.state.lock().unwrap().calls.len();
+    let out = text_of(
+        &john
+            .send(&format!(
+                "<iq type='set' id='loc'><pubsub xmlns='http://jabber.org/protocol/pubsub'><publish node='{GEOLOC}'>\
+                 <item id='current'><geoloc xmlns='{GEOLOC}'><lat>48.85</lat><lon>2.35</lon></geoloc></item>\
+                 </publish></pubsub></iq>"
+            ))
+            .await,
+    );
+    assert!(
+        out.contains("type='error'") && out.contains("<forbidden") && out.contains("type='auth'"),
+        "{out}"
+    );
+    assert_eq!(fake.state.lock().unwrap().calls.len(), calls, "no service is called");
+    assert!(!fake.state.lock().unwrap().pep.keys().any(|(_, node)| node == GEOLOC));
+    assert!(!text_of(&jane.pump().await).contains("geoloc"), "nothing is pushed");
+    // a location kept before the rule is not served, to its owner or to anyone else
+    fake.state.lock().unwrap().pep.insert(
+        ("U1".into(), GEOLOC.into()),
+        (
+            "open".into(),
+            vec![(
+                "current".into(),
+                format!("<geoloc xmlns='{GEOLOC}'><lat>1</lat></geoloc>"),
+            )],
+        ),
+    );
+    for (who, to) in [(&mut jane, " to='john.doe@moqui.local'"), (&mut john, "")] {
+        let out = text_of(
+            &who.send(&format!(
+                "<iq type='get' id='g'{to}><pubsub xmlns='http://jabber.org/protocol/pubsub'><items node='{GEOLOC}'/></pubsub></iq>"
+            ))
+            .await,
+        );
+        assert!(out.contains("<forbidden") && !out.contains("<lat>"), "{out}");
+    }
+    // an ordinary node is stored and pushed as before
+    let out = text_of(
+        &john
+            .send(
+                "<iq type='set' id='dev'><pubsub xmlns='http://jabber.org/protocol/pubsub'><publish node='urn:xmpp:omemo:2:devices'>\
+                 <item id='current'><devices xmlns='urn:xmpp:omemo:2'><device id='31415'/></devices></item></publish></pubsub></iq>",
+            )
+            .await,
+    );
+    assert!(out.contains("type='result'"), "{out}");
+    assert!(text_of(&jane.pump().await).contains("31415"));
+}
+
 /// SEC-COM-20: a publish, a block or a push registration the services refuse past a cap is `resource-constraint`.
 #[tokio::test]
 async fn a_request_past_a_users_cap_is_a_resource_constraint() {
