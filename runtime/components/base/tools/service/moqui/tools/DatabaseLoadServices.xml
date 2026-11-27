@@ -87,6 +87,13 @@ along with this software (see the LICENSE.md file). If not, see
                             dummyFks, useTryInsert, disableEntityEca, disableAuditLog, disableFkCreate, disableDataFeed,
                             transactionTimeout: transactionTimeout || 3600}).disableAuthz().call() || {}
                         recordsLoaded = Number(out.recordsLoaded || 0)
+                        // a file that failed while others loaded reads as in a data load: the records loaded, and the
+                        // failed files named (TOOL-UI-008); with nothing loaded the import's errors say why
+                        const failures = Array.from(out.failures || [])
+                        if (recordsLoaded > 0 && failures.length) {
+                            failedFiles = failures.map(failure => `[${failure.location}] ${failure.reason}`)
+                            ec.message.clearErrors()
+                        }
                     } else {
                         const edl = ec.entity.makeDataLoader()
                         if (types || components) {

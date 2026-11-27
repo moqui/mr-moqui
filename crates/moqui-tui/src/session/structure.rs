@@ -280,11 +280,26 @@ impl Session {
                 continue;
             }
             if fresh || !self.components.contains_key(&id) {
-                self.components.insert(id.clone(), ComponentState::default());
+                let state = self.restored_state(&id).unwrap_or_default();
+                self.components.insert(id.clone(), state);
             }
             self.request_component(&id);
             self.schedule_component(&id);
         }
+    }
+
+    /// A component's state as its screen had it when Back left it, for the same component: where it was (its row, mode,
+    /// closed rows, parameters), not a read that was in flight, which the load after it asks for again. A row past the
+    /// end of what that load brings is clamped where the component draws or takes a key (report's `clamp_row`).
+    fn restored_state(&mut self, id: &str) -> Option<ComponentState> {
+        let (name, mut state) = self.restoring.remove(id)?;
+        if self.index.components.get(id).is_none_or(|info| info.name != name) {
+            return None;
+        }
+        state.loading = false;
+        state.reload_pending = false;
+        state.error.clear();
+        Some(state)
     }
 
     // ---- boxes ----
