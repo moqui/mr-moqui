@@ -903,11 +903,15 @@ its directories, their distinct contents and their bytes (`MapSourceServices.est
 counted in the region and sized near enough. A package past `maps@package-max-bytes` is refused there, as is a region of
 more than 4,000,000 tiles, one with no registered basemap archive to cut (`NO_ARCHIVE`), and one that would take the
 user's packages past `maps@package-user-max-bytes` (`TOO_LARGE_FOR_USER`). Build (`create#Package`) records the
-archives' registered revisions and a random build key, and its run of the `MapPackageBuild` ServiceJob starts as the
-user when the installation has room: at most `maps@package-concurrent-builds` packages are built at once (the job
-workers are shared with the scheduled jobs), another waits, pending ("Waiting for its turn"), and starts when one ends
-(the hourly clean starts any whose turn was missed); a user has at most one package pending or building
-(`PACKAGE_BUSY`). The user is told when it ends (topic `MapPackageBuild`). The run holds no transaction while it cuts,
+archives' registered revisions and a random build key, and its run of the `MapPackageBuild` ServiceJob starts when the
+installation has room: at most `maps@package-concurrent-builds` packages are built at once (the job workers are shared
+with the scheduled jobs), another waits, pending ("Waiting for its turn"), and starts when one ends (the hourly clean
+starts any whose turn was missed); a user has at most one package pending or building (`PACKAGE_BUSY`). One scheduler
+runs at a time (`schedule#PackageBuilds`, after the commit of the request that asked), and it first ends any build whose
+run is gone or silent for an hour, so a dead run never holds the queue. The run is signed in as the package's owner,
+whoever's request or build's end started it, and cuts only what the owner may see; an owner who cannot be signed in (a
+disabled account), or a run that throws, ends the package failed. The owner alone is told when it ends (topic
+`MapPackageBuild`, sent to them directly). The run holds no transaction while it cuts,
 each write its own, and writes only while the package still holds its build key; its files are named by the key, so
 two runs never share one. It cuts each archive (`build#PackageExtract`): for each zoom in turn the tiles of the region
 sorted by tile ID, found through the directories as the tile transition finds one (kept by the archive's tag), read by
@@ -921,8 +925,8 @@ region where no basemap could be cut. The other members are read as the owner; o
 named in the manifest's `failures` in general words (no path of the server), and the rest goes on. The zip is
 `runtime://tmp/map-packages/<packageId>-<revision>-<buildKey>.zip`, with its size and SHA-256 on the row. The run's
 progress is on the row, and Cancel (`cancel#Package`) stops it at its next batch of tiles (a package still waiting ends
-at once); a run that stopped with no word for an hour is ended when its owner next updates, cancels or deletes the
-package, and a run so ended that was only slow stops at its next batch, its key gone. Update (`update#Package`) builds it
+at once); a run that stopped with no word for an hour is ended by the next scheduler or when its owner next updates,
+cancels or deletes the package, and a run so ended that was only slow stops at its next batch, its key gone. Update (`update#Package`) builds it
 again as a new revision from what the owner may see and the archives as registered then; the earlier revision stays
 downloadable until the new one is ready, and its file is removed then. Delete removes the row, its download records and
 the file. The hourly `clean_MapPackages_hourly` job (`clean#MapPackages`) removes the file of a package not downloaded

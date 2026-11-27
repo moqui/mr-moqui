@@ -416,18 +416,23 @@ function estimateOf(fields, exceptPackageId) {
             }),
             {estimate}
         )
+    const overUser = userCap(bytes, exceptPackageId, estimate)
+    if (overUser) return overUser
+    return {ok: true, estimate, revisions}
+}
+// TOO_LARGE_FOR_USER when the user's other packages and this one's bytes pass maps@package-user-max-bytes, else null
+function userCap(bytes, exceptPackageId, estimate) {
     const others = userBytes(exceptPackageId)
     const userLimit = userMaxBytes()
-    if (others + bytes > userLimit)
-        return refused(
-            "TOO_LARGE_FOR_USER",
-            say("Your offline maps would hold about ${size} in all, more than the ${limit} you may keep: delete one first", {
-                size: bytesText(others + bytes),
-                limit: bytesText(userLimit)
-            }),
-            {estimate}
-        )
-    return {ok: true, estimate, revisions}
+    if (others + bytes <= userLimit) return null
+    return refused(
+        "TOO_LARGE_FOR_USER",
+        say("Your offline maps would hold about ${size} in all, more than the ${limit} you may keep: delete one first", {
+            size: bytesText(others + bytes),
+            limit: bytesText(userLimit)
+        }),
+        {estimate}
+    )
 }
 
 // ===== estimate#Package, create#Package, update#Package =====
@@ -460,12 +465,16 @@ function startBuild(row) {
     return false
 }
 
-// Start the waiting builds the installation has room for (maps@package-concurrent-builds): the busy packages are read
-// locked, so two schedulers at once count each other's; a package handed to the job (its jobRunId) counts, a pending one
-// without waits its turn, oldest first. Called where a build is asked for and where one ends, and by the hourly clean.
+// Start the waiting builds the installation has room for (maps@package-concurrent-builds). One scheduler at a time:
+// it first locks the MapPackageBuild ServiceJob row (its mutex), then reads the busy packages locked; a run that has
+// ended without saying so (its ServiceJobRun gone or ended, or no word for an hour) is ended first, its owner told, so
+// a dead run never holds the queue; a package handed to the job (its jobRunId) counts, a pending one without waits its
+// turn, oldest first. Run in a transaction holding no package lock of its own: from a build's end and the hourly clean
+// in one of its own, and after the commit of a create, update, cancel or delete (scheduleAfterCommit).
 function scheduleBuilds() {
     try {
-        const busy = Array.from(
+        find("moqui.service.job.ServiceJob", {jobName: BUILD_JOB}).forUpdate(true).one()
+        const locked = Array.from(
             ec.entity
                 .find(PACKAGE)
                 .condition("statusId", "in", BUSY)
@@ -474,6 +483,7 @@ function scheduleBuilds() {
                 .disableAuthz()
                 .list()
         )
+        const busy = locked.filter(row => !(text(row.jobRunId) && endStale(row)))
         let running = busy.filter(row => text(row.jobRunId)).length
         for (const row of busy) {
             if (running >= concurrentBuilds()) break
@@ -484,13 +494,34 @@ function scheduleBuilds() {
         ec.logger.error("Map packages: the waiting builds were not started: " + (err?.message ?? err))
     }
 }
+// scheduleBuilds once this transaction commits (schedule#PackageBuilds, run async then): the caller's own row write is
+// committed and its locks let go before the scheduler takes its mutex and the busy rows, so no two wait on each other
+function scheduleAfterCommit() {
+    try {
+        // no group is granted the scheduler: registered as the framework, after the caller was checked
+        quietly(() => ec.service.special().name(S + "schedule#PackageBuilds").registerOnCommit())
+    } catch (err) {
+        ec.logger.error("Map packages: the next build was not scheduled: " + (err?.message ?? err))
+    }
+}
+function schedulePackageBuilds() {
+    scheduleBuilds()
+    return {}
+}
 
 // The signed-in user's account row, locked: what serializes their creates and updates, so their counts hold
 const lockUser = () => find("moqui.security.UserAccount", {userId: ec.user.userId}).forUpdate(true).one()
-// A refusal when the user has a package pending or building (one at a time), but the one given
+// A refusal when the user has a package pending or building (one at a time), but the one given; the rows read locked,
+// so a stale one is ended only while its build is not ending it
 function userBusy(exceptPackageId) {
     const rows = Array.from(
-        ec.entity.find(PACKAGE).condition("ownerUserId", ec.user.userId).condition("statusId", "in", BUSY).disableAuthz().list()
+        ec.entity
+            .find(PACKAGE)
+            .condition("ownerUserId", ec.user.userId)
+            .condition("statusId", "in", BUSY)
+            .forUpdate(true)
+            .disableAuthz()
+            .list()
     )
     const other = rows.find(row => String(row.packageId) !== String(exceptPackageId || "") && !endStale(row))
     return other
@@ -502,14 +533,18 @@ function createPackage(p) {
     if (!text(ec.user.userId)) throw new Error(L("Sign in to make an offline map"))
     const request = requestOf(p)
     if (!request.ok) return request
+    // the estimate reads the archives' directories, slowly for a large region: before the user's row is locked
+    const found = estimateOf(request.fields)
+    if (!found.ok) return found
+    // then under the lock the counts that must hold whatever the user's other requests did meanwhile
     lockUser()
     const busy = userBusy(null)
     if (busy) return busy
     const count = Number(find(PACKAGE, {ownerUserId: ec.user.userId}).count())
     if (count >= MAX_PACKAGES)
         return refused("TOO_MANY_PACKAGES", say("You have ${count} offline maps: delete one first", {count}))
-    const found = estimateOf(request.fields)
-    if (!found.ok) return found
+    const overUser = userCap(found.estimate.bytes, null, found.estimate)
+    if (overUser) return overUser
     const row = ec.entity.makeValue(PACKAGE)
     row.setSequencedIdPrimary()
     row.setAll(
@@ -526,11 +561,9 @@ function createPackage(p) {
         })
     )
     writeRow(row, true)
-    scheduleBuilds()
-    const started = text(packageStatus(row.packageId)) !== "MapPkgFailed"
-    return {applied: true, reasonCode: null, reason: null, packageId: String(row.packageId), started, estimate: found.estimate}
+    scheduleAfterCommit()
+    return {applied: true, reasonCode: null, reason: null, packageId: String(row.packageId), started: true, estimate: found.estimate}
 }
-const packageStatus = packageId => one(PACKAGE, {packageId})?.statusId
 
 // The user's own package (locked with forUpdate), or null
 function ownPackage(packageId, forUpdate) {
@@ -564,22 +597,29 @@ function endStale(row) {
         jobRunId: null
     })
     writeRow(row, false)
+    notifyOwner(row, text(row.statusId), text(row.statusNote))
     return true
 }
 
 function updatePackage(p) {
     if (!text(ec.user.userId)) throw new Error(L("Sign in to update an offline map"))
+    const asked = ownPackage(p.packageId, false)
+    if (!asked) return notThere()
+    const busyRefusal = () => refused("PACKAGE_BUSY", L("The offline map is being built: wait for it to end, or cancel it"))
+    if (BUSY.includes(text(asked.statusId)) && !runEnded(asked)) return busyRefusal()
+    // the estimate first, unlocked; then under the user's and the package's locks the checks again
+    const request = requestOf(asked.getMap())
+    if (!request.ok) return request
+    const found = estimateOf(request.fields, asked.packageId)
+    if (!found.ok) return found
     lockUser()
     const row = ownPackage(p.packageId, true)
     if (!row) return notThere()
-    if (BUSY.includes(text(row.statusId)) && !endStale(row))
-        return refused("PACKAGE_BUSY", L("The offline map is being built: wait for it to end, or cancel it"))
+    if (BUSY.includes(text(row.statusId)) && !endStale(row)) return busyRefusal()
     const busy = userBusy(row.packageId)
     if (busy) return busy
-    const request = requestOf(row.getMap())
-    if (!request.ok) return request
-    const found = estimateOf(request.fields, row.packageId)
-    if (!found.ok) return found
+    const overUser = userCap(found.estimate.bytes, row.packageId, found.estimate)
+    if (overUser) return overUser
     row.setAll({
         statusId: "MapPkgPending",
         statusNote: null,
@@ -592,9 +632,8 @@ function updatePackage(p) {
         jobRunId: null
     })
     writeRow(row, false)
-    scheduleBuilds()
-    const started = text(packageStatus(row.packageId)) !== "MapPkgFailed"
-    return {applied: true, reasonCode: null, reason: null, packageId: String(row.packageId), started, estimate: found.estimate}
+    scheduleAfterCommit()
+    return {applied: true, reasonCode: null, reason: null, packageId: String(row.packageId), started: true, estimate: found.estimate}
 }
 
 // ===== cancel#Package, delete#Package, find#Packages =====
@@ -609,7 +648,7 @@ function cancelPackage(p) {
         writeRow(row, false)
     } else if (!endStale(row)) writeRow(row, false)
     // a run that has ended without saying so is ended now, its turn given to the next; a live one stops at its next batch
-    scheduleBuilds()
+    scheduleAfterCommit()
     return {applied: true, reasonCode: null, reason: null}
 }
 
@@ -639,6 +678,8 @@ function deletePackage(p) {
         ec.entity.find(DOWNLOAD).condition("packageId", row.packageId).deleteAll()
         row.delete()
     })
+    // a stale build it ended frees its turn
+    scheduleAfterCommit()
     return {applied: true, reasonCode: null, reason: null}
 }
 
@@ -891,35 +932,71 @@ function frozenConfig(config, build) {
     return frozen
 }
 
-// The run as the package's owner: a run is started by whoever's request or job found the installation room for it
-// (scheduleBuilds), so it signs in as the owner, whose build key the row holds (their own create or update asked for this
-// build), reads and cuts only what the owner may see, and signs back after; a run whose key the package does not hold
-// does nothing
+// The files of a build: {packageId}-{revision}-{buildKey}, a folder while it is built and its zip
+function buildFilesOf(row, buildKey) {
+    const folder = ROOT + "/" + safeName(row.packageId) + "-" + ((num(row.revision) || 0) + 1) + "-" + safeName(buildKey)
+    return {folder, zip: folder + ".zip"}
+}
+
+// A build that could not run, or that threw, ended failed: its files removed, and the package written only while it holds
+// the build's key, its owner told; then the next waiting build has its turn
+function failBuild(packageId, buildKey, note) {
+    let current = null
+    try {
+        ec.transaction.runRequireNew(60, "Error writing a map package's outcome", () => {
+            current = find(PACKAGE, {packageId}).forUpdate(true).one()
+            if (!current || text(current.buildKey) !== buildKey) {
+                current = null
+                return
+            }
+            const files = buildFilesOf(current, buildKey)
+            removeTree(files.zip)
+            removeTree(files.folder)
+            current.setAll({statusId: "MapPkgFailed", statusNote: note, cancelRequested: "N", buildKey: null, jobRunId: null})
+            writeRow(current, false)
+        })
+        if (current) notifyOwner(current, "MapPkgFailed", note)
+        ec.transaction.runRequireNew(60, "Error starting the next map package build", scheduleBuilds)
+    } catch (err) {
+        ec.logger.error("Map package " + packageId + ": its failed build was not ended: " + (err?.message ?? err))
+    }
+    return {name: text(current?.name) || null, statusId: current ? "MapPkgFailed" : null, reason: note}
+}
+
+// The run as the package's owner. A run is started by whichever request, build's end or clean found the installation
+// room for it (scheduleBuilds), so it signs in as the owner, whose build key the row holds (their own create or update
+// asked for this build), and reads and cuts only what the owner may see. A job's run has a context of its own, so it
+// stays signed in as the owner to its end, and a framework notice of the job goes to the owner, not the starter; a call
+// in a web request never changes who is signed in, and is refused for another user's package. A run whose key the
+// package does not hold does nothing; one that cannot sign in as the owner (a disabled account) or that throws ends the
+// package failed, so no run holds the queue; the run itself never ends in error.
 function buildPackage(p) {
     const packageId = text(p.packageId)
     const row = packageId ? one(PACKAGE, {packageId}) : null
     const buildKey = text(p.buildKey)
     if (!row || !buildKey || text(row.buildKey) !== buildKey)
         return {name: text(row?.name) || null, statusId: null, reason: L("The offline map is built by another run")}
-    const before = text(ec.user.username)
-    const switched = text(ec.user.userId) !== text(row.ownerUserId)
-    if (switched) {
+    if (text(ec.user.userId) !== text(row.ownerUserId)) {
+        if (ec.web?.request) return {name: text(row.name), statusId: null, reason: L("The offline map is not available")}
         const account = one("moqui.security.UserAccount", {userId: row.ownerUserId})
-        const signedIn = account && quietly(() => ec.user.internalLoginUser(text(account.username)))
+        let signedIn = false
+        try {
+            signedIn = !!account && account.disabled !== "Y" && !!quietly(() => ec.user.internalLoginUser(text(account.username)))
+        } catch (err) {
+            signedIn = false
+        }
         ec.message.clearErrors()
-        if (!signedIn) {
+        if (!signedIn || text(ec.user.userId) !== text(row.ownerUserId)) {
             ec.logger.error("Map package " + packageId + ": its owner could not be signed in for its build")
-            return {statusId: null, reason: L("The offline map is not available")}
+            return failBuild(packageId, buildKey, L("The offline map's owner could not be signed in for its build"))
         }
     }
     try {
         return buildAsOwner(p)
-    } finally {
-        if (switched) {
-            if (before) ec.user.internalLoginUser(before)
-            else ec.user.logoutLocal()
-            ec.message.clearErrors()
-        }
+    } catch (err) {
+        ec.logger.error("Map package " + packageId + ": its build failed: " + (err?.stack ?? err?.message ?? err))
+        ec.message.clearErrors()
+        return failBuild(packageId, buildKey, L("The build failed"))
     }
 }
 
@@ -956,8 +1033,7 @@ function buildAsOwner(p) {
     if (!BUSY.includes(text(row.statusId))) return {name, statusId: text(row.statusId) || null}
     const next = (num(row.revision) || 0) + 1
     // the build's own files, named by its key: two runs never share one
-    const folder = ROOT + "/" + safeName(packageId) + "-" + next + "-" + safeName(buildKey)
-    const zip = folder + ".zip"
+    const {folder, zip} = buildFilesOf(row, buildKey)
     const limit = maxBytes()
     // The outcome on the row as it is now (the extract wrote its progress, a cancel may have been asked), in a transaction
     // of its own, only while the row is still this build's; the build's files removed unless it is ready and written.
@@ -1393,6 +1469,7 @@ function cleanPackages() {
 }
 
 const operations = {
+    schedulePackageBuilds,
     estimatePackage,
     createPackage,
     updatePackage,

@@ -579,9 +579,11 @@ along with this software (see the LICENSE.md file). If not, see
         <description>A new offline map package of the signed-in user's, estimated as estimate#Package does it and refused
             as it refuses, and TOO_MANY_PACKAGES past 50 and PACKAGE_BUSY while another of theirs is pending or building (the
             user's account row locked, so the counts hold under concurrent requests); its sources' registered revisions
-            recorded, built by a run of the MapPackageBuild ServiceJob as the user (build#Package) when the installation has
-            room (maps@package-concurrent-builds, 1: it waits pending until then), which notifies them when it ends. Out:
-            packageId, started (false when the job did not start: the package is failed), estimate. MAPS_APP_SERVICES.</description>
+            recorded, built by a run of the MapPackageBuild ServiceJob (build#Package) when the installation has room
+            (maps@package-concurrent-builds, 1: it waits pending until then; schedule#PackageBuilds once this commits). The
+            run is signed in as the package's owner whoever's request or build's end started it, and tells them alone when it
+            ends. The estimate is read before the user's row is locked, and the counts and the user's bytes checked again
+            under the lock. Out: packageId, started (the build asked for), estimate. MAPS_APP_SERVICES.</description>
         <implements service="org.moqui.maps.MapSourceServices.define#PackageRequest"/>
         <out-parameters>
             <parameter name="applied" type="Boolean"/>
@@ -655,7 +657,10 @@ along with this software (see the LICENSE.md file). If not, see
             as stale and asked for again, writes nothing; its files are named by its key, so two runs never share one).
             transaction ignore: it holds no transaction while it cuts, each write its own, so its cancel and the sources'
             revisions are read as committed. Each extract has what is left of maps@package-max-bytes, and the zip past it
-            fails the build. A source registered again since the
+            fails the build. The run signs in as the package's owner (whoever's request, build's end or clean started it) and
+            stays so to its end, its context being the job's own; an owner who cannot be signed in, or a run that throws,
+            ends the package failed, so the run never ends in error and holds no turn of the queue. A call in a web request
+            never changes who is signed in. A source registered again since the
             build was asked fails it (checked when it starts and again when the cuts end). Each basemap archive the
             profile offers the user now is cut to the region and zooms (build#PackageExtract), with its style made
             package-relative, its sprites and the map fonts; then the outline, and as asked the user's places and the
@@ -679,6 +684,16 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="reason"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapPackages.js').execute('buildPackage', context))</script></actions>
+    </service>
+
+    <service verb="schedule" noun="PackageBuilds" allow-remote="false">
+        <description>Start the waiting offline map builds the installation has room for (maps@package-concurrent-builds):
+            one scheduler at a time (the MapPackageBuild ServiceJob row locked as its mutex), the busy packages read locked,
+            a run that ended without saying so (its ServiceJobRun gone or ended, or no word for an hour) ended failed and its
+            owner told, so a dead run never holds the queue, then the oldest waiting packages handed to the job. Registered
+            on commit by create#, update#, cancel# and delete#Package, so their own row writes are committed and their locks
+            let go first; a build's end and the hourly clean run it in a transaction of their own. No group's.</description>
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/maps/MapPackages.js').execute('schedulePackageBuilds', context)</script></actions>
     </service>
 
     <service verb="get" noun="PackageAccess">
