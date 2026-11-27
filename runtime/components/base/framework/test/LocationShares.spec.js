@@ -1456,12 +1456,27 @@ feature("over XMPP: a position from the owner's XMPP app feeds only a share they
             out.ahead = as(A, XMPP, {latitude: "44.3", longitude: "-111.9", observedMillis: shared.now + 5 * MINUTE})
             out.aheadPush = xmppPushes(shareId).filter(push => push.event === "position")
             out.aheadObserved = sys(() => ec.user.timestampMillis(xmppLatest(shareId)[0].observedDate)) - shared.now
-            // a person taken out keeps the opt-in (only the last XMPP contact out ends it)
-            const bRow = rows("moqui.maps.LocationShareAudience", {shareId, audienceTypeEnumId: "LsaUser", userId: B})[0]
-            as(A, "revoke#Audience", {shareId, audienceSeqId: bRow.audienceSeqId})
-            out.afterUserRevoke = sys(() => ec.entity.find("moqui.maps.LocationShare").condition("shareId", shareId).one().takeXmppLocation)
+            // an opted-in share of a person and a contact: the person taken out keeps the opt-in, the contact (its last)
+            // taken out ends it
+            const pair = as(A, "create#Share", {
+                audienceList: [toUser(B), contact],
+                thruDate: new Date(shared.now + HOUR),
+                takeXmppLocation: true
+            }).shareId
+            const optInOf = id =>
+                sys(() => ec.entity.find("moqui.maps.LocationShare").condition("shareId", id).one().takeXmppLocation)
+            const entryOf = type => rows("moqui.maps.LocationShareAudience", {shareId: pair, audienceTypeEnumId: type})[0]
+            as(A, "revoke#Audience", {shareId: pair, audienceSeqId: entryOf("LsaUser").audienceSeqId})
+            out.afterUserRevoke = optInOf(pair)
+            as(A, "revoke#Audience", {shareId: pair, audienceSeqId: entryOf("LsaXmpp").audienceSeqId})
+            out.afterContactRevoke = optInOf(pair)
+            as(A, "stop#Share", {shareId: pair})
             // the opt-in with no XMPP contact is refused, on create
-            out.noContact = as(A, "create#Share", {audienceList: [toUser(D)], thruDate: new Date(shared.now + HOUR), takeXmppLocation: true}).reasonCode
+            out.noContact = as(A, "create#Share", {
+                audienceList: [toUser(D)],
+                thruDate: new Date(shared.now + HOUR),
+                takeXmppLocation: true
+            }).reasonCode
             // a page's report: to everyone, the XMPP contacts too, and the owner's last source is the page
             later(6000)
             capture().clear()
@@ -1518,10 +1533,6 @@ feature("over XMPP: a position from the owner's XMPP app feeds only a share they
             // (the opt-in needs an XMPP contact: it comes with the contact's add)
             const late = as(A, "create#Share", {audienceList: [toUser(B)], thruDate: new Date(shared.now + HOUR)}).shareId
             out.lateNoContact = as(A, "update#Share", {shareId: late, takeXmppLocation: "true"}).reasonCode
-            // with no XMPP contact yet it takes none (the other shares may)
-            later(61000)
-            as(A, XMPP, {latitude: "44.5", longitude: "-111.9"})
-            out.noContactYet = xmppLatest(late).length
             capture().clear()
             const before = versionOf(late)
             out.lateAdded = as(A, "update#Share", {shareId: late, addAudienceList: [contact], takeXmppLocation: "true"})
@@ -1616,7 +1627,6 @@ feature("over XMPP: a position from the owner's XMPP app feeds only a share they
         out.offTook == 0
         out.feeding.length == 1
         out.feedingAgain == 0
-        out.noContactYet == 0
         out.lateAdded.errors == ""
         // the contact added and the opt-in turned on: each raises it
         out.lateVersion == 2
@@ -1629,6 +1639,7 @@ feature("over XMPP: a position from the owner's XMPP app feeds only a share they
         out.roughOptIn == "N"
         out.roughReason.includes("last XMPP contact revoked")
         out.afterUserRevoke == "Y"
+        out.afterContactRevoke == "N"
         out.noContact == "XMPP_NO_CONTACT"
         out.roughXmppKept == 0
         out.afterRevoke == 0

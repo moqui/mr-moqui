@@ -226,10 +226,10 @@ and a subscription are `forbidden`, and a location kept before is not served.
   `update#Share`, in the audit log, also offered in Who sees my location and My location shares; turning it on raises
   the share's `audienceVersion`, so a phone that sends the share pauses until its person confirms, and the phone's
   dialog and notification add "(your XMPP app's location also goes to your XMPP contacts)" to its audience; turning it
-  off deletes the XMPP latest and leaves the version, it needs an XMPP contact in the share, `XMPP_NO_CONTACT` otherwise; a revoke that takes out the last one turns it
-  off, "last XMPP contact revoked" in its audit row, and one of a person, group or link leaves it). A
-  share the phone sends takes it too, so its XMPP contacts may see the marker alternate between the phone and the XMPP
-  app while those are different devices. It is `LocationServices.report#XmppPosition`, taken by each of the user's active
+  on needs an XMPP contact in the share, else it is refused `XMPP_NO_CONTACT`; turning it off deletes the XMPP latest
+  and leaves the version; a revoke that takes out the last XMPP contact turns it off, "last XMPP contact revoked" in
+  its audit row, and a revoke of a person, group or link leaves it). A share the phone sends takes it too, so its XMPP
+  contacts may see the marker alternate between the phone and the XMPP app while those are different devices. It is `LocationServices.report#XmppPosition`, taken by each of the user's active
   shares with the opt-in and an XMPP contact, with each share's rules (the rate, the values, staleness, approximate
   rounding) against that share's XMPP latest (`LocationXmppLatest`: its times, and for an approximate share the cell
   it holds; no coordinates for an exact one). Such a position goes to the share's XMPP contacts

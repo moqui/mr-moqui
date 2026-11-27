@@ -757,11 +757,16 @@ function revokeRows(share, rows, now) {
     // why; the version is not raised by an end. A person, group or link taken out leaves it as the owner chose
     if (share.takeXmppLocation === "Y" && contactsBefore.length && !contactsAfter.size) {
         share.takeXmppLocation = "N"
-        ec.context.put("takeXmppLocation_changeReason", "last XMPP contact revoked")
+        // the audit row's reason for this write alone: a reason the caller had in the context is put back after
+        const REASON = "takeXmppLocation_changeReason"
+        const had = ec.context.containsKey(REASON)
+        const callers = had ? ec.context.get(REASON) : null
+        ec.context.put(REASON, "last XMPP contact revoked")
         try {
             share.update()
         } finally {
-            ec.context.remove("takeXmppLocation_changeReason")
+            if (had) ec.context.put(REASON, callers)
+            else ec.context.remove(REASON)
         }
         find(XMPP_LATEST).condition("shareId", share.shareId).deleteAll()
     }

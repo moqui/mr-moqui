@@ -93,8 +93,8 @@ along with this software (see the LICENSE.md file). If not, see
             true or false turns the owner's XMPP app's location for it on or off (to its XMPP contacts only, audited);
             turned on, it raises audienceVersion, so a phone that sends the share pauses until its person confirms the
             words get#AppShare gives; turned off, it leaves the version and deletes the XMPP app's last position
-            (LocationXmppLatest); true for a share with no XMPP contact (its adds counted) is refused XMPP_NO_CONTACT. Refused: SHARE_NOT_FOUND (not the caller's), SHARE_ENDED, and create#Share's
-            reasons.</description>
+            (LocationXmppLatest); true for a share with no XMPP contact (its adds counted) is refused XMPP_NO_CONTACT.
+            Refused: SHARE_NOT_FOUND (not the caller's), SHARE_ENDED, and create#Share's reasons.</description>
         <in-parameters>
             <parameter name="shareId" required="true"/>
             <parameter name="thruDate" type="Timestamp"/>
