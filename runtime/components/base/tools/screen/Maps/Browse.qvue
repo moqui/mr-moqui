@@ -1290,7 +1290,7 @@ module.exports = {
                     form.link ? [t('a guest link')] : []);
                 if (!json.linkToken) this.shareShown = false;
                 // shared once it is sent: in the app only after the person's Send in its own dialog
-                return this.sendShare(json.shareId, { approximate, thruDate: json.thruDate, whomText: whom.join(', '), fresh: true, created: true,
+                return this.sendShare(json.shareId, { approximate, thruDate: json.thruDate, whomText: whom.join(', '), fresh: true, created: true, audienceVersion: 1,
                     intervalSeconds: approximate ? this.shareTargets.approximateIntervalSeconds : this.shareTargets.minIntervalSeconds })
                     .then(() => {
                         // the app bar's chip at once, before the share's started push
@@ -1454,6 +1454,7 @@ module.exports = {
             const given = info || {};
             if (!this.sending.includes(shareId)) this.sending = this.sending.concat([shareId]);
             this.sendInfo = Object.assign({}, this.sendInfo, { [shareId]: { approximate: !!given.approximate, intervalSeconds: Number(given.intervalSeconds) || 0,
+                audienceVersion: Number(given.audienceVersion) || 0,
                 thruDate: given.thruDate || null, whomText: given.whomText || '', startedAt: Date.now() } });
             this.storeSending();
             this.sendError = '';
@@ -1574,7 +1575,11 @@ module.exports = {
             if (this.closed) return;
             const interval = this.intervalOf(shareId);
             const num = (value) => (value === null || value === undefined || !Number.isFinite(Number(value)) ? '' : String(value));
-            const params = { shareId, latitude: num(fix.latitude), longitude: num(fix.longitude), accuracy: num(fix.accuracy), heading: num(fix.heading), speed: num(fix.speed),
+            // the audience version this page read (a share sent from a device, the app's page, takes reports of the version
+            // its audience is at; one the page has not read since is refused and read again)
+            const share = this.myShares.find((one) => one.shareId === shareId);
+            const version = share && share.audienceVersion ? share.audienceVersion : (this.sendInfo[shareId] || {}).audienceVersion;
+            const params = { shareId, audienceVersion: version ? String(version) : '', latitude: num(fix.latitude), longitude: num(fix.longitude), accuracy: num(fix.accuracy), heading: num(fix.heading), speed: num(fix.speed),
                 observedDate: state.serverTime ? '' : String(fix.timestamp) };
             state.inFlight = true;
             const signedOut = () => {
@@ -1593,6 +1598,10 @@ module.exports = {
                 } else if (status === 429) state.nextAt = now + Math.max(1, Number(json.retryAfterSeconds) || 1) * 1000;
                 else if (status === 410 || status === 404) {
                     this.stopSending(shareId);
+                    this.refreshShares();
+                } else if (status === 409 && json.reasonCode === 'AUDIENCE_CHANGED') {
+                    // the audience changed since this page read it: read again (the banner shows whom it reaches now), then on
+                    state.nextAt = now + interval;
                     this.refreshShares();
                 } else if (status === 409 && json.reasonCode === 'OTHER_DEVICE') {
                     // another device of the user's sends it now (its Send from here): this page stops, and offers it back

@@ -153,16 +153,15 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="heading"/>
             <parameter name="speed"/>
             <parameter name="observedDate" type="Timestamp"/>
+            <parameter name="audienceVersion"><description>The audience version the device's person confirmed: required for
+                a share sent from a device, which refuses another or none with 409 AUDIENCE_CHANGED before anything is
+                written or pushed</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="statusCode" type="Integer"/>
             <parameter name="reasonCode"/>
             <parameter name="retryAfterSeconds" type="Integer"/>
-            <parameter name="audienceSeq" type="Integer"><description>With 200: the newest audience entry's sequence, of the
-                audience's revision the Android app compares with what the person confirmed</description></parameter>
-            <parameter name="audienceReach" type="Integer"><description>With 200: the people the current audience reaches,
-                with its contacts and link</description></parameter>
-        </out-parameters>
+</out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('report', context))</script></actions>
     </service>
 
@@ -171,8 +170,8 @@ along with this software (see the LICENSE.md file). If not, see
             it in its notification before it sends it from the phone (plans/Location-Sharing.md §3.4): share {shareId,
             thruDate (epoch millis), untilText (the end in the caller's zone, with the weekday when not today),
             approximate, intervalSeconds (the share's report interval), audienceText (whom with, in words the owner can
-            check: names with usernames, a group with its member count, anyone with the guest link), audienceSeq and
-            audienceReach (the audience's revision), fromThisDevice (this request's device key is the one it is sent
+            check: names with usernames, a group with its member count, anyone with the guest link), audienceVersion
+            (what the device sends with its reports once the person confirmed these words), fromThisDevice (this request's device key is the one it is sent
             from)}. The words are the
             server's, never a page's. Refused: SHARE_NOT_FOUND (not the caller's), SHARE_ENDED.</description>
         <in-parameters><parameter name="shareId" required="true"/></in-parameters>
@@ -191,7 +190,11 @@ along with this software (see the LICENSE.md file). If not, see
             of its own (force-new), each share in one of its own too, so nothing here touches the revoke's: a share
             not of the key's user is refused by name and left, and the rest go on. Called also when an administrator
             ends a user's keys (Identity.js endCredential).</description>
-        <in-parameters><parameter name="userLoginKeyId" required="true"/></in-parameters>
+        <in-parameters>
+            <parameter name="userLoginKeyId" required="true"/>
+            <parameter name="ownerUserId" required="true"><description>The key's user, as the revoke knows it: the key's
+                row, which the revoke writes, is never read here</description></parameter>
+        </in-parameters>
         <out-parameters><parameter name="stoppedCount" type="Integer"/></out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('deviceShares', context))</script></actions>
     </service>

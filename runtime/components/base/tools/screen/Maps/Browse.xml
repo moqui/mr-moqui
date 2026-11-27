@@ -236,8 +236,10 @@ along with this software (see the LICENSE.md file). If not, see
         the server's own time). Its answer is always this transition's JSON, statusCode its outcome: 200 taken (with the
         share's latest as the audience reads it, rounded for an approximate share), 429 too soon (retryAfterSeconds), 410
         ended or stopped (stop sending), 404 not the user's, 409 STALE (not later than the latest), CLOCK_AHEAD (the
-        device's clock is ahead: send without observedDate) or OTHER_DEVICE (another device of the user's sends it: stop,
-        and Send from here takes it over), 400 a value out of range. No value is in an error or a log. -->
+        device's clock is ahead: send without observedDate), OTHER_DEVICE (another device of the user's sends it: stop,
+        and Send from here takes it over) or AUDIENCE_CHANGED (a share sent from this device, the desktop's or the
+        phone's page, whose audience changed since the version the page sent, audienceVersion: read again), 400 a value
+        out of range. No value is in an error or a log. -->
     <transition name="reportPosition" method="post">
         <actions><script><![CDATA[
             const value = (name) => (context[name] == null ? null : String(context[name]).trim() || null)
@@ -247,7 +249,7 @@ along with this software (see the LICENSE.md file). If not, see
             try {
                 const out = ec.service.sync().name('org.moqui.maps.LocationServices.report#Position').requireNewTransaction(true)
                     .parameters({shareId: String(shareId ?? ''), latitude: value('latitude'), longitude: value('longitude'), accuracy: value('accuracy'),
-                        heading: value('heading'), speed: value('speed'), observedDate: value('observedDate') && Number.isFinite(observed) ? new Date(observed) : null})
+                        heading: value('heading'), speed: value('speed'), audienceVersion: value('audienceVersion'), observedDate: value('observedDate') && Number.isFinite(observed) ? new Date(observed) : null})
                     .call() || {}
                 answer = {statusCode: Number(out.statusCode) || (ec.message.hasError() ? 400 : 200), reasonCode: out.reasonCode || null,
                     retryAfterSeconds: out.retryAfterSeconds == null ? null : Number(out.retryAfterSeconds)}

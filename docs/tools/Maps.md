@@ -1099,8 +1099,12 @@ and the guest page for a link are still to come.
   whose reports are taken while it still signs in (its few minutes' grace; cleared by a takeover). Revoking a device
   key (its sign-out, the device list, an administrator ending it) stops every active share it sends
   (`stop#DeviceShares`, in a transaction of its own, each share in its own, its errors logged and cleared so the revoke
-  always goes through), also when the device could not tell the server. A report's 200 answer carries the audience's
-  revision (`audienceSeq`, `audienceReach`), which the Android app compares with what the person confirmed. The owner's reads say where each share is sent from (`sentFromDevice`, the device's
+  always goes through), also when the device could not tell the server. A share has an audience version
+  (`audienceVersion`) that every change of its audience that can reach someone new raises (an entry added, a group
+  added again); a share sent from a device takes reports of that version only (`report#Position`'s `audienceVersion`,
+  409 `AUDIENCE_CHANGED` before anything is written or pushed, also for none), so the Android app sends the version
+  its person confirmed and pauses on a change, and Browse sends the one it read and reads again on a change; a
+  browser's share (no device) sends none and is not checked. The owner's reads say where each share is sent from (`sentFromDevice`, the device's
   `deviceName`, `fromThisDevice`), never the key's id.
 - **From the Android app** (LL3; [Mobile-Client, Live location](../ui/Mobile-Client.md#live-location)). Browse in the app
   has `moquiDesktop.location`: Share asks for the phone's location permission first (approximate alone for an

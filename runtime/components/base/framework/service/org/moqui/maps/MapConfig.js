@@ -1264,6 +1264,7 @@ function liveShares() {
             sentFromDevice: share.sentFromDevice === true,
             deviceName: share.deviceName || null,
             fromThisDevice: share.fromThisDevice === true,
+            audienceVersion: Number(share.audienceVersion) || 0,
             latest: livePosition(share.latest)
         })
     const theirs = probe(LIVE_SERVICES + "find#SharedWithMe", {})

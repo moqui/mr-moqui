@@ -148,8 +148,9 @@ along with this software (see the LICENSE.md file). If not, see
         Maps' own transitions are under MAPS_APP, while every signed-in user may own a share: these call
         org.moqui.maps.LocationServices (LocationShareServices, every signed-in user; the services take the owner's own
         shares only) for any of them, POST only. reportClientLocation answers report#Position's outcome as statusCode in
-        its JSON (200 with the audience's revision, audienceSeq and audienceReach; 400, 404, 409 STALE, CLOCK_AHEAD or
-        OTHER_DEVICE, 410, 429 with retryAfterSeconds), with no position: latitude, longitude, accuracy, heading and speed as text, observedDate epoch millis (none: the server's
+        its JSON (200; 400, 404, 409 STALE, CLOCK_AHEAD, OTHER_DEVICE or AUDIENCE_CHANGED (the audience is not the
+        version the app's person confirmed, audienceVersion: nothing written or pushed), 410, 429 with
+        retryAfterSeconds), with no position: latitude, longitude, accuracy, heading and speed as text, observedDate epoch millis (none: the server's
         time). Nothing posted is logged or answered. 401 without a user. -->
     <transition name="reportClientLocation" method="post">
         <actions><script><![CDATA[
@@ -163,13 +164,11 @@ along with this software (see the LICENSE.md file). If not, see
                 try {
                     const out = ec.service.sync().name('org.moqui.maps.LocationServices.report#Position').requireNewTransaction(true)
                         .parameters({shareId: value('shareId') || '', latitude: value('latitude'), longitude: value('longitude'),
-                            accuracy: value('accuracy'), heading: value('heading'), speed: value('speed'),
+                            accuracy: value('accuracy'), heading: value('heading'), speed: value('speed'), audienceVersion: value('audienceVersion'),
                             observedDate: value('observedDate') && Number.isFinite(observed) ? new Date(observed) : null}).call() || {}
                     answer = {statusCode: Number(out.statusCode) || (ec.message.hasError() ? 400 : 200), reasonCode: out.reasonCode || null,
                         retryAfterSeconds: out.retryAfterSeconds == null ? null : Number(out.retryAfterSeconds),
-                        reason: ec.message.hasError() ? ec.message.errorsString : null,
-                        audienceSeq: out.audienceSeq == null ? null : Number(out.audienceSeq),
-                        audienceReach: out.audienceReach == null ? null : Number(out.audienceReach)}
+                        reason: ec.message.hasError() ? ec.message.errorsString : null}
                 } catch (err) {
                     // the failure's text may hold what was posted: it is not logged or answered
                     answer = {statusCode: 500, reasonCode: 'FAILED'}

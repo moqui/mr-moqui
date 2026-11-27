@@ -37,6 +37,9 @@ along with this software (see the LICENSE.md file). If not, see
             it over (update#Share sendFromHere); none for a browser page, whose requests carry no device key. A share with a
             device takes reports from that device's requests only, and one with none from no device's; the key's renewal
             moves it (plans/Location-Sharing.md §3.1, §3.4)</description></field>
+        <field name="audienceVersion" type="number-integer"><description>Raised by every change of the audience that can
+            reach someone new (an entry added, a group added again with a new snapshot): a share sent from a device takes
+            reports only with the version its person confirmed there (plans/Location-Sharing.md §3.4)</description></field>
         <field name="renewedFromKeyId" type="text-medium"><description>The device key the last renewal replaced (its
             stored hash): a report on its way as the key was renewed is taken from it while it still signs in (its few
             minutes' grace); cleared when another device or page takes the share over</description></field>

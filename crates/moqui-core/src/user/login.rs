@@ -1430,7 +1430,7 @@ pub fn revoke_login_key(key: &str) -> Result<bool, Error> {
         // a device signing out gets no more pushes (plans/Mobile-Desktop.md §5, native push), and the location shares
         // it sends stop (plans/Location-Sharing.md §3.4)
         crate::service::web_push::forget_device_key(&facade, &hashed);
-        stop_key_location_shares(&hashed);
+        stop_key_location_shares(&hashed, &user_id);
     }
     Ok(updated > 0)
 }
@@ -1489,18 +1489,30 @@ pub fn renew_device_key(key: &str) -> Result<Option<(String, i64)>, Error> {
 /// (`LocationServices.stop#DeviceShares`, plans/Location-Sharing.md §3.4): none stays on with nothing sending it, also
 /// when the device could not tell the server itself (a sign-out with no network, then its pending revoke). A failure
 /// is logged: the share then ends at its end.
-pub(crate) fn stop_key_location_shares(hashed: &str) {
-    if hashed.is_empty() {
+pub(crate) fn stop_key_location_shares(hashed: &str, owner_user_id: &str) {
+    if hashed.is_empty() || owner_user_id.is_empty() {
         return;
     }
     let mut parameters = std::collections::BTreeMap::new();
     parameters.insert("userLoginKeyId".to_string(), Value::string(hashed));
-    // its own transaction (the service is force-new), and its errors taken back out of the context's messages, so
-    // nothing of it reaches the revoke: a revoke rolled back would leave a lost device's key signing in
-    let mark = ExecutionContext::with_current(|ec| ec.message().error_mark());
+    // the key's user as the revoke knows it: the key's row, which the revoke has just written, is never read there
+    parameters.insert("ownerUserId".to_string(), Value::string(owner_user_id));
+    // its own transaction (the service is force-new); the context's errors set aside around it, so one already there
+    // does not keep it from running, and its own taken back out, so nothing of it reaches the revoke: a revoke rolled
+    // back would leave a lost device's key signing in
+    let mark = ExecutionContext::with_current(|ec| {
+        ec.message().push_errors();
+        ec.message().error_mark()
+    });
     let called = crate::service::sync("org.moqui.maps.LocationServices.stop#DeviceShares", &parameters);
     let errors = mark
-        .and_then(|mark| ExecutionContext::with_current(|ec| ec.message().take_errors_since(mark)))
+        .and_then(|mark| {
+            ExecutionContext::with_current(|ec| {
+                let taken = ec.message().take_errors_since(mark);
+                ec.message().pop_errors();
+                taken
+            })
+        })
         .unwrap_or_default();
     if let Err(err) = called {
         tracing::warn!(error = %err, "the location shares of a revoked device key were not stopped");

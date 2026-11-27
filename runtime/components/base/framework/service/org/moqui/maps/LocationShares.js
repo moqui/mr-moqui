@@ -84,6 +84,10 @@ function deviceNameOf(userLoginKeyId) {
     return row ? text(row.deviceName) || null : null
 }
 
+/** A report from a device (or a page) the share is not sent from. */
+const refuseOther = () =>
+    refuse("OTHER_DEVICE", "Another device sends this share's location: choose Send from this device to send it from here", 409)
+
 /** The caller's own share, else null: another person's share is the same as none. */
 function ownShare(shareId, forUpdate) {
     const me = ec.user.userId
@@ -477,7 +481,9 @@ function create(p) {
             thruDate: new Date(until.until),
             precisionEnumId,
             keepTrail: trail.keepTrail,
-            trailKeepDays: trail.trailKeepDays
+            trailKeepDays: trail.trailKeepDays,
+            // raised by every change of the audience that can reach someone new (plans/Location-Sharing.md §3.4)
+            audienceVersion: 1
         })
         .setSequencedIdPrimary()
         .create()
@@ -542,6 +548,9 @@ function update(p) {
         if (added.reasonCode) return added
         const reach = checkReach(share)
         if (reach.reasonCode) return reach
+        // any add, a group added again (its row stamped again, its snapshot written again): the audience the person's
+        // device confirmed is not this one, so its reports are refused until it confirms this version
+        share.audienceVersion = (Number(share.audienceVersion) || 0) + 1
     }
     share.update()
     const reached = currentUserIds(share)
@@ -713,7 +722,13 @@ function report(p) {
     const device = deviceKeyId()
     const renewed = device != null && share.renewedFromKeyId != null && share.renewedFromKeyId === device
     if ((share.userLoginKeyId || null) !== device && !renewed)
-        return refuse("OTHER_DEVICE", "Another device sends this share's location: choose Send from this device to send it from here", 409)
+        return refuseOther()
+    // a share sent from a device is sent to the audience its person confirmed there (the app's own dialog): a report
+    // with another version, or none, is refused before anything is written or pushed, and the phone pauses the share
+    // until the person confirms whom it reaches now; a browser page's share (no device) is not checked
+    if (share.userLoginKeyId && text(p.audienceVersion) !== String(Number(share.audienceVersion) || 0))
+        return {statusCode: 409, reasonCode: "AUDIENCE_CHANGED"}
+
     const latest = find(LATEST).condition("shareId", share.shareId).one()
     const approximated = share.precisionEnumId === "LspApproximate"
     const minimum = setting("min-interval-seconds", 5)
@@ -759,9 +774,7 @@ function report(p) {
             .createOrUpdate()
     const reached = currentUserIds(share)
     push(share, reached, Object.assign({event: "position", observedDate: position.observed, approximate: approximated}, values))
-    // the audience's revision, which the Android app compares with the one the person confirmed (a script adding to the
-    // audience after the person's Send pauses the phone's sending until they confirm it again)
-    return Object.assign({statusCode: 200}, audienceRevision(share, reached))
+    return {statusCode: 200}
 }
 
 function positionOf(row, now) {
@@ -821,6 +834,7 @@ function ownerView(share, now) {
         sentFromDevice: !!share.userLoginKeyId,
         deviceName: deviceNameOf(share.userLoginKeyId),
         fromThisDevice: !!share.userLoginKeyId && share.userLoginKeyId === deviceKeyId(),
+        audienceVersion: Number(share.audienceVersion) || 0,
         audienceList
     })
 }
@@ -1158,20 +1172,6 @@ function audienceWords(share) {
 }
 
 /**
- * The audience's revision, which the app compares with the one the person confirmed (plans/Location-Sharing.md §3.4):
- * audienceSeq, the newest entry's sequence (an entry added), and audienceReach, the people its current entries reach and
- * its contacts and link (a group added again, which may reach more). Either grown means the person has not confirmed
- * whom the phone sends to now.
- */
-function audienceRevision(share, userIds) {
-    const rows = activeAudience(share.shareId)
-    const audienceSeq = Array.from(find(AUDIENCE).condition("shareId", share.shareId).list())
-        .reduce((max, row) => Math.max(max, Number(row.audienceSeqId) || 0), 0)
-    const others = rows.filter(row => row.audienceTypeEnumId === "LsaXmpp" || row.audienceTypeEnumId === "LsaLink").length
-    return {audienceSeq, audienceReach: (userIds || currentUserIds(share)).length + others}
-}
-
-/**
  * get#AppShare: an active share of the caller's own as the Android app confirms and shows it before it sends it
  * (plans/Location-Sharing.md §3.4): whom with, until when (untilText, in the caller's zone, with the weekday when not
  * today), exact or approximate, its report interval, its audience's revision, and whether this request's device sends
@@ -1195,9 +1195,9 @@ function appShare(p) {
                 approximate,
                 intervalSeconds: approximate ? Math.max(minimum, setting("approximate-interval-seconds", 60)) : minimum,
                 audienceText: audienceWords(share),
+                audienceVersion: Number(share.audienceVersion) || 0,
                 fromThisDevice: view.fromThisDevice
-            },
-            audienceRevision(share)
+            }
         )
     }
 }
@@ -1212,23 +1212,28 @@ function appShare(p) {
  */
 function deviceShares(p) {
     const id = text(p.userLoginKeyId)
-    if (!id) return {stoppedCount: 0}
-    const key = find("moqui.security.UserLoginKey").condition("loginKey", id).selectField("userId").one()
-    const keyUserId = key ? key.userId : null
+    // the key's user as the revoke knows it: the key's row is the revoke's to write, never read here
+    const keyUserId = text(p.ownerUserId)
+    if (!id || !keyUserId) return {stoppedCount: 0}
     let stoppedCount = 0
     for (const listed of Array.from(find(SHARE).condition("userLoginKeyId", id).condition("endedDate", null).selectField("shareId,ownerUserId").list())) {
         if (listed.ownerUserId !== keyUserId) {
             ec.message.addError(ec.l10n.localize("Location share") + " " + listed.shareId + ": " + ec.l10n.localize("not the device key's user's, left as it is"))
             continue
         }
-        ec.transaction.runRequireNew(30, "Error stopping location share " + listed.shareId, () => {
-            const now = nowMillis()
-            const share = find(SHARE).condition("shareId", listed.shareId).forUpdate(true).one()
-            if (!share || share.endedDate != null) return
-            if (share.revokedDate == null && millis(share.thruDate) > now) share.revokedDate = new Date(now)
-            endShare(share, now)
-            stoppedCount++
-        })
+        // each on its own: one that fails is logged by its id and the rest go on
+        try {
+            ec.transaction.runRequireNew(30, "Error stopping location share " + listed.shareId, () => {
+                const now = nowMillis()
+                const share = find(SHARE).condition("shareId", listed.shareId).forUpdate(true).one()
+                if (!share || share.endedDate != null) return
+                if (share.revokedDate == null && millis(share.thruDate) > now) share.revokedDate = new Date(now)
+                endShare(share, now)
+                stoppedCount++
+            })
+        } catch (err) {
+            ec.logger.error(`Location share ${listed.shareId} of a revoked device key was not stopped: ${err && err.message ? err.message : err}`)
+        }
     }
     return {stoppedCount}
 }

@@ -731,7 +731,7 @@ fn revoke_device_key(
         // the device gets no more pushes (plans/Mobile-Desktop.md §5, native push), and its location shares stop
         // (plans/Location-Sharing.md §3.4)
         super::web_push::forget_device_key(facade, &key);
-        crate::user::stop_key_location_shares(&key);
+        crate::user::stop_key_location_shares(&key, &user_id);
     }
     Ok(BTreeMap::new())
 }

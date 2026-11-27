@@ -974,9 +974,18 @@ function asDevice(device, verbNoun, parameters) {
     ec.message.clearErrors()
     return Object.assign({errors, kind}, out)
 }
-const reportFrom = (device, shareId, latitude) => {
+// the audience version the share is at, as the app confirmed it (a share sent from a device takes reports of it only)
+const versionOf = shareId =>
+    sys(() => String(ec.entity.find("moqui.maps.LocationShare").condition("shareId", shareId).one().audienceVersion))
+const reportFrom = (device, shareId, latitude, version) => {
     later(6000)
-    return asDevice(device, "report#Position", {shareId, latitude, longitude: "-111.9", observedDate: new Date(shared.now)})
+    return asDevice(device, "report#Position", {
+        shareId,
+        latitude,
+        longitude: "-111.9",
+        observedDate: new Date(shared.now),
+        audienceVersion: version === undefined ? versionOf(shareId) : version
+    })
 }
 // a POST to the app's /qapps transition as the app sends it, signed in by the device key (as its login_key header signs
 // a request in; the header is given too, which renewClientDevice reads), or by none (this context's login ended alone: a
@@ -1024,7 +1033,7 @@ feature(
             out.toTablet = asDevice(tablet, "update#Share", {shareId, sendFromHere: true})
             out.tabletBound = deviceOf(shareId)
             later(6000)
-            out.appReport = postApp("reportClientLocation", {shareId, latitude: "40.76", longitude: "-111.9"}, tablet.key)
+            out.appReport = postApp("reportClientLocation", {shareId, latitude: "40.76", longitude: "-111.9", audienceVersion: versionOf(shareId)}, tablet.key)
             out.noUser = postApp("reportClientLocation", {shareId, latitude: "40.77", longitude: "-111.9"}, null)
             out.mineOnPhone = Array.from(asDevice(phone, "find#MyShares").shareList || []).find(row => row.shareId === shareId)
             // the tablet's key renewed: the share goes with it, and the new key reports
@@ -1033,7 +1042,7 @@ feature(
             out.renewed = renewed
             out.renewedBound = deviceOf(shareId)
             later(6000)
-            out.renewedReport = postApp("reportClientLocation", {shareId, latitude: "40.78", longitude: "-111.9"}, renewedKey)
+            out.renewedReport = postApp("reportClientLocation", {shareId, latitude: "40.78", longitude: "-111.9", audienceVersion: versionOf(shareId)}, renewedKey)
             // the key the renewal replaced still signs in for its grace: a report on its way as it was renewed is taken
             out.oldKeyReport = reportFrom(tablet, shareId, "40.785")
             // the app's confirmation reads the share's words from the server; another user's share is not found
@@ -1064,8 +1073,6 @@ feature(
             out.made.kind == "device"
             out.boundTo == out.phone.hash
             out.fromPhone.statusCode == 200
-            out.fromPhone.audienceSeq >= 1
-            out.fromPhone.audienceReach == 1
             out.fromBrowser.statusCode == 409
             out.fromBrowser.reasonCode == "OTHER_DEVICE"
             out.fromBrowser.errors.includes("Another device sends")
@@ -1099,8 +1106,7 @@ feature(
             out.appShare.json.share.approximate == false
             out.appShare.json.share.audienceText == "Loc B (loc.share.b)"
             out.appShare.json.share.untilText.length > 0
-            out.appShare.json.share.audienceSeq >= 1
-            out.appShare.json.share.audienceReach == 1
+            out.appShare.json.share.audienceVersion == 1
             out.othersAppShare == "SHARE_NOT_FOUND"
             out.takeOver.errors == ""
             out.graceAfter == null
@@ -1187,5 +1193,59 @@ feature("a revoke goes through when stop#DeviceShares fails on a share that is n
         out.heldMade == null
         out.heldErrors == ""
         out.heldEnded == true
+    }
+})
+
+feature("a share sent from a device takes reports of the audience version its person confirmed: a group added again with a new member, after a revoke, is refused with nothing written or pushed", {
+    when() {
+        const phone = deviceKey("Spec audience phone")
+        later(6000)
+        const shareId = asDevice(phone, "create#Share", {audienceList: [toUser(J), toGroup(GROUP)], thruDate: new Date(shared.now + HOUR)}).shareId
+        const out = {created: versionOf(shareId)}
+        out.first = reportFrom(phone, shareId, "41.1", "1")
+        // no version from the device: refused (fail closed)
+        out.none = reportFrom(phone, shareId, "41.15", "")
+        // a person taken out (J) keeps the version: who is left was confirmed
+        const jEntry = rows("moqui.maps.LocationShareAudience", {shareId, userId: J})[0]
+        as(A, "revoke#Audience", {shareId, audienceSeqId: jEntry.audienceSeqId})
+        out.afterRevoke = versionOf(shareId)
+        out.stillSent = reportFrom(phone, shareId, "41.2", "1")
+        // C joins the group and the group is added again: its snapshot gains C, with no new entry; the version rises
+        make("moqui.security.UserGroupMember", {userGroupId: GROUP, userId: C, fromDate: new Date(shared.now)})
+        out.readd = as(A, "update#Share", {shareId, addAudienceList: [toGroup(GROUP)]})
+        out.afterReadd = versionOf(shareId)
+        const before = latestOf(shareId)
+        const pushedBefore = pushes(shareId).filter(one => one.event === "position").length
+        out.refused = reportFrom(phone, shareId, "41.3", "1")
+        out.latestKept = Number(latestOf(shareId).latitude) === Number(before.latitude)
+        out.nothingPushed = pushes(shareId).filter(one => one.event === "position").length === pushedBefore
+        out.cSees = sharedWith(C).some(row => row.shareId === shareId && row.latest && Number(row.latest.latitude) === 41.3)
+        // the version the person confirms again: sent
+        out.again = reportFrom(phone, shareId, "41.4", out.afterReadd)
+        // a browser's share (no device) sends no version and is not checked
+        later(6000)
+        const browserShare = as(A, "create#Share", {audienceList: [toUser(B)], thruDate: new Date(shared.now + HOUR)}).shareId
+        out.browser = as(A, "report#Position", {shareId: browserShare, latitude: "41.5", longitude: "-111.9", observedDate: new Date(shared.now)})
+        as(A, "stop#Share", {shareId})
+        as(A, "stop#Share", {shareId: browserShare})
+        sys(() => ec.entity.find("moqui.security.UserGroupMember").condition({userGroupId: GROUP, userId: C}).updateAll({thruDate: new Date(Date.now() - 1000)}))
+        return out
+    },
+    then(out) {
+        out.created == "1"
+        out.first.statusCode == 200
+        out.none.statusCode == 409
+        out.none.reasonCode == "AUDIENCE_CHANGED"
+        out.afterRevoke == "1"
+        out.stillSent.statusCode == 200
+        out.readd.errors == ""
+        out.afterReadd == "2"
+        out.refused.statusCode == 409
+        out.refused.reasonCode == "AUDIENCE_CHANGED"
+        out.latestKept == true
+        out.nothingPushed == true
+        out.cSees == false
+        out.again.statusCode == 200
+        out.browser.statusCode == 200
     }
 })
