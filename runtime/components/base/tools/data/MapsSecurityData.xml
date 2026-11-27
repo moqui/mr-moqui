@@ -57,7 +57,7 @@ along with this software (see the LICENSE.md file). If not, see
         <authz artifactAuthzId="MAPS_DIALOG_USERS" userGroupId="ALL_USERS" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
     </artifactGroups>
 
-    <!-- My location shares (Maps/MyShares.xml; plans/Location-Sharing.md §3.3): where the app bar's "Sharing location" chip
+    <!-- My location shares (Maps/MyShares.xml; plans/archive/Location-Sharing.md §3.3): where the app bar's "Sharing location" chip
         goes, for every signed-in user, since any user may share their location, not only a Maps user. ALWAYS, not
         inherited, as MAPS_DIALOG: the screen and its transitions only. What it calls is LocationServices' (find#MyShares,
         stop#Share, update#Share: LocationShareServices, every signed-in user), which act on the caller's own shares only. -->
@@ -89,7 +89,7 @@ along with this software (see the LICENSE.md file). If not, see
         <artifacts artifactName="org.moqui.maps.MapServices.store#Place" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
         <artifacts artifactName="org.moqui.maps.MapServices.delete#Place" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
         <artifacts artifactName="org.moqui.maps.MapServices.find#Places" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
-        <!-- offline map packages (plans/Maps-Offline.md, Maps/Offline.xml): each acts on the signed-in user's own packages,
+        <!-- offline map packages (plans/archive/Maps-Offline.md, Maps/Offline.xml): each acts on the signed-in user's own packages,
             built from what they may see; the build job's run and the cut itself are no group's -->
         <artifacts artifactName="org\.moqui\.maps\.MapSourceServices\.(estimate|create|update|cancel|delete)#Package" artifactTypeEnumId="AT_SERVICE"
                 nameIsPattern="Y" inheritAuthz="N"/>

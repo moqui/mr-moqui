@@ -21,7 +21,9 @@
 //! node (`pubsub#owner`) or delete it. Access: `open` is any user of this server, `presence` the people the owner
 //! shares a room with, `whitelist` the owner alone. A publish notifies the sessions of the users who may read the node
 //! and asked for it (`<node>+notify` in their capabilities, XEP-0115), the owner's own included. A node of
-//! `REFUSED_NODES` is refused whatever is asked of it, and no one's interest in it is kept.
+//! `REFUSED_NODES` is refused whatever is asked of it. User location is the one such node with a way in: its publish is
+//! mapped onto the user's location share (`geoloc.rs`, plans/archive/Location-Sharing.md §3.6), and an interest in it is kept
+//! for that mapping's notifications alone.
 
 use minidom::Element;
 use serde_json::{json, Value as Json};
@@ -32,19 +34,30 @@ use crate::backend::{self, services};
 use crate::ns;
 use crate::registry::Inbound;
 
-/// The nodes this service does not keep (a PEP service may restrict its nodes, XEP-0163 §4). User location (XEP-0080)
-/// would otherwise be stored and pushed to everyone the user shares a room with (a new node's access is `presence`):
-/// a location share the user can neither see nor revoke in Moqui. Refused until Moqui's own live location sharing maps
-/// the node (plans/Location-Sharing.md). The services refuse the same list (`get#PepNodeRefused` in XmppServices.xml).
-const REFUSED_NODES: &[&str] = &["http://jabber.org/protocol/geoloc"];
+/// The nodes this service does not keep as PEP nodes (a PEP service may restrict its nodes, XEP-0163 §4). User location
+/// (XEP-0080) would otherwise be stored and pushed to everyone the user shares a room with (a new node's access is
+/// `presence`): a location share the user can neither see nor revoke in Moqui. So no generic publish, items fetch,
+/// retract, configure, delete or subscription reaches it, and its one way in is the mapping onto the user's location
+/// share made in Moqui (`geoloc.rs`, plans/archive/Location-Sharing.md §3.6, LL5): a publish there is a report of that share,
+/// and its positions go out to the share's XMPP contacts only. The services refuse the same list
+/// (`get#PepNodeRefused` in XmppServices.xml), whose generic PEP services never take it.
+const REFUSED_NODES: &[&str] = &[ns::GEOLOC];
 
 /// Whether `node` is one this service refuses: no publish, fetch, configure or delete, and no `+notify` interest. It is
 /// compared with ASCII whitespace trimmed (space, tab, LF, FF, CR: what the services trim too, so both sides agree on a
 /// node such as one led by U+FEFF) and in any ASCII case, so a variant spelling cannot reach a stored row on a
 /// case-insensitive collation.
 pub(super) fn refused_node(node: &str) -> bool {
-    let node = node.trim_matches(|ch: char| ch.is_ascii_whitespace());
-    REFUSED_NODES.iter().any(|refused| refused.eq_ignore_ascii_case(node))
+    REFUSED_NODES.iter().any(|refused| same_node(refused, node))
+}
+
+/// Whether `node` is user location (XEP-0080), compared as [`refused_node`] compares.
+pub(super) fn geoloc_node(node: &str) -> bool {
+    same_node(ns::GEOLOC, node)
+}
+
+fn same_node(known: &str, node: &str) -> bool {
+    known.eq_ignore_ascii_case(node.trim_matches(|ch: char| ch.is_ascii_whitespace()))
 }
 
 impl Session {
@@ -57,13 +70,17 @@ impl Session {
         if node.is_empty() && operation.name() != "publish-options" {
             return self.pubsub_error(iq, "modify", "bad-request", "nodeid-required");
         }
+        let owner_ns = pubsub.ns() == ns::PUBSUB_OWNER;
         // `forbidden` (type auth), as XEP-0060 answers a publish without sufficient privileges (§7.1.3.1) and an items
         // fetch the owner's node does not allow (§6.5.9.10); checked before any service, so an item kept there earlier
-        // is not served either
+        // is not served either. A user location publish alone goes on, to the user's location share
+        // (plans/archive/Location-Sharing.md §3.6): it is never a PEP item
         if refused_node(&node) {
+            if geoloc_node(&node) && kind == "set" && operation.name() == "publish" && !owner_ns {
+                return self.geoloc_publish(iq, &operation).await;
+            }
             return self.refuse(iq, "auth", "forbidden", None);
         }
-        let owner_ns = pubsub.ns() == ns::PUBSUB_OWNER;
         match (kind.as_str(), operation.name(), owner_ns) {
             ("get", "items", false) => self.pep_items(iq, &operation, &node, owner).await,
             ("set", "publish", false) => self.pep_publish(iq, pubsub, &operation, &node).await,
@@ -87,7 +104,7 @@ impl Session {
         }
     }
 
-    fn pubsub_error(&mut self, iq: &Element, kind: &str, condition: &str, specific: &str) {
+    pub(super) fn pubsub_error(&mut self, iq: &Element, kind: &str, condition: &str, specific: &str) {
         let mut error = super::xml::stanza_error(iq, kind, condition, None);
         if let Some(inner) = error.get_child_mut("error", ns::CLIENT) {
             inner.append_child(E::new(specific, ns::PUBSUB_ERRORS).build());

@@ -1180,7 +1180,7 @@ fn an_internal_message_is_queued_where_the_server_takes_its_send_once() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// plans/Maps-Offline.md §2.5: a place saved on the offline Maps screen waits only for a server that takes it once by
+/// plans/archive/Maps-Offline.md §2.5: a place saved on the offline Maps screen waits only for a server that takes it once by
 /// its `clientRef` (`features.placeRef`) and goes to Maps' `savePlace`, in the order they were saved: a lost answer is
 /// tried again with the same ref; a refusal fails with the server's reason, and its retry may be saved, the server
 /// having kept no ref for it.
@@ -1257,7 +1257,7 @@ fn a_place_saved_offline_goes_once_by_its_ref_and_a_refusal_says_why_and_may_be_
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// plans/Maps-Offline.md §2.5: a user the server does not let save places (its JSON 403) is told why and the place
+/// plans/archive/Maps-Offline.md §2.5: a user the server does not let save places (its JSON 403) is told why and the place
 /// fails, holding up no later one; a 403 with no JSON (a key not taken) waits for a sign-in, as every operation does.
 #[test]
 fn a_place_refused_by_a_403_fails_with_its_reason_and_a_bare_403_is_held() {

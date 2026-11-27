@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The device's map packages (plans/Maps-Offline.md §2.4, OF2): a package downloaded by ranges from a server that
+//! The device's map packages (plans/archive/Maps-Offline.md §2.4, OF2): a package downloaded by ranges from a server that
 //! answers as the package transition does, resumed after a cut, checked, unpacked with bounds and served by range.
 
 use std::io::{Cursor, Read};

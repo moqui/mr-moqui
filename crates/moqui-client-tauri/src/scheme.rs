@@ -264,7 +264,7 @@ pub fn answer(
     if vault_module_path(&bare) {
         return plain(StatusCode::FORBIDDEN, "The app runs its own vault module");
     }
-    // The offline map packages (plans/Maps-Offline.md §2.4): the current account's, from the device, to the shell only,
+    // The offline map packages (plans/archive/Maps-Offline.md §2.4): the current account's, from the device, to the shell only,
     // whose pages are the app's own code (OF3's offline Maps screen is a bundled one). Every account's server pages
     // share the app origin and run the server's code, so it answers them nothing; never forwarded.
     if bare.starts_with(moqui_client::packages::PATH_PREFIX) {

@@ -70,7 +70,7 @@ pub struct Client {
     pub(crate) keys: Keys,
     /// The accounts' stores, in `data/` of the client's directory.
     pub(crate) stores: Stores,
-    /// The accounts' offline map packages, beside their stores (plans/Maps-Offline.md §2.4).
+    /// The accounts' offline map packages, beside their stores (plans/archive/Maps-Offline.md §2.4).
     packages: Packages,
     /// The client's settings once read, and how the host reads them.
     conf: OnceLock<ClientConf>,
@@ -138,7 +138,7 @@ impl Client {
         &self.packages
     }
 
-    /// Download `revision` of an account's map package and install it (plans/Maps-Offline.md §2.4), on this thread,
+    /// Download `revision` of an account's map package and install it (plans/archive/Maps-Offline.md §2.4), on this thread,
     /// within the conf's `packages-max-mb`; a 401 has `host` check the key; `runner` names who runs it (Android's work
     /// id, whose stop pauses this run only). The state it ended in.
     pub fn download_package(

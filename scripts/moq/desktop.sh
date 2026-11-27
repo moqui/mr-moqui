@@ -566,7 +566,7 @@ stage_client_shell() {
     while IFS= read -r lib; do
         case $lib in '' | '#'*) continue ;; esac
         # "<lib> <part>": only the files the library's parts.json lists for that part (OpenLayers' main part,
-        # plans/Maps-Offline.md §2.5), else the whole library
+        # plans/archive/Maps-Offline.md §2.5), else the whole library
         part=${lib#* }
         [ "$part" != "$lib" ] || part=
         lib=${lib%% *}

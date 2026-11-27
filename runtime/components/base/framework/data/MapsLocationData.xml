@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Shared live location (plans/Location-Sharing.md §3.1, §3.2; entity/MapLocationEntities.xml,
+<!-- Shared live location (plans/archive/Location-Sharing.md §3.1, §3.2; entity/MapLocationEntities.xml,
     service/org/moqui/maps/LocationServices.xml): the precision and audience kinds, the notice an audience member gets, the
     hourly clean job, and the grant of the owner's and the audience's services to every signed-in user. -->
 <entity-facade-xml type="seed">
@@ -33,6 +33,12 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.security.user.NotificationTopic topic="LocationShared" inboxEnumId="NinNotifications" description="Shares their location with you"
             typeString="info" showAlert="Y" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y"
             titleTemplate="${ownerName} shares their location with you until ${untilText}" linkTemplate=""/>
+    <!-- A person told that someone shares their location with their XMPP app, as an XMPP contact of a share (LsaXmpp,
+        plans/archive/Location-Sharing.md §3.6): the positions reach them only there, as user location (XEP-0080) -->
+    <moqui.security.user.NotificationTopic topic="LocationSharedXmpp" inboxEnumId="NinNotifications"
+            description="Shares their location with your XMPP app" typeString="info" showAlert="Y" persistOnSend="Y"
+            receiveNotifications="Y" isPrivate="Y"
+            titleTemplate="${ownerName} shares their location with your XMPP app until ${untilText}" linkTemplate=""/>
 
     <!-- Every hour: the shares past their end are ended (their latest positions deleted, the audience told), the trail points
         past each share's trailKeepDays deleted, and the shares ended past location@trail-max-days with no trail left
@@ -42,13 +48,13 @@ along with this software (see the LICENSE.md file). If not, see
             errorHistoryOnly="Y"/>
 
     <!-- The services of a person's own shares and of the shares shared with them, for every signed-in user. Each acts on the
-        caller's own shares (the owner's: create, change, stop, report, delete the trail) or on those whose current audience
+        caller's own shares (the owner's: create, change, stop, report, from the owner's XMPP client too, delete the trail) or on those whose current audience
         holds the caller (get#Share, find#SharedWithMe), and answers another's as not found; get#ShellIndicator counts the caller's own. No grant reads another person's
         shares: not ADMIN, not a group's owner. Inheritable, so their own reads and writes and the chat directory's rule
         (ChatServices.get#RefusedUsers) are authorized as the caller. -->
     <moqui.security.ArtifactGroup artifactGroupId="LocationShareServices" description="Shared live location: own shares and those shared with me"/>
     <moqui.security.ArtifactGroupMember artifactGroupId="LocationShareServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
-            artifactName="org\.moqui\.maps\.LocationServices\.(create#Share|update#Share|stop#Share|revoke#Audience|report#Position|find#MyShares|find#SharedWithMe|get#Share|delete#Trail|get#ShellIndicator)"/>
+            artifactName="org\.moqui\.maps\.LocationServices\.(create#Share|update#Share|stop#Share|revoke#Audience|report#Position|report#XmppPosition|find#MyShares|find#SharedWithMe|get#Share|delete#Trail|get#ShellIndicator|get#AppShare)"/>
     <moqui.security.ArtifactAuthz artifactAuthzId="LocationShareServicesALL" userGroupId="ALL_USERS" artifactGroupId="LocationShareServices"
             authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
 </entity-facade-xml>

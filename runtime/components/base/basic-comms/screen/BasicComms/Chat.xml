@@ -475,6 +475,12 @@ along with this software (see the LICENSE.md file). If not, see
     <transition-include name="stickerImage" location="component://basic-comms/template/ChatStickerTransitions.xml"/>
     <transition-include name="sendSticker" location="component://basic-comms/template/ChatStickerTransitions.xml"/>
     <transition-include name="sendLocation" location="component://basic-comms/template/ChatStickerTransitions.xml"/>
+    <!-- live location (plans/archive/Location-Sharing.md §3.5, LL4) -->
+    <transition-include name="sendLiveLocation" location="component://basic-comms/template/ChatStickerTransitions.xml"/>
+    <transition-include name="liveLocation" location="component://basic-comms/template/ChatStickerTransitions.xml"/>
+    <transition-include name="reportLiveLocation" location="component://basic-comms/template/ChatStickerTransitions.xml"/>
+    <transition-include name="sendLiveFromHere" location="component://basic-comms/template/ChatStickerTransitions.xml"/>
+    <transition-include name="stopLiveLocation" location="component://basic-comms/template/ChatStickerTransitions.xml"/>
     <!-- files for the next message: each stored on its own, or one sent in chunks (uploadId) -->
     <transition name="upload">
         <actions><script><![CDATA[

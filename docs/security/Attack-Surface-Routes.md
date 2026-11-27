@@ -138,6 +138,30 @@ Token routes are not framework-default paths. `runtime/components/addon/mr-boss/
 | `r` | `/r/<token>` | `mantle.request.RequestServices.check#IntakeToken` | `RequestIntake.xml` |
 | `call` | `/call/<token>` | `org.moqui.call.CallServices.check#CallLinkToken` | `basic-comms` `CallGuest.xml` |
 | `i` | `/i/<token>` | `mantle.party.IdentityServices.check#InvitationToken` | `mr-boss` `AcceptInvitation.xml` (staff invitation) |
+| `location` | `/location/<selector>#<secret>` | `org.moqui.maps.LocationServices.check#LinkKey` | `tools` `Maps/SharedLocation.xml` (a location share's guest link; plans/archive/Location-Sharing.md §3.7) |
+
+The `location` route (`tools/MoquiConf.xml`) is the one whose path segment is not the credential: it is the guest link's
+selector, which names the link, and the secret is the URL's fragment, which no request line, log or `Referer` carries.
+The public shell (`WebrootPublic.qvt.js`) takes the fragment as it loads, before the route's screen, and sets the address
+bar to the URL without it (keeping it in the tab's session storage); `SharedLocation.qvue` posts it in the body of
+`/location/<selector>/read` (`get#LinkShare`, `anonymous-all`, not remote, no grant). A secret in its query string is
+refused with 400 before the transition runs, as every transition with actions refuses URL parameters (the
+`MapsSharedLocation` client spec), and the transition refuses one again (`SECRET_IN_URL`). The browser's history and
+its sync still keep the URL first opened, fragment and all, and a link scanner of a mail or chat service may rewrite or
+fetch the whole URL. The read answers only the share's label, purpose text and latest position with its age (none
+received before the link was added; an approximate share's cell) and the basemap (the outline, or the one `MapLayer`
+marked `isPublic` with no `viewPermission`, registered resource, or proxied or private-network provider), at most
+`location@link-max-views-per-minute` a minute for the link (429, the `LocationShareLinks` spec). A wrong secret is counted
+on the link (`failedTries`) and against the client (`ec.web.noteAuthFailure`); from `location@link-max-failed-tries` the
+link is refused (403), its owner adding a new one: knowing the selector lets someone lock the link, never read it. An
+ended share or a revoked link answers 410. The shell page sends `Referrer-Policy: strict-origin`, `Cache-Control:
+no-store` and a `Content-Security-Policy` of this server, the public basemap's origins and the theme's outside files
+(the `MapsSharedLocation` client spec checks the three headers on the page's one render, the policy as the page enforces
+it, nothing the page needs refused, and the fragment cleared). The link starts with `getWebappRootUrl`'s web root: the
+conf's host, or a request's host only where a `root-screen` pattern names it as one of the configured sites; with none
+configured Browse answers the path alone and says so. tools adds `shared-location-read` on
+`POST /location/*/read`, 60 requests in 60 seconds, burst 10, applied when per-client web protection is on; no spec
+runs it.
 
 mr-boss also adds per-client rate limits: `request-form` on `POST /r/*/submit`, 5 requests in 60 seconds, burst 5; and
 `invitation-accept` on `POST /i/*/*` (an invitation's account and factor steps), 10 requests in 60 seconds, burst 5.

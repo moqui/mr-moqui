@@ -162,7 +162,7 @@ pub struct ServerSync {
     /// `server.features.mailChangesUncovered`: the Inbox stores (`internal`) the mail change cursor does not cover.
     pub mail_uncovered: Vec<String>,
     /// `server.features.placeRef`: Maps' `savePlace` keeps a place once by its `clientRef`, so a place saved offline
-    /// may be queued (`map-place`, plans/Maps-Offline.md §2.5).
+    /// may be queued (`map-place`, plans/archive/Maps-Offline.md §2.5).
     pub place_ref: bool,
 }
 

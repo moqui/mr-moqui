@@ -297,6 +297,9 @@ pub(crate) struct Memory {
     /// The kind of login key this context's user signed in with ([`super::login::LoginKeyKind`]), for this request
     /// only: never stored in the web session, and gone at the next login, logout or bind.
     login_key_kind: Option<super::login::LoginKeyKind>,
+    /// The stored (hashed) key of the login key this context's user signed in with, of any kind, for this request only,
+    /// as `login_key_kind` (`ec.user.loginKeyId`): the id of its `UserLoginKey` row, never the key itself.
+    login_key_id: Option<String>,
     /// The stored (hashed) key of a device's key this context's user signed in with, for this request only, as
     /// `login_key_kind`: where a re-authentication in the request is kept for the device's next ones.
     device_key: Option<String>,
@@ -792,6 +795,7 @@ pub(crate) fn renew_after_logout() -> Result<(), Error> {
         session.screen_history.clear();
         session.authz = AuthzCache::default();
         session.login_key_kind = None;
+        session.login_key_id = None;
         session.device_key = None;
         session.scoped_key = None;
         session.dirty_columns.clear();
@@ -1586,6 +1590,7 @@ pub fn set_user(user_id: &str, username: &str) {
         session.csrf_token = None;
         session.authz = AuthzCache::default();
         session.login_key_kind = None;
+        session.login_key_id = None;
         session.device_key = None;
         session.scoped_key = None;
         mark_column(session, Column::UserId);
@@ -1595,6 +1600,11 @@ pub fn set_user(user_id: &str, username: &str) {
 /// Note the kind of login key the user just signed in with ([`super::login::LoginKeyKind`]).
 pub(crate) fn set_login_key_kind(kind: Option<super::login::LoginKeyKind>) {
     with_session(|session| session.login_key_kind = kind);
+}
+
+/// Note the stored key of the login key, of any kind, the user just signed in with (`ec.user.loginKeyId`).
+pub(crate) fn set_login_key_id(hashed: Option<String>) {
+    with_session(|session| session.login_key_id = hashed);
 }
 
 /// Note the stored key of the device's key the user just signed in with.
@@ -1616,6 +1626,12 @@ pub(crate) fn scoped_key() -> Option<String> {
 /// The stored key of the device's key this context's user signed in with in this request; `None` for any other login.
 pub(crate) fn device_key() -> Option<String> {
     with_session(|session| session.device_key.clone())
+}
+
+/// The stored key of the login key this context's user signed in with in this request, the id of its `UserLoginKey` row
+/// (`ec.user.loginKeyId`: a share's device, plans/archive/Location-Sharing.md §3.1); `None` for any other login.
+pub fn login_key_id() -> Option<String> {
+    with_session(|session| session.login_key_id.clone())
 }
 
 /// The kind of login key this context's user signed in with in this request; `None` for any other login.
@@ -1652,6 +1668,7 @@ pub fn clear_login() {
         session.csrf_token = None;
         session.authz = AuthzCache::default();
         session.login_key_kind = None;
+        session.login_key_id = None;
         session.device_key = None;
         session.scoped_key = None;
         mark_column(session, Column::UserId);
@@ -1754,6 +1771,7 @@ pub(crate) fn release_scoped_hold() {
             session.anonymous = hold.anonymous;
             session.authz = AuthzCache::default();
             session.login_key_kind = None;
+            session.login_key_id = None;
             session.scoped_key = None;
             if let Some(kept) = hold.kept {
                 session.csrf_token = kept.csrf_token;
@@ -1800,6 +1818,7 @@ pub struct Identity {
     last_strong_auth: Option<Json>,
     reauth_password: Option<Json>,
     login_key_kind: Option<super::login::LoginKeyKind>,
+    login_key_id: Option<String>,
     device_key: Option<String>,
     scoped_key: Option<String>,
 }
@@ -1819,6 +1838,7 @@ pub fn identity() -> Identity {
         last_strong_auth: session.attributes.get(super::login::LAST_STRONG_AUTH).cloned(),
         reauth_password: session.attributes.get(super::login::REAUTH_PASSWORD).cloned(),
         login_key_kind: session.login_key_kind,
+        login_key_id: session.login_key_id.clone(),
         device_key: session.device_key.clone(),
         scoped_key: session.scoped_key.clone(),
     })
@@ -1835,6 +1855,7 @@ pub fn restore_identity(identity: &Identity) {
         session.csrf_token.clone_from(&identity.csrf_token);
         session.authz = identity.authz.clone();
         session.login_key_kind = identity.login_key_kind;
+        session.login_key_id.clone_from(&identity.login_key_id);
         session.device_key.clone_from(&identity.device_key);
         session.scoped_key.clone_from(&identity.scoped_key);
         mark_column(session, Column::UserId);
@@ -2181,6 +2202,7 @@ fn install_thread(factory: &Arc<ExecutionContextFactory>, id: &str) -> Result<()
         session.anonymous = live.anonymous;
         session.attributes = live.attributes.clone();
         session.login_key_kind = None;
+        session.login_key_id = None;
         session.device_key = None;
         session.scoped_key = None;
         project_known(session);
@@ -2653,6 +2675,7 @@ fn clear_bind() {
         session.bound_id = None;
         session.factory = None;
         session.login_key_kind = None;
+        session.login_key_id = None;
         session.device_key = None;
         session.scoped_key = None;
         session.dirty_columns.clear();

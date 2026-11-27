@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A map package's zip read with bounds (plans/Maps-Offline.md §2.4, Download): the server writes it with every member
+//! A map package's zip read with bounds (plans/archive/Maps-Offline.md §2.4, Download): the server writes it with every member
 //! stored (`ec.resource.writeZip`, zip64 past 4 GiB), so this reads only stored members, by the central directory,
 //! and copies each member's bytes as a stream. No member is trusted for its name, kind or size: [`entries`] refuses a
 //! compressed or encrypted member, a symlink, a directory, a name that is not a plain relative path, a repeated name,

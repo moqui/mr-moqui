@@ -21,7 +21,7 @@ import java.util.concurrent.FutureTask
 import java.util.concurrent.TimeUnit
 
 /**
- * An offline map package downloaded in the background (plans/Maps-Offline.md §2.4, OF2): the shell's
+ * An offline map package downloaded in the background (plans/archive/Maps-Offline.md §2.4, OF2): the shell's
  * `packages_download` hands it here (src/host.rs, `PackageDownloadWorker.start` through JNI), and the worker has Rust
  * download it (`Native.packageDownload`, src/native.rs `package_download`): ranges into a part file resumed from its
  * length, the checks, the unpack and the swap, with the account's key, as the outbox's [FlushWorker] sends with it.

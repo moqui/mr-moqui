@@ -87,7 +87,7 @@ const SECRET_CONFIG_ENTITY_KEYS: &[&str] = &["emailserver", "systemmessageremote
 /// could plant a script in another user's mapping or take it over; and the database jobs and their statements (§6), whose
 /// text `run#DatabaseJob` executes as written, so a generic write would run any SQL past the SQL runner's permission
 /// and its confirmation (plans/Security-Review-Medium.md SEC-TLS-88); and a person's shared live locations
-/// (plans/Location-Sharing.md §1), which no grant reads for anyone but the owner and the share's audience. No
+/// (plans/archive/Location-Sharing.md §1), which no grant reads for anyone but the owner and the share's audience. No
 /// entity-auto service writes them either.
 const AUDIT_ENTITY_KEYS: &[&str] = &[
     "databaseaudit",
@@ -103,15 +103,17 @@ const AUDIT_ENTITY_KEYS: &[&str] = &[
     "etlvaluemapentry",
     "etlrun",
     "etlrunerror",
-    // a person's shared live location (plans/Location-Sharing.md §1, "No other reader"): its shares, their audiences and
-    // link digests, the latest position and the trail, which only org.moqui.maps.LocationServices reads and writes, for
-    // the owner and the current audience; no generic tool, REST resource or agent reads them, an ADMIN's included
+    // a person's shared live location (plans/archive/Location-Sharing.md §1, "No other reader"): its shares, their audiences and
+    // link digests, the latest position (and the XMPP app's, kept apart) and the trail, which only
+    // org.moqui.maps.LocationServices reads and writes, for the owner and the current audience; no generic tool, REST
+    // resource or agent reads them, an ADMIN's included
     "locationshare",
     "locationshareaudience",
     "locationshareaudiencemember",
     "locationshareowner",
     "locationlatest",
     "locationtrailpoint",
+    "locationxmpplatest",
 ];
 
 /// Managed-instance configuration (`moqui.server.instance`, plans/archive/Vault-Instances.md §4.1): a host type names the
@@ -718,6 +720,7 @@ mod tests {
             "moqui.maps.LocationShareOwner",
             "moqui.maps.LocationLatest",
             "moqui.maps.LocationTrailPoint",
+            "moqui.maps.LocationXmppLatest",
         ] {
             assert!(is_audit_entity(name), "{name}");
             assert!(is_restricted_generic_entity(name), "{name}");

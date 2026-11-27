@@ -25,7 +25,7 @@ along with this software (see the LICENSE.md file). If not, see
     calls it after its own check), the rest MAPS_ADMIN's; read#ArchiveHeader and convert#Overlay are not remote, since each
     reads whatever location it is given. get#ArchiveTile is MAPS_DIALOG's (it checks the layer or overlay itself); read#ArchiveTile is no
     group's and not remote; generalize#Overlay and build#OverlayTiles are no group's (the job runs as the user and checks the
-    overlay's owner), cancel#OverlayTiles MAPS_APP_SERVICES'. Offline map packages (plans/Maps-Offline.md, MapPackages.js): a
+    overlay's owner), cancel#OverlayTiles MAPS_APP_SERVICES'. Offline map packages (plans/archive/Maps-Offline.md, MapPackages.js): a
     region of the archives a user may read cut for a device (estimate#PackageExtract and build#PackageExtract in Rust, moqui-tools
     maps_extract.rs, no group's and not remote), the user's own packages (estimate#, create#, update#, cancel#, delete#Package,
     find#Packages, get#PackageAccess: MAPS_APP_SERVICES, each acting on the signed-in user's own), the MapPackageBuild job's run
@@ -410,7 +410,7 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="estimate" noun="PackageExtract" type="rust" location="moqui_tools::maps_extract::estimate_package_extract" allow-remote="false">
         <description>What cutting a region (west, south, east, north in WGS84 degrees, west east of east across the
             antimeridian) at zooms minZoom to maxZoom from the PMTiles archive at location (pinned as tag of size bytes, a
-            file on disk by modifiedMillis too) would make, for an offline map package (plans/Maps-Offline.md §2.2;
+            file on disk by modifiedMillis too) would make, for an offline map package (plans/archive/Maps-Offline.md §2.2;
             moqui-tools maps_extract.rs): the tiles found through its directories (the header and directories read by range
             and kept by the tag, as read#ArchiveTile keeps them; no tile is read), their distinct contents and bytes, and
             the archive's size near enough (bytes), with the zooms of the request the archive has. Refused (reasonCode,
@@ -530,7 +530,7 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapSources.js').execute('readiness', context))</script></actions>
     </service>
 
-    <!-- ===== Offline map packages (plans/Maps-Offline.md §2; docs/tools/Maps.md "Offline packages"; MapPackages.js) ===== -->
+    <!-- ===== Offline map packages (plans/archive/Maps-Offline.md §2; docs/tools/Maps.md "Offline packages"; MapPackages.js) ===== -->
 
     <service verb="define" noun="PackageRequest" type="interface">
         <description>What an offline map package asks: its name, region (west, south, east, north in WGS84 degrees; west

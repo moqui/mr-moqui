@@ -220,7 +220,7 @@ feature("the client config names what the app's inbox source supports offline, i
         typeof features == "object"
         features.internalSendRef == (bossInstalled ? true : undefined)
         uncovered == (bossInstalled ? "internal" : "")
-        // Maps' savePlace keeps a place once by its clientRef, so the apps may queue one saved offline (plans/Maps-Offline.md §2.5)
+        // Maps' savePlace keeps a place once by its clientRef, so the apps may queue one saved offline (plans/archive/Maps-Offline.md §2.5)
         features.placeRef == true
     }
 })

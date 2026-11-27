@@ -9,7 +9,7 @@ import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** plans/Maps-Offline.md §2.4: the offline map download's constraints and its resume. */
+/** plans/archive/Maps-Offline.md §2.4: the offline map download's constraints and its resume. */
 class PackageDownloadRulesTest {
   @Test
   fun aDownloadWaitsForANetworkWiFiWhenAskedAndStorageNotLow() {

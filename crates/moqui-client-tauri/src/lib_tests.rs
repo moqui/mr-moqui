@@ -299,7 +299,7 @@ fn a_sign_out_tells_the_host_even_with_no_network() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// plans/Maps-Offline.md §2.4: a shared device's sign-out deletes the account's offline map packages with its data; a
+/// plans/archive/Maps-Offline.md §2.4: a shared device's sign-out deletes the account's offline map packages with its data; a
 /// personal one's keeps them, to read offline after the next sign-in.
 #[test]
 fn a_shared_sign_out_deletes_the_accounts_map_packages_and_a_personal_one_keeps_them() {
@@ -325,7 +325,7 @@ fn a_shared_sign_out_deletes_the_accounts_map_packages_and_a_personal_one_keeps_
     }
 }
 
-/// plans/Maps-Offline.md §2.4: a package's file is answered to the shell's page only, by range, and a server page on
+/// plans/archive/Maps-Offline.md §2.4: a package's file is answered to the shell's page only, by range, and a server page on
 /// the app origin is told nothing of it; the path never reaches the server.
 #[test]
 fn a_packages_file_is_the_shells_by_range_and_no_server_pages() {

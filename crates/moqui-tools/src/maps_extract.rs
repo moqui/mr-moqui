@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.maps.MapSourceServices.estimate#PackageExtract` and `build#PackageExtract` (plans/Maps-Offline.md §2.2;
+//! `org.moqui.maps.MapSourceServices.estimate#PackageExtract` and `build#PackageExtract` (plans/archive/Maps-Offline.md §2.2;
 //! docs/tools/Maps.md "Offline packages"): a region of a registered PMTiles archive, a box and a zoom range, cut into
 //! an archive of its own for an offline map package (MapPackages.js, the MapPackageBuild ServiceJob).
 //!

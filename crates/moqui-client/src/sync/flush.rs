@@ -476,7 +476,7 @@ fn send_op(job: &Job<'_>, op: &OutboxOp) -> Outcome {
     }
 }
 
-/// Maps' save of a place (`store#Place`), once by its `clientRef` (plans/Maps-Offline.md §2.5): done when it was
+/// Maps' save of a place (`store#Place`), once by its `clientRef` (plans/archive/Maps-Offline.md §2.5): done when it was
 /// applied (or a duplicate of one that was), not sent with the server's reason when it was refused. A 403 with the
 /// server's JSON (the user may not use Maps) fails with its reason rather than waiting for a sign-in, so it holds up no
 /// later place; a 403 without one (a key the server no longer takes) is held as any other.

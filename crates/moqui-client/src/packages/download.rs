@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A package's download (plans/Maps-Offline.md §2.4, Download): the server's list read for the revision's tag and
+//! A package's download (plans/archive/Maps-Offline.md §2.4, Download): the server's list read for the revision's tag and
 //! size, the zip fetched by ranges into a part file and resumed from its length, its SHA-256 checked, its members
 //! unpacked and checked, and the revision's directory swapped in. Blocking, on the caller's thread: the desktop's task
 //! or Android's `PackageDownloadWorker`.

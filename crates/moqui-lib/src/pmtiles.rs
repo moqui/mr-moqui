@@ -23,7 +23,7 @@
 //! directory decoded ([`decode_directory`]) and a tile found through the root and its leaves, run lengths included
 //! ([`locate_tile`]); and an archive written as its tiles come ([`ArchiveWriter`]: the tile data streamed to a part
 //! file, only the directory entries kept), for a region cut from an archive into an offline map package
-//! (`moqui_tools::maps_extract`, plans/Maps-Offline.md §2.2), or whole in memory ([`write_archive`], the writer over a
+//! (`moqui_tools::maps_extract`, plans/archive/Maps-Offline.md §2.2), or whole in memory ([`write_archive`], the writer over a
 //! `Vec`), for an overlay generalized on the server (`moqui_tools::maps_simplify`). Compression is the caller's: the reader is handed decompressed directories and
 //! the writer compresses with the function it is given, so this crate takes no compression dependency. Written here
 //! rather than on the `pmtiles` crate (MIT or Apache-2.0), whose reader is async over its own backends (Tokio, an HTTP
@@ -786,7 +786,7 @@ pub struct FinishedArchive<W> {
     pub data: W,
 }
 
-/// A PMTiles version 3 archive written as its tiles come (plans/Maps-Offline.md §2.2, a regional extract of hundreds of
+/// A PMTiles version 3 archive written as its tiles come (plans/archive/Maps-Offline.md §2.2, a regional extract of hundreds of
 /// MB): each tile's bytes go to `data` (a part file) when they are added, and only the directory entries are kept, so a
 /// writer holds the entries and the last tile, never the tile data. Tiles come in ascending tile ID order; a tile of the
 /// same content as the one right before it extends that one's run (clustered, as [`write_archive`] writes). A tile added

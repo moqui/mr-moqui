@@ -31,7 +31,7 @@
 //! This crate is on moqui-core, which reaches it through the [`moqui_core::extension`] entry below. moqui-host links it
 //! under its `overture` feature; a build without it reports that `overture` is not built in.
 
-// the address matching is moqui-lib's (the apps' offline search uses it too: plans/Maps-Offline.md §2.5)
+// the address matching is moqui-lib's (the apps' offline search uses it too: plans/archive/Maps-Offline.md §2.5)
 pub use moqui_lib::geo::address;
 pub mod address_service;
 pub mod http;

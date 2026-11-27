@@ -20,7 +20,7 @@ along with this software (see the LICENSE.md file). If not, see
     overlays and places (overlayEdit, saveOverlayEdit).
     Browse.tui.json is the terminal's: the map component over terminalMap (the places of the saved views and the record
     layers, the notices and the attribution), then LocationSharesTui, the user's live location shares with Stop. Live location
-    (plans/Location-Sharing.md §3.3): getConfig carries the user's own active shares and those shared with them
+    (plans/archive/Location-Sharing.md §3.3): getConfig carries the user's own active shares and those shared with them
     (locationShares), and the transitions under "Live location" below start, extend, stop and report them through
     org.moqui.maps.LocationServices. A qvue screen only: asked for in html under /apps it opens at the same path
     under /qapps (screen/render.rs). Search reads saved views and places and the permitted records of the record layers
@@ -76,7 +76,7 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
-    <!-- ===== Live location (plans/Location-Sharing.md §3.3; docs/tools/Maps.md, Live location) =====
+    <!-- ===== Live location (plans/archive/Location-Sharing.md §3.3; docs/tools/Maps.md, Live location) =====
         Each a call of org.moqui.maps.LocationServices as the user, which checks that the user owns the share or is in its
         current audience: these transitions read no entity of a share. A position is posted (never in a URL), handed on as
         text, and named in no log, message or answer but the owner's own latest. -->
@@ -150,8 +150,9 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/>
     </transition>
     <!-- Share my location: create#Share with the audience chosen (audience: a JSON list of {audienceTypeEnumId, userId,
-        userGroupId, jid}), until thruDate (epoch millis), exact or approximate and a trail or not; a link's token is answered
-        this once -->
+        userGroupId, jid}), until thruDate (epoch millis), exact or approximate, a trail or not, and the XMPP app's location
+        for the XMPP contacts or not (takeXmppLocation); a guest link's page link (linkUrl: this server's web root and
+        linkPath, its secret in the fragment; plans/archive/Location-Sharing.md §3.7) is answered this once -->
     <transition name="createShare" method="post">
         <actions><script><![CDATA[
             let audienceList = null
@@ -160,11 +161,18 @@ along with this software (see the LICENSE.md file). If not, see
             const out = !Array.isArray(audienceList) ? null : ec.service.sync().name('org.moqui.maps.LocationServices.create#Share')
                 .requireNewTransaction(true).parameters({audienceList: audienceList.slice(0, 100), thruDate: Number.isFinite(thru) ? new Date(thru) : null,
                     precisionEnumId: String(context.precisionEnumId || 'LspExact'), keepTrail: String(context.keepTrail) === 'true',
+                    takeXmppLocation: String(context.takeXmppLocation) === 'true',
                     label: String(context.label || '').trim() || null}).call()
             if (!out) ec.web.sendJsonResponse({applied: false, reason: ec.l10n.localize('Choose who sees your location')})
             else if (ec.message.hasError()) { const reason = ec.message.getErrorsString(); ec.message.clearErrors(); ec.web.sendJsonResponse({applied: false, reasonCode: out.reasonCode, reason}) }
-            else ec.web.sendJsonResponse({applied: true, shareId: out.shareId, thruDate: out.thruDate ? ec.user.timestampMillis(out.thruDate) : null,
-                linkToken: out.linkToken || null})
+            else {
+                // the full link: this server's https web root and the path, never the page's own origin, which in the apps
+                // is the client's (moqui-app.localhost); with no web root configured, the path alone and the page says so
+                const root = out.linkPath ? String(ec.web.getWebappRootUrl('webroot', null, true, true) || '').replace(/\/+$/, '') : ''
+                const full = /^https?:\/\//.test(root)
+                ec.web.sendJsonResponse({applied: true, shareId: out.shareId, thruDate: out.thruDate ? ec.user.timestampMillis(out.thruDate) : null,
+                    linkUrl: out.linkPath ? (full ? root : '') + out.linkPath : null, linkPathOnly: !!out.linkPath && !full})
+            }
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
@@ -180,6 +188,17 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
+    <!-- The owner's XMPP app's location for a share's XMPP contacts, on or off (update#Share takeXmppLocation;
+        plans/archive/Location-Sharing.md §3.6) -->
+    <transition name="takeXmppShare" method="post">
+        <actions><script><![CDATA[
+            ec.service.sync().name('org.moqui.maps.LocationServices.update#Share').requireNewTransaction(true)
+                .parameters({shareId: String(shareId ?? ''), takeXmppLocation: String(context.takeXmppLocation) === 'true' ? 'true' : 'false'}).call()
+            if (ec.message.hasError()) { const reason = ec.message.getErrorsString(); ec.message.clearErrors(); ec.web.sendJsonResponse({applied: false, reason}) }
+            else ec.web.sendJsonResponse({applied: true})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
     <!-- Add the group again: the one act that sends a group to update#Share, which takes a new snapshot of its members (those
         who joined since are let in, those it leaves out told); addedUserList names whom it lets in -->
     <transition name="addGroupAgain" method="post">
@@ -189,6 +208,18 @@ along with this software (see the LICENSE.md file). If not, see
                 .call() || {}
             if (ec.message.hasError()) { const reason = ec.message.getErrorsString(); ec.message.clearErrors(); ec.web.sendJsonResponse({applied: false, reasonCode: out.reasonCode, reason}) }
             else ec.web.sendJsonResponse({applied: true, addedUserList: Array.from(out.addedUserList || [])})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- Send from here (a browser page) or Send from this device (the Android app, whose requests carry its device key):
+        update#Share with sendFromHere, so the share is sent from this request's device, or from no device, from now on;
+        the device that sent it is refused as another's (409 OTHER_DEVICE) and stops (plans/archive/Location-Sharing.md §3.4) -->
+    <transition name="sendFromHere" method="post">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.maps.LocationServices.update#Share').requireNewTransaction(true)
+                .parameters({shareId: String(shareId ?? ''), sendFromHere: true}).call() || {}
+            if (ec.message.hasError()) { const reason = ec.message.getErrorsString(); ec.message.clearErrors(); ec.web.sendJsonResponse({applied: false, reasonCode: out.reasonCode, reason}) }
+            else ec.web.sendJsonResponse({applied: true, thruDate: out.thruDate ? ec.user.timestampMillis(out.thruDate) : null})
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
@@ -223,8 +254,11 @@ along with this software (see the LICENSE.md file). If not, see
         parameters): the latitude, longitude, accuracy, heading and speed as text, and observedDate (epoch millis, none for
         the server's own time). Its answer is always this transition's JSON, statusCode its outcome: 200 taken (with the
         share's latest as the audience reads it, rounded for an approximate share), 429 too soon (retryAfterSeconds), 410
-        ended or stopped (stop sending), 404 not the user's, 409 STALE (not later than the latest) or CLOCK_AHEAD (the
-        device's clock is ahead: send without observedDate), 400 a value out of range. No value is in an error or a log. -->
+        ended or stopped (stop sending), 404 not the user's, 409 STALE (not later than the latest), CLOCK_AHEAD (the
+        device's clock is ahead: send without observedDate), OTHER_DEVICE (another device of the user's sends it: stop,
+        and Send from here takes it over) or AUDIENCE_CHANGED (a share sent from this device, the desktop's or the
+        phone's page, whose audience changed since the version the page sent, audienceVersion: read again), 400 a value
+        out of range. No value is in an error or a log. -->
     <transition name="reportPosition" method="post">
         <actions><script><![CDATA[
             const value = (name) => (context[name] == null ? null : String(context[name]).trim() || null)
@@ -234,7 +268,7 @@ along with this software (see the LICENSE.md file). If not, see
             try {
                 const out = ec.service.sync().name('org.moqui.maps.LocationServices.report#Position').requireNewTransaction(true)
                     .parameters({shareId: String(shareId ?? ''), latitude: value('latitude'), longitude: value('longitude'), accuracy: value('accuracy'),
-                        heading: value('heading'), speed: value('speed'), observedDate: value('observedDate') && Number.isFinite(observed) ? new Date(observed) : null})
+                        heading: value('heading'), speed: value('speed'), audienceVersion: value('audienceVersion'), observedDate: value('observedDate') && Number.isFinite(observed) ? new Date(observed) : null})
                     .call() || {}
                 answer = {statusCode: Number(out.statusCode) || (ec.message.hasError() ? 400 : 200), reasonCode: out.reasonCode || null,
                     retryAfterSeconds: out.retryAfterSeconds == null ? null : Number(out.retryAfterSeconds)}
@@ -371,7 +405,7 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/>
     </transition>
     <!-- Save place: a named point to the user's places file (store#Place); remove one (delete#Place). A clientRef (a
-        place the apps' offline Maps screen saved, sent by the outbox: plans/Maps-Offline.md §2.5; clientConfig's
+        place the apps' offline Maps screen saved, sent by the outbox: plans/archive/Maps-Offline.md §2.5; clientConfig's
         features.placeRef) makes it once: a save is kept by its ref (ClientSyncServices claim#ClientRequest and
         store#ClientRequest, in one transaction), and sent again it answers the first save with duplicate true. A
         refusal (too many places, an unreadable places file) keeps no ref, so a retry of it may be saved, and is answered

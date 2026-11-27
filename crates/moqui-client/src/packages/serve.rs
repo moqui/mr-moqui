@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A package's files served to the shell (plans/Maps-Offline.md §2.4, Serving to the page):
+//! A package's files served to the shell (plans/archive/Maps-Offline.md §2.4, Serving to the page):
 //! `/__moqui-app/maps/<packageId>/<path>` answered from the installed revision's directory. The apps' scheme answers
 //! take a whole body (`Vec<u8>`), so a file is never read whole past [`WHOLE_MAX`]: one `Range` is answered as a 206
 //! slice of at most [`SLICE_MAX`] bytes read from the file (a range asking more gets a shorter slice, which its

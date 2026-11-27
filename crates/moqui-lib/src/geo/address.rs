@@ -17,7 +17,7 @@
 //! [`postcode_key`], [`fold`]) and the ranking of the points found into candidates ([`rank`]). No database and no
 //! context: the server's service reads the rows (`moqui-maps` `address_service::search_overture_addresses`) and hands
 //! them here, and so does the apps' search of an offline map package's addresses (`moqui-client` `packages::addresses`,
-//! plans/Maps-Offline.md §2.5), which is why it is here, in moqui-lib, with no Parquet reader or codec beside it.
+//! plans/archive/Maps-Offline.md §2.5), which is why it is here, in moqui-lib, with no Parquet reader or codec beside it.
 //!
 //! **Normalization.** Case and the diacritics of Latin letters are folded (`crate::geo::admin1::fold_name`), dots
 //! inside a word dropped (`St.`, `p.za`), other punctuation made a space, and each word of a street mapped to one
@@ -1051,7 +1051,7 @@ pub type RowsOf<'a, E> = dyn FnMut(&str, Option<&str>) -> Result<Vec<Point>, E> 
 /// [`MAX_STREETS`]), the number on it, then the number without its suffix (a suffix the source keeps as the unit, Italy's
 /// `12/A`, is the address), then the street alone. `rows(street, number)` gives the points of a street key of `country`,
 /// those of one number key when given: the server's index (`moqui-maps` `address_service`) and an offline package's
-/// rows (`moqui-client` `packages::addresses`, plans/Maps-Offline.md §2.5) are both searched by this one walk.
+/// rows (`moqui-client` `packages::addresses`, plans/archive/Maps-Offline.md §2.5) are both searched by this one walk.
 ///
 /// # Errors
 ///

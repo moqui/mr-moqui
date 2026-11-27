@@ -612,6 +612,7 @@ sdkmanager 'platform-tools' 'emulator' 'platforms;android-37.0' 'build-tools;36.
 scripts/check-android.sh                     # clippy for both Android targets: moqui-client, moqui-client-tauri, the app
 scripts/android-smoke.sh                     # when asked, not in test-all: ready line, frame check, relaunch
 scripts/android-maps-offline.sh              # acceptance MapsOfflinePackage, when asked: offline map packages
+scripts/android-location-share.sh            # acceptance LocationShareWalk's phone half, when asked: live location
 # For debug sign-in, start this server in a separate terminal.
 moqui_conf__webapp_list__webapp__WEBROOT__http_bind=127.0.0.1 \
 moqui_conf__webapp_list__webapp__WEBROOT__https_enabled=false ./moq run --http-port 8080
@@ -674,9 +675,13 @@ In the Play Console, once:
   of the repository.
 - **The target SDK:** `targetSdk` in `gen/android/app/build.gradle.kts` (37); Play requires a recent one for new
   apps and updates each August.
-- **Declarations:** the full-screen intent (`USE_FULL_SCREEN_INTENT`, for an incoming call: a calling app), and the
+- **Declarations:** the full-screen intent (`USE_FULL_SCREEN_INTENT`, for an incoming call: a calling app), the
   foreground service of type `phoneCall` (`FOREGROUND_SERVICE_PHONE_CALL`, an ongoing call the user answered), each
-  with a short video or description of the incoming call.
+  with a short video or description of the incoming call, and the foreground service of type `location`
+  (`FOREGROUND_SERVICE_LOCATION`, `LocationShareService`): a live location share the user starts in Maps with its
+  audience and end, sent while it lasts with a notification and Stop, started only from the app in front, with a short
+  video of a share started, its notification and Stop. The app asks for no `ACCESS_BACKGROUND_LOCATION`, so Play's
+  background location declaration does not apply ([Mobile-Client, Live location](ui/Mobile-Client.md#live-location)).
 - **Privacy policy:** [docs/Privacy.md](Privacy.md), at its GitHub address, which the app's account menu and sign-in
   open (plans/Security-Review.md SEC-CLI-122).
 - **Data safety**, from the merged manifest's permissions (`app/build/intermediates/merged_manifest/release/`, which has
@@ -684,7 +689,13 @@ In the Play Console, once:
   mail (each account's store, for offline use), contacts' names in them, files attached, and a device key (a
   credential, sealed by the Android Keystore); it records audio (and video) in calls only, sent to the user's server;
   photos and videos the user takes or picks to send, and the precise or approximate location of a place the user
-  shares, go to the user's server; the device's name in the user's device list and as a chat encryption device, which
+  shares, go to the user's server; location is collected while a live share the user started is on, also with the app
+  in the background under its notification, and sent to the user's server, which shows it to the people the user chose
+  for that share until its end (shared: with them, by the user's act; not kept by the server past the share unless the
+  user keeps its trail): precise location for an exact share, approximate for an approximate share (the app asks for
+  approximate location only for it; where the user allowed precise location, for an exact share or a chat place, the
+  phone's fix is precise, and the server rounds it to about 1 km before it is stored or shown, so declare precise
+  location as collected whenever precise is asked for at all); the device's name in the user's device list and as a chat encryption device, which
   room members see, is the phone's model; the phone's contacts are read on the phone to search the dialer and never
   sent; it shows notifications; with Firebase, the FCM token goes to the user's server and Google; with a UnifiedPush
   distributor, that app gets an endpoint for each account under a random name; pushes are sealed to the account's keys.

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The offline search of a package's Overture addresses (plans/Maps-Offline.md §2.5): the server's address matching
+//! The offline search of a package's Overture addresses (plans/archive/Maps-Offline.md §2.5): the server's address matching
 //! (`moqui_lib::geo::address`, which builds with no Parquet reader or codec; its `search_tiers` is the walk the server's
 //! `search#OvertureAddresses` takes too) over the package's `overture-addresses.json`, whose rows carry the keys the
 //! server made of each point (`streetNorm`, `numberNorm`, `unitNorm`, `postcodeNorm`). The text is read into its parts

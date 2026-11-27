@@ -21,9 +21,11 @@
 //! - `chat.rs`: messages and presence in and out, direct rooms and MUC.
 //! - `mam.rs`: the archive (XEP-0313) over the room timelines.
 //! - `pep.rs`: PEP (XEP-0163) for avatars, bookmarks and both OMEMO namespaces.
+//! - `geoloc.rs`: user location (XEP-0080) mapped onto the user's location shares (plans/archive/Location-Sharing.md §3.6).
 
 mod auth;
 mod chat;
+mod geoloc;
 mod iq;
 mod mam;
 mod pep;
@@ -184,6 +186,9 @@ pub struct Session {
     /// The last push notification (XEP-0357), and how many messages waited for it.
     pub(crate) last_push: Option<Instant>,
     pub(crate) pushed_count: u64,
+    /// The location shares that sent this session a position: shareId → (owner, end in Unix milliseconds), so the empty
+    /// `geoloc` item goes out at the end (plans/archive/Location-Sharing.md §3.6).
+    pub(crate) geoloc_ends: HashMap<String, (String, i64)>,
     out: Vec<Out>,
 }
 
@@ -231,6 +236,7 @@ impl Session {
             detached: false,
             last_push: None,
             pushed_count: 0,
+            geoloc_ends: HashMap::new(),
             out: Vec::new(),
         }
     }
@@ -494,6 +500,10 @@ impl Session {
     pub async fn tick(&mut self) {
         if self.state != State::Bound {
             return;
+        }
+        // a location share whose time ended: its empty geoloc item now, not at the services' hourly clean
+        if !self.geoloc_ends.is_empty() {
+            self.geoloc_expire(jiff::Timestamp::now().as_millisecond()).await;
         }
         if self.last_check.is_none_or(|at| at.elapsed() >= CREDENTIAL_CHECK) {
             self.last_check = Some(Instant::now());

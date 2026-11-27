@@ -74,7 +74,7 @@ pub struct ClientConf {
     /// text on a phone. At least 1.
     pub store_max_mb: u64,
     /// `packages-max-mb`: the size cap of an account's offline map packages on the device in MB, outside the store's
-    /// (plans/Maps-Offline.md §2.4); 4096 by default, a few regions at their zooms. At least 1.
+    /// (plans/archive/Maps-Offline.md §2.4); 4096 by default, a few regions at their zooms. At least 1.
     pub packages_max_mb: u64,
 }
 

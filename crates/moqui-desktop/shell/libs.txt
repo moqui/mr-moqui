@@ -5,7 +5,7 @@
 # matrix-sdk-crypto (a WebAssembly module, the CSP's wasm-unsafe-eval) when WebrootCrypto.js opens the crypto device of
 # an encrypted room; emoji (a data file) when m-emoji-picker opens. A meeting board loads Excalidraw; its diagram
 # source editor loads Mermaid and CodeMirror. Markup and shared-screen annotation load drauu. The offline Maps screen
-# (plans/Maps-Offline.md §2.5) loads OpenLayers with ol-pmtiles and pmtiles, its main part only ("<lib> <part>": the files
+# (plans/archive/Maps-Offline.md §2.5) loads OpenLayers with ol-pmtiles and pmtiles, its main part only ("<lib> <part>": the files
 # the library's parts.json lists for the part; no COG layer is packaged, so the raster part and its decoders stay out), and
 # the label fonts and the outline come from each package.
 vue

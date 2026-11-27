@@ -25,7 +25,7 @@
 //! - [`commands`]: the shell's commands (the accounts, sign-in and SSO, sign-out), [`outbox`]: the outbox and drafts,
 //!   [`sockets`]: the sockets of a page whose sockets are all the server's (the mobile app; the desktop app has its
 //!   own, with the node's in process).
-//! - [`packages`]: the offline map packages' commands (plans/Maps-Offline.md §2.4); their files are the schemes'.
+//! - [`packages`]: the offline map packages' commands (plans/archive/Maps-Offline.md §2.4); their files are the schemes'.
 //! - [`vault`]: the page's vault, the module run natively for it (`moquiDesktop.vault`, plans/archive/Vault-Instances.md V5).
 //!
 //! The commands are `pub` at the crate root, where `tauri::command` puts the macros `generate_handler!` looks for, so an
@@ -146,7 +146,7 @@ pub trait ShellHost: Send + Sync {
     fn clear_page_storage(&self) {}
 
     /// Start the download of `revision` of an account's offline map package, queued already
-    /// (plans/Maps-Offline.md §2.4): by default a task of the host, a thread ([`packages::run_task`], the desktop's);
+    /// (plans/archive/Maps-Offline.md §2.4): by default a task of the host, a thread ([`packages::run_task`], the desktop's);
     /// the mobile app hands it to its `PackageDownloadWorker` (WorkManager), on an unmetered network with `wifi_only`.
     ///
     /// # Errors
