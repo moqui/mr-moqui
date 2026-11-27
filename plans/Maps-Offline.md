@@ -105,6 +105,8 @@ beyond Update and Delete).
 - The OpenLayers main entry (and `ol-pmtiles`, `pmtiles`) join the shell's bundled libraries (`shell/libs.txt`), and a
   bundled screen `MapsOffline.qvue` joins `bundled-screens.txt` (`precompiled_qvue`); the raster part is not bundled (a
   COG layer is not packaged in this build).
+- A package's source attribution comes from its archive's metadata and is often HTML: the offline screen shows it
+  as text, never through OpenLayers' HTML attributions (review of OF1).
 - `m-map` gets a **package mode**: its configuration is the manifest's, its allowed origin the package path, and its
   fonts and sprites the package's; everything else (styles, layers, Locate me, places) is the same component.
 - Search offline: the package's places, postal codes and Overture places, in the page over the package's JSON (bounded

@@ -55,8 +55,15 @@ In the framework (`entity/MapEntities.xml`, package `moqui.maps`):
   page), `label` (what the audience sees: the owner's name by default), `purposeText`, `fromDate`, `thruDate`
   (required), `revokedDate`, `precisionEnumId` (`LspExact`, `LspApproximate`), `keepTrail` and `trailKeepDays`, and for
   a guest share the record it is for (`recordAdapterKey`, `recordKey`, as `MapAdapter` names records).
+- The device a share is sent from (`userLoginKeyId`) waits for LL3: no host member yet tells a script which login key
+  signed the request (`ec.user.loginKeyKind` tells only its kind), so LL1 binds a share to its owner, not a device.
 - **`LocationShareAudience`**: `shareId`, `audienceSeqId`, `audienceTypeEnumId` (`LsaUser`, `LsaUserGroup`, `LsaXmpp`,
   `LsaLink`), `userId`, `userGroupId`, `jid`, and for a link `tokenDigest`, `failedTries`, `lastViewedDate`.
+- **`LocationShareAudienceMember`** (built in LL1 after review): a group entry's snapshot, the members the owner's act
+  reached (less those the chat directory keeps the owner from) and the membership row that made each a member; a user
+  counts only while that same row is current, so a membership written later by anyone, with any dates or stamp, reaches
+  nobody until the owner adds the group again (a snapshot member's own row ended and reopened brings that same person
+  back: accepted).
 - **`LocationLatest`**: one row a share (`shareId`), `latitude`, `longitude`, `accuracy` (metres, as the device gives
   it), `heading`, `speed`, `observedDate`, `receivedDate`. Not cached.
 - **`LocationTrailPoint`**: `shareId`, `observedDate`, the same values, indexed by share and date. A share's trail is
@@ -88,6 +95,9 @@ In the framework (`entity/MapEntities.xml`, package `moqui.maps`):
 - Start, extend, stop and revoke are written to the audit log (who, when, the audience; never a position).
 
 ### 3.3 In Maps
+
+A client sends a share's audience only for an explicit "add the group again": any `update#Share` naming an existing
+group takes a new snapshot of it (LL1 review).
 
 - The effective configuration carries `locationShares` (the viewer's own active shares and those shared with them).
   `m-map` draws them in a live layer: a marker with the label and the position's age, an accuracy circle, a stale style
