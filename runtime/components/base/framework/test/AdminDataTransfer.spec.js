@@ -559,8 +559,10 @@ feature("a translation with markup is refused by the import's row services", {
         const rowValues = {original: "Spec transfer markup", locale: "es", localized: "<img src=x onerror=alert(1)>"}
         const prefix = "org.moqui.admin.ConfigurationServices."
         return {
-            validated: invoke(prefix + "validate#MessageTranslationRow", {rowValues}),
-            applied: invoke(prefix + "apply#MessageTranslationRow", {rowValues})
+            validated: invoke(prefix + "validate#MessageTranslationRow", {targetId: "messageTranslations", rowValues}),
+            applied: invoke(prefix + "apply#MessageTranslationRow", {
+                targetId: "messageTranslations", rowValues, operationKey: "spec-markup-1"
+            })
         }
     },
     then({validated, applied}) {

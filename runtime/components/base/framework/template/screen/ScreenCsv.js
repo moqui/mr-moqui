@@ -99,8 +99,8 @@ const $sep = () => { if ($hasPrev) sri.write(","); else $hasPrev = true; };
     });
 
     // The code for one cell, which first writes the comma that separates it from the cell before.
-    const cellCode = (field) => "$sep();\n$cellStart();\ntry {\n" + fieldChain(field, (sub) =>
-        widgetless(sub) ? "" : setCode(sub) + widgetsSource(sub)) + "\n} finally { $cellEnd(); }\n";
+    const cellCode = (field) => "$sep();\n$cellStart();\ntry {\n" + S.indent(fieldChain(field, (sub) =>
+        widgetless(sub) ? "" : setCode(sub) + widgetsSource(sub))) + "} finally {\n    $cellEnd();\n}\n";
 
     const formListMacro = stmt((node) => {
         const columns = S.formListColumns(node);
