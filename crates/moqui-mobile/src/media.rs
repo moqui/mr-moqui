@@ -212,7 +212,9 @@ pub(crate) fn relay(request: &tauri::http::Request<Vec<u8>>) -> Response<Vec<u8>
 }
 
 fn relay_fetch(mut url: Url, allowed: &[String], from: u64, to: u64) -> Result<Response<Vec<u8>>, String> {
-    // one client for every range: its connections stay open, so a range does not wait for a new TLS handshake
+    // one client for every range: its connections stay open, so a range does not wait for a new TLS handshake.
+    // An idle connection closes after a few seconds: after a network change an old one can be dead, and a
+    // request on it waits for the full timeout.
     static CLIENT: std::sync::OnceLock<Result<reqwest::blocking::Client, String>> = std::sync::OnceLock::new();
     let client = CLIENT
         .get_or_init(|| {
@@ -220,7 +222,7 @@ fn relay_fetch(mut url: Url, allowed: &[String], from: u64, to: u64) -> Result<R
                 .redirect(reqwest::redirect::Policy::none())
                 .timeout(Duration::from_secs(RELAY_TIMEOUT_SECONDS))
                 .connect_timeout(Duration::from_secs(10))
-                .pool_idle_timeout(Duration::from_secs(60))
+                .pool_idle_timeout(Duration::from_secs(5))
                 .build()
                 .map_err(|err| format!("HTTP client: {err}"))
         })
