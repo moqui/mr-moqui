@@ -1,4 +1,4 @@
-// The map providers of org.moqui.maps.MapServices (plans/Maps.md §4.2, MapProvider): the mapProvider connection kind and
+// The map providers of org.moqui.maps.MapServices (plans/archive/Maps.md §4.2, MapProvider): the mapProvider connection kind and
 // the Maps readiness checks.
 //
 // The kind is built on the engine of ConfigurationConnections.js (lib.engine), so org.moqui.admin.ConfigurationServices
@@ -8,17 +8,40 @@
 // the seeded OpenFreeMap row, which has none, stays disabled until an administrator tests and then enables it. While
 // maps@external-requests is false a provider is neither tested nor enabled (it may still be changed, and disabled).
 //
-// The test is one GET with no credentials and no body, never with the key, following no redirect (a 3xx fails, naming
-// where it pointed), reading at most 2 MB, to no internal address unless an instance administrator allowed the provider
+// The test is one GET with no credentials and no body, never with the key (but for a proxied provider, below), following
+// no redirect (a 3xx fails, naming where it pointed), reading at most 2 MB, to no internal address unless an instance
+// administrator allowed the provider
 // the private network (allowPrivateNetwork, which is shown here and changed only in Tools, as for every kind): a hosted
 // style must parse as a MapLibre style (version 8, sources, layers) and name its sources, tiles, sprite and glyphs on its
 // own origin (scheme, host and port) only, so the map's allowed origins (the provider's) cover all it fetches; a raster
-// template must answer an image for tile 0/0/0, a TileJSON name its tiles on its own origin; a geocoder must answer its
+// template must answer an image for tile 0/0/0, a TileJSON name its tiles on its own origin, and a raster provider whose
+// endpoint is a Cloud Optimized GeoTIFF (cogEndpoint: a .tif or .tiff path with no tile placeholder; a bucket of COGs, P4c)
+// is read as registering one of its COGs reads it, by one range of its header (MapSources.js readCogHead: a 206 this site
+// may read by CORS, a header a map draws), never through the proxy and never with a key; a geocoder must answer its
 // service's fixed test search (MapGeocoders.js test: a public address or a city, never a user's text); an archive
 // provider has no URL (store#Connection refuses one, ARCHIVE_ENDPOINT) and is sent nothing. Its texts are a fixed
 // vocabulary (an origin only when it is a host name or an IP literal, a status, a kind of failure), never the
 // response's own text. A map draws an outside URL only of an enabled provider that passed its test as it is configured
 // now, on the provider's own origin (tested, for MapConfig.js).
+//
+// A proxied provider (proxyRequests Y; plans/archive/Maps.md §4.2, "a proxy is an explicit provider option") is reached by browsers
+// through LocalMap.xml providerProxy (providerAsset below), so a provider with a key may be drawn: the key stays here. Its
+// test asks as the proxy does, the key added as apiKeyParameter says (a query parameter, key by default, or header:Name),
+// and records the path prefixes its style or TileJSON names (proxyPaths), the only paths the proxy forwards. The proxy
+// answers a GET of a caller who may be offered one of the provider's layers (enabled, its viewPermission held, and the
+// basemap or a layer of an enabled profile whose viewPermission they hold), while outside requests are on and the provider
+// is enabled and tested as it is: one GET to the provider's origin (its endpoint's, the first tile subdomain) at a recorded
+// path, no redirect followed, ten seconds, at most 4 MiB, to no internal address unless it is allowed the private network,
+// a style, TileJSON, sprite or tile type only. A style or TileJSON is rewritten so each URL it names is the proxy's, the
+// key taken out of it (and out of the text wherever it appears); a URL of another origin refuses the document. Its
+// Cache-Control is always private: no-store for a cachePolicy of none, else the cacheSeconds or the answer's own max-age
+// (at most a day); a shared policy also keeps the rewritten documents on this server (maps.provider.document, keyed by
+// the provider's revision and the path, never the key). A proxy hides the user's address from the provider, not the area
+// they view, and this server sees every request: it is not complete location privacy.
+//
+// An OGC service (MPK_WMS, MPK_WMTS, MPK_WFS; MapOgc.js) is tested by its GetCapabilities, read by the framework's XML
+// reader (no DTD, no entity declaration), and records what it offers (capabilitiesJson) and, proxied, the paths and
+// parameters its requests may carry; the proxy checks each parameter of such a request against those capabilities.
 //
 // The readiness checks (moqui.server.ReadinessProvider maps.profile and maps.providers, data/AdminConfigurationData.xml): the
 // installation's default profile is set and can be drawn, and the outline fallback in use is said; each enabled
@@ -77,6 +100,10 @@ function endpointText(value, what) {
 }
 // The geocoders (MapGeocoders.js), loaded when asked: that module loads this one for tested
 const geocoders = () => ec.resource.script("component://framework/service/org/moqui/maps/MapGeocoders.js")
+// A geocoder of this server (MPK_GEOCODER_OVERTURE): no URL, nothing sent
+const localKind = kind => text(kind) === "MPK_GEOCODER_OVERTURE"
+// The OGC services (MapOgc.js), loaded when asked
+const ogc = () => ec.resource.script("component://framework/service/org/moqui/maps/MapOgc.js")
 // A whole number from 1 to max, or empty
 function wholeText(value, what, max) {
     const found = text(value)
@@ -95,6 +122,14 @@ function operationsText(value) {
     const unknown = found.filter(each => !OPERATIONS.includes(each))
     if (unknown.length) throw new Error(say("Allowed operations are of: ${list}", {list: OPERATIONS.join(", ")}))
     return Array.from(new Set(found)).join(",")
+}
+// How a proxied request carries the key: a query parameter's name, or header:Name, or empty (key)
+function keyParameterText(value) {
+    const found = text(value)
+    if (!found) return ""
+    if (!/^(header:)?[A-Za-z][A-Za-z0-9_-]{0,39}$/.test(found))
+        throw new Error(L("The key parameter is a query parameter's name (letters, digits, - and _), or header:Name"))
+    return found
 }
 // The concrete URLs of a URL or a tile template (MapConfig.js templateUrls)
 const templateUrls = url => mapConfig.templateUrls(url)
@@ -140,8 +175,9 @@ function strangeOrigins(urls, endpoint) {
 }
 // One GET, following no redirect (a 3xx fails, naming where it pointed), with no credentials: {status, redirect, tooLarge,
 // contentType, body(): the text, at most MAX_BYTES}.
-function fetchOnce(url, accept, denyInternal) {
+function fetchOnce(url, accept, denyInternal, headers) {
     let client = ec.service.rest().method("GET").uri(url).acceptContentType(accept).timeout(10).followRedirects(false)
+    for (const [name, value] of Object.entries(headers || {})) client = client.addHeader(name, value)
     client = denyInternal ? client.denyInternal() : client.allowInternal()
     const response = client.send()
     const status = Number(response.getStatusCode())
@@ -187,7 +223,9 @@ function fetchFailure(answer, place, what) {
 }
 function fetchJson(url, context, what) {
     const place = shownOrigin(mapConfig.originOf(url))
-    const answer = fetchOnce(url, "application/json", context.denyInternal)
+    // a proxied provider is asked as the proxy asks it: with its key (never shown: place is the origin alone)
+    const keyed = context.provider ? withKey(url, context.provider) : {url, headers: {}}
+    const answer = fetchOnce(keyed.url, "application/json", context.denyInternal, keyed.headers)
     const failed = fetchFailure(answer, place, what)
     if (failed) return {failed}
     try {
@@ -241,6 +279,10 @@ function styleTest(url, context) {
     }
     for (const sprite of Array.isArray(style.sprite) ? style.sprite.map(each => each?.url) : [style.sprite]) urls.push(sprite)
     urls.push(style.glyphs)
+    if (context.rules) {
+        const recorded = collectRules(context.provider, url, style, context)
+        if (recorded) return [recorded]
+    }
     return [
         {
             check: "Style",
@@ -258,7 +300,15 @@ function rasterTest(url, context) {
     if (/\{[zxy]\}/.test(url)) {
         const tile = templateUrls(url)[0]
         const place = shownOrigin(mapConfig.originOf(tile))
-        const answer = fetchOnce(tile, "image/*", context.denyInternal)
+        const keyed = context.provider ? withKey(tile, context.provider) : {url: tile, headers: {}}
+        const answer = fetchOnce(keyed.url, "image/*", context.denyInternal, keyed.headers)
+        if (context.rules) {
+            const rule = ruleOf("tile", url)
+            if (!rule || unsafePath(rule.path) || !tilePattern(rule.path))
+                return [{check: "Proxy", ok: false, text: L("The tile URL's path is not one this server reaches for a map")}]
+            rule.query = queryWithoutKey(rule.query, context.provider)
+            context.rules.push(rule)
+        }
         const failed = fetchFailure(answer, place, "Tiles")
         if (failed) return [failed]
         return [
@@ -276,6 +326,10 @@ function rasterTest(url, context) {
     const tiles = answer.json && Array.isArray(answer.json.tiles) ? answer.json.tiles : null
     if (!tiles || !tiles.length)
         return [{check: "Tiles", ok: false, text: say("${place} answered no TileJSON with tiles", {place: answer.place})}]
+    if (context.rules) {
+        const recorded = collectRules(context.provider, url, answer.json, context)
+        if (recorded) return [recorded]
+    }
     return [
         {
             check: "Tiles",
@@ -286,6 +340,40 @@ function rasterTest(url, context) {
             })
         },
         hostsRow(strangeOrigins(tiles, url), url, L("The TileJSON"))
+    ]
+}
+const cogEndpoint = url => mapConfig.cogEndpoint(url)
+function cogTest(provider, url, context) {
+    const place = shownOrigin(mapConfig.originOf(url))
+    if (proxied(provider) || text(provider.apiKey))
+        return [
+            {
+                check: "GeoTIFF",
+                ok: false,
+                text: L("A COG is read by the browser itself, so its provider has no key and is not reached through this server")
+            }
+        ]
+    // an https URL with no credentials (LOCATION_INVALID otherwise), read as registering one of its COGs reads it
+    const sources = ec.resource.script("component://framework/service/org/moqui/maps/MapSources.js")
+    const read = sources.readCogHead(url, context.denyInternal)
+    if (!read.ok)
+        return [
+            {
+                check: "GeoTIFF",
+                ok: false,
+                text: say("${place}: ${reason} (${code})", {place, reason: read.reason, code: read.reasonCode})
+            }
+        ]
+    const cog = read.header?.cog || {}
+    return [
+        {
+            check: "GeoTIFF",
+            ok: true,
+            text: say(
+                "${place} answered a range of a Cloud Optimized GeoTIFF this site may read (${bands} bands, ${crs}); no credentials were sent",
+                {place, bands: cog.bands, crs: text(cog.epsg)}
+            )
+        }
     ]
 }
 function providerTest(parts, context) {
@@ -303,6 +391,13 @@ function providerTest(parts, context) {
               ]
             : [{check: "Archives", ok: true, text: L("Archives are read from this server's resources; nothing was sent")}]
     try {
+        // an OGC service: its capabilities, recorded with the proxy's rules when it passes
+        if (ogc().isOgcKind(kind)) return ogcTest(provider, context)
+        // a raster provider of COGs: one range of its COG, as a map's browser reads it (never proxied)
+        if (kind === "MPK_RASTER_TILES" && cogEndpoint(url)) return cogTest(provider, url, context)
+        // a proxied provider is tested as the proxy asks it, and the paths it and its layers name recorded for the proxy
+        if (proxied(provider) && (kind === "MPK_VECTOR_STYLE" || kind === "MPK_RASTER_TILES"))
+            return proxiedTest(provider, url, kind, context)
         if (kind === "MPK_VECTOR_STYLE") return styleTest(url, context)
         if (kind === "MPK_RASTER_TILES") return rasterTest(url, context)
         // a geocoder: its service's fixed test search (MapGeocoders.js), never a user's text
@@ -341,7 +436,7 @@ const definition = {
             kind: "url",
             endpoint: true,
             validate: value => endpointText(value, "The style or tile URL"),
-            help: "A hosted style document's URL, a raster tile template with {z}, {x} and {y}, or a geocoder's base URL (https://geocoding.geo.census.gov/geocoder, a Nominatim or Photon server's root); empty for self-hosted archives"
+            help: "A hosted style document's URL, a raster tile template with {z}, {x} and {y}, an OGC service's URL (WMS, WMTS or WFS: the address its GetCapabilities is asked at, or a WMTS service's WMTSCapabilities.xml), or a geocoder's base URL (https://geocoding.geo.census.gov/geocoder, a Nominatim or Photon server's root); empty for self-hosted archives"
         },
         {
             name: "attribution",
@@ -397,7 +492,27 @@ const definition = {
             label: "Requests per day",
             kind: "number",
             validate: value => wholeText(value, "Requests per day", 100000000),
-            help: "Recorded for the provider's terms; not enforced"
+            help: "The most searches this installation sends a geocoder in a calendar day (UTC), all servers of a cluster together; empty for no limit"
+        },
+        // reaching it through this server changes what the test asks (with the key), so a change of either needs a new test
+        {
+            name: "proxyRequests",
+            label: "Through this server",
+            kind: "choice",
+            retest: true,
+            options: () => [
+                {value: "N", label: L("No: browsers ask the provider themselves (it sees their address and the area viewed)")},
+                {value: "Y", label: L("Yes: browsers ask this server, which asks the provider and adds its key")}
+            ],
+            help: "A provider with a key is drawn only through this server. The provider then sees this server's address, not the user's, but still the area viewed: it is not complete location privacy"
+        },
+        {
+            name: "apiKeyParameter",
+            label: "Key parameter",
+            kind: "text",
+            retest: true,
+            validate: value => keyParameterText(value),
+            help: "How a request through this server carries the key: a query parameter's name (key when empty; api_key, access_token), or header:Name for a request header"
         },
         {
             name: "privateNetwork",
@@ -410,7 +525,13 @@ const definition = {
         }
     ],
     // the key stays on the server: never returned, never in map JSON, never sent by the test
-    secrets: [{name: "apiKey", label: "API key", help: "Kept on the server; a provider with a key is not drawn in a browser"}],
+    secrets: [
+        {
+            name: "apiKey",
+            label: "API key",
+            help: "Kept on the server: a provider with a key is drawn only through this server (Through this server), which adds it"
+        }
+    ],
     name: parts => text(parts.main.providerName) || parts.main.providerId,
     providerName: () => "Map provider",
     summary: parts => hostOf(parts.main.endpointUrl) || (text(parts.main.resourceRoot) ? L("Archives on this server") : ""),
@@ -421,18 +542,25 @@ const definition = {
     incomplete: parts => {
         const kind = text(parts.main.providerKindEnumId)
         if (!kind) return L("Choose the provider's kind")
-        if (kind === "MPK_GEOCODER") return L("Choose the geocoder's service: US Census, Nominatim or Photon")
-        if (kind !== "MPK_ARCHIVE" && !text(parts.main.endpointUrl)) return L("Give the provider's style or tile URL")
+        if (kind === "MPK_GEOCODER")
+            return L("Choose the geocoder's service: US Census, Nominatim, Photon or Overture addresses (local)")
+        if (kind !== "MPK_ARCHIVE" && !localKind(kind) && !text(parts.main.endpointUrl))
+            return L("Give the provider's style, tile or service URL")
         return null
     },
-    // an archive provider's layers are this server's resources: a URL would be an outside host no test asks
+    // an archive provider's layers are this server's resources: a URL would be an outside host no test asks; and a key goes
+    // through the proxy only over https (on the private network too when the provider is allowed it)
     check: after =>
         text(after.main?.providerKindEnumId) === "MPK_ARCHIVE" && text(after.main?.endpointUrl)
             ? refused(
                   "ARCHIVE_ENDPOINT",
                   L("A provider of self-hosted archives has no URL: its archives are this server's resources")
               )
-            : null,
+            : localKind(after.main?.providerKindEnumId) && text(after.main?.endpointUrl)
+              ? refused("LOCAL_ENDPOINT", L("A local geocoder has no URL: it searches this server's own address index"))
+              : plainKeyed(after.main)
+                ? refused("PROXY_NOT_HTTPS", L("A provider reached through this server with a key needs an https URL"))
+                : null,
     test: providerTest,
     newParts: values => {
         if (!plainText(values.providerName, "The name")) throw new Error(L("Give the provider a name"))
@@ -483,7 +611,9 @@ function runMapProviderAdapter(p) {
     if (offline() && (operation === "test" || (operation === "store" && yes(p.enabled)))) {
         lib.requireManage(MANAGE)
         const parts = kind.load(text(p.connectionKey))
-        if (!parts || text(parts.main.providerKindEnumId) !== "MPK_ARCHIVE")
+        // an archive provider and a local geocoder send nothing: they are tested and enabled with outside requests off
+        const own = parts && (text(parts.main.providerKindEnumId) === "MPK_ARCHIVE" || localKind(parts.main.providerKindEnumId))
+        if (!own)
             return {
                 result: refused(
                     "EXTERNAL_REQUESTS_OFF",
@@ -495,6 +625,513 @@ function runMapProviderAdapter(p) {
             }
     }
     return {result: kind.run(operation, p)}
+}
+
+// ===== the proxy (plans/archive/Maps.md §4.2: a proxy is an explicit provider option) =====
+const PROXY_PATH = "/apps/maps/LocalMap/providerProxy"
+const PROXY_MAX_BYTES = 4 * 1024 * 1024
+// a rewritten document kept on this server is at most this long (a shared cache policy)
+const DOCUMENT_MAX_CACHED = 256 * 1024
+const DOCUMENTS = "maps.provider.document"
+const DECISIONS = "maps.provider.proxy"
+const SLOTS = "maps.provider.slots"
+const DOCUMENT_TYPE = /^application\/([a-z.+-]*\+)?json\b/
+const ASSET_TYPES = [
+    DOCUMENT_TYPE,
+    /^application\/(x-protobuf|vnd\.mapbox-vector-tile|octet-stream)\b/,
+    /^image\/(png|jpeg|webp|gif|avif)\b/
+]
+// what ol-mapbox-style asks of a sprite's URL: its index and image, plain and at twice the resolution
+const SPRITE_SUFFIXES = [".json", ".png", "@2x.json", "@2x.png"]
+// a provider's fields but its recorded capabilities: what a list of providers reads
+const PROVIDER_FIELDS = [
+    "providerId",
+    "providerName",
+    "providerKindEnumId",
+    "endpointUrl",
+    "apiKey",
+    "apiKeyParameter",
+    "proxyRequests",
+    "disabled",
+    "allowPrivateNetwork",
+    "sequenceNum",
+    "lastUpdatedStamp"
+]
+const proxied = provider => provider?.proxyRequests === "Y"
+const keyParameterOf = provider => text(provider.apiKeyParameter) || "key"
+// a proxied provider with a key and a URL that is not https, not allowed the private network: refused (the key would
+// cross the network in the clear)
+const plainKeyed = provider =>
+    !!provider &&
+    proxied(provider) &&
+    !!text(provider.apiKey) &&
+    !/^https:\/\//i.test(text(provider.endpointUrl)) &&
+    provider.allowPrivateNetwork !== "Y"
+// The origin a proxied provider is asked at: its endpoint's (the first tile subdomain)
+const proxyOrigin = provider => mapConfig.originOf(templateUrls(provider.endpointUrl)[0])
+// A URL with the key added as the provider takes it: {url, headers}
+function withKey(url, provider) {
+    const key = text(provider.apiKey)
+    if (!key) return {url, headers: {}}
+    const parameter = keyParameterOf(provider)
+    if (parameter.startsWith("header:")) return {url, headers: {[parameter.slice(7)]: key}}
+    return {
+        url: url + (url.includes("?") ? "&" : "?") + encodeURIComponent(parameter) + "=" + encodeURIComponent(key),
+        headers: {}
+    }
+}
+// A query string with the key's parameter taken out, and any parameter whose value is the key (a document naming it under
+// another name than the one the key is now sent by: it never reaches a browser nor proxyPaths)
+function queryWithoutKey(query, provider) {
+    const parameter = keyParameterOf(provider).toLowerCase()
+    const key = text(provider.apiKey)
+    const decoded = value => {
+        try {
+            return decodeURIComponent(value.replace(/\+/g, " "))
+        } catch (error) {
+            return value
+        }
+    }
+    return text(query)
+        .split("&")
+        .filter(pair => {
+            if (!pair) return false
+            const at = pair.indexOf("=")
+            const name = decoded(at < 0 ? pair : pair.slice(0, at)).toLowerCase()
+            const value = at < 0 ? "" : decoded(pair.slice(at + 1))
+            return name !== parameter && !(key && value === key)
+        })
+        .join("&")
+}
+// A URL of a provider's document resolved against the document's own URL: absolute, protocol-relative, a path or relative
+function resolvedUrl(url, base) {
+    const value = text(url)
+    if (/^[a-z][a-z0-9+.-]*:/i.test(value)) return value
+    const origin = mapConfig.originOf(base)
+    if (!origin) return null
+    if (value.startsWith("//")) return origin.split(":")[0] + ":" + value
+    if (value.startsWith("/")) return origin + value
+    const path = text(base).slice(origin.length).split(/[?#]/)[0]
+    return origin + path.slice(0, path.lastIndexOf("/") + 1) + value
+}
+// a path a browser would normalize to another: a . or .. segment, raw or %-encoded, an encoded / or \, a backslash
+const DOT_SEGMENT = /(^|\/)(\.|%2e){1,2}(\/|$)/i
+const unsafePath = path => DOT_SEGMENT.test(path) || /%2f|%5c|\\/i.test(path)
+// {path, query} of a URL on the provider's own origins (each tile subdomain), or null for another origin or an unsafe path
+function ownPathOf(provider, url) {
+    const own = new Set(
+        templateUrls(provider.endpointUrl)
+            .map(mapConfig.originOf)
+            .filter(origin => origin)
+    )
+    const origins = templateUrls(url).map(mapConfig.originOf)
+    if (!origins.length || !origins.every(origin => origin && own.has(origin))) return null
+    const rest = /^[a-z][a-z0-9+.-]*:\/\/[^\/?#]*([^?#]*)(?:\?([^#]*))?/i.exec(url)
+    if (!rest || !rest[1] || rest[1] === "/" || unsafePath(rest[1])) return null
+    return {path: rest[1], query: rest[2] || ""}
+}
+// The proxy's path for a URL of the provider (a template's {z}, {x} and {y} kept for the browser to fill), or null
+function proxyUrl(provider, url, base) {
+    const resolved = base ? resolvedUrl(url, base) : text(url)
+    const own = resolved ? ownPathOf(provider, resolved) : null
+    if (!own) return null
+    const query = queryWithoutKey(own.query, provider)
+    return PROXY_PATH + "/" + encodeURIComponent(provider.providerId) + own.path + (query ? "?" + query : "")
+}
+// A rule of what the proxy forwards, from a URL of the provider: "doc", "sprite" or "tile", its path (a template's
+// placeholders kept) and its own query without the key; the line kept in proxyPaths is "kind path[?query]"
+function ruleOf(kind, url) {
+    const own = /^[a-z][a-z0-9+.-]*:\/\/[^\/?#]*([^?#]*)(?:\?([^#]*))?/i.exec(text(url))
+    if (!own || !own[1] || own[1] === "/") return null
+    return {kind, path: own[1], query: own[2] || ""}
+}
+// a tile template's path as a pattern: {z}, {x} and {y} whole numbers, {r} an optional @2x, every other character itself;
+// null for a template with another placeholder in its path
+function tilePattern(path) {
+    let bad = false
+    const source = path
+        .split(/(\{[a-z]+\})/)
+        .map(part => {
+            if (/^\{[zxy]\}$/.test(part)) return "\\d{1,9}"
+            if (part === "{r}") return "(@2x)?"
+            if (/^\{[a-z]+\}$/.test(part)) bad = true
+            return part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+        })
+        .join("")
+    return bad ? null : new RegExp("^" + source + "$")
+}
+// The recorded rule a request's path matches, or null: a document's exact path, a sprite's path with one of SPRITE_SUFFIXES,
+// a tile template's pattern; an OGC operation's exact path (wms, wmts, wfs: its parameters are checked by MapOgc.js
+// proxyQuery) and a WMTS tile template's pattern (wmtsrest)
+function matchRule(provider, path) {
+    for (const line of text(provider.proxyPaths).split("\n")) {
+        const parts = /^(doc|sprite|tile|wms|wmts|wfs|wmtsrest) (\/[^?\s]*)(?:\?(\S*))?$/.exec(line.trim())
+        if (!parts) continue
+        const [, kind, rulePath, query] = parts
+        const matched =
+            kind === "doc" || kind === "wms" || kind === "wmts" || kind === "wfs"
+                ? path === rulePath
+                : kind === "sprite"
+                  ? SPRITE_SUFFIXES.some(suffix => path === rulePath + suffix)
+                  : kind === "wmtsrest"
+                    ? ogc().restAllowed(provider, path)
+                    : !!tilePattern(rulePath)?.test(path)
+        if (matched) return {kind, path: rulePath, query: query || ""}
+    }
+    return null
+}
+// The rules a style or a TileJSON names (and the document's own), added to context.rules; the TileJSON a style's sources name
+// are read too, so their tiles are recorded. A check row when a URL is not the provider's or not a safe path, else null.
+function collectRules(provider, url, json, context) {
+    const refusal = () => ({
+        check: "Proxy",
+        ok: false,
+        text: L(
+            "The provider's document names a URL of another host, or a path with . or .., which this server does not reach for a map"
+        )
+    })
+    const add = (kind, each, base) => {
+        const resolved = base ? resolvedUrl(each, base) : each
+        if (!resolved || !ownPathOf(provider, resolved)) return false
+        const rule = ruleOf(kind, resolved)
+        if (!rule || (kind === "tile" && !tilePattern(rule.path))) return false
+        rule.query = queryWithoutKey(rule.query, provider)
+        context.rules.push(rule)
+        return true
+    }
+    if (!add("doc", url)) return refusal()
+    if (json.sources && typeof json.sources === "object") {
+        for (const source of Object.values(json.sources).slice(0, 20)) {
+            if (!source || typeof source !== "object") continue
+            for (const tile of Array.isArray(source.tiles) ? source.tiles : []) if (!add("tile", tile, url)) return refusal()
+            if (typeof source.data === "string" && !add("doc", source.data, url)) return refusal()
+            if (typeof source.url === "string" && !source.url.startsWith("pmtiles:")) {
+                const tileJsonUrl = resolvedUrl(source.url, url)
+                if (!add("doc", source.url, url)) return refusal()
+                const tileJson = fetchJson(tileJsonUrl, context, "Tiles")
+                if (tileJson.failed) return tileJson.failed
+                for (const tile of Array.isArray(tileJson.json?.tiles) ? tileJson.json.tiles : [])
+                    if (!add("tile", tile, tileJsonUrl)) return refusal()
+            }
+        }
+        for (const sprite of Array.isArray(json.sprite) ? json.sprite.map(each => each?.url) : [json.sprite])
+            if (typeof sprite === "string" && !add("sprite", sprite, url)) return refusal()
+    } else if (Array.isArray(json.tiles)) {
+        for (const tile of json.tiles) if (!add("tile", tile, url)) return refusal()
+    }
+    return null
+}
+// A proxied provider's test: its endpoint, then each enabled layer of it that names another URL of the provider, each asked as
+// the proxy asks it; when every check passes, the rules they name are the provider's proxyPaths (the proxy forwards no other
+// path), else none are
+function proxiedTest(provider, url, kind, context) {
+    if (plainKeyed(provider))
+        return [{check: "Proxy", ok: false, text: L("A provider reached through this server with a key needs an https URL")}]
+    const asked = Object.assign({}, context, {provider, rules: []})
+    const results = kind === "MPK_VECTOR_STYLE" ? styleTest(url, asked) : rasterTest(url, asked)
+    const layers = rows(LAYER, {providerId: provider.providerId})
+        .filter(layer => layer.disabled !== "Y")
+        .slice(0, 20)
+    for (const layer of layers) {
+        const format = text(layer.formatEnumId)
+        const layerUrl =
+            format === "MLF_VECTOR_STYLE" ? text(layer.styleLocation) : format === "MLF_RASTER_XYZ" ? text(layer.sourceUrl) : ""
+        if (!layerUrl || layerUrl === url) continue
+        const name = text(layer.layerName) || layer.layerId
+        for (const row of format === "MLF_VECTOR_STYLE" ? styleTest(layerUrl, asked) : rasterTest(layerUrl, asked))
+            results.push(Object.assign({}, row, {check: row.check + " (" + name + ")"}))
+    }
+    const passed = results.every(row => row.ok)
+    const lines = passed
+        ? Array.from(
+              new Set(
+                  asked.rules.filter(rule => rule).map(rule => rule.kind + " " + rule.path + (rule.query ? "?" + rule.query : ""))
+              )
+          ).slice(0, 200)
+        : []
+    const was = ec.artifactExecution.disableAuthz()
+    try {
+        ec.entity
+            .makeValue(PROVIDER)
+            .setAll({providerId: provider.providerId, proxyPaths: lines.join("\n")})
+            .update()
+    } finally {
+        if (!was) ec.artifactExecution.enableAuthz()
+    }
+    return results
+}
+// An OGC provider's test (MapOgc.js): its capabilities, asked with its key when it is proxied; when every check passes, what
+// they offer is its capabilitiesJson and, proxied, the rules of its requests its proxyPaths (none when it is not)
+function ogcTest(provider, context) {
+    if (plainKeyed(provider))
+        return [{check: "Proxy", ok: false, text: L("A provider reached through this server with a key needs an https URL")}]
+    let found
+    try {
+        found = ogc().test(provider, Object.assign({}, context, {proxied: proxied(provider)}), {
+            withKey,
+            queryWithoutKey,
+            shownOrigin,
+            unsafePath
+        })
+    } catch (error) {
+        // the provider and the kind of failure, never the answer's text
+        ec.logger.warn(
+            "Map provider " +
+                provider.providerId +
+                ": its capabilities were not read: " +
+                String(error?.message ?? error).slice(0, 200)
+        )
+        throw error
+    }
+    if (found.rows.every(row => row.ok) && found.capabilities) {
+        const was = ec.artifactExecution.disableAuthz()
+        try {
+            ec.entity
+                .makeValue(PROVIDER)
+                .setAll({
+                    providerId: provider.providerId,
+                    capabilitiesJson: JSON.stringify(found.capabilities),
+                    proxyPaths: proxied(provider) ? found.rules.join("\n") : null
+                })
+                .update()
+        } finally {
+            if (!was) ec.artifactExecution.enableAuthz()
+        }
+    }
+    return found.rows
+}
+// The URLs a style or a TileJSON names, rewritten in place to the proxy's: false when one is not on the provider's origin
+function rewriteDocument(json, provider, base) {
+    if (!json || typeof json !== "object") return true
+    const each = url => proxyUrl(provider, url, base)
+    if (json.sources && typeof json.sources === "object") {
+        for (const source of Object.values(json.sources)) {
+            if (!source || typeof source !== "object") continue
+            if (typeof source.url === "string" && !source.url.startsWith("pmtiles:")) {
+                source.url = each(source.url)
+                if (!source.url) return false
+            }
+            if (typeof source.data === "string") {
+                source.data = each(source.data)
+                if (!source.data) return false
+            }
+            if (Array.isArray(source.tiles)) {
+                source.tiles = source.tiles.map(each)
+                if (source.tiles.some(tile => !tile)) return false
+            }
+        }
+        if (typeof json.sprite === "string") {
+            json.sprite = each(json.sprite)
+            if (!json.sprite) return false
+        } else if (Array.isArray(json.sprite))
+            for (const sprite of json.sprite) {
+                sprite.url = sprite && typeof sprite.url === "string" ? each(sprite.url) : null
+                if (!sprite.url) return false
+            }
+        // ol-mapbox-style draws labels with web fonts (plans/archive/Maps.md §4.1): glyph ranges are not fetched, nor proxied
+        delete json.glyphs
+    } else if (Array.isArray(json.tiles)) {
+        json.tiles = json.tiles.map(each)
+        if (json.tiles.some(tile => !tile)) return false
+    }
+    return true
+}
+// Whether the caller may be offered one of the provider's layers: enabled, its viewPermission held, and the basemap or a
+// layer of an enabled profile whose viewPermission they hold
+function proxyOfferedNow(provider) {
+    const permitted = row => row.disabled !== "Y" && (!text(row.viewPermission) || ec.user.hasPermission(row.viewPermission))
+    const cached = entity => ec.entity.find(entity).useCache(true).disableAuthz()
+    const layerIds = Array.from(cached(LAYER).condition("providerId", provider.providerId).limit(100).list())
+        .filter(permitted)
+        .map(row => String(row.layerId))
+    if (!layerIds.length) return false
+    const profileIds = Array.from(
+        cached("moqui.maps.MapProfileLayer").condition("layerId", "in", layerIds).limit(500).list()
+    ).map(row => String(row.profileId))
+    const cf = ec.entity.conditionFactory
+    const either = [cf.makeCondition("basemapLayerId", "in", layerIds)]
+    if (profileIds.length) either.push(cf.makeCondition("profileId", "in", profileIds))
+    return Array.from(cached("moqui.maps.MapProfile").condition(cf.makeCondition(either, "or")).limit(500).list()).some(permitted)
+}
+// proxyOfferedNow and the provider's test state, decided once a short while (maps.provider.proxy, 30 seconds) for a user,
+// provider revision and test: a map asks for many tiles at once
+function proxyDecision(provider) {
+    const check = one(CHECK, {adapterKey: ADAPTER_KEY, connectionKey: provider.providerId})
+    const key = [text(ec.user.userId), provider.providerId, text(provider.lastUpdatedStamp), text(check?.lastUpdatedStamp)].join(
+        "|"
+    )
+    const cache = ec.cache.getCache(DECISIONS)
+    const kept = cache.get(key)
+    if (kept) return String(kept)
+    const decided = !tested(provider) ? "PROVIDER_UNTESTED" : !proxyOfferedNow(provider) ? "PROVIDER_MISSING" : "OK"
+    cache.put(key, decided)
+    return decided
+}
+const proxyOffered = provider => proxyOfferedNow(provider)
+// Whether a URL of the provider is one its last test recorded for the proxy (a document's path, a sprite's or a tile template's)
+function proxyRecorded(provider, url) {
+    const own = ownPathOf(provider, text(url))
+    return (
+        !!own &&
+        text(provider.proxyPaths)
+            .split("\n")
+            .some(line => (line.trim().split(" ")[1] || "").split("?")[0] === own.path)
+    )
+}
+// A request's path from its decoded segments, or null for one that is not a plain path
+function proxyPathOf(segments) {
+    const list = Array.from(segments || []).map(segment => String(segment))
+    if (!list.length || list.length > 24) return null
+    for (const segment of list)
+        if (
+            !segment ||
+            segment === "." ||
+            segment === ".." ||
+            segment.length > 200 ||
+            /[\/\\\u0000-\u001f\u007f?#]/.test(segment)
+        )
+            return null
+    // @, , and : as they are (a WMTS layer's name is often namespace:name)
+    return (
+        "/" +
+        list.map(segment => encodeURIComponent(segment).replace(/%40/g, "@").replace(/%2C/g, ",").replace(/%3A/g, ":")).join("/")
+    )
+}
+// The provider's rate for the proxy, as for a geocoder: requestsPerSecond claimed in this server's slots of the second
+// (refused past it, never queued; each server of a cluster by itself), requestsPerDay on the provider's day row (MapGeocoders
+// claimDay: the cluster together). A refusal code, or null.
+function rateRefusal(provider) {
+    const perSecond = Math.min(Number(provider.requestsPerSecond) || 0, 1000)
+    if (perSecond > 0) {
+        const second = Math.floor(Date.now() / 1000)
+        const slots = ec.cache.getCache(SLOTS)
+        let claimed = false
+        for (let slot = 0; slot < perSecond && !claimed; slot++)
+            claimed = !!slots.putIfAbsent(provider.providerId + ":" + second + ":" + slot, "Y")
+        if (!claimed) return "RATE_LIMITED"
+    }
+    const perDay = Number(provider.requestsPerDay) || 0
+    if (perDay > 0 && !geocoders().claimDay(provider.providerId, perDay)) return "DAILY_LIMIT"
+    return null
+}
+// get#ProviderAsset: one asset of a proxied provider for the LocalMap providerProxy transition, the caller checked first
+function providerAsset(p) {
+    const refused = (status, reasonCode) => ({ok: false, status, reasonCode})
+    const providerId = text(p.providerId)
+    // its row as it is now (one read by its key): how its key is sent, its rules and its revision for the decision cache
+    const provider = providerId ? ec.entity.find(PROVIDER).condition({providerId}).useCache(false).disableAuthz().one() : null
+    if (!provider || !proxied(provider) || provider.disabled === "Y" || geocoders().isGeocoderKind(provider.providerKindEnumId))
+        return refused(404, "PROVIDER_MISSING")
+    if (offline()) return refused(403, "EXTERNAL_REQUESTS_OFF")
+    if (plainKeyed(provider)) return refused(404, "PROVIDER_MISSING")
+    const decided = proxyDecision(provider)
+    if (decided !== "OK") return refused(404, decided)
+    // only a path a recorded rule names, with the query that rule names: the browser's own query is not passed on
+    const path = proxyPathOf(p.pathSegments)
+    const rule = path ? matchRule(provider, path) : null
+    if (!rule) return refused(404, "PATH_NOT_ALLOWED")
+    // an OGC request: the browser's parameters, each one its kind's requests carry, checked against the capabilities its
+    // last test recorded, then the rule's own query
+    const ogcRequest = ["wms", "wmts", "wfs"].includes(rule.kind)
+    const query = ogcRequest ? ogc().proxyQuery(provider, rule.kind, p.queryString, rule.query) : rule.query
+    if (query === null) return refused(400, "QUERY_NOT_ALLOWED")
+    const target = proxyOrigin(provider) + path + (query ? "?" + query : "")
+    const policy = text(provider.cachePolicy).toLowerCase()
+    const cacheControl = seconds =>
+        policy === "private" || policy === "shared"
+            ? seconds > 0
+                ? "private, max-age=" + Math.min(seconds, 86400)
+                : "private, no-cache"
+            : "private, no-store"
+    // a shared policy: a rewritten document is kept here, by the provider's revision, its path and its own query (so a
+    // browser cannot fill the cache with variants), never the key
+    const documentKey =
+        policy === "shared" && ["doc", "sprite"].includes(rule.kind)
+            ? ec.resource.digestText(providerId + "\n" + text(provider.lastUpdatedStamp) + "\n" + target, "sha256")
+            : null
+    if (documentKey) {
+        const hit = ec.cache.getCache(DOCUMENTS).get(documentKey)
+        if (hit) {
+            try {
+                const kept = JSON.parse(String(hit))
+                if (Date.now() < Number(kept.until))
+                    return {
+                        ok: true,
+                        status: 200,
+                        contentType: kept.contentType,
+                        text: kept.text,
+                        cacheControl: cacheControl(Math.round((kept.until - Date.now()) / 1000))
+                    }
+            } catch (error) {
+                // a kept document that does not read is asked again
+            }
+        }
+    }
+    const limited = rateRefusal(provider)
+    if (limited) return refused(429, limited)
+    const keyed = withKey(target, provider)
+    let response
+    try {
+        let client = ec.service.rest().method("GET").uri(keyed.url).timeout(10).followRedirects(false)
+        for (const [name, value] of Object.entries(keyed.headers)) client = client.addHeader(name, value)
+        client = privateAllowed(provider) ? client.allowInternal() : client.denyInternal()
+        response = client.send()
+    } catch (error) {
+        ec.logger.warn("Map provider " + providerId + " was not reached through the proxy")
+        return refused(502, "PROVIDER_FAILED")
+    }
+    const status = Number(response.getStatusCode())
+    if (status === 404) return refused(404, "PROVIDER_NOT_FOUND")
+    if (status < 200 || status > 299) {
+        ec.logger.warn("Map provider " + providerId + " answered the proxy HTTP " + status)
+        return refused(502, "PROVIDER_FAILED")
+    }
+    const contentType = text(response.getContentType()).toLowerCase()
+    if (!ASSET_TYPES.some(type => type.test(contentType))) return refused(502, "TYPE_REFUSED")
+    const control = text(response.headerFirst("cache-control")).toLowerCase()
+    const maxAge = /no-store|no-cache|private/.test(control) ? 0 : Number(/max-age=(\d+)/.exec(control)?.[1]) || 0
+    const seconds = Number(provider.cacheSeconds) > 0 ? Number(provider.cacheSeconds) : maxAge
+    try {
+        if (!DOCUMENT_TYPE.test(contentType))
+            return {
+                ok: true,
+                status: 200,
+                contentType,
+                bytes: response.bytes(PROXY_MAX_BYTES),
+                cacheControl: cacheControl(seconds)
+            }
+        // an OGC answer (a WFS's GeoJSON) is passed on as it came, not read or rewritten: refused only when it carries the key
+        if (ogcRequest) {
+            const answered = response.text(PROXY_MAX_BYTES + 1)
+            if (answered.length > PROXY_MAX_BYTES) return refused(502, "PROVIDER_FAILED")
+            const key = text(provider.apiKey)
+            if (key.length >= 4 && [key, encodeURIComponent(key)].some(form => answered.includes(form)))
+                return refused(502, "URL_NOT_PROVIDERS")
+            return {ok: true, status: 200, contentType, text: answered, cacheControl: cacheControl(seconds)}
+        }
+        const json = JSON.parse(response.text(PROXY_MAX_BYTES))
+        if (!rewriteDocument(json, provider, target)) return refused(502, "URL_NOT_PROVIDERS")
+        let body = JSON.stringify(json)
+        // the key out of the text, as it is and URL-encoded: by its text, so a key of a few common characters could also
+        // cut other text short (at least 4 characters are needed); the rewritten URLs never carry its parameter
+        const key = text(provider.apiKey)
+        if (key.length >= 4)
+            for (const form of new Set([key, encodeURIComponent(key), encodeURIComponent(encodeURIComponent(key))]))
+                body = body.split(form).join("")
+        if (documentKey && seconds > 0 && body.length <= DOCUMENT_MAX_CACHED)
+            ec.cache.getCache(DOCUMENTS).put(
+                documentKey,
+                JSON.stringify({
+                    until: Date.now() + Math.min(seconds, 86400) * 1000,
+                    contentType: "application/json",
+                    text: body
+                })
+            )
+        return {ok: true, status: 200, contentType: "application/json", text: body, cacheControl: cacheControl(seconds)}
+    } catch (error) {
+        ec.logger.warn("Map provider " + providerId + " answered the proxy more than 4 MiB or a document that does not read")
+        return refused(502, "PROVIDER_FAILED")
+    }
 }
 
 // ===== readiness =====
@@ -662,7 +1299,8 @@ function cspBlocked(urls, directives) {
 const outsideUrl = url => /^https?:\/\//i.test(text(url))
 function providerChecks() {
     if (!ec.user.hasPermission(VIEW) && !ec.user.hasPermission(MANAGE)) denied(VIEW)
-    const enabled = rows(PROVIDER)
+    // the fields the checks and the test state read, not an OGC provider's recorded capabilities
+    const enabled = Array.from(find(PROVIDER, {}).selectFields(PROVIDER_FIELDS).orderBy("providerId").limit(500).list())
         .filter(row => row.disabled !== "Y")
         .slice(0, 100)
     // a layer that asks an outside host with no provider of its own is never drawn: no test vouches for its host
@@ -723,10 +1361,34 @@ function providerChecks() {
                         fix
                     )
         )
+        // a local geocoder sends nothing: it is ready while a region's Overture addresses are active
+        if (localKind(provider.providerKindEnumId)) {
+            const ready = geocoders().localReady()
+            out.push(
+                ready || !tested(provider)
+                    ? check(
+                          key + ".local",
+                          "Local geocoder",
+                          "ready",
+                          null,
+                          say("${name} searches this server's own index; nothing is sent", {name}),
+                          fix
+                      )
+                    : check(
+                          key + ".local",
+                          "Local geocoder",
+                          "warning",
+                          "NO_ADDRESS_DATA",
+                          say("${name} is enabled, but no region's Overture addresses are active: it is not asked", {name}),
+                          fix
+                      )
+            )
+            continue
+        }
         // a geocoder is asked by this server, never by a browser: no key rule and no page policy apply
         const geocoder = geocoders().isGeocoderKind(provider.providerKindEnumId)
         // its key would be in the URLs a browser asks: it is not offered to a browser, so the page policy does not matter
-        if (text(provider.apiKey) && !geocoder) {
+        if (text(provider.apiKey) && !geocoder && !proxied(provider)) {
             out.push(
                 check(
                     key + ".keyed",
@@ -753,13 +1415,45 @@ function providerChecks() {
             continue
         }
         if (geocoder) {
-            // a public demo server: its policy allows an application very little (plans/Maps.md §6.2)
+            // a public demo server: its policy allows an application very little (plans/archive/Maps.md §6.2)
             const host = geocoders().publicHost(provider)
             if (host)
                 out.push(
                     check(key + ".public", "Geocoder policy", "warning", "PUBLIC_GEOCODER", geocoders().publicHostText(host), fix)
                 )
             continue
+        }
+        // reached through this server: a browser asks only this server's paths, which the page policy allows
+        if (proxied(provider)) {
+            out.push(
+                check(
+                    key + ".proxy",
+                    "Map provider requests",
+                    "ready",
+                    "PROXIED",
+                    say("Browsers reach ${name} through this server, which adds its key", {name}),
+                    fix
+                )
+            )
+            continue
+        }
+        // an OGC provider whose test saw no CORS: its images load as plain images, with the browser's cookies of its site
+        if (ogc().isOgcKind(provider.providerKindEnumId)) {
+            const recorded = text(one(PROVIDER, {providerId})?.capabilitiesJson)
+            if (/"cors":false/.test(recorded))
+                out.push(
+                    check(
+                        key + ".cors",
+                        "Map provider and CORS",
+                        "warning",
+                        "PROVIDER_NO_CORS",
+                        say(
+                            "${name} does not answer CORS: browsers load its images as plain images, sending it their cookies of its site; reach it through this server to avoid that",
+                            {name}
+                        ),
+                        fix
+                    )
+                )
         }
         // the URLs a browser asks for this provider's layers, each tile subdomain by itself
         const urls = new Set(templateUrls(provider.endpointUrl).filter(outsideUrl))
@@ -811,12 +1505,17 @@ function readiness(p) {
     throw new Error("Unknown Maps readiness check " + key)
 }
 
-const operations = {runMapProviderAdapter, readiness}
+const operations = {runMapProviderAdapter, readiness, providerAsset}
 ;({
     execute: (op, parameters) => {
         if (!Object.hasOwn(operations, op)) throw new Error("Unknown map provider operation " + op)
         return operations[op](parameters || {})
     },
-    // for the effective configuration (MapConfig.js)
-    tested
+    // for the effective configuration (MapConfig.js): a provider's test state, and a proxied provider's URLs and access
+    tested,
+    // for the COG readiness check (MapSources.js): the page's policy, each directive with its sources
+    cspDirectives,
+    proxyUrl,
+    proxyOffered,
+    proxyRecorded
 })

@@ -301,7 +301,8 @@ fn loader_filters_types_holds_services_and_reads_zip() {
     assert!(!facade.flags().disable_fk_create);
 }
 
-/// As Java's `loadAllData`, a file of a directory that fails is logged and counted, and the files after it still load.
+/// As Java's `loadAllData`, a file of a directory that fails is logged, and the files after it still load. The failure
+/// names the file and its reason, so a caller can show which one to repair (TOOL-UI-006).
 #[test]
 fn a_failed_file_in_a_directory_is_skipped_and_the_next_one_loads() {
     let facade = open_empty();
@@ -322,7 +323,11 @@ fn a_failed_file_in_a_directory_is_skipped_and_the_next_one_loads() {
     .unwrap();
     let loaded = load_entity_data(&facade, dir.to_str().unwrap(), &LoadOptions::default()).unwrap();
     assert_eq!(loaded.records, 1);
-    assert_eq!(loaded.failed_files, 1);
+    assert_eq!(loaded.failures.len(), 1, "{:?}", loaded.failures);
+    let failure = &loaded.failures[0];
+    assert!(failure.location.ends_with("a-broken.xml"), "{failure:?}");
+    // the parser's reason for the unclosed element
+    assert!(failure.reason.contains("ended early"), "{failure:?}");
 }
 
 /// As Java's `loadSingleFile`, one file is one transaction: a record that fails takes the file's earlier records
@@ -349,7 +354,7 @@ fn a_file_loads_in_one_transaction_and_a_failure_rolls_back_the_whole_file() {
     )
     .unwrap();
     let loaded = load_entity_data(&facade, dir.to_str().unwrap(), &LoadOptions::default()).unwrap();
-    assert_eq!((loaded.records, loaded.failed_files), (1, 1));
+    assert_eq!((loaded.records, loaded.failures.len()), (1, 1));
     assert_eq!(test_medium(&facade, "T1"), None);
     assert_eq!(test_medium(&facade, "T2").as_deref(), Some("second"));
 }
@@ -852,6 +857,25 @@ fn a_loads_switch_is_this_threads_and_leaves_the_security_checks() {
     });
     assert!(unwound.is_err());
     assert_eq!(WriteSwitches::current(), WriteSwitches::default());
+}
+
+/// Rows created together run their entity's create ECA rules as a create does, the entity named by its short name too:
+/// each row then goes through its own create, and the security check refuses the admin group's member.
+#[test]
+fn rows_created_together_by_a_short_name_run_the_create_eca_rules() {
+    let (facade, context) = open_eca();
+    let _entered = context.enter();
+    let mut member = facade.make_value("moqui.security.UserGroupMember").unwrap();
+    member.set("userId", Value::string("SEC-NONE"));
+    member.set("userGroupId", Value::string("ADMIN"));
+    member.set("fromDate", Value::string("2001-02-03 04:05:06.0"));
+    let err = facade.create_values("UserGroupMember", vec![member]).unwrap_err();
+    let text = error_chain(&err);
+    assert!(
+        text.contains("not authorized to change membership of group ADMIN"),
+        "{text}"
+    );
+    assert_eq!(admin_member_count(&facade), 0);
 }
 
 #[test]

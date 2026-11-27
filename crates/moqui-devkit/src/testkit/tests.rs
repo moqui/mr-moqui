@@ -166,6 +166,39 @@ feature("zero decimal fails", { expect() { toDecimal("0.00") } })
 }
 
 #[test]
+fn logical_operators_give_the_operand_groovy_truth_chooses() {
+    let result = run(r#"
+let calls = 0
+const count = () => { calls++; return calls }
+feature("a list or [] as an argument", { expect({ x }) { Array.from(x.checks || []).length == 2 }, where: [{ x: { checks: ["a", "b"] } }] })
+feature("a missing list as an argument", { expect({ x }) { Array.from(x.checks || []).length == 0 }, where: [{ x: {} }] })
+feature("a comparison side", { expect({ row }) { (row.name || "") == "" }, where: [{ row: { name: null } }] })
+feature("an empty list is not chosen", { expect() { ([] || "x") == "x" } })
+feature("&& keeps the false operand", { expect() { (0 && "x") === 0 } })
+feature("&& gives the right side", { expect() { ("a" && "b") == "b" } })
+feature("&& keeps an empty list, where JavaScript gives the right side", { expect() { Array.isArray([] && "x") && ([] && "x").length === 0 } })
+feature("each side once, the right only when chosen", { expect() { (count() || count()) == 1 && calls == 1 } })
+feature("a false && fails", { expect() { "a" && [] } })
+feature("a false || fails", { expect() { null || 0 } })
+"#);
+    assert_eq!(
+        outcomes(&result),
+        vec![
+            ("a list or [] as an argument".to_string(), "passed"),
+            ("a missing list as an argument".to_string(), "passed"),
+            ("a comparison side".to_string(), "passed"),
+            ("an empty list is not chosen".to_string(), "passed"),
+            ("&& keeps the false operand".to_string(), "passed"),
+            ("&& gives the right side".to_string(), "passed"),
+            ("&& keeps an empty list, where JavaScript gives the right side".to_string(), "passed"),
+            ("each side once, the right only when chosen".to_string(), "passed"),
+            ("a false && fails".to_string(), "failed"),
+            ("a false || fails".to_string(), "failed"),
+        ]
+    );
+}
+
+#[test]
 fn assert_checks_a_condition_in_a_loop() {
     let result =
         run("feature('loop', {\n  expect() {\n    for (const n of [1, 2, 3]) assert(n < 3, `n is ${n}`)\n  },\n})\n");
@@ -708,6 +741,9 @@ feature("methods", {
         const left = {}; left.self = left
         const right = {}; right.self = right
         assert.deepEqual(left, right)
+        const shared = [1, 2]
+        assert.deepEqual({ a: shared, b: shared }, { a: [1, 2], b: [1, 2] })
+        assert.deepEqual([shared, shared], [[1, 2], [1, 2]])
         assert.match("abc", /b/)
         assert.doesNotMatch("abc", /z/)
         assert.throws(() => { throw new Error("nope 12") }, /nope/)
@@ -736,6 +772,9 @@ feature("methods", {
         "{}",
         shallow_failure.message
     );
+
+    let shared = run("feature('shared', { expect() { const one = [1]; assert.deepEqual([one, one], [[1], [2]]) } })");
+    assert_eq!(failure(&shared, 0).kind, "assertion");
 
     let pending = run("feature('pending', { expect() { assert.rejects(() => new Promise(() => {})) } })");
     let pending_failure = failure(&pending, 0);
@@ -1041,4 +1080,25 @@ feature("a secret attribute is null to a script, and a malformed selector throws
         None,
         "put back after cleanupSpec"
     );
+}
+
+#[test]
+fn sleep_pauses_the_spec_thread() {
+    let result = run(r#"
+feature("sleep pauses for its milliseconds", {
+    when() {
+        const started = Date.now()
+        sleep(60)
+        const waited = Date.now() - started
+        let refused = null
+        try { sleep(Infinity) } catch (e) { refused = String(e) }
+        return {waited, refused}
+    },
+    then({waited, refused}) {
+        waited >= 50
+        refused.includes("finite number")
+    },
+})
+"#);
+    assert_eq!(outcomes(&result), vec![("sleep pauses for its milliseconds".to_string(), "passed")], "{result:?}");
 }

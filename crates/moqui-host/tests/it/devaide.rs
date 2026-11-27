@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The dev-aide's services on a dev instance (plans/design-dev-aide.md P2): a site component and an upstream app, each its
+//! The dev-aide's services on a dev instance (plans/archive/design-dev-aide.md P2): a site component and an upstream app, each its
 //! own scratch git repository with a bare remote, and git isolated from the desktop (no global or system config, no
 //! askpass, no credential helper). Saves reload and check, a save over a changed file is refused with the disk's text,
 //! the upstream lock and the tiers hold, paths stay in their roots, writes are audited, commits name the user as author
@@ -718,7 +718,7 @@ const SITE_CALLS: &str = r#"<services>
 </services>
 "#;
 
-/// The artifact index on a dev instance (plans/design-dev-aide.md P3): built into its rows, kept per file by each reload,
+/// The artifact index on a dev instance (plans/archive/design-dev-aide.md P3): built into its rows, kept per file by each reload,
 /// an unchanged file not read again (as after a restart, which reads the ids back from the rows), the site's
 /// extensions with their state, a renamed anchor in an upstream screen showing its extension broken after the reload,
 /// and a call observed on the artifact stack joining the references.
@@ -1490,7 +1490,7 @@ fn the_index_writes_nothing_once_the_shutdown_began() {
     );
 }
 
-/// The index's scale (plans/design-dev-aide.md 7.1, question 11): this repository's components (components/base and
+/// The index's scale (plans/archive/design-dev-aide.md 7.1, question 11): this repository's components (components/base and
 /// component) and a synthetic corpus ten times their size, each built into the rows, with a per-file update and a find
 /// timed. Run once by hand and the numbers recorded in the design:
 /// `cargo test -p moqui-host --features dev --test it devaide::the_index_scales -- --ignored --nocapture`.
@@ -1583,7 +1583,7 @@ fn the_index_scales() {
     measure("synthetic x10", synthetic);
 }
 
-/// F14 (plans/design-dev-aide.md 13.3, 13.5): a screen renders with proposed text standing at a location for the renders
+/// F14 (plans/archive/design-dev-aide.md 13.3, 13.5): a screen renders with proposed text standing at a location for the renders
 /// in the overlay, a new `screen-extend` file merged into its base screen; outside the overlay the screen is as saved,
 /// and the cached definition is not the overlaid one.
 #[test]
@@ -1675,7 +1675,7 @@ fn a_proposed_screen_previews_in_the_real_shell(factory: &Arc<ExecutionContextFa
     assert!(!data.contains("<i>PWNEDMENU"), "{data}");
 }
 
-/// Source stamps (plans/design-dev-aide.md P6, F10): a render that asks for them (`X-Moqui-Aide: source`, a Dev AIDE
+/// Source stamps (plans/archive/design-dev-aide.md P6, F10): a render that asks for them (`X-Moqui-Aide: source`, a Dev AIDE
 /// user on a dev instance) writes each widget's file, line and column as `data-m-src`, a field a site's `screen-extend`
 /// merges naming the screen-extend file; a render that does not ask has none.
 #[test]
@@ -1752,7 +1752,7 @@ fn a_stamped_render_names_each_widgets_file() {
     assert!(!plain.contains("dbform:"));
 }
 
-/// Convert to site extension (plans/design-dev-aide.md 7.2, question 16): a DbForm that changes an upstream form (a
+/// Convert to site extension (plans/archive/design-dev-aide.md 7.2, question 16): a DbForm that changes an upstream form (a
 /// required text field with a tooltip, a drop-down with options and a widget attribute, a dependency, a base field
 /// retitled and one made hidden) becomes the form merge of the site's screen-extend, after the field the site's merge has
 /// already; a dated DbForm is refused; a review's digest that no longer holds is refused and keeps the rows, and so does
@@ -1963,7 +1963,7 @@ fn a_db_form_converts_to_a_site_extension() {
 
 const SCREENS: &str = "org.moqui.devaide.ScreenServices.";
 
-/// The screen tree's actions (plans/design-dev-aide.md 11.1): Set default and a menu index in the parent's file; Move
+/// The screen tree's actions (plans/archive/design-dev-aide.md 11.1): Set default and a menu index in the parent's file; Move
 /// with the references to the old location updated; Remove refused while something references the screen, then
 /// confirmed; and for an upstream parent the default goes in the site's screen-extend of it.
 #[test]
@@ -2171,7 +2171,7 @@ fn writer_gate(label: &str) -> crate::common::Gate {
     )
 }
 
-/// Try in sim and Save as spec (plans/design-dev-aide.md P7, 9.4): a Try lists the rows the service would write and
+/// Try in sim and Save as spec (plans/archive/design-dev-aide.md P7, 9.4): a Try lists the rows the service would write and
 /// keeps none; Save as spec writes its feature into the site's spec file, as the service is upstream; Run spec runs it in
 /// the sim, and it passes.
 #[test]
@@ -2263,7 +2263,7 @@ fn a_try_saved_as_a_spec_passes() {
     );
 }
 
-/// A new SECA rule in the site component runs after its save (plans/design-dev-aide.md P7, 10): the rule set is built
+/// A new SECA rule in the site component runs after its save (plans/archive/design-dev-aide.md P7, 10): the rule set is built
 /// again from the files, no restart.
 #[test]
 fn a_site_seca_runs_after_its_save() {
@@ -2312,7 +2312,7 @@ fn a_site_seca_runs_after_its_save() {
     assert_eq!(rules[0]["site"], true, "{rules}");
 }
 
-/// ECA rules against recorded contexts (plans/design-dev-aide.md 10): a context saved as a named fixture of the site's
+/// ECA rules against recorded contexts (plans/archive/design-dev-aide.md 10): a context saved as a named fixture of the site's
 /// rules file and listed; Save as spec on a SECA rule writes a feature that calls its service with the fixture and
 /// checks what the rule did, on an EECA rule one that makes its entity operation, on a gitECA rule one of its condition
 /// alone (a spec does not replay a push), saying so; the sim keeps nothing of the Tries, and Run spec runs each in the
@@ -2531,7 +2531,7 @@ fn a_rules_fixture_becomes_a_spec_that_passes() {
     assert!(emeca.unwrap_err().contains("received message"));
 }
 
-/// New component (`create#Component`, plans/design-dev-aide.md 12): a component from the component template
+/// New component (`create#Component`, plans/archive/design-dev-aide.md 12): a component from the component template
 /// (`runtime/components/dev/template`) in runtime/components/addon, or with dev in runtime/components/dev, of the part or
 /// kind asked for (a dev tool in runtime/components/dev unasked), with a git repository of its own and the remote asked for
 /// as its origin; a name taken, a name that is not one, an unknown part or kind, or a remote with a credential or a
@@ -2652,7 +2652,7 @@ fn new_components_come_from_the_component_template() {
 
 const ENTITY: &str = "org.moqui.devaide.EntityServices.";
 
-/// The entity modeler's save (plans/design-dev-aide.md P5, F5): the entity view of an upstream entity names the site's
+/// The entity modeler's save (plans/archive/design-dev-aide.md P5, F5): the entity view of an upstream entity names the site's
 /// entity file as where its edits go; a save of the site's `extend-entity` relinks the model at once and adds the
 /// column, no restart; a file that does not parse keeps the model there was, with "restart to apply" and the problem;
 /// a site's seed data file loads.
@@ -2915,7 +2915,7 @@ fn an_entity_save_relinks_and_adds_its_column() {
 
 const NOTES: &str = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\ntwelve\n";
 
-/// Git depth (plans/design-dev-aide.md P8) on a scratch repository with git isolated from the desktop: hunks staged,
+/// Git depth (plans/archive/design-dev-aide.md P8) on a scratch repository with git isolated from the desktop: hunks staged,
 /// unstaged and discarded one at a time; a branch made, renamed and deleted; a merge that stops at a conflict, aborted,
 /// then resolved; a tag pushed; a stash popped; a revert and a cherry-pick; a commit's tree, a file at it and blame;
 /// remotes; a force push refused until it is confirmed and for the extend tier; and a clone into the component directory.
@@ -3342,7 +3342,7 @@ const TASK_SERVICES: &str = r#"<services>
 </services>
 "#;
 
-/// The task panel (plans/design-dev-aide.md P8, 14): this instance's tasks assigned to the user, open ones only, with
+/// The task panel (plans/archive/design-dev-aide.md P8, 14): this instance's tasks assigned to the user, open ones only, with
 /// their project's name and the link in the chosen app; Quick create; another instance's tasks over its entity REST
 /// API with the user's own token (here the same server); a source that cannot be reached answers its error; and a
 /// branch named for a task becomes the root's current task.
@@ -3530,6 +3530,31 @@ fn tasks_from_mantle_and_rest() {
         .to_string()
         .contains(&token));
 
+    // SEC-DEV-87: a source moved to another address keeps no token not given again, and sends none in the clear to
+    // another machine
+    let moved = call(
+        &factory,
+        "john.doe",
+        &format!("{TASKS}store#TaskSource"),
+        &[
+            ("taskSourceId", &source),
+            ("baseUrl", "http://127.0.0.1:9"),
+            ("username", "john.doe"),
+        ],
+    );
+    assert!(moved.is_err(), "{moved:?}");
+    let plain = call(
+        &factory,
+        "john.doe",
+        &format!("{TASKS}store#TaskSource"),
+        &[
+            ("taskSourceId", &source),
+            ("baseUrl", "http://tasks.example.net"),
+            ("username", "john.doe"),
+            ("token", &token),
+        ],
+    );
+    assert!(plain.is_err(), "{plain:?}");
     // a source that cannot be reached: its error, no tasks
     call(
         &factory,
@@ -3539,6 +3564,7 @@ fn tasks_from_mantle_and_rest() {
             ("taskSourceId", &source),
             ("baseUrl", "http://127.0.0.1:9"),
             ("username", "john.doe"),
+            ("token", &token),
         ],
     )
     .unwrap();
@@ -3568,7 +3594,7 @@ fn tasks_from_mantle_and_rest() {
     assert_eq!(text(&status, "currentTask"), "PROJ-1");
 }
 
-/// A `.qvue` screen in the screen builder (plans/design-dev-aide.md P9, 11.4): its text renders from the canvas's
+/// A `.qvue` screen in the screen builder (plans/archive/design-dev-aide.md P9, 11.4): its text renders from the canvas's
 /// overlay (F14 for a `<text location>`), and a stamped render marks its template's elements with their lines (F10).
 #[test]
 fn a_qvue_screen_renders_from_its_buffer() {
@@ -3664,7 +3690,7 @@ fn aide_project(name: &str) -> std::path::PathBuf {
     std::fs::canonicalize(root).unwrap()
 }
 
-/// The index's reads on an instance that is not dev (plans/design-dev-aide.md 7.4): an `AIDE_READERS` user reads an
+/// The index's reads on an instance that is not dev (plans/archive/design-dev-aide.md 7.4): an `AIDE_READERS` user reads an
 /// allowed project by its id, as a service and over REST with an API key, each answer with the index's stamp; a project
 /// not allowed, a directory, the server's own index, a user without the permission and the rebuild are refused, and a
 /// name only the server has is a miss in the project, not the server's answer.

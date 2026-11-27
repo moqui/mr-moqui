@@ -264,6 +264,12 @@ pub(crate) fn field(scope: &mut ExoticScope<'_>, cell: &Arc<EntityCell>, name: &
 /// The host value of an entity value, a list or a find; `None` for another object.
 pub(crate) fn object_to_host<J: Js>(js: &mut J, object: &ObjectRef) -> JsResult<Option<HostValue>> {
     if let Some(cell) = super::super::names::entity_cell(js, object)? {
+        // handed to the host, so the cell coming back is this object ([`super::super::engine::EntityObjects`])
+        if let Some(engine) = current() {
+            if !engine.keeps_entity(&cell) {
+                engine.keep_entity(object.clone(), Arc::clone(&cell));
+            }
+        }
         return Ok(Some(HostValue::Object(HostObject(cell))));
     }
     if let Some(list) = js.host_data::<ListTarget>(object)? {
@@ -293,10 +299,20 @@ pub(crate) fn object_to_host<J: Js>(js: &mut J, object: &ObjectRef) -> JsResult<
 }
 
 
-/// The state of a host call's receiver when it is an entity value or list, read from the call with no handle.
+/// The state of a host call's receiver when it is an entity value or list, read from the call with no handle. An
+/// entity value the run no longer keeps is kept again, with a handle then, so a method that returns its receiver
+/// (`value.create()`) returns this object ([`super::super::engine::EntityObjects`]).
 pub(crate) fn receiver_state(scope: &mut quickjs_oxide::engine::api::core::Scope<'_>) -> JsResult<Option<HostObject>> {
     if let Some(target) = scope.this_host_data::<super::super::names::EntityTarget>()? {
-        return Ok(Some(HostObject(Arc::clone(&target.0) as _)));
+        let cell = Arc::clone(&target.0);
+        if let Some(engine) = current() {
+            if !engine.keeps_entity(&cell) {
+                if let Value::Object(this) = scope.this() {
+                    engine.keep_entity(this, Arc::clone(&cell));
+                }
+            }
+        }
+        return Ok(Some(HostObject(cell as _)));
     }
     Ok(scope
         .this_host_data::<ListTarget>()?

@@ -29,9 +29,12 @@ use moqui_core::context::{ExecutionContext, ExecutionContextFactory};
 use super::{run, Refusal};
 use crate::http::{HttpState, ListenLimits};
 
-/// A factory whose request pool has one worker and room for `queue` jobs.
+/// A factory whose request pool has one worker and room for `queue` jobs, with the MCP server on (an off one is
+/// answered before the queue, SEC-AI-88).
 fn factory(queue: usize) -> (ExecutionContext, Arc<ExecutionContextFactory>) {
-    let context = ExecutionContextFactory::test_context();
+    let context = ExecutionContextFactory::test_context_with_conf(
+        r#"<moqui-conf><llm-facade enabled="true"><mcp server-enabled="true"/></llm-facade></moqui-conf>"#,
+    );
     let factory = Arc::clone(context.factory());
     factory.request_pool().start(1, queue).unwrap();
     (context, factory)

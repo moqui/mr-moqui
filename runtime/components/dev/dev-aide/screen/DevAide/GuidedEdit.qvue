@@ -11,7 +11,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The guided arrangement (plans/design-dev-aide.md D18): one artifact in its visual view, with the file status strip,
+<!-- The guided arrangement (plans/archive/design-dev-aide.md D18): one artifact in its visual view, with the file status strip,
     Save, Text one click away, Problems and the Assist drawer, nothing else. Entities/Edit, Services/Edit, Eca/Edit and
     Screens/Edit render it; the view is the one of the tool (entity, service, eca, screen) and the Workspace's
     transitions answer the client. -->

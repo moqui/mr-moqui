@@ -12,11 +12,14 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Maps › Configuration › Archives (plans/Maps.md §4.1, §5; docs/tools/Maps.md "Archives"): the PMTiles layers, each with its
+<!-- Maps › Configuration › Archives (plans/archive/Maps.md §4.1, §5; docs/tools/Maps.md "Archives"): the PMTiles and Cloud Optimized
+    GeoTIFF layers (a COG at a resource location registered as a PMTiles archive is, its header read instead; a COG at its
+    provider's URL read from there, P4c), each with its
     archive's location, registered revision, size, zoom range and state now (org.moqui.maps.MapSourceServices
     find#ArchiveLayers), Register (register#ArchiveLayer: an archive in a drive, a git repository as a Git LFS object or on
-    disk, its header checked and its revision recorded; again after the file is replaced, which a map drawing the old
-    revision is refused and loads its configuration again), the profiles whose basemap it is with Enable and Make default
+    disk, its header checked and its revision recorded, for the layer chosen and those chosen to draw it too, such as the
+    light and dark styles of one Protomaps extract, all in one action; again after the file is replaced, which registers
+    every layer naming the archive, and which a map drawing the old revision is refused and loads its configuration again), the profiles whose basemap it is with Enable and Make default
     (MapServices.store#ProfileSettings), and the limits an archive's size meets. The services check their caller:
     Configuration's view to read, its update to change. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
@@ -24,7 +27,8 @@ along with this software (see the LICENSE.md file). If not, see
 
     <transition name="registerArchive">
         <service-call name="org.moqui.maps.MapSourceServices.register#ArchiveLayer" out-map="registered"
-                in-map="{layerId:layerId, resourceLocation:(resourceLocation || null)}"/>
+                in-map="{layerId:layerId, resourceLocation:(resourceLocation || null),
+                    alsoLayerIds:(alsoLayerIds ? (Array.isArray(alsoLayerIds) ? alsoLayerIds : String(alsoLayerIds).split(',')) : null)}"/>
         <actions>
             <if condition="!ec.message.hasError()">
                 <script>ec.message.addMessage(registered.reason + (registered.applied &amp;&amp; registered.notes?.length ? ' ' + Array.from(registered.notes).join(' ') : ''),
@@ -63,6 +67,10 @@ along with this software (see the LICENSE.md file). If not, see
                     profileRows.push(Object.assign({}, profile, {layerName: row.layerName, registered: !!row.revision,
                         stateText: profile.enabled ? ec.l10n.localize('Enabled') : ec.l10n.localize('Disabled')}))
             layerOptions = archiveRows.map(row => ({key: row.layerId, text: row.layerName}))
+            // the packaged local profile's two styles draw one extract: offered together while neither is registered
+            const unregistered = layerId => archiveRows.some(row => row.layerId === layerId && !row.revision)
+            registerDefaults = unregistered('LOCAL_PROTOMAPS_LIGHT') && unregistered('LOCAL_PROTOMAPS_DARK')
+                ? {layerId: 'LOCAL_PROTOMAPS_LIGHT', alsoLayerIds: ['LOCAL_PROTOMAPS_DARK']} : {}
             const limits = found?.limits || {}
             limitsText = ec.l10n.localize('An upload is at most') + ' ' + (limits.maxUploadText || '?') + ' (max-upload); '
                 + ec.l10n.localize('a Git LFS object at most') + ' ' + (limits.lfsMaxObjectText || '?') + ' (git-server@lfs-max-object-size); '
@@ -75,19 +83,24 @@ along with this software (see the LICENSE.md file). If not, see
     <widgets>
         <label text="Map archives" type="h5"/>
         <label type="p" style="text-caption m-muted"
-                text="A PMTiles archive on this server draws a map with no outside request: place a regional extract (such as a Protomaps download) in a drive, in a git repository as a Git LFS object, or on the server's disk, then register its location here. Registering checks the archive and records the revision maps read; register again after replacing the file."/>
+                text="A PMTiles archive or a Cloud Optimized GeoTIFF on this server draws a map with no outside request: place a regional extract (such as a Protomaps download) or a COG in a drive, in a git repository as a Git LFS object, or on the server's disk, then register its location here. Registering checks its header and records the revision maps read; register again after replacing the file. A COG layer with no location and its provider's URL is read from the provider, its header recorded."/>
         <label type="p" style="text-negative" condition="!configured" text="Maps configuration is not available to you."/>
         <section name="ArchiveSections" condition="configured">
             <widgets>
                 <container-box id="MapsArchiveRegisterBox">
                     <box-header title="Register an archive"/>
                     <box-body>
-                        <form-single name="RegisterArchive" transition="registerArchive">
+                        <form-single name="RegisterArchive" transition="registerArchive" map="registerDefaults">
                             <field name="layerId">
                                 <default-field title="Layer"><drop-down><list-options list="layerOptions" key="${key}" text="${text}"/></drop-down></default-field>
                             </field>
+                            <field name="alsoLayerIds">
+                                <default-field title="Also drawn by" tooltip="Other PMTiles layers of the same format that draw the same archive, such as the dark style of a Protomaps extract: all are registered together">
+                                    <drop-down allow-multiple="true" allow-empty="true"><list-options list="layerOptions" key="${key}" text="${text}"/></drop-down>
+                                </default-field>
+                            </field>
                             <field name="resourceLocation">
-                                <default-field title="Location" tooltip="A file's resource location: dbresource://drive/..., git://repository/path.pmtiles (a Git LFS object), file:/path or runtime://path; empty for the layer's own">
+                                <default-field title="Location" tooltip="A file's resource location: dbresource://drive/..., git://repository/path.pmtiles or .tif (a Git LFS object), file:/path or runtime://path; empty for the layer's own (a COG layer's provider URL when it has no location)">
                                     <text-line size="60"/></default-field>
                             </field>
                             <field name="submitButton"><default-field title="Register"><submit/></default-field></field>
@@ -100,7 +113,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <container-box id="MapsArchivesBox">
                     <box-header title="Archive layers"/>
                     <box-body>
-                        <label type="p" style="m-muted" condition="!archiveRows.length" text="No PMTiles layer is registered."/>
+                        <label type="p" style="m-muted" condition="!archiveRows.length" text="No PMTiles or COG layer is registered."/>
                         <form-list name="ArchiveList" list="archiveRows" skip-form="true" paginate="false">
                             <field name="layerName"><default-field title="Layer"><display/></default-field></field>
                             <field name="resourceLocation"><default-field title="Location"><display/></default-field></field>

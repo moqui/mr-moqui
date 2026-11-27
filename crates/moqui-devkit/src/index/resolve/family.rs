@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! What takes a name from an entity field, a parameter or a form field (plans/design-dev-aide.md 13.6): for the LSP's
+//! What takes a name from an entity field, a parameter or a form field (plans/archive/design-dev-aide.md 13.6): for the LSP's
 //! rename, through the expansions (`expand.rs`), each row followed by what it was made from (its provenance), not by
 //! its name alone: a view's alias of another member's field of that name, or a declared parameter an `include="pk"`
 //! leaves apart from a field, is not of the family.

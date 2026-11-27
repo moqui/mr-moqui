@@ -53,6 +53,12 @@ const COMMANDS: &[&str] = &[
     "file_save",
     "vault_call",
     "vault_memory",
+    "packages_list",
+    "packages_download",
+    "packages_cancel",
+    "packages_delete",
+    "packages_status",
+    "packages_addresses",
     "scheme_fetch",
     "client_show_shell",
     "open_in_shell",
@@ -81,6 +87,10 @@ const COMMANDS: &[&str] = &[
     "call_dial_from",
     "contacts_search",
     "contact_names",
+    "location_allow",
+    "location_share_start",
+    "location_share_stop",
+    "location_share_status",
 ];
 
 fn main() {

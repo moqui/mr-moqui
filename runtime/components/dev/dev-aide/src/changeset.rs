@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.devaide.ChangeSetServices`: an agent's change set (plans/design-dev-aide.md 13.3) as its owner reviews it.
+//! `org.moqui.devaide.ChangeSetServices`: an agent's change set (plans/archive/design-dev-aide.md 13.3) as its owner reviews it.
 //! `get#ChangeSet` gives the Workspace each file's text on disk and as proposed, for the inline merge of Review;
 //! `complete#Review` resolves the hand-off with what the user did once their saves are in. The Preview of a change set
 //! is a render of the page with its proposed text standing at the files' locations: the screen overlay's provider
@@ -20,6 +20,7 @@
 
 use std::sync::Arc;
 
+use moqui_core::context::framework_thread;
 use moqui_core::context::{Error, ExecutionContext, ExecutionContextFactory};
 use moqui_core::native::{NativeRegistry, Parameters, ServiceInfo};
 use moqui_core::screen::overlay::Overlay;
@@ -51,7 +52,7 @@ pub(crate) fn owned(context: &Context, approval_id: &str) -> Result<approval::Ap
 /// The overlay of a preview token: `approval:<approvalId>`, a pending or handed-off change set of the current user, or
 /// `buffer:<id>`, a Design frame's canvas buffer.
 fn preview_overlay(factory: &Arc<ExecutionContextFactory>, token: &str) -> Option<Overlay> {
-    // the screen builder's Design frame: the user's unsaved texts (plans/design-dev-aide.md 11.2)
+    // the screen builder's Design frame: the user's unsaved texts (plans/archive/design-dev-aide.md 11.2)
     if let Some(id) = token.strip_prefix("buffer:") {
         return crate::buffers::buffer_overlay(factory, id);
     }
@@ -158,12 +159,12 @@ fn complete_review(
     let detail = json!({"accepted": accepted, "total": total, "edited": edited, "saved": saved});
     let done = std::thread::scope(|scope| {
         scope
-            .spawn(|| {
+            .spawn(framework_thread(|| {
                 let own = context.factory.new_context();
                 let _entered = own.enter();
                 let _authz = own.disable_authz();
                 approval::handoff::complete(&context.factory, &view.approval_id, &view.user_id, &review, &detail)
-            })
+            }))
             .join()
             .unwrap_or_else(|_| Err(LibError::new("the review could not be completed")))
     })?;

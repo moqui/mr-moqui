@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Hosted roots (plans/design-dev-aide.md 4.10, P10): a repository of this server's git hosting at a branch, edited in
+//! Hosted roots (plans/archive/design-dev-aide.md 4.10, P10): a repository of this server's git hosting at a branch, edited in
 //! the Workspace with no working tree. Its tree, files, Go to file and search are read through
 //! `org.moqui.git.GitServices` (`get#GitTree`, `get#GitBlob`) as the user, so `AT_GIT_REPOSITORY` decides what they
 //! read, at the root's branch; each Save, new file, new folder, move and delete is a commit by the user through
@@ -59,7 +59,8 @@ const GIT: &str = "org.moqui.git.GitServices.";
 const MAX_FILES: usize = 20_000;
 const MAX_DIRECTORIES: usize = 2_000;
 const MAX_SEARCHED: usize = 5_000;
-/// The most files a delete of a folder removes in its one commit.
+/// The most files a delete of a folder removes in its one commit when `dev-aide@hosted-max-deleted` is not a number
+/// over 0.
 const MAX_DELETED: usize = 2_000;
 
 /// What a hosted root is: the repository and the branch its saves commit to.
@@ -684,7 +685,7 @@ pub(crate) fn delete_path(
         return Err(LibError::new(format!("{path} is not there")));
     };
     let removes = match item_text(&entry, "type").as_str() {
-        "dir" => under(hosted, &path)?,
+        "dir" => under(hosted, &path, max_deleted(context))?,
         "submodule" => return Err(LibError::new(format!("{path} is a submodule: delete it from a clone"))),
         _ => vec![path.clone()],
     };
@@ -706,10 +707,21 @@ pub(crate) fn delete_path(
     Ok(out)
 }
 
+/// The most files a delete of a folder removes in its one commit: `dev-aide@hosted-max-deleted`, else [`MAX_DELETED`].
+fn max_deleted(context: &Context) -> usize {
+    context
+        .factory
+        .conf_setting("dev-aide", "hosted-max-deleted")
+        .parse()
+        .ok()
+        .filter(|max| *max > 0)
+        .unwrap_or(MAX_DELETED)
+}
+
 /// Every path a delete of the folder `dir` removes, read at one commit: its files, executables and symbolic links. A
 /// folder that cannot be read whole (a listing that fails, the time budget), that holds a submodule, or that has more
-/// than [`MAX_DELETED`] of them is refused, never deleted in part.
-fn under(hosted: &HostedBranch, dir: &str) -> Result<Vec<String>, LibError> {
+/// than `max` of them is refused, never deleted in part.
+fn under(hosted: &HostedBranch, dir: &str, max: usize) -> Result<Vec<String>, LibError> {
     let started = Instant::now();
     let mut commit = String::new();
     let mut out = Vec::new();
@@ -741,9 +753,9 @@ fn under(hosted: &HostedBranch, dir: &str) -> Result<Vec<String>, LibError> {
                 }
                 _ => out.push(path),
             }
-            if out.len() > MAX_DELETED {
+            if out.len() > max {
                 return Err(LibError::new(format!(
-                    "{dir} has more than {MAX_DELETED} files: delete it from a clone"
+                    "{dir} has more than {max} files: delete it from a clone"
                 )));
             }
         }

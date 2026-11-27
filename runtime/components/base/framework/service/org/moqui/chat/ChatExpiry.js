@@ -401,7 +401,12 @@ function expireRoom(p) {
   const limit = Math.max(1, Number(p.limit) || 2000)
   const room = find(ROOM).condition('chatRoomId', chatRoomId).forUpdate(true).one()
   // events of a room that is gone: deleted, with nothing of the room to change
-  if (!room) return { deletedCount: find(EVENT).condition('chatRoomId', chatRoomId).condition('expireDate', 'less-equals', new Date(now)).deleteAll() }
+  if (!room) {
+    const deletedCount = find(EVENT).condition('chatRoomId', chatRoomId).condition('expireDate', 'less-equals', new Date(now)).deleteAll()
+    // its live location links (ChatLiveShare) stay for the hourly clean of the shares, so an owner's later block still
+    // reaches a share sent to this room (plans/archive/Location-Sharing.md §3.5)
+    return { deletedCount }
+  }
   const rotationMillis = Math.min(WEEK_MILLIS, (Number(room.messageTimerSeconds) || 0) * 1000 || WEEK_MILLIS)
   pendingSessions(chatRoomId, now)
   let due = Array.from(find(EVENT).condition('chatRoomId', chatRoomId).condition('expireDate', 'less-equals', new Date(now))

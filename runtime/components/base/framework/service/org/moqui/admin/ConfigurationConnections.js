@@ -1455,7 +1455,8 @@ function getConnection(p) {
 function storeConnection(p) {
     lib.requireManage(MANAGE)
     const adapter = adapterOf(p.adapterKey)
-    if (!text(p.connectionKey) && !adapter.creatable)
+    // a key that names no connection is a creation too, which the kind's engine would start (SEC-ADM-88)
+    if (!adapter.creatable && (!text(p.connectionKey) || !run(adapter, "get", {connectionKey: p.connectionKey}).connection))
         return refused("NOT_CREATABLE", "A " + adapter.title.toLowerCase() + " is not started here")
     return run(adapter, "store", {
         connectionKey: p.connectionKey,

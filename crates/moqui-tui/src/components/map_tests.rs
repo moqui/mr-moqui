@@ -90,6 +90,20 @@ fn the_places_are_a_list_over_the_land_with_the_attribution() {
             "Area: 51.30000, -0.50000 – 51.70000, 0.30000"
         ]
     );
+    // with places, the view comes before them (Browse opened on an area across the antimeridian lists those within it)
+    let within = shown(
+        &json!({"points": [{"id": "v", "lon": 135.07, "lat": 48.48, "label": "Khabarovsk"}],
+            "center": [108.7, 59.4], "extent": [27.2865, 41.1518, -169.8983, 77.6975]}),
+        &state,
+    );
+    let at = within.iter().position(|line| line == "Places").unwrap();
+    assert_eq!(
+        within[at - 2..at],
+        [
+            "Center: 59.40000, 108.70000",
+            "Area: 41.15180, 27.28650 – 77.69750, -169.89830"
+        ]
+    );
 }
 
 #[test]
@@ -166,9 +180,122 @@ fn a_source_gives_the_places_notes_and_attribution() {
         ..ComponentState::default()
     };
     let text = shown(&props, &state);
-    let note = text.iter().position(|line| line == "Not shown: Parks (it names no source)");
+    let note = text
+        .iter()
+        .position(|line| line == "Not shown: Parks (it names no source)");
     let places = text.iter().position(|line| line == "Places");
     assert!(note.is_some() && places.is_some() && note < places, "{text:?}");
-    assert!(text.contains(&"▸ Home  41.87810, -87.62980  Your saved view".to_string()), "{text:?}");
-    assert_eq!(text.last().map(String::as_str), Some("Map data: OpenFreeMap; © OpenMapTiles"));
+    assert!(
+        text.contains(&"▸ Home  41.87810, -87.62980  Your saved view".to_string()),
+        "{text:?}"
+    );
+    assert_eq!(
+        text.last().map(String::as_str),
+        Some("Map data: OpenFreeMap; © OpenMapTiles")
+    );
+}
+
+#[test]
+fn with_a_source_a_postal_code_is_searched_and_the_overlays_listed() {
+    // Maps › Browse: a postal search's places first, the saved places (a shared one read-only), then the overlays
+    let props = json!({"source": "terminalMap"});
+    let mut state = ComponentState {
+        data: Some(json!({
+            "points": [
+                {"id": "postal:0", "lon": -71.1, "lat": 42.35, "label": "02134 Allston", "precision": "Approximate location — postal area", "source": "Census ZCTA 2026"},
+                {"id": "place:1:a", "lon": -87.6298, "lat": 41.8781, "label": "Office", "source": "Shared by Ann · read-only"}
+            ],
+            "postalSearch": {"query": "US 02134", "count": 1, "reason": null},
+            "overlays": [{"label": "Hikes", "details": "Yours · 12 features"}, {"label": "Ann's places", "details": "Shared by Ann · read-only · 3 features"}]
+        })),
+        ..ComponentState::default()
+    };
+    let text = shown(&props, &state);
+    let search = text
+        .iter()
+        .position(|line| line == "Postal search US 02134: 1 approximate place, listed first");
+    let places = text.iter().position(|line| line == "Places");
+    assert!(search.is_some() && search < places, "{text:?}");
+    assert!(
+        text.contains(
+            &"▸ 02134 Allston  42.35000, -71.10000  Approximate location — postal area · Census ZCTA 2026".to_string()
+        ),
+        "{text:?}"
+    );
+    assert!(
+        text.contains(&"  Office  41.87810, -87.62980  Shared by Ann · read-only".to_string()),
+        "{text:?}"
+    );
+    let overlays = text
+        .iter()
+        .position(|line| line == "Overlays")
+        .expect("the overlays are listed");
+    assert_eq!(text[overlays + 1], "  Hikes  Yours · 12 features");
+    assert_eq!(
+        text[overlays + 2],
+        "  Ann's places  Shared by Ann · read-only · 3 features"
+    );
+    // s: type a code and its country (a character no code has is not taken); Enter asks the source again with it
+    state.at = 1;
+    Map.key(&props, &mut state, &press(Key::Char('s')), false).unwrap();
+    for ch in "ca k1a?".chars() {
+        Map.key(&props, &mut state, &press(Key::Char(ch)), false).unwrap();
+    }
+    Map.paste(&props, &mut state, " 0b1<").unwrap();
+    assert!(
+        shown(&props, &state).contains(&"Postal code (and its country, such as US 02134): ca k1a 0b1▏".to_string()),
+        "{:?}",
+        shown(&props, &state)
+    );
+    assert_eq!(
+        Map.key(&props, &mut state, &press(Key::Char('c')), false),
+        Some(Vec::new()),
+        "typing, not copying"
+    );
+    // a chord is the screen's: nothing typed
+    assert_eq!(
+        Map.key(&props, &mut state, &KeyPress::with_ctrl(Key::Char('u')), false),
+        None
+    );
+    assert_eq!(
+        Map.key(&props, &mut state, &KeyPress::with_alt(Key::Char('x')), false),
+        None
+    );
+    Map.key(&props, &mut state, &press(Key::Backspace), false).unwrap();
+    assert_eq!(
+        Map.key(&props, &mut state, &press(Key::Enter), false),
+        Some(vec![Act::Reload])
+    );
+    assert_eq!(state.parameters.get("postal").map(String::as_str), Some("ca k1a 0b1"));
+    assert_eq!(state.at, 0, "the first place is the search's");
+    let (source, parameters) = Map.source(&props, &state).unwrap();
+    assert_eq!(source, "terminalMap");
+    assert_eq!(parameters.get("postal").map(String::as_str), Some("ca k1a 0b1"));
+    // nothing found says why; an empty search takes the postal places away
+    state.data = Some(
+        json!({"points": [], "postalSearch": {"query": "ZZ 1", "count": 0, "reason": "No imported Geo data has this postal code"}}),
+    );
+    let text = shown(&props, &state);
+    assert!(
+        text.contains(&"Postal search ZZ 1: nothing found".to_string()),
+        "{text:?}"
+    );
+    assert!(
+        text.contains(&"No imported Geo data has this postal code".to_string()),
+        "{text:?}"
+    );
+    Map.key(&props, &mut state, &press(Key::Char('s')), false).unwrap();
+    for _ in 0..12 {
+        Map.key(&props, &mut state, &press(Key::Backspace), false).unwrap();
+    }
+    assert_eq!(
+        Map.key(&props, &mut state, &press(Key::Enter), false),
+        Some(vec![Act::Reload])
+    );
+    assert!(!state.parameters.contains_key("postal"));
+    // a map with no source (a map-view's props) offers no search
+    assert_eq!(
+        Map.key(&json!({"points": []}), &mut state, &press(Key::Char('s')), false),
+        None
+    );
 }

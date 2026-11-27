@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The Geo data importer (plans/Maps.md §6.4): `org.moqui.maps.GeoDataServices` ([`service`]) brings a registered data
+//! The Geo data importer (plans/archive/Maps.md §6.4): `org.moqui.maps.GeoDataServices` ([`service`]) brings a registered data
 //! set (`moqui.maps.GeoDataSet`) in when an administrator asks: preflight, a capped and conditional download to a file
 //! under `runtime/tmp`, or an operator's file ([`fetch`]); the whole file read and checked writing nothing, then loaded
 //! in batches of a few thousand codes to a transaction, and retired only after a whole load ([`load`]). Each run is a
@@ -28,6 +28,8 @@ pub mod service;
 pub const DATA_SET: &str = "moqui.maps.GeoDataSet";
 pub const IMPORT: &str = "moqui.maps.GeoDataImport";
 pub const IMPORT_SERVICE: &str = "org.moqui.maps.GeoDataServices.import#GeoData";
+/// The ServiceJob that runs an import in the background, a run of it a run of `import#GeoData`.
+pub const IMPORT_JOB: &str = "GeoDataImport";
 
 /// Where a run's error file goes: `<root>/<userId>/<geoDataImportId>/errors.csv`.
 pub const ERROR_ROOT: &str = "dbresource://moqui/maps/geo-import";

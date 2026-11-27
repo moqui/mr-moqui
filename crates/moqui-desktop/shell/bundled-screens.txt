@@ -4,6 +4,7 @@
 BasicComms/Panel/Chat runtime/components/base/basic-comms/screen/BasicComms/Panel/ChatPanel.qvue
 Shell/Root crates/moqui-desktop/shell/screens/Root.qvue
 Shell/SignIn crates/moqui-desktop/shell/screens/SignIn.qvue
+Shell/MapsOffline crates/moqui-desktop/shell/screens/MapsOffline.qvue
 BasicComms/Chat runtime/components/base/basic-comms/screen/BasicComms/Chat.qvue
 BasicComms/Inbox/Mail runtime/components/base/basic-comms/screen/BasicComms/Inbox/Mail.qvue
 BasicComms/Inbox/Compose runtime/components/base/basic-comms/screen/BasicComms/Inbox/Compose.qvue

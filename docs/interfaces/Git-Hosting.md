@@ -147,7 +147,7 @@ first branch pushed) its default branch.
   itself, the user's own only); a request a scoped key signed in ends that key alone. The REST has both as
   `hosting/gatewayKey` (made only with the account's key) and `hosting/keyRevoke` (POST; it takes every scope). The Dev
   AIDE's Connect keeps a `git`, a `tasks` and a `gateway` key, never the account's but for a Smithy server's installed
-  app key ([Dev-AIDE](../tools/Dev-AIDE.md#group-servers); plans/design-dev-aide.md question 18).
+  app key ([Dev-AIDE](../tools/Dev-AIDE.md#group-servers); plans/archive/design-dev-aide.md question 18).
 
 An account page adds and removes SSH keys and creates and revokes access tokens through
 `org.moqui.impl.UserServices` (My Account, Git Access of mr-marble; BOSS's Git Access): `create#UserSshKey`,
@@ -1108,7 +1108,7 @@ remote:   https://moqui.org/moqui/mr-moqui/-/merge-requests/12
 ### REST
 
 The framework's REST for hosting is in the `moqui` root resource (`tools/service/moqui.rest.xml`), in OpenAPI at
-`/rest/service.swagger/moqui.json` (plans/Dogfood.md F9, plans/design-dev-aide.md F18). Every path is open to a
+`/rest/service.swagger/moqui.json` (plans/Dogfood.md F9, plans/archive/design-dev-aide.md F18). Every path is open to a
 signed-in user (`MOQUI_API_GIT`, `MOQUI_API_HOSTING` in `ToolsSecurityData.xml`) and the services under it check the
 repository's rights as they do without REST, so an access token (a login key) reaches what its account may; a
 repository the caller may not view answers as one that is not there. Merge requests and pipeline runs are named by
@@ -1166,9 +1166,12 @@ gateway, `keyPath`: where a key for it alone is made, `requireClient`: whether t
 docs/ai/Gateway.md); `agreement` (`path`, `decided`); `forks`; `pages` (a repository's pages for a person: none
 here). `git-server` `offer-service` (interface `add#GitHostingOffer`, with the offer and the user, authorization off)
 returns the offer as the application has it: its REST (`application`: `name`, `restBase`, and `pages`, the templates of
-a repository's pages it keeps: `file` with `{repositoryPath}`, `{ref}`, `{file}` and `{line}`, `commit` with
-`{commitId}`, `branch` with `{branch}`, absolute URLs on the server's own address, which the Dev AIDE's "Open on the
-server" fills), its task source (`tasks`: `kind`, `path`, and a task app's paths), whether it makes forks, and so on.
+a repository's pages it keeps: `file` with `{repositoryPath}` or `{repositoryId}`, `{ref}`, `{file}` and `{line}`,
+`commit` with `{commitId}`, `branch` with `{branch}`, absolute URLs on the server's own address, which the Dev AIDE's
+"Open on the server" fills), the same templates in `pages` for the repositories this server's hosting keeps where the
+application has pages for them (IronStone Projects' Code: `ironstone.projects.CodeServices.add#HostingOffer`, which
+calls Mantle's first), its task source (`tasks`: `kind`, `path`, and a task app's paths), whether it makes forks, and
+so on. With no application's pages, a client shows no "Open on the server".
 It is asked for callers with no credentials too, so it gives no one's data.
 
 **An application that keeps a repository.** A hosting application with rules of its own (Smithy's roles, confirmed

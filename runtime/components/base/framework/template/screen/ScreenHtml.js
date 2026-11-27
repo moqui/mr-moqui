@@ -2373,7 +2373,7 @@
 
     const tableOfFormNoops = noops(S.allElements);
 
-    // map-view (plans/Maps.md §3.2): the page draws no map, so its places as text (ScreenSupport's mapViewHtmlFn: label,
+    // map-view (plans/archive/Maps.md §3.2): the page draws no map, so its places as text (ScreenSupport's mapViewHtmlFn: label,
     // coordinates as latitude, longitude, precision, source; the center or area when there is no place; the attribution),
     // every value escaped. Nothing for a false condition.
     const mapViewWidget = stmt((node) => {

@@ -1,5 +1,7 @@
 # MR Moqui — UI review: Dev AIDE workspace and collaboration
 
+**Active pass · November 26.** [DEVW-B03](#devw-b03--november-26-change-led-review) records the selected branches and their outcomes. Earlier batches retain their dated evidence.
+
 **Review update — 2026-11-25.** DEVW-B02 records the latest live evidence. The activity ledger identifies the branches still open.
 
 **Status — 2026-11-25, refinement.** All three DEVW-B01 findings are fixed (DEVW-UI-001–003).
@@ -18,7 +20,7 @@ and collaborate, then verify what reloaded or still needs restart. One Workspace
 workflows, each listed below. Guided entity/service/screen authoring has its own companion file.
 
 Sources: [Dev AIDE README](../runtime/components/dev/dev-aide/README.md),
-[design](design-dev-aide.md), [Run and Deploy](../docs/Run-Deploy.md),
+[design](archive/design-dev-aide.md), [Run and Deploy](../docs/Run-Deploy.md),
 [Git hosting](../docs/interfaces/Git-Hosting.md), [Terminal](../docs/ui/Terminal.md),
 current DevAide Home/Workspace/Repositories/Tasks/Settings, Workspace QVue/TUI,
 `devstatic`, `DevAideSecurityData.xml`, and `org.moqui.devaide` services. Reconcile current implemented group-server
@@ -416,6 +418,20 @@ The ledger records the strongest observed outcome. The remaining steps, recovery
 | DEVW-12 | Start an Assist task in a disposable worktree, review its proposed diff and confirm its disposition. |
 | DEVW-13 | Repeat the same valid Workspace write across View, Edit and host-local grants through browser and TUI. |
 
+### DEVW-B03 · November 26 change-led review
+
+The Workspace tabs and dialogs below extend the screen inventory. Each row names the existing flow it extends, the evidence level, and the point to resume. The fixtures used a local group peer, a disposable Git tree, two browser contexts and a local BusyBox image.
+
+| New activity | Observed path and result | Evidence and next check |
+|---|---|---|
+| DEVW-14 · Hosted roots and task apps (DEVW-01/04/08/09) | HostedRoot exercised visibility for a viewer and non-viewer, a file tree backed by a Git branch, Save as a commit, move and folder deletion. TaskApps exercised creation, ownership and refusal of invalid local paths. The editor gate saved and committed fixture changes in Chromium. | rules.txt and gates.txt. The local group-server check filed a repository issue, named a branch for it and inspected the commit reference. A second task fixture checked project and task URLs, local creation and remote reads. See issues.txt. A live addon UI handoff still needs a Mantle project installed and linked to a repository. |
+| DEVW-15 · Shared file editing (DEVW-02/03/13) | John Doe and Fixture Contributor opened the same file. Each saw the other by name. Both edits appeared in the saved disk text. After disconnect the remaining editor lost the peer chip. Rejoin restored both names and the same text. Saving a pending edit after an independent disk write opened conflict handling and preserved the external disk content. | coedit.json. Selecting Take the disk’s restored “Independent disk edit” in both editors. A fresh open and the disk read agreed (resolve.json). |
+| DEVW-16 · Checks and job execution (DEVW-10/11) | The Chromium gate opened and reviewed a hosted merge request and opened its commit’s failed check. On a disposable working tree, the same CI step printed review-ok and exited in busybox:latest without creating its marker in the original. The host-terminal run wrote the marker there. | gates.txt, runner.json, hosted-ci.json and checks-ui.json. In a second real pipeline, the Checks chip opened source-check’s retained log and linked to line 2 of Review.txt. Its text matched the committed source. Clicking Retry queued attempt 3, which the registered runner took and finished with the same intentional exit 1. |
+| DEVW-17 · Editor settings and diagnostics (DEVW-02/13) | EditorSettings persisted Vim and rejected an unknown keymap. The browser worker loaded its declarations and located the misspelled member on line 2 and returned zero diagnostics for the corrected expression. The editor gate exercised replace, save, data load and commit. | rules.txt, editor.txt, keymaps.txt and gates.txt. Chromium exercised the default command bindings, VS Code and Vim, shared undo and filename-based language selection. The actual Workspace editor retained the open file at both desktop themes, 1280px and 390px (workspace-layout.json). |
+| DEVW-18 · Assist worktrees and change review (DEVW-12) | Chromium created an Assist session worktree, saved the proposed file there and followed the worktree through the conversation ending. The change-card fixtures compared its summary and decisions with the underlying edits. | gates.txt and extra-editor.txt. Carry any follow-up on the generated artifact into DEVA-17. |
+
+In an actual 120×40 remote terminal, John Doe opened Terminal.txt, focused the file editor and typed into it. Save explained that Dev AIDE requires a session for writes, and the original bytes stayed intact. In the in-process terminal, the same user opened a disposable site’s Terminal.txt, edited and activated Save. The client reported Saved and the disk contained “Native editTerminal reference”. See terminal-workspace.txt. The service and browser fixtures cover tier-specific refusals separately.
+
 ## 7. Decisions
 
 - IDs are `DEVW`; authoring uses `DEVA`. Workspace owns its XML transition host, while guided editor interactions
@@ -430,3 +446,28 @@ The ledger records the strongest observed outcome. The remaining steps, recovery
   are not inherited. Preserve routes, stored preferences and public contracts in any later refinement.
 - Finish a review with explicit branch outcomes and a candid unresolved ledger; missing prerequisites do not become
   passes. Building absent features is outside this review.
+
+### DEVW-B04 · November 27, 2026 · Workspace, Git and collaboration
+
+John Doe used Workspace transitions against a throwaway local Git repository, a separate bare origin and a second clone. Seeded contributors and scoped identities used the focused Workspace rules. The coordinator supplied the Mantle handoff against the same build. The existing November 26 checks for the hosted runner, shared file and worktree remain applicable where the consumer and operation match. Build `23204bf61`. Chrome measured Material light and dark at 1920×1080, 1280×720 and 390×844 while sampling layout. [Viewport receipts](ui-refinement-evidence/pass-2320/B/layout.json) · [Build receipt](ui-refinement-evidence/pass-2320/binary.sha256).
+
+| Activity | Disposition | Last observed result or applicable prior evidence | Remaining prerequisite and next check | Receipt |
+|---|---|---|---|---|
+| DEVW-01 | partial | Hosted Root discovery and denial ran for holder and non-holder. Prior generated component startup remains applicable. | Use a non-admin component creator to make a new site, reject a duplicate name and reopen it after restart. | [rules.txt](ui-refinement-evidence/pass-2320/B/rules.txt) |
+| DEVW-02 | partial | File hash conflict kept both versions. An independently loaded Tools consumer saw the new extension field after restart. | Repeat file move/delete and binary/XML recovery from the actual narrow editor. | [rules.txt](ui-refinement-evidence/pass-2320/B/rules.txt) · [reload.json](ui-refinement-evidence/pass-2320/B/reload.json) |
+| DEVW-03 | partial | WorkspaceTui exercised a real second disk edit, retained both versions and persisted Save mine. The earlier two-editor Take disk receipt still applies. | Introduce a third disk edit while the conflict dialog is open and verify recovery from a failed follow-up save. | [rules.txt](ui-refinement-evidence/pass-2320/B/rules.txt) |
+| DEVW-04 | partial | Workspace staged and committed the changed file. An independent clone confirmed its contents. HostedRoot exercised a task trailer. | Stage one of two hunks as the assigned contributor and follow that exact commit from the task record. | [git.json](ui-refinement-evidence/pass-2320/B/git.json) · [rules.txt](ui-refinement-evidence/pass-2320/B/rules.txt) |
+| DEVW-05 | partial | A tag, branch switch and conflicting stash resolved to the intended text on disk. The stash was dropped. Workspace renamed and deleted a throwaway branch and tag. A dirty checkout was refused and kept the worktree bytes. | Cancel deletion in the actual branch/tag dialog and verify the named refs still exist. | [git.json](ui-refinement-evidence/pass-2320/B/git.json) · [git-history.json](ui-refinement-evidence/pass-2320/B/git-history.json) |
+| DEVW-06 | partial | The diverged merge conflicted in notes.txt. Conflict resolution produced a two-parent commit. Workspace history, the peer and blame read the resolved text. Cherry-pick introduced history.txt and Revert removed it in a new commit. | Reject continuation on a still-unresolved conflict and cancel an offered history action in the native terminal. | [git.json](ui-refinement-evidence/pass-2320/B/git.json) · [git-history.json](ui-refinement-evidence/pass-2320/B/git-history.json) |
+| DEVW-07 | partial | A peer advanced origin. Workspace push was refused, fetched and merged, then pushed. Both independent clones and the bare repository pointed at 9a3dab3. | Exercise Site Publish and canceled remote operations on a disposable site with its own origin. | [git.json](ui-refinement-evidence/pass-2320/B/git.json) |
+| DEVW-08 | partial | Dev AIDE's task and project links opened the matching Mantle objects. The local task app verified creation and ownership. | Switch between two task-specific branches and independently reopen each linked commit. | [linked-project.json](ui-refinement-evidence/pass-2320/linked-project.json) · [rules.txt](ui-refinement-evidence/pass-2320/B/rules.txt) |
+| DEVW-09 | partial | GroupServers exercised connection state, offered app paths and the distinction between connection token and gateway key. | Rotate or expire a credential on a running group peer and check that reconnect restores the correct repository list. | [rules.txt](ui-refinement-evidence/pass-2320/B/rules.txt) |
+| DEVW-10 | partial | The earlier local peer reached a real merge request. Its discussion store had no independently authored resolution/reviewer decision. | Use a discussion-enabled group repository and an independent reviewer. Follow comment, reply, resolution and decision to the stored MR. | [Prior gates.txt](ui-refinement-evidence/fresh-719e/gates.txt) |
+| DEVW-11 | partial | Prior checks followed a failed hosted job to retained log and committed source. Its registered runner took Retry attempt 3. | Repeat the same rerun operation with a user denied rerun permission and the eligible operator. Inspect a malformed log. | [Prior checks-ui.json](ui-refinement-evidence/fresh-719e/checks-ui.json) |
+| DEVW-12 | partial | The editor change-card checks covered proposed content and decisions. The earlier browser worktree run retained the file through conversation end. | Follow the resolved decision from the active agent worktree to a specific receiving branch and commit. | [editor.txt](ui-refinement-evidence/pass-2320/B/editor.txt) |
+| DEVW-13 | partial | CoeditAccess and WorkspaceTui exercised scoped access and file save branches. | Perform the same file write from View, Edit and host-local accounts in both the mounted Workspace and actual native terminal. | [rules.txt](ui-refinement-evidence/pass-2320/B/rules.txt) |
+| DEVW-14 | complete | HostedRoot wrote, moved and deleted through remote Git. The coordinator linked ur-project-review to BOSS_DEMO_PROJECT. Both Dev AIDE links reached Plan the office move and its Office move project. Earlier issue, revision and stored commit receipts remain applicable. | — | [rules.txt](ui-refinement-evidence/pass-2320/B/rules.txt) · [linked-project.json](ui-refinement-evidence/pass-2320/linked-project.json) · [record-files.json](ui-refinement-evidence/pass-2320/record-files.json) |
+| DEVW-15 | complete | CoeditAccess and Workspace exercised the shared edit/disk-conflict rules. The prior two-browser presence, disconnect, rejoin and final disk read use the same contract. | — | [rules.txt](ui-refinement-evidence/pass-2320/B/rules.txt) |
+| DEVW-16 | complete | Prior independent Chromium and runner reads cover the failed hosted job, its source/rerun and host-local versus image marker. The recorded failure is the intentional fixture exit. | — | [Prior runner.json](ui-refinement-evidence/fresh-719e/runner.json) |
+| DEVW-17 | complete | The served Workspace worker checked the script text against the live generated declarations. The misspelled call produced a line-two diagnostic and the corrected call cleared it. Both themes, 1280px, 390px, key bindings and saved settings have receipts. | — | [live-worker.json](ui-refinement-evidence/pass-2320/B/live-worker.json) · [editor.txt](ui-refinement-evidence/pass-2320/B/editor.txt) · [editor-vectors.txt](ui-refinement-evidence/pass-2320/B/editor-vectors.txt) · [rules.txt](ui-refinement-evidence/pass-2320/B/rules.txt) |
+| DEVW-18 | complete | The current editor card checks support the independently observed worktree/conversation lifecycle. The guided artifact consumer is recorded under DEVA-17. | — | [editor.txt](ui-refinement-evidence/pass-2320/B/editor.txt) |

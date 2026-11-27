@@ -124,8 +124,8 @@ device key the host keeps. The full description is [docs/ui/Desktop-Client.md](.
 - **Outbox and drafts:** chat sends and reads, mail sends and state changes queued in the store and sent by the host on
   a thread of its own (`moqui_client::sync::outbox` and `flush`, the commands in `moqui_client_tauri::outbox`), with
   WebrootChat's retry rules.
-- **Bundled screens:** `shell/bundled-screens.txt` (the shell's own, and BasicComms' chat panel, Chat, Inbox, Compose,
-  Calls/Call and Calls/Dialer), precompiled into `shell/js/bundled-screens.js` with the libraries of `libs.txt`; any
+- **Bundled screens:** `shell/bundled-screens.txt` (the shell's own, the offline Maps screen among them, and BasicComms'
+  chat panel, Chat, Inbox, Compose, Calls/Call and Calls/Dialer), precompiled into `shell/js/bundled-screens.js` with the libraries of `libs.txt`; any
   other screen opens in an app window (`windows.rs`). After a change to one:
   `UPDATE_GOLDEN=1 cargo test -p moqui-core --lib bundled_screens_are_precompiled`.
 - **Vault:** an app window's `moquiDesktop.vault`, the vault module run natively (`moqui_client::vault`, V5), for vault
@@ -142,7 +142,8 @@ without booting a node (`client/conf.rs`), so each build sets its own in its run
 The defaults, in `MoquiDefaultConf.xml`:
 
 ```xml
-<client-conf device-mode="choose" mirror-days="90" prefetch-rooms="20" prefetch-mail="100" store-max-mb="512"/>
+<client-conf device-mode="choose" mirror-days="90" prefetch-rooms="20" prefetch-mail="100" store-max-mb="512"
+    packages-max-mb="4096"/>
 ```
 
 The attributes are in `mr-moqui-conf.xsd` and

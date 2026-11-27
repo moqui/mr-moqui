@@ -1,15 +1,19 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
 /*
- * The code editor widgets (plans/design-dev-aide.md 5.1, F9), on the vendored CodeMirror 6 bundle (libs/codemirror), which
+ * The code editor widgets (plans/archive/design-dev-aide.md 5.1, F9), on the vendored CodeMirror 6 bundle (libs/codemirror), which
  * loads when the first editor mounts:
  *   - m-code-editor: one file's text with its language (by `language` or `file-name`), line numbers, folding, search,
  *     completion (XML elements and attributes from a schema digest; for `sql:<kind>` the dialect, and tables and columns
  *     from a schema map), lint (a `lint` function answering problems), the
  *     shell's dark mode, Mod-S as `save`; `ready` gives the EditorView to a host such as the dev-aide. The user's editor
- *     settings (`moqui.codeEditor.setSettings`: font size, tab size, wrap, white space shown, the keymap and the keys a
- *     user rebound) apply to every editor on the page. When the bundle cannot load it is a plain text area, so a form
- *     still submits. In a form it writes a hidden input of `name`.
+ *     settings (`moqui.codeEditor.setSettings`: font size, tab size, wrap, white space shown, the keymap (CodeMirror's,
+ *     VS Code's or Vim, whose library loads when picked) and the keys a user rebound) apply to every editor on the page.
+ *     A language of the second bundle (libs/codemirror/legacy-modes.min.js: shell, Groovy, properties, TOML,
+ *     Dockerfile, nginx) loads the first time a file needs it. With `collab` the text is a shared Y.Text
+ *     (y-codemirror.next, plans/archive/design-dev-aide.md F15), with the others' carets and selections by name and Yjs' undo.
+ *     When the bundle cannot load it is a plain text area, so a form still submits. In a form it writes a hidden input
+ *     of `name`.
  *   - m-diff-view: two texts side by side (MergeView) or inline (unifiedMergeView), read only unless `editable`.
  *   - m-file-tree: a lazy tree of a directory over a `load(path)` function, each entry with its git status, the folder's
  *     rolled up; `open` for a file, `menu` for a right click.
@@ -39,22 +43,37 @@
         return typeof error === "string" && error ? error : "The folder could not be read";
     };
 
-    // File extensions to the editor's languages; anything else is plain text.
+    // File extensions to the editor's languages; anything else is plain text. shell, groovy, properties, toml, dockerfile
+    // and nginx are the second bundle's (LEGACY_LANGUAGES).
     const EXTENSIONS = {
         xml: "xml", xsd: "xml", xsl: "xml", svg: "xml",
         html: "html", htm: "html", ftl: "html", qvt: "html",
         vue: "vue", qvue: "vue",
         js: "javascript", mjs: "javascript", cjs: "javascript", qjs: "javascript", ts: "javascript",
-        json: "json", css: "css", md: "markdown", markdown: "markdown", sql: "sql", yaml: "yaml", yml: "yaml", rs: "rust"
+        json: "json", css: "css", md: "markdown", markdown: "markdown", sql: "sql", yaml: "yaml", yml: "yaml", rs: "rust",
+        sh: "shell", bash: "shell", zsh: "shell", ksh: "shell", groovy: "groovy", gradle: "groovy", gvy: "groovy",
+        properties: "properties", toml: "toml", dockerfile: "dockerfile", containerfile: "dockerfile", nginx: "nginx"
     };
     editor.extensions = EXTENSIONS;
+    // Whole file names that say the language, where the extension does not.
+    const FILE_NAMES = {
+        dockerfile: "dockerfile", containerfile: "dockerfile", "nginx.conf": "nginx", ".bashrc": "shell", ".bash_profile": "shell",
+        ".profile": "shell", ".zshrc": "shell", "gradlew": "shell", "jenkinsfile": "groovy"
+    };
 
-    // The language of a file name: `.tui.json` is JSON, `Screen.qvue` is Vue, `notes` is plain text.
+    // The language of a file name: `.tui.json` is JSON, `Screen.qvue` is Vue, `Dockerfile` and `Dockerfile.dev` are
+    // Dockerfile, `notes` is plain text.
     editor.languageOf = (fileName) => {
         const name = String(fileName || "").split(/[\\/]/).pop().toLowerCase();
+        if (FILE_NAMES[name]) return FILE_NAMES[name];
+        if (/^(docker|container)file\./.test(name)) return "dockerfile";
         const dot = name.lastIndexOf(".");
         return dot < 0 ? "text" : (EXTENSIONS[name.slice(dot + 1)] || "text");
     };
+    // The languages of the second bundle (libs/codemirror/legacy-modes.min.js, @codemirror/legacy-modes), each by the
+    // name of the mode it exports; the bundle loads the first time a file of one is shown.
+    editor.LEGACY_LANGUAGES = Object.freeze({ shell: "shell", groovy: "groovy", properties: "properties", toml: "toml",
+        dockerfile: "dockerFile", nginx: "nginx" });
 
     // The status a folder shows from its entries' (git's letters): a conflict first, then changes, additions, deletions,
     // untracked files; "" when every entry is clean or ignored.
@@ -151,7 +170,7 @@
     };
     editor.dropState = (key) => { keptStates.delete(key); };
 
-    // ---- editor settings (plans/design-dev-aide.md 5.1) ----
+    // ---- editor settings (plans/archive/design-dev-aide.md 5.1) ----
 
     // What a user sets (the dev-aide's DEV_AIDE_EDITOR preference, given to setSettings by the page that holds it, which
     // takes them back as it goes): the font size in pixels, the tab size and the indent unit (that many spaces; null
@@ -159,9 +178,37 @@
     // shown, the keymap (a base of KEYMAPS by name; "default" is CodeMirror's) and keys (a command's keys by its name,
     // over the keymap). With none set an editor is as CodeMirror makes it.
     editor.DEFAULT_SETTINGS = Object.freeze({ fontSize: 13, tabSize: null, wrap: false, whitespace: false, keymap: "default", keys: Object.freeze({}) });
-    // The keymaps a user picks from: each a function of the bundle answering the extension it adds ahead of the editor's
-    // own keys. Another (Vim) is added here by the script that loads its library: KEYMAPS.vim = (CM) => CM.vim().
+    // The keymaps a user picks from (the dev-aide's editor.rs KEYMAPS): each a function of the bundle and the commands
+    // the user rebound (their functions, a Set) answering the extension it adds ahead of the editor's own keys. "vscode"
+    // is VS Code's bindings made from CodeMirror's commands (@replit/codemirror-vscode-keymap carries no license text, so
+    // it is not vendored); "vim" is @replit/codemirror-vim, its library (KEYMAP_LIBRARIES) loaded when it is picked.
     editor.KEYMAPS = editor.KEYMAPS || { default: () => [] };
+    editor.KEYMAPS.vscode = (CM, rebound) => editor.vscodeKeymap(CM, rebound);
+    editor.KEYMAPS.vim = () => { if (!root.CodeMirrorVim) return []; editor.vimHistory(); return root.CodeMirrorVim.vim(); };
+    // A keymap's library, loaded the first time it is picked, after which the editors on the page take it.
+    editor.KEYMAP_LIBRARIES = { vim: { url: "/libs/codemirror/vim.min.js", ready: () => !!root.CodeMirrorVim } };
+    // The views whose text is a shared Y.Text, with their collab ({undoManager}), for Vim's undo and redo.
+    const sharedViews = new WeakMap();
+    editor.sharedOf = (view) => sharedViews.get(view) || null;
+    // Vim's u, Ctrl-R, :undo and :redo run its CodeMirror.commands undo and redo, which use CodeMirror's history: in a
+    // shared text's editor they are Yjs' (this user's own edits), elsewhere as Vim has them. Once a page.
+    editor.vimHistory = () => {
+        const vim = root.CodeMirrorVim;
+        if (!vim || !vim.CodeMirror || vim.historyShared) return;
+        vim.historyShared = true;
+        const commands = vim.CodeMirror.commands;
+        for (const name of ["undo", "redo"]) {
+            const own = commands[name];
+            commands[name] = (cm) => {
+                const shared = cm && sharedViews.get(cm.cm6);
+                if (shared && shared.undoManager) shared.undoManager[name]();
+                else own(cm);
+            };
+        }
+        // the ex commands took the functions when Vim started: defined again over the ones above
+        vim.Vim.defineEx("undo", "u", (cm) => commands.undo(cm));
+        vim.Vim.defineEx("redo", "red", (cm) => commands.redo(cm));
+    };
     // The commands a key row rebinds (DEV_AIDE_EDITOR keys), each the bundle's function its default bindings run, which
     // finds them; save is the editor's own (Mod-S emits `save`).
     editor.COMMANDS = {
@@ -203,13 +250,87 @@
         }
         return ahead.concat((bindings || []).filter((binding) => !dropped.has(binding.run)));
     };
+    // VS Code's bindings where they differ from CodeMirror's (which stay under them), from CodeMirror's commands: Mod-L
+    // selects the line, Mod-Shift-Enter opens a line above, Mod-Alt-Up and Down add a cursor, the Mod-K chords fold,
+    // unfold and comment, Mod-G goes to a line, Mod-H replaces, F3 finds again, Mod-I completes, Shift-Alt-Right widens
+    // the selection, and Alt-click adds a cursor. A command the user rebound (rebound, its function) keeps only their keys.
+    editor.vscodeKeymap = (CM, rebound) => {
+        const lineAbove = (view) => {
+            if (view.state.readOnly) return false;
+            const changes = view.state.changeByRange((range) => {
+                const line = view.state.doc.lineAt(range.head);
+                const indent = /^\s*/.exec(line.text)[0];
+                return { changes: { from: line.from, insert: indent + "\n" }, range: CM.EditorSelection.cursor(line.from + indent.length) };
+            });
+            view.dispatch(changes, { scrollIntoView: true, userEvent: "input" });
+            return true;
+        };
+        // a cursor on the line above (-1) or below (1) each cursor, at its column
+        const addCursor = (direction) => (view) => {
+            const state = view.state;
+            const ranges = state.selection.ranges.slice();
+            for (const range of state.selection.ranges) {
+                const line = state.doc.lineAt(range.head);
+                const number = line.number + direction;
+                if (number < 1 || number > state.doc.lines) continue;
+                const target = state.doc.line(number);
+                ranges.push(CM.EditorSelection.cursor(target.from + Math.min(range.head - line.from, target.length)));
+            }
+            if (ranges.length === state.selection.ranges.length) return false;
+            view.dispatch({ selection: CM.EditorSelection.create(ranges, ranges.length - 1), scrollIntoView: true });
+            return true;
+        };
+        const bindings = [
+            { key: "Mod-l", run: CM.selectLine, preventDefault: true },
+            { key: "Mod-Shift-Enter", run: lineAbove, preventDefault: true },
+            { key: "Mod-Alt-ArrowUp", run: addCursor(-1), preventDefault: true },
+            { key: "Mod-Alt-ArrowDown", run: addCursor(1), preventDefault: true },
+            { key: "Mod-Shift-k", run: CM.deleteLine, preventDefault: true },
+            { key: "Mod-d", run: CM.selectNextOccurrence, preventDefault: true },
+            { key: "Mod-Shift-l", run: CM.selectSelectionMatches, preventDefault: true },
+            { key: "Mod-k Mod-c", run: CM.lineComment, preventDefault: true },
+            { key: "Mod-k Mod-u", run: CM.lineUncomment, preventDefault: true },
+            { key: "Mod-k Mod-0", run: CM.foldAll, preventDefault: true },
+            { key: "Mod-k Mod-j", run: CM.unfoldAll, preventDefault: true },
+            { key: "Mod-Shift-[", run: CM.foldCode, preventDefault: true },
+            { key: "Mod-Shift-]", run: CM.unfoldCode, preventDefault: true },
+            // on a Mac Cmd-G is find next, as in VS Code: go to a line is Ctrl-G there
+            { key: "Mod-g", mac: "Ctrl-g", run: CM.gotoLine, preventDefault: true },
+            { key: "Mod-h", run: CM.openSearchPanel, preventDefault: true },
+            { key: "F3", run: CM.findNext, shift: CM.findPrevious, preventDefault: true },
+            { key: "F8", run: CM.nextDiagnostic, shift: CM.previousDiagnostic, preventDefault: true },
+            { key: "Mod-i", run: CM.startCompletion, preventDefault: true },
+            { key: "Shift-Alt-ArrowRight", run: CM.selectParentSyntax, preventDefault: true },
+            { key: "Mod-Shift-\\", run: CM.cursorMatchingBracket, preventDefault: true }
+        ].filter((binding) => typeof binding.run === "function" && !(rebound && rebound.has(binding.run)));
+        return [CM.EditorView.clickAddsSelectionRange.of((event) => event.altKey), CM.keymap.of(bindings)];
+    };
+    // The library of keymap `name` (KEYMAP_LIBRARIES), loading it the first time: resolved when it is there, at once for
+    // a keymap that needs none.
+    editor.loadKeymap = (name) => {
+        const library = editor.KEYMAP_LIBRARIES[name];
+        if (!library || library.ready()) return Promise.resolve();
+        if (!library.loading) {
+            library.loading = moqui.loadScript(library.url, null, library.ready)
+                .catch((error) => { library.loading = null; throw error; });
+        }
+        return library.loading;
+    };
     // settings a page gave before this file loaded (the dev-aide's Workspace sets them as it starts) are kept
     editor.settings = editor.normalizeSettings(editor.settings || null);
     // The editors on the page, which a change of the settings reconfigures.
     const liveEditors = new Set();
+    // the keymap's library, then its keys in every editor; one that does not load leaves CodeMirror's keys
+    const takeKeymap = (name) => {
+        const library = editor.KEYMAP_LIBRARIES[name];
+        if (!library || library.ready()) return;
+        editor.loadKeymap(name).then(() => { for (const vm of liveEditors) vm.reconfigure("keys"); },
+            (error) => console.error("The " + name + " keymap could not load; the editor keeps CodeMirror's keys", error));
+    };
     editor.setSettings = (value) => {
         editor.settings = editor.normalizeSettings(value);
         for (const vm of liveEditors) vm.applySettings();
+        takeKeymap(editor.settings.keymap);
         return editor.settings;
     };
 
@@ -224,6 +345,45 @@
                 .catch((error) => { loading = null; throw error; });
         }
         return loading;
+    };
+
+    // The second bundle of languages (LEGACY_LANGUAGES), loaded once; each language made once a page.
+    let legacyLoading = null;
+    editor.loadLegacy = () => {
+        if (root.CodeMirrorLegacy) return Promise.resolve(root.CodeMirrorLegacy);
+        if (!legacyLoading) {
+            legacyLoading = moqui.loadScript("/libs/codemirror/legacy-modes.min.js", null, () => !!root.CodeMirrorLegacy)
+                .then(() => root.CodeMirrorLegacy)
+                .catch((error) => { legacyLoading = null; throw error; });
+        }
+        return legacyLoading;
+    };
+    const legacyMade = new Map();
+    // The language of a legacy mode, or null while its bundle has not loaded.
+    function legacyLanguage(CM, language) {
+        const modes = root.CodeMirrorLegacy;
+        const mode = modes && modes[editor.LEGACY_LANGUAGES[language]];
+        if (!mode) return null;
+        if (!legacyMade.has(language)) legacyMade.set(language, CM.StreamLanguage.define(mode));
+        return legacyMade.get(language);
+    }
+    editor.legacyLanguage = legacyLanguage;
+
+    // What a co-edited editor needs (plans/archive/design-dev-aide.md F15): the CodeMirror bundle, Yjs (libs/yjs, the global
+    // Yjs) and y-codemirror.next built against both (the global YCodeMirror), in that order; resolved with
+    // { CM, Yjs, YCodeMirror }.
+    let collabLoading = null;
+    editor.loadCollab = () => {
+        if (!collabLoading) {
+            // a library the page has already is not loaded again: a second Yjs breaks the first's constructor checks
+            const script = (src, ready) => (ready() ? Promise.resolve() : moqui.loadScript(src, null, ready));
+            collabLoading = editor.load()
+                .then(() => script("/libs/yjs/yjs.min.js", () => !!root.Yjs))
+                .then(() => script("/libs/codemirror/y-codemirror.min.js", () => !!root.YCodeMirror))
+                .then(() => ({ CM: root.CodeMirror, Yjs: root.Yjs, YCodeMirror: root.YCodeMirror }))
+                .catch((error) => { collabLoading = null; throw error; });
+        }
+        return collabLoading;
     };
 
     // The lang-sql dialect of a database's kind (`get#Capabilities` backend, or the database conf): Postgres, MySQL or
@@ -244,6 +404,7 @@
 
     function languageExtension(CM, language, schema) {
         if (String(language || "").startsWith("sql:")) return CM.sql(editor.sqlConfig(CM, language, schema));
+        if (editor.LEGACY_LANGUAGES[language]) return legacyLanguage(CM, language) || [];
         switch (language) {
             case "xml": return CM.xml(schema ? { elements: editor.xmlElements(schema) } : {});
             case "html": return CM.html();
@@ -293,10 +454,11 @@
         ];
     }
 
-    // The editing extensions every editor has, the basic setup of CodeMirror without the parts each editor decides.
+    // The editing extensions every editor has, the basic setup of CodeMirror without the parts each editor decides (the
+    // history is CodeMirror's, or Yjs' in a co-edited editor).
     function basics(CM) {
         return [
-            CM.highlightActiveLineGutter(), CM.highlightSpecialChars(), CM.history(), CM.foldGutter(), CM.drawSelection(),
+            CM.highlightActiveLineGutter(), CM.highlightSpecialChars(), CM.foldGutter(), CM.drawSelection(),
             CM.dropCursor(), CM.EditorState.allowMultipleSelections.of(true), CM.indentOnInput(), CM.bracketMatching(),
             CM.closeBrackets(), CM.autocompletion(), CM.rectangularSelection(), CM.crosshairCursor(), CM.highlightActiveLine(),
             CM.highlightSelectionMatches(), CM.indentationMarkers()
@@ -304,14 +466,18 @@
     }
 
     // The editor's keys: the chosen keymap's extension first, then save and CodeMirror's keymaps with the keys the user
-    // rebound over them.
-    function keys(CM, save, settings) {
+    // rebound over them; a co-edited editor's undo and redo are Yjs' (YCodeMirror's yUndoManagerKeymap).
+    function keys(CM, save, settings, collab) {
         const commands = {};
         for (const [name, of] of Object.entries(editor.COMMANDS)) if (of) commands[name] = of(CM);
-        const base = [].concat(CM.closeBracketsKeymap, CM.defaultKeymap, CM.searchKeymap, CM.historyKeymap, CM.foldKeymap,
-            CM.completionKeymap, CM.lintKeymap, [CM.indentWithTab]);
+        const shared = collab && root.YCodeMirror;
+        // a rebound undo or redo of a shared text runs Yjs' (yUndoManagerKeymap: undo, then redo)
+        if (shared) { commands.undo = root.YCodeMirror.yUndoManagerKeymap[0].run; commands.redo = root.YCodeMirror.yUndoManagerKeymap[1].run; }
+        const base = [].concat(CM.closeBracketsKeymap, CM.defaultKeymap, CM.searchKeymap, shared ? root.YCodeMirror.yUndoManagerKeymap : CM.historyKeymap,
+            CM.foldKeymap, CM.completionKeymap, CM.lintKeymap, [CM.indentWithTab]);
         const keymap = editor.KEYMAPS[settings.keymap] || editor.KEYMAPS.default;
-        return [keymap(CM), CM.keymap.of([{ key: settings.keys.save || "Mod-s", preventDefault: true, run: save }]
+        const rebound = new Set(Object.keys(settings.keys).map((name) => commands[name]).filter(Boolean));
+        return [keymap(CM, rebound), CM.keymap.of([{ key: settings.keys.save || "Mod-s", preventDefault: true, run: save }]
             .concat(editor.rebind(base, settings.keys, commands)))];
     }
 
@@ -421,7 +587,10 @@
             // unmounts and taken back when one mounts again with the same key and text, so switching tabs keeps history
             stateKey: String,
             // the editor settings of this editor (as setSettings takes them), in place of the page's
-            settings: Object
+            settings: Object,
+            // a shared text (plans/archive/design-dev-aide.md F15): { ytext, awareness, undoManager } of a joined Y.Doc, with
+            // editor.loadCollab() done; the text is the Y.Text's while it is set (the model follows it), the undo Yjs'
+            collab: Object
         },
         emits: ["update:modelValue", "save", "cursor", "ready"],
         data() { return { failed: false, ready: false, text: this.modelValue || "" }; },
@@ -445,7 +614,7 @@
                     if (this.highlightLines && this.highlightLines.length) { this.reconfigure("highlight"); this.reveal(); }
                 }
             },
-            resolvedLanguage() { this.reconfigure("language"); },
+            resolvedLanguage() { this.takeLanguage(); this.reconfigure("language"); },
             schema() { this.reconfigure("language"); },
             readOnly() { this.reconfigure("readOnly"); },
             wrap() { this.reconfigure("wrap"); },
@@ -453,12 +622,26 @@
             ariaLabel() { this.reconfigure("accessibility"); },
             ariaLabelledby() { this.reconfigure("accessibility"); },
             highlightLines() { this.reconfigure("highlight"); this.reveal(); },
-            blame() { this.reconfigure("blame"); }
+            blame() { this.reconfigure("blame"); },
+            // a shared text bound: the editor takes its text first, so y-codemirror starts from the same text; unbound, the
+            // editor keeps the text and has CodeMirror's history again
+            collab(value) {
+                if (!this.view) return;
+                if (value && value.ytext) {
+                    const text = value.ytext.toString(), now = this.view.state.doc.toString();
+                    if (text !== now) this.view.dispatch({ changes: editor.textChange(now, text) });
+                }
+                ["collab", "history", "keys"].forEach((key) => this.reconfigure(key));
+                this.markShared();
+            }
         },
         mounted() {
             addStyles();
             liveEditors.add(this);
             this.$watch(() => isDark(this), () => this.reconfigure("theme"));
+            this.takeLanguage();
+            const settings = this.effectiveSettings();
+            if (editor.KEYMAP_LIBRARIES[settings.keymap]) takeKeymap(settings.keymap);
             editor.load().then((CM) => { if (!this.unmounted) this.build(CM); }, (error) => {
                 console.error("The code editor could not load; editing as plain text", error);
                 this.failed = true;
@@ -477,6 +660,18 @@
             // the settings this editor follows: its own, else the page's
             effectiveSettings() { return this.settings ? editor.normalizeSettings(this.settings) : editor.settings; },
             applySettings() { ["settings", "keys", "wrap"].forEach((key) => this.reconfigure(key)); },
+            // the view's shared text, for Vim's undo and redo
+            markShared() {
+                if (!this.view) return;
+                if (this.collab && this.collab.undoManager && root.YCodeMirror) sharedViews.set(this.view, this.collab);
+                else sharedViews.delete(this.view);
+            },
+            // a language of the second bundle: the bundle, then the language (plain text until it loads, or if it fails)
+            takeLanguage() {
+                if (!editor.LEGACY_LANGUAGES[this.resolvedLanguage] || root.CodeMirrorLegacy) return;
+                editor.loadLegacy().then(() => { if (!this.unmounted) this.reconfigure("language"); },
+                    (error) => console.error("The " + this.resolvedLanguage + " language could not load; the file is plain text", error));
+            },
             parts(CM) {
                 const owner = this.owner;
                 const save = (view) => { if (owner && owner.vm) owner.vm.$emit("save", view.state.doc.toString()); return true; };
@@ -491,7 +686,11 @@
                         const tab = settings.tabSize ? [CM.EditorState.tabSize.of(settings.tabSize), CM.indentUnit.of(" ".repeat(settings.tabSize))] : [];
                         return [CM.EditorView.theme({ "&": { fontSize: settings.fontSize + "px" } }), tab, settings.whitespace ? whitespaceMarks(CM) : []];
                     },
-                    keys: () => keys(CM, save, this.effectiveSettings()),
+                    keys: () => keys(CM, save, this.effectiveSettings(), this.collab),
+                    history: () => (this.collab && root.YCodeMirror ? [] : CM.history()),
+                    collab: () => (this.collab && this.collab.ytext && root.YCodeMirror
+                        ? root.YCodeMirror.yCollab(this.collab.ytext, this.collab.awareness || null,
+                            this.collab.undoManager ? { undoManager: this.collab.undoManager } : {}) : []),
                     accessibility: () => CM.EditorView.contentAttributes.of(this.accessibilityAttributes),
                     highlight: () => highlighted(CM, this.highlightLines, this.view ? this.view.state.doc : CM.Text.of(this.text.split("\n"))),
                     blame: () => blameGutter(CM, this.blame)
@@ -500,14 +699,17 @@
             build(CM) {
                 // a kept state of this buffer: its extensions call the editor through its owner, which is now this one
                 const kept = this.stateKey ? editor.takeState(this.stateKey) : null;
+                // a shared text's editor starts from the Y.Text (the model follows it while unmounted too)
+                if (this.collab && this.collab.ytext) this.text = this.collab.ytext.toString();
                 if (kept && kept.state.doc.toString() === this.text) {
                     this.cm = CM;
                     this.compartments = kept.compartments;
                     this.owner = kept.owner;
                     this.owner.vm = this;
                     this.view = new CM.EditorView({ state: kept.state, parent: this.$refs.host });
-                    ["language", "theme", "readOnly", "wrap", "accessibility", "highlight", "blame", "settings", "keys"].forEach((key) => this.reconfigure(key));
+                    ["language", "theme", "readOnly", "wrap", "accessibility", "highlight", "blame", "settings", "keys", "history", "collab"].forEach((key) => this.reconfigure(key));
                     if (this.autofocus) this.view.focus();
+                    this.markShared();
                     this.ready = true;
                     this.reveal();
                     this.$emit("ready", this.view);
@@ -549,6 +751,7 @@
                     parent: this.$refs.host
                 });
                 if (this.autofocus) this.view.focus();
+                this.markShared();
                 this.ready = true;
                 this.reveal();
                 this.$emit("ready", this.view);
@@ -594,7 +797,7 @@
             original: { type: String, default: "" }, modified: { type: String, default: "" }, language: String,
             fileName: String, unified: Boolean, editable: Boolean, collapseUnchanged: { type: Boolean, default: true },
             height: String,
-            // unified and editable: Accept and Reject on each chunk (a reviewed proposal; plans/design-dev-aide.md 13.3)
+            // unified and editable: Accept and Reject on each chunk (a reviewed proposal; plans/archive/design-dev-aide.md 13.3)
             mergeControls: Boolean
         },
         emits: ["update:modified", "ready"],
@@ -630,7 +833,11 @@
                 const CM = this.cm;
                 if (!CM || !this.$refs.host) return;
                 this.destroy();
-                const language = languageExtension(CM, this.language || editor.languageOf(this.fileName));
+                const named = this.language || editor.languageOf(this.fileName);
+                if (editor.LEGACY_LANGUAGES[named] && !root.CodeMirrorLegacy) {
+                    editor.loadLegacy().then(() => { if (!this.unmounted) this.rebuild(); }, () => {});
+                }
+                const language = languageExtension(CM, named);
                 const look = [CM.lineNumbers(), CM.highlightSpecialChars(), CM.drawSelection(), language, theme(CM, isDark(this))];
                 const readOnly = [CM.EditorState.readOnly.of(true), CM.EditorView.editable.of(false)];
                 const changes = CM.EditorView.updateListener.of((update) => {
@@ -768,7 +975,7 @@
         }
     };
 
-    // A pan-and-zoom layer (plans/design-dev-aide.md D9): one CSS transform on the layer; drag the background, the wheel
+    // A pan-and-zoom layer (plans/archive/design-dev-aide.md D9): one CSS transform on the layer; drag the background, the wheel
     // or a trackpad to pan, Ctrl+wheel or a pinch to zoom at the pointer, arrow keys and + and - for both, 0 to fit. With
     // `wheel-zoom` a plain wheel zooms at the pointer and Shift+wheel pans; `controls` adds zoom out, the zoom (click: 100%),
     // zoom in and Fit buttons in the bottom right corner. The default slot is the layer's content, absolutely placed; the

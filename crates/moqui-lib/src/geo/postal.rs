@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Postal codes by country (plans/Maps.md §6.3): each code's normalized form (upper case, spaces and hyphens taken
+//! Postal codes by country (plans/archive/Maps.md §6.3): each code's normalized form (upper case, spaces and hyphens taken
 //! out, leading zeros kept), its display spelling and its granularity. The rules are explicit for the countries whose
 //! sources mix full and partial codes: the US (a five-digit ZIP code), Canada, Great Britain and the Netherlands (a
 //! full code, or its first part as a declared prefix); every other country's code is taken whole. A prefix is never
@@ -66,6 +66,9 @@ pub struct PostalRecord {
     pub point: Option<Point>,
     pub accuracy: Option<i32>,
     pub precision: Precision,
+    /// The land area of the code's area in square meters, where the source has it (a Census ZCTA's `ALAND`), for the
+    /// lookup's extent.
+    pub land_area: Option<u64>,
 }
 
 /// ISO alpha-2 of the countries with rules of their own, from alpha-2 or alpha-3.
@@ -169,7 +172,7 @@ pub fn normalize_postal_code(country: &str, raw: &str) -> Result<PostalCode, Str
     }
 }
 
-/// A postal code a person typed, read for the postal lookup (plans/Maps.md §6.1, §6.3): the code by its country's rules,
+/// A postal code a person typed, read for the postal lookup (plans/archive/Maps.md §6.1, §6.3): the code by its country's rules,
 /// and the declared prefix to fall back to when the full code has no row.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LookupCode {

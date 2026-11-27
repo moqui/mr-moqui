@@ -145,6 +145,9 @@ task_opensearch_download() {
             run_cmd curl -fL --progress-bar -o "$cached.part" "$url" || die "download failed"
         fi
         verify_published_sha512 "$cached.part" "$url.sha512"
+        # and against the SHA-256 recorded at its first download, so a changed archive and its sum published together
+        # are not taken (SEC-OUT-91)
+        check_download_sum "$cached.part" "opensearch:$name"
         run_cmd mv "$cached.part" "$cached" || die "could not move the archive into $cache"
     fi
     if [ -n "$cache_only" ]; then
@@ -179,14 +182,15 @@ task_opensearch_download() {
 }
 
 # Check the file $1 against the SHA-512 published at the url $2 (a sha512sum line), which OpenSearch publishes beside
-# each tarball; the file is removed and the task stops when it differs. When none can be read, warn and go on.
+# each tarball; the file is removed and the task stops when it differs, or when no sum can be read: an archive that is
+# run is never used unchecked (plans/Security-Review-Low.md SEC-OUT-91).
 verify_published_sha512() {
     local file=$1 url=$2 expected actual
     dry_run && return 0
     expected=$(curl -fsSL --max-time 60 "$url" 2>/dev/null | awk '{print tolower($1); exit}')
     if [ -z "$expected" ]; then
-        warn "could not read $url; the archive is not checked"
-        return 0
+        rm -f "$file"
+        die "could not read $url, so the archive cannot be checked; it was removed (try again)"
     fi
     if command -v sha512sum >/dev/null 2>&1; then
         actual=$(sha512sum "$file" | awk '{print $1}')

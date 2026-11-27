@@ -12,15 +12,18 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The local-map dialog (plans/Maps.md §3.2; docs/tools/Maps.md "The local-map dialog"), opened beside an address or a
+<!-- The local-map dialog (plans/archive/Maps.md §3.2; docs/tools/Maps.md "The local-map dialog"), opened beside an address or a
     coordinate field of any app with View map: a dynamic-dialog whose id is LocalMapDialog, loading this screen with
     adapterKey and recordKey (its key fields as JSON) and an optional addressPurpose, or a plain longitude, latitude and
     label, or a plain postalCode and countryGeoId (an address with no point: its local postal-area position from
     get#PostalLocation, labeled approximate, with a broad extent, no outside request), and the dialog's id as dialogId when
-    it is not LocalMapDialog. Every signed-in user reaches it and its transitions (MAPS_DIALOG, data/MapsSecurityData.xml); an app shows it
+    it is not LocalMapDialog, and optionally a consumer's profileId (HOME's map profile, say), which get#EffectiveConfig
+    weighs by its usual precedence (a profile the user may not be offered falls back) and Open in Maps carries to Browse.
+    Every signed-in user reaches it and its transitions (MAPS_DIALOG, data/MapsSecurityData.xml); an app shows it
     under its own route by the thin-wrapper rule (include-screen and a transition-include of getConfig and storeLocation).
     The record's place is read here, in the actions, through get#EffectiveConfig, whose adapter checks the caller's access
-    first (a record they may not read is "not available", with nothing of it shown), and given to the map-view as its
+    first (a record they may not read is "not available", with nothing of it shown; a record's address with no point is
+    matched by the installation's local geocoder when it has one, else shown at its postal area, and never saved), and given to the map-view as its
     points, view (a postal area's extent) and features (an area or a line), so html, print, text and the terminal show the
     same place (its coordinates, precision and source, which the browser's map lists with Copy and the terminal's copies
     with c) as the browser; the browser asks getConfig for the basemap and layers only. Neither asks a record layer's
@@ -30,10 +33,16 @@ along with this software (see the LICENSE.md file). If not, see
     writes through its domain's guarded services). The form posts in the background in every client: on success the dialog
     closes (background-hide-id, the dialogId) and the screen behind it reloads in place (background-reload-id _screen); a
     refusal stays in the dialog. A plain point grants no record access: with pick=true its map lets the user choose
-    a point, which m-map gives the host page as the m-map-pick event, and nothing is posted. Open in Maps shows only to a
-    user who may open the Maps app. -->
+    a point, which m-map gives the host page as the m-map-pick event, and nothing is posted. The record's links (an
+    adapter's route keys) show where a registered moqui.maps.MapRoute resolves one to a screen the user's own grants open
+    (record.resolvedLinks): the host app's rows (routeApp, which an app's mount sets, as a dynamic-dialog parameter or a field
+    of its wrapper before the include), then those of no app, never another app's; the rest are left out; and none with routeLinks false, which a wrapper of an app that
+    resolves its links itself sets. Open in Maps shows only to a user who may open the Maps app. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Map" default-menu-include="false" history="false">
+    <parameter name="profileId"/>
+    <parameter name="routeApp"/>
+    <parameter name="routeLinks"/>
     <parameter name="adapterKey"/>
     <parameter name="recordKey"/>
     <parameter name="addressPurpose"/>
@@ -55,7 +64,7 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
-    <!-- A registered map archive (a PMTiles layer's, plans/Maps.md §5), read by range by every map, the Browse page's and any
+    <!-- A registered map archive (a PMTiles layer's, plans/archive/Maps.md §5), read by range by every map, the Browse page's and any
         app's dialog alike: the effective configuration hands a map this path with the layer's ID and its registered revision
         (MapSources.js). Each request (GET, HEAD, every range) checks the caller again and writes nothing
         (MapSourceServices.get#SourceAccess: the layer, its viewPermission and its drive's access, so a revoked share is
@@ -75,6 +84,77 @@ along with this software (see the LICENSE.md file). If not, see
                 const wasDisabled = ec.artifactExecution.disableAuthz()
                 try { ec.web.sendPinnedResourceResponse(access.location, access.tag, access.size, true, access.fileName) }
                 finally { if (!wasDisabled) ec.artifactExecution.enableAuthz() }
+            }
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- One Z/X/Y tile of a registered map archive (plans/archive/Maps.md §5: a client with no PMTiles reader, such as OpenLayers'
+        XYZ vector tile source or a terminal), at tile/{layerId}/{revision}/{z}/{x}/{y} (y may end in .mvt, .pbf or .png):
+        layerId a registered PMTiles layer, or overlay:ID, a user's overlay generalized on the server. Each request checks the
+        caller again, as source does, and writes nothing (MapSourceServices.get#ArchiveTile: the layer, its viewPermission
+        and its drive's access, or the overlay file's access in its drive); a revision that is no longer the registered one
+        is 409. The tile is read by range in Rust (the header and directories kept by the archive's revision) and sent with
+        its type, gzipped as stored when the client takes it (Content-Encoding gzip) or decompressed, a strong ETag of the
+        revision and the tile (304 for If-None-Match), Cache-Control private for resource-facade@pinned-max-age, immutable;
+        no such tile is 204 for vector tiles (an empty tile) and 404 for images. -->
+    <transition name="tile" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const extra = Array.from(sri.getScreenUrlInfo().extraPathNameList || []).map(String)
+            const header = name => String(ec.web.request?.getHeader(name) ?? '')
+            // gzip (or *) in Accept-Encoding with no q=0
+            const acceptGzip = header('Accept-Encoding').split(',').some(part => {
+                const [name, ...params] = part.split(';').map(piece => piece.trim().toLowerCase())
+                const q = params.find(param => param.startsWith('q='))
+                return (name === 'gzip' || name === '*') && !(q && Number(q.slice(2)) === 0)
+            })
+            const out = extra.length === 5 ? ec.service.sync().name('org.moqui.maps.MapSourceServices.get#ArchiveTile')
+                .parameters({layerId: extra[0], revision: extra[1], z: extra[2], x: extra[3], y: extra[4], acceptGzip,
+                    ifNoneMatch: header('If-None-Match')}).call() : null
+            if (ec.message.hasError() || !out?.ok) {
+                const status = ec.message.hasError() || !out ? 404 : Number(out.status) || 404
+                ec.message.clearErrors()
+                ec.web.sendJsonError(status, status === 409 ? 'The map archive changed: load the map again' : 'Map tile not available')
+            } else {
+                const response = ec.web.response
+                const headers = () => {
+                    response.setHeader('Cache-Control', out.cacheControl)
+                    response.setHeader('Vary', 'Accept-Encoding')
+                    if (out.etag) response.setHeader('ETag', out.etag)
+                }
+                if (out.status === 200) {
+                    headers()
+                    response.setHeader('X-Content-Type-Options', 'nosniff')
+                    if (out.contentEncoding) response.setHeader('Content-Encoding', out.contentEncoding)
+                    ec.web.sendBytesResponse(out.bytes, out.contentType, true)
+                } else {
+                    response.setStatus(out.status)
+                    headers()
+                }
+            }
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- A proxied map provider's style, TileJSON, tiles and sprites (proxyRequests Y; plans/archive/Maps.md §4.2): the effective
+        configuration hands a map providerProxy/{providerId}/{the provider's own path} in place of the provider's URLs, and a
+        rewritten style or TileJSON names only such paths. Each GET checks the caller and the path again
+        (MapSourceServices.get#ProviderAsset: one of the provider's layers offered to them, outside requests on, a path its
+        last test recorded) and asks the provider's origin with its key added on the server, never returned. Always
+        Cache-Control private. A proxy hides the user's address from the provider, not the area they view. -->
+    <transition name="providerProxy" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const extra = Array.from(sri.getScreenUrlInfo().extraPathNameList || []).map(String)
+            const out = ec.service.sync().name('org.moqui.maps.MapSourceServices.get#ProviderAsset')
+                .parameters({providerId: extra[0] || '', pathSegments: extra.slice(1),
+                    queryString: String(ec.web.request?.queryString ?? '')}).call()
+            if (ec.message.hasError() || !out?.ok) {
+                const status = ec.message.hasError() ? 404 : Number(out.status) || 404
+                ec.message.clearErrors()
+                ec.web.sendJsonError(status, status === 403 ? 'Outside map requests are turned off' : 'Map asset not available')
+            } else {
+                ec.web.response.setHeader('Cache-Control', out.cacheControl)
+                if (out.text != null) ec.web.sendTextResponse(out.text, out.contentType)
+                else ec.web.sendBytesResponse(out.bytes, out.contentType, true)
+                ec.web.response.setHeader('Cache-Control', out.cacheControl)
             }
         ]]></script></actions>
         <default-response type="none"/>
@@ -139,7 +219,7 @@ along with this software (see the LICENSE.md file). If not, see
         <if condition="adapterKey">
             <!-- the adapter checks the caller first; a refusal or a failure is a layer error of the record, never an error here -->
             <service-call name="org.moqui.maps.MapServices.get#EffectiveConfig" out-map="effective" transaction="force-new" ignore-error="true"
-                    in-map="{adapterKey: adapterKey, recordKey: recordKey || null, addressPurpose: addressPurpose || null, recordLayers: false}"/>
+                    in-map="{profileId: profileId || null, routeApp: routeApp || null, adapterKey: adapterKey, recordKey: recordKey || null, addressPurpose: addressPurpose || null, recordLayers: false}"/>
             <set field="mapConfig" from="effective?.config || {}"/>
             <!-- a plain address: its postal code's local postal-area position (get#PostalLocation), approximate, no outside request -->
             <else-if condition="postalCode &amp;&amp; countryGeoId &amp;&amp; !String(longitude ?? '').trim()">
@@ -173,7 +253,11 @@ along with this software (see the LICENSE.md file). If not, see
                 : plain ? {id: 'place', lon: plainLon, lat: plainLat, label: String(label || '')}
                 : postalMatch ? {id: 'place', lon: Number(postalMatch.lon), lat: Number(postalMatch.lat), label: String(label || '') || postalMatch.displayCode,
                     precision: postalMatch.precisionText, sourceText: postalMatch.sourceText} : null
-            placePoints = place ? [place] : []
+            // an address matched by the local geocoder (not saved) says so, and several address points are choices, none chosen
+            addressNote = record?.addressNote || ''
+            const choices = Array.from(record?.addressChoices || []).map(choice => ({id: String(choice.id), lon: Number(choice.lon), lat: Number(choice.lat),
+                label: String(choice.label || ''), precision: choice.precision || null, sourceText: choice.source || null}))
+            placePoints = (place ? [place] : []).concat(choices)
             // the record's view (a postal area's extent, else its point and zoom) and its area or line, when it is not a point
             mapExtent = postalMatch && Array.isArray(postalMatch.extent) ? postalMatch.extent.join(',')
                 : Array.isArray(mapConfig.extent) && mapConfig.extent.length === 4 ? mapConfig.extent.join(',') : ''
@@ -184,6 +268,9 @@ along with this software (see the LICENSE.md file). If not, see
             const areas = Array.from(mapConfig.features?.features || []).filter(feature => feature?.id === 'record')
             recordFeatures = areas.length ? {type: 'FeatureCollection', features: areas} : null
             hideId = /^[A-Za-z][A-Za-z0-9_-]{0,80}$/.test(String(dialogId || '')) ? String(dialogId) : 'LocalMapDialog'
+            // the record's links a registered route resolves to a screen the user may open (get#EffectiveConfig, MapRoutes.js)
+            // routeLinks false (a wrapper of an app that resolves the links itself, as BOSS's) shows none of them
+            recordLinks = String(routeLinks ?? '') === 'false' ? [] : Array.from(record?.resolvedLinks || [])
             mayChoose = !!record && Array.from(record.permittedActions || []).includes('chooseLocation')
             pickPlain = !adapterKey && String(pick || '') === 'true'
             // the user's own grant of the app, not the frames of an app that shows this dialog under its own root
@@ -194,6 +281,10 @@ along with this software (see the LICENSE.md file). If not, see
                 latitude: place ? place.lat.toFixed(6) : '', longitude: place ? place.lon.toFixed(6) : ''}
             openParameters = adapterKey ? {adapterKey, recordKey: keyText, addressPurpose: addressPurpose || ''}
                 : place ? {longitude: String(place.lon), latitude: String(place.lat), label: place.label} : {}
+            // a consumer's profile (HOME's, say) goes on to Browse, where the same precedence decides it again
+            if (profileId) openParameters.profileId = String(profileId)
+            // and the host app, whose routes the record's links resolve to there too
+            if (adapterKey && routeApp) openParameters.routeApp = String(routeApp)
         ]]></script>
     </actions>
     <widgets>
@@ -202,12 +293,24 @@ along with this software (see the LICENSE.md file). If not, see
             <label condition="recordError" type="p" style="text-negative" text="${recordError.message}"/>
             <label condition="record &amp;&amp; !place" type="p" style="m-muted" text="This record has no location on the map yet."/>
             <label condition="approximateText" type="p" style="text-caption m-muted q-mb-xs" text="${approximateText}"/>
+            <label condition="addressNote" type="p" style="text-caption m-muted q-mb-xs" text="${addressNote}"/>
             <label condition="!adapterKey &amp;&amp; !place &amp;&amp; !postalNote" type="p" style="m-muted" text="No place was given to show."/>
             <label condition="postalNote" type="p" style="m-muted" text="${postalNote}"/>
             <label condition="placeNamesText" type="p" style="text-caption m-muted" text="${placeNamesText}"/>
-            <map-view id="LocalMapView" config-transition="getConfig" points="placePoints" features="recordFeatures" height="360px"
+            <map-view id="LocalMapView" config-transition="getConfig" profile="${profileId || ''}" points="placePoints" features="recordFeatures" height="360px"
                     extent="${mapExtent}" center="${mapCenter}" zoom="${mapZoom}"
                     pick="${mayChoose || pickPlain ? 'true' : 'false'}" pick-form="${mayChoose ? 'ChooseLocation' : ''}"/>
+            <section name="LocalMapRecordLinks" condition="recordLinks.length">
+                <widgets>
+                    <container id="LocalMapRecordLinkList" style="row q-gutter-sm q-mt-xs">
+                        <section-iterate name="LocalMapRecordLink" list="recordLinks" entry="recordLink">
+                            <widgets>
+                                <link url="${recordLink.url}" url-type="plain" text="${recordLink.label}" link-type="anchor" icon="sym_o_open_in_new"/>
+                            </widgets>
+                        </section-iterate>
+                    </container>
+                </widgets>
+            </section>
             <section name="OpenInMaps" condition="mayOpenMaps">
                 <widgets>
                     <link url="//apps/maps/Browse" text="Open in Maps" icon="sym_o_map" parameter-map="openParameters" style="q-mt-sm"/>

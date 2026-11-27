@@ -12,24 +12,35 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Map archives (plans/Maps.md §4.1, §5; docs/tools/Maps.md "Archives"): a PMTiles archive registered as a layer's revision,
+<!-- Map archives (plans/archive/Maps.md §4.1, §5; docs/tools/Maps.md "Archives"): a PMTiles archive registered as a layer's revision,
     the access check of the map-source transition (tools screen/Maps/LocalMap.xml source), the archives Configuration lists
-    and their readiness; and a user's geographic file read as an overlay (convert#Overlay, P3). The logic is
-    MapSources.js; the header is read in Rust (moqui-tools maps_archive.rs, over moqui-lib pmtiles.rs), and an overlay
+    and their readiness; a user's geographic file read as an overlay (convert#Overlay, P3); and a proxied map provider's
+    assets for the LocalMap providerProxy transition (get#ProviderAsset, MapProviders.js); one Z/X/Y tile of an archive for the LocalMap
+    tile transition (get#ArchiveTile, read in Rust by read#ArchiveTile: moqui-tools maps_tiles.rs); and a user's overlay too large to
+    draw whole simplified into vector tiles beside its file (generalize#Overlay in Rust, moqui-tools maps_simplify.rs, run by
+    build#OverlayTiles in the MapOverlayTiles ServiceJob, cancel#OverlayTiles; MapOverlays.js). The logic is MapSources.js; the header is read in Rust (moqui-tools maps_archive.rs, over moqui-lib pmtiles.rs), and an overlay
     (moqui-tools maps_overlay.rs, over moqui-lib geo/overlay.rs). Grants (tools data/MapsSecurityData.xml): get#SourceAccess
-    is MAPS_DIALOG's (every signed-in user: it checks the layer and the drive itself), check#ArchiveReadiness
-    MAPS_READINESS's (it checks ADMIN_OVERVIEW_VIEW itself), convert#Overlay no group's (MapOverlays.js calls it after its
-    own check), the rest MAPS_ADMIN's. No Java counterpart. -->
+    and get#ProviderAsset are MAPS_DIALOG's (every signed-in user: each checks the layer or provider and the access itself),
+    check#ArchiveReadiness MAPS_READINESS's (it checks ADMIN_OVERVIEW_VIEW itself), convert#Overlay no group's (MapOverlays.js
+    calls it after its own check), the rest MAPS_ADMIN's; read#ArchiveHeader and convert#Overlay are not remote, since each
+    reads whatever location it is given. get#ArchiveTile is MAPS_DIALOG's (it checks the layer or overlay itself); read#ArchiveTile is no
+    group's and not remote; generalize#Overlay and build#OverlayTiles are no group's (the job runs as the user and checks the
+    overlay's owner), cancel#OverlayTiles MAPS_APP_SERVICES'. Offline map packages (plans/archive/Maps-Offline.md, MapPackages.js): a
+    region of the archives a user may read cut for a device (estimate#PackageExtract and build#PackageExtract in Rust, moqui-tools
+    maps_extract.rs, no group's and not remote), the user's own packages (estimate#, create#, update#, cancel#, delete#Package,
+    find#Packages, get#PackageAccess: MAPS_APP_SERVICES, each acting on the signed-in user's own), the MapPackageBuild job's run
+    (build#Package) and the hourly clean (clean#MapPackages), no group's. No Java counterpart. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
-    <service verb="read" noun="ArchiveHeader" type="rust" location="moqui_tools::maps_archive::read_archive_header">
+    <service verb="read" noun="ArchiveHeader" type="rust" location="moqui_tools::maps_archive::read_archive_header" allow-remote="false">
         <description>The header and metadata of the PMTiles archive at a resource location (location#versionName for a
             version), read by range (the 127-byte header, then the metadata where it says) and checked: version 3, the zoom
             range, the bounds, every section within the file and the root directory within its first 16 KiB, tiles of
             vector (mvt) or image type, directories gzipped or not compressed, metadata that is a JSON object (naming its
             vector layers for vector tiles). found false when nothing is there; each reason a map cannot draw it in
             problems, and valid true only when there is none. Writes nothing. It reads whatever location it is given, so it
-            is MAPS_ADMIN's; register#ArchiveLayer and the readiness checks call it.</description>
+            is MAPS_ADMIN's and not remote: register#ArchiveLayer and the readiness checks call it, after their own check
+            of the caller (Configuration's update by the caller's own grant, ADMIN_OVERVIEW_VIEW).</description>
         <in-parameters><parameter name="location" required="true"/></in-parameters>
         <out-parameters>
             <parameter name="found" type="Boolean"/>
@@ -44,10 +55,53 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
 
+    <service verb="read" noun="CogHeader" type="rust" location="moqui_tools::maps_archive::read_cog_header" allow-remote="false">
+        <description>The header of a Cloud Optimized GeoTIFF (P4c; moqui-lib geo/tiff.rs) at a resource location
+            (location#versionName for a version), read by range, or its first bytes (bytes, the file's size) a provider's
+            COG answered a range with: the TIFF or BigTIFF header and its image directories (at most 64, each of at most
+            1024 entries, at most 1 MiB read past the first 64 KiB, every offset and count checked against the size; a loop
+            refused), never a tile. A map draws it when it is tiled (a multiple of 16, at most 4096), of a compression a
+            browser decodes, of 8, 16, 32 or 64-bit samples, georeferenced without rotation, in an EPSG CRS that is WGS84, Web
+            Mercator or a registered projection (MapProjection), with overviews when it is larger than 2048 pixels; each
+            reason it cannot in problems. Writes nothing. It reads whatever location it is given, so it is MAPS_ADMIN's and
+            not remote, as read#ArchiveHeader is: register#ArchiveLayer calls it after its own check of the caller.</description>
+        <in-parameters>
+            <parameter name="location"/>
+            <parameter name="bytes" type="Object"><description>The file's first bytes, instead of a location</description></parameter>
+            <parameter name="size" type="Long"><description>The file's size with bytes (a Content-Range's total)</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="found" type="Boolean"/>
+            <parameter name="valid" type="Boolean"/>
+            <parameter name="problems" type="List"/>
+            <parameter name="notes" type="List"/>
+            <parameter name="size" type="Long"/>
+            <parameter name="tag"/>
+            <parameter name="cog" type="Map"><description>{bigTiff, width, height, bands, bitsPerSample, sampleFormat,
+                sampleType, compression, photometric, tileWidth, tileHeight, overviews, masks, epsg, geographic, bounds (in its
+                CRS), wgs84Bounds, resolution, nodata, statistics [[band, min, max]]}</description></parameter>
+        </out-parameters>
+    </service>
+    <service verb="check" noun="ProjectionDefinition" type="rust" location="moqui_tools::maps_overlay::check_projection_definition" allow-remote="false">
+        <description>Whether the server reads a map projection's PROJ.4 definition (P4c; moqui-lib geo/proj.rs): its methods
+            (geographic, Mercator, transverse Mercator and UTM, Lambert conformal conic and azimuthal equal-area, Albers, polar
+            stereographic) with a datum of WGS84, NAD83 or a +towgs84 shift; readable false with the reason otherwise (a
+            grid, another method, an ellipsoid with no shift). A pure function of its text: store#Projection calls it.</description>
+        <in-parameters><parameter name="definition" required="true" allow-html="any"/></in-parameters>
+        <out-parameters>
+            <parameter name="readable" type="Boolean"/>
+            <parameter name="reason"/>
+            <parameter name="transform"/>
+            <parameter name="geographic" type="Boolean"/>
+        </out-parameters>
+    </service>
     <service verb="convert" noun="Overlay" type="rust" location="moqui_tools::maps_overlay::convert_overlay_service" allow-remote="false">
-        <description>A GeoJSON, GPX or KML file read as a map overlay (plans/Maps.md §4.1, §8; moqui-lib geo/overlay.rs): at a
-            resource location (read as the framework) or given as text, at most maxBytes, at most maxFeatures features,
-            WGS84 or a GeoJSON file's declared EPSG:3857 (converted; any other CRS refused), each feature's geometry checked
+        <description>A geographic file read as a map overlay (plans/archive/Maps.md §4.1, §8; moqui-lib geo/overlay.rs and its
+            readers): GeoJSON, TopoJSON, EsriJSON, GPX, KML, GML, WKT, WKB, delimited text with a WKT, WKB or latitude and
+            longitude column, or a zipped shapefile, at a resource location (read as the framework) or given as text or
+            bytes, at most maxBytes, at most maxFeatures features, WGS84 or a declared EPSG:3857 (a GeoJSON or TopoJSON crs,
+            an EsriJSON spatialReference, a GML srsName, an EWKT or EWKB SRID, a shapefile's .prj; converted; any other CRS
+            refused), each feature's geometry checked
             by itself (one that is not sane is left out, counted and named in notes), labels and descriptions made plain
             text, and no KML network link, image overlay, style, icon or other reference followed (each counted in
             notes). Answers a sanitized GeoJSON FeatureCollection (geojson, unless summaryOnly) with featureCount,
@@ -58,7 +112,10 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters>
             <parameter name="location"/>
             <parameter name="text" allow-html="any"/>
-            <parameter name="format"><description>MLF_GEOJSON, MLF_GPX or MLF_KML; else by fileName's extension</description></parameter>
+            <parameter name="bytes" type="Object"><description>The file's bytes (an upload of a binary format: WKB, a zipped
+                shapefile)</description></parameter>
+            <parameter name="format"><description>An MLF_ enum ID of a format read (MLF_GEOJSON, MLF_TOPOJSON, MLF_ESRIJSON,
+                MLF_GPX, MLF_KML, MLF_GML, MLF_WKT, MLF_WKB, MLF_CSV, MLF_SHAPEFILE); else by fileName's extension</description></parameter>
             <parameter name="fileName"/>
             <parameter name="maxBytes" type="Long"/>
             <parameter name="maxFeatures" type="Integer"/>
@@ -73,10 +130,95 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="rejectedCount" type="Integer"/>
             <parameter name="bounds" type="List"/>
             <parameter name="crs"/>
+            <parameter name="transform"><description>What converting crs to WGS84 did (P4c: a registered projection's method,
+                ellipsoid and datum shift with its accuracy); empty for WGS84</description></parameter>
             <parameter name="notes" type="List"/>
             <parameter name="size" type="Long"/>
             <parameter name="geojson"/>
         </out-parameters>
+    </service>
+
+    <service verb="generalize" noun="Overlay" type="rust" location="moqui_tools::maps_simplify::generalize_overlay" allow-remote="false">
+        <description>An overlay file (any format convert#Overlay reads) too large to draw whole cut into vector tiles (plans/archive/Maps.md §7; moqui-lib
+            geo/tiles.rs over geo/simplify.rs and geo/mvt.rs, moqui-tools maps_simplify.rs): read and sanitized as
+            convert#Overlay reads it but with up to maxFeatures (250,000) features, projected to Web Mercator, and for each
+            zoom from 0 simplified (Douglas–Peucker to half a pixel), clipped to each tile with a small buffer, points thinned
+            to one a pixel, written as one MVT layer overlay with each feature's label and description, until a zoom keeps
+            everything (from zoom 12), maxZoom (14), or before a zoom that would pass maxTiles (50,000) or maxArchiveBytes
+            (64 MiB); answered as a PMTiles archive (bytes; tiles and directories gzipped). Each zoom made is written to
+            overlayId's row as tilesProgress (in its own transaction) and its tilesCancel read, so a cancel stops it
+            (CANCELLED, cancelled true). Refusals: the overlay reader's reasons, NOT_FOUND, NOT_READ, NOT_TEXT,
+            TOO_LARGE_TO_TILE (zoom 0 alone passes the limits), NO_TILES. Writes nothing but the progress. It reads whatever
+            location it is given, so no group is granted it: build#OverlayTiles calls it after its own check.</description>
+        <in-parameters>
+            <parameter name="location" required="true"/>
+            <parameter name="format"/>
+            <parameter name="fileName"/>
+            <parameter name="overlayId"/>
+            <parameter name="maxBytes" type="Long"/>
+            <parameter name="maxFeatures" type="Integer"/>
+            <parameter name="maxTiles" type="Integer"/>
+            <parameter name="maxArchiveBytes" type="Long"/>
+            <parameter name="maxZoom" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="valid" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="cancelled" type="Boolean"/>
+            <parameter name="bytes" type="byte[]"/>
+            <parameter name="size" type="Long"/>
+            <parameter name="maxZoom" type="Integer"/>
+            <parameter name="tileCount" type="Integer"/>
+            <parameter name="featureCount" type="Integer"/>
+            <parameter name="rejectedCount" type="Integer"/>
+            <parameter name="bounds" type="List"/>
+            <parameter name="notes" type="List"/>
+        </out-parameters>
+    </service>
+
+    <service verb="build" noun="OverlayTiles" allow-remote="false">
+        <description>The MapOverlayTiles ServiceJob's run (store#Overlay with generalize starts it, as the user): the user's
+            own overlay overlayId, pending or running, simplified into vector tiles (generalize#Overlay) and the archive
+            written beside its file in its drive as "name.tiles.pmtiles" (FileServices upload#Resource, replacing an earlier
+            one: the drive's own write check, quota and versions), its version and content address recorded on the row
+            (tilesStatus ready, tilesPath, tilesRevision, tilesTag, tilesSize, tilesMaxZoom), so LocalMap's tile transition
+            draws it with the file's own access. A file no longer readable, a refusal, a write refused, an archive the drive
+            keeps in git outside LFS and a cancel end it failed or cancelled with tilesNote, written in a transaction of its
+            own; the overlay removed or its run ended meanwhile writes nothing. An earlier archive is replaced only when it
+            is this overlay's own (its tilesPath); another file of that name is kept and the new one named "name (2)".
+            Another user's overlay changes nothing. Out: the row's label, tilesStatus and
+            reason, for the job's notification.</description>
+        <in-parameters><parameter name="overlayId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="label"/>
+            <parameter name="tilesStatus"/>
+            <parameter name="reason"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapOverlays.js').execute('buildTiles', context))</script></actions>
+    </service>
+
+    <service verb="cancel" noun="OverlayTiles">
+        <description>Stop the simplifying of one of the signed-in user's overlays (tilesStatus pending or running): its run stops
+            within a second (between tiles) and ends cancelled, the overlay left as it was; a run that ended without saying
+            so (its ServiceJobRun gone or ended, or older than the job's transaction) is ended at once. Another user's
+            overlay, one not there and one not being simplified are RECORD_UNAVAILABLE. MAPS_APP_SERVICES, as the other overlay services.</description>
+        <in-parameters><parameter name="overlayId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapOverlays.js').execute('cancelTiles', context))</script></actions>
+    </service>
+
+    <service verb="get" noun="OverlayTilesStatus">
+        <description>The simplifying of the signed-in user's own overlays overlayIds (at most 100; another user's is left out):
+            each one's tilesStatus and tilesProgress, for Browse's poll while a run goes on. Changes nothing.
+            MAPS_APP_SERVICES, as the other overlay services.</description>
+        <in-parameters><parameter name="overlayIds" type="List" required="true"/></in-parameters>
+        <out-parameters><parameter name="statusList" type="List"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapOverlays.js').execute('tilesStatus', context))</script></actions>
     </service>
 
     <service verb="register" noun="ArchiveLayer">
@@ -95,10 +237,25 @@ along with this software (see the LICENSE.md file). If not, see
             access a viewer needs too, the archive's zoom range and bounds, its attribution and version when the layer has
             none, and enables the layer. notes: what the archive's size meets (the upload limit, an LFS object's, its
             drive's quota). A new revision is replaced (replaced true): a map drawing the old one is refused it (409) and
-            loads its configuration again.</description>
+            loads its configuration again. One action registers every layer drawn from the archive: layerId, those of
+            alsoLayerIds and every other PMTiles layer of its format that already names the location, the header read once
+            (one that is not of the archive's format refuses the whole action, nothing changed). layerId and alsoLayerIds are
+            enabled; a layer that only named the location keeps its enabled or disabled state.
+
+            A Cloud Optimized GeoTIFF layer (MLF_COG, P4c) is registered the same way from a resource location, its header
+            read by read#CogHeader instead (COG_INVALID with each of problems), and records its CRS (crs), bounds and what
+            its header holds (rasterJson: bands, sample type, no-data, statistics and its default band settings). A COG layer
+            with no location and a sourceUrl of its provider (enabled, tested, the URL on its own origin, outside requests
+            on) is read from there: one range of its first 64 KiB with no credentials, no redirect and no internal address
+            unless the provider is allowed the private network, which must answer 206 (NO_RANGES otherwise) and allow the
+            page's origin by CORS (NO_CORS: a browser reads it itself); nothing is pinned, so a later change of the file is
+            the provider's.</description>
         <in-parameters>
             <parameter name="layerId" required="true"/>
             <parameter name="resourceLocation"/>
+            <parameter name="alsoLayerIds" type="List"><description>Other PMTiles layers of the same format to point at the
+                same archive and register with it (the light and dark styles of one Protomaps extract); every other layer
+                that already names the location is registered with it too</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="applied" type="Boolean"/>
@@ -106,6 +263,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="reason"/>
             <parameter name="problems" type="List"/>
             <parameter name="layerId"/>
+            <parameter name="layerIds" type="List"><description>Every layer registered: layerId first, then the others
+                pointed at the same archive</description></parameter>
             <parameter name="revision"/>
             <parameter name="replaced" type="Boolean"/>
             <parameter name="size" type="Long"/>
@@ -113,9 +272,45 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="driveId"/>
             <parameter name="header" type="Map"/>
             <parameter name="metadata" type="Map"/>
+            <parameter name="cog" type="Map"><description>A COG layer's header (read#CogHeader's cog)</description></parameter>
             <parameter name="notes" type="List"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapSources.js').execute('register', context))</script></actions>
+    </service>
+
+    <service verb="get" noun="ProviderAsset">
+        <description>One asset of a proxied map provider (proxyRequests Y; plans/archive/Maps.md §4.2) for the LocalMap
+            providerProxy transition: its style, a TileJSON, a tile or a sprite at a path a rule its last passing test recorded
+            matches (proxyPaths: an exact document path, a sprite with its suffixes, a tile template), asked of the
+            provider's origin with that rule's query (never the browser's, but for an OGC rule, wms, wmts or wfs, the
+            parameters its kind's requests carry, each checked against the recorded capabilities, MapOgc.js proxyQuery:
+            QUERY_NOT_ALLOWED, 400, otherwise) and its key added here, never returned; within
+            its requestsPerSecond and requestsPerDay (RATE_LIMITED, DAILY_LIMIT: 429). For a caller who may be
+            offered one of its layers (enabled, its viewPermission held, the basemap or a layer of an enabled profile whose
+            viewPermission they hold), while outside requests are on (EXTERNAL_REQUESTS_OFF, 403) and the provider enabled,
+            proxied and tested as it is (PROVIDER_MISSING, PROVIDER_UNTESTED, 404); another path is PATH_NOT_ALLOWED (404).
+            One GET, no redirect, ten seconds, at most 4 MiB, no internal address unless the provider is allowed the
+            private network, of a style, TileJSON, sprite or tile type only (PROVIDER_FAILED, TYPE_REFUSED: 502). A style
+            or TileJSON comes back rewritten (text) with each URL the proxy's and the key out of it (URL_NOT_PROVIDERS, 502,
+            for a URL of another origin); anything else as its bytes. cacheControl is always private: no-store for a
+            cachePolicy of none, else its cacheSeconds or the answer's own max-age, at most a day. Every signed-in user may
+            call it (MAPS_DIALOG): it checks the caller itself.</description>
+        <in-parameters>
+            <parameter name="providerId" required="true"/>
+            <parameter name="pathSegments" type="List"><description>The path on the provider's origin, its segments
+                decoded</description></parameter>
+            <parameter name="queryString"><description>The query the browser sent (the style's own, never the key)</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="ok" type="Boolean"/>
+            <parameter name="status" type="Integer"/>
+            <parameter name="reasonCode"/>
+            <parameter name="contentType"/>
+            <parameter name="text"/>
+            <parameter name="bytes" type="byte[]"/>
+            <parameter name="cacheControl"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapProviders.js').execute('providerAsset', context))</script></actions>
     </service>
 
     <service verb="get" noun="SourceAccess">
@@ -146,6 +341,163 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapSources.js').execute('sourceAccess', context))</script></actions>
     </service>
 
+    <service verb="get" noun="ArchiveTile">
+        <description>One Z/X/Y tile of a registered PMTiles archive (plans/archive/Maps.md §5: a client with no PMTiles reader) for the
+            LocalMap tile transition, on every request, writing nothing: layerId a registered layer, checked as
+            get#SourceAccess checks it (SOURCE_MISSING, SOURCE_NOT_REGISTERED, PROVIDER_DISABLED 404; SOURCE_NOT_PERMITTED
+            403; REVISION_CHANGED, SOURCE_CHANGED 409), or overlay:ID, a user's overlay generalized on the server
+            (build#OverlayTiles), read only by a reader of its file in its drive now (OVERLAY_MISSING 404; another revision
+            409). Then read#ArchiveTile reads the tile by range. status 200 with the tile's bytes, its content type and
+            contentEncoding gzip when the archive's tiles are gzipped and the client takes it (else decompressed), 204 for no
+            tile of a vector archive (an empty tile), 304 for an ifNoneMatch naming its ETag, 404 for no tile of an image
+            archive or one not read (TILE_MISSING). etag is strong (the registered tag, the tile ID, the encoding);
+            cacheControl private for resource-facade@pinned-max-age, immutable (the revision is in the URL). Every signed-in
+            user may call it (MAPS_DIALOG): it checks the layer or the overlay and the access itself.</description>
+        <in-parameters>
+            <parameter name="layerId" required="true"/>
+            <parameter name="revision" required="true"/>
+            <parameter name="z" required="true"/>
+            <parameter name="x" required="true"/>
+            <parameter name="y" required="true"><description>May end in the tile's extension (.mvt, .pbf, .png)</description></parameter>
+            <parameter name="acceptGzip" type="Boolean" default="false"/>
+            <parameter name="ifNoneMatch"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="ok" type="Boolean"/>
+            <parameter name="status" type="Integer"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="bytes" type="byte[]"/>
+            <parameter name="contentType"/>
+            <parameter name="contentEncoding"/>
+            <parameter name="etag"/>
+            <parameter name="cacheControl"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapSources.js').execute('archiveTile', context))</script></actions>
+    </service>
+
+    <service verb="read" noun="ArchiveTile" type="rust" location="moqui_tools::maps_tiles::read_archive_tile" allow-remote="false">
+        <description>Tile z/x/y of the PMTiles archive at location (location#versionName on storage that keeps versions),
+            registered as tag of size bytes (moqui-tools maps_tiles.rs over moqui-lib pmtiles.rs): the header, the root and
+            the leaf directories the lookup goes through (run lengths included) and the tile, each read by range as the
+            framework; the header and the decoded directories kept by the tag, within a bound (256 directories, about two
+            million entries). status 200 (bytes, contentType, contentEncoding gzip or empty, etag), 204 (no tile of a vector
+            archive), 304 (ifNoneMatch names its etag), 404 (no tile of an image archive, a tile not read, with reason), 409
+            (content that is no longer that tag and size); cacheControl. Writes nothing. It reads whatever location it is
+            given, so no group is granted it and it is not remote: get#ArchiveTile calls it after its check of the
+            caller.</description>
+        <in-parameters>
+            <parameter name="location" required="true"/>
+            <parameter name="tag" required="true"/>
+            <parameter name="size" type="Long" required="true"/>
+            <parameter name="z" required="true"/>
+            <parameter name="x" required="true"/>
+            <parameter name="y" required="true"/>
+            <parameter name="acceptGzip" type="Boolean" default="false"/>
+            <parameter name="ifNoneMatch"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="status" type="Integer"/>
+            <parameter name="reason"/>
+            <parameter name="bytes" type="byte[]"/>
+            <parameter name="contentType"/>
+            <parameter name="contentEncoding"/>
+            <parameter name="etag"/>
+            <parameter name="cacheControl"/>
+        </out-parameters>
+    </service>
+
+    <service verb="estimate" noun="PackageExtract" type="rust" location="moqui_tools::maps_extract::estimate_package_extract" allow-remote="false">
+        <description>What cutting a region (west, south, east, north in WGS84 degrees, west east of east across the
+            antimeridian) at zooms minZoom to maxZoom from the PMTiles archive at location (pinned as tag of size bytes, a
+            file on disk by modifiedMillis too) would make, for an offline map package (plans/archive/Maps-Offline.md §2.2;
+            moqui-tools maps_extract.rs): the tiles found through its directories (the header and directories read by range
+            and kept by the tag, as read#ArchiveTile keeps them; no tile is read), their distinct contents and bytes, and
+            the archive's size near enough (bytes), with the zooms of the request the archive has. Refused (reasonCode,
+            reason): BBOX_INVALID, ZOOMS_INVALID, SOURCE_MISSING, SOURCE_GONE, SOURCE_CHANGED (no longer that tag and size),
+            NO_ZOOMS, TOO_MANY_TILES (the box covers more than maxTiles tiles, at most 4,000,000, counted before anything is
+            read), TOO_LARGE (bytes past maxBytes), NOT_READ (logged). Writes nothing. It reads whatever location it is
+            given, so no group is granted it and it is not remote: MapPackages.js calls it after its check of the
+            owner.</description>
+        <in-parameters>
+            <parameter name="location" required="true"/>
+            <parameter name="tag" required="true"/>
+            <parameter name="size" type="Long" required="true"/>
+            <parameter name="modifiedMillis" type="Long"/>
+            <parameter name="west" type="Double" required="true"/>
+            <parameter name="south" type="Double" required="true"/>
+            <parameter name="east" type="Double" required="true"/>
+            <parameter name="north" type="Double" required="true"/>
+            <parameter name="minZoom" type="Integer" default="0"/>
+            <parameter name="maxZoom" type="Integer" default="14"/>
+            <parameter name="maxTiles" type="Long"/>
+            <parameter name="maxBytes" type="Long"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="valid" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="tileCount" type="Long"/>
+            <parameter name="contentCount" type="Long"/>
+            <parameter name="tileBytes" type="Long"/>
+            <parameter name="bytes" type="Long"/>
+            <parameter name="minZoom" type="Integer"/>
+            <parameter name="maxZoom" type="Integer"/>
+        </out-parameters>
+    </service>
+
+    <service verb="build" noun="PackageExtract" type="rust" location="moqui_tools::maps_extract::build_package_extract" allow-remote="false">
+        <description>The region and zooms of estimate#PackageExtract cut from the archive at location into a new PMTiles
+            archive at target (a .pmtiles location under runtime://tmp/map-packages/, TARGET_INVALID otherwise), for an
+            offline map package (moqui-tools maps_extract.rs over moqui-lib pmtiles.rs ArchiveWriter): the tiles of the box
+            for each zoom, sorted by tile ID, found through the directories and read by range in batches by offset
+            (neighbouring tiles one read), each handed as stored to the streaming writer, which writes the tile data to a
+            part file and keeps only the directory entries; a content the source shares between tiles is read and stored
+            once; the source's metadata JSON is copied whole, the directories gzipped. The archive's tag and size are
+            checked when the cut starts and again when it ends (reopened, a file on disk by its modification time too): an
+            archive replaced meanwhile is SOURCE_CHANGED and nothing is kept. With packageId its progress, from
+            progressFrom to progressTo percent, is written to that MapPackage's row in a transaction of its own between
+            batches (at most once a second), and the row's cancelRequested read then (CANCELLED, cancelled true). Out: size,
+            sha256 (hex), tileCount, contentCount, minZoom, maxZoom, reads, and the attribution and license the source's metadata names; refused as the estimate is, and NO_TILES. A
+            refused or failed cut leaves no file. It reads whatever location it is given, so no group is granted it and it
+            is not remote: MapPackages.js calls it in the MapPackageBuild job after its check of the owner.</description>
+        <in-parameters>
+            <parameter name="location" required="true"/>
+            <parameter name="tag" required="true"/>
+            <parameter name="size" type="Long" required="true"/>
+            <parameter name="modifiedMillis" type="Long"/>
+            <parameter name="west" type="Double" required="true"/>
+            <parameter name="south" type="Double" required="true"/>
+            <parameter name="east" type="Double" required="true"/>
+            <parameter name="north" type="Double" required="true"/>
+            <parameter name="minZoom" type="Integer" default="0"/>
+            <parameter name="maxZoom" type="Integer" default="14"/>
+            <parameter name="maxTiles" type="Long"/>
+            <parameter name="maxBytes" type="Long"/>
+            <parameter name="target" required="true"/>
+            <parameter name="packageId"/>
+            <parameter name="buildKey"><description>The build the run is: its progress is written, and it goes on, only while
+                the package's row holds this key (a run it no longer holds stops as CANCELLED)</description></parameter>
+            <parameter name="progressFrom" type="Integer"/>
+            <parameter name="progressTo" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="valid" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="cancelled" type="Boolean"/>
+            <parameter name="size" type="Long"/>
+            <parameter name="sha256"/>
+            <parameter name="tileCount" type="Long"/>
+            <parameter name="contentCount" type="Long"/>
+            <parameter name="minZoom" type="Integer"/>
+            <parameter name="maxZoom" type="Integer"/>
+            <parameter name="reads" type="Long"/>
+            <parameter name="attribution"><description>The source's metadata's attribution, its notice</description></parameter>
+            <parameter name="license"><description>The source's metadata's license, when it names one</description></parameter>
+        </out-parameters>
+    </service>
+
     <service verb="find" noun="ArchiveLayers">
         <description>The PMTiles layers for Maps › Configuration › Archives, for a caller who may open Configuration
             (PERMISSION_DENIED otherwise): each with its location, registered revision, version, size, zoom range, drive,
@@ -167,10 +519,220 @@ along with this software (see the LICENSE.md file). If not, see
         <description>The maps.archives readiness provider (data/AdminConfigurationData.xml), changing nothing, for a caller with
             ADMIN_OVERVIEW_VIEW (PERMISSION_DENIED otherwise): each PMTiles layer with a location, enabled or registered,
             as find#ArchiveLayers states it (NOT_REGISTERED and NEWER_REVISION warnings; NOT_LFS, a git archive that is not
-            a Git LFS object, refused by name, SOURCE_CHANGED, SOURCE_GONE and STORAGE_NOT_RANGED failed); NO_ARCHIVES when
-            there is none.</description>
+            a Git LFS object, refused by name, SOURCE_CHANGED, SOURCE_GONE and STORAGE_NOT_RANGED failed); the page policy's
+            room for COG decoding (maps.raster.csp); maps.archive.space, the room on the filesystems the registered archives
+            are on to replace the largest of each and, while the scheduled backup runs, for the database's archives in the
+            next local backup (ARCHIVE_SPACE_LOW warning; ARCHIVE_SPACE_EXTERNAL_DB for an external content database and
+            ARCHIVE_SPACE_UNREAD for filesystems not reported or not read, each unavailable); NO_ARCHIVES when there is
+            none.</description>
         <in-parameters><parameter name="providerKey" required="true"/></in-parameters>
         <out-parameters><parameter name="checks" type="List"/></out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapSources.js').execute('readiness', context))</script></actions>
+    </service>
+
+    <!-- ===== Offline map packages (plans/archive/Maps-Offline.md §2; docs/tools/Maps.md "Offline packages"; MapPackages.js) ===== -->
+
+    <service verb="define" noun="PackageRequest" type="interface">
+        <description>What an offline map package asks: its name, region (west, south, east, north in WGS84 degrees; west
+            east of east crosses the antimeridian), zooms (0 to 16), the map profile it is read through (the user's own
+            when empty), the basemap layers (registered PMTiles archives the profile offers the user; empty for the
+            profile's basemap and the other styles of its archive), and what else it holds (each Y unless N).</description>
+        <in-parameters>
+            <parameter name="name"/>
+            <parameter name="west" type="Double" required="true"/>
+            <parameter name="south" type="Double" required="true"/>
+            <parameter name="east" type="Double" required="true"/>
+            <parameter name="north" type="Double" required="true"/>
+            <parameter name="minZoom" type="Integer" default="0"/>
+            <parameter name="maxZoom" type="Integer" default="14"/>
+            <parameter name="profileId"/>
+            <parameter name="basemapLayerIds" type="List"/>
+            <parameter name="includePlaces"/>
+            <parameter name="includeOverlays"/>
+            <parameter name="includePostal"/>
+            <parameter name="includeOverture"/>
+        </in-parameters>
+    </service>
+
+    <service verb="estimate" noun="Package">
+        <description>What an offline map package of the signed-in user's would hold, before anything is built: for each
+            basemap archive the profile offers them now (and each of their overlays simplified into tiles that meets the
+            region) the tiles of the region and zooms and their bytes, read from the archive's directories
+            (estimate#PackageExtract); the rest near enough; and what is left out and why (omitted: a layer not offered,
+            a provider's remote tiles, record layers, a profile's overlay layers). Refused (applied false, reasonCode,
+            reason): BBOX_INVALID, ZOOMS_INVALID, CONFIG_UNAVAILABLE, NO_ARCHIVE (no registered basemap archive can be cut),
+            TOO_MANY_TILES, TOO_LARGE (past maps@package-max-bytes, 2 GiB, with the estimate), TOO_LARGE_FOR_USER (with
+            their other packages past maps@package-user-max-bytes, 8 GiB). The postal and Overture rows are counted in the
+            region and sized near enough. Changes nothing. MAPS_APP_SERVICES.</description>
+        <implements service="org.moqui.maps.MapSourceServices.define#PackageRequest"/>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="estimate" type="Map"><description>bytes, bytesText, tileCount, maxBytes, layers [{id, label,
+                bytes, tileCount, minZoom, maxZoom}], omitted [{id, kind, reason}]</description></parameter>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapPackages.js').execute('estimatePackage', context))</script></actions>
+    </service>
+
+    <service verb="create" noun="Package">
+        <description>A new offline map package of the signed-in user's, estimated as estimate#Package does it and refused
+            as it refuses, and TOO_MANY_PACKAGES past 50 and PACKAGE_BUSY while another of theirs is pending or building (the
+            user's account row locked, so the counts hold under concurrent requests); its sources' registered revisions
+            recorded, built by a run of the MapPackageBuild ServiceJob (build#Package) when the installation has room
+            (maps@package-concurrent-builds, 1: it waits pending until then; schedule#PackageBuilds once this commits). The
+            run is signed in as the package's owner whoever's request or build's end started it, and tells them alone when it
+            ends. The estimate is read before the user's row is locked, and the counts and the user's bytes checked again
+            under the lock. Out: packageId, estimate. MAPS_APP_SERVICES.</description>
+        <implements service="org.moqui.maps.MapSourceServices.define#PackageRequest"/>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="packageId"/>
+            <parameter name="estimate" type="Map"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapPackages.js').execute('createPackage', context))</script></actions>
+    </service>
+
+    <service verb="update" noun="Package">
+        <description>Build one of the signed-in user's offline map packages again (a new revision), from what they may see
+            now and the archives as registered now, estimated and refused as create#Package is; the package's earlier
+            revision stays downloadable until the new one is ready, and its file is removed then. Read locked: a package
+            being built, or another of the user's, is PACKAGE_BUSY (a run that ended without saying so is ended first); another
+            user's, or none, RECORD_UNAVAILABLE. MAPS_APP_SERVICES.</description>
+        <in-parameters><parameter name="packageId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="packageId"/>
+            <parameter name="estimate" type="Map"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapPackages.js').execute('updatePackage', context))</script></actions>
+    </service>
+
+    <service verb="cancel" noun="Package">
+        <description>Stop the build of one of the signed-in user's offline map packages (pending or building): its run
+            stops at its next batch of tiles and ends cancelled; a run that ended without saying so (its ServiceJobRun gone
+            or ended, or no word from it for an hour) is ended at once. Another user's, one not there and one not being
+            built are RECORD_UNAVAILABLE. MAPS_APP_SERVICES.</description>
+        <in-parameters><parameter name="packageId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapPackages.js').execute('cancelPackage', context))</script></actions>
+    </service>
+
+    <service verb="delete" noun="Package">
+        <description>Delete one of the signed-in user's offline map packages: its row, its download records and its file
+            (a copy already on a device stays there until it is deleted there). One being built is PACKAGE_BUSY (cancel it
+            first); another user's, or none, RECORD_UNAVAILABLE. MAPS_APP_SERVICES.</description>
+        <in-parameters><parameter name="packageId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapPackages.js').execute('deletePackage', context))</script></actions>
+    </service>
+
+    <service verb="find" noun="Packages">
+        <description>The signed-in user's offline map packages, newest first (at most 50), each with its region, zooms,
+            state and its words (statusText, statusNote), progress, revision, size (sizeText the estimate's while it has
+            no file), built date (builtText in the user's zone), the download URL of its revision and its strong tag when
+            it has a file, and which of Update, Cancel and Delete it takes. Changes nothing. MAPS_APP_SERVICES.</description>
+        <out-parameters><parameter name="packageList" type="List"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapPackages.js').execute('findPackages', context))</script></actions>
+    </service>
+
+    <service verb="build" noun="Package" allow-remote="false" transaction="ignore">
+        <description>The MapPackageBuild ServiceJob's run (started when its turn comes by schedule#PackageBuilds,
+            after create#Package, update#Package, a cancel or delete, each build's end and the hourly clean): the user's
+            own package packageId, pending or building, built as a new revision, while the package holds the run's
+            buildKey (a run it no longer holds, one ended as stale and asked for again, writes nothing; its files are
+            named by its key, so two runs never share one). transaction ignore: it holds no transaction while it cuts,
+            each write its own, so its cancel and the sources' revisions are read as committed. Each extract has what is
+            left of maps@package-max-bytes, and the zip past it fails the build. The run signs in as the package's owner
+            (whoever's request, build's end or clean started it) and stays so to its end, its context being the job's
+            own. An owner whose account is closed (disabled for good, or past its terminateDate) or whose password must
+            change, or a run that throws, ends the package failed, so the run never ends in error; an owner locked out
+            for a few minutes after failed sign-ins (user-facade/login@disable-minutes) puts the build back to wait, and
+            the scheduler passes it by until the lock ends, starting it at its next pass after (within about an hour). A
+            call in a web request never changes who is signed in. A source registered again since the build was asked
+            fails it (checked when it starts and again when the cuts end). Each basemap archive the profile offers the
+            user now is cut to the region and zooms (build#PackageExtract), with its style made package-relative, its
+            sprites and the map fonts; then the outline, and as asked the user's places and the overlays they read now
+            that meet the region (a tiled one as its tiles' extract), the postal codes whose point is in it and the
+            active Overture imports' places and addresses in it, each with its licenses; then manifest.json (the
+            package, the frozen effective configuration with every URL package-relative, the sources, each member's
+            path, size and SHA-256, what was left out and what failed) and the zip (ec.resource.writeZip, the archives,
+            sprites and fonts stored as they are) at runtime://tmp/map-packages/{packageId}-{revision}-{buildKey}.zip,
+            its size and SHA-256 recorded. A member that cannot be read is logged and named in the manifest's failures,
+            and the rest goes on. Progress and the cancel are on the row; the outcome is written in a transaction of its
+            own, and a failed or cancelled build leaves no file of its own (an earlier revision stays). Another user's
+            package changes nothing. Out: name, statusId and reason, for the job's notification.</description>
+        <in-parameters>
+            <parameter name="packageId" required="true"/>
+            <parameter name="buildKey" required="true"><description>The build's key, given when it was asked for: a run whose
+                key the package no longer holds writes nothing</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="name"/>
+            <parameter name="statusId"/>
+            <parameter name="reason"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapPackages.js').execute('buildPackage', context))</script></actions>
+    </service>
+
+    <service verb="schedule" noun="PackageBuilds" allow-remote="false">
+        <description>Start the waiting offline map builds the installation has room for (maps@package-concurrent-builds):
+            one scheduler at a time (the MapPackageBuild ServiceJob row locked as its mutex), the busy packages read
+            locked, a run that ended without saying so ended failed and its owner told, then the oldest waiting packages
+            handed to the job. A run has ended when its ServiceJobRun is gone or ended, when it started and has given no
+            word for an hour (the package's progressDate, else the run's start), or when it never started six hours after
+            its ServiceJobRun was made: the build's own clocks, never the package row's stamp. A lost run so holds its turn
+            up to an hour or two, a queued one up to about seven. Registered on commit by create#, update#, cancel# and
+            delete#Package, so their own row writes are committed and their locks let go first; a build's end and the
+            hourly clean run it in a transaction of their own. No group's.</description>
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/maps/MapPackages.js').execute('schedulePackageBuilds', context)</script></actions>
+    </service>
+
+    <service verb="get" noun="PackageAccess">
+        <description>Whether the signed-in user may download one of their offline map packages at a revision, for the
+            Offline screen's package transition on every request (GET, HEAD, each range): their own package with a file
+            (PACKAGE_MISSING, 404, for another user's, one not built, or a file gone); a revision that is no longer the
+            package's is REVISION_CHANGED (409). A GET records the download (MapPackageDownload: the package, the
+            revision and, when the request came signed in by a device's key, that UserLoginKey and its device name; touched
+            at most once an hour, with the package's lastDownloadDate). When ok: the location, its strong tag
+            (sha256-{sha256}), size and file name, for ec.web.sendPinnedResourceResponse. MAPS_APP_SERVICES.</description>
+        <in-parameters>
+            <parameter name="packageId" required="true"/>
+            <parameter name="revision" required="true"/>
+            <parameter name="method"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="ok" type="Boolean"/>
+            <parameter name="status" type="Integer"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="location"/>
+            <parameter name="tag"/>
+            <parameter name="size" type="Long"/>
+            <parameter name="fileName"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapPackages.js').execute('packageAccess', context))</script></actions>
+    </service>
+
+    <service verb="clean" noun="MapPackages" allow-remote="false">
+        <description>The hourly clean of offline map packages (the clean_MapPackages_hourly ServiceJob): the file of a
+            package not downloaded for maps@package-keep-days (30) since it was built or last downloaded is removed, the
+            package left Expired (Update builds it again); the files under runtime://tmp/map-packages that no package names
+            (a deleted package's, an earlier revision's, a build that stopped) are removed, a busy package's own build left
+            alone. Each that cannot be removed is logged and the others go on. No group's.</description>
+        <out-parameters><parameter name="removedCount" type="Integer"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapPackages.js').execute('cleanPackages', context))</script></actions>
     </service>
 </services>

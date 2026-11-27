@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Artifacts (plans/design-dev-aide.md 7): Search, an artifact's references as lists (Refs, the browser's List view), and
+<!-- Artifacts (plans/archive/design-dev-aide.md 7): Search, an artifact's references as lists (Refs, the browser's List view), and
     the site's Customizations, all from the framework's artifact index, plain forms and lists so the terminal reaches
     them; the Browser, the canvas of the same references (a qvue page, P9, with BrowseTui its terminal twin); and Docs and Export docs, the Markdown docs
     of the artifacts (plans/archive/Autodoc.md). -->

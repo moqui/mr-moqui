@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The artifacts that are rows of the database (plans/design-dev-aide.md 7.1): service jobs and the service each runs,
+//! The artifacts that are rows of the database (plans/archive/design-dev-aide.md 7.1): service jobs and the service each runs,
 //! data documents and their primary entity, email templates and their body screen, and DbForm forms with the screen
 //! form each modifies (configuration a site changes in production, shown beside the site component's extensions), and
 //! artifact groups with their members (each a reference to the screen, service, entity or REST resource it names; one

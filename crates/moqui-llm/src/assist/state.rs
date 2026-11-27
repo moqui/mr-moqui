@@ -66,7 +66,7 @@ pub struct DrawerState {
     pub form_info: Vec<TailForm>,
     /// A canvas open in the drawer: its title and version.
     pub canvas: Option<(String, u32)>,
-    /// A dev-aide page's editor: the file open and where the cursor is (plans/design-dev-aide.md 13.4).
+    /// A dev-aide page's editor: the file open and where the cursor is (plans/archive/design-dev-aide.md 13.4).
     pub editor: Option<crate::prompt::TailEditor>,
 }
 

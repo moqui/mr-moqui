@@ -25,4 +25,16 @@ object ObscuredTouches {
         refuse(shown.window?.decorView)
         return shown
     }
+
+    /**
+     * `dialog` created, then `prepare`d (its window's flags, set before it shows: hidden overlays), then shown with its
+     * window refusing obscured touches.
+     */
+    fun show(dialog: AlertDialog.Builder, prepare: (AlertDialog) -> Unit): AlertDialog {
+        val created = dialog.create()
+        prepare(created)
+        created.show()
+        refuse(created.window?.decorView)
+        return created
+    }
 }

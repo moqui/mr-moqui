@@ -30,8 +30,9 @@
 //!
 //! The tool: `isEnabled()`, `enable()`, `disable()`, `reset()` (off, no fixtures, no requests, no network opened: still
 //! closed), `allowNetwork(urlPrefixes)` (a list; empty closes again), `add({method, url,
-//! bodyContains, status, body, headers, contentType, error, times})` (`url` exact, or a prefix when it ends with `*`;
-//! `body` text, or a `Uint8Array` for a binary answer such as a zip; `times` 0 or absent is any number), `clear()`
+//! bodyContains, status, body, headers, contentType, error, times, ranges})` (`url` exact, or a prefix when it ends with
+//! `*`; `body` text, or a `Uint8Array` for a binary answer such as a zip; `times` 0 or absent is any number; `ranges`
+//! true answers a `Range` request with that part, 206, and an `If-Match` its `ETag` header fails with 412), `clear()`
 //! (the fixtures and requests), `requests()` (oldest first, each `{method, url, headers, body, fixture, at}`,
 //! `fixture` the index of the fixture that answered or -1), `count()` and `last()`.
 
@@ -70,6 +71,10 @@ pub struct Fixture {
     pub error: Option<String>,
     /// How many requests it answers; 0 is any number.
     pub times: usize,
+    /// Answer as a file server does: a `Range` request with the part of the body it asks for (206 and `Content-Range`),
+    /// a range past the end 416, an `If-Match` or `If-Unmodified-Since` that the fixture's `ETag` or `Last-Modified` header
+    /// does not meet 412; a request with no usable `Range` gets the whole body.
+    pub ranges: bool,
     used: usize,
 }
 
@@ -208,6 +213,15 @@ impl HttpFixtures {
         } else {
             fixture.body_bytes
         };
+        let range = request
+            .headers
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case("range"))
+            .map(|(_, value)| value.as_str());
+        if fixture.ranges {
+            let status = if fixture.status == 0 { 200 } else { fixture.status };
+            return Ok(ranged(&bytes, range, &request.headers, status, fixture.headers));
+        }
         Ok(Response {
             status: if fixture.status == 0 { 200 } else { fixture.status },
             bytes,
@@ -244,6 +258,85 @@ impl HttpFixtures {
             fixture,
             at,
         });
+    }
+}
+
+/// A ranged fixture's answer, as a file server's: `If-Match` (against its `ETag`) or `If-Unmodified-Since` (against its
+/// `Last-Modified`) that does not hold is 412; the part of `bytes` a single `Range: bytes=...` asks for (`a-b`, `a-`,
+/// `-n`) is 206 with `Content-Range`, and one that starts past the end 416; no range, one that does not parse, several,
+/// or one whose end is before its start (RFC 9110: ignored) gets the whole body with the fixture's `status`.
+fn ranged(
+    bytes: &[u8],
+    range: Option<&str>,
+    request_headers: &[(String, String)],
+    status: u16,
+    mut headers: Vec<(String, String)>,
+) -> Response {
+    let header = |list: &[(String, String)], name: &str| {
+        list.iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case(name))
+            .map(|(_, value)| value.trim().to_string())
+    };
+    let precondition_failed = [("If-Match", "ETag"), ("If-Unmodified-Since", "Last-Modified")]
+        .iter()
+        .any(|(condition, validator)| match header(request_headers, condition) {
+            Some(wanted) => wanted != "*" && header(&headers, validator).as_deref() != Some(wanted.as_str()),
+            None => false,
+        });
+    if precondition_failed {
+        return Response {
+            status: 412,
+            bytes: Vec::new(),
+            body: String::new(),
+            headers,
+        };
+    }
+    let whole = |headers: Vec<(String, String)>| Response {
+        status,
+        bytes: bytes.to_vec(),
+        body: String::new(),
+        headers,
+    };
+    let total = bytes.len() as u64;
+    let parsed = range
+        .map(str::trim)
+        .and_then(|range| range.strip_prefix("bytes="))
+        .filter(|spec| !spec.contains(','))
+        .and_then(|spec| spec.split_once('-'))
+        .and_then(|(start, end)| match (start.trim(), end.trim()) {
+            ("", suffix) => suffix
+                .parse::<u64>()
+                .ok()
+                .filter(|n| *n > 0)
+                .map(|n| (total.saturating_sub(n), total.saturating_sub(1))),
+            (start, "") => start.parse::<u64>().ok().map(|a| (a, total.saturating_sub(1))),
+            (start, end) => {
+                let (start, end) = (start.parse::<u64>().ok()?, end.parse::<u64>().ok()?);
+                (start <= end).then_some((start, end.min(total.saturating_sub(1))))
+            }
+        });
+    let Some((start, end)) = parsed else {
+        return whole(headers);
+    };
+    if start >= total {
+        headers.push(("Content-Range".to_string(), format!("bytes */{total}")));
+        return Response {
+            status: 416,
+            bytes: Vec::new(),
+            body: String::new(),
+            headers,
+        };
+    }
+    let part = bytes
+        .get(usize::try_from(start).unwrap_or(usize::MAX)..=usize::try_from(end).unwrap_or(usize::MAX))
+        .unwrap_or_default()
+        .to_vec();
+    headers.push(("Content-Range".to_string(), format!("bytes {start}-{end}/{total}")));
+    Response {
+        status: 206,
+        bytes: part,
+        body: String::new(),
+        headers,
     }
 }
 
@@ -360,6 +453,7 @@ fn fixture_of(value: &Value) -> Result<Fixture, Error> {
         headers,
         error: (!error.is_empty()).then_some(error),
         times: number("times").map_or(0, |times| times as usize),
+        ranges: matches!(map.get("ranges"), Some(Value::Bool(true))),
         used: 0,
     })
 }
@@ -416,7 +510,7 @@ impl ToolFactory for HttpFixturesToolFactory {
             "{ isEnabled(): boolean; enable(): void; disable(): void; reset(): void; \
              allowNetwork(urlPrefixes: string[]): void; \
              add(fixture: { method?: string; url: string; bodyContains?: string; status?: number; body?: string | Uint8Array; \
-             headers?: Record<string, string>; contentType?: string; error?: string; times?: number }): void; \
+             headers?: Record<string, string>; contentType?: string; error?: string; times?: number; ranges?: boolean }): void; \
              clear(): void; requests(): { method: string; url: string; headers: Record<string, string>; \
              body: string | null; fixture: number; at: number }[]; count(): number; \
              last(): Record<string, unknown> | null }",

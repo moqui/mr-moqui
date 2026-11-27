@@ -376,7 +376,50 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   There is no map and no geocoding. The message is a card with the label, the address and the coordinates, Open in maps
   (the phone's maps app in the Android app, OpenStreetMap elsewhere) and Copy. Everyone else gets "Location: …" and an
   OpenStreetMap link; Sinch RCS its location message. A location someone shares with you over RCS shows the same way.
-  In an encrypted room the place is only in the ciphertext. Live location waits for the Maps app.
+  In an encrypted room the place is only in the ciphertext. Live location is below.
+- <a id="live-location"></a>**Live location** (`ChatLocationServices.send#LiveLocation` and `get#LiveLocation` over
+  `org.moqui.maps.LocationServices`; who sees a share, its reach, retention and precision are the guide
+  [Maps, Live location](Maps.md#live-location)). Share a location has **Share live location** beside Send, with its
+  end (15 minutes, an hour or 8 hours, within `location@max-share-hours`) and Approximate (about 1 km). It starts a
+  location share whose audience is the room's members as they are at that moment, as people: its local users but you,
+  less its agents, members who put the room out of sight, accounts that cannot sign in, people you blocked, people who
+  blocked you and those the chat directory keeps from you, each told as any share's audience is. Then it posts a
+  message whose `content.location` is `{liveShareId, label, thruDate, approximate, source: "live"}`: the share's id,
+  never a position (the room and message are kept with the share's id, `ChatLiveShare`). Its words are "Live location:
+  Ann, for 1 h" (a time from now, which reads right in any zone; the person's full name, never a username, else "A
+  member of the room") and "Live updates are in the app" with the room's link, so the room list, the push, the terminal
+  and every bridge (SMS, XMPP, Matrix and the others: a place without coordinates goes to no adapter's location
+  message) get those words and no position. Share live location again after a lost answer (the dialog keeps its
+  `clientRef`) answers the first message and its share, and starts sending it. In the Android app the app's own dialog
+  confirms the share and its location service sends it, also in the background; in a browser the page sends it while a
+  chat view is open (`moqui.chat.live.sender`, Chat's `reportLiveLocation`), with a banner above the room ("Sharing
+  your live location until 15:30 · sent from this page while it is open", Stop) and "sending here" on the app bar's
+  chip, and stops, said, when another device takes it over, when its sign-in is lost (401 or 403) and at a sign-out; it
+  reads the share again and goes on when its audience changed (a device's share), and stops when no chat view stays
+  open; a share no page sends goes stale and its age says so. The card shows the position with its accuracy, "Updated 2
+  min ago" and the end while the share is on, moved by the share's pushes, with Open in maps and Copy, and "Live
+  location ended" after. It reads the share through `get#Share`, which checks the audience: a member who joined the
+  room after it started, or who was taken out of it, sees "This live location is not shared with you" and no position;
+  for such a reader of the room `get#ShareStatus` says only whether it has ended. **Membership changes and the share**:
+  a new member is never added (to share with them, share again); a person who leaves the room by themselves stays in
+  its audience until you take them out in Who sees my location (Maps, or My location shares); a person a moderator
+  takes out of the room (`remove#Member`) is taken out of that room's live shares, and one you block after it started
+  (`block#ChatUser`) out of every live share you sent to a room, once that commits (`revoke#LiveAudience`,
+  `LocationServices.revoke#ChatAudience`, in a transaction of its own, logged and never failing the removal or the
+  block; a room that is gone still counts, since its `ChatLiveShare` rows stay until the hourly clean removes the ended
+  share). The owner's card says so ("Shared with the members of the room when you started it"), names those no longer
+  in the room who still see it, says where it is sent from, and has Send from here (Send from this device in the app),
+  Stop and Who sees my location. Deleting the message does not stop the share: its dialog says so and has "Also stop
+  sharing my live location", chosen. **Not in an encrypted room** (the decision of
+  [plans/archive/Location-Sharing.md](../../plans/archive/Location-Sharing.md) §3.5): the picker says "Live location is not offered in
+  an encrypted room: the server would see where you are", and `send#LiveLocation` refuses it (`encryptedRoom`). Sealing
+  each report to the room's devices instead (Megolm, as a message is sealed) would keep the server out, but the Android
+  app's location service sends from Rust with no page, and the room's keys live only in a page's crypto store
+  (matrix-sdk-crypto in IndexedDB), so the phone would send nothing in the background; the server could not apply the
+  audience rule (who was reached when), the rate, the approximate rounding or the end, each of which would move to every
+  reader's device; and a member who joined later would hold the room key. Sealed live location is a later step: the
+  room's devices sealing per report (or a session per share shared only with its audience's devices), with the phone's
+  service given a crypto store of its own.
 - **Photos: compressed or original** (phase 21). A photo you attach (JPEG, PNG or WebP) is now drawn again in your
   browser before it goes: a JPEG or WebP becomes a JPEG of at most 2048 px on its long side, also when that is no
   smaller, and a PNG stays a PNG (made smaller only past 2048 px, so a screenshot keeps its sharp text); either way its
@@ -639,6 +682,7 @@ records drive's folders by their records.
 | `call-target` | Which users the current user may not call, transfer a call to or add to one (`userIdList`; answers `refusedUserIdList`): a refused user is answered as one that does not exist, a desk phone's REFER to one gets 403; with no provider any enabled user may be reached, and one that fails refuses (IronStone: the users of the parties the user may see, under the organization filter of `recipient-source`; a user with no party is in no organization and may be reached; the example gallery refuses users named `*.offlimits`) |
 | `chat-calendar` | A chat event's entry on the current user's calendar (`ProviderInterfaces.chat#CalendarEntry`: `chatRoomId`, `eventSeq`, `action` answer, change or cancel; answers `eventUrl`). Called by `ChatCalServices` after its writes are committed, each provider in a transaction of its own; one that fails is logged and the answer stands. It is given ids only and reads `ChatCalEvent` and the user's `ChatCalAnswer` itself. Without a provider Add to calendar is the `.ics` file (IronStone: one Mantle event per chat event, its `universalId` the chat event's UID, changed only by one who can read the chat room; it is shared, so an edit of it in Commons, Calendar is overwritten by the next change of the chat event). A change or cancel a provider failed is kept (`ChatCalEvent.calendarSyncPending`) and tried again at the event's next answer or change, after a wait that doubles from a minute to a day, ten times at most |
 | `chat-target` | Which users the current user may not find in the people search (`CommsServices.search#Users`), start a direct room with, add to a room or mention in a public room they are not in (`userIdList`; answers `refusedUserIdList`, the interface `chat#Target`, whose parameters are `call#Target`'s): a refused user is left out of the search and answered as one that does not exist; with no provider any enabled user may be reached, and one that fails refuses (`ChatServices.get#RefusedUsers`). The search leaves out every external user (`EXTERNAL_USER`), and an external user reaches only the people of their own rooms. The example gallery refuses users named `*.offlimits`; one service may answer both hooks |
+| `shell-indicator` | Not a Comms hook: the status chips of the shell's app bar for the current user (called with no parameters; answers `indicators` and `refreshOn`), asked by the shell's `/shellIndicators` ([Qvt-Client, Shell indicators](../ui/Qvt-Client.md)). Maps answers "Sharing location" while the user shares theirs |
 
 A provider runs with the app's authorization and entity filters; a read that fails is left out and named, and a mutation that fails is an error.
 
@@ -702,7 +746,13 @@ Olm-encrypted message ([Chat keys](../interfaces/Chat-Keys.md#tests)). `./moq te
 policy and every refusal of end-to-end encrypted calls, an encrypted room's calls among them; `./moq test-client basic-comms --serve --spec EncryptedCallFlow`:
 an encrypted call in three browsers ([WebRTC, Encrypted calls](../interfaces/WebRTC.md#encrypted-calls)). The lock and
 the notes: `./moq test-client webroot --offline --spec WebrootChat` (the rules of `moqui.chat.e2eeLabel`), and the
-acceptance walk `./moq accept basic-comms --spec ChatLabels` (each room's label on a phone and a desktop). `cargo test -p moqui-xmpp` and
+acceptance walk `./moq accept basic-comms --spec ChatLabels` (each room's label on a phone and a desktop). Live location:
+`./moq test framework --spec ChatLocation` (the room's members see it and nobody else, the message's share id and words,
+a send again by its clientRef, a member added later and one who left, those left out when it starts, one taken out of the
+room or blocked later, an encrypted room and a non-member refused, a bridged room's words), `./moq test-client webroot
+--offline --spec WebrootChat` (`moqui.chat.live`: the pushes and the page's sender, its statuses, a lost sign-in, the
+chip's note) and `./moq test-client basic-comms --offline --spec ShellSync` (the card's live update and its end, the
+owner's card, the delete dialog). `cargo test -p moqui-xmpp` and
 `cargo test -p moqui-host --test it -- xmpp::`: XMPP clients against recorded stanzas and on a real server ([XMPP,
 Tests](../interfaces/XMPP.md#tests)). IronStone's own parts are in its specs (`Inbox`, `Compose`,
 `Chat`, `CommsHome`, `InboxMailboxes`, `MailAccounts`, `MailSettings`).

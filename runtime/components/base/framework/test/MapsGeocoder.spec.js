@@ -1,9 +1,9 @@
-// Address and place search (plans/Maps.md §6.1, §6.2, §8; org.moqui.maps.MapServices.find#Places, MapGeocoders.js, the
+// Address and place search (plans/archive/Maps.md §6.1, §6.2, §8; org.moqui.maps.MapServices.find#Places, MapGeocoders.js, the
 // geocoder kinds of the mapProvider connection kind): nothing is sent without an enabled geocoder that passed its test,
 // nor with outside requests off; the connection test sends a fixed public address, never a user's text; the US Census
 // geocoder's answer, through the HTTP fixtures, is street-range interpolation with several matches ambiguous, and Browse's
 // search lists it third with its source and precision; a failure is said and no other service is asked; its rate and
-// allowed operations refuse a search with nothing more sent; the reads of the local-map dialog (the effective
+// allowed operations refuse a search with nothing more sent, and so does its requests a day once the day's are used; the reads of the local-map dialog (the effective
 // configuration and the postal lookup) send nothing to the geocoder.
 // Run: ./moq test framework --spec MapsGeocoder
 const S = "org.moqui.maps.MapServices."
@@ -93,6 +93,7 @@ spec({
         ec.artifactExecution.disableAuthz()
         const del = (entity, field, values) => ec.entity.find(entity).condition(field, "in", values).deleteAll()
         del("moqui.server.ConnectionCheck", "connectionKey", [PROVIDER])
+        del("moqui.maps.MapProviderDayCount", "providerId", [PROVIDER])
         del("moqui.maps.MapProvider", "providerId", [PROVIDER])
         del("moqui.security.UserGroupMember", "userId", [USER, MANAGER])
         del("moqui.security.UserGroupPermission", "userGroupId", [MANAGERS])
@@ -172,6 +173,15 @@ feature("the Census answer is street-range interpolation, several matches ambigu
         out.notAllowed = search()
         policy({allowedOperations: null})
         out.afterPolicy = http.count()
+        // its requests a day: today's count starts over, one is sent and the next refused with nothing sent
+        ec.entity.find("moqui.maps.MapProviderDayCount").condition("providerId", PROVIDER).deleteAll()
+        policy({requestsPerDay: 1})
+        http.add({method: "GET", url: SEARCH, status: 200, contentType: "application/json", body: SPRINGFIELDS, times: 1})
+        const daily = [search({query: "3 Third St"}), search({query: "4 Fourth St"})]
+        out.daily = daily.map(each => each.reasonCode)
+        out.dailyErrors = daily.map(each => each.error).join("")
+        out.afterDaily = http.count()
+        policy({requestsPerDay: null})
         return out
     },
     then(out) {
@@ -196,6 +206,10 @@ feature("the Census answer is street-range interpolation, several matches ambigu
         out.rated[1] == "RATE_LIMITED"
         out.notAllowed.reasonCode == "OPERATION_NOT_ALLOWED"
         out.afterPolicy - out.afterFailure <= 1
+        out.daily[0] != "DAILY_LIMIT"
+        out.daily[1] == "DAILY_LIMIT"
+        out.dailyErrors == ""
+        out.afterDaily - out.afterPolicy == 1
     }
 })
 

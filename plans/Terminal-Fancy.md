@@ -60,7 +60,7 @@ Contents: [1 today](#1-what-is-there-today) · [2 server sessions](#2-server-sid
 | The tray panel | `m-shell-tray`: one panel at the right of the canvas, 400 px, with a tab per screen the theme names (Today, Chat, Notifications, Dialer; mr-boss's Commons and Comms panels), each an `m-dynamic-container` loaded once and kept. The root keeps what is open, the tab and each tab's scroll, in `sessionStorage`. It is in Assist's reach while open | `WebrootVue.qvt.js`; mr-boss `plan/design-drawers-commons.md` §1.4 |
 | The desktop app | The node in process bridges `/termws` to the page with its binary frames. As a client of a remote server the host bridges `/notws` and `/callws` only, text frames only | `crates/moqui-desktop/src/client/sockets.rs`, `crates/moqui-client/src/bridge.rs` |
 | The edge node | Web access forwards WebSockets, `/termws` among them, as HTTP/2 extended CONNECT on the link; at most 768 tunnels and sockets per node. The local node sees the client's address | [Edge-Node](archive/Edge-Node.md) §5.3 |
-| The rule | No code comes in from outside and runs on the server, and there is no web eval endpoint. The Dev AIDE is the one exception, on dev instances (its D15). The browser terminal runs the apps only | [design-dev-aide](design-dev-aide.md) §15, `docs/security/Attack-Surface.md` |
+| The rule | No code comes in from outside and runs on the server, and there is no web eval endpoint. The Dev AIDE is the one exception, on dev instances (its D15). The browser terminal runs the apps only | [design-dev-aide](archive/design-dev-aide.md) §15, `docs/security/Attack-Surface.md` |
 
 ---
 
@@ -866,7 +866,7 @@ Nov 11, 2026, the evening. The plan stays here, not archived: §15 waits for a f
 - A per-person OS account for host sessions on a shared dev server.
 - Named workspaces: an arrangement saved with the profiles it starts.
 - ~~A git worktree per agent session, with the Dev AIDE's repositories.~~ Built Nov 14, 2026 in the Dev AIDE
-  ([design-dev-aide](design-dev-aide.md) §21.8, P13): a session's tools work in its own worktree, a root of its own.
+  ([design-dev-aide](archive/design-dev-aide.md) §21.8, P13): a session's tools work in its own worktree, a root of its own.
 - Images, ligatures, WebGL; a bundled font with the symbols agents' TUIs use.
 - A native window per terminal in the Desktop app.
 - Recording a session.

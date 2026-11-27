@@ -19,19 +19,23 @@
 //! - [`account`]: the servers and users signed in on this device, the current one, and each one's device mode.
 //! - [`keys`]: where the device keys are kept, behind a trait the host fills with the OS key store.
 //! - [`login`]: password sign-in with `createLoginKey`, the second factor, and sign-out that revokes the key.
+//! - [`location`]: a live location share sent from this device (the Android app's foreground service): the newest
+//!   point only, sent with the device key, and the server's answers handled as the browser's Maps page does.
 //! - [`proxy`]: a request of the page forwarded to the server with the key, its answer made safe for the page.
 //! - [`socket`]: `/notws` and `/callws` held by the host and bridged to the page.
 //! - [`cache`]: the shell's answers as MD3 kept them in files, moved once into the account's [`store`].
 //! - [`store`]: an account's data on the device for offline reading and writing: cached answers, chat, mail, the
 //!   outbox, drafts and files, in SQLite under a size cap.
 //! - [`conf`]: the client's settings from the `<client-conf>` element of the Moqui XML conf (the device mode, the
-//!   mirror and prefetch limits, the store's size cap).
+//!   mirror and prefetch limits, the store's and the map packages' size caps).
 //! - [`sso`]: sign-in through the server's identity providers in the system browser, handed back to the app (RFC 8252).
 //! - [`app`]: the client's state while the app runs as a client ([`app::Client`]), and what it asks of its host
 //!   ([`app::ClientHost`]): the pages are the host's.
 //! - [`bridge`]: the pages' sockets held by the host, and a client's `/notws` frames written into the store.
 //! - [`stores`]: each account's store, opened when first used; [`offline`]: the comms transitions' answers kept and
 //!   answered when the server cannot be reached; [`sync`]: the pushes, the outbox and its sender, and the mirror.
+//! - [`packages`]: the offline map packages downloaded here, checked, unpacked and served to the shell
+//!   (plans/archive/Maps-Offline.md §2.4).
 //! - [`modes`]: what each device mode keeps; [`renewal`]: the keys renewed before they run out; [`assets`]: the
 //!   shell's own files.
 //! - [`vault`]: the vault module run natively for the pages (plans/archive/Vault-Instances.md V5), with rollback memory and
@@ -53,9 +57,11 @@ pub mod conf;
 mod files;
 mod http;
 pub mod keys;
+pub mod location;
 pub mod login;
 pub mod modes;
 pub mod offline;
+pub mod packages;
 pub mod proxy;
 pub mod renewal;
 pub mod socket;

@@ -13,7 +13,7 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
-    <!-- The Geo data importer (plans/Maps.md §6.4), in crates/moqui-tools/src/geo, with the parsers, postal-code rules and
+    <!-- The Geo data importer (plans/archive/Maps.md §6.4), in crates/moqui-tools/src/geo, with the parsers, postal-code rules and
         derived IDs in moqui-lib's geo module. A run brings a registered data set (moqui.maps.GeoDataSet, MapEntities.xml)
         into moqui.basic.Geo, GeoPostalCode, GeoPostalCodePlace, GeoPoint, GeoPointAssoc and GeoAssoc (BasicEntities.xml)
         and is a moqui.maps.GeoDataImport row. For MAPS_ADMIN (the artifact group names these services), checked again
@@ -53,8 +53,12 @@ along with this software (see the LICENSE.md file). If not, see
             (dbresource://moqui/maps/geo-import/(userId)/(geoDataImportId)/errors.csv, as an ETL run's: the first
             10,000, and how many more), the first 100 in errors; a failed run's errorLocation names the step.
             geoDataImportId runs a pending run (GdiPending, made by the screen or job that starts it), whose own data set
-            and country are used. A ServiceJob with no user signed in names the user to run as in runAsUserId, a
-            ServiceJobUser of the job who added themselves.</description>
+            and country are used; when the run is one of a queue (queueId, start#GeoDataImport's every country), it then
+            starts the queue's next pending run as a run of the GeoDataImport ServiceJob, whatever its own end (one whose
+            job does not start is marked failed and the next is tried); a refusal every run of the queue would meet (the
+            set disabled or unreadable, its license, outside requests off, the size limit, the job's user refused or not
+            authorized) instead cancels the queue's waiting runs with that reason. A ServiceJob with no user signed in names the user
+            to run as in runAsUserId, a ServiceJobUser of the job who added themselves.</description>
         <in-parameters>
             <parameter name="dataSetId"/>
             <parameter name="countryGeoId"/>
@@ -85,22 +89,37 @@ along with this software (see the LICENSE.md file). If not, see
             transaction="ignore">
         <description>Ask a run to stop: a pending run is cancelled at once; a running one reads the request between its
             steps and batches and ends GdiCancelled with nothing retired, the rows of the batches it loaded kept and the
-            edition in use unchanged. Refused for a run that has ended.</description>
-        <in-parameters><parameter name="geoDataImportId" required="true"/></in-parameters>
-        <out-parameters><parameter name="statusId"/></out-parameters>
+            edition in use unchanged. A running one whose row has not changed for an hour is taken as abandoned and ended
+            at once (and its queue goes on with its next). Refused for a run that has ended. With queueId instead, the
+            whole queue of an import of every country: its pending runs cancelled at once (so none starts) and its running
+            one asked to stop (ended at once when abandoned); refused when none is in progress. cancelledCount is the queue's runs cancelled or asked to stop.</description>
+        <in-parameters>
+            <parameter name="geoDataImportId"/>
+            <parameter name="queueId"><description>A queue's runs (start#GeoDataImport with everyCountry)</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="statusId"/>
+            <parameter name="cancelledCount" type="Long"/>
+        </out-parameters>
     </service>
 
     <service verb="remove" noun="GeoData" type="rust" location="moqui_tools::geo::service::remove_geo_data"
             transaction="ignore">
         <description>Remove what a data set's source key owns, for countryGeoId (needed for a set read a country at a
-            time; every country for a set with none), in one transaction: its place names and point associations, then
-            each point, postal code and county, place or city Geo it made that no row of any entity refers to (from the
-            entity model's relationships to Geo, GeoPoint and GeoPostalCode: another source's points and place names, an
-            address, a group); the rest are end-dated. A user-confirmed point stays, with its association, and keeps its
-            Geo; a record's own location is left alone. For the ZCTA-to-county set, its county-to-code links are deleted;
-            a set of countries or divisions is refused, those rows being shared. Refused while an import of the source
-            key and country is in progress. rowsDeleted and rowsRetired count rows. The operator's uploads its runs read (under
-            dbresource://moqui/maps/import/) are deleted, and the postal lookup cache is cleared.</description>
+            time; every country for a set with none), a batch of about 2,000 Geo IDs at a time, each batch in its own
+            transaction: a batch's place names and point associations, then each point, postal code and county, place or
+            city Geo it made that no row of any entity refers to (from the entity model's relationships to Geo, GeoPoint
+            and GeoPostalCode: another source's points and place names, an address, a group); the rest are end-dated. A
+            user-confirmed point stays, with its association, and keeps its Geo; a record's own location is left alone.
+            For the ZCTA-to-county set, its county-to-code links are deleted, 2,000 a batch; a set of countries or
+            divisions is refused, those rows being shared. A removal stopped part way leaves whole batches removed, and a
+            Remove again finishes it. A batch that fails is rolled back and the removal goes on with the next; the error
+            names the failed batches' Geo IDs. Refused while an import of the source key and country, or another removal
+            of the set, is in progress: the removal marks the data set (removingStamp, removingCountryGeoId, touched
+            before each batch, abandoned after an hour unchanged), and start#GeoDataImport and the import refuse the scope
+            meanwhile; an import that starts anyway stops the removal before its next batch. rowsDeleted and rowsRetired
+            count rows. When every batch is removed, the operator's uploads its runs read (under
+            dbresource://moqui/maps/import/) are deleted; the postal lookup cache is cleared.</description>
         <in-parameters>
             <parameter name="dataSetId" required="true"/>
             <parameter name="countryGeoId"/>
@@ -168,10 +187,16 @@ along with this software (see the LICENSE.md file). If not, see
             (GdiPending, the signed-in user's) that the job's import#GeoData takes, so it has a job run, its notification
             (topic GeoDataImport) and the run row from the start. Refused here, with no run: a set that is not there or is
             disabled, a license not acknowledged, a download while outside requests are off, no country for a set read a
-            country at a time or an operator's file (or one its countryCodes do not list), no file for an operator's file, and a run of the same source key and
-            country in progress, each before an upload is written. An operator's file is an upload (file, at most maps@import-max-bytes, kept under
+            country at a time or an operator's file (or one its countryCodes do not list), no file for an operator's file, a run of the same source key and
+            country in progress, and a removal of its rows under way (remove#GeoData's mark), each before an upload is
+            written. An operator's file is an upload (file, at most maps@import-max-bytes, kept under
             dbresource://moqui/maps/import/(userId)/) or a location the importer allows. A refused job start leaves the run
-            failed. Every GeoNames country at once is not offered: one country a run.</description>
+            failed. everyCountry (a set read a country at a time) imports every country of its countryCodes that has a country
+            Geo as a queue (plans/archive/Maps.md §6.3): a pending run a country sharing a queueId (the first run's ID), refused while
+            a run of the source key is in progress (one with no word for an hour not counted; the data set's row is locked
+            so two starts do not both pass); only the first starts here, and each run starts the next when it ends
+            (import#GeoData), one at a time, each its own run and edition; cancel#GeoDataImport with the queueId cancels the
+            rest. everyCountryEstimate gives the confirmation's estimate.</description>
         <in-parameters>
             <parameter name="dataSetId" required="true"/>
             <parameter name="countryGeoId"><description>A Geo ID or an alpha-2 or alpha-3 code</description></parameter>
@@ -180,10 +205,14 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="force" type="Boolean" default-value="false"/>
             <parameter name="again" type="Boolean" default-value="false"><description>A Refresh: an operator's file given no
                 file or location is the file its scope's last run read</description></parameter>
+            <parameter name="everyCountry" type="Boolean" default-value="false"><description>Every country of a set read a
+                country at a time, as a queue of runs</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="geoDataImportId"/>
             <parameter name="jobRunId"/>
+            <parameter name="queueId"/>
+            <parameter name="countryCount" type="Integer"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/GeoData.js').execute('startImport', context))</script></actions>
     </service>

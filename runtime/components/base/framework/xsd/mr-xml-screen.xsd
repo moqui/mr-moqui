@@ -607,6 +607,7 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:element ref="call-target"/>
             <xs:element ref="chat-target"/>
             <xs:element ref="chat-calendar"/>
+            <xs:element ref="shell-indicator"/>
         </xs:choice>
     </xs:complexType></xs:element>
     <xs:attributeGroup name="provider-attributes">
@@ -664,6 +665,12 @@ along with this software (see the LICENSE.md file). If not, see
         user's calendar, changes or removes it (org.moqui.comms.ProviderInterfaces.chat#CalendarEntry, called by
         org.moqui.chat.ChatCalServices): given only the event's room, message and an action, it reads the event and the
         user's answer itself. With no provider a chat event is offered as an .ics file.</xs:documentation></xs:annotation></xs:element>
+    <xs:element name="shell-indicator" type="provider-type"><xs:annotation><xs:documentation>The status chips of the shell's
+        app bar for the current user, on every screen (the /shellIndicators transition, asked when the page starts and again
+        when a push its answer names comes or after its refreshInSeconds): called with no parameters, it answers indicators, each
+        {key, label, icon, tone, url, title, refreshInSeconds (from now)}, an empty list when there is nothing to show, and
+        refreshOn [{topicPrefix, events}], the pushes on which the shell asks again. A component's conf may answer it too,
+        for every signed-in user (mr-moqui-conf.xsd screen-facade shell-providers: the framework's live location).</xs:documentation></xs:annotation></xs:element>
 
     <!-- ================ Declared actions and panels ================ -->
     <xs:attributeGroup name="ext-item-attributes">
@@ -842,7 +849,7 @@ along with this software (see the LICENSE.md file). If not, see
     <xs:element name="page-action"><xs:annotation><xs:documentation>
         An action of the Assist drawer's header on every app page of a user who may open this app: it opens the drawer with
         the agent named, whose suggested prompts for the page follow (the dev-aide's "Customize this screen" on a dev
-        instance, plans/design-dev-aide.md 3.5). A user without the agent is not offered it. With screen instead, it opens
+        instance, plans/archive/design-dev-aide.md 3.5). A user without the agent is not offered it. With screen instead, it opens
         that screen of this app (a path under its root) with the page's path and query as the page parameter (the
         dev-aide's "Open in screen builder").
     </xs:documentation></xs:annotation><xs:complexType>
@@ -1480,7 +1487,7 @@ along with this software (see the LICENSE.md file). If not, see
     </xs:complexType></xs:element>
 
     <xs:element name="map-view" substitutionGroup="AllWidgets"><xs:annotation><xs:documentation>
-        A map (plans/Maps.md §3.2): in qvt an m-map, which loads js/WebrootMap.js and the vendored OpenLayers bundle when it
+        A map (plans/archive/Maps.md §3.2): in qvt an m-map, which loads js/WebrootMap.js and the vendored OpenLayers bundle when it
         first mounts and draws the profile's basemap (the Natural Earth country outline when no provider is configured), its
         layers and the places given, with a scale line, attribution, a coordinate readout, Locate me (on request only) and,
         with pick, the choice of a point; when the map cannot draw it lists the places instead. Bound over the screen's data

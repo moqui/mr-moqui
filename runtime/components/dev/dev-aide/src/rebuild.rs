@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Rebuild from the app (plans/design-dev-aide.md 6.5): `./moq build` of the package this server runs, typed into a new
+//! Rebuild from the app (plans/archive/design-dev-aide.md 6.5): `./moq build` of the package this server runs, typed into a new
 //! host session of the Terminal in the checkout, as Run locally types its script (`open#TerminalSession` `input`). The
 //! shell `exec`s it (sh, bash, zsh, fish, csh and tcsh all take `exec`), so the session's end is the build's: the Terminal keeps an
 //! ended session listed with its exit status and its last output (`find#TerminalSessions`), and the banner that follows

@@ -4,7 +4,7 @@ The Dev AIDE (assisted IDE) is the `/qapps` app for changing and creating Moqui 
 a workspace of the components' repositories with an editor, git and live reload; an artifact index with search and a
 browser; an entity modeler; a service writer with a logic composer and ECA rule tools; a screen builder; a task panel;
 and Dev Assist, the dev agent, with tools for all of it. It is at `/qapps/dev` (menu Dev AIDE) on a dev instance. The
-design and its build record are in [plans/design-dev-aide.md](../../plans/design-dev-aide.md).
+design and its build record are in [plans/archive/design-dev-aide.md](../../plans/archive/design-dev-aide.md).
 
 The code: the component `runtime/components/dev/dev-aide` (its crate in `src/`, services in
 `service/org/moqui/devaide/`, screens in `screen/DevAide/`, the browser client in `screen/devstatic/`, the dev agent's
@@ -90,7 +90,9 @@ is the page.
 ### The Workspace with git
 
 The git commands are the developer's own `git` (`dev-aide@git-command`), with its config, hooks, signing and
-credential helpers. The tabs of a git root:
+credential helpers. A read (status, a diff, a file at a commit, the log, blame) runs nothing a repository names: no
+lazy fetch from a partial clone's remote, no `core.fsmonitor` and no hooks; writes and network commands keep the
+repository's config. The tabs of a git root:
 
 - **Changes**: the staged and unstaged files with their diffs; Stage, Unstage and Discard by file or by hunk (the hunks
   as chips over the merge view); the commit form with the current task's trailer, Amend, Skip hooks, and Commit and
@@ -104,7 +106,7 @@ credential helpers. The tabs of a git root:
 - **Conflicts**: a merge, cherry-pick, revert or stash that stops at conflicts shows a banner; a conflicted file opens
   ours, the result and theirs side by side, with Ours, Theirs and Both on each conflict, Mark resolved once no markers
   remain, and Abort.
-- **Settings** (a tab of the root): remotes (Open on host, Prune, Set URL, Remove, Add remote), the root's components,
+- **Settings** (a tab of the root): remotes (Open on the server, Prune, Set URL, Remove, Add remote), the root's components,
   where Publish pushes, and `.gitignore`. A root's **publish branch** (Settings › Roots, or per user the
   `DEV_AIDE_PUBLISH_BRANCH` preference an admin sets on System › User) makes Publish push to a branch of its own and
   open a merge request, optionally required.
@@ -303,8 +305,9 @@ coding-agent skill (`runtime/components/base/framework/skill/moqui-coding-agent.
 **Tasks** (`dev/Tasks`, and the Workspace rail's Tasks) lists your open tasks from a task source: `mantle` (this
 instance's Mantle work efforts assigned to you, when Mantle is loaded) or another Moqui instance over REST (Another
 instance's tasks: a base URL, your user name and an access token there, kept encrypted); Tasks from and Open in pick
-the source and the task app (IronStone Projects and MarbleERP by the conf's `task-app` elements, and any
-`DevAideTaskApp` row). A task has Open (in the task app), Copy key, Use in commit, **Set current** (the root's commit
+the source and the task app (IronStone Projects and MarbleERP by the conf's `task-app` elements, those a group server
+offers, and those added in Settings › **Task apps**: a title, and a project's and a task's path on this server with
+`{projectId}` and `{taskId}`; the extend tier adds one, and who added it or the full tier removes it). A task has Open (in the task app), Copy key, Use in commit, **Set current** (the root's commit
 messages get its trailer) and **Branch** (`KEY-first-words`). Quick create makes a task on this instance through
 Mantle. A task key is one short line; one that is not is refused.
 
@@ -340,7 +343,11 @@ fork, merge request settings, agreement), and the Workspace has:
   deleted when the run ends; nothing comes back to the tree, and the run's output is its log in the dialog. A run in
   the image needs `TERMINAL_HOST` and a root you may write that does not hold the runtime, has the conf's memory,
   process and time limits, and has no network on a shared dev server.
-- **Open on the server** for the current file at its line, a commit and a branch, where the server offers those pages.
+- **Open on the server** for the current file at its line, a commit and a branch, where the server offers those pages:
+  the pages of the application that keeps the repository (Smithy's), or for a repository the framework's hosting keeps
+  those an application has for it (IronStone Projects' Code, where mr-boss is loaded). The framework has no pages of
+  its own, so on a server with no such application the button is not shown. The same label opens a merge request, a
+  status and a remote on their server.
 - **The contributor agreement**: where it is on, Changes warns when the commit's author has not signed, and **Sign**
   commits the line in `AUTHORS.md` alone, as you.
 - **Issues** in the task panel: the hosted repository's open issues, the tasks of its linked projects first; Use in
@@ -369,12 +376,23 @@ With `dev-aide shared="true"`, one dev instance serves a team:
   stored for;
 - **presence**: a tab shows who else has the file open ("being edited by"), and a save by another user tells the open
   tabs, whose clean ones take the new text;
-- Save is single-writer by hash: a file saved by another since you opened it opens Compare.
+- Save is single-writer by hash: a file saved by another since you opened it opens Compare;
+- **co-editing**: the users with one file open that they may write edit it together, each seeing the others' carets
+  and selections by name and the "co-editing with" chip. The file's room is seeded from the file when its first editor
+  opens it, kept in memory only and dropped when the last tab closes; undo is your own edits only. Save is still each
+  user's, by hash: a save by one moves the others' base, so the next save of the shared text is no conflict. A room is
+  one server's: on a server with cluster peers nothing is co-edited. The bounds are `dev-aide@coedit-max-rooms` (files
+  a user co-edits at once, 20) and `dev-aide@coedit-max-total-bytes` (every room's state together, 64 MiB).
 
 ## Editor settings and keymaps
 
 Settings › **Editor** sets, for you only (the `DEV_AIDE_EDITOR` preference): the font size, the tab size (and indent;
-empty is CodeMirror's), wrap, white space shown and the keymap. Settings › **Editor keys** has a row for each of the
+empty is CodeMirror's), wrap, white space shown, the keymap (CodeMirror's, VS Code's or Vim, whose library loads when
+you pick it) and **Check script types**, off by default: a script file under a component's `script/` is checked by
+TypeScript in a worker of the browser against the project's `moqui types` declarations, as the function body it runs
+as, its problems in the editor and Problems (the compiler, 3.6 MB, loads on the first script tab). The shell, Groovy,
+properties, TOML, Dockerfile and nginx files are highlighted by a second bundle of languages, loaded when one opens.
+Settings › **Editor keys** has a row for each of the
 code editor's commands (find, toggle comment, completion, undo, redo, fold all, unfold all) with its default and your
 keys, in CodeMirror's form (`Mod-Shift-f`; Mod is Ctrl, or Cmd on a Mac); empty sets the default back, and a key another
 command has is refused. The Workspace's own keys (Go to file, Go to artifact, Search in files, Save) are the shell's key
@@ -421,7 +439,16 @@ keeps, or `MOQUI_LOGIN_KEY`) and `--project DIR` or `--java DIR` for another Moq
   maps, data records); it is refused, naming the place, where a reference does not resolve, something reads the name
   under another, an edit would land in an upstream component under the lock, or under `--server`. Its last gate is a
   strict plain-text scan of every component for the old name, so renaming a common name practically always refuses.
-  **Code actions** offer the nearest known names for an unknown entity, service, field or parameter.
+  **Code actions** offer the nearest known names for an unknown entity, service, field or parameter, and **Extend in
+  my-site** for an in-place edit of an upstream component while the lock is on: the open text against the file at git's
+  `HEAD` is reported as `upstream.edit`, and where the edit is mechanical (fields added to an upstream entity, a field
+  added to an upstream form with its layout ref, a column added to an upstream list with a column of its own, each
+  after another field) the quick fix is one edit that puts the upstream file back as committed and writes the fields
+  as the entity modeler and the screen builder do: an `extend-entity` in the site component's entity file, or a form
+  merge with `after=` in its `screen-extend` of the screen, the file made when there is none (offered to a client whose
+  edits take `documentChanges` with a `create`, the open file's edit naming its version). The site component is the
+  first of the conf's `dev-aide@site-component`; with none there nothing is upstream and nothing is offered (Settings ›
+  Site components is the database's, which the command line does not read).
 
 ## Settings
 
@@ -439,8 +466,14 @@ The `dev-aide` conf element (the component's `MoquiConf.xml`; Settings stores so
 | `local-run-timeout-minutes` | 60 | After which a run in the image is stopped |
 | `local-run-limit` | 2 | Runs in the image a user may have going |
 | `local-run-copy-mb` | 1024 | The most the copy of a working tree may hold |
+| `hosted-max-deleted` | 2000 | The most files a delete of a hosted root's folder removes in its one commit; a folder with more is refused |
 
-Its `task-app` elements name the task apps' project and task paths. The preferences: `DEV_AIDE_EDITOR`,
+The framework's `dev-reload` element (`MoquiDefaultConf.xml`) has the dev tools' own: `index-writers` (3), the
+connections the artifact index writes a build's rows on at once, a hundred files to a transaction, at most one more
+than the pool's connections the request and service workers leave.
+
+Its `task-app` elements name the task apps' project and task paths; Settings › Task apps adds more (`DevAideTaskApp`
+rows). The preferences: `DEV_AIDE_EDITOR`,
 `DEV_AIDE_UPSTREAM_EDITS`, `DEV_AIDE_PUBLISH_BRANCH` (an admin's, on System › User), `DEV_AIDE_TASK_SOURCE`,
 `DEV_AIDE_TASK_APP` and `DEV_AIDE_CURRENT_TASK.<root>`.
 

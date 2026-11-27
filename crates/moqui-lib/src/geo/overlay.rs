@@ -12,13 +12,26 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A user's geographic file as a map overlay (plans/Maps.md §4.1, §8): a GeoJSON, GPX or KML file read, checked and
-//! made a sanitized GeoJSON FeatureCollection in WGS84 for the browser, which draws only that.
+//! A user's geographic file as a map overlay (plans/archive/Maps.md §4.1, §8): a GeoJSON, TopoJSON, EsriJSON, GPX, KML, GML,
+//! WKT, WKB, delimited text (a WKT, WKB or latitude and longitude column) or zipped shapefile read, checked and made a
+//! sanitized GeoJSON FeatureCollection in WGS84 for the browser, which draws only that. The readers of the formats added
+//! after GeoJSON, GPX and KML are the submodules ([`topojson`], [`esrijson`], [`wkt`] with the delimited text, [`wkb`],
+//! [`gml`], [`shapefile`]); each hands its geometries to the one [`Reader`], so every format has the same bounds, checks
+//! and plain-text rule. A GeoPackage is not read: it is an SQLite database, and the server links no SQLite reader
+//! (docs/tools/Maps.md, Overlays and places).
 //!
-//! - Bounded: a file over `max_bytes`, or with more than `max_features` features, is refused whole.
+//! - Bounded: a file over `max_bytes`, or with more than `max_features` features, is refused whole. A zipped shapefile's
+//!   members are inflated to at most four times `max_bytes` in all, at most a hundred times their compressed size, and
+//!   a TopoJSON file's arcs, which features may share, to at most `max_bytes / 4` positions in all.
 //! - Coordinates are WGS84 longitude and latitude, each in range and finite. GPX and KML are WGS84 by definition; a
-//!   GeoJSON file is WGS84 unless its (pre-2016) `crs` member names EPSG:4326 or CRS84 (the same), or EPSG:3857 (Web
-//!   Mercator, converted here); any other CRS is refused, since no reprojection is made here (§4.1).
+//!   GeoJSON or TopoJSON file is WGS84 unless its (pre-2016) `crs` member names EPSG:4326 or CRS84 (the same), or
+//!   EPSG:3857 (Web Mercator, converted here); an EsriJSON file's `spatialReference`, a GML geometry's `srsName` (an
+//!   EPSG:4326 URN or URL read latitude first, as GML has it), an EWKT or EWKB SRID and a shapefile's `.prj` may name
+//!   the same two, or a CRS of the projection registry ([`super::proj::Registry`], the `moqui.maps.MapProjection`
+//!   rows: UTM, the British National Grid, NAD83, Lambert-93, LAEA Europe and those an administrator adds), converted
+//!   to WGS84 here with the transform it records (P4c; a GML URN or URL of one is read in its authority's axis order,
+//!   the row's). Any other CRS is refused (CRS_UNSUPPORTED) by its name. The CRS recorded is the file's (its first
+//!   geometry's), with what converting it did ([`Overlay::transform`]).
 //! - Each feature is checked by itself: a geometry that is not sane (a position out of range or not a number, a line of
 //!   fewer than two positions, a ring of fewer than four, a nesting that is not its type's) rejects that feature, which
 //!   is counted and named in the notes, and the rest are kept. A file with no feature left is refused.
@@ -31,28 +44,71 @@
 //!
 //! No ExecutionContext: `moqui_tools::maps_overlay` reads the file through the resource facade and serves the result.
 
+mod esrijson;
+mod gml;
+mod shapefile;
+mod topojson;
+mod wkb;
+mod wkt;
+
 use std::collections::BTreeMap;
 
 use serde_json::{json, Map, Value};
 
 use crate::node::MNode;
 
+use super::proj::Registry;
+
 /// The formats read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OverlayFormat {
     GeoJson,
+    TopoJson,
+    EsriJson,
     Gpx,
     Kml,
+    Gml,
+    /// One WKT or EWKT geometry a line.
+    Wkt,
+    /// WKB or EWKB: binary geometries one after another, or hex text, one geometry a line.
+    Wkb,
+    /// Delimited text with a header: a WKT or hex WKB column, or latitude and longitude columns.
+    Csv,
+    /// A zip of a shapefile: its `.shp`, with its `.dbf`, `.prj` and `.cpg` when it has them.
+    Shapefile,
 }
 
 impl OverlayFormat {
-    /// A format by its `MapLayerFormat` enum ID (`MLF_GEOJSON`) or its short name (`geojson`, `json`, `gpx`, `kml`).
+    /// Every format, in the order a list of them is shown.
+    pub const ALL: [Self; 10] = [
+        Self::GeoJson,
+        Self::TopoJson,
+        Self::EsriJson,
+        Self::Gpx,
+        Self::Kml,
+        Self::Gml,
+        Self::Wkt,
+        Self::Wkb,
+        Self::Csv,
+        Self::Shapefile,
+    ];
+
+    /// A format by its `MapLayerFormat` enum ID (`MLF_GEOJSON`) or its short name (`geojson`, `json`, `gpx`, `kml`, ...).
     #[must_use]
     pub fn parse(name: &str) -> Option<Self> {
-        match name.trim().to_ascii_lowercase().as_str() {
-            "mlf_geojson" | "geojson" | "json" => Some(Self::GeoJson),
-            "mlf_gpx" | "gpx" => Some(Self::Gpx),
-            "mlf_kml" | "kml" => Some(Self::Kml),
+        let lower = name.trim().to_ascii_lowercase();
+        let short = lower.strip_prefix("mlf_").unwrap_or(&lower);
+        match short {
+            "geojson" | "json" => Some(Self::GeoJson),
+            "topojson" => Some(Self::TopoJson),
+            "esrijson" => Some(Self::EsriJson),
+            "gpx" => Some(Self::Gpx),
+            "kml" => Some(Self::Kml),
+            "gml" => Some(Self::Gml),
+            "wkt" => Some(Self::Wkt),
+            "wkb" => Some(Self::Wkb),
+            "csv" => Some(Self::Csv),
+            "shapefile" | "shp" => Some(Self::Shapefile),
             _ => None,
         }
     }
@@ -62,22 +118,45 @@ impl OverlayFormat {
     pub fn enum_id(self) -> &'static str {
         match self {
             Self::GeoJson => "MLF_GEOJSON",
+            Self::TopoJson => "MLF_TOPOJSON",
+            Self::EsriJson => "MLF_ESRIJSON",
             Self::Gpx => "MLF_GPX",
             Self::Kml => "MLF_KML",
+            Self::Gml => "MLF_GML",
+            Self::Wkt => "MLF_WKT",
+            Self::Wkb => "MLF_WKB",
+            Self::Csv => "MLF_CSV",
+            Self::Shapefile => "MLF_SHAPEFILE",
         }
     }
 
-    /// The format of a file name by its extension.
+    /// The format of a file name by its extension (`.esri.json` before `.json`; a shapefile is a `.zip`).
     #[must_use]
     pub fn of_file_name(name: &str) -> Option<Self> {
         let lower = name.trim().to_ascii_lowercase();
+        if lower.ends_with(".esri.json") {
+            return Some(Self::EsriJson);
+        }
         let extension = lower.rsplit_once('.').map(|(_, extension)| extension)?;
         match extension {
             "geojson" | "json" => Some(Self::GeoJson),
+            "topojson" => Some(Self::TopoJson),
+            "esrijson" => Some(Self::EsriJson),
             "gpx" => Some(Self::Gpx),
             "kml" => Some(Self::Kml),
+            "gml" => Some(Self::Gml),
+            "wkt" => Some(Self::Wkt),
+            "wkb" => Some(Self::Wkb),
+            "csv" | "tsv" => Some(Self::Csv),
+            "zip" => Some(Self::Shapefile),
             _ => None,
         }
+    }
+
+    /// Whether the file is read as bytes rather than UTF-8 text.
+    #[must_use]
+    pub fn is_binary(self) -> bool {
+        matches!(self, Self::Wkb | Self::Shapefile)
     }
 }
 
@@ -114,8 +193,11 @@ pub struct Overlay {
     pub rejected: usize,
     /// west, south, east, north of every position kept.
     pub bounds: Option<[f64; 4]>,
-    /// The file's CRS: EPSG:4326, or EPSG:3857 for a GeoJSON file that declared it (its positions are converted).
-    pub crs: &'static str,
+    /// The file's CRS as it declared it (its first geometry's): EPSG:4326, EPSG:3857 or a registered `EPSG:n`, whose
+    /// positions are converted.
+    pub crs: String,
+    /// What converting the CRS to WGS84 did, in words (the provenance): empty for WGS84.
+    pub transform: String,
     /// What was not read or kept, in words: each kind once with its count, and the first rejected features by number.
     pub notes: Vec<String>,
 }
@@ -142,24 +224,96 @@ const EARTH_RADIUS: f64 = 6_378_137.0;
 /// # Errors
 /// An [`OverlayError`] when the file as a whole cannot be an overlay; a feature that cannot be is rejected by itself.
 pub fn convert_overlay(text: &str, format: OverlayFormat, limits: &OverlayLimits) -> Result<Overlay, OverlayError> {
-    if text.len() > limits.max_bytes {
+    convert_overlay_bytes(text.as_bytes(), format, limits)
+}
+
+/// Read `bytes` as a file of `format`: a text format must be UTF-8 (NOT_TEXT otherwise).
+///
+/// # Errors
+/// As [`convert_overlay`].
+pub fn convert_overlay_bytes(
+    bytes: &[u8],
+    format: OverlayFormat,
+    limits: &OverlayLimits,
+) -> Result<Overlay, OverlayError> {
+    convert_overlay_with(bytes, format, limits, &Registry::empty())
+}
+
+/// Read `bytes` as a file of `format`, converting a CRS of `projections` (the registry's rows) to WGS84.
+///
+/// # Errors
+/// As [`convert_overlay`].
+pub fn convert_overlay_with(
+    bytes: &[u8],
+    format: OverlayFormat,
+    limits: &OverlayLimits,
+    projections: &Registry,
+) -> Result<Overlay, OverlayError> {
+    if bytes.len() > limits.max_bytes {
         return Err(OverlayError::new(
             "TOO_LARGE",
             format!(
                 "the file is {} bytes, more than the {} an overlay may be",
-                text.len(),
+                bytes.len(),
                 limits.max_bytes
             ),
         ));
     }
-    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
-    let mut reader = Reader::new(limits.max_features);
+    let mut reader = Reader::new(limits, projections);
     match format {
-        OverlayFormat::GeoJson => reader.geojson(text)?,
-        OverlayFormat::Gpx => reader.gpx(text)?,
-        OverlayFormat::Kml => reader.kml(text)?,
+        OverlayFormat::Shapefile => reader.shapefile(bytes, limits.max_bytes)?,
+        OverlayFormat::Wkb => reader.wkb_file(bytes)?,
+        _ => {
+            // delimited text is often saved as Windows-1252 by a spreadsheet: read so, and said, when it is not UTF-8
+            let text: std::borrow::Cow<'_, str> = match std::str::from_utf8(bytes) {
+                Ok(text) => text.into(),
+                Err(_) if format == OverlayFormat::Csv => {
+                    reader.count("the file is not UTF-8, so it was read as Windows-1252");
+                    decode_cp1252(bytes).into()
+                }
+                Err(_) => return Err(OverlayError::new("NOT_TEXT", "the file is not UTF-8 text")),
+            };
+            let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
+            match format {
+                OverlayFormat::GeoJson => reader.geojson(text, limits.max_bytes)?,
+                OverlayFormat::TopoJson => {
+                    let document = parse_json(text)?;
+                    reader.topojson(&document, limits.max_bytes)?;
+                }
+                OverlayFormat::EsriJson => {
+                    let document = parse_json(text)?;
+                    reader.esrijson(&document)?;
+                }
+                OverlayFormat::Gpx => reader.gpx(text)?,
+                OverlayFormat::Kml => reader.kml(text)?,
+                OverlayFormat::Gml => reader.gml(text)?,
+                OverlayFormat::Wkt => reader.wkt_file(text)?,
+                OverlayFormat::Csv => reader.delimited(text)?,
+                OverlayFormat::Wkb | OverlayFormat::Shapefile => {}
+            }
+        }
     }
     reader.finish()
+}
+
+/// Windows-1252's characters for 0x80 to 0x9F (Latin-1 for the rest); an unassigned one is a replacement character.
+const CP1252_HIGH: [char; 32] = [
+    '€', '\u{FFFD}', '‚', 'ƒ', '„', '…', '†', '‡', 'ˆ', '‰', 'Š', '‹', 'Œ', '\u{FFFD}', 'Ž', '\u{FFFD}', '\u{FFFD}',
+    '‘', '’', '“', '”', '•', '–', '—', '˜', '™', 'š', '›', 'œ', '\u{FFFD}', 'ž', 'Ÿ',
+];
+
+/// Bytes read as Windows-1252.
+fn decode_cp1252(raw: &[u8]) -> String {
+    raw.iter()
+        .map(|byte| match byte {
+            0x80..=0x9F => CP1252_HIGH[usize::from(byte - 0x80)],
+            other => char::from(*other),
+        })
+        .collect()
+}
+
+fn parse_json(text: &str) -> Result<Value, OverlayError> {
+    serde_json::from_str(text).map_err(|err| OverlayError::new("NOT_PARSED", format!("the file is not JSON: {err}")))
 }
 
 /// A position as kept: longitude, latitude.
@@ -202,15 +356,24 @@ impl Geometry {
 /// The reading of one file: the features kept, the rejections and the notes.
 struct Reader {
     max_features: usize,
+    /// the positions all features may have: a file's bytes give at most a position for every four (`max_bytes / 4`), so
+    /// only a format whose features share parts could pass it, and memory stays bounded whatever the format
+    positions_left: usize,
     features: Vec<Value>,
     rejected: usize,
     rejects_named: Vec<String>,
     /// a note's text to the times it happened
     counted: BTreeMap<&'static str, usize>,
     bounds: Option<[f64; 4]>,
-    crs: &'static str,
-    /// GeoJSON in EPSG:3857: each position converted
-    mercator: bool,
+    crs: String,
+    /// whether `crs` was set by the file (its first geometry's), so a later geometry in another is noted
+    crs_given: bool,
+    /// the CRS of the geometry read now, whose positions are converted from it
+    current: Crs,
+    /// what converting the file's CRS did, for its provenance
+    transform: String,
+    /// the registered CRSs a file may be in
+    projections: Registry,
     /// the feature number, 1 first, as the file holds them
     number: usize,
     /// a GeoJSON feature's own id, kept for the next feature added when it is short, plain and not used yet
@@ -219,16 +382,20 @@ struct Reader {
 }
 
 impl Reader {
-    fn new(max_features: usize) -> Self {
+    fn new(limits: &OverlayLimits, projections: &Registry) -> Self {
         Self {
-            max_features,
+            max_features: limits.max_features,
+            positions_left: (limits.max_bytes / 4).max(1000),
             features: Vec::new(),
             rejected: 0,
             rejects_named: Vec::new(),
             counted: BTreeMap::new(),
             bounds: None,
-            crs: "EPSG:4326",
-            mercator: false,
+            crs: "EPSG:4326".to_string(),
+            crs_given: false,
+            current: Crs::Wgs84,
+            transform: String::new(),
+            projections: projections.clone(),
             number: 0,
             given_id: None,
             ids: std::collections::HashSet::new(),
@@ -240,6 +407,7 @@ impl Reader {
     }
 
     fn reject(&mut self, reason: &str) {
+        self.given_id = None;
         self.rejected += 1;
         if self.rejects_named.len() < REJECTS_NAMED {
             self.rejects_named
@@ -257,6 +425,15 @@ impl Reader {
                 ),
             ));
         }
+        let mut count = 0;
+        geometry.for_each_position(|_| count += 1);
+        if count > self.positions_left {
+            return Err(OverlayError::new(
+                "TOO_LARGE",
+                "the file's features have more positions than an overlay may have",
+            ));
+        }
+        self.positions_left -= count;
         geometry.for_each_position(|&[lon, lat]| {
             self.bounds = Some(match self.bounds {
                 None => [lon, lat, lon, lat],
@@ -313,6 +490,7 @@ impl Reader {
             rejected: self.rejected,
             bounds: self.bounds,
             crs: self.crs,
+            transform: self.transform,
             notes,
         })
     }
@@ -322,15 +500,27 @@ impl Reader {
         if !lon.is_finite() || !lat.is_finite() {
             return Err("a coordinate is not a number".to_string());
         }
-        let (lon, lat) = if self.mercator {
-            if lon.abs() > MERCATOR_EDGE * 1.000_001 || lat.abs() > MERCATOR_EDGE * 1.01 {
-                return Err("a Web Mercator coordinate is outside the projection".to_string());
+        let (lon, lat) = match self.current {
+            Crs::WebMercator => {
+                if lon.abs() > MERCATOR_EDGE * 1.000_001 || lat.abs() > MERCATOR_EDGE * 1.01 {
+                    return Err("a Web Mercator coordinate is outside the projection".to_string());
+                }
+                let longitude = (lon / EARTH_RADIUS).to_degrees();
+                let latitude = (2.0 * (lat / EARTH_RADIUS).exp().atan() - std::f64::consts::FRAC_PI_2).to_degrees();
+                (longitude.clamp(-180.0, 180.0), latitude)
             }
-            let longitude = (lon / EARTH_RADIUS).to_degrees();
-            let latitude = (2.0 * (lat / EARTH_RADIUS).exp().atan() - std::f64::consts::FRAC_PI_2).to_degrees();
-            (longitude.clamp(-180.0, 180.0), latitude)
-        } else {
-            (lon, lat)
+            Crs::Registered(code) | Crs::RegisteredAuthority(code) => {
+                let Some(entry) = self.projections.get(code) else {
+                    return Err(format!("a coordinate in EPSG:{code}, which is not registered"));
+                };
+                // easting (longitude) first: a GML reader puts a northing-first URN's positions so before this
+                let (x, y) = (lon, lat);
+                entry
+                    .projection
+                    .to_wgs84(x, y)
+                    .ok_or_else(|| format!("a coordinate outside EPSG:{code}'s projection ({x}, {y})"))?
+            }
+            Crs::Wgs84 | Crs::Wgs84LatFirst => (lon, lat),
         };
         if !(-180.0..=180.0).contains(&lon) {
             return Err(format!("a longitude out of range ({lon})"));
@@ -361,13 +551,197 @@ impl Reader {
         Ok(positions)
     }
 
+    /// The CRS of the geometry read next: the file's is its first geometry's, and a geometry in another is noted. A CRS
+    /// that is not WGS84 or Web Mercator must be registered (CRS_UNSUPPORTED by its name otherwise).
+    fn use_crs(&mut self, crs: Crs) -> Result<(), OverlayError> {
+        let name = crs.code();
+        let transform = match crs {
+            Crs::Registered(code) | Crs::RegisteredAuthority(code) => match self.projections.get(code) {
+                Some(entry) => format!("{name} ({}) to WGS84: {}", entry.label, entry.projection.describe()),
+                // a row that is there but whose definition the server does not read says so, not that it is unknown
+                None => match self.projections.unreadable(code) {
+                    Some(reason) => {
+                        return Err(OverlayError::new(
+                            "CRS_UNSUPPORTED",
+                            format!(
+                                "the file's coordinates are in {name}, a registered map projection whose definition the server does not convert ({}): a map draws it, but an overlay in it is given in WGS84",
+                                plain_text(reason, 160, false)
+                            ),
+                        ))
+                    }
+                    None => return Err(crs_unsupported(&name)),
+                },
+            },
+            Crs::WebMercator => "EPSG:3857 to WGS84: inverse Web Mercator (the sphere)".to_string(),
+            Crs::Wgs84 | Crs::Wgs84LatFirst => String::new(),
+        };
+        if !self.crs_given {
+            self.crs = name;
+            self.transform = transform;
+            self.crs_given = true;
+        } else if self.crs != name {
+            self.count("{count} geometries were in another CRS than the file's first, and converted");
+        }
+        self.current = crs;
+        Ok(())
+    }
+
+    /// Whether a CRS's positions are given northing (latitude) first: an EPSG:4326 URN, or a registered CRS named by its
+    /// authority whose axis order is so.
+    fn north_first(&self, crs: Crs) -> bool {
+        match crs {
+            Crs::Wgs84LatFirst => true,
+            Crs::RegisteredAuthority(code) => self.projections.get(code).is_some_and(|entry| entry.north_first),
+            _ => false,
+        }
+    }
+
+    /// A feature's label and description from its properties (the first of `name`, `title`, `label`, and of
+    /// `description`, `desc`, by those names in any case), with the other properties counted, not kept.
+    fn pick_properties(&mut self, properties: Option<&Map<String, Value>>) -> (String, String) {
+        const LABELS: [&str; 3] = ["name", "title", "label"];
+        const DESCRIPTIONS: [&str; 2] = ["description", "desc"];
+        let Some(properties) = properties else {
+            return (String::new(), String::new());
+        };
+        let text_of = |names: &[&str]| -> String {
+            names
+                .iter()
+                .find_map(|name| {
+                    properties
+                        .iter()
+                        .find(|(key, _)| key.eq_ignore_ascii_case(name))
+                        .and_then(|(_, value)| match value {
+                            Value::String(text) if !text.trim().is_empty() => Some(text.clone()),
+                            Value::Number(number) => Some(number.to_string()),
+                            _ => None,
+                        })
+                })
+                .unwrap_or_default()
+        };
+        let label = text_of(&LABELS);
+        let description = text_of(&DESCRIPTIONS);
+        let others = properties
+            .keys()
+            .filter(|key| {
+                !LABELS
+                    .iter()
+                    .chain(DESCRIPTIONS.iter())
+                    .any(|kept| key.eq_ignore_ascii_case(kept))
+            })
+            .count();
+        if others > 0 {
+            self.count("{count} features had other properties, which are not shown");
+        }
+        (label, description)
+    }
+
+    /// A geometry read in its source's coordinates, checked and kept: a collection's parts are each a feature of their
+    /// own, with the same label; a part that is not sane rejects the feature whole.
+    fn add_raw(&mut self, raw: Result<Raw, String>, label: &str, description: &str) -> Result<(), OverlayError> {
+        let geometries = raw.and_then(|raw| {
+            let mut out = Vec::new();
+            self.raw_geometries(raw, &mut out)?;
+            if out.is_empty() {
+                return Err("an empty geometry collection".to_string());
+            }
+            Ok(out)
+        });
+        match geometries {
+            Ok(geometries) => {
+                if geometries.len() > 1 {
+                    self.count("{count} geometry collections were drawn as their parts");
+                }
+                for geometry in &geometries {
+                    self.add(geometry, label, description)?;
+                }
+            }
+            Err(reason) => self.reject(&reason),
+        }
+        Ok(())
+    }
+
+    fn raw_positions(&self, positions: Vec<Position>) -> Result<Vec<Position>, String> {
+        positions.into_iter().map(|[x, y]| self.position(x, y)).collect()
+    }
+
+    fn raw_polygon(&mut self, rings: Vec<Vec<Position>>) -> Result<Vec<Vec<Position>>, String> {
+        if rings.is_empty() {
+            return Err("a polygon with no ring".to_string());
+        }
+        let mut out = Vec::with_capacity(rings.len());
+        for ring in rings {
+            let positions = self.raw_positions(ring)?;
+            out.push(self.ring(positions)?);
+        }
+        Ok(out)
+    }
+
+    fn raw_geometries(&mut self, raw: Raw, out: &mut Vec<Geometry>) -> Result<(), String> {
+        match raw {
+            Raw::Point([x, y]) => out.push(Geometry::Point(self.position(x, y)?)),
+            Raw::MultiPoint(points) => {
+                if points.is_empty() {
+                    return Err("a multipoint with no points".to_string());
+                }
+                out.push(Geometry::MultiPoint(self.raw_positions(points)?));
+            }
+            Raw::Line(line) => {
+                let positions = self.raw_positions(line)?;
+                out.push(Geometry::LineString(self.line(positions)?));
+            }
+            Raw::MultiLine(lines) => {
+                if lines.is_empty() {
+                    return Err("a multiline with no lines".to_string());
+                }
+                let mut kept = Vec::with_capacity(lines.len());
+                for line in lines {
+                    let positions = self.raw_positions(line)?;
+                    kept.push(self.line(positions)?);
+                }
+                out.push(if kept.len() == 1 {
+                    Geometry::LineString(kept.remove(0))
+                } else {
+                    Geometry::MultiLineString(kept)
+                });
+            }
+            Raw::Polygon(rings) => out.push(Geometry::Polygon(self.raw_polygon(rings)?)),
+            Raw::MultiPolygon(polygons) => {
+                if polygons.is_empty() {
+                    return Err("a multipolygon with no polygons".to_string());
+                }
+                let mut kept = Vec::with_capacity(polygons.len());
+                for rings in polygons {
+                    kept.push(self.raw_polygon(rings)?);
+                }
+                out.push(if kept.len() == 1 {
+                    Geometry::Polygon(kept.remove(0))
+                } else {
+                    Geometry::MultiPolygon(kept)
+                });
+            }
+            Raw::Collection(parts) => {
+                for part in parts {
+                    self.raw_geometries(part, out)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     // ===== GeoJSON =====
-    fn geojson(&mut self, text: &str) -> Result<(), OverlayError> {
-        let document: Value = serde_json::from_str(text)
-            .map_err(|err| OverlayError::new("NOT_PARSED", format!("the file is not JSON: {err}")))?;
+    /// A GeoJSON file; a TopoJSON or EsriJSON one given the GeoJSON format (a `.json` file) is read as that.
+    fn geojson(&mut self, text: &str, max_bytes: usize) -> Result<(), OverlayError> {
+        let document = parse_json(text)?;
         let Some(object) = document.as_object() else {
             return Err(OverlayError::new("NOT_FORMAT", "the file is not a GeoJSON object"));
         };
+        if object.get("type").and_then(Value::as_str) == Some("Topology") {
+            return self.topojson(&document, max_bytes);
+        }
+        if esrijson::is_esrijson(object) {
+            return self.esrijson(&document);
+        }
         self.declared_crs(object.get("crs"))?;
         match object.get("type").and_then(Value::as_str) {
             Some("FeatureCollection") => {
@@ -404,26 +778,13 @@ impl Reader {
         let name = crs
             .pointer("/properties/name")
             .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_ascii_uppercase();
-        let code = name
-            .rsplit([':', '/'])
-            .find(|part| !part.is_empty())
             .unwrap_or_default();
-        match code {
-            "CRS84" | "4326" => Ok(()),
-            "3857" | "900913" | "3785" | "102100" => {
-                self.crs = "EPSG:3857";
-                self.mercator = true;
-                Ok(())
-            }
-            _ => Err(OverlayError::new(
-                "CRS_UNSUPPORTED",
-                format!(
-                    "the file's coordinates are in {}, which is not read here: give it in WGS84 (EPSG:4326) or Web Mercator (EPSG:3857)",
-                    if name.is_empty() { "a CRS that is not named" } else { name.as_str() }
-                ),
-            )),
+        match Crs::of_name(name) {
+            // a GeoJSON position is longitude (easting) first whatever its CRS's axis order
+            Some(Crs::Wgs84 | Crs::Wgs84LatFirst) => self.use_crs(Crs::Wgs84),
+            Some(Crs::WebMercator) => self.use_crs(Crs::WebMercator),
+            Some(Crs::Registered(code) | Crs::RegisteredAuthority(code)) => self.use_crs(Crs::Registered(code)),
+            None => Err(crs_unsupported(name)),
         }
     }
 
@@ -443,36 +804,7 @@ impl Reader {
             Some(Value::Number(id)) => Some(id.to_string()),
             _ => None,
         };
-        let properties = feature.get("properties").and_then(Value::as_object);
-        let pick = |names: &[&str]| -> String {
-            properties
-                .and_then(|properties| {
-                    names.iter().find_map(|name| match properties.get(*name) {
-                        Some(Value::String(text)) => Some(text.clone()),
-                        Some(Value::Number(number)) => Some(number.to_string()),
-                        _ => None,
-                    })
-                })
-                .unwrap_or_default()
-        };
-        let label = pick(&["name", "title", "label", "Name", "NAME"]);
-        let description = pick(&["description", "desc", "Description"]);
-        let kept = [
-            "name",
-            "title",
-            "label",
-            "Name",
-            "NAME",
-            "description",
-            "desc",
-            "Description",
-        ];
-        let others = properties.map_or(0, |properties| {
-            properties.keys().filter(|key| !kept.contains(&key.as_str())).count()
-        });
-        if others > 0 {
-            self.count("{count} features had other properties, which are not shown");
-        }
+        let (label, description) = self.pick_properties(feature.get("properties").and_then(Value::as_object));
         if geometry.get("type").and_then(Value::as_str) == Some("GeometryCollection") {
             // each member drawn as a feature of its own, with the same label
             let members = geometry
@@ -827,6 +1159,172 @@ impl Reader {
     }
 }
 
+/// A geometry as a reader found it, in its source's coordinates (x, y: longitude and latitude, or Web Mercator meters),
+/// before [`Reader::add_raw`] checks and converts it.
+#[derive(Clone, Debug)]
+enum Raw {
+    Point(Position),
+    MultiPoint(Vec<Position>),
+    Line(Vec<Position>),
+    MultiLine(Vec<Vec<Position>>),
+    Polygon(Vec<Vec<Position>>),
+    MultiPolygon(Vec<Vec<Vec<Position>>>),
+    Collection(Vec<Raw>),
+}
+
+/// The CRSs read: WGS84 (longitude first, or latitude first as a GML EPSG:4326 URN gives it), Web Mercator, and a CRS
+/// of the projection registry by its EPSG code (named by its authority's URN or URL: in that authority's axis order).
+/// Whether a registered code is in the registry is decided when it is used ([`Reader::use_crs`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Crs {
+    Wgs84,
+    Wgs84LatFirst,
+    WebMercator,
+    Registered(u32),
+    RegisteredAuthority(u32),
+}
+
+impl Crs {
+    /// A CRS by its EPSG code (0, no SRID, is WGS84); another code is a registered one's.
+    fn of_code(code: u32) -> Option<Self> {
+        match code {
+            0 | 4326 => Some(Self::Wgs84),
+            3857 | 900_913 | 3785 | 102_100 | 102_113 => Some(Self::WebMercator),
+            code => Some(Self::Registered(code)),
+        }
+    }
+
+    /// A CRS by its name: `EPSG:4326`, `CRS:84`, `urn:ogc:def:crs:OGC:1.3:CRS84`, `urn:ogc:def:crs:EPSG::4326` and
+    /// `http://www.opengis.net/def/crs/EPSG/0/4326` (these two latitude first), the legacy
+    /// `http://www.opengis.net/gml/srs/epsg.xml#4326`, and the same for 3857 and its older codes. None for another.
+    fn of_name(name: &str) -> Option<Self> {
+        let upper = name.trim().to_ascii_uppercase();
+        if upper.ends_with("CRS84") || upper.ends_with("CRS:84") {
+            return Some(Self::Wgs84);
+        }
+        let code: u32 = upper
+            .rsplit([':', '/', '#'])
+            .find(|part| !part.is_empty())
+            .and_then(|code| code.parse().ok())?;
+        let crs = Self::of_code(code).filter(|_| code != 0)?;
+        // a registered CRS by an EPSG name only: another authority's number is not one of the registry's
+        if matches!(crs, Self::Registered(_)) && !upper.contains("EPSG") {
+            return None;
+        }
+        let lat_first = upper.starts_with("URN:")
+            || upper.starts_with("HTTP://WWW.OPENGIS.NET/DEF/CRS/")
+            || upper.starts_with("HTTPS://WWW.OPENGIS.NET/DEF/CRS/");
+        Some(match crs {
+            Self::Wgs84 if lat_first => Self::Wgs84LatFirst,
+            Self::Registered(code) if lat_first => Self::RegisteredAuthority(code),
+            crs => crs,
+        })
+    }
+
+    fn code(self) -> String {
+        match self {
+            Self::Wgs84 | Self::Wgs84LatFirst => "EPSG:4326".to_string(),
+            Self::WebMercator => "EPSG:3857".to_string(),
+            Self::Registered(code) | Self::RegisteredAuthority(code) => format!("EPSG:{code}"),
+        }
+    }
+}
+
+fn crs_unsupported(name: &str) -> OverlayError {
+    let name = plain_text(name, 120, false);
+    OverlayError::new(
+        "CRS_UNSUPPORTED",
+        format!(
+            "the file's coordinates are in {}, which is not read here: give it in WGS84 (EPSG:4326), Web Mercator (EPSG:3857) or a CRS of the map projections an administrator registered",
+            if name.is_empty() { "a CRS that is not named".to_string() } else { name }
+        ),
+    )
+}
+
+/// The most rings one Esri or shapefile geometry may have, and the edge tests grouping its holes may take: past either the
+/// feature is left out, so one feature of many rings costs no more than these.
+const MAX_RINGS: usize = 10_000;
+const MAX_RING_WORK: usize = 20_000_000;
+
+/// Rings of the Esri and shapefile kind as polygons: a clockwise ring starts a polygon and a counterclockwise one is a
+/// hole of the first polygon whose outer ring holds its first position, an outer ring tried only when its box holds it
+/// (a hole that no outer ring holds is taken as an outer ring itself, for a file whose rings are not wound as the format
+/// says, and is not tried for the holes after it). Bounded by [`MAX_RINGS`] and [`MAX_RING_WORK`].
+fn rings_to_polygons(rings: Vec<Vec<Position>>) -> Result<Vec<Vec<Vec<Position>>>, String> {
+    if rings.len() > MAX_RINGS {
+        return Err(format!(
+            "a geometry of {} rings, more than the {MAX_RINGS} read",
+            rings.len()
+        ));
+    }
+    let mut polygons: Vec<Vec<Vec<Position>>> = Vec::new();
+    let mut boxes: Vec<[f64; 4]> = Vec::new();
+    let mut holes = Vec::new();
+    for ring in rings {
+        if signed_area(&ring) <= 0.0 {
+            boxes.push(ring_box(&ring));
+            polygons.push(vec![ring]);
+        } else {
+            holes.push(ring);
+        }
+    }
+    // only the outer rings are tried (boxes is theirs): a hole taken as an outer ring is not
+    let mut work = 0;
+    for hole in holes {
+        let mut held = None;
+        if let Some(&[x, y]) = hole.first() {
+            for (index, [west, south, east, north]) in boxes.iter().enumerate() {
+                if x < *west || x > *east || y < *south || y > *north {
+                    continue;
+                }
+                let outer = &polygons[index][0];
+                work += outer.len();
+                if work > MAX_RING_WORK {
+                    return Err("a polygon whose rings are too many to group".to_string());
+                }
+                if ring_holds(outer, [x, y]) {
+                    held = Some(index);
+                    break;
+                }
+            }
+        }
+        match held {
+            Some(index) => polygons[index].push(hole),
+            None => polygons.push(vec![hole]),
+        }
+    }
+    Ok(polygons)
+}
+
+/// A ring's west, south, east and north.
+fn ring_box(ring: &[Position]) -> [f64; 4] {
+    ring.iter().fold(
+        [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY],
+        |[west, south, east, north], [x, y]| [west.min(*x), south.min(*y), east.max(*x), north.max(*y)],
+    )
+}
+
+/// Twice a ring's signed area: positive counterclockwise, negative clockwise (x east, y north).
+fn signed_area(ring: &[Position]) -> f64 {
+    edges(ring).map(|([x1, y1], [x2, y2])| x1 * y2 - x2 * y1).sum()
+}
+
+/// A ring's edges, the last position back to the first included (nothing more for a closed ring).
+fn edges(ring: &[Position]) -> impl Iterator<Item = (Position, Position)> + '_ {
+    ring.iter().copied().zip(ring.iter().copied().cycle().skip(1))
+}
+
+/// Whether a ring holds a position (even-odd).
+fn ring_holds(ring: &[Position], [x, y]: Position) -> bool {
+    let mut inside = false;
+    for ([x1, y1], [x2, y2]) in edges(ring) {
+        if (y1 > y) != (y2 > y) && x < (x2 - x1) * (y - y1) / (y2 - y1) + x1 {
+            inside = !inside;
+        }
+    }
+    inside
+}
+
 fn is_kml_geometry(node: &MNode) -> bool {
     matches!(
         local(&node.name()),
@@ -1118,3 +1616,7 @@ fn decode_entities(text: &str) -> String {
 #[cfg(test)]
 #[path = "overlay_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "overlay/formats_tests.rs"]
+mod formats_tests;

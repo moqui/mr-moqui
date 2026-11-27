@@ -1,4 +1,4 @@
-// The map configuration of P1 (plans/Maps.md §3.2, §4.2; org.moqui.maps.MapServices, MapConfig.js and MapProviders.js): the
+// The map configuration of P1 (plans/archive/Maps.md §3.2, §4.2; org.moqui.maps.MapServices, MapConfig.js and MapProviders.js): the
 // effective configuration's precedence (the installation's default, then the user's preference, then the consumer's
 // profile, then a record's place for the viewport), its fallbacks with an explanation (a profile whose provider is
 // disabled, a disabled, removed or unpermitted layer, a stale layer of the preferences, a missing default with the
@@ -8,8 +8,11 @@
 // and a shown one cut to maps@max-features; the grants (an ALL_USERS-only user draws a map and changes nothing); the
 // mapProvider connection kind (its style test through the HTTP fixtures, no redirect followed, an archive with no URL,
 // enabled only after a passing test, an endpoint change clearing the key, refused with outside requests off and to a
-// non-administrator); and the Maps readiness checks, the page policy read from the header and webapp@csp-append. The
-// adapters are test/service/org/moqui/mapstest's.
+// non-administrator); a record's link resolved by a MapRoute of the host app, else of no app, for a holder of its screen,
+// and left out for a non-holder; and the Maps readiness checks, the page policy read from the header and webapp@csp-append.
+// The adapters are test/service/org/moqui/mapstest's.
+// A profile's view projection (P4c): a registered one handed to the map with its definition, a vector-style basemap refusing
+// one, an unknown code refused.
 // Run: ./moq test framework --spec MapsConfig
 const S = "org.moqui.maps.MapServices."
 const C = "org.moqui.admin.ConfigurationServices."
@@ -21,6 +24,7 @@ const apiKey = "maps-cfg-key-8w3p"
 const ADAPTER = "MAPS_CFG_ADAPTER"
 const UNGRANTED = "MAPS_CFG_UNGRANTED"
 const GRANT = "MAPS_CFG_GRANT"
+const routes = ["MAPS_CFG_ROUTE", "MAPS_CFG_ROUTE_GAP", "MAPS_CFG_ROUTE_HOST", "MAPS_CFG_ROUTE_OTHER"]
 const providers = ["MAPS_CFG_ON", "MAPS_CFG_OFF", "MAPS_CFG_KEYED", "MAPS_CFG_TEST", "MAPS_CFG_FRESH", "MAPS_CFG_ARCH"]
 const layers = [
     "MAPS_CFG_BASE_ON",
@@ -163,6 +167,22 @@ spec({
             contextServiceName: "org.moqui.mapstest.MapsTestServices.get#RecordMapContext",
             featuresServiceName: "org.moqui.mapstest.MapsTestServices.find#LayerFeatures"
         })
+        // where the spec adapter's link (route specRecord) goes, each screen the Maps app's own grant: of no app, a row naming a
+        // parameter the link has not (passed over) and one that resolves it; and two apps' own rows, the other app's first by
+        // priority, which a map of the host app or of none never takes
+        const route = (mapRouteId, priority, urlTemplate, routeApp) =>
+            make("moqui.maps.MapRoute", {
+                mapRouteId,
+                routeKey: "specRecord",
+                priority,
+                urlTemplate,
+                routeApp,
+                screenLocation: "component://tools/screen/Maps.xml"
+            })
+        route(routes[1], 1, "/apps/maps/Gap?x={missing}", null)
+        route(routes[0], 2, "/apps/maps/Browse?recordId={recordId}", null)
+        route(routes[2], 5, "/apps/spechost/Record?recordId={recordId}", "specHost")
+        route(routes[3], 0, "/apps/specother/Record?recordId={recordId}", "specOther")
         const layer = (layerId, fields) => make("moqui.maps.MapLayer", Object.assign({layerId, layerName: layerId}, fields))
         layer("MAPS_CFG_BASE_ON", {providerId: "MAPS_CFG_ON", formatEnumId: "MLF_VECTOR_STYLE", isBasemap: "Y"})
         layer("MAPS_CFG_BASE_OFF", {providerId: "MAPS_CFG_OFF", formatEnumId: "MLF_VECTOR_STYLE", isBasemap: "Y"})
@@ -274,6 +294,7 @@ spec({
         del("moqui.maps.MapProfile", "profileId", profiles)
         del("moqui.maps.MapLayer", "layerId", layers)
         del("moqui.maps.MapAdapter", "adapterKey", [ADAPTER, UNGRANTED])
+        del("moqui.maps.MapRoute", "mapRouteId", routes)
         del("moqui.maps.MapProvider", "providerId", providers)
         del("moqui.security.UserGroupMember", "userId", Object.values(users))
         del("moqui.security.UserGroupPermission", "userGroupId", [managerGroup])
@@ -294,11 +315,28 @@ feature("the installation's default, then the user's preference, then the consum
             const personal = effective()
             const consumer = effective({profileId: "OUTLINE"})
             const record = effective({adapterKey: ADAPTER, recordKey: JSON.stringify({recordId: "LOCATED"})})
+            const hostLinks = effective({
+                adapterKey: ADAPTER,
+                recordKey: JSON.stringify({recordId: "LOCATED"}),
+                routeApp: "specHost"
+            }).record
             const read = invoke(S + "get#Preferences")
-            return {fresh, preferred, hosted, personal, consumer, record, read}
+            // a route's URL template, render-free: a path of this site only, each value one encoded segment or value
+            const fill = ec.resource.script("component://framework/service/org/moqui/maps/MapRoutes.js").fillTemplate
+            const refusedTemplates = [
+                "//evil.com/x",
+                "/\\evil.com",
+                "javascript:alert(1)",
+                "https://x",
+                "/a\t/b",
+                '/a"b',
+                "{p}"
+            ].map(template => fill(template, {p: "1"}))
+            const filled = [fill("/x?id={id}", {id: "a/b?c#d&e"}), fill("/x/{id}", {id: "a/b"}), fill("/x/{id}", {id: ".."})]
+            return {fresh, preferred, hosted, personal, consumer, record, hostLinks, read, refusedTemplates, filled}
         })
     },
-    then({fresh, preferred, hosted, personal, consumer, record, read}) {
+    then({fresh, preferred, hosted, personal, consumer, record, hostLinks, read, refusedTemplates, filled}) {
         fresh.profileId == "OUTLINE"
         fresh.profile.basemaps[0].kind == "outline"
         fresh.profile.basemaps[0].url == "/libs/naturalearth/countries-110m.json"
@@ -333,6 +371,16 @@ feature("the installation's default, then the user's preference, then the consum
         record.extent == null
         record.record.recordVersion == "1"
         record.record.links[0].route == "specRecord"
+        // a Maps user holds the routes' screen: with no host app the link resolves to the rows of no app, past the one it
+        // cannot fill, never to an app's; in the host app's map to that app's row, whatever another app registered. The
+        // link to the record shown is left out of both
+        record.record.links.length == 2
+        record.record.resolvedLinks.length == 1
+        record.record.resolvedLinks[0].url == "/apps/maps/Browse?recordId=RELATED"
+        record.record.resolvedLinks[0].label == "Spec related"
+        hostLinks.resolvedLinks.map(link => link.url).join(",") == "/apps/spechost/Record?recordId=RELATED"
+        refusedTemplates.every(url => url === null)
+        filled.map(String).join(" ") == "/x?id=a%2Fb%3Fc%23d%26e /x/a%2Fb null"
         !record.layerErrors.some(row => row.id === "record")
         read.preferences.profileId == "MAPS_CFG_PROFILE"
         read.preferences.extent.join(",") == "-10,40,0,50"
@@ -736,6 +784,33 @@ feature(
     }
 )
 
+feature("a profile's view projection: a registered one is drawn with its definition, and a vector-style basemap refuses one", {
+    when() {
+        return as(null, () => {
+            const store = (profileId, viewProjection) => invoke(S + "store#ProfileSettings", {profileId, viewProjection})
+            const polar = store("MAPS_CFG_PROFILE_LOCAL", "EPSG:3413")
+            const drawn = effective({profileId: "MAPS_CFG_PROFILE_LOCAL"})
+            const out = {
+                polar,
+                drawn,
+                definition: Array.from(drawn.projections || []).find(row => row.code == "EPSG:3413") || {},
+                styled: store("MAPS_CFG_PROFILE", "EPSG:3413"),
+                unknown: store("MAPS_CFG_PROFILE_LOCAL", "EPSG:9999")
+            }
+            out.reset = store("MAPS_CFG_PROFILE_LOCAL", "")
+            out.mercator = effective({profileId: "MAPS_CFG_PROFILE_LOCAL"})
+            return out
+        })
+    },
+    then({polar, drawn, definition, styled, unknown, reset, mercator}) {
+        polar.applied === true && drawn.projection == "EPSG:3413"
+        definition.proj4.startsWith("+proj=stere") && definition.extent.length == 4 && definition.bounds[3] == 90
+        styled.applied === false && styled.reasonCode == "PROJECTION_INCOMPATIBLE" && /Web Mercator/.test(styled.reason)
+        unknown.applied === false && unknown.reasonCode == "PROJECTION_UNKNOWN"
+        reset.applied === true && mercator.projection === undefined && mercator.projections === undefined
+    }
+})
+
 feature("readiness: the default profile and the outline in use, an untested provider, and a page policy that blocks a provider", {
     when() {
         const check = providerKey => invoke(S + "check#Readiness", {providerKey}).checks || []
@@ -794,13 +869,17 @@ feature("a user with no group but ALL_USERS draws a map and reads their preferen
     when() {
         return as(users.plain, () => ({
             config: invoke(S + "get#EffectiveConfig", {}),
+            record: effective({adapterKey: ADAPTER, recordKey: JSON.stringify({recordId: "LOCATED"})}).record,
             read: invoke(S + "get#Preferences"),
             store: invoke(S + "store#Preferences", {units: "metric"}),
             saved: invoke(S + "store#SavedView", {description: "Spec plain", view: {center: [0, 0]}})
         }))
     },
-    then({config, read, store, saved}) {
+    then({config, record, read, store, saved}) {
         config.error == ""
+        // the record is theirs to read, its link's screen is not: the link is left out
+        record.links[0].route == "specRecord"
+        record.resolvedLinks.length == 0
         config.config.profileId == "OUTLINE"
         read.error == ""
         read.installationProfileId == "OUTLINE"

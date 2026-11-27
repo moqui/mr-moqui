@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The checks of a Moqui XML file (plans/design-dev-aide.md 5.6, F8): the schema digest (an unknown element or
+//! The checks of a Moqui XML file (plans/archive/design-dev-aide.md 5.6, F8): the schema digest (an unknown element or
 //! attribute, a missing required attribute, a value outside its enumeration), the reference rules (an unknown entity,
 //! field, service, service parameter or location), and the expression lint (a JavaScript expression or script that
 //! does not parse). Each problem names its rule and the section of the coding-agent skill that has it, so the Problems
@@ -410,7 +410,7 @@ fn check_expressions(path: &Path, text: &str, root: &MNode, display: &str, probl
     }
 }
 
-/// The extensions of every component (plans/design-dev-aide.md 5.6), from the artifact index read into memory: each
+/// The extensions of every component (plans/archive/design-dev-aide.md 5.6), from the artifact index read into memory: each
 /// `screen-extend` file has a base screen at its path and each form, section or container it names there (a transition
 /// replaces the base screen's of its name or adds one),
 /// each `extend-entity` an entity, and each ECA rule the service or entity it runs on.
@@ -621,7 +621,7 @@ impl<'a> LineIndex<'a> {
     }
 }
 
-/// What `moqui check --agreement` (F19, plans/design-dev-aide.md 21.7) says of a commit about to be made, from the group
+/// What `moqui check --agreement` (F19, plans/archive/design-dev-aide.md 21.7) says of a commit about to be made, from the group
 /// server's answer (`/rest/s1/moqui/hosting/agreement`: `known`, `required`, `signed`, `signUrl`) and the files staged
 /// for it.
 #[derive(Clone, Debug, PartialEq, Eq)]

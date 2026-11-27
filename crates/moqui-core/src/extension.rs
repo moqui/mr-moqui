@@ -94,6 +94,8 @@ const LOCATIONS: &[(&str, &str)] = &[
     ("moqui_tools::", "tools"),
     // CalcGrid (crates/moqui-calc), linked under the host's xlsx feature
     ("moqui_calc::", "calc"),
+    // Optional Overture data for Maps (crates/moqui-maps), linked under the host's overture feature
+    ("moqui_maps::", "overture"),
     ("moqui_dav::", "dav"),
     ("moqui_vault_server::", "vault"),
     ("moqui_instance::", "instances"),

@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Search the artifact index (plans/design-dev-aide.md 7.2): a name with camel case or segments (OrdHdr, place#Order), a
+<!-- Search the artifact index (plans/archive/design-dev-aide.md 7.2): a name with camel case or segments (OrdHdr, place#Order), a
     kind and a component; each result opens in the Workspace at its line, or its references. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Search" default-menu-index="1">

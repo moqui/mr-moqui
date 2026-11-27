@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! ECA rules against recorded contexts (plans/design-dev-aide.md 10): the contexts Try the condition takes (a
+//! ECA rules against recorded contexts (plans/archive/design-dev-aide.md 10): the contexts Try the condition takes (a
 //! service's last Try, a record of an EECA's entity, a push of the push log) saved as named fixtures,
 //! `test/fixtures/<name>.json` of the rules file's component (or the site's, D17), and Save as spec on a rule: a
 //! feature that runs the rule's trigger with a fixture and checks what the rule did, appended to the rules file's spec
@@ -464,7 +464,7 @@ fn save_rule_spec(
         "the rules file is upstream and there is no site component to write its spec in",
     )?;
     let header = format!(
-        "// Specs of the rules of {}, from Save as spec in Dev AIDE (plans/design-dev-aide.md 10): each runs a\n\
+        "// Specs of the rules of {}, from Save as spec in Dev AIDE (plans/archive/design-dev-aide.md 10): each runs a\n\
          // rule's trigger with a fixture of test/fixtures and checks what the rule did when it was saved; trim what a run\n\
          // makes anew (generated ids, stamps) before relying on them.\n// Run: ./moq test <component> --spec {spec}\n",
         crate::services::comment_text(&rules_name)

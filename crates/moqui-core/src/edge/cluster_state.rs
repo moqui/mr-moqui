@@ -38,6 +38,7 @@ use moqui_lib::sync::lock;
 
 use moqui_lib::error::Error;
 
+use crate::context::framework_thread;
 use crate::context::ExecutionContextFactory;
 use crate::entity::EntityFacade;
 
@@ -210,7 +211,7 @@ impl Reloader {
         let me = Arc::clone(self);
         let spawned = std::thread::Builder::new()
             .name("moqui-edge-state".to_string())
-            .spawn(move || loop {
+            .spawn(framework_thread(move || loop {
                 while me.pending.swap(false, Ordering::AcqRel) {
                     (me.reload)();
                 }
@@ -219,7 +220,7 @@ impl Reloader {
                 if !me.pending.load(Ordering::Acquire) || me.running.swap(true, Ordering::AcqRel) {
                     return;
                 }
-            });
+            }));
         if let Err(err) = spawned {
             self.running.store(false, Ordering::Release);
             tracing::error!("Edge cluster: the host table was not loaded again after another member's change: {err}");

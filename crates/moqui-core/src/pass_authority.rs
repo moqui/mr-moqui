@@ -55,6 +55,10 @@ pub const ACCOUNT_PREFIX: &str = "account.";
 
 /// The framework's check of a registered client's secret.
 const CHECK_CLIENT: &str = "org.moqui.public.AccountServices.check#Client";
+/// The user context name that holds, for the length of the authority service's call, the client this transport checked
+/// (its secret on the listener, or the edge link): Mantle's `handle#Call` takes the client as verified only when it is
+/// this one (SEC-PSA-12).
+pub const TRANSPORT_CLIENT: &str = "passTransportClient";
 
 /// One operation for the authority.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -593,7 +597,16 @@ fn run(call: &Call, client: &Client, file: Option<UploadFile>) -> Result<Outcome
         "" => DEFAULT_SERVICE,
         name => name,
     };
+    // The client this transport checked, for the service to read from the user context rather than from a parameter any
+    // in-process caller could pass (SEC-PSA-12); gone again after the call.
+    ExecutionContext::with_current(|ctx| {
+        ctx.user_context()
+            .insert(TRANSPORT_CLIENT.to_string(), Value::string(&client_id));
+    });
     let answered = crate::service::sync(service, &parameters);
+    ExecutionContext::with_current(|ctx| {
+        ctx.user_context().remove(TRANSPORT_CLIENT);
+    });
     let errors = ExecutionContext::with_current(|ctx| {
         let errors = ctx.message().errors().to_vec();
         ctx.message().clear_errors();
@@ -617,12 +630,14 @@ fn run(call: &Call, client: &Client, file: Option<UploadFile>) -> Result<Outcome
     };
     if let Some(guard) = session {
         // Once a delegation is issued the frontend signs in with it; the session keeps no user, so a handle carries
-        // only a sign-in in progress (the second factor). Not logoutUser: that would end the user's other sessions.
-        if outcome
+        // only a sign-in in progress (the second factor, which signs no user in). So an action that left a user signed in
+        // without answering a credential (account.security with a delegation, which signs the session in) is cleared too
+        // (SEC-PSA-10). Not logoutUser: that would end the user's other sessions.
+        let credential = outcome
             .result
             .as_ref()
-            .is_ok_and(|result| result.get("credential").is_some())
-        {
+            .is_ok_and(|result| result.get("credential").is_some());
+        if credential || crate::user::session::current_user_id().ok().flatten().is_some() {
             crate::user::session::clear_login();
             crate::user::session::set_session_attribute("moquiLastAuth", None);
         }

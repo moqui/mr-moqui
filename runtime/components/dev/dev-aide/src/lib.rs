@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Dev AIDE, the assisted IDE (plans/design-dev-aide.md): the Rust side of the `dev-aide` component. `submit_component!`
+//! Dev AIDE, the assisted IDE (plans/archive/design-dev-aide.md): the Rust side of the `dev-aide` component. `submit_component!`
 //! binds its services, which the component's service files name; the first of them a factory runs turns the framework's
 //! reload reports into notifications for the open Workspace pages ([`notify`]). The general pieces it uses (the reload, the checks,
 //! the schema digest, the lossless XML layer) are the framework's (`moqui_core::devtools`, `moqui_lib::xml_edit`).
@@ -26,6 +26,7 @@ pub mod audit;
 mod browser;
 mod buffers;
 mod changeset;
+mod coedit;
 pub mod confine;
 mod data_load;
 mod dbform;
@@ -53,6 +54,7 @@ mod tasks;
 mod template;
 pub mod tier;
 mod try_overlay;
+mod types;
 mod vcs;
 pub(crate) mod workspace;
 mod worktree;
@@ -74,6 +76,8 @@ fn register(registry: &mut NativeRegistry) -> Result<(), Error> {
     dbform::register(registry)?;
     docs::register(registry)?;
     editor::register(registry)?;
+    coedit::register(registry)?;
+    types::register(registry)?;
     replace::register(registry)?;
     entities::register(registry)?;
     data_load::register(registry)?;

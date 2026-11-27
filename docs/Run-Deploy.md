@@ -219,7 +219,9 @@ what is not built ([Edge-Node2 §3](../plans/Edge-Node2.md#3-topologies)).
   build of Maximal, carry the dev tools (the file watcher, Dev AIDE): they open only on a dev instance, and the server
   warns at start when it finds them on a production one. A production image leaves them out: `./moq build --enterprise`,
   or Maximal without them (`cargo build --profile release --no-default-features -F maximal -p moqui`)
-  ([Packaging](Build-Test.md#packages), SEC-OUT-14).
+  ([Packaging](Build-Test.md#packages), SEC-OUT-14). `podman/build.sh` builds the default `--release`, with the dev
+  tools: for a production image build Maximal without them first, as above, and then run `podman/build.sh --nobuild`,
+  which packs `target/release/moqui` as it is (SEC-OUT-90).
 - **Purpose**: `instance@purpose` is `production` everywhere except in the dev conf. An archive's `MoquiConf.xml` is
   the production conf.
 - **Seal**: the server starts sealed and opens its listeners only once unsealed: `moqui operator init` with `tpm` (or
@@ -310,7 +312,11 @@ time it is needed, and runs as its own process; unlike the runtime files they ar
 this is packaging and delivery only. `moqui embedded unpack [postgres|opensearch|chromium|all]` unpacks them ahead of
 the first start (a container image). OpenSearch starts when the search backend is `opensearch`, the cluster is local
 and not running, and `runtime/opensearch` has no install of its own; its config (seeded from the install on the first
-start), data and logs stay in `runtime/opensearch`. Chromium is used for PDF and the browser tests after
+start), data and logs stay in `runtime/opensearch`. That OpenSearch is the `opensearch-min` distribution, without the
+security plugin: it listens on loopback with no sign-in, so any local user or process of the host reads, rewrites and
+deletes every search index on port 9200, past the server's own authorization. On a host shared with other users keep
+the default Postgres search backend, or run an OpenSearch with the security plugin of your own and give the server its
+credentials (`search-facade/cluster@user` and `@password`, from `.env`). Chromium is used for PDF and the browser tests after
 `screen-facade/pdf@chromium-path` and `runtime/chromium`, before an installed one.
 
 **Checksums.** `moqui embedded checksum` prints the SHA-256 of each part built in, in `sha256sum` format: `runtime`
@@ -442,7 +448,8 @@ The settings most deployments set or should know. Their defaults are in `MoquiDe
 | `terminal@remote` | `false` | `true` lets those be reached from other machines, over HTTPS with a recent sign-in; `moqui_conf__terminal__remote=true` in `runtime/.env` is the lightest way ([Terminal](ui/Terminal.md#who-may-open-what-and-from-where)) |
 | `screen-facade/pdf@chromium-path` | empty | The Chromium for PDF and the browser tests; empty looks in `runtime/chromium`, then for an installed Chromium, Google Chrome or Microsoft Edge (the PATH and the OS's install locations) |
 | `load-runner@targets`, `load-runner@max-runs`, `load-runner@max-users` | empty, `1`, `1000` | Load runs from Tools: the URL prefixes a run may reach besides this server and loopback (any URL on a dev instance; plain http to another machine only when listed), the loads at once, and the users a run |
-| `maps@external-requests`, `maps@import-max-bytes`, `maps@max-features` | `true`, `536870912` (512 MiB), `5000` | Maps ([plan](../plans/Maps.md#42-metadata-and-effective-settings)): `false` stops the server's outside map requests (a geocoder, a Geo data download) and its handing a browser a profile with outside URLs; the largest Geo data download or file and what it may unzip to; the most features one overlay or viewport query returns (`0`: record layers off) |
+| `maps@external-requests`, `maps@import-max-bytes`, `maps@max-features` | `true`, `536870912` (512 MiB), `5000` | Maps ([plan](../plans/archive/Maps.md#42-metadata-and-effective-settings)): `false` stops the server's outside map requests (a geocoder, a Geo data download) and its handing a browser a profile with outside URLs; the largest Geo data download or file and what it may unzip to; the most features one overlay or viewport query returns (`0`: record layers off) |
+| `location@max-share-hours`, `location@trail-max-days`, `location@min-interval-seconds`, `location@approximate-interval-seconds`, `location@max-active-shares`, `location@max-audience`, `location@link-max-views-per-minute`, `location@link-max-failed-tries` | `24`, `30`, `5`, `60`, `20`, `50`, `30`, `10` | Shared live location ([Maps, Live location](tools/Maps.md#live-location)): the longest a share runs from its start or last extension; the longest a kept trail stays after its share ends; the shortest time between two positions a share takes (a sooner one is answered 429), and an approximate share's; the most shares a person has on at once; the most people, contacts and links a share has; the most reads a minute of a guest link's page; the wrong secrets after which a guest link is refused |
 | `ssh-server@port`, `ssh-server@host` | empty, `127.0.0.1` | The SSH server (SFTP, git, the apps in a terminal); off while `ssh-server@port` is empty (`2222` in the dev conf) |
 | `media-server@port`, `media-server@host`, `media-server@public-address` | empty, `127.0.0.1`, empty | Call media ([WebRTC](interfaces/WebRTC.md)); off while `media-server@port` is empty; the public address is what browsers are told, for a server behind 1:1 NAT |
 | `calls@ring-seconds` | `45` | How long a call rings before it is missed |
@@ -707,6 +714,13 @@ moqui_conf__entity_facade__datasource__TRANSACTIONAL__password=...
 | `schema-name` | | Empty for the default schema |
 | `user`, `password` | `moqui`, ... | |
 | `sslmode` | | Empty is verified TLS. `verify-full` checks the authority and the name, `verify-ca` the authority only and needs `sslrootcert` (it trusts that file alone, as libpq does; without it the connection is refused), `require` encrypts without checking, and `disable` turns TLS off (for a local dev server only) |
+
+On MySQL (`mysql`, `mysql8`) the same `sslmode` and `sslrootcert` apply (SEC-DAT-97). An upgrade from a build before
+this changes two things: `sslmode=require` now encrypts without checking the certificate, where before the mode was
+ignored and the certificate checked in full (set `verify-full` to keep that); and a conf connection with no mode
+(`database-conf` `jdbc-uri` style, no `sslmode`) is `verify-full` to a server off loopback and plain to `127.0.0.1`,
+`localhost` or `::1`. A MySQL server with no TLS needs `sslmode=disable`, a database extract from it too
+(`jdbc_extract`).
 | `sslrootcert` | `/etc/moqui/db-ca.pem` | A PEM file of the authorities to trust instead of the public ones |
 
 `entity-facade@crypt-pass`, made into `seal.json` by `moqui operator init`, is the key of encrypted fields; it moves
@@ -2557,7 +2571,10 @@ The get tasks take `-t git|current|release|binary` and `-r <repository>`. `--dev
 `runtime/components/dev`. A component with a `Cargo.toml` is linked into the binary on the next build
 ([Native-Components](dev/Native-Components.md)). A new component loads at the next start. System › Components can also
 load it on a running server, with its data, when it has no Rust code
-([Component-Deploy](tools/Component-Deploy.md#loading-a-component)).
+([Component-Deploy](tools/Component-Deploy.md#loading-a-component)). A component deployed that way is updated, moved aside and removed
+only in its own directory under a directory named `components` (`runtime/components/addon/<name>` by default): a conf
+whose `component-dir` is not named `components` (Moqui Java's `runtime/component`) has its deploys and removals refused
+(plans/Security-Review-Low.md SEC-TLS-104).
 
 ## Moving from Moqui Java
 

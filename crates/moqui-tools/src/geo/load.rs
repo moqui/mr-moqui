@@ -12,12 +12,12 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Validating and loading a Geo data file (plans/Maps.md §6.3, §6.4, steps 3 to 5).
+//! Validating and loading a Geo data file (plans/archive/Maps.md §6.3, §6.4, steps 3 to 5).
 //!
-//! - **Validate** ([`prepare`]): the whole file read with `moqui_lib::geo`, writing nothing: each row's country (the
-//!   run's, or one the Geo table has), its code's shape and computed IDs (at most 40 characters), its coordinates, and
-//!   duplicates; a code's rows grouped, its representative chosen (highest accuracy, the first in the file among
-//!   equals).
+//! - **Validate** ([`read_file`], [`Preparer`]): the whole file read with `moqui_lib::geo`, writing nothing, each row
+//!   checked as it is read: its country (the run's, or one the Geo table has), its code's shape and computed IDs (at
+//!   most 40 characters), its coordinates, and duplicates; a code's rows grouped, its representative chosen (highest
+//!   accuracy, the first in the file among equals). Its finds bypass the entity cache ([`uncached`]).
 //! - **Load** ([`Loader::load_batch`]): a batch of items in one transaction, create-or-update by computed ID with each
 //!   batch's rows read first, a row that has not changed left alone. A batch that fails is loaded again an item at a
 //!   time, so one bad item is rejected and the rest go in.
@@ -55,9 +55,6 @@ const USER_CONFIRMED: &str = "GPP_USER_CONFIRMED";
 const RECORD_LOCATION: &str = "GPT_RECORD_LOCATION";
 /// The values of an `In` condition per query.
 pub(crate) const IN_CHUNK: usize = 500;
-/// The countries whose GeoNames first-level codes are ISO 3166-2 (download.geonames.org/export/dump/readme.txt); the
-/// others' are FIPS, matched by name, never written to an ISO field.
-const ISO_ADMIN1: [&str; 4] = ["US", "CH", "BE", "ME"];
 
 /// The data set a run loads.
 #[derive(Clone, Debug)]
@@ -174,53 +171,6 @@ pub struct Prepared {
     pub countries: BTreeSet<String>,
 }
 
-/// Read the file at `path` (the zip member `member`, or the file) as `format`.
-///
-/// # Errors
-///
-/// The file as a whole does not read: not the member, a missing header column, a decompression limit.
-pub fn read_file(
-    path: &std::path::Path,
-    member: Option<&str>,
-    limits: &geo::text::Limits,
-    format: Format,
-    heartbeat: &mut dyn FnMut(),
-) -> Result<FileRead, LibError> {
-    let mut read = FileRead::default();
-    let mut seen = 0_u64;
-    let rows = geo::text::read_file(path, member, limits, |reader| {
-        geo::parse(format, reader, &mut |row| {
-            seen += 1;
-            if seen.is_multiple_of(HEARTBEAT_ROWS) {
-                heartbeat();
-            }
-            match row {
-                Ok(record) => read.records.push(record),
-                Err(mut error) => {
-                    if let Some(key) = error.key.take() {
-                        read.keys.push(*key);
-                    }
-                    read.rejected.push(error);
-                }
-            }
-        })
-    })?;
-    read.rows = rows;
-    Ok(read)
-}
-
-/// How often, in rows, a long read calls its heartbeat.
-const HEARTBEAT_ROWS: u64 = 50_000;
-
-/// A file read: its records, its rejected rows, what those rows were about where they could be read, and its rows.
-#[derive(Debug, Default)]
-pub struct FileRead {
-    pub records: Vec<Record>,
-    pub rejected: Rejections,
-    pub keys: Vec<RowKey>,
-    pub rows: u64,
-}
-
 /// The rejected rows of a run: every one counted, the first [`super::MAX_KEPT_REJECTIONS`] kept for the error file.
 #[derive(Debug, Default)]
 pub struct Rejections {
@@ -253,6 +203,7 @@ fn find_country(facade: &EntityFacade, code: &str) -> Result<Option<Country>, Li
     };
     let found = facade
         .find(GEO)?
+        .use_cache(false)
         .eq("geoTypeEnumId", Value::string("GEOT_COUNTRY"))
         .eq(field, Value::string(&code))
         .list()?;
@@ -274,7 +225,7 @@ fn country_of(row: &EntityValue) -> Country {
 ///
 /// A database error.
 pub fn country_by_id(facade: &EntityFacade, geo_id: &str) -> Result<Option<Country>, LibError> {
-    let row = facade.find(GEO)?.eq("geoId", Value::string(geo_id)).one()?;
+    let row = uncached(facade, GEO)?.eq("geoId", Value::string(geo_id)).one()?;
     Ok(row
         .filter(|row| text_of(row, "geoTypeEnumId") == "GEOT_COUNTRY")
         .map(|row| country_of(&row)))
@@ -284,99 +235,187 @@ fn text_of(row: &EntityValue, field: &str) -> String {
     row.get(field).map(to_plain_string).unwrap_or_default()
 }
 
-/// Check the records of a file, writing nothing. `country` is the run's: a row of another country is passed over.
+/// Why a file could not be prepared: it does not read as a whole, or a lookup failed.
+#[derive(Debug)]
+pub enum ReadFailure {
+    /// Not the member, a missing header column, a decompression limit.
+    File(LibError),
+    /// A database error while looking a country up.
+    Database(LibError),
+}
+
+/// Read and check the file at `path` (the zip member `member`, or the file) as the run's set's format, writing nothing,
+/// each row checked as it is read: the records are grouped into the items to load as they come, never held twice
+/// (plans/archive/Maps.md §6.3, the forced refresh's memory). `country` is the run's: a row of another country is passed over.
 ///
 /// # Errors
 ///
-/// A database error while looking a country up.
-pub fn prepare(
+/// The file as a whole does not read, or a country lookup fails.
+pub fn read_file(
     facade: &EntityFacade,
     set: &DataSet,
     country: Option<&Country>,
-    read: FileRead,
-) -> Result<Prepared, LibError> {
-    let FileRead {
-        records,
-        rejected,
-        keys,
-        rows,
-    } = read;
-    let mut prepared = Prepared {
-        rejected,
-        rows,
-        ..Prepared::default()
-    };
-    let mut countries: HashMap<String, Option<Country>> = HashMap::new();
-    if let Some(country) = country {
-        countries.insert(country.alpha2.clone(), Some(country.clone()));
-        countries.insert(country.alpha3.clone(), Some(country.clone()));
+    path: &std::path::Path,
+    member: Option<&str>,
+    limits: &geo::text::Limits,
+    heartbeat: &mut dyn FnMut(),
+) -> Result<Prepared, ReadFailure> {
+    let mut preparer = Preparer::new(facade, set, country);
+    let mut seen = 0_u64;
+    let rows = geo::text::read_file(path, member, limits, |reader| {
+        geo::parse(set.format, reader, &mut |row| {
+            seen += 1;
+            if seen.is_multiple_of(HEARTBEAT_ROWS) {
+                heartbeat();
+            }
+            preparer.add(row);
+        })
+    })
+    .map_err(ReadFailure::File)?;
+    preparer.finish(rows).map_err(ReadFailure::Database)
+}
+
+/// How often, in rows, a long read calls its heartbeat.
+const HEARTBEAT_ROWS: u64 = 50_000;
+
+/// A file's rows checked as they are read ([`read_file`]): each row's country (the run's, or one the Geo table has), its
+/// code's shape and computed IDs (at most 40 characters), its coordinates, and duplicates; a code's rows grouped, its
+/// representative chosen at the end (highest accuracy, the first in the file among equals).
+pub struct Preparer<'a> {
+    facade: &'a EntityFacade,
+    set: &'a DataSet,
+    country: Option<&'a Country>,
+    prepared: Prepared,
+    countries: HashMap<String, Option<Country>>,
+    groups: IndexMap<String, CodeGroup>,
+    zcta_counties: Vec<ZctaCountyRecord>,
+    /// The first line of each key a valid row had, for duplicates (a rejected row's key never makes one).
+    lines: HashMap<String, u64>,
+    /// The first database error: the rows after it are not checked, and [`Self::finish`] returns it.
+    failed: Option<LibError>,
+}
+
+impl<'a> Preparer<'a> {
+    #[must_use]
+    pub fn new(facade: &'a EntityFacade, set: &'a DataSet, country: Option<&'a Country>) -> Self {
+        let mut countries = HashMap::new();
+        if let Some(country) = country {
+            countries.insert(country.alpha2.clone(), Some(country.clone()));
+            countries.insert(country.alpha3.clone(), Some(country.clone()));
+        }
+        Self {
+            facade,
+            set,
+            country,
+            prepared: Prepared::default(),
+            countries,
+            groups: IndexMap::new(),
+            zcta_counties: Vec::new(),
+            lines: HashMap::new(),
+            failed: None,
+        }
     }
-    let mut lookup = |code: &str| -> Result<Option<Country>, LibError> {
+
+    fn lookup(&mut self, code: &str) -> Result<Option<Country>, LibError> {
         let code = code.to_ascii_uppercase();
-        if let Some(found) = countries.get(&code) {
+        if let Some(found) = self.countries.get(&code) {
             return Ok(found.clone());
         }
-        let found = find_country(facade, &code)?;
-        countries.insert(code, found.clone());
+        let found = find_country(self.facade, &code)?;
+        self.countries.insert(code, found.clone());
         Ok(found)
-    };
-    // a row passed over whose code could be read keeps that code in the edition
-    for key in keys {
+    }
+
+    /// Check one row as read: a record, or a row the parser passed over.
+    pub fn add(&mut self, row: Result<Record, RowError>) {
+        if self.failed.is_some() {
+            return;
+        }
+        let checked = match row {
+            Ok(record) => self.add_record(record),
+            Err(mut error) => {
+                let key = error.key.take();
+                self.prepared.rejected.push(error);
+                match key {
+                    Some(key) => self.add_key(*key),
+                    None => Ok(()),
+                }
+            }
+        };
+        if let Err(err) = checked {
+            self.failed = Some(err);
+        }
+    }
+
+    /// A row passed over whose code could be read keeps that code in the edition.
+    fn add_key(&mut self, key: RowKey) -> Result<(), LibError> {
+        let run = self.country;
         let geo_id = match key {
             RowKey::Postal {
                 country: code_country,
                 code,
-            } => match lookup(&code_country)? {
-                Some(found) if country.is_none_or(|run| run.geo_id == found.geo_id) => {
+            } => match self.lookup(&code_country)? {
+                Some(found) if run.is_none_or(|run| run.geo_id == found.geo_id) => {
                     ids::postal_code_geo_id(&found.geo_id, &code).ok()
                 }
                 _ => None,
             },
-            RowKey::Fips(geoid) if set.format == Format::CensusCounties => ids::county_geo_id(&geoid).ok(),
-            RowKey::Fips(geoid) if set.format == Format::CensusPlaces => ids::place_geo_id(&geoid).ok(),
+            RowKey::Fips(geoid) if self.set.format == Format::CensusCounties => ids::county_geo_id(&geoid).ok(),
+            RowKey::Fips(geoid) if self.set.format == Format::CensusPlaces => ids::place_geo_id(&geoid).ok(),
             RowKey::Fips(_) => None,
             RowKey::City {
                 country: city_country,
                 geonameid,
-            } => match lookup(&city_country)? {
+            } => match self.lookup(&city_country)? {
                 Some(found) => ids::city_geo_id(&found.geo_id, &geonameid).ok(),
                 None => None,
             },
         };
         if let Some(geo_id) = geo_id {
-            prepared.seen.insert(geo_id);
+            self.prepared.seen.insert(geo_id);
         }
+        Ok(())
     }
-    let mut groups: IndexMap<String, CodeGroup> = IndexMap::new();
-    let mut zcta_counties: Vec<ZctaCountyRecord> = Vec::new();
-    let mut lines: HashMap<String, u64> = HashMap::new();
-    for record in records {
+
+    /// Whether `key` is new; a duplicate of a valid row before it is rejected.
+    fn first(&mut self, key: &str, line: u64, field: &str) -> bool {
+        if let Some(first) = self.lines.get(key) {
+            self.prepared.rejected.push(duplicate(line, field, Some(first)));
+            return false;
+        }
+        self.lines.insert(key.to_string(), line);
+        true
+    }
+
+    fn add_record(&mut self, record: Record) -> Result<(), LibError> {
+        let set = self.set;
         match record {
             Record::Postal(record) => {
-                let row_country = match lookup(&record.country)? {
-                    Some(found) if country.is_none_or(|run| run.geo_id == found.geo_id) => found,
+                let run = self.country;
+                let row_country = match self.lookup(&record.country)? {
+                    Some(found) if run.is_none_or(|run| run.geo_id == found.geo_id) => found,
                     Some(found) => {
-                        prepared.rejected.push(row_error(
+                        self.prepared.rejected.push(row_error(
                             record.line,
                             "country",
                             format!(
                                 "the row's country {} is not the run's ({})",
                                 found.geo_id,
-                                country.map_or("", |run| run.geo_id.as_str())
+                                run.map_or("", |run| run.geo_id.as_str())
                             ),
                         ));
-                        continue;
+                        return Ok(());
                     }
                     None => {
-                        prepared.rejected.push(row_error(
+                        self.prepared.rejected.push(row_error(
                             record.line,
                             "country",
                             format!("there is no country Geo for {}", record.country),
                         ));
-                        continue;
+                        return Ok(());
                     }
                 };
-                add_postal(&mut prepared, &mut groups, set, &row_country, record);
+                add_postal(&mut self.prepared, &mut self.groups, set, &row_country, record);
             }
             Record::County(record) | Record::Place(record) => {
                 let county = set.format == Format::CensusCounties;
@@ -389,141 +428,151 @@ pub fn prepare(
                 let (geo_id, point_id) = match ids {
                     Ok(ids) => ids,
                     Err(message) => {
-                        prepared.rejected.push(row_error(record.line, "GEOID", message));
-                        continue;
+                        self.prepared.rejected.push(row_error(record.line, "GEOID", message));
+                        return Ok(());
                     }
                 };
-                if !prepared.seen.insert(geo_id.clone()) {
-                    prepared
-                        .rejected
-                        .push(duplicate(record.line, "GEOID", lines.get(&geo_id)));
-                    continue;
+                if !self.first(&geo_id, record.line, "GEOID") {
+                    return Ok(());
                 }
-                lines.insert(geo_id.clone(), record.line);
-                prepared.countries.insert("USA".to_string());
-                prepared.items.push(Item::Division {
+                self.prepared.seen.insert(geo_id.clone());
+                self.prepared.countries.insert("USA".to_string());
+                self.prepared.items.push(Item::Division {
                     geo_id,
                     point_id,
                     county,
                     record,
                 });
             }
-            Record::ZctaCounty(record) => zcta_counties.push(record),
+            Record::ZctaCounty(record) => self.zcta_counties.push(record),
             Record::Country(record) => {
-                if !prepared.seen.insert(record.iso2.clone()) {
-                    prepared
-                        .rejected
-                        .push(duplicate(record.line, "ISO", lines.get(&record.iso2)));
-                    continue;
+                if self.first(&record.iso2, record.line, "ISO") {
+                    self.prepared.seen.insert(record.iso2.clone());
+                    self.prepared.items.push(Item::Country(record));
                 }
-                lines.insert(record.iso2.clone(), record.line);
-                prepared.items.push(Item::Country(record));
             }
             Record::Admin1(record) => {
                 let key = format!("{}.{}", record.country, record.code);
-                if !prepared.seen.insert(key.clone()) {
-                    prepared.rejected.push(duplicate(record.line, "code", lines.get(&key)));
-                    continue;
+                if self.first(&key, record.line, "code") {
+                    self.prepared.seen.insert(key);
+                    self.prepared.items.push(Item::Admin1(record));
                 }
-                lines.insert(key, record.line);
-                prepared.items.push(Item::Admin1(record));
             }
             Record::Admin2(record) => {
                 let key = format!("{}.{}.{}", record.country, record.admin1, record.code);
-                if !prepared.seen.insert(key.clone()) {
-                    prepared.rejected.push(duplicate(record.line, "code", lines.get(&key)));
-                    continue;
+                if self.first(&key, record.line, "code") {
+                    self.prepared.seen.insert(key);
+                    self.prepared.items.push(Item::Admin2(record));
                 }
-                lines.insert(key, record.line);
-                prepared.items.push(Item::Admin2(record));
             }
             Record::City(record) => {
-                let Some(row_country) = lookup(&record.country)? else {
-                    prepared.rejected.push(row_error(
+                let Some(row_country) = self.lookup(&record.country)? else {
+                    self.prepared.rejected.push(row_error(
                         record.line,
                         "country code",
                         format!("there is no country Geo for {}", record.country),
                     ));
-                    continue;
+                    return Ok(());
                 };
                 let ids = ids::city_geo_id(&row_country.geo_id, &record.geonameid)
                     .and_then(|geo_id| ids::point_id(&geo_id, &set.source_key).map(|point_id| (geo_id, point_id)));
                 let (geo_id, point_id) = match ids {
                     Ok(ids) => ids,
                     Err(message) => {
-                        prepared.rejected.push(row_error(record.line, "geonameid", message));
-                        continue;
+                        self.prepared
+                            .rejected
+                            .push(row_error(record.line, "geonameid", message));
+                        return Ok(());
                     }
                 };
-                if !prepared.seen.insert(geo_id.clone()) {
-                    prepared
-                        .rejected
-                        .push(duplicate(record.line, "geonameid", lines.get(&geo_id)));
-                    continue;
+                if !self.first(&geo_id, record.line, "geonameid") {
+                    return Ok(());
                 }
-                lines.insert(geo_id.clone(), record.line);
-                prepared.countries.insert(row_country.geo_id.clone());
-                prepared.items.push(Item::City {
+                self.prepared.seen.insert(geo_id.clone());
+                self.prepared.countries.insert(row_country.geo_id.clone());
+                self.prepared.items.push(Item::City {
                     geo_id,
                     point_id,
                     record,
                 });
             }
         }
+        Ok(())
     }
-    for (_, mut group) in groups {
-        let accuracies: Vec<Option<i32>> = group.records.iter().map(|record| record.accuracy).collect();
-        group.representative = geo::representative_index(&accuracies).unwrap_or(0);
-        // a place with a point of its own needs that point's ID within 40 characters; one at the representative's
-        // point shares the code's point and needs none
-        let representative = group.records.get(group.representative).and_then(|record| record.point);
-        let mut kept = Vec::with_capacity(group.records.len());
-        let mut kept_representative = 0;
-        for (index, record) in std::mem::take(&mut group.records).into_iter().enumerate() {
-            let sequence = u32::try_from(kept.len() + 1).unwrap_or(u32::MAX);
-            let own_point = index != group.representative && record.point.is_some() && record.point != representative;
-            if own_point && record.place_name.is_some() {
-                if let Err(message) = ids::place_point_id(&group.geo_id, &set.source_key, sequence) {
-                    if let Some(place) = &record.place_name {
-                        prepared.seen_places.remove(&(group.geo_id.clone(), place.clone()));
+
+    /// The file's rows read: each code's representative chosen, the ZCTA-to-county links made.
+    ///
+    /// # Errors
+    ///
+    /// The first database error a row met.
+    pub fn finish(self, rows: u64) -> Result<Prepared, LibError> {
+        let Self {
+            set,
+            mut prepared,
+            groups,
+            zcta_counties,
+            failed,
+            ..
+        } = self;
+        if let Some(err) = failed {
+            return Err(err);
+        }
+        prepared.rows = rows;
+        for (_, mut group) in groups {
+            let accuracies: Vec<Option<i32>> = group.records.iter().map(|record| record.accuracy).collect();
+            group.representative = geo::representative_index(&accuracies).unwrap_or(0);
+            // a place with a point of its own needs that point's ID within 40 characters; one at the representative's
+            // point shares the code's point and needs none
+            let representative = group.records.get(group.representative).and_then(|record| record.point);
+            let mut kept = Vec::with_capacity(group.records.len());
+            let mut kept_representative = 0;
+            for (index, record) in std::mem::take(&mut group.records).into_iter().enumerate() {
+                let sequence = u32::try_from(kept.len() + 1).unwrap_or(u32::MAX);
+                let own_point =
+                    index != group.representative && record.point.is_some() && record.point != representative;
+                if own_point && record.place_name.is_some() {
+                    if let Err(message) = ids::place_point_id(&group.geo_id, &set.source_key, sequence) {
+                        if let Some(place) = &record.place_name {
+                            prepared.seen_places.remove(&(group.geo_id.clone(), place.clone()));
+                        }
+                        prepared.rejected.push(row_error(record.line, "place", message));
+                        continue;
                     }
-                    prepared.rejected.push(row_error(record.line, "place", message));
-                    continue;
                 }
+                if index == group.representative {
+                    kept_representative = kept.len();
+                }
+                kept.push(record);
             }
-            if index == group.representative {
-                kept_representative = kept.len();
-            }
-            kept.push(record);
+            group.records = kept;
+            group.representative = kept_representative;
+            prepared.items.push(Item::Code(group));
         }
-        group.records = kept;
-        group.representative = kept_representative;
-        prepared.items.push(Item::Code(group));
-    }
-    for record in geo::census::largest_share(&zcta_counties) {
-        let code = PostalCode {
-            normalized: record.zcta.clone(),
-            display: record.zcta.clone(),
-            granularity: Granularity::Full,
-        };
-        let ids = ids::postal_code_geo_id("USA", &code)
-            .and_then(|postal| ids::county_geo_id(&record.county).map(|county| (postal, county)));
-        match ids {
-            Ok((postal_geo_id, county_geo_id)) => {
-                prepared.seen.insert(postal_geo_id.clone());
-                prepared.items.push(Item::ZctaCounty {
-                    county_geo_id,
-                    postal_geo_id,
-                    line: record.line,
-                });
+        for record in geo::census::largest_share(&zcta_counties) {
+            let code = PostalCode {
+                normalized: record.zcta.clone(),
+                display: record.zcta.clone(),
+                granularity: Granularity::Full,
+            };
+            let ids = ids::postal_code_geo_id("USA", &code)
+                .and_then(|postal| ids::county_geo_id(&record.county).map(|county| (postal, county)));
+            match ids {
+                Ok((postal_geo_id, county_geo_id)) => {
+                    prepared.seen.insert(postal_geo_id.clone());
+                    prepared.items.push(Item::ZctaCounty {
+                        county_geo_id,
+                        postal_geo_id,
+                        line: record.line,
+                    });
+                }
+                Err(message) => prepared
+                    .rejected
+                    .push(row_error(record.line, "GEOID_ZCTA5_20", message)),
             }
-            Err(message) => prepared
-                .rejected
-                .push(row_error(record.line, "GEOID_ZCTA5_20", message)),
         }
+        prepared.rejected.kept.sort_by_key(|error| error.line);
+        Ok(prepared)
     }
-    prepared.rejected.kept.sort_by_key(|error| error.line);
-    Ok(prepared)
 }
 
 fn row_error(line: u64, field: &str, message: String) -> RowError {
@@ -592,8 +641,15 @@ fn add_postal(
     group.records.push(record);
 }
 
-/// The rows of `entity` whose `field` is one of `values`, as the framework, read a chunk at a time; `extra` narrows
-/// each query.
+/// A find of `entity` that neither reads nor fills the entity cache. Geo, GeoAssoc and GeoPoint are cached entities,
+/// and a run reads every row of its file's scope a chunk at a time: a refresh that changes nothing wrote no row to clear
+/// those lists, so each run's reads stayed in the list caches (about 225 MB for the US, plans/archive/Maps.md §6.3).
+pub(crate) fn uncached(facade: &EntityFacade, entity: &str) -> Result<moqui_core::entity::EntityFind, LibError> {
+    Ok(facade.find(entity)?.use_cache(false))
+}
+
+/// The rows of `entity` whose `field` is one of `values`, as the framework, read a chunk at a time, bypassing the
+/// entity cache ([`uncached`]); `extra` narrows each query.
 pub(crate) fn rows_in(
     facade: &EntityFacade,
     entity: &str,
@@ -606,9 +662,8 @@ pub(crate) fn rows_in(
         if chunk.is_empty() {
             continue;
         }
-        let mut find = facade
-            .find(entity)?
-            .condition(Condition::In(field.into(), chunk.iter().map(Value::string).collect()));
+        let mut find =
+            uncached(facade, entity)?.condition(Condition::In(field.into(), chunk.iter().map(Value::string).collect()));
         for (name, value) in extra {
             find = find.eq(name, Value::string(*value));
         }
@@ -928,7 +983,14 @@ impl<'a> Loader<'a> {
                 if let Some(state) = state {
                     change = change.and(self.link(&state, geo_id, existing)?);
                 }
-                match self.write_point(existing, geo_id, point_id, Some(record.point), Precision::PlaceEstimate)? {
+                match self.write_point(
+                    existing,
+                    geo_id,
+                    point_id,
+                    Some(record.point),
+                    Precision::PlaceEstimate,
+                    None,
+                )? {
                     Ok(point) => Ok(Ok(change.and(point))),
                     Err(message) => Ok(Err(row_error(record.line, "", message))),
                 }
@@ -951,8 +1013,7 @@ impl<'a> Loader<'a> {
                 // a ZCTA is in one county: another county's link, the importer's own, goes
                 for (from, to) in &existing.regions {
                     if to == postal_geo_id && from != county_geo_id && from.starts_with("USA_C_") {
-                        self.facade
-                            .find(GEO_ASSOC)?
+                        uncached(self.facade, GEO_ASSOC)?
                             .eq("geoId", Value::string(from))
                             .eq("toGeoId", Value::string(to))
                             .list()?
@@ -1005,7 +1066,14 @@ impl<'a> Loader<'a> {
                         change = change.and(self.link(&parent, geo_id, existing)?);
                     }
                 }
-                match self.write_point(existing, geo_id, point_id, Some(record.point), Precision::PlaceEstimate)? {
+                match self.write_point(
+                    existing,
+                    geo_id,
+                    point_id,
+                    Some(record.point),
+                    Precision::PlaceEstimate,
+                    None,
+                )? {
                     Ok(point) => Ok(Ok(change.and(point))),
                     Err(message) => Ok(Err(row_error(record.line, "", message))),
                 }
@@ -1049,8 +1117,9 @@ impl<'a> Loader<'a> {
         )?))
     }
 
-    /// The source's point `point_id` of `geo_id` and its association. A point of a user's confirmation is left as it
-    /// is (unchanged); a record's own location under that ID is refused.
+    /// The source's point `point_id` of `geo_id` and its association, with the area's land area in square meters where
+    /// the source has it (a Census ZCTA's, for the lookup's extent). A point of a user's confirmation is left as it is
+    /// (unchanged); a record's own location under that ID is refused.
     fn write_point(
         &self,
         existing: &Existing,
@@ -1058,6 +1127,7 @@ impl<'a> Loader<'a> {
         point_id: &str,
         point: Option<Point>,
         precision: Precision,
+        land_area: Option<u64>,
     ) -> Result<Result<Change, String>, LibError> {
         let Some(point) = point else {
             return Ok(Ok(Change::Unchanged));
@@ -1084,6 +1154,12 @@ impl<'a> Loader<'a> {
                     ("precisionEnumId", Value::string(precision.enum_id())),
                     ("dataSetId", Value::string(&self.set.data_set_id)),
                     ("priority", Value::I64(self.set.priority)),
+                    (
+                        "landArea",
+                        land_area
+                            .and_then(|area| i64::try_from(area).ok())
+                            .map_or(Value::Null, Value::I64),
+                    ),
                     ("thruDate", Value::Null),
                 ],
                 on_create: &[("fromDate", self.now.clone())],
@@ -1217,6 +1293,7 @@ impl<'a> Loader<'a> {
             &group.point_id,
             representative.point,
             representative.precision,
+            representative.land_area,
         )? {
             Ok(point) => change = change.and(point),
             Err(message) => return Ok(Err(row_error(line, "", message))),
@@ -1385,13 +1462,13 @@ impl<'a> Loader<'a> {
             .find(|child| {
                 child.geo_id == made
                     || (!child.numeric.is_empty() && child.numeric == record.code)
-                    || names.iter().any(|name| child.name.eq_ignore_ascii_case(name))
+                    || names.iter().any(|name| geo::admin1::same_name(&child.name, name))
             })
             .map(|child| child.geo_id.clone());
         if let Some(found) = found {
             return self.rename_computed(&parent, &found, &record.name);
         }
-        let geo = self.facade.find(GEO)?.eq("geoId", Value::string(&made)).one()?;
+        let geo = uncached(self.facade, GEO)?.eq("geoId", Value::string(&made)).one()?;
         if geo.is_some() {
             return Ok(Err(row_error(
                 record.line,
@@ -1420,7 +1497,7 @@ impl<'a> Loader<'a> {
         if !ids::is_computed(geo_id) {
             return Ok(Ok(Change::Unchanged));
         }
-        let Some(row) = self.facade.find(GEO)?.eq("geoId", Value::string(geo_id)).one()? else {
+        let Some(row) = uncached(self.facade, GEO)?.eq("geoId", Value::string(geo_id)).one()? else {
             return Ok(Ok(Change::Unchanged));
         };
         let change = write(
@@ -1455,9 +1532,7 @@ impl<'a> Loader<'a> {
 
     fn children_of(&mut self, parent: &str) -> Result<&Vec<Child>, LibError> {
         if !self.children.contains_key(parent) {
-            let to_ids: Vec<String> = self
-                .facade
-                .find(GEO_ASSOC)?
+            let to_ids: Vec<String> = uncached(self.facade, GEO_ASSOC)?
                 .eq("geoId", Value::string(parent))
                 .eq("geoAssocTypeEnumId", Value::string(REGIONS))
                 .list()?
@@ -1479,10 +1554,12 @@ impl<'a> Loader<'a> {
     }
 
     /// The first-level division of country `country_geo_id` (ISO alpha-2 `alpha2`) for the source's `code`, found by
-    /// lookup among the country's `GAT_REGIONS` children (plans/Maps.md §6.3): by the code in `geoCodeAlpha2` or
-    /// `geoCodeNumeric` where the source's codes are ISO, by the ID the importer would have made, then by `names`.
-    /// When nothing matches and `create_name` is given, `{country}_A1_{code}` is made with that name (and the code
-    /// as `geoCodeAlpha2` where it is ISO) and linked to the country.
+    /// lookup among the country's `GAT_REGIONS` children (plans/archive/Maps.md §6.3): by its ISO 3166-2 code (the source's own
+    /// for the US, Switzerland, Belgium and Montenegro, else through the crosswalk of `moqui_lib::geo::admin1`) in
+    /// `geoCodeAlpha2`, `geoCodeNumeric` or the ID as Mantle writes one (`CAN_AB`, `JPN_01`, `VNM_VN-SG`), by the ID the
+    /// importer would have made, then by `names`. When nothing matches and `create_name` is given,
+    /// `{country}_A1_{code}` is made with that name and its ISO code where one is known (`geoCodeNumeric` for digits,
+    /// else `geoCodeAlpha2`; never a FIPS code) and linked to the country.
     fn admin1(
         &mut self,
         country_geo_id: &str,
@@ -1491,31 +1568,54 @@ impl<'a> Loader<'a> {
         names: &[&str],
         create_name: Option<&str>,
     ) -> Result<Option<String>, LibError> {
-        let iso = ISO_ADMIN1.contains(&alpha2);
+        let iso = geo::admin1::iso_code(alpha2, code);
         let Ok(made) = ids::admin1_geo_id(country_geo_id, code) else {
             return Ok(None);
         };
         let children = self.children_of(country_geo_id)?;
+        let by_iso = |child: &&Child| {
+            iso.as_deref().is_some_and(|iso| {
+                let codes = geo::admin1::DivisionCodes {
+                    geo_id: &child.geo_id,
+                    alpha2: &child.alpha2,
+                    numeric: &child.numeric,
+                };
+                geo::admin1::matches_iso(codes, country_geo_id, alpha2, iso)
+            })
+        };
+        // a division the importer made before its ISO code was known gets it now (it was made with no code)
         let found = children
             .iter()
-            .find(|child| {
-                (iso && (child.alpha2.eq_ignore_ascii_case(code) || child.numeric == code)) || child.geo_id == made
+            .find(by_iso)
+            .map(|child| (child.geo_id.clone(), false))
+            .or_else(|| {
+                children.iter().find(|child| child.geo_id == made).map(|child| {
+                    (
+                        child.geo_id.clone(),
+                        child.alpha2.is_empty() && child.numeric.is_empty(),
+                    )
+                })
             })
             .or_else(|| {
                 children
                     .iter()
-                    .find(|child| names.iter().any(|name| child.name.eq_ignore_ascii_case(name)))
-            })
-            .map(|child| child.geo_id.clone());
-        if found.is_some() {
-            return Ok(found);
+                    .find(|child| names.iter().any(|name| geo::admin1::same_name(&child.name, name)))
+                    .map(|child| (child.geo_id.clone(), false))
+            });
+        if let Some((geo_id, backfill)) = found {
+            if let (true, Some(iso)) = (backfill, &iso) {
+                if let Some(mut row) = uncached(self.facade, GEO)?.eq("geoId", Value::string(&geo_id)).one()? {
+                    row.set(geo::admin1::iso_field(iso), Value::string(iso));
+                    row.update(self.facade)?;
+                    self.children.remove(country_geo_id);
+                }
+            }
+            return Ok(Some(geo_id));
         }
         let Some(name) = create_name else {
             return Ok(None);
         };
-        if self
-            .facade
-            .find(GEO)?
+        if uncached(self.facade, GEO)?
             .eq("geoId", Value::string(&made))
             .one()?
             .is_none()
@@ -1524,8 +1624,8 @@ impl<'a> Loader<'a> {
             row.set("geoId", Value::string(&made));
             row.set("geoTypeEnumId", Value::string("GEOT_STATE"));
             row.set("geoName", Value::string(name));
-            if iso {
-                row.set("geoCodeAlpha2", Value::string(code));
+            if let Some(iso) = &iso {
+                row.set(geo::admin1::iso_field(iso), Value::string(iso));
             }
             row.create(self.facade)?;
         }

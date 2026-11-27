@@ -51,7 +51,7 @@ use serde_json::{json, Value};
 
 use super::outbox::{
     self, backoff_ms, classify, payload_of, Next, CHAT_EDIT, CHAT_REACT, CHAT_READ, CHAT_REDACT, CHAT_SEND,
-    INTERNAL_SEND, MAIL_SEND, MAIL_STATE, POLL_VOTE,
+    INTERNAL_SEND, MAIL_SEND, MAIL_STATE, MAP_PLACE, POLL_VOTE,
 };
 use crate::account::Account;
 use crate::app::{Client, ClientHost};
@@ -75,6 +75,8 @@ const HELD: &str = "Waiting for a sign-in";
 /// How long a chat message with files waits before it fails: the server removes unsent files after 24 hours
 /// (WebrootChat.js `OUTBOX_FILES_FOR`).
 const FILES_FOR_MS: i64 = 20 * 3600 * 1000;
+/// Maps' save of a place (`Maps/Browse.xml` `savePlace`), which takes a place saved offline once by its `clientRef`.
+const MAP_PLACE_PATH: &str = "/apps/maps/Browse/savePlace";
 /// A file larger than this goes in chunks, with a server at `clientApi` 4: the server's least chunk but the last
 /// (`client-sync@upload-min-chunk-bytes`).
 pub(crate) const CHUNK_MIN: usize = 262_144;
@@ -469,8 +471,51 @@ fn send_op(job: &Job<'_>, op: &OutboxOp) -> Outcome {
             let sent = post_form(job, &format!("{}/send", compose_base(&job.comms_root)), &fields);
             sent_outcome(&sent)
         }
+        MAP_PLACE => send_place(job, op, &payload),
         other => Outcome::NotSent(400, Some(format!("No operation {other}"))),
     }
+}
+
+/// Maps' save of a place (`store#Place`), once by its `clientRef` (plans/archive/Maps-Offline.md §2.5): done when it was
+/// applied (or a duplicate of one that was), not sent with the server's reason when it was refused. A 403 with the
+/// server's JSON (the user may not use Maps) fails with its reason rather than waiting for a sign-in, so it holds up no
+/// later place; a 403 without one (a key the server no longer takes) is held as any other.
+fn send_place(job: &Job<'_>, op: &OutboxOp, payload: &Value) -> Outcome {
+    if !job.server.place_queue() {
+        return Outcome::NotSent(400, Some("A place saved offline needs a newer server".to_string()));
+    }
+    let params = vec![
+        ("label".to_string(), payload["label"].as_str().unwrap_or("").to_string()),
+        ("longitude".to_string(), payload["longitude"].to_string()),
+        ("latitude".to_string(), payload["latitude"].to_string()),
+        ("clientRef".to_string(), op.id.clone()),
+    ];
+    let sent = post_form(job, MAP_PLACE_PATH, &params);
+    if sent.status() == 403 && sent.json().is_object() {
+        return Outcome::NotSent(
+            400,
+            Some(errors_of(&sent.json()).map_or_else(
+                || "You may not save places on this server".to_string(),
+                |why| format!("Not saved: {why}"),
+            )),
+        );
+    }
+    if !is_ok(&sent) {
+        return not_sent(&sent);
+    }
+    let json = sent.json();
+    if json["applied"].as_bool() == Some(true) {
+        return Outcome::Done(Some(json));
+    }
+    Outcome::NotSent(
+        400,
+        json["reason"]
+            .as_str()
+            .filter(|reason| !reason.is_empty())
+            .map(str::to_string)
+            .or_else(|| errors_of(&json))
+            .or_else(|| Some("The place was not saved".to_string())),
+    )
 }
 
 /// A mail state change: its threads with their `seen` (MD5), the request once by its ref; the threads the server

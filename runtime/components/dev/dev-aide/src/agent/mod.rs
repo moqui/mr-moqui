@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The dev tools of the agents (plans/design-dev-aide.md 13.2): `artifact`, `source` and `check` read the index, the
+//! The dev tools of the agents (plans/archive/design-dev-aide.md 13.2): `artifact`, `source` and `check` read the index, the
 //! files and the checks; `propose_edit` proposes a change set the user accepts; `try_service` runs a service in sim;
 //! `vcs` reads and writes git. Each needs the `dev.aide` capability, which a run has only on a dev instance with the
 //! dev-aide loaded for a user with one of its permissions, and checks the instance, the component and the user's tier

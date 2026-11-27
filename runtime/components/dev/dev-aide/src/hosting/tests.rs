@@ -14,7 +14,7 @@
 
 //! The pure parts of the group server connection: the addresses a token goes to, the remotes a server owns, the
 //! `myaddons.xml` edits, and the REST contract of each kind of server: the framework's and an application's (Smithy's
-//! operations under its `restBase`, plans/design-dev-aide.md 21, mr-pass design-smithy §15.5). The calls against a
+//! operations under its `restBase`, plans/archive/design-dev-aide.md 21, mr-pass design-smithy §15.5). The calls against a
 //! server are the host's integration test (`crates/moqui-host/tests/it/devaide_group.rs`), with the instance as its own
 //! group server; a Smithy server is checked here by its contract only, as mr-pass and mr-mantle do not load there.
 
@@ -751,6 +751,28 @@ fn a_repositorys_pages_are_the_servers_own() {
     assert!(own["file"].is_null(), "{own}");
     assert_eq!(own["commit"], "https://team.example.com/c/{commitId}");
     assert!(repository_pages(&server, &json!({})).is_null());
+    // pages by the repository's id (IronStone Projects' Code): the id as one encoded part; with no id, none
+    let by_id = server_with_pages(json!({
+        "file": "https://team.example.com/qapps/Projects/Code/RepositoryDetail/Files?repositoryId={repositoryId}&ref={ref}&path={file}&line={line}",
+        "commit": "https://team.example.com/qapps/Projects/Code/CommitDetail?repositoryId={repositoryId}&commitId={commitId}" }));
+    let pages = repository_pages(
+        &by_id,
+        &json!({ "repositoryPath": "team/site", "repositoryId": "site a/b" }),
+    );
+    assert_eq!(
+        pages["file"],
+        "https://team.example.com/qapps/Projects/Code/RepositoryDetail/Files?repositoryId=site%20a%2Fb&ref={ref}&path={file}&line={line}"
+    );
+    assert_eq!(
+        pages["commit"],
+        "https://team.example.com/qapps/Projects/Code/CommitDetail?repositoryId=site%20a%2Fb&commitId={commitId}"
+    );
+    assert!(repository_pages(&by_id, &json!({ "repositoryPath": "team/site" })).is_null());
+}
+
+/// A server whose offer has the framework's `pages` alone.
+fn server_with_pages(pages: serde_json::Value) -> Server {
+    server(json!({ "pages": pages }))
 }
 
 /// A value put into a server's path as one part never names the part above it.

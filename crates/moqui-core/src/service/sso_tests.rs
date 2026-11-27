@@ -250,6 +250,52 @@ fn an_email_address_is_taken_only_when_the_provider_verified_it() {
     assert_eq!(address(), "sso.eve@example.com");
 }
 
+/// SEC-ADM-85: `email_verified` speaks of the `email` claim, so another claim mapped onto `emailAddress` (one the user
+/// sets at the provider, such as `nickname`) writes nothing, though the provider verified the `email`.
+#[test]
+fn a_mapped_address_is_taken_only_when_it_is_the_verified_email_claim() {
+    let (facade, context) = entered();
+    let _entered = context.enter();
+    let _authz = context.disable_authz();
+    crate::service::load_definitions().unwrap();
+    let flow = flow(&facade);
+    seed(
+        &facade,
+        "moqui.security.sso.AuthFlowFieldMap",
+        &[
+            ("authFlowId", Value::string("TEST_FLOW")),
+            ("ruleSeqId", Value::string("02")),
+            ("srcFieldName", Value::string("nickname")),
+            ("dstFieldName", Value::string("emailAddress")),
+        ],
+    );
+    let address = || {
+        let row = facade
+            .find(ACCOUNT)
+            .unwrap()
+            .eq("username", Value::string("sso.nick"))
+            .one()
+            .unwrap()
+            .expect("the account");
+        field(&row, "emailAddress")
+    };
+    let mut planted = profile("sub-nick", "sso.nick", &[]);
+    planted
+        .attributes
+        .insert("nickname".to_string(), Value::string("victim@example.com"));
+    sync_account(&facade, &flow, &planted, "sso.nick").unwrap();
+    assert_eq!(address(), "", "another claim's address is not taken");
+    let mut same = profile("sub-nick", "sso.nick", &[]);
+    same.attributes
+        .insert("nickname".to_string(), Value::string("SSO.Nick@example.com"));
+    sync_account(&facade, &flow, &same, "sso.nick").unwrap();
+    assert_eq!(
+        address(),
+        "SSO.Nick@example.com",
+        "the verified email's value, by whatever claim"
+    );
+}
+
 #[test]
 fn a_zero_or_false_claim_is_not_mapped_as_groovy_truth_has_it() {
     let (facade, context) = entered();

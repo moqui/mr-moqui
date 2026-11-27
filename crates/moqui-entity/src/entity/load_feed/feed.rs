@@ -150,6 +150,48 @@ pub(crate) fn note_touch(
     TOUCHES.with(|touches| touches.borrow_mut().entry(frame).or_default().push(touch));
 }
 
+/// [`note_touch`] for the creates of `rows`, all of `entity_name`, that one call wrote (`EntityFacade::create_values`):
+/// the frame's registration and whether the feed keeps the values decided once for them all, and where it keeps none
+/// one touch for them all, as the commit reads a touch with no values only for its entity. Out of a transaction each
+/// is fed as [`note_touch`] feeds it.
+pub(crate) fn note_creates(facade: &EntityFacade, entity_name: &str, rows: &[Arc<FieldMap>]) {
+    let Some(tx) = facade.transactions_for(entity_name).ok() else {
+        return;
+    };
+    let Some(frame) = tx.frame_token() else {
+        for row in rows {
+            note_touch(facade, entity_name, "create", Some(row), None);
+        }
+        return;
+    };
+    if rows.is_empty()
+        || !TOUCHES.with(|touches| touches.borrow().contains_key(&frame))
+            && (tx.on_commit(move || drop_frame_touches(frame)).is_err()
+                || tx.on_rollback(move || drop_frame_touches(frame)).is_err())
+    {
+        return;
+    }
+    let keep_fields = feed_keeps_values(facade, entity_name);
+    let origin_agent = keep_fields.then(|| (crate::hooks::get().agent_id)()).flatten();
+    let touch = |fields: Option<Arc<FieldMap>>| Touch {
+        entity_name: entity_name.to_string(),
+        operation: "create".to_string(),
+        fields,
+        old: None,
+        origin_agent: origin_agent.clone(),
+    };
+    TOUCHES.with(|touches| {
+        let mut touches = touches.borrow_mut();
+        let frame_touches = touches.entry(frame).or_default();
+        if keep_fields {
+            frame_touches.extend(rows.iter().map(|row| touch(Some(Arc::clone(row)))));
+        } else {
+            // with no values a touch says only that the entity was written, which the first says for them all
+            frame_touches.push(touch(None));
+        }
+    });
+}
+
 /// Whether the data feed keeps the values of a write of `entity_name` ([`note_touch`]), so a bulk write that would
 /// read only the primary key reads whole rows (plans/archive/High-Level-Review.md HL-033).
 pub(crate) fn feed_keeps_values(facade: &EntityFacade, entity_name: &str) -> bool {

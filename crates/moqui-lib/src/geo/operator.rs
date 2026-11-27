@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! An operator's postal file (plans/Maps.md §6.4): CSV with a header of our own, read by column name in any order
+//! An operator's postal file (plans/archive/Maps.md §6.4): CSV with a header of our own, read by column name in any order
 //! and case: `country` (ISO alpha-2 or alpha-3), `code`, `latitude` and `longitude` required (a row may leave both
 //! coordinates empty: a code with no point), `place`, `admin1`, `admin2` and `precision` (an enum ID or `address`,
 //! `street`, `postal`, `place`; empty is postal) optional. Quoted fields as CSV has them, within one line: each line is
@@ -158,5 +158,6 @@ fn row(line: u64, text: &str, cells: &[&str], columns: &BTreeMap<String, usize>)
         point,
         accuracy: None,
         precision,
+        land_area: None,
     })
 }

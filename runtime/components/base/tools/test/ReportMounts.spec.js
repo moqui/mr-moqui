@@ -274,6 +274,9 @@ feature("a mounted dashboard reads the mount's links, policy and fixed variable;
         tools.errors == ""
         toolsText.includes('"definition":"/apps/dashboards/Definition"')
         toolsText.includes('"alertRule":"/apps/dashboards/AlertRule"')
+        // a geomap's link into Maps only for a viewer whose own grants open Maps (an administrator here, not the mount's user)
+        toolsText.includes('"maps":"/apps/maps/Browse"')
+        !mounted.includes('"maps":')
         edit.location.includes("/apps/dashboards/Definition")
         !toolsText.includes("/forged")
         !edit.location.includes("/forged")
@@ -386,5 +389,46 @@ feature("a dashboard is shared under a mount only by its feature, with a group t
         feature.includes("Sharing is not offered to you here")
         state.shareable == false
         afterRefused == GROUP
+    }
+})
+
+// DASH-UI-007: after the owner takes a dashboard's share away, a reader who opens its URL sees that it is not available, not
+// a render failure nor the engine's refusal; the owner still sees it.
+feature("a dashboard the owner no longer shares reads as not available to its former reader, not as a render failure", {
+    when() {
+        const group = () =>
+            sys(() => ec.entity.find("moqui.report.Definition").condition("definitionId", boardId).one())?.userGroupId || null
+        const before = group()
+        // the owner makes it private through the mount's share
+        const unshare = screen(mount, "Board/share", {definitionId: boardId, userGroupId: ""}, "post")
+        const after = group()
+        try {
+            login("john.doe")
+            const reader = screen(webroot, "apps/dashboards/Dashboard", {definitionId: boardId})
+            ec.user.internalLoginUser(USERNAME)
+            const owner = screen(mount, "Board", {definitionId: boardId})
+            return {unshare, after, reader, readerText: decoded(reader.output), owner, ownerText: decoded(owner.output)}
+        } finally {
+            ec.user.internalLoginUser(USERNAME)
+            sys(() => {
+                const row = ec.entity.find("moqui.report.Definition").condition("definitionId", boardId).one()
+                row.userGroupId = before
+                row.update()
+            })
+        }
+    },
+    then({unshare, after, reader, readerText, owner, ownerText}) {
+        unshare.errors == ""
+        after == null
+        reader.status == 200
+        reader.errors == ""
+        readerText.includes("Dashboard not available")
+        readerText.includes("This dashboard does not exist or is not shared with you.")
+        !readerText.includes("cannot read property")
+        !readerText.includes("may not read definition")
+        !readerText.includes("Mount board")
+        owner.errors == ""
+        ownerText.includes("Mount board")
+        !ownerText.includes("Dashboard not available")
     }
 })

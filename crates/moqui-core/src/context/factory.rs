@@ -483,7 +483,8 @@ impl ExecutionContextFactory {
 
     /// Run queued async work now, on this thread. Only [`Executor::Inline`] queues work; the
     /// threaded executor returns 0. The browser host calls this after each top-level request.
-    /// Leaving the outermost execution context on a thread drains too.
+    /// Leaving the outermost execution context on a thread drains too, except on a framework thread
+    /// ([`super::framework_thread`]).
     ///
     /// Runs nothing while a transaction is in place on this thread. Each item gets a fresh context
     /// and acts as the user who queued it. Returns how many ran.
@@ -1624,7 +1625,9 @@ impl ExecutionContext {
     /// Make this context current on this thread until the guard drops.
     ///
     /// Entering while another context is current makes this one current, and dropping its guard
-    /// brings the other back. [`Self::is_entered`] is true while any guard is alive. The slot holds
+    /// brings the other back. Dropping the outermost guard of an inline factory runs its queued work
+    /// ([`ExecutionContextFactory::run_pending`]), except on a thread started with
+    /// [`super::framework_thread`]. [`Self::is_entered`] is true while any guard is alive. The slot holds
     /// a handle to this context's state, so a leaked guard keeps the state alive instead of
     /// leaving the slot dangling, and a guard dropped out of order removes only its own entry.
     pub fn enter(&self) -> ContextGuard<'_> {
@@ -1634,22 +1637,16 @@ impl ExecutionContext {
             stack.push(handle);
             stack.len() == 1
         });
-        // Leaving the outermost context is an inline drain point.
-        let drain = (outermost && self.factory().executor() == Executor::Inline).then(|| Arc::clone(self.factory()));
+        // Leaving the outermost context is an inline drain point, but not on a framework thread: the queue is the
+        // draining thread's (super::background::framework_thread).
+        let drain =
+            (outermost && self.factory().executor() == Executor::Inline && !super::background::is_framework_thread())
+                .then(|| Arc::clone(self.factory()));
         ContextGuard {
             entered: Rc::clone(&self.state),
             drain,
             _scope: PhantomData,
         }
-    }
-
-    /// [`Self::enter`] for a background thread of the framework's own working for the factory, such as the shell counts
-    /// sender: leaving it is no drain point. An inline factory's queued work belongs to the thread that drains it (a
-    /// test, the browser's worker); run here it would be taken from under that thread's `run_pending`.
-    pub(crate) fn enter_background(&self) -> ContextGuard<'_> {
-        let mut guard = self.enter();
-        guard.drain = None;
-        guard
     }
 
     /// True while a context is entered on this thread.
@@ -1706,7 +1703,7 @@ impl Drop for RestoredAuthz {
 pub struct ContextGuard<'a> {
     /// The state this guard entered: its entry is the topmost one sharing this state.
     entered: Rc<ContextState>,
-    /// Set on an outermost guard of an inline factory: queued async work runs when it drops.
+    /// Set on an outermost guard of an inline factory, off a framework thread: queued async work runs when it drops.
     drain: Option<Arc<ExecutionContextFactory>>,
     _scope: PhantomData<&'a ExecutionContext>,
 }

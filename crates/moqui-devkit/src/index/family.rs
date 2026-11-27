@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A rename's family of names in the memory index (plans/design-dev-aide.md 13.6, `moqui lsp`).
+//! A rename's family of names in the memory index (plans/archive/design-dev-aide.md 13.6, `moqui lsp`).
 
 use super::{resolve, MemoryIndex};
 

@@ -56,6 +56,10 @@ pub(crate) async fn handle(
         .get::<ClientAddr>()
         .map_or(peer.ip(), |client| client.0);
     let (parts, body) = request.into_parts();
+    // nothing of the body is read while the protocol is off (SEC-AI-88)
+    if !moqui_llm::mcp::enabled(&state.factory) {
+        return plain(404, "the MCP server is off");
+    }
     let declared = parts
         .headers
         .get(axum::http::header::CONTENT_LENGTH)

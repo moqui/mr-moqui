@@ -99,6 +99,17 @@
         }
     });
 
+    // A pause of the spec's thread for ms milliseconds (Atomics.wait on a buffer of its own, which nothing notifies), as
+    // a client spec's sleep: a spec polling work on another thread, such as a ServiceJob's run, pauses between looks.
+    // ec.factory.waitWorkerPoolEmpty is no pause there: it waits for the service worker pool only, and returns at once
+    // while a job runs. A value that is not a finite number throws; a pause is at most a minute (a loop sleeps between
+    // looks, it does not wait out its whole deadline in one call).
+    define("sleep", (ms) => {
+        const millis = Number(ms);
+        if (!Number.isFinite(millis)) throw new TypeError(`sleep needs a finite number of milliseconds, not ${ms}`);
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.min(60000, Math.max(0, millis)));
+    });
+
     Object.defineProperty(g, "log", { get: () => ec.logger, configurable: true });
 
     // A spec with database: false sees no entity facade, service calls, or screen tests, even when this run opened a

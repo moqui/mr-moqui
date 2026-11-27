@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The git layer (plans/design-dev-aide.md 4.2, D5): the developer's own `git` (the conf's `git-command`) on working
+//! The git layer (plans/archive/design-dev-aide.md 4.2, D5): the developer's own `git` (the conf's `git-command`) on working
 //! trees, with their config, hooks, signing and credentials. Never through a shell: arguments are argv, paths after `--`,
 //! `-c core.quotepath=off -c color.ui=false`, `LC_ALL=C` for parsed output, `GIT_TERMINAL_PROMPT=0` so nothing prompts,
 //! and `GIT_OPTIONAL_LOCKS=0` for reads so status polling never takes the index lock from the developer's terminal. One
@@ -45,7 +45,7 @@ pub struct Git {
     pub write_timeout: Duration,
 }
 
-/// A long command's progress (plans/design-dev-aide.md 4.2): its `--progress` lines handed to `sink` as they come, at
+/// A long command's progress (plans/archive/design-dev-aide.md 4.2): its `--progress` lines handed to `sink` as they come, at
 /// most a few a second and the last always, and Cancel by `id` ([`cancel`]) while it runs.
 pub struct Progress {
     pub id: String,
@@ -192,6 +192,11 @@ impl Git {
         let repo_lock = (mode != Mode::Read).then(|| write_lock(repo));
         let _held = repo_lock.as_deref().map(lock);
         let mut command = Command::new(&self.command);
+        if mode == Mode::Read {
+            // a read runs nothing the repository's config names: no lazy fetch from a promisor remote (whose URL may
+            // be ext::<command>), no fsmonitor, no hooks, no inherited GIT_DIR (moqui_lib::git_read)
+            moqui_lib::git_read::harden(&mut command);
+        }
         command
             .args(["-c", "core.quotepath=off", "-c", "color.ui=false"])
             .args(args)
@@ -595,7 +600,7 @@ pub fn task_key_valid(key: &str) -> bool {
 }
 
 /// The trailer line of a task: `Task: PROJ-12` for a work item's key; `Fixes #12` for an issue of the repository by its
-/// number (plans/design-dev-aide.md 21.6), which closes it when the commit reaches the default branch; a line that is a
+/// number (plans/archive/design-dev-aide.md 21.6), which closes it when the commit reaches the default branch; a line that is a
 /// closing keyword already (`Fixes PROJ-12`, `Closes #3`, `Resolves ...`) as it is.
 #[must_use]
 pub fn trailer_line(task: &str) -> String {

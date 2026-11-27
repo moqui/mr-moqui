@@ -12,14 +12,16 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Maps › Configuration › Settings (plans/Maps.md §3.1, §4.2): readiness (the Maps checks, org.moqui.maps.MapServices
+<!-- Maps › Configuration › Settings (plans/archive/Maps.md §3.1, §4.2): readiness (the Maps checks, org.moqui.maps.MapServices
     check#Readiness), the outside-request policy and limits as the conf sets them (read here; maps@external-requests,
     maps@max-features and maps@import-max-bytes are changed in the conf), the map providers (the mapProvider connections,
     org.moqui.admin.ConfigurationServices.find#Connections, each opened in ConnectionDetail, a new one started with
     createProvider), the profiles (enabled or not, and the installation's default: store#ProfileSettings) and
     the layers (find#Configuration). The services check their caller: ADMIN_CONNECTION_VIEW and ADMIN_CONNECTION_MANAGE for
     providers, Configuration's own authorization for profiles and layers. A provider is enabled only by a passing test,
-    so a profile drawn from it is not drawn until then, whatever its own state. -->
+    so a profile drawn from it is not drawn until then, whatever its own state. Add OGC layer makes a layer of a tested WMS,
+    WMTS or WFS provider from what its test recorded (store#OgcLayer; its choices from get#OgcLayerOptions, no request
+    sent), and may show it in a profile (an overlay among its layers, a basemap as its basemap). -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Settings" default-menu-index="1" menu-image="sym_o_tune" menu-image-type="icon">
 
@@ -43,7 +45,36 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="storeProfile">
         <service-call name="org.moqui.maps.MapServices.store#ProfileSettings" out-map="stored"
-                in-map="{profileId:profileId, enabled:(enabled || null), makeDefault:(makeDefault === 'Y')}"/>
+                in-map="{profileId:profileId, enabled:(enabled || null), makeDefault:(makeDefault === 'Y'),
+                    viewProjection:(viewProjection !== undefined &amp;&amp; viewProjection !== null ? String(viewProjection) : null)}"/>
+        <actions>
+            <if condition="!ec.message.hasError()">
+                <script>ec.message.addMessage(stored.reason, stored.applied ? 'success' : 'warning')</script>
+            </if>
+        </actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+
+    <!-- Add OGC layer's choices: the tested OGC providers, and for one its layers (what), or a layer's styles, formats,
+        CRSs or matrix sets, from its recorded capabilities -->
+    <transition name="ogcOptions" read-only="true">
+        <actions>
+            <service-call name="org.moqui.maps.MapServices.get#OgcLayerOptions" out-map="found"
+                    in-map="{providerId:(providerId || null), ogcLayers:(ogcLayers || null)}"/>
+            <script><![CDATA[
+                const list = Array.from(found?.[String(what || 'layers')] || [])
+                const match = String(term || '').toLowerCase()
+                ec.web.sendJsonResponse(list.filter(row => !match || String(row.label).toLowerCase().includes(match)).slice(0, 100))
+            ]]></script>
+        </actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="storeOgcLayer">
+        <service-call name="org.moqui.maps.MapServices.store#OgcLayer" out-map="stored"
+                in-map="{providerId:providerId, ogcLayers:ogcLayers, layerName:(layerName || null), ogcStyles:(ogcStyles || null),
+                    ogcFormat:(ogcFormat || null), crs:(crs || null), ogcMatrixSet:(ogcMatrixSet || null), ogcTime:(ogcTime || null),
+                    ogcSingleImage:(ogcSingleImage || 'N'), isBasemap:(isBasemap || 'N'), profileId:(profileId || null)}"/>
         <actions>
             <if condition="!ec.message.hasError()">
                 <script>ec.message.addMessage(stored.reason, stored.applied ? 'success' : 'warning')</script>
@@ -64,6 +95,22 @@ along with this software (see the LICENSE.md file). If not, see
                 checkText: !row.lastCheckDate ? ec.l10n.localize('Not tested') : ec.l10n.format(Date.parse(row.lastCheckDate), 'yyyy-MM-dd HH:mm')
                     + (row.lastCheckPassed ? ', ' + ec.l10n.localize('passed') : ', ' + ec.l10n.localize('did not pass'))}))
             providersAvailable = !!found?.connectionList
+            // Add OGC layer: offered to a caller who may change Configuration while a tested OGC provider is there
+            ogcProviders = []
+            try {
+                ec.message.pushErrors()
+                const options = ec.service.sync().name('org.moqui.maps.MapServices.get#OgcLayerOptions').requireNewTransaction(true).call()
+                if (!ec.message.hasError()) ogcProviders = Array.from(options?.providers || [])
+            } catch (err) {
+                ogcProviders = []
+            } finally {
+                ec.message.clearErrors()
+                ec.message.popErrors()
+            }
+            mayAddOgcLayer = ogcProviders.length > 0 && ec.artifactExecution.isPermittedOwn('component://tools/screen/Maps/Configuration.xml', 'AT_XML_SCREEN', 'AUTHZA_UPDATE')
+            profileOptions = Array.from(configuration?.profileList || []).map(row => ({value: row.profileId, label: row.profileName}))
+            // the projections a profile's view may be drawn in (P4c): EPSG:3857, EPSG:4326 and the registry's
+            projectionOptions = Array.from(configuration?.projectionList || []).map(row => ({key: row.code, text: row.code + ' · ' + row.label}))
             mayStartProvider = !!found?.canManage && Array.from(found?.adapterList || []).some(row => row.adapterKey === 'mapProvider' && row.creatable)
             profileRows = Array.from(configuration?.profileList || []).map(row => Object.assign({}, row, {
                 stateText: (row.enabled ? ec.l10n.localize('Enabled') : ec.l10n.localize('Disabled')) + (row.installationDefault ? ' · ' + ec.l10n.localize('Default') : ''),
@@ -211,6 +258,7 @@ along with this software (see the LICENSE.md file). If not, see
                                 </default-field>
                             </field>
                             <field name="drawText"><default-field title="Now"><display/></default-field></field>
+                            <field name="viewProjection"><default-field title="Projection"><display/></default-field></field>
                             <field name="actions">
                                 <default-field title="">
                                     <link url="storeProfile" text="Make default" icon="sym_o_star" link-type="hidden-form-link"
@@ -231,11 +279,93 @@ along with this software (see the LICENSE.md file). If not, see
                                 <column><field-ref name="stateText"/><field-ref name="actions"/></column>
                             </columns>
                         </form-list>
+                        <!-- the projection a profile's map is drawn in (P4c): one a map draws, in which its basemap can be drawn -->
+                        <form-single name="ProfileProjection" transition="storeProfile">
+                            <field name="profileId">
+                                <default-field title="Profile"><drop-down><list-options list="profileOptions" key="${value}" text="${label}"/></drop-down></default-field>
+                            </field>
+                            <field name="viewProjection">
+                                <default-field title="View projection" tooltip="Web Mercator (EPSG:3857) unless another is chosen: EPSG:4326 or a registered projection, such as a polar one. A basemap of vector tiles (a MapLibre style, a vector PMTiles archive) is drawn only in Web Mercator, so it is refused in another; raster basemaps are reprojected.">
+                                    <drop-down><list-options list="projectionOptions" key="${key}" text="${text}"/></drop-down></default-field>
+                            </field>
+                            <field name="submitButton"><default-field title="Set projection"><submit/></default-field></field>
+                        </form-single>
                     </box-body>
                 </container-box>
 
                 <container-box id="MapsLayersBox">
                     <box-header title="Layers"/>
+                    <box-toolbar>
+                        <section name="AddOgcLayerSection" condition="mayAddOgcLayer">
+                            <widgets>
+                                <container-dialog id="AddOgcLayer" button-text="Add OGC layer" icon="sym_o_add" title="Add a layer of a WMS, WMTS or WFS provider">
+                                    <label type="p" style="m-muted"
+                                            text="The choices are what the provider's last test read from its capabilities: test the provider again to see a layer it added since. A WFS layer is an overlay, read as GeoJSON, at most maps@max-features features at a time."/>
+                                    <form-single name="AddOgcLayer" transition="storeOgcLayer">
+                                        <field name="providerId">
+                                            <default-field title="Provider"><drop-down><list-options list="ogcProviders" key="${value}" text="${label}"/></drop-down></default-field>
+                                        </field>
+                                        <field name="ogcLayers">
+                                            <default-field title="Layer">
+                                                <drop-down allow-empty="true">
+                                                    <dynamic-options transition="ogcOptions" server-search="true" min-length="0" parameter-map="{what:'layers'}">
+                                                        <depends-on field="providerId"/></dynamic-options>
+                                                </drop-down>
+                                            </default-field>
+                                        </field>
+                                        <field name="layerName"><default-field title="Name" tooltip="Empty for the layer's title"><text-line size="40"/></default-field></field>
+                                        <field name="ogcStyles">
+                                            <default-field title="Style">
+                                                <drop-down allow-empty="true">
+                                                    <dynamic-options transition="ogcOptions" server-search="true" min-length="0" parameter-map="{what:'styles'}">
+                                                        <depends-on field="providerId"/><depends-on field="ogcLayers"/></dynamic-options>
+                                                </drop-down>
+                                            </default-field>
+                                        </field>
+                                        <field name="ogcFormat">
+                                            <default-field title="Format">
+                                                <drop-down allow-empty="true">
+                                                    <dynamic-options transition="ogcOptions" server-search="true" min-length="0" parameter-map="{what:'formats'}">
+                                                        <depends-on field="providerId"/><depends-on field="ogcLayers"/></dynamic-options>
+                                                </drop-down>
+                                            </default-field>
+                                        </field>
+                                        <field name="crs">
+                                            <default-field title="CRS" tooltip="Empty for EPSG:3857 when the layer has it">
+                                                <drop-down allow-empty="true">
+                                                    <dynamic-options transition="ogcOptions" server-search="true" min-length="0" parameter-map="{what:'crs'}">
+                                                        <depends-on field="providerId"/><depends-on field="ogcLayers"/></dynamic-options>
+                                                </drop-down>
+                                            </default-field>
+                                        </field>
+                                        <field name="ogcMatrixSet">
+                                            <default-field title="Matrix set (WMTS)">
+                                                <drop-down allow-empty="true">
+                                                    <dynamic-options transition="ogcOptions" server-search="true" min-length="0" parameter-map="{what:'matrixSets'}">
+                                                        <depends-on field="providerId"/><depends-on field="ogcLayers"/></dynamic-options>
+                                                </drop-down>
+                                            </default-field>
+                                        </field>
+                                        <field name="ogcTime">
+                                            <default-field title="Time" tooltip="A value of the layer's time dimension; empty for its default"><text-line size="24"/></default-field>
+                                        </field>
+                                        <field name="ogcSingleImage">
+                                            <default-field title="One image of the view (WMS)"><check><option key="Y" text=" "/></check></default-field>
+                                        </field>
+                                        <field name="isBasemap">
+                                            <default-field title="Basemap (WMS, WMTS)"><check><option key="Y" text=" "/></check></default-field>
+                                        </field>
+                                        <field name="profileId">
+                                            <default-field title="Show in profile" tooltip="An overlay is added to the profile's layers; a basemap becomes the profile's basemap">
+                                                <drop-down allow-empty="true"><list-options list="profileOptions" key="${value}" text="${label}"/></drop-down>
+                                            </default-field>
+                                        </field>
+                                        <field name="submitButton"><default-field title="Add layer"><submit/></default-field></field>
+                                    </form-single>
+                                </container-dialog>
+                            </widgets>
+                        </section>
+                    </box-toolbar>
                     <box-body>
                         <label type="p" style="m-muted" condition="!layerRows.length" text="No layer is registered."/>
                         <form-list name="LayerList" list="layerRows" skip-form="true" paginate="false">

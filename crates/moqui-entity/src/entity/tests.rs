@@ -2576,7 +2576,7 @@ fn a_db_view_entity_that_does_not_build_is_logged_and_not_found() {
     assert_eq!(facade.find("BadAliasView").unwrap().count().unwrap(), 3);
 }
 
-/// F5 (plans/design-dev-aide.md): a relink reads the entity files again and swaps the model in. A call that took the
+/// F5 (plans/archive/design-dev-aide.md): a relink reads the entity files again and swaps the model in. A call that took the
 /// old model keeps it; finds on other threads during the relinks see one model or the other, whole; the changed
 /// entity's table is checked with its DDL answered; a file that does not parse keeps the model there was.
 #[test]

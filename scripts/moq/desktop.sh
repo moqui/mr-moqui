@@ -481,6 +481,9 @@ remake_appimage_without_namespaces_hook() {
         for image in "$dir"/*.AppImage; do
             [ -f "$image" ] || die "no AppImage beside $(rel "$appdir")"
             [ -f "$quick_sharun" ] || die "no $quick_sharun to remake $(rel "$image") with"
+            # the script tauri downloaded, checked against the SHA-256 recorded the first time for this tauri-cli
+            # (SEC-OUT-91)
+            check_download_sum "$quick_sharun" "quick-sharun:$(cargo tauri --version 2>/dev/null | tr ' ' '-')"
             run_cmd rm -f -- "$appdir/bin/fix-namespaces.hook" "$image" || die "could not remove the namespaces hook"
             (cd "$dir" && APPDIR=$appdir OUTNAME=${image##*/} run_cmd sh "$quick_sharun" --make-appimage) \
                 || die "could not remake $(rel "$image")"
@@ -585,10 +588,29 @@ stage_client_shell() {
         run_cmd rsync -a --delete --delete-excluded --exclude '.DS_Store' --exclude '/vault/' "$webroot/$lib/" "$stage/webroot/$lib/" \
             || die "could not stage webroot/$lib"
     done
+    local part files
     while IFS= read -r lib; do
         case $lib in '' | '#'*) continue ;; esac
-        run_cmd rsync -a --delete --exclude '.DS_Store' "$webroot/libs/$lib/" "$stage/webroot/libs/$lib/" \
-            || die "could not stage webroot/libs/$lib"
+        # "<lib> <part>": only the files the library's parts.json lists for that part (OpenLayers' main part,
+        # plans/archive/Maps-Offline.md §2.5), else the whole library
+        part=${lib#* }
+        [ "$part" != "$lib" ] || part=
+        lib=${lib%% *}
+        if [ -n "$part" ]; then
+            files=$(node -e 'const parts = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+                const list = parts[process.argv[2]];
+                if (!Array.isArray(list) || !list.length || list.some((name) => typeof name !== "string" || name.split("/").some((seg) => !seg || seg === "." || seg === "..")))
+                    process.exit(1);
+                process.stdout.write(list.join("\n") + "\n");' "$webroot/libs/$lib/parts.json" "$part") \
+                || die "webroot/libs/$lib/parts.json names no part $part"
+            run_cmd rm -rf -- "${stage:?}/webroot/libs/$lib"
+            run_cmd mkdir -p "$stage/webroot/libs/$lib" || die "could not create $(rel "$stage")"
+            printf '%s' "$files" | run_cmd rsync -a --files-from=- "$webroot/libs/$lib/" "$stage/webroot/libs/$lib/" \
+                || die "could not stage the $part part of webroot/libs/$lib"
+        else
+            run_cmd rsync -a --delete --exclude '.DS_Store' "$webroot/libs/$lib/" "$stage/webroot/libs/$lib/" \
+                || die "could not stage webroot/libs/$lib"
+        fi
     done < "$ROOT/crates/moqui-desktop/shell/libs.txt"
 }
 

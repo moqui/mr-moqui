@@ -1,13 +1,24 @@
 # Maps
 
-November 1, 2026 — initial design. Built P0 to P3 on November 25, 2026 (each stage's row in §9 says what was built; the HOME mount, P4 and the optional Overture stages remain). Reviewed November 25, 2026 against the code, the sibling plans
-and the outside projects it relies on: paths, settings and existing mechanisms are named as they are today, and
-what is still to build is marked proposed. The selected browser renderer is OpenLayers. This plan owns
-the framework Maps app, reusable map interface, configuration, resource delivery and geographic lookup work.
-[BOSS shared maps](../runtime/components/addon/mr-boss/plan/design-crosscut.md#332-maps-and-record-location-dialogs)
-and [HOME Maps](../runtime/components/addon/mr-home/plan/initial-design.md#39-maps-places-and-geographic-information)
+> Archived 2026-11-26: built (P0–P4, O1 and O2, and the leftovers of November 26). Open items are in
+> [Remaining-Work](../Remaining-Work.md#maps), [Future-Plans](../Future-Plans.md#maps) and [Testing-Needed](../Testing-Needed.md#maps);
+> offline packages are [Maps-Offline](Maps-Offline.md) and live location [Location-Sharing](Location-Sharing.md); guide
+> [Maps](../../docs/tools/Maps.md).
+
+November 1, 2026 — initial design. Built P0 to P3 on November 25, 2026, and P4 and the optional O1 and O2 on
+November 26, 2026 (each stage's row in §9 says what was built; Overture's own plan is [Maps-Overture](Maps-Overture.md)).
+P3's HOME mount and walks are mr-home's H1c. The leftovers were built November 26, 2026 (the terminal geomap's link to
+Maps, archive space in readiness, a COG provider tested by a range read and `MapsCogPublic`, the memory a Geo job held,
+§6.3); offline packages and shared live location moved to [Maps-Offline](Maps-Offline.md) and
+[Location-Sharing](Location-Sharing.md), and the rest of §9's later research to Future-Plans. Reviewed November 25, 2026
+against the code, the sibling plans and the outside projects it relies on: paths, settings and existing mechanisms
+are named as they are today, and what is still to build is marked proposed. The selected browser renderer is
+OpenLayers. This plan owns the framework Maps app, reusable map interface, configuration, resource delivery and
+geographic lookup work.
+[BOSS shared maps](../../runtime/components/addon/mr-boss/plan/design-crosscut.md#332-maps-and-record-location-dialogs)
+and [HOME Maps](../../runtime/components/addon/mr-home/plan/initial-design.md#39-maps-places-and-geographic-information)
 own their application contexts. 3D layers over this app (terrain, extruded buildings, a facility on the map) are
-[mr-three's](../runtime/components/addon/mr-three/plan/design-technical.md#63-3d-for-maps), after P1, and Maps
+[mr-three's](../../runtime/components/addon/mr-three/plan/design-technical.md#63-3d-for-maps), after P1, and Maps
 needs nothing from it; its extruded buildings need the optional O1 data (§4.3), and a terrain elevation source is
 its own to supply. No pre-release data migration plan is required.
 
@@ -49,16 +60,16 @@ Verified starting points, rather than claims that Maps already exists:
 
 | Foundation | Reuse and required extension |
 | --- | --- |
-| Tools app registration | `runtime/components/base/tools/MoquiConf.xml` mounts `dashboards` (menu-index 96), `system` (98) and `tools` (99) under the apps screen; Monitor is a section of System (`System/Monitor.xml`), not an app. The three roots are ADMIN-only (`ToolsSecurityData.xml`, `MonitoringSecurityData.xml`); Maps receives its own grants. Two precedents there split a capability from its app root: `SYSTEM_VAULT_DIALOGS` (two dialog screens and their transitions, `inheritAuthz="N"`, granted to ALL_USERS) and `CALC_GRID` (a screen and its services that apps grant to their own groups). |
-| XML screens and browser widgets | Follow the [app practices](../docs/dev/Practices-App-Dev.md): XML owns parameters/transitions/access; a `.qvue` can own the browsing layout, beside its XML screen and a `.tui.json` twin. Repeated map use becomes a shared widget, with TUI and print fallbacks; `code-view`/`m-code` is the precedent for a widget with a lazily loaded library (§3.2). |
+| Tools app registration | `runtime/components/base/tools/MoquiConf.xml` mounts `dashboards` (menu-index 96), `system` (98) and `tools` (99) under the apps screen; Monitor is a section of System (`System/Monitor.xml`), not an app. The three roots are ADMIN-only (`ToolsSecurityData.xml`, `MonitoringSecurityData.xml`); Maps receives its own grants. Two precedents there split a capability from its app root: `SYSTEM_VAULT_DIALOGS` (two dialog screens and their transitions, `inheritAuthz="N"`, granted to ALL_USERS) and `CALC_GRID` (the Dashboards screen and its services: an app shows CalcGrid under a root of its own, as BOSS's Insights does, and grants its groups `CALC_GRID_AUTHOR` and an access profile). |
+| XML screens and browser widgets | Follow the [app practices](../../docs/dev/Practices-App-Dev.md): XML owns parameters/transitions/access; a `.qvue` can own the browsing layout, beside its XML screen and a `.tui.json` twin. Repeated map use becomes a shared widget, with TUI and print fallbacks; `code-view`/`m-code` is the precedent for a widget with a lazily loaded library (§3.2). |
 | Geographic reference data | `moqui.basic.Geo` (`BasicEntities.xml`) already has `GEOT_POSTAL_CODE`, `GEOT_COUNTY`, `GEOT_CITY`, localized names, codes and `wellKnownText`; `GeoAssoc` records geographic relationships (types group member, regions, county seat). `GeoPoint` stores coordinates, elevation, `dataSourceId` and a type whose enumeration has no values yet. No Geo has a point, and no postal-code, county or city Geo is loaded anywhere: seed data has the countries, Mantle's install data the states and provinces (`USA_CA`). The extensions are in §6. |
 | Domain locations | Mantle `PostalAddress` has `postalCodeGeoId` (read by sales tax and checkout, set by nothing) and `geoPointId`; `Facility`, `FacilityLocation`, `Asset`, `Container` and `PartyGeoPoint` already reference GeoPoint. Mantle owns their access and location updates; Maps knows no business entity names. Mantle's `GooglePartyServices` geocoder (called by nothing, its key a user preference) is superseded by the provider interface in P3. |
-| Resource delivery | Built: `ByteSource` (`crates/moqui-entity/src/resource/source.rs`: length, a strong tag, `read_at`) behind `ResourceFacade::open`, and one response path (`respond_opened` in `crates/moqui-core/src/screen/static_files.rs`, reached by `ec.web.sendResourceResponse` and static files) that answers a single `Range`, `If-Range`, `If-None-Match` and HEAD and compresses no binary or partial response ([Revision management](../docs/data/Revision-Management.md), [Git hosting](../docs/interfaces/Git-Hosting.md)). What remains is in §5; that work is shared with [HOME Media](../runtime/components/addon/mr-home/plan/initial-design.md#32-media-photos-music-videos-ebooks-and-audiobooks). Drives and `ResourceShare` (`org.moqui.resource.FileServices`) are the sharing of files. |
+| Resource delivery | Built: `ByteSource` (`crates/moqui-entity/src/resource/source.rs`: length, a strong tag, `read_at`) behind `ResourceFacade::open`, and one response path (`respond_opened` in `crates/moqui-core/src/screen/static_files.rs`, reached by `ec.web.sendResourceResponse` and static files) that answers a single `Range`, `If-Range`, `If-None-Match` and HEAD and compresses no binary or partial response ([Revision management](../../docs/data/Revision-Management.md), [Git hosting](../../docs/interfaces/Git-Hosting.md)). What remains is in §5; that work is shared with [HOME Media](../../runtime/components/addon/mr-home/plan/initial-design.md#32-media-photos-music-videos-ebooks-and-audiobooks). Drives and `ResourceShare` (`org.moqui.resource.FileServices`) are the sharing of files. |
 | Saved items and preferences | `moqui.database.GridView` (owner, `isShared`, JSON columns) is the model for a saved view. `UserPreference` holds personal settings, with `UserGroupPreference` rows of ALL_USERS as the installation default and JSON values as Dashboards' `REPORT_PINNED_*`. |
-| Connections and settings | A provider with an endpoint and a secret is a registered connection kind: `moqui.server.ConnectionAdapter`, `org.moqui.admin.ConfigurationServices` (`store#Connection`, `test#Connection`), `tools/template/ConnectionParts.xml` and System › Integrations give write-only secrets, a cleared secret and a new test when the endpoint changes, and enabling only after a passing test. `ReadinessProvider`, `RefreshOperation` and `SettingsEntry` rows register a component's checks, refreshes and settings screens ([app practices](../docs/dev/Practices-App-Dev.md)). |
+| Connections and settings | A provider with an endpoint and a secret is a registered connection kind: `moqui.server.ConnectionAdapter`, `org.moqui.admin.ConfigurationServices` (`store#Connection`, `test#Connection`), `tools/template/ConnectionParts.xml` and System › Integrations give write-only secrets, a cleared secret and a new test when the endpoint changes, and enabling only after a passing test. `ReadinessProvider`, `RefreshOperation` and `SettingsEntry` rows register a component's checks, refreshes and settings screens ([app practices](../../docs/dev/Practices-App-Dev.md)). |
 | Outbound requests | `ec.service.rest()` and `moqui_core::outbound`, with the internal-address guard (`denyInternal`, a record's `allowPrivateNetwork`) and `HttpFixtures` standing in for the outside host in specs. |
 | Imports and jobs | `ServiceJob` runs and schedules; ETL runs (`crates/moqui-tools/src/etl`) for the run record, counts, error file and rerun conventions; `org.moqui.admin.DataTransferServices` for a staged import of an uploaded file. The workspace already has the `zip` and `csv` crates. |
-| Dashboard geomap | The [existing geomap](../docs/tools/Monitoring.md) draws Natural Earth country outlines and point summaries as SVG (`WebrootReport.js`), with a braille land mask in the terminal. Keep its reporting behavior. Maps reuses its outline file as the zero-request basemap, its ISO code mapping and the terminal mask; an optional detailed Maps drill-down is a later consumer of this interface. |
+| Dashboard geomap | The [existing geomap](../../docs/tools/Monitoring.md) draws Natural Earth country outlines and point summaries as SVG (`WebrootReport.js`), with a braille land mask in the terminal. Keep its reporting behavior. Maps reuses its outline file as the zero-request basemap, its ISO code mapping and the terminal mask; an optional detailed Maps drill-down is a later consumer of this interface. |
 
 Ownership is explicit:
 
@@ -70,14 +81,15 @@ Ownership is explicit:
 - **Mantle:** party/address/facility/asset adapters, permission-scoped queries, provenance of record locations,
   and writes through the domain's guarded services. No new business location registry beside these entities.
 - **BOSS/HOME:** contextual navigation, authorized layers and links, vocabulary and workflow-specific actions.
-  HOME has no screens or conf yet, so its Maps mount is its first; a photo-location layer from its Media is a
-  registered layer adapter of HOME's (§3.2).
+  HOME's mount, its adapters (a photo-location layer from its Media is a registered layer adapter of HOME's, §3.2)
+  and its visibility walks are mr-home's H1c, planned in
+  [its §3.9](../../runtime/components/addon/mr-home/plan/initial-design.md#39-maps-places-and-geographic-information).
 - **PASS/other consumers:** the same component with their own publication and access rules. A public map receives
   explicitly published features and permitted basemaps, never a staff dataset with client-side filtering.
 
 ## 3. Screens and reusable interface
 
-Names and routes in this section are proposed contracts, not built artifacts.
+The names and routes in this section are built (P1); [the Maps guide](../../docs/tools/Maps.md) describes them as they are.
 
 ### 3.1 Tools Maps app
 
@@ -102,9 +114,9 @@ to its source record. Failed layers show a named, retryable status while other l
 
 ### 3.2 Map widget and local-map dialog
 
-Propose an XML `map-view` widget backed by `m-map`, with a shared dialog screen
-`component://tools/screen/Maps/LocalMap.xml`. Develop its parts together, by the element checklist of
-[the BOSS style guide](../runtime/components/addon/mr-boss/plan/style-guide.md) §8.1 and as `code-view`/`m-code`
+An XML `map-view` widget backed by `m-map`, with a shared dialog screen
+`component://tools/screen/Maps/LocalMap.xml`. Its parts were built together, by the element checklist of
+[the BOSS style guide](../../runtime/components/addon/mr-boss/plan/style-guide.md) §8.1 and as `code-view`/`m-code`
 was added:
 
 - the element in `framework/xsd/mr-xml-screen.xsd`;
@@ -116,15 +128,18 @@ was added:
   `WebrootVue.qvt.render.js` and `m-*` styles in `WebrootVue.qvt.css`;
 - a terminal component in `crates/moqui-tui/src/components`, registered by name;
 - the qvt render goldens and the client's node tests; a Gallery example in
-  `runtime/components/dev/example/screen/Gallery/Widgets.xml`; a row in [Qvt-Client](../docs/ui/Qvt-Client.md).
+  `runtime/components/dev/example/screen/Gallery/Widgets.xml`; a row in [Qvt-Client](../../docs/ui/Qvt-Client.md).
 
 The browser libraries are the framework's own, vendored as the webroot's others are
-([Build-Test](../docs/Build-Test.md)): exact pins in `webroot/build/libs/package.json` and its lock, an entry each
+([Build-Test](../../docs/Build-Test.md)): exact pins in `webroot/build/libs/package.json` and its lock, an entry each
 in `build/libs/refresh.mjs` with its license, `./moq update-js` for the lock, the generated `NOTICES.md` and
 `MANIFEST.json`, then `./moq build-js` and `./moq verify-js`. OpenLayers, `ol-mapbox-style`, `ol-pmtiles`
-and `pmtiles` are ES modules, so they are bundled into one global with esbuild, as CodeMirror 6 is, from an entry
-file that imports only what `m-map` uses. There is no per-widget chunking: the bundle loads with
-`moqui.loadScript` when the first map mounts, so a screen without a map never fetches it. No mandatory runtime CDN
+and `pmtiles` are ES modules, bundled with esbuild from an entry file that imports only what `m-map` uses. Since P4c the
+build is ES modules split into chunks: the main entry, a raster and projection part (geotiff.js, the WebGL tile layer,
+proj4) and a decoder worker share one copy of OpenLayers, every file named by its hash (so an upgrade never pairs one
+build's entry with another's chunks), with `ol-map.json` naming the entries. `m-map` reads that map (revalidated) and imports
+the main entry when the first map mounts, so a screen without a map never fetches it, and imports the raster part only for
+a map with a COG layer or a registered projection. No mandatory runtime CDN
 or Node test dependency. P0 fixes the versions; at this review they are OpenLayers 10.x, ol-mapbox-style 13.x,
 ol-pmtiles 2.0.x (which needs OpenLayers 9 or later) and pmtiles 4.x.
 
@@ -152,6 +167,16 @@ name:
   from it loads the configuration again, so a replaced archive is drawn whole at its new revision.
 - A hillshade layer's raster operation runs in a Blob worker: a page with a Content-Security-Policy stricter than the
   default needs `worker-src blob:` for it, beside the provider's hosts in `connect-src`, `img-src` and `font-src`.
+- An OGC layer (P4a) asks only the URL the effective configuration gave it, its provider's origin or this server's proxy,
+  with no page credentials for a provider that answers CORS; a WMTS tile grid is made from the matrix set the server
+  recorded, so a browser never reads capabilities.
+- A COG layer (P4c) is read by range with geotiff.js: a registered one through the map-source transition with the session
+  (a 409 loads the configuration again), a provider's directly from its URL with no credentials of the page, only when its
+  registration saw CORS allow this site. Its decoders run in module workers of this server (the build's decoder entry), so a
+  stricter page policy needs `worker-src 'self'`; their LERC and Zstandard decoders instantiate WebAssembly from a `data:`
+  URL inside the worker, which needs `'wasm-unsafe-eval'` and `connect-src data:` only where a policy reaches the worker's
+  own response (this server sends none with static files). A projection is registered from the configuration's rows;
+  the bundle's lookup of any other code is refused, so no definition is fetched.
 
 The common interface accepts:
 
@@ -166,24 +191,24 @@ The common interface accepts:
 **Choosing a location.** No dialog today hands a value back to the form that opened it, and this one does not
 need to. **Choose location** posts the dialog's own form to a LocalMap transition, which calls the registered
 adapter's `store#RecordLocation` with the proposed point, the record identity and the version read; the adapter
-is the owning domain's guarded service. The dialog then closes (`submit-hide-id`) and the host screen reloads with
-the saved location. A plain coordinate field, with no record behind it, takes the picked point from an `m-map`
-event in the page, as `m-emoji-picker` gives its pick.
+is the owning domain's guarded service. The form posts in the background; on success the dialog closes
+(`background-hide-id`) and the host screen reloads in place with the saved location. A plain coordinate field, with no
+record behind it, takes the picked point from an `m-map` event in the page, as `m-emoji-picker` gives its pick.
 
-The shared dialog can be used without granting access to the standalone Maps launcher. Split map-view capability
-(`MAPS_DIALOG`) from app-root access (`MAPS_APP`), configuration administration (`MAPS_ADMIN`) and source-record
-writes (the adapter's own check). An app shows the dialog under its own route by the
-[thin-wrapper rule](../docs/dev/Practices-App-Dev.md#a-framework-screen-under-an-apps-root): `include-screen` and
+The shared dialog can be used without granting access to the standalone Maps launcher. Map-view capability
+(`MAPS_DIALOG`) is split from app-root access (`MAPS_APP`), configuration administration (`MAPS_ADMIN`) and
+source-record writes (the adapter's own check). An app shows the dialog under its own route by the
+[thin-wrapper rule](../../docs/dev/Practices-App-Dev.md#a-framework-screen-under-an-apps-root): `include-screen` and
 one `transition-include` for each transition it offers, with its grants naming its own screen. Mount/app context
 narrows data and actions; it never grants authority. Do not copy System's grants or require BOSS app access to
 open a HOME map.
 
-Expose proposed typed services in `org.moqui.maps.MapServices`
-(`framework/service/org/moqui/maps/MapServices.xml`) for effective configuration, saved views, source
+Typed services in `org.moqui.maps.MapServices`
+(`framework/service/org/moqui/maps/MapServices.xml`) serve effective configuration, saved views, source
 metadata, postal lookup and geocoding. Record and layer adapters implement framework interface services:
 `get#RecordMapContext` (label, geometry, precision, permitted actions and links, after the adapter's own access
 check), `store#RecordLocation` and a bounded `find#LayerFeatures` for a viewport. A component registers an
-adapter as a seed data row (a proposed `moqui.maps.MapAdapter`: a key and the implementing service's name), as
+adapter as a seed data row (a `moqui.maps.MapAdapter`: a key and the implementing services' names), as
 `TransferTarget` and `ConnectionAdapter` rows register theirs; a row naming a service that does not exist is
 logged and left out. A browser sends only the adapter's key: never a service name, entity name, query,
 filesystem path or proxy URL. Optional full-screen record layers
@@ -227,9 +252,32 @@ style's `pmtiles://` source; that source is not checked as a URL to ask.
 
 Initial local overlays support GeoJSON, GPX and KML through OpenLayers, with bounded imports and original files kept
 in resources. Add WMS/WMTS service configuration and additional readers (GML, WKT/WKB, EsriJSON, TopoJSON) as the
-corresponding workflow is exposed. Library capability alone does not promise an application editor for every format.
+corresponding workflow is exposed. Built (P4a, November 26, 2026): WMS 1.3.0, WMTS 1.0.0 and WFS 2.0.0 (read as GeoJSON)
+providers and layers ([Maps › OGC services](../../docs/tools/Maps.md#ogc-services)); WFS editing, GeoTIFF/COG and other CRSs
+are P4's later batches, which add what they need to the browser bundle. Library capability alone does not promise an application editor for every format.
 GeoTIFF/COG band controls, WFS editing and arbitrary projections are later UI increments; shapefile/GeoPackage
-ingestion requires additional tooling. Conversion must preserve source CRS/provenance and report unsupported data.
+ingestion requires additional tooling. Conversion must preserve source CRS/provenance and report unsupported data. Built
+(P4b, November 26, 2026): overlay readers for TopoJSON, EsriJSON, GML 3.2 simple features, WKT, WKB, delimited text (a
+WKT, WKB or latitude and longitude column) and zipped shapefiles (`.shp`, `.dbf`, `.prj`, `.cpg`), each our own in
+`moqui-lib` `geo/overlay/` under the same bounds, geometry checks and plain-text rule as GeoJSON, GPX and KML, the source
+CRS recorded and any CRS but WGS84 and Web Mercator refused by name until P4c's reprojection; GeoPackage is not read (it
+needs an SQLite reader the server does not link) and is refused with that said; and editing of a user's own overlays and
+places in Browse (draw, move vertices with snapping, delete, plain-text labels; saved as a new version of the GeoJSON file,
+or beside any file a save would otherwise change as `name.edited.geojson`, read again by the converter and refused when the file
+changed since) ([Maps › Overlays and places](../../docs/tools/Maps.md#overlays-and-places)). WFS editing (WFS-T) stays a
+later increment. Built (P4c, November 26, 2026): Cloud Optimized GeoTIFF layers (`MLF_COG`), from a registered resource
+(its header read in Rust, `moqui-lib` `geo/tiff.rs`: TIFF or BigTIFF, directories bounded, tiled, overviews, an EPSG CRS;
+its revision pinned and served by range through the map-source transition with the same access) or a tested provider's URL
+(one range read to record its header; CORS required), drawn by geotiff.js with WebGL from a raster part of the OpenLayers
+bundle that a map imports only when it needs it, with band controls in Browse (RGB or one band through a colormap, the
+stretch, no-data) kept as the user's preference or in a saved view; a registry of projections (`moqui.maps.MapProjection`:
+WGS 84, Web Mercator, NAD83, the UTM zones, the British National Grid, Lambert-93, LAEA Europe, the US Albers and two
+polar stereographic ones, PROJ.4 text from the EPSG dataset's parameters) that m-map registers from the configuration
+(never fetched) and the server reads for its own transverse Mercator, Lambert conformal conic, LAEA, Albers and polar
+stereographic with NAD83 and ETRS89 taken as WGS84 and a Helmert shift for OSGB36 (`geo/proj.rs`), so the overlay readers
+convert a registered CRS and record it and the transform (`sourceCrs`, `crsTransform`); and a profile's view projection
+(`viewProjection`), vector-tile basemaps refused outside Web Mercator with the reason
+([Maps › Cloud Optimized GeoTIFF](../../docs/tools/Maps.md#cloud-optimized-geotiff), [Projections](../../docs/tools/Maps.md#projections)).
 [OpenLayers formats](https://github.com/openlayers/openlayers/blob/main/src/ol/format.js),
 [reprojection](https://openlayers.org/doc/tutorials/raster-reprojection.html)
 
@@ -267,7 +315,9 @@ source grants, attribution, Geo data availability and optional geocoder; they re
 rows, and a data refresh as a `RefreshOperation`. Administration can disable outgoing
 map/search requests while retaining local maps and postal lookup. Public basemap requests may be direct to the
 provider when configured; explain that its server sees the requested area and client connection. A proxy is an
-explicit provider option, not a claim of complete location privacy.
+explicit provider option, not a claim of complete location privacy (built, November 25, 2026: a provider's
+`proxyRequests`, the `LocalMap.xml` `providerProxy` transition and `MapSourceServices.get#ProviderAsset`, which also make a
+keyed provider drawable; [Maps](../../docs/tools/Maps.md#configuration)).
 
 The outbound switch acts on the server: it stops the server's own requests (a geocoder, a data download) and
 stops it handing a browser a profile with outside URLs. What a browser may then contact is the page's
@@ -284,7 +334,7 @@ Overture imports do not automatically create Mantle parties/facilities or replac
 | Order | Scope | Use and boundary |
 | --- | --- | --- |
 | O1 — Places and Buildings | Regional place records and building footprints | Places supplies named destinations/categories for search and saved-place selection; Buildings supplies contextual footprints around homes and facilities. Keep imported reference data separate from private household/business records, with explicit links when useful. Footprints do not establish legal property boundaries. |
-| O2 — regional address lookup | Optional address-point extract and local matching index | Follow O1 with evaluation of the target region's coverage, fields and position quality. Implement parsing, normalization, candidate ranking and ambiguity handling through the shared provider interface; the dataset alone is not a geocoder service. Keep Census/GeoNames postal lookup as the lightweight fallback. |
+| O2 — regional address lookup | Optional address-point extract and local matching index | Follow O1 with evaluation of the target region's coverage, fields and position quality. Implement parsing, normalization, candidate ranking and ambiguity handling through the shared provider interface; the dataset alone is not a geocoder service. Keep Census/GeoNames postal lookup as the lightweight fallback. Built November 26, 2026 ([Maps-Overture §8](Maps-Overture.md#8-o2-regional-addresses)): evaluated on release 2026-11-18.0 for Boston's Back Bay and central Florence (and Austin and Amsterdam for coverage): no position kind in the schema, Italy without postal codes, Florence's numbers often several points far apart, one source marked proprietary; imported as O1's runs into `moqui.maps.OvertureAddress` with a refresh compared by address; matched by the local geocoder `MPK_GEOCODER_OVERTURE`. |
 
 **Access and rendering.** Overture publishes monthly releases of GeoParquet data, with a STAC catalog for discovering
 release assets. Import only the selected themes/region and needed properties; preserve originals and derived files
@@ -339,10 +389,10 @@ What each backend does with a range today:
 | Any `location#version` | Built in stage R: a version of an LFS object, a content blob or a large object opens by range with its strong tag; a small row or a filesystem git object is read whole | Strong (its content address) |
 
 This work is **stage R** (§9): it has no dependency on the map widget, and
-[HOME Media](../runtime/components/addon/mr-home/plan/initial-design.md#32-media-photos-music-videos-ebooks-and-audiobooks)
+[HOME Media](../../runtime/components/addon/mr-home/plan/initial-design.md#32-media-photos-music-videos-ebooks-and-audiobooks)
 needs the same contract, so whichever of the two starts first builds it here rather than in its own plan. Built (stage R,
 then the registration, the transition and the LFS rule with P2's archives, November 25, 2026: `org.moqui.maps.MapSourceServices`,
-`MapSources.js`, `LocalMap.xml` `source`; [Maps › Archives](../docs/tools/Maps.md#archives)); the items were:
+`MapSources.js`, `LocalMap.xml` `source`; [Maps › Archives](../../docs/tools/Maps.md#archives)); the items were:
 
 - **Git archives are LFS objects.** A map source registered in a git repository must be an LFS object, and
   readiness refuses another by name; the 512 MiB cap on a pushed non-LFS object (`git-server@max-object-size`)
@@ -389,10 +439,14 @@ The authenticated HTTP resource adapter must:
 PMTiles is read-only: changing an archive entails replacement, not individual in-place tile edits. Mutable saved
 places and business overlays stay separate. Initial delivery streams archive ranges directly to the browser and
 does not require a tile server. A later Rust endpoint returning individual Z/X/Y tiles can serve clients without a
-PMTiles reader, using exactly the same facade and authorization boundary.
+PMTiles reader, using exactly the same facade and authorization boundary. Built (P4d, November 26, 2026): LocalMap's
+`tile/{layerId}/{revision}/{z}/{x}/{y}` (`get#ArchiveTile` over the map-source transition's check, `read#ArchiveTile` in
+Rust: directories decoded with run lengths and kept by the archive's tag, bounded; the tile gzipped as stored or
+decompressed by `Accept-Encoding`, a strong ETag of tag and tile, private caching, 204 for no vector tile), on our own
+decoder rather than the `pmtiles` crate ([Maps › Archives](../../docs/tools/Maps.md#archives)).
 [PMTiles format and access model](https://docs.protomaps.com/pmtiles/)
 
-The [existing LFS placement issue](Remaining-Work.md#git-and-git-hosting) remains a shared prerequisite for genuinely
+The [existing LFS placement issue](../Remaining-Work.md#git-and-git-hosting) remains a shared prerequisite for genuinely
 disk-backed git/LFS archives. Local git metadata currently does not imply local LFS bytes. Default LFS payload
 placement should follow the repository backend with explicit overrides; Maps introduces no separate LFS store.
 
@@ -403,7 +457,9 @@ drive's own `quotaBytes`; a large regional/planet archive can exceed them. Where
 on, the `all` rate limit (50 requests a second, a burst of 500) also bounds the tile requests of several people
 panning behind one address; measure a pan against it in P2 rather than raising it by default (measured by `MapsLocalOnly`, November 25, 2026: a pan of six steps and two zooms over a small archive asked 17 ranges in about 4 s, far under the limit; an archive with leaf directories asks a few more, and the browser keeps each range it read). Support operator-registered local files in place and bounded server-side download/import jobs, with explicit
 configured limits and disk/database capacity checks. Do not imply that range playback removes upload/storage caps,
-or globally raise those caps just to install a map. Include backup and archive-replacement space in readiness.
+or globally raise those caps just to install a map. Include backup and archive-replacement space in readiness (built
+November 26, 2026: `maps.archive.space`, the largest archive once more on its filesystem and the next local backup where it
+is written there; [Maps › Archives](../../docs/tools/Maps.md#archives)).
 
 ## 6. Address resolution and postal-code fallback
 
@@ -434,10 +490,10 @@ point, delivery entrance and mailing address can differ; preserve their purpose 
 | US Census Gazetteer | Initial US source: downloadable ZCTA records with representative/internal-point latitude and longitude, public domain. The yearly files (2026 at this review: `2026_Gaz_zcta_national.zip`, `2026_Gaz_counties_national.zip`, `2026_Gaz_place_national.zip` under `www2.census.gov/geo/docs/maps-data/data/gazetteer/2026_Gazetteer/`) are pipe-delimited text with a header line; the ZCTA file has `GEOID`, areas, `INTPTLAT` and `INTPTLONG` and no name or state, while Counties and Places have the state's USPS code, FIPS `GEOID` and `NAME`. A ZCTA approximates a ZIP delivery area for statistical purposes; it is not a USPS ZIP registry, and not every valid ZIP has a ZCTA. Preserve leading zeros, edition and this approximation. Missing/PO-box-only/new codes can remain unmatched. The 2020 ZCTA-to-county relationship file gives a ZCTA's county, and through it its state. |
 | GeoNames postal downloads | Initial international source, and the US source of names: one file a country (124 at this review; `US.zip` is 619 KB) with postal codes, place name, three levels of admin name and code, WGS84 coordinates and an accuracy of 1 (estimated), 4 (the place's own) or 6 (centroid of addresses or shape); tab-delimited UTF-8, no header. `allCountries.zip` (19 MB) holds every country but only the first part of Canadian, Dutch and British codes, whose full codes are `CA_full`, `NL_full` and `GB_full` (the last under a Royal Mail notice). CC BY 4.0 with attribution; Chile, China, Ireland, Malta, Argentina and Brazil are partial codes or partial coverage, and other upstream notices vary by country. Some coordinates are inferred from neighboring places/codes. Import per country with its documented granularity, not a blanket worldwide accuracy claim. |
 | GeoNames gazetteer | Global source of administrative divisions and cities: `countryInfo.txt`, `admin1CodesASCII.txt`, `admin2Codes.txt` and `cities15000.zip` (about 25,000 cities; `cities5000`, `cities1000` and `cities500` reach about 185,000), tab-delimited, CC BY 4.0. Its first-level codes are FIPS except for the US, Switzerland, Belgium and Montenegro, which are ISO, so a code is kept as the source's own and not written to an ISO field. |
-| Other national datasets | Register country-specific import adapters for openly licensed or operator-supplied postal datasets, with explicit CRS, code granularity, update source and terms. For example, Ordnance Survey Code-Point Open provides postcode locations for Great Britain; evaluate its format and attribution for a national adapter. A non-WGS84 source needs a verified transformation before use. |
+| Other national datasets | Register country-specific import adapters for openly licensed or operator-supplied postal datasets, with explicit CRS, code granularity, update source and terms. For example, Ordnance Survey Code-Point Open provides postcode locations for Great Britain; evaluate its format and attribution for a national adapter. A non-WGS84 source needs a verified transformation before use: the British National Grid's Helmert shift of P4c (`moqui-lib` `geo/proj.rs`) is about 5 m, enough for a postcode's point; a centimetre transformation would need OSTN15. |
 | US Census geocoder | Optional address-level provider, separate from downloads: returns coordinates calculated along address ranges in supported US territories. Do not label these rooftop/entrance positions. |
 | Self-hosted Nominatim / Photon | Candidates for full address/place search and reverse geocoding. Photon also supplies autocomplete. Configure independently of basemap choice; operating these services is optional. |
-| Optional Overture Addresses | Later regional import and local matching provider after Places/Buildings (§4.3, O2). Evaluate coverage, source precision and identifier changes; it supplements the postal fallback and is not an initial address-resolution dependency. |
+| Optional Overture Addresses | Regional import and local matching provider after Places/Buildings (§4.3, O2; built, [Maps-Overture §8](Maps-Overture.md#8-o2-regional-addresses)): `MPK_GEOCODER_OVERTURE`, address matches whose position kind is not stated, estimates and choices, the postal lookup as its fallback. It supplements the postal fallback and is not an initial address-resolution dependency. |
 
 Sources: [USPS Addresses](https://developers.usps.com/addressesv3),
 [USPS City State Product](https://postalpro.usps.com/address-quality/city-state-product),
@@ -488,7 +544,14 @@ Keep reference geography in `moqui.basic`, usable with only the framework instal
   `ITA_AG` a province) and GeoNames' first-level codes are FIPS for most countries, so the importer looks among the
   country's `GAT_REGIONS` children by `geoCodeAlpha2` or `geoCodeNumeric` (a GeoNames code through a crosswalk to ISO
   3166-2) and makes `{country}_A1_{code}` or `{country}_A2_{admin1}_{admin2}` only when nothing matches. A state the
-  importer meets is then the row Mantle's install data already has, not a second one.
+  importer meets is then the row Mantle's install data already has, not a second one. Built in F1: the crosswalk is
+  `moqui_lib::geo::admin1` (`admin1_iso.tsv`), GeoNames' `admin1CodesASCII.txt` (CC BY 4.0) joined on each division's
+  geonameid with the ISO 3166-2 code (P300) of the Wikidata item carrying that GeoNames ID (P1566; Wikidata is CC0):
+  3,263 divisions of the FIPS countries, three of them chosen by hand; every Canadian, Indian, Japanese and Portuguese
+  division matches Mantle's row by code. China's (Mantle keeps GB/T 2260 numbers) and most of Vietnam's 2025 provinces have
+  no match by code: matched by name where the source gives one, else made. A ZCTA's land area (`ALAND`) is kept on its
+  point's `GeoPointAssoc.landArea`, and the postal lookup's extent is a square of that area (half its side between about
+  0.5 and 55 km), else the fixed box.
 - A code's place names are `GeoPostalCodePlace` rows (code, source, name, its order in the file, admin names, the
   source's accuracy and an optional point of its own): GeoNames has a row a code and place, and no name wins. The
   code's one representative point from a source is its row with the highest accuracy (GeoNames 6, then 4, then 1),
@@ -517,14 +580,80 @@ load included). The figures here are the test server's resident size read with `
 beside the run, so a shorter peak can be missed: about 445 MB before the first import, at most about 520 MB during it,
 and about 745 MB at the end of the forced GeoNames refresh.
 
+**The forced refresh's memory, found and fixed (F1, November 25, 2026).** Geo, GeoAssoc and GeoPoint are cached entities,
+and a run reads every row of its scope before it writes, 500 IDs to a query: the entity list caches kept each query and
+its rows. A first import writes those rows, which clears the lists; a refresh that changes nothing writes none, so every
+Geo and point of the US stayed cached, about 225 MB. The importer's finds now bypass the entity cache, and the file is
+checked as it is read, its records grouped as they come rather than held as a list and then grouped (the items loaded are
+dropped before the retiring). Measured again the same way (the ZCTA's land area now kept too), with `/usr/bin/time -l`
+for the test process's peak (its data load included) beside the sampler (every half second): the binary before the fix
+peaked at 868 MB, about 449 MB before the first import, 545 MB during it and 739 MB at the end of the forced refresh; after
+it 625 MB, about 500, 540 and 565 MB, back to 444 MB once the refresh ended. The times were the same: the first import 55 s
+(Counties 1.2 s, ZCTAs 23.2 s, the relationship file 18.5 s, GeoNames 12.4 s), the forced refresh 3.1 s, the lookup 0.52 ms
+cold and 0.11 ms cached.
+
 **Every country.** One run reads one country, so the time, the rows and the memory of a run grow with that country's
-codes, not with the number of countries: at the US rate (about 3,000 GeoNames rows a second), the 124 GeoNames countries (about 1.3 million rows, judged by `allCountries.zip`'s 19 MB against `US.zip`'s 619 KB
-and 41,490 rows; with the US's about 7.7 database rows a code, about 10 million database rows) would load in roughly 8 minutes of runs. Importing
-each country by itself stays as it is (Geo data's Import, one country a run). Every country at once may open as a queued
-sequence of per-country runs, each its own run and edition, with the confirmation of §6.4 giving that estimate, once the
-memory growth of a forced refresh (about 225 MB above the first import's peak for 41,000 codes) is explained: a run that
-holds a country's records in memory would need GBs for the largest files (`GB_full` has well over a million codes),
-which stay a separate, deliberate import. Until then the screen offers one country a run.
+rows, not with the number of countries. `allCountries.zip` counted 1,836,751 rows in the 124 countries (November 25,
+2026; the first part only of the Canadian, Dutch and British codes, as their country files); the largest country files
+are Portugal (206,942), the United Arab Emirates (178,171), India (155,570), Japan (146,883), Mexico (144,655) and
+Singapore (121,154), the US 41,490. The acceptance test `GeoDataEveryCountry` ran five countries as a queue (each its own
+run of the GeoDataImport ServiceJob, one after another): 119,956 rows and 49,561 codes in 42 s, Brazil 3.3 s (5,525 rows),
+Canada 1.0 s (1,657), Germany 8.2 s (23,296), Spain 12.3 s (37,867) and France 16.9 s (51,611, 26 rejected), about 2,900
+rows a second and about 3 database rows a file row (a code's four, a place name, a place's own point); removing the five
+took 31 s. At that rate the 124 countries are about 5.5 million database rows in roughly 11 minutes of runs.
+
+So Import offers **every country** of a set read a country at a time as a queue (§6.4), after a confirmation with that
+estimate (a country's last completed run's rows where it has one, else its counted size or GeoNames' average), cancelled
+as a group. A run holds one country's records while it loads, so a queue's peak is that of its largest country, not the
+sum. The full Canadian, Dutch and British files (`CA_full`, `NL_full` and `GB_full`, the last about 1.8 million rows)
+stay sets of their own, a deliberate import, and were not measured.
+
+The memory a ServiceJob run seemed to take (about 20 KB a file row: 490 MB before the queue above, 1,130 MB at the end of
+France, against about 6 KB a row called synchronously) was the acceptance specs' wait loops and the script engine, not
+the job runner (commit 9536385a0, "Script engine: a run keeps only its 1,024 most recently used entity value objects").
+`ec.factory.waitWorkerPoolEmpty` waits for the service worker pool only, so it returned at once while the job ran and the
+spec read the run's row hundreds of thousands of times in one script run, and the engine kept every entity value a run
+had touched until the run ended (about 4.6 KB each). The engine now keeps a run's 1,024 most recently used values, and a
+spec pauses between its looks with the testkit's `sleep(ms)` (JS-Testkit). A queue was limited to the countries under
+50,000 rows while this was open; it now runs every country. Measured again (release build, November 26, 2026,
+`/usr/bin/time -l` for the test process's peak beside a `ps` sampler every half second) with a queue of Brazil, Portugal
+(the largest country file) and Canada: 214,124 rows in 115 s, Brazil 3.5 s (5,525 rows), Portugal 109.4 s (206,942
+rows, 197,772 codes, about 1,900 rows a second) and Canada 1.2 s (1,657 rows), each completed and Canada started after
+Portugal ended. The test process (its own data load and the server in one) was about 430 MB before the queue and 830 MB
+while Portugal's file was downloaded and checked; during Portugal's load it grew from about 730 MB to 1,200 MB (about
+2.2 KB a row, the importer's records of one country), with 1.49 GB at its peak as the load ended and retired, and fell to
+about 1.03 GB after the run. So every country can be queued, the largest included, on a server with about 1 GB to
+spare beyond its size at rest; the estimate now takes about 2,000 rows a second (all 124 countries roughly 15 minutes of runs).
+Removing what the test loaded (`remove#GeoData`, the three countries, called synchronously in its cleanup) first took
+64 s and grew the process from about 1.03 GB to 3.48 GB (3.73 GB peak): a removal read a country's place names, codes
+and point associations whole and deleted them a row at a time in one transaction. A removal now goes a batch of Geo IDs
+at a time (`moqui-tools` `geo/remove.rs`: about 2,000, each kind of row paged by Geo ID, the references checked with
+`IN` queries of the batch), each batch in its own transaction, so a Remove stopped part way leaves whole batches removed
+and another finishes it; its rules are as before. A batch that fails is rolled back and named in the error while the
+rest go on. While a removal runs it marks its data set (`removingStamp`, touched before each batch, abandoned after an
+hour unchanged): an import's start and the import itself refuse the scope, a second Remove of the set is refused, and an
+import that starts anyway stops the removal before its next batch. Measured the same way, the three countries' removal
+took 86 s and the process went from about 570 MB to 940 MB, and the test process peaked at 1.58 GB, during Portugal's
+import, not its removal.
+
+The three largest countries back to back (November 26, 2026, the same measurement, a queue of Portugal, the United Arab
+Emirates and India, then the removal of the three): Portugal 111 s (206,942 rows), the United Arab Emirates 78 s
+(178,171 rows) and India 23 s (155,570 rows, 155,542 place names on 19,238 codes, 28 rejected), all completed; the
+removal 206 s. The memory does not pile up from one run to the next: each run grows while it loads (about 2.2 KB a
+row: about 690 MB to 1,170 MB for Portugal, 735 MB to 1,410 MB for the Emirates, 1.55 GB at each one's retire step) and
+returns it when it ends (735 MB after Portugal, about 600 MB after India), and each country's Remove grows about 1.8 KB
+a removed code (586 MB to 953 MB for one) and returns it when its call ends (612 MB). The growth is held for the life of
+the job run or the service call, outside its transactions, which commit. Found November 26, 2026: the telemetry's
+per-thread tail kept every unsampled span under an open root, with no bound, until the root ended; it now keeps at most
+`tail-trace-spans` a trace, failed and slow ones first (commits 948e385f2, 264a5e574), and a 100,000-code operator import
+stays flat while it loads and removes. The retire step's read of a scope's rows in one transaction is still its peak. The test process
+peaked at 1.72 GB. So a queue of every country needs what its largest country needs, about 1 GB beyond the server at
+rest, however many countries it runs.
+
+Cancel between batches, measured by the acceptance test `GeoDataImportCancel`: a job run of a 20,000-code operator file
+asked to stop once its first batch committed ended `GdiCancelled` after its second (4,000 codes kept, whole batches only,
+nothing retired, the lookup cache cleared); run again it completed in 10.5 s, the 4,000 unchanged, 16,000 created, and
+only then the three codes the new edition lacked retired.
 
 A framework postal lookup accepts country and postal code only; it does not need a street address or party ID.
 
@@ -594,7 +723,11 @@ runs lack, is new here.
 **Settings.** Maps › Configuration › Geo data, for `MAPS_ADMIN`: each data set with its license and attribution;
 the countries imported, each with its edition, counts and last run; and Import, Refresh, Cancel, Schedule and
 Remove (rows nothing refers to are deleted, the rest end-dated). Importing every GeoNames country at once asks
-for confirmation with an estimate of the rows, and is not offered until the P2 measurement. Built: Import and a scope's
+for confirmation with an estimate of the rows (built in F1: a queue of per-country runs, §6.3 "Every country":
+every country of the set, the largest included).
+A refusal every run of a queue would meet (the set disabled, its license, outside requests off, the user not authorized)
+cancels the queue's waiting runs with that reason, so one job and one notification say why; a queue run that stopped with
+no word for an hour is taken as abandoned, and a cancel ends it and lets the queue go on. Built: Import and a scope's
 Refresh start a run of the `GeoDataImport` ServiceJob; Refresh all and the schedule are one `GeoDataRefresh` ServiceJob
 that imports every scope again (an unchanged source costs a conditional request), scheduled weekly or monthly and run
 as the administrator who scheduled it, rather than a job a data set (docs/tools/Maps.md "Geo data").
@@ -609,17 +742,17 @@ for streaming, bounded processing and shared use by browser, TUI, imports and AP
 | Resource range access and HTTP delivery | Stage R (§5): extend the existing `ByteSource` providers (`moqui-entity`, `moqui-git`), `ResourceFacade::open` and `respond_opened` in `moqui-core`, and the transport in `moqui-host`; all consumers share them. No map-specific bypass of provider storage or authentication. |
 | Metadata, Geo data imports and lookup | Framework services for effective configuration, the Geo data importer (§6.4: download, bounded zip and delimited-text parsing, validation, batched load, retiring) and indexed Geo lookups. The importer is a module of `moqui-tools` beside `etl`, which is in every build; the three parsers, postal-code normalization and coordinate helpers belong in `moqui-lib`, as they need no ExecutionContext. |
 | Provider adapters | Typed Rust clients for geocoding/normalization, timeouts, quotas, cancellation and allowed caching; configuration and authorization services remain the public boundary. Send through `moqui_core::outbound` (or `ec.service.rest()` from a script), with its internal-address guard, and let specs answer for the provider with `HttpFixtures`. Avoid separate JS proxies per app. |
-| Archive metadata and optional tile extraction | Validate PMTiles headers/indexes and read metadata through ResourceFacade; a later Z/X/Y endpoint can extract a tile without loading the archive. Evaluate the [Rust pmtiles crate](https://docs.rs/pmtiles/latest/pmtiles/) against the facade's range-reader contract before choosing it. No server decoder is required just to stream the original archive. |
-| Geometry/import jobs | Later, shared coordinate validation, extent calculation, reprojection, simplification and large-file normalization to GeoJSON/vector tiles. Evaluate Rust libraries and license/build costs against actual formats; no mandatory GDAL/PROJ or PostGIS dependency in the initial delivery. |
-| Optional Overture ingestion | Bounded regional GeoParquet reads, schema/provenance validation, Places indexing, Buildings overlays and release reconciliation; later address candidate matching. Evaluate Rust Parquet/geometry tooling and prepared-data import options before adding dependencies. ResourceFacade owns input/derived storage; reuse or integrate tile-generation tooling rather than requiring a new Rust cartography engine. |
-| Spatial data queries | Begin with bounded, indexed latitude/longitude queries and domain scope filters. Add spatial indexes/PostGIS or dynamic vector tiles when dataset size/query needs justify them; no unbounded download of all parties/assets to the client. |
+| Archive metadata and optional tile extraction | Validate PMTiles headers/indexes and read metadata through ResourceFacade; a later Z/X/Y endpoint can extract a tile without loading the archive. Evaluate the [Rust pmtiles crate](https://docs.rs/pmtiles/latest/pmtiles/) against the facade's range-reader contract before choosing it. No server decoder is required just to stream the original archive. Built (P4d): the Z/X/Y endpoint on `moqui-lib` `pmtiles.rs` (tile IDs, directories, lookup, and an archive writer); the crate was not taken: its reader is async over Tokio, an HTTP client or memory maps, which the facade's synchronous `read_at` does not fit, and the format's directory is a few varints. |
+| Geometry/import jobs | Later, shared coordinate validation, extent calculation, reprojection, simplification and large-file normalization to GeoJSON/vector tiles. Evaluate Rust libraries and license/build costs against actual formats; no mandatory GDAL/PROJ or PostGIS dependency in the initial delivery. Built (P4d): a user's overlay too large to draw whole simplified per zoom (Douglas–Peucker), clipped per tile and written as MVT tiles in a PMTiles archive beside the file (`moqui-lib` `geo/simplify.rs`, `geo/mvt.rs`, `geo/tiles.rs`; the `MapOverlayTiles` ServiceJob with progress and cancel; [Maps › Large overlays](../../docs/tools/Maps.md#overlays-and-places)), on our own code rather than the `geo` and `mvt` crates (MIT or Apache-2.0: a dozen geometry crates, a protobuf runtime). No reprojection beyond EPSG:3857 yet. Built (P4b): the overlay readers of the other formats are our own (`moqui-lib` `geo/overlay/`), not the `shapefile` crate (MIT, with `dbase`) or GDAL: each format is a few fixed headers, a grammar or a JSON or XML shape, and each reader keeps its own bounds (claimed counts checked against the bytes, a zip's inflation, TopoJSON's shared arcs); GeoPackage is left out, since `rusqlite` with its bundled C SQLite is linked only in the browser and client crates and would add a native build to every server for one format. |
+| Optional Overture ingestion | Bounded regional GeoParquet reads, schema/provenance validation, Places indexing, Buildings overlays and release reconciliation; later address candidate matching. Evaluate Rust Parquet/geometry tooling and prepared-data import options before adding dependencies. ResourceFacade owns input/derived storage; reuse or integrate tile-generation tooling rather than requiring a new Rust cartography engine. Built (O1, November 26, 2026): the `moqui-maps` crate under the host's `overture` feature, with our own GeoParquet reader on the pure-Rust `ruzstd` (the `parquet` crate reads ZSTD only through the C zstd library, and its codecs are closed), measured and decided in [Maps-Overture](Maps-Overture.md) §1; Buildings tiled by P4d's tiler. |
+| Spatial data queries | Begin with bounded, indexed latitude/longitude queries and domain scope filters. Add spatial indexes/PostGIS or dynamic vector tiles when dataset size/query needs justify them; no unbounded download of all parties/assets to the client. P4d left this as it is: Mantle's adapter already reads a viewport by a bounded latitude and longitude range (across the antimeridian too) with its scope filters and `limit + 1`, and a shared framework helper would only move that condition; an index of `GeoPoint` latitude and longitude, or dynamic tiles through the tile endpoint, wait for a dataset that needs them. |
 
-Follow [Rust practices](../docs/dev/Practices-Rust.md) and [crate seams](archive/Crate-Split.md): reuse existing
+Follow [Rust practices](../../docs/dev/Practices-Rust.md) and [crate seams](Crate-Split.md): reuse existing
 lower-level modules and extension hooks. No new crate through P3: the work above goes in `moqui-lib`, `moqui-core`
 and `moqui-tools`, with services declared `type="rust"`. A feature-gated `moqui-maps` extension crate, modelled on
 `moqui-calc` under the host's `xlsx` feature, is decided when Overture's Parquet dependency arrives with O1, since
 that weight should not be in every build; a new crate then has its own plan and the crate checklist
-(`scripts/check-packages.sh`, `cargo lint-min`). `moqui-host` owns async/process edges and core must not depend
+(`scripts/check-packages.sh`, `cargo lint-min`). Decided and built with O1: [Maps-Overture](Maps-Overture.md). `moqui-host` owns async/process edges and core must not depend
 upward on it. Domain rules stay in Mantle, with XML Actions first for normal entity workflows, and Rust only for
 the loops over thousands of rows and the binary formats. A new crate is not needed merely to serve a resource's
 bytes.
@@ -658,13 +791,28 @@ prepared downloads. This keeps a HOME installation practical without a large geo
 | R — byte access | The to-build list of §5: LFS-only git archives with their readiness check, pinned revisions by range, the map-source transition with a strong validator and private caching, strong `If-Range`, cancellation. Independent of P1, and built by whichever of Maps and HOME Media starts first. |
 | P1 — map and shared UI | Tools Maps full-screen browser, local dialog, personal preferences/saved views, explicit current-location action, the outline map of a fresh install and the OpenFreeMap provider an administrator enables. A user can open a record dialog without System, BOSS or standalone Maps app access, but cannot read an unauthorized record; with no Mantle in this stage, that rule is tested with a test adapter of the framework's own test services (`framework/test/MoquiConf.xml` and `framework/test/service/org/moqui/mapstest/`, loaded in `moqui test` runs only). Text/TUI/phone fallbacks work. |
 | P2 — local data and archives | PMTiles through stage R on all four backends, packaged local styles/fonts/icons, the Geo data importer (§6.4) with its Census, GeoNames and operator-CSV parsers and its settings screen, a measured US import, provenance/precision and data refresh. Local browsing and postal lookup work with external requests disabled. Other GeoNames countries open after the measurement. Built (A7a, November 25, 2026): the postal lookup (`get#PostalLocation`) in Browse's search and as the local-map dialog's fallback for an address with no point, Maps › Configuration › Geo data (licenses, Import as a ServiceJob run, Refresh and its schedule, Cancel, Remove, run history), the `maps.geodata` readiness and refresh; measured US import (§6.3): 61 s first, 1.3 s conditional and 3.5 s forced refresh changing nothing, 41,637 codes and about 318,500 rows, lookup 0.46 ms cold; every country at once waits on the forced refresh's memory (§6.3), one country a run is offered. Built (A7b, November 25, 2026): PMTiles archives registered from a plain file, a drive (DbResource) or git as a Git LFS object (`register#ArchiveLayer`: header checked in Rust, revision, version, drive and size recorded; a non-LFS git archive refused, `NOT_LFS`), the map-source transition (`LocalMap.xml` `source`: access on every range with no write, 409 for a stale revision, pinned strong ETag and private caching) and the same-origin URL in the effective configuration, `m-map` loading its configuration again on a 409, Maps › Configuration › Archives, the `maps.archives` readiness, and the packaged local Protomaps profile (`LOCAL_PROTOMAPS`: the `@protomaps/basemaps` light and dark styles generated at build time, the basemaps-assets sprites, Noto Sans); acceptance `MapsArchiveBackends`, `MapsLocalOnly` and `MapsFrameworkOnly`. |
-| P3 — consumer integration | Mantle adapters and BOSS/HOME mounts, basic geographic file overlays, optional configured street/place search, private/shared collections. HOME-only and dual-suite users see only permitted places; a viewer cannot save record coordinates. P0–P3 comprise the initial Maps scope. Built, the framework part (A8, November 25, 2026): personal overlays (`MapServices.store#Overlay`, `MapOverlays.js`; a GeoJSON, GPX or KML upload kept in `Maps/overlays` of the personal drive, or a file of a drive the user reads, read first by `MapSourceServices.convert#Overlay` in Rust, `moqui-lib` `geo/overlay.rs`: `maps@overlay-max-bytes` (10 MiB) within `maps@import-max-bytes`, `maps@max-features` (5000 when 0), 4 MiB of GeoJSON, WGS84 or a declared EPSG:3857, each geometry checked by itself, plain-text labels and descriptions, no network link, icon or reference followed), recorded as `moqui.maps.MapOverlay` and drawn from Browse's `overlay` transition with the reader's drive access checked on every request; saved places as `Maps/places.geojson` (`store#Place`); collections shared only by sharing the file in Files (`ResourceShare`), listed read-only in Browse's Layers, Saved views and search; the geocoder kinds `MPK_GEOCODER_CENSUS`, `MPK_GEOCODER_NOMINATIM` and `MPK_GEOCODER_PHOTON` with their fixed-query test, `find#Places` (one tested provider, never another on failure, outside requests, allowed operations, a shared cache policy and the rate (1 a second for Nominatim and Photon by default, per server) honoured, the answer read to 1 MiB with the RestClient's new `text(maxBytes)`) and its candidates third in Browse's search with source, precision and ambiguity; the disabled seed `CENSUS_GEOCODER`. Regression: `MapsOverlays`, `MapsGeocoder`, `geo/overlay_tests.rs`. Built, the Mantle part (A9): the record adapters `postalAddress`, `party`, `facility` and `asset` (mr-mantle `mantle.other.MapPlaceServices`, its `docs/MapAdapters.md`), each checking access itself (a party's business addresses only to others, a home address only to the person or their personal contact's owner; `PARTY_LOCATION_EDIT`, `FACILITY_EDIT`, `MAINTENANCE_RESOURCE_EDIT` to choose a location); the postal fallback never written to a record; saves as new points with `GeoPointProvenance`, refusing a stale version and an estimate over a recorded point; `PostalAddress.postalCodeGeoId` derived from the local Geo data; the bounded, organization-scoped record layers `MANTLE_FACILITIES` and `MANTLE_ASSETS`; `GooglePartyServices` superseded (regression: mr-mantle `MapPlaces`). Built, the BOSS part (A10): mr-boss `screen/Shared/LocalMap.xml`, LocalMap by the thin-wrapper rule, mounted under its app roots; View map on contact addresses, FacilityDetail and Maintenance's EquipmentDetail; the adapters' route keys resolved to BOSS screens; `PARTY_LOCATION_EDIT` for `BOSS_CONTACT_ADMIN`, while an internal organization's own places stay its settings manager's (`ADMIN_SETTINGS_MANAGE`), and Maps configuration rights read from the user's own grants (`isPermittedOwn`), so a mount's inherited root grant confers none (regression: mr-boss `RecordMap`). Not built: the HOME mount and the HOME-only and dual-suite visibility walks, which wait for mr-home's first screens. |
-| P4 — richer GIS | Configured WMS/WMTS/WFS and additional imports/editing, COG/raster controls, advanced CRS workflows, large-data processing and optional detailed dashboard drill-downs. Prioritize concrete household/business scenarios. |
-| Optional O1 — Overture Places and Buildings | After the shared source/import foundation, add selected regional Places search and Buildings overlays with attribution, pinned releases and staged updates. Initial Maps remains usable without these datasets. |
-| Optional O2 — Overture regional addresses | After O1, evaluate and index regional address points; exercise ambiguous, missing and approximate matches plus refresh reconciliation. Retain postal/manual fallback and the existing record-save authority. |
-| Later research | Routing, Google/other external maps, device integrations and “find my XYZ”, explicitly shared person-location feeds and offline mobile packages. Reuse the interface without treating approximate postal positions as navigation or tracking evidence. |
+| P3 — consumer integration | Mantle adapters and BOSS/HOME mounts, basic geographic file overlays, optional configured street/place search, private/shared collections. HOME-only and dual-suite users see only permitted places; a viewer cannot save record coordinates. P0–P3 comprise the initial Maps scope. Built, the framework part (A8, November 25, 2026): personal overlays (`MapServices.store#Overlay`, `MapOverlays.js`; a GeoJSON, GPX or KML upload kept in `Maps/overlays` of the personal drive, or a file of a drive the user reads, read first by `MapSourceServices.convert#Overlay` in Rust, `moqui-lib` `geo/overlay.rs`: `maps@overlay-max-bytes` (10 MiB) within `maps@import-max-bytes`, `maps@max-features` (5000 when 0), 4 MiB of GeoJSON, WGS84 or a declared EPSG:3857, each geometry checked by itself, plain-text labels and descriptions, no network link, icon or reference followed), recorded as `moqui.maps.MapOverlay` and drawn from Browse's `overlay` transition with the reader's drive access checked on every request; saved places as `Maps/places.geojson` (`store#Place`); collections shared only by sharing the file in Files (`ResourceShare`), listed read-only in Browse's Layers, Saved views and search; the geocoder kinds `MPK_GEOCODER_CENSUS`, `MPK_GEOCODER_NOMINATIM` and `MPK_GEOCODER_PHOTON` with their fixed-query test, `find#Places` (one tested provider, never another on failure, outside requests, allowed operations, a shared cache policy and the rate (1 a second for Nominatim and Photon by default, per server) honoured, the answer read to 1 MiB with the RestClient's new `text(maxBytes)`) and its candidates third in Browse's search with source, precision and ambiguity; the disabled seed `CENSUS_GEOCODER`. Regression: `MapsOverlays`, `MapsGeocoder`, `geo/overlay_tests.rs`. Built, the Mantle part (A9): the record adapters `postalAddress`, `party`, `facility` and `asset` (mr-mantle `mantle.other.MapPlaceServices`, its `docs/MapAdapters.md`), each checking access itself (a party's business addresses only to others, a home address only to the person or their personal contact's owner; `PARTY_LOCATION_EDIT`, `FACILITY_EDIT`, `MAINTENANCE_RESOURCE_EDIT` to choose a location); the postal fallback never written to a record; saves as new points with `GeoPointProvenance`, refusing a stale version and an estimate over a recorded point; `PostalAddress.postalCodeGeoId` derived from the local Geo data; the bounded, organization-scoped record layers `MANTLE_FACILITIES` and `MANTLE_ASSETS`; `GooglePartyServices` superseded (regression: mr-mantle `MapPlaces`). Built, the BOSS part (A10): mr-boss `screen/Shared/LocalMap.xml`, LocalMap by the thin-wrapper rule, mounted under its app roots; View map on contact addresses, FacilityDetail and Maintenance's EquipmentDetail; the adapters' route keys resolved to BOSS screens; `PARTY_LOCATION_EDIT` for `BOSS_CONTACT_ADMIN`, while an internal organization's own places stay its settings manager's (`ADMIN_SETTINGS_MANAGE`), and Maps configuration rights read from the user's own grants (`isPermittedOwn`), so a mount's inherited root grant confers none (regression: mr-boss `RecordMap`). P3's framework, Mantle and BOSS parts are complete; its HOME mount, adapters and the HOME-only and dual-suite visibility walks are mr-home's H1c ([initial design §3.9](../../runtime/components/addon/mr-home/plan/initial-design.md#39-maps-places-and-geographic-information) and [§7](../../runtime/components/addon/mr-home/plan/initial-design.md#7-delivery-proposal)). |
+| P4 — richer GIS | Configured WMS/WMTS/WFS and additional imports/editing, COG/raster controls, advanced CRS workflows, large-data processing and optional detailed dashboard drill-downs. Prioritize concrete household/business scenarios. Built, P4d (November 26, 2026): the Z/X/Y tile endpoint (§5), large overlays simplified on the server into vector tiles drawn through it with the file's own access (§7), and the Dashboards geomap's drill-down into Browse (a country's extent or a point, for a viewer whose own grants open Maps; the terminal geomap's `M` on a row, built November 26, 2026). Spatial queries for record layers stay as they are (§7). Built, P4a (November 26, 2026): the OGC provider kinds `MPK_WMS`, `MPK_WMTS` and `MPK_WFS` (`MapOgc.js`), each tested by its GetCapabilities read in Rust (`moqui-lib` `geo/ogc.rs`: no DTD, no entity declaration) and recorded (`capabilitiesJson`, at most 2,000 layers); Configuration's Add OGC layer (`store#OgcLayer`, choices from the recorded capabilities) and the `MapLayer` OGC fields; `m-map`'s WMS (tiled or one image), WMTS (its tile grid from the recorded matrix set, REST or KVP) and WFS (GeoJSON by the view's box, at most `maps@max-features`) layers on the provider's own origin; a keyed OGC provider through the proxy, a GetMap, GetTile or GetFeature forwarded only for a registered layer the caller may be offered, with its own names, style, format and matrix set; CORS recorded for a direct provider. Regression `MapsOgc`, `geo/ogc_tests.rs` and the page test; acceptance `MapsOgcPublic` (USGS WMTS, NASA GIBS WMS) ([Maps › OGC services](../../docs/tools/Maps.md#ogc-services)). WFS editing (WFS-T) is P4b's. Built, P4b (November 26, 2026): overlays read from TopoJSON, EsriJSON, GML, WKT, WKB, delimited text and zipped shapefiles (§4.1, §7), GeoPackage refused with the reason; editing of one's own overlays and places in Browse (`get#OverlayEdit`, `store#OverlayEdit`: owner only, not tiled, the converter's checks, an optimistic version check, `FileServices.save#Text` versions and quota (the quota check added to `save#Text`), a file the save would otherwise change kept with the edit beside it), `m-map`'s editing with Draw, Modify and Snap (added to the bundle) and keyboard vertices at the center. Regression `MapsOverlays` (an edit saved, refused to another user, for invalid geometry and a stale version; a CSV and a WKB upload), `geo/overlay/formats_tests.rs`, the page test's editing helpers. WFS-T editing of OGC layers is not built: a later increment. Built, P4c (November 26, 2026): COG layers (a registered resource pinned and served by range, or a tested provider's URL) with their header read in Rust (`geo/tiff.rs`) and band controls in Browse kept per user and in saved views; the raster and projection part of the OpenLayers bundle (GeoTIFF, WebGL tiles, geotiff.js, proj4) built as split ES modules with the main bundle and imported only by a map that needs it, geotiff's decoders in module workers of this server with no second copy of their WebAssembly, the projection lookup refused; the projection registry (`MapProjection`, seeded) registered in the browser from the configuration and read on the server (`geo/proj.rs`, the EPSG guidance examples), overlays in a registered CRS converted with their transform recorded; a profile's view projection with incompatible basemaps refused; readiness of the page policy for the decoder worker. Regression `MapsSource` (a COG registered, refused in strips, read by a holder only), `MapsOverlays` (UTM and British National Grid overlays), `geo/proj_tests.rs`, `geo/tiff_tests.rs`, `geo/overlay/formats_tests.rs`, the page test (the lazy part's decisions, band styles, projections registered and a lookup refused). Acceptance `MapsCogPublic` (a Sentinel-2 COG on AWS, its provider tested by a range read of the COG, built November 26,
+2026). |
+| Optional O1 — Overture Places and Buildings | After the shared source/import foundation, add selected regional Places search and Buildings overlays with attribution, pinned releases and staged updates. Initial Maps remains usable without these datasets. Built (November 26, 2026; [Maps-Overture](Maps-Overture.md), [Maps › Overture](../../docs/tools/Maps.md#overture-places-and-buildings)): the `moqui-maps` crate (host feature `overture`) with its GeoParquet reader and STAC client; regions of at most `maps@overture-max-area` km², a theme imported as a run of the `OvertureImport` ServiceJob pinned to a release and its schema 2.x, read by range (only the items, row groups and columns that meet the region), staged, checked (rows, licenses by source, a new one held for review) and activated with the previous release kept for rollback; Places as `moqui.maps.OverturePlace` searched in Browse after the postal codes, Buildings as a PMTiles layer registered per region with the theme's attribution; Configuration › Overture and the `maps.overture` readiness. Regression `MapsOverture`; acceptance `OvertureRegionImport`. |
+| Optional O2 — Overture regional addresses | After O1, evaluate and index regional address points; exercise ambiguous, missing and approximate matches plus refresh reconciliation. Retain postal/manual fallback and the existing record-save authority. Built (November 26, 2026; [Maps-Overture §8](Maps-Overture.md#8-o2-regional-addresses), [Maps › Overture addresses](../../docs/tools/Maps.md#overture-addresses)): the evaluation (Boston's Back Bay, central Florence, downtown Austin, central Amsterdam: coverage, field completeness, same-number spread, licenses); the `ADDRESSES` theme imported by O1's run (license review per source, the acknowledgement covering none at first) into `moqui.maps.OvertureAddress` (indexed street and number keys, at most 1,000,000 rows a run), a refresh activated as a whole and compared by address (added, removed, moved, unchanged), never by ID, nothing outside its rows touched; `moqui-maps` `address.rs` (parsing, normalization by the country's languages, ranking, choices within a margin, estimates) and `search#OvertureAddresses`; the local geocoder `MPK_GEOCODER_OVERTURE` (seeded disabled `OVERTURE_ADDRESSES`: no URL, tested by its own data, asked with outside requests off only while addresses are active), its misses answered by the postal lookup; Browse's geocoder slot and the record chain (the record's point, the address match, the postal area, a chosen point; saves through the adapter only). Regression `MapsOvertureAddresses`, `address_tests.rs`, `address_service_tests.rs`; acceptance `OvertureAddressLookup`. |
+| Later research | Routing, Google/other external maps, device integrations and “find my XYZ”, explicitly shared person-location feeds ([Location-Sharing](Location-Sharing.md)) and offline mobile packages
+([Maps-Offline](Maps-Offline.md)). Reuse the interface without treating approximate postal positions as navigation or tracking evidence. |
 
-The checks below go in two suites, by [the testing rules](../docs/Build-Test.md#the-two-suites). A stage is done
+Follow-ups to P0–P3, built November 26, 2026: the FIPS to ISO 3166-2 first-level crosswalk for GeoNames (`moqui-lib`
+`geo/admin1_iso.tsv`, CC BY 4.0 from GeoNames joined with Wikidata); the importer's memory fixes and a queued
+every-country import (every country, the largest included, once the memory growth §6.3 describes was found in the
+specs' wait loops and the script engine); Census land area sizing a postal area's extent; cancel between batches (acceptance
+`GeoDataImportCancel`); overlay features selectable with plain-text details; the terminal Browse's places, overlays
+and postal search; the drive picker for overlays; the framework route registry `moqui.maps.MapRoute` (host app's rows
+first, `routeApp`, `routeLinks`) and LocalMap's `profileId`; Configuration and the Geo data services needing the
+caller's own `MAPS_ADMIN` grant; geocoder `requestsPerDay`; the server proxy for keyed providers (exact recorded
+paths and patterns, the key added on the server, https only); one archive registered for its light and dark layers
+(acceptance `MapsProtomapsExtract` with a real Protomaps extract); and in Mantle and BOSS the read-only
+`transactionAddress` adapter for a document's readers, Sales' and HR's location rules, and View map on the 360s,
+documents, equipment, stores and organizations.
+
+The checks below go in two suites, by [the testing rules](../../docs/Build-Test.md#the-two-suites). A stage is done
 when the regression tests of the rules it added pass within the component's budget and `moqui lint --screens` is
 clean; its scenarios are acceptance tests to write, named here, and running them is not part of done.
 
@@ -681,8 +829,10 @@ clean; its scenarios are acceptance tests to write, named here, and running them
   lookup with external requests disabled, and no outside request from opening a locally resolvable address),
   `MapsBrowseWalk` and `MapsDialogWalk` in a browser at desktop and phone width, the terminal walk,
   `MapsFrameworkOnly` (an installation without Mantle), `GeoDataUsaImport` (the real Census and GeoNames US
-  downloads, recording time and memory), and with P3 the HOME-only and dual-suite visibility walks in their
-  components.
+  downloads, recording time and memory), `MapsProtomapsExtract` (a real Protomaps extract read by ranges from a daily
+  build, registered for both local layers in one action and drawn through the map-source transition). P3's HOME-only and dual-suite visibility walks, `MapsHomeOnlyWalk` and
+  `MapsDualSuiteWalk`, are mr-home's H1c
+  ([its §7](../../runtime/components/addon/mr-home/plan/initial-design.md#7-delivery-proposal)).
 
 Focused implementation checks should cover:
 

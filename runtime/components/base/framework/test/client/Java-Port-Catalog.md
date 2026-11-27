@@ -51,7 +51,7 @@ are Java Assist checks and out of scope.
 
 | Python test | Here |
 | --- | --- |
-| `test_echopath_extra_path_is_html_escaped` | ported: SecurityScreens > A01 an extra path on echopath is HTML-escaped
+| `test_echopath_extra_path_is_html_escaped` | ported: SecurityScreens > A01 the sample echopath screen is not served (the screen is gone, SEC-RTE-89)
 | `test_fop_without_login_is_not_a_pdf` | ported: SecurityScreens > A01 FOP of a screen without a login is not a PDF
 | `test_email_tracking_unknown_id_returns_png` | ported: SecurityScreens > A01 an unknown email tracking id returns the 1x1 PNG |
 | `test_status_from_loopback_is_json` | ported: SecurityStatus > A01 /status from loopback is JSON

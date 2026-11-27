@@ -999,6 +999,48 @@ fn a_failed_first_write_leaves_no_touch_and_feed_names_do_not_grow() {
     assert_eq!(frame_touches(), 0);
 }
 
+/// The rows of `create_values` are fed as their creates would be: a touch with its values for each row of a document's
+/// entity, a pending row for each at the commit; for an entity no document has, one touch without values for them all.
+#[test]
+fn rows_created_together_are_fed_as_their_creates() {
+    let script = new_script(false, false);
+    let facade = open_with(Arc::new(ScriptDriver {
+        script: Arc::clone(&script),
+    }));
+    // A first commit loads the feed definitions.
+    facade.begin("moqui.test.Foo", None).unwrap();
+    create_foo(&facade, "F0").unwrap();
+    facade.commit("moqui.test.Foo").unwrap();
+    let pending = script.inserts.lock().expect("inserts").len();
+    let rows = |entity: &str, field: &str, ids: &[&str]| {
+        ids.iter()
+            .map(|id| {
+                let mut value = facade.make_value(entity).unwrap();
+                value.set(field, Value::string(*id));
+                value
+            })
+            .collect::<Vec<_>>()
+    };
+    facade.begin("moqui.test.Foo", None).unwrap();
+    facade
+        .create_values("moqui.test.Foo", rows("moqui.test.Foo", "fooId", &["F1", "F2", "F3"]))
+        .unwrap();
+    assert_eq!(touch_fields_kept(), vec![true, true, true]);
+    facade
+        .create_values(
+            "moqui.test.TestEntity",
+            rows("moqui.test.TestEntity", "testId", &["T1", "T2", "T3"]),
+        )
+        .unwrap();
+    assert_eq!(touch_fields_kept(), vec![true, true, true, false]);
+    facade.commit("moqui.test.Foo").unwrap();
+    let ids: Vec<Value> = script.inserts.lock().expect("inserts")[pending..]
+        .iter()
+        .map(|params| params[3].clone())
+        .collect();
+    assert_eq!(ids, ["F1", "F2", "F3"].map(Value::string), "a pending row for each Foo");
+}
+
 #[test]
 fn feed_definitions_are_read_once_until_one_is_written() {
     let script = new_script(false, false);

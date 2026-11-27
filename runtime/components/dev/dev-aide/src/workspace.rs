@@ -13,7 +13,7 @@
  */
 
 //! `org.moqui.devaide.WorkspaceServices`: the roots, their directories and files, and the save pipeline
-//! (plans/design-dev-aide.md 4 and 5.7). A save writes the file (its line endings, byte order mark and mode kept; a
+//! (plans/archive/design-dev-aide.md 4 and 5.7). A save writes the file (its line endings, byte order mark and mode kept; a
 //! temporary file renamed over it), audits it, reloads what it defines, checks it, and answers the report with the
 //! file's git status. A save over a file changed on disk since it was read is refused with the disk's text, which the
 //! editor opens as Compare. An upstream file (a root no site component is in) is read only unless the user has the full
@@ -659,7 +659,7 @@ fn save_file(
     )
 }
 
-/// The save pipeline (plans/design-dev-aide.md 5.7), for an editor's Save and an accepted change set alike: the user
+/// The save pipeline (plans/archive/design-dev-aide.md 5.7), for an editor's Save and an accepted change set alike: the user
 /// may write the file; a file there is still at `base_hash`, else the answer is the conflict with the disk's text; its line endings and byte order mark are kept; a temporary file is renamed over it;
 /// the write is audited (with `detail`, such as the agent run and approval); and what it defines is reloaded and
 /// checked, the answer carrying the report, the problems and the git status.
@@ -766,7 +766,7 @@ pub(crate) fn save_text_with(
     if context.settings.shared {
         let user = moqui_core::user::current_user_id().ok().flatten().unwrap_or_default();
         let username = moqui_core::user::current_username().ok().flatten().unwrap_or_default();
-        crate::notify::announce_save(&context.facade, &user, &username, &root.id, &resolved.relative);
+        crate::notify::announce_save(&context.facade, &user, &username, &root.id, &resolved.relative, &hash);
     }
     Ok(out)
 }
@@ -1455,7 +1455,7 @@ fn site_dependency_refusal(loaded: &[moqui_core::context::ComponentInfo], depend
     )
 }
 
-/// `create#SiteComponent`: a component the site owns, from the dev-aide's Site template (plans/design-dev-aide.md 12), in
+/// `create#SiteComponent`: a component the site owns, from the dev-aide's Site template (plans/archive/design-dev-aide.md 12), in
 /// runtime/components/addon/<name> with a git repository of its own; the site component when none is set. It loads after a
 /// restart.
 fn create_site_component(

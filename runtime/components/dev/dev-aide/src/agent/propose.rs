@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `propose_edit` (plans/design-dev-aide.md 13.2 and 13.3, WRITE): the one write path of every agent edit (D11). A
+//! `propose_edit` (plans/archive/design-dev-aide.md 13.2 and 13.3, WRITE): the one write path of every agent edit (D11). A
 //! change set of files, each by operations of the lossless XML layer, by exact text replacements, or as a whole new
 //! text, is checked first (an error comes back to the model with its rule and skill section, and nothing is
 //! proposed; an edit of an upstream component while the lock is on is such an error, D17), then becomes an approval of

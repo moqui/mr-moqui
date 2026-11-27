@@ -14,9 +14,11 @@
 
 use std::path::Path;
 
+#[cfg(unix)]
+use super::{copy_tree, TreeCopy};
 use super::{
-    copy_tree, digest, digest_refusal, engine_sockets, image_refusal, image_run, jobs_of, pick, quoted, script,
-    script_in, valid_run_name, with_time_limit, ImageLimits, Place, TreeCopy, LABEL_ROOT, LABEL_USER,
+    digest, digest_refusal, engine_sockets, image_refusal, image_run, jobs_of, pick, quoted, script, script_in,
+    valid_run_name, with_time_limit, ImageLimits, Place, LABEL_ROOT, LABEL_USER,
 };
 
 const LIMITS: ImageLimits = ImageLimits {
@@ -209,6 +211,7 @@ fn the_engine_is_found_by_its_socket_and_a_run_by_its_name() {
 }
 
 /// git in `dir`, isolated from the desktop's config and credential helpers.
+#[cfg(unix)]
 fn git_in(dir: &Path, args: &[&str]) -> String {
     let out = std::process::Command::new("git")
         .args([
@@ -238,6 +241,7 @@ fn git_in(dir: &Path, args: &[&str]) -> String {
 }
 
 /// Every path under `dir` (no link followed) with a file's text: what a run must leave as it was.
+#[cfg(unix)]
 fn snapshot(dir: &Path) -> Vec<(String, String)> {
     let mut out = Vec::new();
     let mut pending = vec![dir.to_path_buf()];
@@ -266,6 +270,7 @@ fn snapshot(dir: &Path) -> Vec<(String, String)> {
 /// it was; the copy is deleted after.
 /// `MOQUI_CI_DOCKER_SOCKET=/var/run/docker.sock cargo test -p dev-aide --lib in_a_real -- --ignored --nocapture` (an
 /// image `busybox` on the engine; `MOQUI_CI_IMAGE` names another).
+#[cfg(unix)]
 #[test]
 #[ignore = "opt-in: a real Docker or Podman socket"]
 fn in_a_real_engine_a_job_runs_on_a_copy_of_the_tree() {
@@ -374,6 +379,7 @@ fn in_a_real_engine_a_job_runs_on_a_copy_of_the_tree() {
 
 /// A working tree's copy has the files git lists and nothing else: no `.git` part, no path through a link out of the
 /// tree, a link as a link, no directory; one over its size is refused, and the copy goes when it is dropped.
+#[cfg(unix)]
 #[test]
 fn a_runs_copy_has_the_files_git_sees_and_no_git() {
     let base = std::env::temp_dir().join(format!("dev-aide-copy-{}", std::process::id()));

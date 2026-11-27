@@ -58,7 +58,7 @@ fn a_navigation_attachment_keeps_the_screen_and_saves_the_original_bytes() {
     session.navigate("/apps/app/Files/raw?ref=abc123", true);
     session.run_now(&link);
     assert_eq!(session.model(), &model);
-    assert!(session.nav().history().is_empty());
+    assert!(!session.nav().has_history());
     assert_eq!(session.focus_id(), "download");
     assert!(!session.message_is_error());
     assert_eq!(

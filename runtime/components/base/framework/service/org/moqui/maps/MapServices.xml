@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Maps (plans/Maps.md §3.2): the contracts a record or layer adapter implements, and the registry that resolves an adapter
+<!-- Maps (plans/archive/Maps.md §3.2): the contracts a record or layer adapter implements, and the registry that resolves an adapter
     from its key. A component registers an adapter as a moqui.maps.MapAdapter seed row naming its services; a browser sends
     only the adapterKey, never a service or entity name, query, path or URL. The adapter is the owning domain's guarded
     service: it checks the caller's access to the record (and its organization scope) itself, on every call, and the
@@ -66,6 +66,11 @@ along with this software (see the LICENSE.md file). If not, see
                 shows its local postal-area position (get#PostalLocation, approximate, with a broad extent) and no outside
                 service is asked; never a substitute for a recorded point</description></parameter>
             <parameter name="countryGeoId"><description>The country of postalCode: a Geo ID or an ISO alpha-2 or alpha-3 code</description></parameter>
+            <parameter name="address1"><description>With no geometry: the address's street line (number and street), which the
+                installation's local geocoder (MPK_GEOCODER_OVERTURE, this server's own index, no outside request) matches when
+                one is enabled, before the postal area; the point found is shown, never saved</description></parameter>
+            <parameter name="address2"><description>Its second line, used only when it names a unit (Apt, Suite, #)</description></parameter>
+            <parameter name="city"><description>Its locality</description></parameter>
         </out-parameters>
     </service>
 
@@ -218,7 +223,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="get" noun="EffectiveConfig">
         <description>The configuration a map draws (m-map's, WebrootMap.js), for a map-view's config-url and the Maps
-            screens. Precedence (plans/Maps.md §4.2): the installation's policy (maps@external-requests: false leaves out
+            screens. Precedence (plans/archive/Maps.md §4.2): the installation's policy (maps@external-requests: false leaves out
             every profile, basemap and layer drawn from an outside host) constrains every choice; the profile is the one
             asked for (profileId, the consumer's), else the user's own maps.profile preference, else their groups' (the
             ALL_USERS one is the installation's default), else OUTLINE; the user's maps.preferences (basemap, layer
@@ -235,7 +240,10 @@ along with this software (see the LICENSE.md file). If not, see
             allowedOrigins are those origins, each tile subdomain by itself. No provider's key, service, entity or resource
             name reaches the browser: a provider with a key is not offered at all (PROVIDER_KEYED). With adapterKey the
             registered adapter's get#RecordMapContext gives the record's place (points, or features for another geometry)
-            and record (label, precision, source, version, permitted actions, links) after its own access check; a refusal,
+            and record (label, precision, source, version, permitted actions, links, and resolvedLinks: {label, route, url}
+            of each link a registered MapRoute of the host app, routeApp, else of no app, resolves to a screen the user's own
+            grants open, MapRoutes.js) after its own
+            access check; a refusal,
             an adapter the user may not call and a failure are a layer error (RECORD_UNAVAILABLE for the first two, which
             are not told apart, ADAPTER_FAILED), never a failed configuration, and the adapter's own text is neither answered
             nor logged here. A record layer is listed in recordLayers; a shown one's features (find#LayerFeatures, for the
@@ -247,17 +255,30 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="adapterKey"/>
             <parameter name="recordKey" type="Object"><description>The record's key fields, a map or its JSON</description></parameter>
             <parameter name="addressPurpose"/>
+            <parameter name="routeApp"><description>The app showing the map (its mount of LocalMap passes it): a record's links
+                resolve to its MapRoute rows first, then to those of no app, never to another app's</description></parameter>
             <parameter name="featuresExtent" type="Object"><description>The view a shown record layer's features are read for
                 (west, south, east, north in degrees, a list or a comma text): Browse's search reads the view on screen;
                 empty for the initial view</description></parameter>
             <parameter name="recordLayers" type="Boolean" default="true"><description>false: the record layers are listed and
                 no adapter is asked for their features (the local-map dialog, which shows one record)</description></parameter>
+            <parameter name="locationShares" type="Boolean" default="false"><description>true: the configuration carries
+                locationShares (plans/archive/Location-Sharing.md §3.3), the caller's own active shares and those shared with them
+                now, read only through LocationServices find#MyShares, find#SharedWithMe and get#Share, which check the
+                caller against each share's current audience: Maps › Browse's getConfig asks for them (its terminal twin reads
+                the same through MapConfig.js liveShares), a map-view's config-url and the local-map dialog do not; with
+                locationSharesMineFailed or locationSharesTheirsFailed true when the read of the own shares or of those shared
+                with the caller failed</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="config" type="Map"><description>{profileId, profile: {profileId, profileName, basemaps, basemap,
                 allowedOrigins, notice}, layers, recordLayers, center, zoom, extent, units, points, features, featuresTruncated, record,
                 fallbacks: [{kind, id, reasonCode, message}], layerErrors: [{id, label, reasonCode, message}],
-                externalRequests}</description></parameter>
+                externalRequests, and with locationShares: locationShares [{shareId, role (owner or viewer), label, ownerName
+                (a viewer's), purposeText, fromDate, thruDate (epoch millis), approximate, keepTrail, latest {latitude,
+                longitude, accuracy, heading, speed, observedDate, ageSeconds} or null, trail [[longitude, latitude]] (its
+                latest 500 points, of at most 10 shares, when kept), and an owner's trailKeepDays, trailCount, audience
+                [{audienceSeqId, audienceTypeEnumId, userGroupId, name}] and reportIntervalSeconds}]}</description></parameter>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapConfig.js').execute('effectiveConfig', context))</script></actions>
     </service>
@@ -293,6 +314,9 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="restoreLastView" type="Boolean"/>
             <parameter name="lastView" type="Map"><description>{center: [lon, lat], zoom}</description></parameter>
             <parameter name="layers" type="Map"><description>{layerId: true or false}</description></parameter>
+            <parameter name="rasters" type="Map"><description>A COG layer's band settings by its ID (P4c): {layerId: {rgb: [r, g,
+                b] or band, min, max, colormap (grey, viridis, terrain, magma), nodata}}, each band one of the layer's; a layer's
+                null clears its settings (RASTER_INVALID for one that does not read)</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="applied" type="Boolean"/>
@@ -371,6 +395,45 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapConfig.js').execute('findConfiguration', context))</script></actions>
     </service>
+    <service verb="find" noun="Projections">
+        <description>The map projection registry (P4c, MapProjection) for Maps › Configuration › Projections: each row with
+            its definition, axis order, area of use, extent, whether it is enabled and whether the server reads its definition
+            (check#ProjectionDefinition: overlays in it are converted and a COG's bounds known) or only a browser draws it,
+            with the reason. For a caller who may open Configuration (their own grant; PERMISSION_DENIED otherwise).</description>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="projectionList" type="List"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapConfig.js').execute('findProjections', context))</script></actions>
+    </service>
+    <service verb="store" noun="Projection">
+        <description>Add or change a map projection (P4c, MapProjection), or enable or disable one (only projectionId and
+            disabled given), for a caller who may change Maps › Configuration (their own grant; PERMISSION_DENIED). The code is
+            an EPSG code other than EPSG:4326 and EPSG:3857 (every map's own); the definition PROJ.4 text of plain parameters
+            (no URL, no grid but +nadgrids=@null), which a browser registers with proj4 (DEFINITION_INVALID otherwise); the
+            area of use west, south, east, north in degrees; the extent four numbers in its units. The answer says whether the
+            server reads it too (serverReadable, serverReason): one it does not is still drawn by a map, and an overlay in it
+            is refused with that reason.</description>
+        <in-parameters>
+            <parameter name="projectionId" required="true"/>
+            <parameter name="label"/>
+            <parameter name="proj4Definition" allow-html="any"/>
+            <parameter name="axisOrder"/>
+            <parameter name="bounds"><description>west,south,east,north in degrees</description></parameter>
+            <parameter name="projectedExtent"><description>minx,miny,maxx,maxy in its units; empty for none</description></parameter>
+            <parameter name="disabled"><description>Y or N; empty to leave it</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="serverReadable" type="Boolean"/>
+            <parameter name="serverReason"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapConfig.js').execute('storeProjection', context))</script></actions>
+    </service>
     <service verb="store" noun="ProfileSettings">
         <description>Enable or disable a map profile and make one the installation's default (the ALL_USERS
             UserGroupPreference maps.profile), for a caller who may open and change Maps › Configuration (its view and update;
@@ -383,6 +446,9 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="profileId" required="true"/>
             <parameter name="enabled"><description>Y or N; empty to leave it</description></parameter>
             <parameter name="makeDefault" type="Boolean"/>
+            <parameter name="viewProjection"><description>The projection the profile's map is drawn in (P4c): EPSG:3857 (also
+                for empty), EPSG:4326 or a MapProjection row's code; a basemap of vector tiles is drawn only in EPSG:3857, so it
+                is refused with another (PROJECTION_INCOMPATIBLE); not given to leave it</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="applied" type="Boolean"/>
@@ -391,6 +457,82 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="cause"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapConfig.js').execute('storeProfileSettings', context))</script></actions>
+    </service>
+
+    <!-- ========== OGC layers (P4a; MapOgc.js) ========== -->
+
+    <service verb="read" noun="OgcCapabilities" type="rust" location="moqui_tools::maps_ogc::read_ogc_capabilities" allow-remote="false">
+        <description>An OGC service's GetCapabilities text (WMS 1.3.0, WMTS 1.0.0, WFS 2.0.0), which a provider's test fetched,
+            read by moqui-lib's XML reader (geo/ogc.rs: a DOCTYPE, an entity declaration and an unknown entity refuse it) into
+            the JSON the provider records (capabilitiesJson; MapOgc.js). Sends and writes nothing; no group is granted it:
+            the provider's test calls it.</description>
+        <in-parameters>
+            <parameter name="service" required="true"><description>wms, wmts or wfs</description></parameter>
+            <parameter name="text" required="true" allow-html="any"/>
+            <parameter name="maxLayers" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="read" type="Boolean"/>
+            <parameter name="refused"><description>Why it is not capabilities a map reads, a short fixed text</description></parameter>
+            <parameter name="capabilitiesJson"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="OgcLayerOptions">
+        <description>For Configuration's Add OGC layer: the OGC providers (WMS, WMTS, WFS) that passed their test as they are
+            now, and, for one of them, what its last test recorded (capabilitiesJson): its layers or feature types, and for
+            the layer named its styles, formats, the CRSs a map draws, its matrix sets (WMTS) and its time dimension. No
+            request is sent. For a caller who may open Maps › Configuration (PERMISSION_DENIED otherwise).</description>
+        <in-parameters>
+            <parameter name="providerId"/>
+            <parameter name="ogcLayers"><description>The layer whose choices are asked for</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="service"/>
+            <parameter name="providers" type="List"/>
+            <parameter name="layers" type="List"/>
+            <parameter name="styles" type="List"/>
+            <parameter name="formats" type="List"/>
+            <parameter name="crs" type="List"/>
+            <parameter name="matrixSets" type="List"/>
+            <parameter name="time" type="Map"/>
+            <parameter name="title"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapConfig.js').execute('ogcLayerOptions', context))</script></actions>
+    </service>
+    <service verb="store" noun="OgcLayer">
+        <description>A layer of a tested OGC provider (MapLayer of format MLF_WMS, MLF_WMTS or MLF_WFS), from what its last test
+            recorded: the layer or layers (a WMS may name several), style, format, CRS, matrix set (WMTS), time and whether a WMS
+            layer is one image of the view. It is checked as a map draws it before it is kept (LAYER_UNAVAILABLE, with the
+            cause: a name, style, format, CRS or matrix set its capabilities do not have). A WMS or WMTS layer may be a basemap; a
+            WFS layer is an overlay. With a profileId an overlay is also added to that profile's layers, shown, and a basemap
+            becomes that profile's basemap. For a caller who
+            may open and change Maps › Configuration (PERMISSION_DENIED otherwise); PROVIDER_UNAVAILABLE for a provider that is
+            not a tested OGC one.</description>
+        <in-parameters>
+            <parameter name="providerId" required="true"/>
+            <parameter name="ogcLayers" required="true"/>
+            <parameter name="layerId"/>
+            <parameter name="layerName"/>
+            <parameter name="ogcStyles"/>
+            <parameter name="ogcFormat"/>
+            <parameter name="crs"/>
+            <parameter name="ogcMatrixSet"/>
+            <parameter name="ogcTime"/>
+            <parameter name="ogcSingleImage"/>
+            <parameter name="isBasemap"/>
+            <parameter name="profileId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="cause"/>
+            <parameter name="layerId"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapConfig.js').execute('storeOgcLayer', context))</script></actions>
     </service>
 
     <!-- ========== Providers and readiness (P1; MapProviders.js) ========== -->
@@ -403,7 +545,10 @@ along with this software (see the LICENSE.md file). If not, see
             network is shown and changed only in Tools. The engine's rules hold: a change of the URL or the kind clears the
             key and disables the provider until a test passes, and a provider is enabled only after a passing test of its
             configuration as it is. The test is one GET with no credentials, following no redirect and reading at most
-            2 MB (a style document must parse and name only its own origin; a raster template must answer an image), to no
+            2 MB (a style document must parse and name only its own origin; a raster template must answer an image; a
+            raster provider whose URL is a Cloud Optimized GeoTIFF, a .tif or .tiff path with no tile placeholder, as a
+            bucket of COGs has, is read as registering one of its COGs reads it: one range of its first 64 KiB, a 206 this
+            site may read by CORS, its header one a map draws, never through the proxy or with a key), to no
             internal address unless the private network is allowed; an archive provider has no URL (ARCHIVE_ENDPOINT). While maps@external-requests is false a provider is neither tested nor enabled
             (EXTERNAL_REQUESTS_OFF). Needs ADMIN_CONNECTION_VIEW to read and ADMIN_CONNECTION_MANAGE to change or test; no
             group is authorized to call it directly.</description>
@@ -429,7 +574,7 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- ========== Postal lookup and Geo data readiness (P2; MapLookup.js, GeoData.js) ========== -->
 
     <service verb="get" noun="PostalLocation">
-        <description>A postal code's place from the local Geo data (plans/Maps.md §6.1, §6.3; GeoDataServices imports it), for a
+        <description>A postal code's place from the local Geo data (plans/archive/Maps.md §6.1, §6.3; GeoDataServices imports it), for a
             map, a search and an address with no point: country and code only, no street address, party or outside request.
             The country is a Geo ID or an ISO alpha-2 or alpha-3 code; the code is read by the importer's rules
             (normalize#PostalCode: leading zeros kept, a US ZIP+4 read as its ZIP code). Each match is the code's active
@@ -477,21 +622,29 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- ========== Overlays and saved places (P3; MapOverlays.js) ========== -->
 
     <service verb="store" noun="Overlay">
-        <description>Add a GeoJSON, GPX or KML file as one of the signed-in user's map overlays: an upload (file), kept as it was
+        <description>Add a geographic file (GeoJSON, TopoJSON, EsriJSON, GPX, KML, GML, WKT, WKB, CSV with a WKT, WKB or
+            latitude and longitude column, or a zipped shapefile) as one of the signed-in user's map overlays: an upload (file), kept as it was
             sent in Maps/overlays of their personal drive (a name already there gets "name (2).ext"), or a file of a drive
             they read (driveId, path), which stays where it is. The file is read first (MapSourceServices.convert#Overlay: at
             most maps@overlay-max-bytes within maps@import-max-bytes, at most maps@max-features features (5000 when that is
-            0), WGS84 or a declared EPSG:3857, at most 4 MiB of characters as GeoJSON) and, when it cannot be drawn,
+            0), WGS84 or a declared EPSG:3857 (another CRS is refused until reprojection is built), at most 4 MiB of
+            characters as GeoJSON) and, when it cannot be drawn,
             refused with nothing written (FORMAT_UNKNOWN, TOO_LARGE, NOT_PARSED, NOT_FORMAT, CRS_UNSUPPORTED,
             TOO_MANY_FEATURES, NO_FEATURES, TOO_LARGE_TO_DRAW; NOT_FOUND for a file the user does not read). A feature whose
             geometry is not sane is left out and counted (rejectedCount, notes), as is what is not read (network links,
             icons, styles, extended data). Records a moqui.maps.MapOverlay row of the user's (the same file again brings its
-            row up to date), at most 100 (TOO_MANY_OVERLAYS). Sharing it is sharing the file in Files.</description>
+            row up to date), at most 100 (TOO_MANY_OVERLAYS). Sharing it is sharing the file in Files. A file too large to
+            draw whole (TOO_MANY_FEATURES, TOO_LARGE_TO_DRAW) is refused with canGeneralize true; with generalize true it is
+            kept and simplified on the server into vector tiles beside it (MapSourceServices build#OverlayTiles in the
+            MapOverlayTiles ServiceJob, generalizing true; a file the user may not write beside is TILES_NOT_WRITABLE, one being
+            simplified now TILES_RUNNING).</description>
         <in-parameters>
             <parameter name="file" type="Object"><description>An uploaded file</description></parameter>
             <parameter name="driveId"/>
             <parameter name="path"/>
             <parameter name="label"/>
+            <parameter name="generalize" type="Boolean" default="false"><description>Simplify a file too large to draw whole
+                into vector tiles on the server</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="applied" type="Boolean"/>
@@ -501,6 +654,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="featureCount" type="Integer"/>
             <parameter name="rejectedCount" type="Integer"/>
             <parameter name="notes" type="List"/>
+            <parameter name="canGeneralize" type="Boolean"/>
+            <parameter name="generalizing" type="Boolean"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapOverlays.js').execute('storeOverlay', context))</script></actions>
     </service>
@@ -521,7 +676,8 @@ along with this software (see the LICENSE.md file). If not, see
             overlays whose file the user may read now in its drive (a share of the file or a folder above it, or a
             membership: FileServices get#DriveAccess), at most 100 of each. Each has its layerId (overlay:ID), label, owner,
             file name (its path only for one's own), format, feature count, rejected count, bounds, notes and the overlay
-            transition's URL. Changes nothing.</description>
+            transition's URL; one simplified into vector tiles its tilesStatus, tilesProgress and tilesNote, and when ready
+            its tileUrl (LocalMap's tile transition) and tilesMaxZoom. Changes nothing.</description>
         <in-parameters><parameter name="placesOnly" type="Boolean" default="false"/></in-parameters>
         <out-parameters><parameter name="overlayList" type="List"/></out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapOverlays.js').execute('findOverlays', context))</script></actions>
@@ -542,12 +698,55 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapOverlays.js').execute('overlayContent', context))</script></actions>
     </service>
-    <service verb="find" noun="OverlayFiles">
-        <description>The GeoJSON, GPX and KML files the signed-in user could add as an overlay: those of their personal drive's
-            top folder, Maps and Maps/overlays, and their recent files of any drive they still read, at most 50, each
-            {driveId, path, name, driveName}. Changes nothing.</description>
-        <out-parameters><parameter name="fileList" type="List"/></out-parameters>
-        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapOverlays.js').execute('findOverlayFiles', context))</script></actions>
+    <service verb="get" noun="OverlayEdit">
+        <description>One of the signed-in user's own overlays to edit on the map (P4b; MapOverlays.js editOverlay): its
+            sanitized GeoJSON as a map draws it, the version of its file (version, which a save names) and where a save
+            writes (editPath; inPlace true only when a save over the file changes nothing of it but the edit: a GeoJSON
+            file that is exactly what the converter makes of it, the user's places, or an edited copy; else the edit is
+            written beside it as name.edited.geojson and the original kept). Refused: another user's overlay or none (RECORD_UNAVAILABLE), one
+            simplified into tiles (NOT_EDITABLE), a file the user may not write or add a file beside (NOT_WRITABLE), a file
+            gone (FILE_GONE) or no longer drawn (the reader's reason, TOO_LARGE_TO_DRAW). Writes nothing.</description>
+        <in-parameters><parameter name="overlayId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="overlayId"/>
+            <parameter name="geojson"/>
+            <parameter name="version"/>
+            <parameter name="isPlaces" type="Boolean"/>
+            <parameter name="editPath"/>
+            <parameter name="inPlace" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapOverlays.js').execute('editOverlay', context))</script></actions>
+    </service>
+    <service verb="store" noun="OverlayEdit">
+        <description>Save an edit of one of the signed-in user's own overlays (P4b; MapOverlays.js saveEdit): geojson, a
+            FeatureCollection, read by MapSourceServices.convert#Overlay as any overlay is (its bounds, maps@max-features,
+            plain-text labels and descriptions, nothing else of a feature kept) and written through FileServices.save#Text
+            as the user (the drive's write check, quota and versions) to the overlay's file when get#OverlayEdit's rule holds
+            for the file as it is now, else beside it as name.edited.geojson (upload#Resource, keepBoth: no file replaced),
+            which the overlay then draws (sourcePath, sourceCrs and importNotes keep the original's). The overlay's row
+            is locked, and the save refused when the file is not the version the edit started from (baseVersion:
+            STALE_VERSION). Refused as get#OverlayEdit refuses, and: not a FeatureCollection (NOT_FORMAT), no feature
+            (NO_FEATURES, saved places excepted), a geometry that is not valid (INVALID_GEOMETRY, with notes), past what a map
+            draws (TOO_LARGE_TO_DRAW, TOO_MANY_FEATURES), a saved place that is not a point (POINTS_ONLY).</description>
+        <in-parameters>
+            <parameter name="overlayId" required="true"/>
+            <parameter name="geojson" required="true" allow-html="any"/>
+            <parameter name="baseVersion"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="notes" type="List"/>
+            <parameter name="overlayId"/>
+            <parameter name="version"/>
+            <parameter name="path"/>
+            <parameter name="featureCount" type="Integer"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapOverlays.js').execute('saveEdit', context))</script></actions>
     </service>
     <service verb="store" noun="Place">
         <description>Save a named point to the signed-in user's places: Maps/places.geojson of their personal drive (written
@@ -585,9 +784,14 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- ========== Address and place search (P3; MapGeocoders.js) ========== -->
 
     <service verb="find" noun="Places">
-        <description>Candidate places for a text from one configured geocoder (plans/Maps.md §6.1, §6.2, §8): the provider named,
+        <description>Candidate places for a text from one configured geocoder (plans/archive/Maps.md §6.1, §6.2, §8): the provider named,
             or the enabled geocoder (a MapProvider of a kind under MPK_GEOCODER: the US Census geocoder, a self-hosted
-            Nominatim or Photon) that passed its test as it is configured now, first by sequenceNum. Each candidate is
+            Nominatim or Photon, or this server's own index of Overture address points, MPK_GEOCODER_OVERTURE) that passed its
+            test as it is configured now and may be asked now (an outside one with outside requests on, the local one while a
+            region's addresses are active), first by sequenceNum. The local geocoder sends nothing: its candidates are address
+            matches (GPP_ADDRESS_MATCH, the point's position kind not stated), a number found without its suffix or a street
+            (GPP_PLACE_ESTIMATE), each with its source dataset, license, GERS ID and release; a text it does not match is
+            answered with the postal area of the code read from it (NO_ADDRESS_MATCH, approximate) or none (NO_MATCH). Each candidate is
             {label (plain text), lon, lat, matchKind (address, street, postal, place), precisionEnumId and precisionText
             (the Census geocoder's: an address placed by street-range interpolation, GPP_STREET_RANGE, never a rooftop; an address point
             GPP_ADDRESS_MATCH; a postal code GPP_POSTAL_AREA; a street or place GPP_PLACE_ESTIMATE), extent}; several are
@@ -596,7 +800,8 @@ along with this software (see the LICENSE.md file). If not, see
             more than 200 characters (QUERY_INVALID), a country the geocoder does not cover (COUNTRY_NOT_COVERED, the Census
             geocoder outside the US), a provider whose allowedOperations name neither geocode nor search
             (OPERATION_NOT_ALLOWED), the provider's rate passed (RATE_LIMITED: requestsPerSecond, 1 for Nominatim and Photon
-            when empty, claimed atomically on each server by itself; requestsPerDay is not enforced). One GET with no
+            when empty, claimed atomically on each server by itself) and its requests a day not used up (DAILY_LIMIT:
+            requestsPerDay, a calendar day in UTC, claimed on its MapProviderDayCount row for the whole cluster). One GET with no
             credentials, following no redirect, ten seconds, the body read to at most 1 MiB whatever its Content-Length, to
             no internal address unless the provider is allowed the private network; a failure is PROVIDER_FAILED, naming the
             provider, and no other outside service is asked. This server keeps an answer only for cachePolicy shared

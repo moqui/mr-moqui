@@ -345,9 +345,11 @@ macro_rules! tools_js {
         l.csvFieldNames = (names) => { options.csvFieldNames = Array.from(names || []); return l; };
         l.dataTypes = (types) => { options.dataTypes.push(...Array.from(types || [])); return l; };
         l.componentNameList = (names) => { options.componentNames.push(...Array.from(names || [])); return l; };
-        l.load = (messages) => {
+        // A file or location that failed is in failures, with an array given, as {location, reason} (TOOL-UI-006).
+        l.load = (messages, failures) => {
             const result = host.loadData(options);
             if (Array.isArray(messages)) messages.push(...result.messages);
+            if (Array.isArray(failures)) failures.push(...result.failures);
             return result.records;
         };
         // Java's check(): compare the data with the database and write nothing. With no argument the messages of
@@ -371,8 +373,14 @@ macro_rules! tools_js {
             return result.diffInfo;
         };
         // Java's list(): the values of the records the data has, nested records after the record they are in, with
-        // nothing written and no service called.
-        l.list = () => host.loadData(Object.assign({}, options, { list: true })).values;
+        // nothing written and no service called. The messages and failures, with arrays given, name a location that
+        // failed, as load's do.
+        l.list = (messages, failures) => {
+            const result = host.loadData(Object.assign({}, options, { list: true }));
+            if (Array.isArray(messages)) messages.push(...result.messages);
+            if (Array.isArray(failures)) failures.push(...result.failures);
+            return result.values;
+        };
         return l;
     };
 
@@ -1882,6 +1890,8 @@ fn load_data(call: &mut Call<'_>) -> Result<Ret, HostError> {
         csv_quote_char: text("csvQuoteChar").chars().next(),
         // Java's `messageNoActionFiles` is true unless the script sets it false.
         hide_no_action_files: text("messageNoActionFiles") == "false",
+        // set for the texts in `load_source`
+        wait_each_write: false,
         default_values: match options.get("defaultValues") {
             Some(Value::Map(entries)) => entries
                 .iter()
@@ -1908,9 +1918,10 @@ fn load_data(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let mut values = Vec::new();
     let loaded = if listing {
         let source = || load_source(&facade, &factory, &text, &locations, &load_options);
-        crate::entity::load_feed::list_with(source).map(|((records, _), result)| {
+        // the messages name a location that failed, so a caller can tell missing data from data with no records
+        crate::entity::load_feed::list_with(source).map(|(loaded, result)| {
             values = result.values;
-            (records, Vec::new())
+            loaded
         })
     } else if check {
         // `check()`: the messages are what did not match, not what was loaded. `checkInfo()`: what did not match
@@ -1921,16 +1932,30 @@ fn load_data(call: &mut Call<'_>) -> Result<Ret, HostError> {
         } else {
             crate::entity::load_feed::check_with(source)
         };
-        checked.map(|((records, _), result)| {
+        checked.map(|(loaded, result)| {
             fields_checked = result.fields_checked;
             diff_info = result.diff_info;
-            (records, result.messages)
+            SourceLoad {
+                messages: result.messages,
+                ..loaded
+            }
         })
     } else {
-        load_source(&facade, &factory, &text, &locations, &load_options)
+        // As Java's `internalRun` (`runRequireNew` with no transaction begun): the caller's transaction is set aside,
+        // and each text and file loads in a transaction of its own, so a record the database refuses fails the load
+        // at that record and not a screen's commit, where the transaction cache held it (TOOL-UI-005).
+        facade.default_transactions().and_then(|tx| {
+            tx.run(crate::transaction::TransactionAttribute::IgnoreSuspend, None, || {
+                load_source(&facade, &factory, &text, &locations, &load_options)
+            })
+        })
     };
     drop(switches);
-    let (records, messages) = loaded.map_err(HostError::Lib)?;
+    let SourceLoad {
+        records,
+        messages,
+        failures,
+    } = loaded.map_err(HostError::Lib)?;
     let mut out = indexmap::IndexMap::default();
     out.insert(
         "records".to_string(),
@@ -1940,6 +1965,16 @@ fn load_data(call: &mut Call<'_>) -> Result<Ret, HostError> {
         "messages".to_string(),
         Value::List(messages.into_iter().map(Value::String).collect()),
     );
+    let failures: Vec<Value> = failures
+        .into_iter()
+        .map(|failure| {
+            let mut row = indexmap::IndexMap::default();
+            row.insert("location".to_string(), Value::String(failure.location));
+            row.insert("reason".to_string(), Value::String(failure.reason));
+            Value::Map(row)
+        })
+        .collect();
+    out.insert("failures".to_string(), Value::List(failures));
     out.insert(
         "fieldsChecked".to_string(),
         Value::I64(i64::try_from(fields_checked).unwrap_or(i64::MAX)),
@@ -1957,13 +1992,20 @@ fn load_data(call: &mut Call<'_>) -> Result<Ret, HostError> {
     Ok(Ret::Value(Value::Map(out)))
 }
 
+/// What [`load_source`] loaded: the records, the messages of each location, and the files and locations that failed.
+struct SourceLoad {
+    records: u64,
+    messages: Vec<String>,
+    failures: Vec<crate::entity::load_feed::LoadFailure>,
+}
+
 fn load_source(
     facade: &crate::entity::EntityFacade,
     factory: &crate::context::ExecutionContextFactory,
     text: &dyn Fn(&str) -> String,
     locations: &[String],
     options: &crate::entity::load_feed::LoadOptions,
-) -> Result<(u64, Vec<String>), moqui_lib::error::Error> {
+) -> Result<SourceLoad, moqui_lib::error::Error> {
     use crate::entity::load_feed::{
         component_data_locations, conf_data_locations, load_entity_data, load_entity_text, load_entity_xml_text,
         location_in_components,
@@ -1972,14 +2014,34 @@ fn load_source(
     // none of those, the conf data and the components' data of the data types or components.
     let mut records = 0;
     let mut messages = Vec::new();
+    let mut failures = Vec::new();
+    // A text is request-sized: each write waits, so a record that fails is the one named. As Java, a text that fails
+    // fails the load, with the record and the database's reason in the message a script catches.
+    let text_options = crate::entity::load_feed::LoadOptions {
+        wait_each_write: true,
+        ..options.clone()
+    };
+    // the message a script catches is the whole of it, as the error's display has its sources; a source as well would
+    // repeat the reason in the display (TOOL-UI-007), so only the Rust call site is kept from it
+    let text_failed = |name: &str, err: moqui_lib::error::Error| {
+        let failed = moqui_lib::error::Error::new(format!("Error loading {name}: {err}"));
+        match err.origin() {
+            Some(origin) => failed.with_origin(origin),
+            None => failed,
+        }
+    };
     let xml = text("xmlText");
     if !xml.is_empty() {
-        records += load_entity_xml_text(facade, "xmlText", &xml, options)?.records;
+        records += load_entity_xml_text(facade, "xmlText", &xml, &text_options)
+            .map_err(|err| text_failed("xmlText", err))?
+            .records;
     }
     for (name, json) in [("csvText", false), ("jsonText", true)] {
         let body = text(name);
         if !body.is_empty() {
-            records += load_entity_text(facade, name, &body, json, options)?.records;
+            records += load_entity_text(facade, name, &body, json, &text_options)
+                .map_err(|err| text_failed(name, err))?
+                .records;
         }
     }
     let given = !xml.is_empty() || !text("csvText").is_empty() || !text("jsonText").is_empty() || !locations.is_empty();
@@ -2004,21 +2066,30 @@ fn load_source(
         let result = match load_entity_data(facade, &location, options) {
             Ok(result) => result,
             Err(err) => {
-                let text = crate::entity::load_feed::error_chain(&err);
-                tracing::error!("Skipping to next file after error loading {location}: {text}");
-                messages.push(format!("Error loading {location}: {text}"));
+                let reason = crate::entity::load_feed::error_chain(&err);
+                tracing::error!("Skipping to next file after error loading {location}: {reason}");
+                messages.push(format!("Error loading {location}: {reason}"));
+                failures.push(crate::entity::load_feed::LoadFailure { location, reason });
                 continue;
             }
         };
         if result.records > 0 || given {
             messages.push(format!("Loaded {} records from {location}", result.records));
         }
-        if result.failed_files > 0 {
-            messages.push(format!("{} files failed to load from {location}", result.failed_files));
+        if !result.failures.is_empty() {
+            messages.push(format!(
+                "{} files failed to load from {location}",
+                result.failures.len()
+            ));
         }
         records += result.records;
+        failures.extend(result.failures);
     }
-    Ok((records, messages))
+    Ok(SourceLoad {
+        records,
+        messages,
+        failures,
+    })
 }
 
 // ---- service ----

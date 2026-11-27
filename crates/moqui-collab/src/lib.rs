@@ -34,6 +34,9 @@
 //! document with the stored state merged first. Yjs updates are idempotent, so merging what a room already has changes
 //! nothing.
 //!
+//! A key `DevFile:<rootId>:<path>` is a file of a Dev AIDE root co-edited in shared mode ([`text`]): its own rooms,
+//! seeded from the file and kept in memory only, joined and changed through the same functions.
+//!
 //! This crate is on moqui-core (plans/archive/Crate-Split.md), which reaches it through the [`moqui_core::extension`]
 //! entry below: `org.moqui.resource.CollabServices` ([`service`]). moqui-host links it in every build and calls the rooms
 //! from its WebSocket; the browser build leaves it out, and its services report that `collab` is not built in.
@@ -41,8 +44,10 @@
 mod board;
 pub mod markdown;
 mod meeting;
+mod nesting;
 pub use meeting::Meeting;
 pub mod service;
+pub mod text;
 
 moqui_core::extension::submit! {
     moqui_core::extension::Extension {
@@ -110,6 +115,11 @@ pub struct Joined {
     pub state_vector: Vec<u8>,
     /// The user's name, for the others' presence.
     pub user_name: String,
+    /// A co-edited file's room ([`text`]): its seed's id, new each time the room is seeded, by which a client that
+    /// joins again knows a room seeded again since (and starts a new document rather than merge an old copy).
+    pub seed: Option<String>,
+    /// A co-edited file's room: the hash of the file it was seeded from, which a joining tab compares with its own.
+    pub base_hash: Option<String>,
 }
 
 /// Something the host tells the editors of a document.
@@ -177,12 +187,29 @@ impl Codec {
             Self::Board => board::search_text(doc),
         }
     }
+
+    /// What its documents may hold (SEC-TLS-118): a page, its fragment of XML elements and texts; a board, its three
+    /// maps of plain values.
+    fn shape(self) -> nesting::Shape {
+        match self {
+            Self::Markdown => nesting::Shape {
+                roots: &[markdown::FRAGMENT],
+                nested: nesting::Nested::Xml,
+            },
+            Self::Board => nesting::Shape {
+                roots: &["elements", "files", "app"],
+                nested: nesting::Nested::None,
+            },
+        }
+    }
 }
 
 struct Room {
     saving: Arc<Mutex<()>>,
     doc: Doc,
     board_candidate: Option<Doc>,
+    /// The depth of the document's shared types, which an editor's update may not take past its bound (SEC-TLS-118).
+    nesting: nesting::Nesting,
     target: WikiTarget,
     /// Changed since the state was last written.
     dirty: bool,
@@ -405,29 +432,56 @@ fn stamp_of(row: &moqui_core::entity::EntityValue) -> Option<i64> {
 /// Merge a stored state into `doc`. Out: the update of what `doc` lacked, for its clients; `None` when it had it all
 /// or the state is not one.
 fn merge_into(key: &str, doc: &Doc, state: &[u8]) -> Option<Vec<u8>> {
+    merge_checked(key, doc, state).ok().flatten()
+}
+
+/// [`merge_into`], with an error when the state was not merged (it does not read, or was not applied).
+fn merge_checked(key: &str, doc: &Doc, state: &[u8]) -> Result<Option<Vec<u8>>, ()> {
     if state.is_empty() {
-        return None;
+        return Ok(None);
     }
     let update = match Update::decode_v1(state) {
         Ok(update) => update,
         Err(err) => {
             tracing::warn!("co-edited {key}: its stored state is not a Yjs update and was not merged: {err}");
-            return None;
+            return Err(());
         }
     };
     let before = doc.transact().state_vector();
     if let Err(err) = doc.transact_mut().apply_update(update) {
         tracing::warn!("co-edited {key}: its stored state was not merged: {err}");
-        return None;
+        return Err(());
     }
     let txn = doc.transact();
-    (txn.state_vector() != before).then(|| txn.encode_state_as_update_v1(&before))
+    Ok((txn.state_vector() != before).then(|| txn.encode_state_as_update_v1(&before)))
 }
 
 /// What another server stored: merged into the room, and what the room lacked queued for its clients.
 fn merge_stored(key: &str, room: &mut Room, row: &moqui_core::entity::EntityValue) {
     room.board_candidate = None;
-    if let Some(update) = merge_into(key, &room.doc, &bytes_of(row, "stateData")) {
+    let state = bytes_of(row, "stateData");
+    if state.is_empty() {
+        room.stamp = stamp_of(row);
+        return;
+    }
+    // held to the same roots, kinds and depth as an update (SEC-TLS-118); a state refused is not merged
+    let shape = room.target.codec.shape();
+    let checked = {
+        let Room { doc, nesting, .. } = &mut *room;
+        match nesting.check(doc, shape, &state) {
+            Ok(checked) => checked,
+            Err((_, why)) => {
+                tracing::error!("co-edited {key}: the state another server stored is refused: {why}");
+                room.stamp = stamp_of(row);
+                return;
+            }
+        }
+    };
+    let merged = merge_checked(key, &room.doc, &state);
+    if merged.is_ok() {
+        room.nesting.keep(checked);
+    }
+    if let Ok(Some(update)) = merged {
         lock(events()).push(Event::Update {
             document_key: key.to_string(),
             update,
@@ -518,6 +572,7 @@ fn load(key: &str, page_id: &str, on_database: bool) -> Result<Arc<Mutex<Room>>,
     let hash = text_hash(&page_text);
     let row = stored(key)?;
     let doc = Doc::new();
+    let mut nesting = nesting::Nesting::for_room(key);
     let mut unsaved = BTreeSet::new();
     let mut meeting_names = BTreeSet::new();
     let mut seed = true;
@@ -538,12 +593,28 @@ fn load(key: &str, page_id: &str, on_database: bool) -> Result<Arc<Mutex<Room>>,
                 tracing::warn!("co-edited {key}: the page changed outside co-editing while changes were open; the co-edited text is kept and its next save writes over the change, which stays in the page's history");
             }
             let state = bytes_of(row, "stateData");
-            if !state.is_empty() {
+            // a state stored before its updates were checked (SEC-TLS-118) may nest types past the bound, which a
+            // delete would overflow the stack on: it is checked as an update, and one refused is not opened
+            let checked = if state.is_empty() {
+                None
+            } else {
+                match nesting.check(&doc, target.codec.shape(), &state) {
+                    Ok(checked) => Some(checked),
+                    Err((_, why)) => {
+                        tracing::error!(
+                            "co-edited {key}: its stored state is refused ({why}), the page's text is read again"
+                        );
+                        None
+                    }
+                }
+            };
+            if let Some(checked) = checked {
                 match Update::decode_v1(&state) {
                     Ok(update) => {
                         if let Err(err) = doc.transact_mut().apply_update(update) {
                             tracing::error!("co-edited {key}: its stored state was not applied, the page's text is read again: {err}");
                         } else {
+                            nesting.keep(checked);
                             seed = false;
                             unsaved = editors;
                             meeting_names = row
@@ -582,6 +653,7 @@ fn load(key: &str, page_id: &str, on_database: bool) -> Result<Arc<Mutex<Room>>,
         saving: Arc::default(),
         doc,
         board_candidate: None,
+        nesting,
         target,
         dirty: false,
         changed_at: Instant::now(),
@@ -748,6 +820,12 @@ fn wrote(key: &str, room: &mut Room, written: Written) {
 
 /// An error unless the current user may view the document.
 pub fn check_view(key: &str) -> Result<(), Refusal> {
+    if text::is_key(key) {
+        return Err(Refusal::new(
+            404,
+            format!("{key} is a co-edited file: its editors join it"),
+        ));
+    }
     let page_id = wiki_page_id(key)?;
     let user_id = moqui_core::user::current_user_id().ok().flatten().unwrap_or_default();
     if access(page_id, &user_id)?.can_view {
@@ -769,6 +847,13 @@ pub fn join_scoped(
     client_state_vector: &[u8],
     meeting: Option<Meeting>,
 ) -> Result<Joined, Refusal> {
+    if text::is_key(key) {
+        // a file is co-edited by its writers, never from a meeting
+        if meeting.is_some() {
+            return Err(Refusal::new(404, "board not found"));
+        }
+        return text::join(key, user_id, client_state_vector);
+    }
     let page_id = wiki_page_id(key)?;
     let key_of_actor = meeting.as_ref().map_or_else(|| user_id.to_string(), Meeting::key);
     let (
@@ -831,6 +916,8 @@ pub fn join_scoped(
         update,
         state_vector,
         user_name: name,
+        seed: None,
+        base_hash: None,
     })
 }
 
@@ -858,6 +945,9 @@ fn user_name(user_id: &str) -> String {
 
 /// An update from an editor of the document; refused when the user did not join it or may not change it.
 pub fn apply(key: &str, user_id: &str, update: &[u8]) -> Result<(), Refusal> {
+    if text::is_key(key) {
+        return text::apply(key, user_id, update);
+    }
     let room = room_of(key).ok_or_else(|| Refusal::new(409, format!("{key} is not open here: join it first")))?;
     let mut room = lock(&room);
     match room.can_edit.get(user_id) {
@@ -881,6 +971,14 @@ pub fn apply(key: &str, user_id: &str, update: &[u8]) -> Result<(), Refusal> {
     if room.state_bytes.saturating_add(update.len()) > max {
         return Err(Refusal::new(413, format!("the document is larger than {max} bytes")));
     }
+    // its roots and nested types, before anything of it is applied, here or to the board's candidate (SEC-TLS-118)
+    let shape = room.target.codec.shape();
+    let checked = {
+        let Room { doc, nesting, .. } = &mut *room;
+        nesting
+            .check(doc, shape, update)
+            .map_err(|(status, why)| Refusal::new(status, why))?
+    };
     if matches!(room.target.codec, Codec::Board) {
         let Room {
             doc, board_candidate, ..
@@ -893,6 +991,7 @@ pub fn apply(key: &str, user_id: &str, update: &[u8]) -> Result<(), Refusal> {
         .transact_mut()
         .apply_update(update)
         .map_err(|err| Refusal::new(400, format!("the update was not applied: {err}")))?;
+    room.nesting.keep(checked);
     room.state_bytes = room.state_bytes.saturating_add(size);
     room.dirty = true;
     room.changed_at = Instant::now();
@@ -918,13 +1017,31 @@ fn max_state_bytes() -> usize {
 
 /// An update another server applied: into this server's room, when it has the document open. That server writes it.
 pub fn apply_remote(key: &str, update: &[u8]) {
+    if text::is_key(key) {
+        return text::apply_remote(key, update);
+    }
     let Some(room) = room_of(key) else { return };
     let mut room = lock(&room);
     room.board_candidate = None;
+    // held to the same roots, kinds and depth as an editor's update, so a cluster member does not get past them
+    // (SEC-TLS-118)
+    let shape = room.target.codec.shape();
+    let checked = {
+        let Room { doc, nesting, .. } = &mut *room;
+        match nesting.check(doc, shape, update) {
+            Ok(checked) => checked,
+            Err((_, why)) => {
+                tracing::error!("co-edited {key}: an update from another server is refused: {why}");
+                return;
+            }
+        }
+    };
     match Update::decode_v1(update) {
         Ok(update) => {
-            if let Err(err) = room.doc.transact_mut().apply_update(update) {
-                tracing::warn!("co-edited {key}: an update from another server was not applied: {err}");
+            let applied = room.doc.transact_mut().apply_update(update);
+            match applied {
+                Ok(()) => room.nesting.keep(checked),
+                Err(err) => tracing::warn!("co-edited {key}: an update from another server was not applied: {err}"),
             }
         }
         Err(err) => tracing::warn!("co-edited {key}: an update from another server is not a Yjs update: {err}"),
@@ -939,6 +1056,9 @@ pub fn leave(key: &str) {
 /// A client of `user_id` left the document: the room counts one member fewer, and the user's access answer goes with
 /// their last client (SEC-TLS-112).
 pub fn leave_as(key: &str, user_id: Option<&str>) {
+    if text::is_key(key) {
+        return text::leave(key, user_id);
+    }
     if let (Some(room), Some(user_id)) = (room_of(key), user_id) {
         let mut room = lock(&room);
         let last = room.can_edit.get_mut(user_id).is_some_and(|grant| {
@@ -961,6 +1081,9 @@ fn leave_count(key: &str) {
 
 /// Searchable text of an open document: Markdown, or board text in reading order.
 pub fn snapshot(key: &str) -> Option<String> {
+    if text::is_key(key) {
+        return text::snapshot(key);
+    }
     room_of(key).map(|room| {
         let room = lock(&room);
         room.target.codec.search_text(&room.doc)
@@ -969,13 +1092,18 @@ pub fn snapshot(key: &str) -> Option<String> {
 
 /// The keys of the documents open on this server.
 pub fn open_documents() -> Vec<String> {
-    lock(rooms()).keys().cloned().collect()
+    let mut keys: Vec<String> = lock(rooms()).keys().cloned().collect();
+    keys.extend(text::open_keys());
+    keys
 }
 
 /// Write the rooms' state a moment after their edits, save a version of a document on database files that has been
 /// left a while, and save and close the rooms no one is in. Each room stands alone: a failure is logged and the others
 /// go on. Runs on a request worker in a fresh context every second or two.
 pub fn tick() {
+    let mut revoked = Vec::new();
+    text::tick(&mut revoked);
+    lock(events()).extend(revoked);
     let keys: Vec<(String, Arc<Mutex<Room>>)> = lock(rooms())
         .iter()
         .map(|(key, room)| (key.clone(), Arc::clone(room)))

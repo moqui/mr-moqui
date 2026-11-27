@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The registry of Geo data sets (plans/Maps.md §6.4): the sources the importer supports first, their identity, parser,
+<!-- The registry of Geo data sets (plans/archive/Maps.md §6.4): the sources the importer supports first, their identity, parser,
     license and attribution; where each is downloaded from, its year and its priority are in MapsSetupData.xml
     (seed-initial), which an administrator may change. Nothing here is downloaded or loaded until an administrator
     imports a set from Maps › Configuration › Geo data, after acknowledging its license (licenseAckUserId, which these rows
@@ -120,4 +120,25 @@ along with this software (see the LICENSE.md file). If not, see
             serviceName="org.moqui.maps.GeoDataServices.import#GeoData" topic="GeoDataImport" transactionTimeout="86400" noTimeLimit="Y"/>
     <moqui.service.job.ServiceJob jobName="GeoDataRefresh" description="Refresh the imported Geo data"
             serviceName="org.moqui.maps.GeoDataServices.run#GeoDataRefresh" topic="GeoDataRefresh" transactionTimeout="86400" noTimeLimit="Y"/>
+    <!-- a user's overlay too large to draw whole, simplified into vector tiles beside its file (MapOverlays.js buildTiles,
+        docs/tools/Maps.md "Large overlays"): run as the user who asked, who is told when it ends -->
+    <moqui.security.user.NotificationTopic topic="MapOverlayTiles" inboxEnumId="NinUpdates" description="Map overlay simplified"
+            typeString="success" showAlert="Y" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y" emailTemplateId="NOTIFICATION"
+            titleTemplate="Map overlay ${results.label || ''}: ${results.tilesStatus === 'ready' ? 'simplified for drawing' : results.tilesStatus === 'cancelled' ? 'simplifying cancelled' : 'not simplified'}"
+            errorTitleTemplate="Map overlay not simplified: see Maps › Layers" linkTemplate="/qapps/maps/Browse"/>
+    <moqui.service.job.ServiceJob jobName="MapOverlayTiles" description="Simplify a map overlay into vector tiles"
+            serviceName="org.moqui.maps.MapSourceServices.build#OverlayTiles" topic="MapOverlayTiles" transactionTimeout="3600"/>
+    <!-- an offline map package built from what its owner may see (MapPackages.js buildPackage, plans/archive/Maps-Offline.md §2.2):
+        started by whichever request or build's end found the installation room for it, so the run signs in as the
+        package's owner, and the owner alone is told when it ends (the build sends the topic's notification itself, directly
+        to them: the job has no topic, which would tell the user who started it). A regional cut may take long, so its
+        transaction timeout is a day. The hourly clean removes the files of deleted packages and those not downloaded for
+        maps@package-keep-days, and starts a waiting build whose turn was missed. -->
+    <moqui.security.user.NotificationTopic topic="MapPackageBuild" inboxEnumId="NinUpdates" description="Offline map built"
+            typeString="success" showAlert="Y" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y" emailTemplateId="NOTIFICATION"
+            titleTemplate="Offline map ${name || ''}: ${outcome || ''}" linkTemplate="/qapps/maps/Offline"/>
+    <moqui.service.job.ServiceJob jobName="MapPackageBuild" description="Build an offline map package"
+            serviceName="org.moqui.maps.MapSourceServices.build#Package" transactionTimeout="86400" noTimeLimit="Y"/>
+    <moqui.service.job.ServiceJob jobName="clean_MapPackages_hourly" description="Remove the files of deleted and expired offline map packages"
+            serviceName="org.moqui.maps.MapSourceServices.clean#MapPackages" cronExpression="0 23 * * * ?" paused="N" errorHistoryOnly="Y"/>
 </entity-facade-xml>

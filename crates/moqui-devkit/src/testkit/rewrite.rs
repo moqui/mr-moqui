@@ -17,7 +17,9 @@
 //! In each top-level `feature(name, { ... })` call, every expression statement directly in the body of the `then` or
 //! `expect` member is a condition, as a statement in a Spock `then:` block is. The rewrite wraps each condition so a
 //! false one fails the feature with a diagram of the values of its parts, and gives `==`, `!=`, `<` and the rest, `!`,
-//! `&&`, `||` and the condition itself Groovy semantics: decimals compare by value and an empty list is false.
+//! `&&`, `||` and the condition itself Groovy semantics: decimals compare by value and an empty list is false. `a || b`
+//! and `a && b` choose an operand by Groovy truth and keep its value (`__or`, `__and`), so they work as values inside a
+//! condition (`Array.from(x || [])`, `(name || "") == ""`).
 //!
 //! The rewrite inserts text at node boundaries and adds no line, so a line in an error is the spec file's line. The
 //! `then` and `expect` keys it rewrote are renamed `then$pa` and `expect$pa`; a `then` the rewrite could not see, such
@@ -631,16 +633,18 @@ impl Rewriter<'_> {
                 let right = logical.right.span();
                 let at = self.operator_at(left.end, right.start, operator);
                 self.slot(expression, index, base, at);
+                // `a || b` is `__or(a, () => (b))`: the operand Groovy truth chooses, with its own value (so it can be
+                // a call's argument or a comparison's side), each side evaluated once and the right one only when
+                // needed; the condition's truth is then the chosen operand's.
                 if logical.operator != LogicalOperator::Coalesce {
                     let span = logical.span;
-                    self.push(span.start, false, span.size(), "(__truthy(", 0);
-                    self.push(
-                        left.end,
-                        false,
-                        0,
-                        format!(") {operator} __truthy("),
-                        right.start - left.end,
-                    );
+                    let helper = if logical.operator == LogicalOperator::Or {
+                        "__or("
+                    } else {
+                        "__and("
+                    };
+                    self.push(span.start, false, span.size(), helper, 0);
+                    self.push(left.end, false, 0, ", () => (", right.start - left.end);
                     self.push(span.end, true, span.size(), "))", 0);
                 }
                 self.instrument(&logical.left, index, base);

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `textDocument/rename` of `moqui lsp` (plans/design-dev-aide.md 13.6): an entity field, a service, a form field or a
+//! `textDocument/rename` of `moqui lsp` (plans/archive/design-dev-aide.md 13.6): an entity field, a service, a form field or a
 //! parameter, through the memory index's references, as edits across files.
 //!
 //! The target is the artifact the attribute value (or script string) under the cursor names, or defines: an attribute
@@ -1523,16 +1523,10 @@ fn check_upstream<'a>(
     index: &MemoryIndex,
     paths: impl Iterator<Item = &'a PathBuf>,
 ) -> Result<(), String> {
-    if factory.conf_setting("dev-aide", "allow-upstream-edits") == "true" {
+    // the conf's site components, as Extend in my-site reads them (`lsp_extend.rs`)
+    let Some(sites) = super::extend::locked_sites(factory) else {
         return Ok(());
-    }
-    let sites: Vec<String> = factory
-        .conf_setting("dev-aide", "site-component")
-        .split(',')
-        .map(str::trim)
-        .filter(|name| !name.is_empty())
-        .map(str::to_string)
-        .collect();
+    };
     let mut components: Vec<String> = Vec::new();
     for path in paths {
         let component = index::locate(factory, path)

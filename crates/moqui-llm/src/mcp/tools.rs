@@ -431,7 +431,8 @@ pub fn tool_result(text: &str, is_error: bool) -> Json {
     json!({"resultType": "complete", "content": [{"type": "text", "text": text}], "isError": is_error})
 }
 
-/// Count a call against the caller's AT_LLM tarpit (`mcp:<tool>`).
+/// Count a request against the caller's AT_LLM tarpit (`mcp:tools/call`, `mcp:tools/list`): by the method, never by a
+/// tool name the caller chose, so a caller who changes the name has no fresh count each time (SEC-AI-99).
 fn count_hit(name: &str) -> Result<(), McpError> {
     let artifact = format!("mcp:{name}");
     let counted = ExecutionContext::with_current(|ec| {
@@ -480,8 +481,8 @@ pub fn call(
         Some(arguments @ Json::Object(_)) => arguments.clone(),
         Some(_) => return Err(McpError::invalid_params("arguments must be an object")),
     };
-    // counted before anything is built, an unknown name as any other
-    count_hit(&name.chars().take(128).collect::<String>())?;
+    // counted before anything is built, every name under the method's one count
+    count_hit("tools/call")?;
     let ctx = Ctx::new(factory, caller)?;
     let Some(listed) = cached(&ctx).iter().find(|listed| listed.name == name).cloned() else {
         return Err(McpError::invalid_params(format!("Unknown tool: {name}")));

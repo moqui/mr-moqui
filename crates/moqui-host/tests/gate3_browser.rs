@@ -720,12 +720,24 @@ fn the_suite_shell_tray_shows_the_theme_screens_in_chromium() {
         true,
         "Search is an icon"
     );
+    // a shell indicator (moqui.shellIndicators, as Maps' "Sharing location" chip) is its icon alone at this width
+    browser.eval(
+        "moqui.shellIndicators.set('gateSpec', {label: 'Sharing location (2) · sending here', icon: 'sym_o_share_location', \
+         tone: 'positive'}), true",
+    );
+    browser.wait_for(
+        "the indicator chip",
+        "!!document.getElementById('m-indicator-gateSpec') && document.getElementById('m-indicator-gateSpec').offsetParent !== null \
+         && document.querySelector('#m-indicator-gateSpec .m-shell-indicator-label').offsetParent === null",
+        WAIT,
+    );
     let overflow = browser.eval(
         "(() => { const bar = document.querySelector('#top .q-toolbar'); const right = bar.getBoundingClientRect().right; \
          return Array.from(bar.children).filter((el) => el.offsetParent !== null && el.getBoundingClientRect().right > right + 1).map((el) => el.id || el.className).join(' | ') \
          + (bar.scrollWidth > bar.clientWidth + 1 ? ' scroll ' + bar.scrollWidth + '>' + bar.clientWidth : ''); })()",
     );
-    assert_eq!(overflow, "", "nothing in the header overflows at 390 px");
+    assert_eq!(overflow, "", "nothing in the header overflows at 390 px, a shell indicator in it");
+    browser.eval("moqui.shellIndicators.remove('gateSpec'), true");
     browser.click("the tray button", "document.getElementById('m-counter-tray')");
     browser.wait_for(
         "the tray from its button",
@@ -4412,7 +4424,7 @@ module.exports = {
     }
 }
 
-/// The code editor in a form (plans/design-dev-aide.md F9): a text-area with editor-type="code" is m-code-editor, loaded with
+/// The code editor in a form (plans/archive/design-dev-aide.md F9): a text-area with editor-type="code" is m-code-editor, loaded with
 /// js/WebrootCode.js and the CodeMirror bundle; text typed into it is posted by the form's Save and is there when the page
 /// opens again. With the CodeMirror script blocked it is a plain text area.
 #[test]
@@ -4487,7 +4499,7 @@ fn the_code_editor_saves_in_a_form_in_chromium() {
     );
 }
 
-/// The Dev AIDE Workspace (plans/design-dev-aide.md P2): on a dev instance with a site component (its own git repository),
+/// The Dev AIDE Workspace (plans/archive/design-dev-aide.md P2): on a dev instance with a site component (its own git repository),
 /// an upstream app and a plain directory, a service file of the site opens in the editor, an edit is saved, and the
 /// service runs the new text at once; the upstream file is read only and says to extend it in the site component; the
 /// plain directory has no version control; a save over a file changed on disk opens Compare.
@@ -4663,7 +4675,7 @@ fn the_workspace_edits_and_saves_a_site_file_in_chromium() {
     );
 }
 
-/// Git depth in the Workspace (plans/design-dev-aide.md P8): one hunk of a file's two staged from Changes; a Pull that
+/// Git depth in the Workspace (plans/archive/design-dev-aide.md P8): one hunk of a file's two staged from Changes; a Pull that
 /// cannot fast-forward offers a merge of the upstream, which stops at a conflict; the conflict view takes theirs, Mark
 /// resolved saves and stages it, and Commit makes the merge commit.
 #[cfg(feature = "devtools")]
@@ -4858,7 +4870,7 @@ fn a_pull_conflict_is_resolved_in_chromium() {
     assert_clean(&mut browser, "the conflict resolved");
 }
 
-/// The Artifact Browser canvas (plans/design-dev-aide.md P9, 7.3): a service in the center with what uses it to its left
+/// The Artifact Browser canvas (plans/archive/design-dev-aide.md P9, 7.3): a service in the center with what uses it to its left
 /// and what it uses to its right; a row of each side expanded into a second generation, joined by a connector; the
 /// orientation flipped to down and back; a card collapsed again.
 #[cfg(feature = "devtools")]
@@ -5007,7 +5019,7 @@ fn the_artifact_browser_expands_and_flips_in_chromium() {
     assert_clean(&mut browser, "the browser");
 }
 
-/// A `.qvue` screen in its Design view (plans/design-dev-aide.md P9, 11.4): the page renders in the canvas with its
+/// A `.qvue` screen in its Design view (plans/archive/design-dev-aide.md P9, 11.4): the page renders in the canvas with its
 /// template's elements stamped; selecting a button on the canvas and inserting a Quasar button after it changes the
 /// buffer, and the canvas shows the new button before Save; Save writes the file.
 #[cfg(feature = "devtools")]
@@ -5113,7 +5125,7 @@ fn a_qvue_screen_is_designed_in_chromium() {
     assert_clean(&mut browser, "the qvue design");
 }
 
-/// The entity modeler (plans/design-dev-aide.md P5, 8): an upstream entity opens in its view from Entities, with its
+/// The entity modeler (plans/archive/design-dev-aide.md P5, 8): an upstream entity opens in its view from Entities, with its
 /// edits going to the site's extend-entity (D17); Add field by its kind shows the field at once (unsaved), and Save
 /// writes the site's entity file, relinks the model and adds the column with no restart; a Picklist writes its field,
 /// its relationship and its seed records in one Save, the records load, and a site screen's drop-down shows them.
@@ -5370,7 +5382,7 @@ fn the_entity_modeler_extends_an_upstream_entity_in_chromium() {
     assert_clean(&mut browser, "the site form");
 }
 
-/// The screen builder (plans/design-dev-aide.md P6, 11, F10): an upstream app page opened in the builder (what "Open in
+/// The screen builder (plans/archive/design-dev-aide.md P6, 11, F10): an upstream app page opened in the builder (what "Open in
 /// screen builder" opens) renders on the canvas with each widget stamped with its source; selecting a list cell offers
 /// Add column, which writes a form-list merge into the site's screen-extend and shows the column on the canvas before
 /// Save (the buffer through F14) and after; a field added to a form with a field-layout lands in the layout after the
@@ -5697,7 +5709,7 @@ fn the_screen_builder_extends_an_upstream_list_in_chromium() {
     }
 }
 
-/// The service writer (plans/design-dev-aide.md P7, 9): a site service in its view, its actions as blocks in the logic
+/// The service writer (plans/archive/design-dev-aide.md P7, 9): a site service in its view, its actions as blocks in the logic
 /// composer; a block added from the palette and a chip edited, each an operation on the buffer, saved and reloaded; a
 /// Try in sim lists the rows it would write, Save as spec writes the feature and Run spec passes it. The composer's block
 /// tree draws 300 blocks within the measure of 9.2 (100 ms).
@@ -5964,7 +5976,7 @@ fn the_service_writer_composes_tries_and_saves_a_spec_in_chromium() {
     }
 }
 
-/// A change set of the dev agent (plans/design-dev-aide.md P4, 13.3) from an upstream app page: "Customize this screen"
+/// A change set of the dev agent (plans/archive/design-dev-aide.md P4, 13.3) from an upstream app page: "Customize this screen"
 /// opens Dev Assist, whose scripted `propose_edit` proposes a `screen-extend` of the page's form and an edit of a site
 /// service; the card reads the change as artifacts and its Preview frames the page with the proposal in place (the new
 /// field shows, nothing saved); Review takes it to the Workspace, where one of the service's two changes is rejected and
@@ -6361,7 +6373,7 @@ fn wait_until(browser: &mut Browser, what: &str, mut check: impl FnMut() -> bool
     }
 }
 
-/// The review application of the group server, as Mantle would be for threads (plans/design-dev-aide.md 21.10): a
+/// The review application of the group server, as Mantle would be for threads (plans/archive/design-dev-aide.md 21.10): a
 /// review-thread service over a table of its own (`it::devaide_group`'s stub, its threads alone).
 #[cfg(all(feature = "devtools", feature = "git"))]
 const REVIEW_STUB_CONF: &str =
@@ -6418,7 +6430,7 @@ const REVIEW_STUB_SERVICES: &str = r#"<services>
     </service>
 </services>"#;
 
-/// The Dev AIDE with a group server (plans/design-dev-aide.md 21, P11-P13; DevAideCollaborationWalk in
+/// The Dev AIDE with a group server (plans/archive/design-dev-aide.md 21, P11-P13; DevAideCollaborationWalk in
 /// plans/ui-review-dev-aide-workspace.md, DEVW-09 to DEVW-11), the instance its own group server over loopback as
 /// `it::devaide_group` sets it up: the site's working tree has the instance's hosted `my-site` as its origin. Settings ›
 /// Group servers connects with a pasted access token (the app sign-in's browser handoff is `it::devaide_group`'s) and
@@ -6736,7 +6748,7 @@ fn a_group_server_merge_request_is_opened_reviewed_and_checked_in_chromium() {
     assert_clean(&mut browser, "the merge request's review and checks");
 }
 
-/// An Assist session's worktree (plans/design-dev-aide.md 21.8, P13, question 19; DevAideSessionWorktreeWalk in
+/// An Assist session's worktree (plans/archive/design-dev-aide.md 21.8, P13, question 19; DevAideSessionWorktreeWalk in
 /// plans/ui-review-dev-aide-workspace.md, DEVW-12): a conversation in the Workspace's Assist drawer, then the Sessions
 /// tab makes a worktree for it, saying a worktree is not loaded; opened, the Workspace's banner says so too; a file saved
 /// there is written in the worktree and not in the main tree, and nothing of it runs; committed, the worktree is clean,
@@ -7004,7 +7016,7 @@ fn an_assist_session_worktree_is_made_saved_in_and_ends_with_its_conversation_in
     assert_clean(&mut browser, "the session's worktree");
 }
 
-/// The Workspace's editor features (plans/design-dev-aide.md 4.3, 4.10, 9, 11.4, 12; DevAideWorkspaceWalk in
+/// The Workspace's editor features (plans/archive/design-dev-aide.md 4.3, 4.10, 9, 11.4, 12; DevAideWorkspaceWalk in
 /// plans/ui-review-dev-aide-workspace.md and the authoring walks of plans/ui-review-dev-aide-authoring.md), one walk
 /// over a site component: the service view's Parameters adds a child in a Map and saves it nested; a `.qvue` tab's Text
 /// .xml edits and saves its XML screen; Replace across files previews the matches, one file left out, and writes the

@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Dev AIDE, the assisted IDE (plans/design-dev-aide.md 1): Home (the site's changes, Publish, the reload log), the
+<!-- Dev AIDE, the assisted IDE (plans/archive/design-dev-aide.md 1): Home (the site's changes, Publish, the reload log), the
     Workspace (the IDE: repositories and directories, files in the editor, changes and commits), Artifacts (search, the
     references, the site's customizations) and Settings. Mounted under
     apps as dev by the component's MoquiConf.xml; only on a dev instance, for ADMIN, DEV_AIDE_USERS and DEV_AIDE_EXTENDERS
@@ -45,7 +45,7 @@ along with this software (see the LICENSE.md file). If not, see
         <!-- the artifact index: entities, services, screens and rules by name, each opening in the Workspace at its line -->
         <palette-source group="DevArtifacts" label="Artifacts" icon="sym_o_data_object" sequence="60"
                 service="org.moqui.devaide.ArtifactServices.search#Palette"/>
-        <!-- on every app page of a Dev AIDE user: Dev Assist with the recipes for the page (plans/design-dev-aide.md 3.5) -->
+        <!-- on every app page of a Dev AIDE user: Dev Assist with the recipes for the page (plans/archive/design-dev-aide.md 3.5) -->
         <page-action label="Customize this screen" icon="sym_o_design_services" agent="dev" sequence="10"/>
         <!-- the screen builder on the page (11.2): its screen on the canvas with the page's parameters -->
         <page-action label="Open in screen builder" icon="sym_o_dashboard_customize" screen="dev/Screens/Design" sequence="11"/>

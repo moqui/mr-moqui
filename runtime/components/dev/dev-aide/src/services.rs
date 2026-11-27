@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.devaide.ServiceWriterServices`: the service writer's and the ECA rules' server side (plans/design-dev-aide.md
+//! `org.moqui.devaide.ServiceWriterServices`: the service writer's and the ECA rules' server side (plans/archive/design-dev-aide.md
 //! 9, 10). The services of the index with their SECA rules and the calls of the last spec run; a service as its view
 //! reads it (the framework's `service_detail`, its file and line, its rules, what uses it); Try (9.4): a run in the sim
 //! overlay with the rows it would write, nothing kept (the agent's `try_service` runs the same), or for real behind a
@@ -639,6 +639,11 @@ fn try_service(
             "this server has no sim (it needs embedded Postgres): run it for real",
         ));
     }
+    // what the sim cannot hold (the Terminal's services, Dev AIDE's own writes, the framework's development tools that
+    // write the server's files or restart it) is refused here as the agent's try_service refuses it (SEC-DEV-81)
+    if let Some(why) = crate::try_overlay::over(overlay.clone(), || crate::agent::try_service::sim_refusal(&name)) {
+        return Err(LibError::new(why));
+    }
     let called = name.clone();
     let shown = overlay.as_deref().map(crate::try_overlay::overlay_json);
     let over = Over {
@@ -925,7 +930,7 @@ fn save_try_spec(
         "the service is upstream and there is no site component to write its spec in",
     )?;
     let header = format!(
-        "// Specs of {} and its neighbours, from Tries in Dev AIDE (plans/design-dev-aide.md 9.4): trim what a\n// run makes anew (generated ids, stamps) before relying on them.\n// Run: ./moq test <component> --spec {spec}\n",
+        "// Specs of {} and its neighbours, from Tries in Dev AIDE (plans/archive/design-dev-aide.md 9.4): trim what a\n// run makes anew (generated ids, stamps) before relying on them.\n// Run: ./moq test <component> --spec {spec}\n",
         comment_text(&name)
     );
     let feature = spec_feature(&name, &given, &out, &rows);

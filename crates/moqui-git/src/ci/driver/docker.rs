@@ -599,7 +599,7 @@ pub fn service_body(
     body
 }
 
-/// A developer's own run of a job in its image, on their machine (the Dev AIDE's Run locally, plans/design-dev-aide.md
+/// A developer's own run of a job in its image, on their machine (the Dev AIDE's Run locally, plans/archive/design-dev-aide.md
 /// 21.5, question 20). Its container is a job's ([`create_body`]: no privilege, no capabilities, no new privileges, an
 /// init, a read-only root with a sized tmpfs at `/tmp`, a user that is not root, an image `VOLUME` on a tmpfs), with one
 /// thing no pool's run has: a tree of the host mounted at the working directory, read and written as `user` (the Dev

@@ -1,5 +1,8 @@
-// The Maps app's screens (plans/Maps.md §3.1, §3.2; docs/tools/Maps.md): Browse's two templates (Browse.qvue, its terminal twin
-// Browse.tui.json over terminalMap) for a Maps user, and the app refused to a user with ALL_USERS alone; the local-map dialog,
+// The Maps app's screens (plans/archive/Maps.md §3.1, §3.2; docs/tools/Maps.md): Browse's terminal template (Browse.tui.json over
+// terminalMap; Browse.qvue's one render is in a browser, test/client/MapsBrowseExtent) for a Maps user, with its live
+// location list (LocationSharesTui, plans/archive/Location-Sharing.md §3.3: the user's own share and one shared with them, ages and
+// coordinates, Stop for their own only), and the app refused to a user with ALL_USERS alone; My location shares, rendered
+// once in qvt for an owner with ALL_USERS alone (MAPS_SHARES), and its Stop, the owner's only; the local-map dialog,
 // a plain XML screen rendered once in qvt and once in html: for a Maps user the adapter lets write, the record's place,
 // precision and source from the adapter's answer, Choose location and Open in Maps; for a user with ALL_USERS alone (no
 // MAPS_APP, no System), who opens it, a record the adapter refuses them (DENIED) not available, with nothing of it, no Save
@@ -99,6 +102,14 @@ spec({
             authzTypeEnumId: "AUTHZT_ALLOW",
             authzActionEnumId: "AUTHZA_ALL"
         })
+        // where the adapter's links go, for every app's maps: the Maps app's own screen (a Maps user holds it)
+        make("moqui.maps.MapRoute", {
+            mapRouteId: "MAPS_SCR_ROUTE",
+            routeKey: "specRecord",
+            priority: 1,
+            urlTemplate: "/apps/maps/Browse?recordId={recordId}",
+            screenLocation: "component://tools/screen/Maps.xml"
+        })
         ec.cache.getCache("moqui.test.maps.stored").clear()
         ec.artifactExecution.enableAuthz()
     },
@@ -111,39 +122,207 @@ spec({
         ec.entity.find("moqui.security.ArtifactGroupMember").condition("artifactGroupId", GRANT).deleteAll()
         ec.entity.find("moqui.security.ArtifactGroup").condition("artifactGroupId", GRANT).deleteAll()
         ec.entity.find("moqui.maps.MapAdapter").condition("adapterKey", ADAPTER).deleteAll()
+        ec.entity.find("moqui.maps.MapRoute").condition("mapRouteId", "MAPS_SCR_ROUTE").deleteAll()
         ec.artifactExecution.enableAuthz()
     }
 })
 
-feature("Browse renders its qvue and its terminal twin for a Maps user, and the app is refused to a user with ALL_USERS alone", {
+/* A LocationServices call as the user (plans/archive/Location-Sharing.md §3.2): its results. */
+function shareCall(userId, verbNoun, parameters) {
+    ec.user.internalLoginUser(usernameOf(userId))
+    try {
+        return (
+            ec.service
+                .sync()
+                .name("org.moqui.maps.LocationServices." + verbNoun)
+                .parameters(parameters || {})
+                .call() || {}
+        )
+    } finally {
+        ec.message.clearErrors()
+        ec.user.logoutUser()
+    }
+}
+
+feature("Browse renders its terminal twin for a Maps user, and the app is refused to a user with ALL_USERS alone", {
     when() {
+        // live location (plans/archive/Location-Sharing.md §3.3): the writer's own share and one shared with them, each with a
+        // position, for the twin's list under the map (LocationSharesTui) and its Stop
+        const thruDate = new Date(Date.now() + 3600000)
+        const own = shareCall(WRITER, "create#Share", {audienceList: [{audienceTypeEnumId: "LsaUser", userId: PLAIN}], thruDate}).shareId
+        shareCall(WRITER, "report#Position", {shareId: own, latitude: "51.5", longitude: "-0.12"})
+        const theirs = shareCall(PLAIN, "create#Share", {
+            audienceList: [{audienceTypeEnumId: "LsaUser", userId: WRITER}],
+            thruDate,
+            label: "Plain walk"
+        }).shareId
+        shareCall(PLAIN, "report#Position", {shareId: theirs, latitude: "48.85", longitude: "2.35"})
+        const shares = as(WRITER, "apps/maps/LocationSharesTui", {}, null, "tui")
+        as(WRITER, "apps/maps/LocationSharesTui/stopShare", {shareId: theirs}, "post")
+        as(WRITER, "apps/maps/LocationSharesTui/stopShare", {shareId: own}, "post")
+        const live = {
+            own,
+            theirs,
+            shares,
+            ownActive: Array.from(shareCall(WRITER, "find#MyShares").shareList || []).some(row => row.shareId === own),
+            theirsActive: Array.from(shareCall(WRITER, "find#SharedWithMe").shareList || []).some(row => row.shareId === theirs)
+        }
+        shareCall(PLAIN, "stop#Share", {shareId: theirs})
         return {
-            qvue: as(WRITER, "apps/maps/Browse", {}, null, "qvue"),
+            live,
             tui: as(WRITER, "apps/maps/Browse", {}, null, "tui"),
-            terminal: as(WRITER, "apps/maps/Browse/terminalMap", {adapterKey: ADAPTER, recordKey: located}, "get"),
+            terminal: as(
+                WRITER,
+                "apps/maps/Browse/terminalMap",
+                {adapterKey: ADAPTER, recordKey: located, postal: "US 00000"},
+                "get"
+            ),
+            // the view a dashboard geomap opens: a point, marked first; an area around the record's place (Chicago); and
+            // Russia's, across the antimeridian, which leaves it out
+            point: as(WRITER, "apps/maps/Browse/terminalMap", {longitude: "2.35", latitude: "48.85", label: "Paris"}, "get"),
+            around: as(WRITER, "apps/maps/Browse/terminalMap", {adapterKey: ADAPTER, recordKey: located, extent: "-90,40,-85,43"}, "get"),
+            russia: as(WRITER, "apps/maps/Browse/terminalMap",
+                {adapterKey: ADAPTER, recordKey: located, extent: "27.2865,41.1518,-169.8983,77.6975"}, "get"),
             plainConfig: as(PLAIN, "apps/maps/Browse/getConfig", {}, "get")
         }
     },
-    then({qvue, tui, terminal, plainConfig}) {
-        // Browse.qvue: the component file the shell compiles
-        qvue.status == 200
-        qvue.output.includes("name: 'MapsBrowse'")
-        qvue.output.includes("<m-map")
-        // Browse.tui.json: the map component over terminalMap, whose places carry their precision as words
+    then({live, tui, terminal, point, around, russia, plainConfig}) {
+        // Browse.tui.json: the map component over terminalMap, whose places carry their precision as words, and the live
+        // location list under it
         tui.status == 200
         tui.errors == ""
         tui.output.includes('"name":"map"')
         tui.output.includes("terminalMap")
+        tui.output.includes('"t":"dynamicContainer"')
+        tui.output.includes("LocationSharesTui")
+        // the list: the writer's own share with whom and Stop, and the one shared with them, each its age and coordinates;
+        // Stop ends the writer's own, and another's share is not theirs to stop
+        live.shares.status == 200
+        live.shares.errors == ""
+        noRenderError(live.shares)
+        live.shares.output.includes("You, with Maps screens MAPS_SCR_PLAIN")
+        live.shares.output.includes("51.50000, -0.12000")
+        live.shares.output.includes("Plain walk")
+        live.shares.output.includes("48.85000, 2.35000")
+        live.shares.output.includes("just now")
+        live.shares.output.includes("stopShare")
+        // Shared with me (after Who sees my location in the document) holds the other person's share and no Stop
+        live.shares.output.indexOf("SharedShareList") > live.shares.output.lastIndexOf("stopShare")
+        live.shares.output.slice(live.shares.output.indexOf("SharedShareList")).includes("Plain walk")
+        !live.shares.output.slice(live.shares.output.indexOf("SharedShareList")).includes("stopShare")
+        live.shares.output.includes(live.own)
+        live.ownActive == false
+        live.theirsActive == true
         terminal.status == 200
         json(terminal).attribution == "Natural Earth"
         json(terminal).points.some(
             point => point.label === "Spec place" && point.precision === "Postal-area representative point"
         )
+        // its overlays (none yet), and a postal search said with its result: no Geo data has the code here
+        Array.isArray(json(terminal).overlays)
+        json(terminal).postalSearch.query == "US 00000"
+        json(terminal).postalSearch.count == 0
+        json(terminal).postalSearch.reason != null
+        // the view it is opened on: a point marked first and centered on; an area's places within it, its middle the
+        // center, across the antimeridian too (Russia's middle is in Siberia, not the Atlantic)
+        json(point).points[0].id == "given"
+        json(point).points[0].label == "Paris"
+        json(point).center[0] == 2.35
+        json(around).points.some(place => place.label === "Spec place")
+        json(around).extent[0] == -90
+        !json(russia).points.some(place => place.label === "Spec place")
+        json(russia).extent[2] == -169.8983
+        json(russia).center[0] > 100 && json(russia).center[0] < 120
         // the app is MAPS_APP's
         refused(plainConfig)
         !plainConfig.output.includes("profileId")
     }
 })
+
+feature("My location shares opens for an owner with ALL_USERS alone, lists their share and stops it; another user stops nothing of it", {
+    when() {
+        // the share has an XMPP contact too (WRITER, of PLAIN's roster: a direct room of the two), for the opt-in below
+        return withConf("xmpp-server@domain", "maps.example.test", () => myShares())
+    },
+    then({shareId, page, afterOther, afterOwn, optInOther, optInOwn, writerMaps, plainMaps}) {
+        optInOther == false
+        optInOwn == true
+        writerMaps == true
+        plainMaps == false
+        page.status == 200
+        page.errors == ""
+        !refused(page)
+        page.output.includes("Plain errand")
+        page.output.includes("Maps screens MAPS_SCR_WRITER")
+        page.output.includes("stopShare")
+        page.output.includes("extendShare")
+        page.output.includes("takeXmppShare")
+        page.output.includes(shareId)
+        // no Open in Maps for a user whose grants do not open Browse
+        !page.output.includes("Open in Maps")
+        afterOther == true
+        afterOwn == false
+    }
+})
+
+/** My location shares as its owner and another user see it, with the opt-in each asks for: for the feature above. */
+function myShares() {
+    ec.user.internalLoginUser(usernameOf(PLAIN))
+    ec.artifactExecution.disableAuthz()
+    try {
+        ec.service
+            .sync()
+            .name("org.moqui.chat.ChatServices.create#Room")
+            .parameters({roomTypeEnumId: "CrtDirect", memberUserIdList: [WRITER]})
+            .call()
+    } finally {
+        ec.artifactExecution.enableAuthz()
+        ec.message.clearErrors()
+        ec.user.logoutUser()
+    }
+    // where the app bar's "Sharing location" chip goes (plans/archive/Location-Sharing.md §3.3; MAPS_SHARES), for a user with no
+    // Maps
+    const shareId = shareCall(PLAIN, "create#Share", {
+        audienceList: [
+            {audienceTypeEnumId: "LsaUser", userId: WRITER},
+            {audienceTypeEnumId: "LsaXmpp", jid: usernameOf(WRITER) + "@maps.example.test"}
+        ],
+        thruDate: new Date(Date.now() + 3600000),
+        label: "Plain errand"
+    }).shareId
+    const page = as(PLAIN, "apps/maps/MyShares", {}, null, "qvt")
+    // the XMPP app's opt-in (plans/archive/Location-Sharing.md §3.6): the owner's alone to turn on
+    const optIn = () =>
+        (Array.from(shareCall(PLAIN, "find#MyShares").shareList || []).find(row => row.shareId === shareId) || {})
+            .takeXmppLocation
+    as(WRITER, "apps/maps/MyShares/takeXmppShare", {shareId, takeXmppLocation: "true"}, "post")
+    const optInOther = optIn()
+    as(PLAIN, "apps/maps/MyShares/takeXmppShare", {shareId, takeXmppLocation: "true"}, "post")
+    const optInOwn = optIn()
+    as(WRITER, "apps/maps/MyShares/stopShare", {shareId}, "post")
+    const afterOther = Array.from(shareCall(PLAIN, "find#MyShares").shareList || []).some(row => row.shareId === shareId)
+    as(PLAIN, "apps/maps/MyShares/stopShare", {shareId}, "post")
+    const afterOwn = Array.from(shareCall(PLAIN, "find#MyShares").shareList || []).some(row => row.shareId === shareId)
+    // Open in Maps' check, the user's own grant of the Maps app (Maps.xml carries MAPS_APP), without another render
+    const mapsOpen = userId => {
+        ec.user.internalLoginUser(usernameOf(userId))
+        try {
+            return !!ec.artifactExecution.isPermittedOwn("component://tools/screen/Maps.xml", "AT_XML_SCREEN", "view")
+        } finally {
+            ec.user.logoutUser()
+        }
+    }
+    return {
+        shareId,
+        page,
+        afterOther,
+        afterOwn,
+        optInOther,
+        optInOwn,
+        writerMaps: mapsOpen(WRITER),
+        plainMaps: mapsOpen(PLAIN)
+    }
+}
 
 feature("LocalMap shows the record's place, Choose location and Open in Maps to a Maps user the adapter lets write", {
     when() {
@@ -168,6 +347,10 @@ feature("LocalMap shows the record's place, Choose location and Open in Maps to 
         qvt.output.includes("SpecDialog")
         qvt.output.includes("_screen")
         qvt.output.includes("Open in Maps")
+        // the record's link a route of no app resolves (the one to the record itself left out)
+        qvt.output.includes('href="/apps/maps/Browse?recordId=RELATED"')
+        qvt.output.includes("Spec related")
+        !qvt.output.includes("recordId=LOCATED")
     }
 })
 
@@ -316,5 +499,66 @@ feature("Configuration is refused to a Maps user; its settings entry and its pro
         profile.disabled == "Y"
         audited.length >= 2
         audited.every(row => !!row.changedByUserId)
+    }
+})
+
+feature("an app's own allow of Maps.xml opens neither Configuration nor a Geo data service: MAPS_ADMIN is the user's own grant", {
+    when() {
+        // a group of another app given the Maps app (an inheritable allow of Maps.xml), not MAPS_USERS and not MAPS_ADMIN
+        const GROUP = "MAPS_SCR_APP_GROUP"
+        const USER = "MAPS_SCR_APP_USER"
+        ec.artifactExecution.disableAuthz()
+        make("moqui.security.UserAccount", {userId: USER, username: usernameOf(USER), userFullName: "Maps screens app user"})
+        make("moqui.security.UserGroup", {userGroupId: GROUP, description: "Maps screens spec: an app's group"})
+        make("moqui.security.UserGroupMember", {userGroupId: GROUP, userId: USER, fromDate: ec.user.nowTimestamp})
+        make("moqui.security.ArtifactAuthz", {
+            artifactAuthzId: GROUP,
+            userGroupId: GROUP,
+            artifactGroupId: "MAPS_APP",
+            authzTypeEnumId: "AUTHZT_ALLOW",
+            authzActionEnumId: "AUTHZA_ALL"
+        })
+        ec.artifactExecution.enableAuthz()
+        try {
+            const screen = as(USER, "apps/maps/Configuration/Archives", {})
+            // a service MAPS_ADMIN names, called under Maps.xml, whose allow the frame passes down
+            ec.user.internalLoginUser(usernameOf(USER))
+            let service
+            try {
+                ec.artifactExecution.push("component://tools/screen/Maps.xml", "AT_XML_SCREEN", "AUTHZA_VIEW", true)
+                try {
+                    const out = ec.service.sync().name("org.moqui.maps.GeoDataServices.find#GeoDataSets").call() || {}
+                    service = {errors: ec.message.getErrorsString(), dataSets: out.dataSetList}
+                } finally {
+                    ec.artifactExecution.pop()
+                }
+            } catch (e) {
+                service = {errors: String(e.message || e)}
+            } finally {
+                ec.message.clearErrors()
+                ec.user.logoutUser()
+            }
+            return {screen, service}
+        } finally {
+            ec.artifactExecution.disableAuthz()
+            ec.entity.find("moqui.security.ArtifactAuthz").condition("artifactAuthzId", GROUP).deleteAll()
+            ec.entity.find("moqui.security.UserGroupMember").condition("userGroupId", GROUP).deleteAll()
+            ec.entity.find("moqui.security.UserGroup").condition("userGroupId", GROUP).deleteAll()
+            for (const entity of ["moqui.security.ArtifactAuthzFailure", "moqui.security.UserAccount"])
+                try {
+                    ec.entity.find(entity).condition("userId", USER).deleteAll()
+                } catch (e) {
+                    ec.logger.warn("MapsScreens: " + entity + " of " + USER + " not removed: " + (e.message || e))
+                }
+            ec.message.clearErrors()
+            ec.artifactExecution.enableAuthz()
+            ec.user.internalLoginUser("john.doe")
+        }
+    },
+    then({screen, service}) {
+        refused(screen)
+        !screen.output.includes("Register an archive")
+        String(service.errors).includes("PERMISSION_DENIED") || /not authorized/i.test(service.errors)
+        !service.dataSets
     }
 })

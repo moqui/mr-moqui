@@ -293,7 +293,7 @@ pub fn check_actions(xml: &str) -> Result<(), Error> {
 }
 
 /// The JavaScript the framework runs for an `<actions>` XML text, as the service writer's Generated view shows it
-/// (plans/design-dev-aide.md 9.2): with `debug`, each statement after a comment naming its element, as
+/// (plans/archive/design-dev-aide.md 9.2): with `debug`, each statement after a comment naming its element, as
 /// `MOQUI_ACTIONS_DEBUG` writes it. Not cached, and not the cache's.
 ///
 /// # Errors

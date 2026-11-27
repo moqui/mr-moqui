@@ -141,7 +141,7 @@ listed under both.
 |  | [v5.0.0-11.5.1](V11-Cryptography.md) | Gap | none |  |
 |  | [v5.0.0-11.6.1](V11-Cryptography.md) | Gap | none |  |
 |  | [v5.0.0-12.1.1](V12-Secure-Communication.md) | Framework | `the_https_listener_speaks_tls_13_and_12_only_preferring_13` (`tls_tests.rs`) |  |
-|  | [v5.0.0-12.1.2](V12-Secure-Communication.md) | Gap | part: `the_https_listener_enables_only_aead_suites_with_forward_secrecy` (`tls_tests.rs`) |  |
+|  | [v5.0.0-12.1.2](V12-Secure-Communication.md) | Framework | `the_https_listener_enables_only_aead_suites_with_forward_secrecy` (`tls_tests.rs`) |  |
 |  | [v5.0.0-12.1.3](V12-Secure-Communication.md) | Framework | `a_member_without_the_cluster_certificate_is_refused` (`cluster_edge/tests.rs`) |  |
 |  | [v5.0.0-12.2.1](V12-Secure-Communication.md) | Configuration | `V12SecureCommunication` (deployment) |  |
 |  | [v5.0.0-12.2.2](V12-Secure-Communication.md) | Configuration | `V12SecureCommunication` (deployment) |  |

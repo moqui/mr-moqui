@@ -107,6 +107,45 @@ After v0.1.0 ([§4.1](archive/Vault-Instances.md#41-the-model), [§4.6](archive/
 - **Attachments in a vault**: files encrypted with their item.
 - **Dynamic credentials** made for one lease and dropped after it, as Vault's database engine makes them.
 
+## Maps
+
+From [Maps](archive/Maps.md), archived 2026-11-26 (with [Maps-Overture](archive/Maps-Overture.md)); guide [Maps](../docs/tools/Maps.md).
+Offline packages and shared live location are built ([Maps-Offline](archive/Maps-Offline.md),
+[Location-Sharing](archive/Location-Sharing.md), archived 2026-11-27). After v0.1.0 ([§4.1](archive/Maps.md#41-initial-source-choices),
+[§6.2](archive/Maps.md#62-sources-researched), [§6.4](archive/Maps.md#64-geo-data-importer), [§7](archive/Maps.md#7-useful-rust-server-work),
+[§9](archive/Maps.md#9-delivery-and-acceptance)):
+- **WFS-T**: editing an OGC layer's features on its server.
+- **More data**: boundaries into `Geo.wellKnownText` (Natural Earth, geoBoundaries with each boundary's license),
+  GeoNames alternate names for localized Geo names, national postal files (Ordnance Survey Code-Point Open, with OSTN15
+  for a centimetre transformation), Overture Divisions, and GeoPackage (it needs an SQLite reader on the server).
+- **Spatial queries**: an index of `GeoPoint` latitude and longitude, PostGIS or dynamic record-layer tiles through
+  the tile endpoint, when a dataset needs them; reprojection of large overlays beyond EPSG:3857.
+- **Routing**, Google and other external maps, and device integrations ("find my" devices, home automation).
+- **PASS public maps**: a published-data adapter with its own rate and resource limits.
+- **iOS** for offline packages and live location sharing (the apps' MD7).
+- **Live location, later**: Check In ("tell them when I arrive", built on a live share); live location in encrypted
+  rooms, each report sealed to the room's device keys (today it is offered only in unencrypted rooms); XMPP positions
+  to and from federated servers (local users only today) ([Location-Sharing §3.5, §3.6](archive/Location-Sharing.md#35-in-chat)).
+
+## Dev AIDE
+
+From [design-dev-aide](archive/design-dev-aide.md), archived 2026-11-26. P1a to P13, the component template and the finishing work of Nov 25
+and 26 are built; guide [Dev-AIDE](../docs/tools/Dev-AIDE.md). After v0.1.0 ([§18](archive/design-dev-aide.md#18-phases),
+[§20](archive/design-dev-aide.md#20-risks-and-open-questions)):
+- **Co-editing across a cluster**: a file's room is one server's, and a join is refused while the server has cluster
+  peers; across servers a room's seed and updates would need one owner, and a two-server test with it.
+- **TypeScript for scripts in the framework** (question 10): if the framework takes TypeScript for scripts generally,
+  the checker becomes the server's, in the binary, in place of the browser worker; and **the checker's completion**
+  from the same declarations ([§5.4](archive/design-dev-aide.md#54-javascript)).
+- **Projects adopting the widgets**: IronStone Projects' Code taking `m-file-tree`, `m-code-editor` and `m-diff-view`
+  (question 13), its own plan's call; and **code search in Projects**, read only, a safe feature by D7's rule
+  ([§4.10](archive/design-dev-aide.md#410-projects-code-reviewed)).
+- **A Try of a screen's actions** from the screen view's Actions panel: the actions run inside a render, so a Try is a
+  render in the sim with a trace, not a service call.
+- **Smithy and scoped keys**: whether Smithy takes the `git`, `tasks` and `gateway` keys, so Connect keeps no account
+  key (`appKey`) for a Smithy server: the user's decision, under PASS's device-key rule (mr-pass `plan/design-smithy.md`
+  §5.5; question 18).
+
 ## Component JavaScript libraries
 Built ([JS-Build](archive/JS-Build.md#component-javascript-libraries-in-dev-aide-built-2026-11-23); guide [Build-Test](../docs/Build-Test.md#add-a-component-library)). Next: removing a library (`add-js` adds and `update-js --component` changes a pin, but taking one out of `js-build.json`, its pin and lock, its outputs and its `.gitignore` lines is by hand), and client libraries in the desktop shell's bundled screens (`precompiled_qvue` registers no library list, so a bundled `.qvue` that declares one does not load it).
 

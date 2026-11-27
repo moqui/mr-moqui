@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The Workspace's roots, directories and files (plans/design-dev-aide.md 4 and 5.7), implemented in the dev-aide crate
+<!-- The Workspace's roots, directories and files (plans/archive/design-dev-aide.md 4 and 5.7), implemented in the dev-aide crate
     (src/workspace.rs). Each checks the instance purpose (dev) and the user's tier first: DEV_AIDE_VIEW reads,
     DEV_AIDE_EXTEND writes in site components, DEV_AIDE does everything; paths are confined to their root. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
@@ -72,7 +72,7 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
     <service verb="save" noun="File" type="rust" location="dev_aide::workspace::save_file" allow-remote="false">
         <description>Write a file read at baseHash (its line endings, byte order mark and mode kept); conflict with the disk's text when it changed since. Answers the reload report, the problems and the git status.
-            On a hosted root (plans/design-dev-aide.md 4.10) the write is a commit to the root's branch by the user through
+            On a hosted root (plans/archive/design-dev-aide.md 4.10) the write is a commit to the root's branch by the user through
             commit#GitFiles, with message (Edit [path] when empty) and the root's task trailer; baseHash is the blob the
             file had when opened, and the conflict's diskText is the branch's when the branch moved past it. Nothing is
             reloaded.</description>
@@ -188,7 +188,7 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
     <service verb="get" noun="EditorSettings" type="rust" location="dev_aide::editor::get_editor_settings" allow-remote="false" read-only="true">
         <description>The user's editor settings (the DEV_AIDE_EDITOR preference, 5.1): font size, tab size, wrap, white
-            space shown, the keymap, and each command's keys with its default.</description>
+            space shown, the keymap, the TypeScript check (typeCheck), and each command's keys with its default.</description>
         <out-parameters>
             <parameter name="settings" type="Map"/>
             <parameter name="commands" type="List"><description>{command, label, scope (workspace or editor), defaultKeys, keys}</description></parameter>
@@ -197,14 +197,15 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
     <!-- a user's own preference: the view tier sets it too, so the action is view -->
     <service verb="store" noun="EditorSettings" authz-action="view" type="rust" location="dev_aide::editor::store_editor_settings" allow-remote="false">
-        <description>The user's font size (8 to 32), tab size (1 to 8), wrap, white space shown and keymap; the keys
-            are kept. Refused out of range or for an unknown keymap.</description>
+        <description>The user's font size (8 to 32), tab size (1 to 8), wrap, white space shown, keymap (default,
+            vscode or vim) and the TypeScript check of a script file; the keys are kept. Refused out of range or for an unknown keymap.</description>
         <in-parameters>
             <parameter name="fontSize"/>
             <parameter name="tabSize"/>
             <parameter name="wrap"/>
             <parameter name="whitespace"/>
             <parameter name="keymap"/>
+            <parameter name="typeCheck"><description>The TypeScript check of a script file (5.4)</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="settings" type="Map"/>
@@ -293,6 +294,37 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <out-parameters><parameter name="editors" type="List"/></out-parameters>
     </service>
+    <service verb="get" noun="CoeditAccess" type="rust" location="dev_aide::coedit::get_coedit_access" allow-remote="false" read-only="true">
+        <description>Whether a user may co-edit a file (F15), asked by the file's room (moqui-collab text rooms) as the
+            user: shared mode only, a user who may write the file as Save would, the path confined and as the Workspace
+            names it; with the bounds, and the file's text (LF line endings) when asked. Refused for another user than
+            the current one.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="path" required="true"/>
+            <parameter name="userId" required="true"/>
+            <parameter name="withText" type="Boolean"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="canEdit" type="Boolean"/>
+            <parameter name="reason"><description>Why not, when the user may not</description></parameter>
+            <parameter name="text"/>
+            <parameter name="hash"><description>The hash of the file's bytes, with the text</description></parameter>
+            <parameter name="maxBytes" type="Long"/>
+            <parameter name="maxRooms" type="Long"/>
+            <parameter name="maxTotalBytes" type="Long"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="TypeDeclarations" type="rust" location="dev_aide::types::get_type_declarations" allow-remote="false" read-only="true">
+        <description>The moqui types declarations a server script is checked against by the Workspace's TypeScript
+            checker (5.4): moqui-host.d.ts, moqui-globals.d.ts, entities.d.ts, services.d.ts and tools.d.ts of the loaded
+            definitions, made at most once a minute.</description>
+        <in-parameters><parameter name="knownHash"><description>The hash the page has: the same answers no files</description></parameter></in-parameters>
+        <out-parameters>
+            <parameter name="hash"/>
+            <parameter name="files" type="List"><description>{name, text}</description></parameter>
+        </out-parameters>
+    </service>
     <service verb="get" noun="Credentials" type="rust" location="dev_aide::workspace::get_credentials" allow-remote="false" read-only="true">
         <description>The shared server's stored git tokens, without the tokens. An admin's.</description>
         <out-parameters><parameter name="credentials" type="List"/></out-parameters>
@@ -330,7 +362,7 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters><parameter name="location" required="true"/></in-parameters>
     </service>
 
-    <!-- The edit buffers of the terminal's guided editors (plans/design-dev-aide.md D14): edits staged per user and
+    <!-- The edit buffers of the terminal's guided editors (plans/archive/design-dev-aide.md D14): edits staged per user and
         artifact, nothing written until Save. -->
     <service verb="get" noun="EditBuffer" type="rust" location="dev_aide::buffers::get_edit_buffer" allow-remote="false" read-only="true">
         <description>A guided editor's buffer: what it holds and when it expires, whether it expired with edits in it,

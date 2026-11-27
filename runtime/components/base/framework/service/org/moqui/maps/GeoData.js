@@ -1,12 +1,14 @@
-// The Geo data settings of org.moqui.maps.GeoDataServices (plans/Maps.md §6.4; docs/tools/Maps.md "Geo data"), around the
+// The Geo data settings of org.moqui.maps.GeoDataServices (plans/archive/Maps.md §6.4; docs/tools/Maps.md "Geo data"), around the
 // importer (import#GeoData, cancel#GeoDataImport and remove#GeoData, in crates/moqui-tools/src/geo): what Maps ›
 // Configuration › Geo data shows (each data set with its license, the countries imported with their edition, counts and
 // last run, the run history and the refresh schedule), the license acknowledgement, an import started as a run of the
 // GeoDataImport ServiceJob (never in the request), the refresh of every imported scope (the GeoDataRefresh ServiceJob, run
 // now or on its schedule) and the maps.geodata readiness checks of org.moqui.maps.MapServices.
 //
-// A scope is a data set's source key (the sets sharing it: a mirror, a later year) and a country. Importing every GeoNames
-// country at once is not offered: the US measurement of P2 (plans/Maps.md §6.3) leaves the international shape open.
+// A scope is a data set's source key (the sets sharing it: a mirror, a later year) and a country. Every country of a set read
+// a country at a time is imported as a queue (plans/archive/Maps.md §6.3, §6.4): a pending run a country sharing a queueId, run one
+// after another (each run starts the next when it ends, import#GeoData), each its own run and edition, cancelled as a group,
+// after a confirmation that gives the estimate of everyCountryEstimate.
 // The services are MAPS_ADMIN's (the artifact group names GeoDataServices); the rows they write (a pending run, the job's
 // schedule) are written with authorization off as the services' own steps.
 const DATA_SET = "moqui.maps.GeoDataSet"
@@ -28,6 +30,16 @@ const STATUS_TEXT = {
 // the refresh schedules offered: a Quartz expression each (moqui_lib::cron), at a quiet hour
 const SCHEDULES = {weekly: "0 20 3 ? * SUN", monthly: "0 20 3 1 * ?"}
 const MAX_RUNS = 50
+// The estimate an import of every GeoNames country is confirmed with (plans/archive/Maps.md §6.3): the rows of the 124 country
+// files, as allCountries.zip counted them on November 25, 2026 (1,836,751; its Canadian, Dutch and British codes the
+// first part only, as the country files), and the database rows a file row came to and the file rows a second a queue
+// loaded, as GeoDataEveryCountry measured them (five countries under 52,000 rows, 119,956 rows in 42 s; Brazil, Portugal
+// and Canada, 214,124 rows in 115 s, Portugal's 206,942 at about 1,900 a second)
+const EVERY_COUNTRY = {fileRows: 1840000, countries: 124, databaseRowsPerRow: 3, rowsPerSecond: 2000}
+// The GeoNames country files of 50,000 rows or more, as allCountries.zip counted them (November 25, 2026), for the estimate
+const LARGE_FILES = {PT: 206942, AE: 178171, IN: 155570, JP: 146883, MX: 144655, SG: 121154, PE: 96943, ID: 81058, PL: 72899, FR: 51611}
+// A run whose row has not changed for this long is taken as abandoned, as the importer takes it (STALE_AFTER)
+const STALE_MS = 3600 * 1000
 
 const L = value => ec.l10n.localize(value)
 const say = (value, values) => ec.resource.expand(L(value), "", values || {})
@@ -204,6 +216,7 @@ function runRow(run) {
         ),
         errorFileLocation: run.errorFileLocation || null,
         failureText: text(run.failureText) || null,
+        queueId: run.queueId || null,
         userName: user ? text(user.userFullName) || text(user.username) : "",
         fromText: stampText(run.fromDate),
         thruText: stampText(run.thruDate),
@@ -291,6 +304,7 @@ function findGeoDataSets() {
         })
     }
     const runList = Array.from(find(IMPORT).orderBy("-fromDate,-geoDataImportId").limit(MAX_RUNS).list()).map(runRow)
+    const queueList = queuesInProgress()
     const job = one("moqui.service.job.ServiceJob", {jobName: REFRESH_JOB})
     const cron = job && job.paused !== "Y" ? text(job.cronExpression) : ""
     const scheduleKey = Object.keys(SCHEDULES).find(key => SCHEDULES[key] === cron) || (cron ? "other" : "none")
@@ -301,6 +315,7 @@ function findGeoDataSets() {
     return {
         dataSetList,
         runList,
+        queueList,
         schedule: {
             scheduleKey,
             cronExpression: cron || null,
@@ -312,6 +327,42 @@ function findGeoDataSets() {
         externalRequests: !offline(),
         importMaxBytes: text(ec.factory.getConfValue("maps@import-max-bytes")) || null
     }
+}
+
+// The queues of every country with a run in progress: each with its data set, its counts by outcome and its running country
+function queuesInProgress() {
+    const queueIds = new Set(
+        Array.from(find(IMPORT).condition("queueId", "is-not-null", null).condition("statusId", "in", IN_PROGRESS).list()).map(
+            run => run.queueId
+        )
+    )
+    return Array.from(queueIds)
+        .sort()
+        .map(queueId => {
+            const runs = Array.from(find(IMPORT, {queueId}).list())
+            const countOf = statuses => runs.filter(run => statuses.includes(run.statusId)).length
+            const running = runs.find(run => IN_PROGRESS.includes(run.statusId) && run.statusId !== "GdiPending")
+            const counts = {
+                total: runs.length,
+                done: countOf(["GdiCompleted", "GdiUnchanged"]),
+                failed: countOf(["GdiFailed"]),
+                cancelled: countOf(["GdiCancelled"]),
+                waiting: countOf(["GdiPending"])
+            }
+            // no row of the queue changed for STALE_MS: no run is alive to go on with it
+            const stalled =
+                Math.max(...runs.map(run => Number(run.lastUpdatedStamp || run.fromDate || 0))) < Date.now() - STALE_MS
+            return Object.assign(counts, {
+                queueId,
+                stalled,
+                dataSetId: runs[0]?.dataSetId || null,
+                runningName: running ? countryName(running.countryGeoId) : null,
+                progressText:
+                    say("${done} of ${total} countries done, ${failed} failed, ${waiting} waiting", counts) +
+                    (running ? say(": importing ${country}", {country: countryName(running.countryGeoId)}) : "") +
+                    (stalled ? " — " + L("stalled: nothing has happened for an hour; Cancel the rest ends it") : "")
+            })
+        })
 }
 
 // ===== acknowledge, start, refresh, schedule =====
@@ -350,6 +401,65 @@ function countryAllowed(set, country) {
         .filter(code => code)
     return !codes.length || codes.includes(text(country.geoCodeAlpha2))
 }
+// The country Geos of a set's countryCodes, in its order: the countries an import of every country runs
+function queueCountries(set) {
+    const codes = text(set.countryCodes)
+        .split(",")
+        .map(code => code.trim())
+        .filter(code => code)
+    if (!codes.length) return []
+    const byCode = new Map(
+        Array.from(
+            find("moqui.basic.Geo", {geoTypeEnumId: "GEOT_COUNTRY"}).condition("geoCodeAlpha2", "in", codes).useCache(true).list()
+        ).map(geo => [text(geo.geoCodeAlpha2), geo])
+    )
+    return Array.from(new Set(codes))
+        .filter(code => byCode.has(code))
+        .map(code => byCode.get(code))
+}
+// The countries of an import of every country of a set, each with its estimated file rows (its last completed run's where
+// it has one, else its counted size if it is large, else the average of the others)
+function queuePlan(set) {
+    const known = new Map()
+    for (const run of runsOf(set.sourceKey))
+        if (run.statusId === "GdiCompleted" && run.countryGeoId && !known.has(run.countryGeoId))
+            known.set(run.countryGeoId, Number(run.rowsRead || 0))
+    const largeRows = Object.values(LARGE_FILES).reduce((sum, rows) => sum + rows, 0)
+    const average = (EVERY_COUNTRY.fileRows - largeRows) / (EVERY_COUNTRY.countries - Object.keys(LARGE_FILES).length)
+    return queueCountries(set).map(country => ({
+        country,
+        rows: known.get(country.geoId) ?? LARGE_FILES[text(country.geoCodeAlpha2)] ?? average
+    }))
+}
+// What an import of every country of a set comes to, for its confirmation: its runs, the file rows (a country's last
+// completed run's where it has one, else GeoNames' average), the database rows and the minutes, as estimated from the
+// measurement (EVERY_COUNTRY)
+function everyCountryEstimate(p) {
+    const set = one(DATA_SET, {dataSetId: text(p.dataSetId)})
+    if (!set || set.perCountry !== "Y" || set.coverageGeoId || !text(set.urlTemplate)) return {countryCount: 0}
+    const queued = queuePlan(set)
+    const countryCount = queued.length
+    const total = queued.reduce((sum, entry) => sum + entry.rows, 0)
+    const fileRows = Math.round(total / 10000) * 10000 || 10000
+    const databaseRows = Math.round((fileRows * EVERY_COUNTRY.databaseRowsPerRow) / 10000) * 10000
+    const minutes = Math.max(1, Math.round(fileRows / EVERY_COUNTRY.rowsPerSecond / 60))
+    const values = {
+        countries: countryCount,
+        fileRows: ec.l10n.format(fileRows, "#,##0"),
+        databaseRows: ec.l10n.format(databaseRows, "#,##0"),
+        minutes
+    }
+    return {
+        countryCount,
+        fileRows,
+        databaseRows,
+        minutes,
+        estimateText: say(
+            "Imports ${countries} countries one after another, each its own run: about ${fileRows} postal code rows, about ${databaseRows} database rows, roughly ${minutes} minutes of runs. Canada, the Netherlands and Great Britain come with the first part of their codes only.",
+            values
+        )
+    }
+}
 // The countries Import offers for a set: those of its countryCodes, else every country, by name
 function countryOptions(p) {
     const set = one(DATA_SET, {dataSetId: text(p.dataSetId)})
@@ -370,10 +480,104 @@ function countryOptions(p) {
 }
 
 // A scope's run in progress, of the source key and country (or of either with none), if any
+// A run in progress whose row (for a queue's run, any row of its queue) has not changed for STALE_MS is abandoned, as
+// import#GeoData takes it, and is not counted.
 function runningRun(set, countryGeoId) {
-    return runsOf(set.sourceKey).find(
-        run => IN_PROGRESS.includes(run.statusId) && (!countryGeoId || !run.countryGeoId || run.countryGeoId === countryGeoId)
+    const runs = runsOf(set.sourceKey)
+    const touched = run => Number(run.lastUpdatedStamp || run.fromDate || 0)
+    const queueTouched = new Map()
+    for (const run of runs)
+        if (run.queueId) queueTouched.set(run.queueId, Math.max(queueTouched.get(run.queueId) || 0, touched(run)))
+    const live = run => (run.queueId ? queueTouched.get(run.queueId) : touched(run)) >= Date.now() - STALE_MS
+    return runs.find(
+        run =>
+            IN_PROGRESS.includes(run.statusId) &&
+            live(run) &&
+            (!countryGeoId || !run.countryGeoId || run.countryGeoId === countryGeoId)
     )
+}
+
+// A removal under way of the source key's rows for the country (or of either for every country), as remove#GeoData
+// marks it on its data set's row (removingStamp, touched before each batch; one not changed for STALE_MS is abandoned):
+// the data set and country, if any
+function removalRunning(set, countryGeoId) {
+    const sets = Array.from(find(DATA_SET).condition("dataSetId", "in", setIdsOf(set.sourceKey)).useCache(false).list())
+    return sets.find(
+        row =>
+            row.removingStamp &&
+            Number(row.removingStamp) >= Date.now() - STALE_MS &&
+            (!countryGeoId || !row.removingCountryGeoId || row.removingCountryGeoId === countryGeoId)
+    )
+}
+const removalRefusal = (set, countryGeoId) => {
+    const removing = removalRunning(set, countryGeoId)
+    return removing
+        ? refuse(
+              say("The rows of ${id} for ${country} are being removed; import after the removal ends", {
+                  id: removing.dataSetId,
+                  country: countryName(removing.removingCountryGeoId) || L("every country")
+              })
+          )
+        : null
+}
+
+// Every country of a set read a country at a time, as a queue: a pending run a country sharing the first run's ID as
+// queueId; only the first is started here, and each run starts the next when it ends
+// (import#GeoData)
+function startQueue(set, force) {
+    if (set.perCountry !== "Y" || set.coverageGeoId || !text(set.urlTemplate))
+        return refuse(say("${id} is not read a country at a time: import it whole", {id: set.dataSetId}))
+    // the data set's row locked for this transaction: two starts of a queue run one after the other, the second seeing the
+    // first's runs
+    find(DATA_SET, {dataSetId: set.dataSetId}).forUpdate(true).one()
+    runCache.delete(set.sourceKey)
+    const removal = removalRefusal(set, null)
+    if (removal) return removal
+    const running = runningRun(set, null)
+    if (running)
+        return refuse(
+            say("An import of ${id} is in progress (${run}); cancel it or wait for it to end", {
+                id: set.dataSetId,
+                run: running.geoDataImportId
+            })
+        )
+    const countries = queuePlan(set).map(entry => entry.country)
+    if (!countries.length) return refuse(say("${id} lists no country to import", {id: set.dataSetId}))
+    const runs = asSystemWrite(() => {
+        let queueId = null
+        return countries.map(country => {
+            const row = ec.entity
+                .makeValue(IMPORT)
+                .setAll({
+                    dataSetId: set.dataSetId,
+                    countryGeoId: country.geoId,
+                    statusId: "GdiPending",
+                    forced: force ? "Y" : "N",
+                    userId: ec.user.userId,
+                    fromDate: ec.user.nowTimestamp
+                })
+                .setSequencedIdPrimary()
+            queueId = queueId || row.geoDataImportId
+            row.setAll({queueId}).create()
+            return row
+        })
+    })
+    const first = runs[0]
+    const queueId = first.geoDataImportId
+    const jobRunId = ec.service.job(IMPORT_JOB).parameters({geoDataImportId: queueId, force}).run()
+    if (!jobRunId) {
+        asSystemWrite(() => {
+            for (const run of runs)
+                run.setAll({
+                    statusId: "GdiFailed",
+                    failureText: L("The import job did not start"),
+                    thruDate: ec.user.nowTimestamp
+                }).update()
+        })
+        return {geoDataImportId: queueId, queueId, countryCount: runs.length}
+    }
+    asSystemWrite(() => first.setAll({jobRunId}).update())
+    return {geoDataImportId: queueId, jobRunId, queueId, countryCount: runs.length}
 }
 
 function startImport(p) {
@@ -394,6 +598,8 @@ function startImport(p) {
                 id: set.dataSetId
             })
         )
+    if (p.everyCountry === true || p.everyCountry === "true" || p.everyCountry === "Y")
+        return startQueue(set, p.force === true || p.force === "true" || p.force === "Y")
     let countryGeoId = set.coverageGeoId || null
     if (!countryGeoId && (set.perCountry === "Y" || operatorFile)) {
         const country = countryOf(p.countryGeoId)
@@ -403,6 +609,8 @@ function startImport(p) {
         countryGeoId = country.geoId
     }
     // refused before an upload is written
+    const removal = removalRefusal(set, countryGeoId)
+    if (removal) return removal
     const running = runningRun(set, countryGeoId)
     if (running)
         return refuse(
@@ -644,6 +852,7 @@ function readiness(p) {
 
 const operations = {
     countryOptions,
+    everyCountryEstimate,
     findGeoDataSets,
     acknowledgeLicense,
     startImport,
@@ -652,9 +861,23 @@ const operations = {
     scheduleRefresh,
     readiness
 }
+// The services an operation runs for, asked of the caller's own grants (isPermittedOwn): MAPS_ADMIN names them, and an allow
+// of Maps.xml an app grants its own group is inheritable, so it would reach them from a screen under Maps (plans/archive/Maps.md
+// §8). runRefresh is the GeoDataRefresh job's (its import#GeoData checks the user it runs as) and readiness checks
+// ADMIN_OVERVIEW_VIEW.
+const OWN_GRANTS = {
+    findGeoDataSets: ["find#GeoDataSets", "view"],
+    acknowledgeLicense: ["acknowledge#GeoDataLicense", "all"],
+    startImport: ["start#GeoDataImport", "all"],
+    requestRefresh: ["request#GeoDataRefresh", "all"],
+    scheduleRefresh: ["schedule#GeoDataRefresh", "all"]
+}
 ;({
     execute: (op, parameters) => {
         if (!Object.hasOwn(operations, op)) throw new Error("Unknown Geo data operation " + op)
+        const grant = OWN_GRANTS[op]
+        if (grant && !ec.artifactExecution.isPermittedOwn("org.moqui.maps.GeoDataServices." + grant[0], "AT_SERVICE", grant[1]))
+            return refuse(L("PERMISSION_DENIED: Geo data needs your own Maps administration grant (MAPS_ADMIN)"))
         return operations[op](parameters || {})
     }
 })

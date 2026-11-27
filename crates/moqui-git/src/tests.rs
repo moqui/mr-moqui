@@ -238,6 +238,68 @@ fn an_import_from_an_https_source_connects_only_to_a_public_address() {
     );
 }
 
+/// SEC-GIT-86: an import from a caller's source is fetched with no credential: a host that answers 401 is never offered
+/// the token the administrator stored for the repository's own remoteUrl.
+#[test]
+fn an_import_from_a_callers_source_offers_no_stored_token() {
+    use std::io::{Read as _, Write as _};
+    let fixture = fixture_conf(
+        "import-token",
+        Some(r#"<moqui-conf><git-server webhook-private-network="true"/></moqui-conf>"#),
+    );
+    let _entered = fixture.context.enter();
+    define(
+        &fixture.entity,
+        "tok",
+        "db",
+        None,
+        Some("https://git.example.com/own.git"),
+    );
+    {
+        let mut row = fixture
+            .entity
+            .find(super::GIT_REPOSITORY)
+            .unwrap()
+            .eq("repositoryId", Value::string("tok"))
+            .one()
+            .unwrap()
+            .unwrap();
+        row.set("username", Value::string("deploy"));
+        row.set("accessToken", Value::string("STORED_TOKEN_9K"));
+        row.update(&fixture.entity).unwrap();
+    }
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let kept = std::sync::Arc::clone(&seen);
+    std::thread::spawn(move || {
+        for stream in listener.incoming().take(4) {
+            let Ok(mut stream) = stream else { break };
+            let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
+            let mut head = [0u8; 8192];
+            let read = stream.read(&mut head).unwrap_or(0);
+            kept.lock()
+                .unwrap()
+                .push(String::from_utf8_lossy(&head[..read]).into_owned());
+            let _ = stream.write_all(
+                b"HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"x\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            );
+        }
+    });
+    let provider = crate::provider(fixture.context.factory()).expect("git provider");
+    let refused = provider.import("tok", Some(&format!("http://127.0.0.1:{port}/other.git")));
+    assert!(refused.is_err());
+    let token = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, "deploy:STORED_TOKEN_9K");
+    let requests = seen.lock().unwrap().clone();
+    assert!(!requests.is_empty(), "the source was asked");
+    for request in &requests {
+        assert!(
+            !request.contains(&token) && !request.to_ascii_lowercase().contains("authorization:"),
+            "{request}"
+        );
+    }
+}
+
 #[test]
 fn a_db_repository_exports_and_imports_with_the_same_ids() {
     let fixture = fixture("db");
@@ -1021,7 +1083,7 @@ fn lfs_files_through_git_locations_are_content_blobs_behind_pointers() {
 }
 
 /// A pinned revision of an LFS file (`location#version`) opens by range from its content blob with its oid as the
-/// strong tag, never read whole (`plans/Maps.md` §5); the content address tells an LFS object from a git object, at
+/// strong tag, never read whole (`plans/archive/Maps.md` §5); the content address tells an LFS object from a git object, at
 /// the head and at a version.
 #[test]
 fn a_version_of_an_lfs_file_opens_by_range_and_names_its_object() {
@@ -1344,4 +1406,50 @@ fn gc_removes_a_dead_pushs_quarantine() {
     provider.gc(Some("left"), &gc_options(false)).unwrap();
     assert!(!dead.exists(), "the dead push's quarantine is removed");
     assert!(own.exists(), "this process's is kept");
+}
+
+/// A read of one object is an equality on both columns of the primary key, and no other index of `GitObject` (nor a
+/// foreign key's) leads with `repositoryId`: with one that did, Postgres read a repository added or grown since the
+/// table was analyzed through that index, reckoning it at one row, and filtered every object of the repository for
+/// each object read (a commit of 2,001 files took 10 s, a listing of them 14 s).
+#[test]
+fn an_object_is_read_by_its_primary_key() {
+    let tape = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let entity = moqui_core::testing::open_with_tape(std::sync::Arc::clone(&tape));
+    entity
+        .with_entity(super::db::GIT_OBJECT, |definition, _, _| {
+            for index in &definition.indexes {
+                assert_ne!(
+                    index.fields.first().map(String::as_str),
+                    Some("repositoryId"),
+                    "{}",
+                    index.name
+                );
+            }
+            for relationship in definition
+                .relationships
+                .iter()
+                .filter(|rel| rel.relationship_type == "one")
+            {
+                let first = relationship.key_pairs.first().map(|(field, _)| field.as_str());
+                assert_ne!(
+                    first,
+                    Some("repositoryId"),
+                    "the foreign key to {}",
+                    relationship.related
+                );
+            }
+            Ok(())
+        })
+        .unwrap();
+    let store = super::db::DbStore::new(entity, "code", super::db::object_cache());
+    let id = gix::ObjectId::from_hex(b"8ab686eafeb1f44702738c8b0f24f2567c36da6d").unwrap();
+    assert_eq!(store.object_size(&id).unwrap(), None);
+    let statements = moqui_lib::sync::lock(&tape).clone();
+    let read = statements
+        .iter()
+        .find(|sql| sql.contains("git_object") && sql.starts_with("SELECT"))
+        .expect("a read of the object");
+    assert!(read.contains(r#""object_id" = ?"#), "{read}");
+    assert!(!read.contains(" IN ("), "{read}");
 }

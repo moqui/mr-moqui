@@ -836,7 +836,7 @@ pub struct SubscreensItem {
     pub disable_when: Option<String>,
     /// From a `SubscreensItem` row: only members of this group see the item.
     pub user_group_id: Option<String>,
-    /// How it is mounted, for the screen builder's tree (plans/design-dev-aide.md 11.1): `directory` (a file in the
+    /// How it is mounted, for the screen builder's tree (plans/archive/design-dev-aide.md 11.1): `directory` (a file in the
     /// directory named like the parent), `item <file>:<line>` (a `subscreens-item` of the parent), `conf <file>:<line>`
     /// (a `screen-facade` mount) or `row` (a `SubscreensItem` row).
     pub mounted_by: String,
@@ -897,6 +897,13 @@ fn menu_include_of(value: Option<&str>, at: &str) -> (bool, Option<String>) {
         return (false, None);
     }
     (true, Some(text.to_string()))
+}
+
+/// Whether `location` names another server (`http`, `https`, `ftp`, `ftps`): no screen definition is read from one. The
+/// scheme is read as the resource facade reads it (before the first `:`, so `http:host/x.xml` is one), in any case.
+pub(crate) fn remote_location(location: &str) -> bool {
+    let scheme = crate::context::scheme_of(location.trim_start()).to_ascii_lowercase();
+    matches!(scheme.as_str(), "http" | "https" | "ftp" | "ftps")
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1318,6 +1325,13 @@ impl ScreenDef {
         if depth > MAX_INCLUDE_DEPTH {
             return Err(Error::new(format!(
                 "screen includes are nested too deeply at {location}"
+            )));
+        }
+        // a screen holds actions, so its text is code: never fetched from another server (SEC-SCR-11)
+        if remote_location(location) {
+            return Err(Error::new(format!(
+                "screen {location} is not loaded: a screen is read from this server's files or database, not from \
+                 another server"
             )));
         }
         let resource = factory.resource().get(location)?;
@@ -1973,7 +1987,7 @@ fn merge_extend(screen: &MNode, extend: &MNode, location: &str, extended: &mut E
             };
             let place = widgets_extend.attribute("where").unwrap_or_default();
             if place == "prepend" || place == "append" {
-                // Inside the named element, first or last (plans/design-dev-aide.md F16): a section's widgets, a box's
+                // Inside the named element, first or last (plans/archive/design-dev-aide.md F16): a section's widgets, a box's
                 // body, or the element itself.
                 let inner = widget_body(&matched);
                 let start = if place == "prepend" { 0 } else { inner.child_count() };

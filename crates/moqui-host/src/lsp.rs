@@ -12,13 +12,15 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `moqui lsp` (plans/design-dev-aide.md 13.6, F13): a Language Server Protocol server over stdio for editors and
+//! `moqui lsp` (plans/archive/design-dev-aide.md 13.6, F13): a Language Server Protocol server over stdio for editors and
 //! coding agents, answering from what `moqui check` and `moqui refs` use: diagnostics (the checks of
 //! `moqui_devkit::check`, on each open file's text as it changes), go to definition and references (the artifact
 //! index, read into memory on a model-only boot and kept current with the open buffers), hover (an artifact's summary,
 //! or an element's or attribute's documentation from the XSD digest), completion (the elements and attributes the
 //! digest gives, and entity and service names from the index in their attributes), document and workspace symbols, and
-//! on the local index rename (with `prepareRename`, `lsp_rename.rs`) and the check rules' quick fixes (`lsp_edit.rs`).
+//! on the local index rename (with `prepareRename`, `lsp_rename.rs`) and the check rules' quick fixes (`lsp_edit.rs`):
+//! the nearest known names, and "Extend in my-site" for an in-place edit of an upstream component (`lsp_extend.rs`,
+//! which also gives its `upstream.edit` diagnostics).
 //! With `--server URL` the checks and the index are a running dev instance's, over its MCP tools `check` and
 //! `artifact`, with the login key `moqui tui --server` keeps (or `MOQUI_LOGIN_KEY`); rename is refused there, and the
 //! quick fixes find names with the instance's `artifact` tool.
@@ -39,6 +41,8 @@ use crate::devtools_remote::{Remote, Target};
 
 #[path = "lsp_edit.rs"]
 mod edit;
+#[path = "lsp_extend.rs"]
+mod extend;
 #[path = "lsp_rename.rs"]
 mod rename;
 
@@ -58,7 +62,9 @@ impl Backend {
                 if let Some(located) = index::locate(factory, path) {
                     index.update_text(factory, &located, text);
                 }
-                check::check_text(factory, path, text)
+                let mut problems = check::check_text(factory, path, text);
+                problems.extend(extend::problems(factory, path, text));
+                problems
             }
             Self::Remote(remote) => remote
                 .check(path, text)
@@ -159,6 +165,25 @@ impl Backend {
         }
     }
 
+    /// The "Extend in my-site" rewrite of an upstream file's in-place edit, when it is mechanical: the committed text
+    /// it goes back to, what it added, the site's files with the extension, and the site component's name. The local
+    /// index only, as the site component comes from this boot's conf.
+    fn extension(&self, path: &Path, text: &str, text_of: &dyn Fn(&Path) -> Option<String>) -> Option<Extension> {
+        let Self::Local { factory, .. } = self else {
+            return None;
+        };
+        let upstream = extend::upstream_of(factory, path)?;
+        let head = extend::committed_text(path)?;
+        let found = extend::diff(&upstream, text, &head)?;
+        let site_edits = extend::site_edits(&found, text_of)?;
+        Some(Extension {
+            reverted: extend::reverted(text, &head),
+            added: found.added,
+            site_edits,
+            site: upstream.site,
+        })
+    }
+
     fn digest(&self, root: &str) -> Option<Arc<schema::Digest>> {
         match self {
             Self::Local { factory, .. } => schema::digest(&check::xsd_dir(factory), root),
@@ -169,6 +194,15 @@ impl Backend {
             }
         }
     }
+}
+
+/// An upstream file's in-place edit as the site component's extension (`lsp_extend.rs`).
+struct Extension {
+    /// The file's committed text, in its line endings.
+    reverted: String,
+    added: Vec<extend::Added>,
+    site_edits: Vec<extend::SiteEdit>,
+    site: String,
 }
 
 /// The target of `artifact`; a derived one (an entity-auto service or its parameter, no file's) is at its entity.
@@ -420,6 +454,11 @@ fn names_kind(element: &str, attribute: &str) -> Option<&'static [&'static str]>
 pub struct Server {
     backend: Backend,
     documents: HashMap<String, String>,
+    /// Each open document's version, as the client numbers it.
+    versions: HashMap<String, i64>,
+    /// Whether the client applies a `WorkspaceEdit`'s `documentChanges` with a `create` operation (its `initialize`
+    /// capabilities), which Extend in my-site needs.
+    edits_create_files: bool,
 }
 
 /// A request's document and its 0-based line and UTF-16 character.
@@ -434,6 +473,24 @@ impl Server {
         Self {
             backend,
             documents: HashMap::new(),
+            versions: HashMap::new(),
+            edits_create_files: false,
+        }
+    }
+
+    /// Take the client's `initialize` parameters: what its `WorkspaceEdit`s may hold.
+    pub fn set_client(&mut self, initialize: &Json) {
+        let edit = &initialize["capabilities"]["workspace"]["workspaceEdit"];
+        self.edits_create_files = edit["documentChanges"].as_bool() == Some(true)
+            && edit["resourceOperations"]
+                .as_array()
+                .is_some_and(|operations| operations.iter().any(|operation| operation == "create"));
+    }
+
+    /// Keep the version a notification gives its document.
+    fn keep_version(&mut self, uri_text: &str, params: &Json) {
+        if let Some(version) = params["textDocument"]["version"].as_i64() {
+            self.versions.insert(uri_text.to_string(), version);
         }
     }
 
@@ -487,6 +544,7 @@ impl Server {
             "textDocument/didOpen" => {
                 let text = params["textDocument"]["text"].as_str().unwrap_or_default().to_string();
                 self.documents.insert(uri_text.clone(), text);
+                self.keep_version(&uri_text, params);
                 self.publish(&uri_text).into_iter().collect()
             }
             "textDocument/didChange" => {
@@ -497,6 +555,7 @@ impl Server {
                 {
                     self.documents.insert(uri_text.clone(), text.to_string());
                 }
+                self.keep_version(&uri_text, params);
                 self.publish(&uri_text).into_iter().collect()
             }
             "textDocument/didSave" => {
@@ -507,6 +566,7 @@ impl Server {
             }
             "textDocument/didClose" => {
                 self.documents.remove(&uri_text);
+                self.versions.remove(&uri_text);
                 vec![Notification::new(
                     "textDocument/publishDiagnostics".into(),
                     lsp::PublishDiagnosticsParams {
@@ -642,11 +702,13 @@ impl Server {
     }
 
     /// The quick fixes of the diagnostics the client sends: for an unknown entity, service, field or in-parameter, the
-    /// nearest known names, each an edit of the name's value.
+    /// nearest known names, each an edit of the name's value; and for an in-place edit of an upstream component,
+    /// "Extend in my-site" where the range is on what it added or an `upstream.edit` diagnostic is sent.
     fn code_actions(&self, params: &Json) -> Json {
         let uri_text = params["textDocument"]["uri"].as_str().unwrap_or_default();
         let text = self.text_of(uri_text);
         let mut actions = Vec::new();
+        actions.extend(self.extend_action(uri_text, &text, params));
         for diagnostic in params["context"]["diagnostics"].as_array().into_iter().flatten() {
             let rule = diagnostic["code"].as_str().unwrap_or_default();
             let Some(unknown) = edit::unknown_name(rule, diagnostic["message"].as_str().unwrap_or_default()) else {
@@ -668,6 +730,84 @@ impl Server {
             }
         }
         json!(actions)
+    }
+
+    /// "Extend in my-site": a `WorkspaceEdit` taking the upstream file back to its committed text and writing what it
+    /// added as the site component's extension (a new file made where the site has none), when the edit is mechanical
+    /// and the request's range is on an added element or carries an `upstream.edit` diagnostic. Offered only to a
+    /// client that applies `documentChanges` with a `create` (its `initialize` capabilities).
+    fn extend_action(&self, uri_text: &str, text: &str, params: &Json) -> Option<Json> {
+        if !self.edits_create_files {
+            return None;
+        }
+        let path = path_of(uri_text)?;
+        let documents: HashMap<PathBuf, &String> = self
+            .documents
+            .iter()
+            .filter_map(|(uri_text, text)| Some((path_of(uri_text)?, text)))
+            .collect();
+        let text_of = |path: &Path| {
+            documents
+                .get(path)
+                .map(|text| (*text).clone())
+                .or_else(|| std::fs::read_to_string(path).ok())
+        };
+        let extension = self.backend.extension(&path, text, &text_of)?;
+        let line_of = |key: &str| {
+            params["range"][key]["line"]
+                .as_u64()
+                .and_then(|line| u32::try_from(line).ok())
+        };
+        // the added elements' lines are 1-based, the range's 0-based
+        let on_added = match (line_of("start"), line_of("end")) {
+            (Some(start), Some(end)) => extension
+                .added
+                .iter()
+                .any(|added| start < added.end_line && end + 1 >= added.line),
+            _ => false,
+        };
+        let diagnostics: Vec<&Json> = params["context"]["diagnostics"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|diagnostic| diagnostic["code"].as_str() == Some(extend::UPSTREAM_RULE))
+            .collect();
+        if !on_added && diagnostics.is_empty() {
+            return None;
+        }
+        // an open document's edit names the version it was made on, so the client refuses it on a later text
+        let version = |uri: &str| self.versions.get(uri).map_or(Json::Null, |version| json!(version));
+        let mut changes = vec![
+            json!({ "textDocument": { "uri": uri_text, "version": version(uri_text) },
+            "edits": [span_edit(text, &extension.reverted)] }),
+        ];
+        for site_edit in &extension.site_edits {
+            let uri = uri_of(&site_edit.path);
+            let before = match &site_edit.before {
+                Some(before) => before.as_str(),
+                None => {
+                    // a file made since is not written over: the client fails the edit instead
+                    changes.push(json!({ "kind": "create", "uri": uri,
+                        "options": { "overwrite": false, "ignoreIfExists": false } }));
+                    ""
+                }
+            };
+            let version = if site_edit.before.is_some() {
+                version(&uri)
+            } else {
+                Json::Null
+            };
+            changes.push(json!({ "textDocument": { "uri": uri, "version": version },
+                "edits": [span_edit(before, &site_edit.after)] }));
+        }
+        let what: Vec<&str> = extension.added.iter().map(|added| added.what.as_str()).collect();
+        Some(json!({
+            "title": format!("Extend in {}: {}", extension.site, what.join(", ")),
+            "kind": lsp::CodeActionKind::QUICKFIX,
+            "diagnostics": diagnostics,
+            "isPreferred": true,
+            "edit": { "documentChanges": changes },
+        }))
     }
 
     fn hover(&self, params: &Json) -> Json {
@@ -847,6 +987,23 @@ fn text_edit(edit: &edit::Edit) -> Json {
     json!({ "range": range, "newText": edit.text })
 }
 
+/// The protocol's position of the byte offset `at` of `text`: its 0-based line and UTF-16 character.
+fn position_of(text: &str, at: usize) -> lsp::Position {
+    let before = &text[..at];
+    let line_start = before.rfind('\n').map_or(0, |found| found + 1);
+    lsp::Position::new(
+        u32::try_from(before.matches('\n').count()).unwrap_or(u32::MAX),
+        u32::try_from(before[line_start..].encode_utf16().count()).unwrap_or(u32::MAX),
+    )
+}
+
+/// The one `TextEdit` making `text` into `new`: the span between their common start and end.
+fn span_edit(text: &str, new: &str) -> Json {
+    let (span, replacement) = extend::changed_span(text, new);
+    let range = lsp::Range::new(position_of(text, span.start), position_of(text, span.end));
+    json!({ "range": range, "newText": replacement })
+}
+
 /// A `WorkspaceEdit`'s `changes`: each file's URI with its edits.
 fn workspace_changes(edits: &std::collections::BTreeMap<PathBuf, Vec<edit::Edit>>) -> serde_json::Map<String, Json> {
     edits
@@ -932,7 +1089,7 @@ pub(crate) fn dispatch_lsp(args: &[String]) -> Result<(), Error> {
     };
     let (connection, io_threads) = Connection::stdio();
     let capabilities = serde_json::to_value(Server::capabilities()).unwrap_or(Json::Null);
-    let (id, _client) = connection
+    let (id, client) = connection
         .initialize_start()
         .map_err(|err| Error::new(format!("lsp initialize: {err}")))?;
     connection
@@ -942,6 +1099,7 @@ pub(crate) fn dispatch_lsp(args: &[String]) -> Result<(), Error> {
         )
         .map_err(|err| Error::new(format!("lsp initialize: {err}")))?;
     let mut server = Server::new(backend);
+    server.set_client(&client);
     serve(&connection, &mut server)?;
     drop(connection);
     io_threads.join().map_err(|err| Error::new(format!("lsp: {err}")))?;

@@ -4,7 +4,7 @@ The assisted IDE of mr-moqui, at `/qapps/dev` on a dev instance: the Workspace (
 the artifact index and Browser, the entity modeler, the service writer and ECA rules, the screen builder, tasks and
 group servers, and Dev Assist. How to use it is in the guide,
 [docs/tools/Dev-AIDE.md](../../../../docs/tools/Dev-AIDE.md); the design and its build record are in
-[plans/design-dev-aide.md](../../../../plans/design-dev-aide.md).
+[plans/archive/design-dev-aide.md](../../../../plans/archive/design-dev-aide.md).
 
 It gives its users code execution as the server's OS user, so it loads only when `instance@purpose` is dev
 (`runtime/components/dev` is a dev-only component directory, and its `component.xml` says `purpose="dev"`). Its Rust
@@ -32,7 +32,7 @@ See [the two suites](../../../../docs/Build-Test.md#the-two-suites). The regress
 
 - `./moq test dev-aide`: the screens, the Workspace's terminal form on a scratch root, the docs, the terminal's guided
   editors against a throw-away root, the three-way data load, a hosted root on a scratch repository, Replace, the
-  editor settings, the rule fixtures and the push contexts.
+  editor settings, the task apps added in Settings, the rule fixtures and the push contexts.
 - `cargo test -p dev-aide`: confinement, the git parsers, the Browser's sections, the edit buffers, the data load, the
   local runs and the worktrees. The opt-in real-engine run of Run locally needs Docker or Podman.
 - `moqui test-client runtime/components/dev/dev-aide --offline`: the client in headless Chromium. `test/vectors/` are

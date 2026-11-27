@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Saved views (plans/Maps.md §3.1): the user's own saved map views and, beside them, those others shared, over
+<!-- Saved views (plans/archive/Maps.md §3.1): the user's own saved map views and, beside them, those others shared, over
     org.moqui.maps.MapServices find#SavedViews, store#SavedView and delete#SavedView, which act on the signed-in user's own
     views only (another's is read, never changed). Each shows its place, its owner and whether all its layers are still
     available (a layer that is not is left out of what is drawn, and said here); its name opens it in Browse, and View map
@@ -63,10 +63,12 @@ along with this software (see the LICENSE.md file). If not, see
                 ownerText: row.isOwn ? (row.isPlaces ? ec.l10n.localize('Your places') : ec.l10n.localize('Yours')) : ec.l10n.localize('Shared by') + ' ' + (row.ownerName || ''),
                 fileText: row.path || row.fileName, featuresText: String(row.featureCount) + (row.rejectedCount ? ' (' + row.rejectedCount + ' ' + ec.l10n.localize('left out') + ')' : '')}))"/>
         <set field="available" from="!!found?.savedViewList"/>
+        <!-- a view's place: its center, or its extent's middle (across the antimeridian when west is greater than east) -->
         <set field="viewRows" from="Array.from(found?.savedViewList || []).map(row =&gt; {
                 const view = row.view || {}
+                const across = (west, east) =&gt; { const lon = (west + (east &lt; west ? east + 360 : east)) / 2; return lon &gt; 180 ? lon - 360 : lon }
                 const middle = Array.isArray(view.center) ? view.center : Array.isArray(view.extent)
-                    ? [(Number(view.extent[0]) + Number(view.extent[2])) / 2, (Number(view.extent[1]) + Number(view.extent[3])) / 2] : null
+                    ? [across(Number(view.extent[0]), Number(view.extent[2])), (Number(view.extent[1]) + Number(view.extent[3])) / 2] : null
                 const place = Array.isArray(view.center) ? Number(view.center[1]).toFixed(4) + ', ' + Number(view.center[0]).toFixed(4) + (view.zoom != null ? ' · zoom ' + view.zoom : '')
                     : Array.isArray(view.extent) ? view.extent.map(value =&gt; Number(value).toFixed(2)).join(', ') : ''
                 return {savedViewId: row.savedViewId, description: row.description, isOwn: row.isOwn, isShared: row.isShared,

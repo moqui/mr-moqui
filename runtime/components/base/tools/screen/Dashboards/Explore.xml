@@ -54,15 +54,19 @@
     <transition name="addPanel" method="post" authz-action="update">
         <actions><script><![CDATA[
             if (!/^[a-zA-Z0-9_.:-]{1,80}$/.test(String(panelId || ''))) throw new Error(ec.l10n.localize('Choose a panel id using letters, digits, _, ., : or -'))
-            const definition=ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId:dashboardId}).call().definition
-            if (definition.type !== 'dashboard') throw new Error('Choose a dashboard')
-            definition.body.panels=definition.body.panels || {}
-            if (definition.body.panels[panelId]) throw new Error('This panel id is already used; choose another id')
-            definition.body.panels[panelId]={title:panelTitle || 'Explore',visualization:datasetId==='otel_logs'?'logs':'table',queries:[{
-                datasetId,mode:'documents',queryString:queryString || '',filters:JSON.parse(filtersJson || '[]'),retrievalMode:retrievalMode || 'lexical',pageSize:1000
-            }]}
-            ec.service.sync().name('org.moqui.report.ReportServices.save#Definition').parameters({definition,note:'Added panel from Explore'}).call()
-        ]]></script></actions><default-response url="${ec.resource.script('component://tools/template/ReportMount.js').url('dashboard')}"><parameter name="definitionId" from="dashboardId"/><parameter name="from"/><parameter name="thru"/></default-response>
+            // a dashboard the viewer may not read (another's unshared one, or none): a form error, not a failure
+            const definition=(ec.resource.script('component://tools/template/ReportDelivery.js').ask('get#Definition',{definitionId:String(dashboardId || '')}).out || {}).definition
+            if (!definition) ec.message.addError(ec.l10n.localize('This dashboard does not exist or is not shared with you'))
+            else {
+                if (definition.type !== 'dashboard') throw new Error('Choose a dashboard')
+                definition.body.panels=definition.body.panels || {}
+                if (definition.body.panels[panelId]) throw new Error('This panel id is already used; choose another id')
+                definition.body.panels[panelId]={title:panelTitle || 'Explore',visualization:datasetId==='otel_logs'?'logs':'table',queries:[{
+                    datasetId,mode:'documents',queryString:queryString || '',filters:JSON.parse(filtersJson || '[]'),retrievalMode:retrievalMode || 'lexical',pageSize:1000
+                }]}
+                ec.service.sync().name('org.moqui.report.ReportServices.save#Definition').parameters({definition,note:'Added panel from Explore'}).call()
+            }
+        ]]></script></actions><default-response url="${ec.resource.script('component://tools/template/ReportMount.js').url('dashboard')}"><parameter name="definitionId" from="dashboardId"/><parameter name="from"/><parameter name="thru"/></default-response><error-response url="."/>
     </transition>
     <transition name="split"><default-response url="${ec.resource.script('component://tools/template/ReportMount.js').url('split')}"/></transition>
     <transition name="analysis"><default-response url="${ec.resource.script('component://tools/template/ReportMount.js').url('analysis')}"><parameter name="datasetId"/><parameter name="from"/><parameter name="thru"/></default-response></transition>
@@ -82,13 +86,17 @@
     ]]></script>
     <if condition="!noDataset"><script><![CDATA[
         if (savedSearchId) {
-            const saved=ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId:savedSearchId}).call().definition
-            if (saved.type !== 'search') throw new Error(ec.l10n.localize('This definition is not a saved search'))
-            datasetId=ec.web.parameters.datasetId ?? saved.body.datasetId
-            queryString=ec.web.parameters.queryString ?? saved.body.queryString
-            from=ec.web.parameters.from ?? saved.body.from;thru=ec.web.parameters.thru ?? saved.body.thru
-            retrievalMode=ec.web.parameters.retrievalMode ?? saved.body.retrievalMode
-            filtersJson=ec.web.parameters.filtersJson ?? JSON.stringify(saved.body.filters || [])
+            // a saved search the viewer may not read (another's unshared one, or none) is left out, with a message
+            const saved=ec.resource.script('component://tools/template/ReportDelivery.js').ask('get#Definition',{definitionId:String(savedSearchId || '')}).out?.definition
+            if (!saved) ec.message.addMessage(ec.l10n.localize('This saved search does not exist or is not shared with you'),'warning')
+            else {
+                if (saved.type !== 'search') throw new Error(ec.l10n.localize('This definition is not a saved search'))
+                datasetId=ec.web.parameters.datasetId ?? saved.body.datasetId
+                queryString=ec.web.parameters.queryString ?? saved.body.queryString
+                from=ec.web.parameters.from ?? saved.body.from;thru=ec.web.parameters.thru ?? saved.body.thru
+                retrievalMode=ec.web.parameters.retrievalMode ?? saved.body.retrievalMode
+                filtersJson=ec.web.parameters.filtersJson ?? JSON.stringify(saved.body.filters || [])
+            }
         }
         from = from || exploreRange.from; thru = thru || exploreRange.thru
         savedSearches=ec.service.sync().name('org.moqui.report.ReportServices.list#Definitions').parameters({definitionType:'search'}).call().definitions || []

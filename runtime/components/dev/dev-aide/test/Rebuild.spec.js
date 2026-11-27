@@ -1,6 +1,6 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
-// Rebuild from the app (plans/design-dev-aide.md 6.5, src/rebuild.rs): offered to the full tier where the runtime has
+// Rebuild from the app (plans/archive/design-dev-aide.md 6.5, src/rebuild.rs): offered to the full tier where the runtime has
 // moq beside it, and refused below the full tier before any terminal opens. Nothing here starts a
 // build: the session it would open, and its exit status, are the Terminal's (the lib tests check the command line and
 // how a session's end reads).

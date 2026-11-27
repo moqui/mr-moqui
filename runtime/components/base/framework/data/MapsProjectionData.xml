@@ -1,0 +1,480 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The map projection registry's seed (moqui.maps.MapProjection, plans/archive/Maps.md §4.1, P4c): WGS 84 and Web Mercator, NAD83,
+    the 120 WGS 84 UTM zones and NAD83's North American zones 1 to 23, the British National Grid, Lambert-93, LAEA Europe,
+    the US Albers and the two polar stereographic projections NASA GIBS and NSIDC draw. Each definition is the EPSG
+    Geodetic Parameter Dataset's parameters for the code (IOGP; its terms of use let the dataset's data be used and
+    redistributed, naming it) written in PROJ's syntax, as PROJ's projinfo -o PROJ gives them, with the datum shift
+    PROJ's EPSG:27700 carries (EPSG:1314's parameters, about 5 m) and no grid. m-map registers a row with proj4js when a
+    map needs it; the server reads it for a user's overlay (moqui-lib geo/proj). An administrator adds a row for another
+    CRS (a grid shift is refused on the server). -->
+<entity-facade-xml type="seed">
+    <moqui.maps.MapProjection projectionId="EPSG:4326" label="WGS 84" axisOrder="neu" minLongitude="-180" minLatitude="-90" maxLongitude="180" maxLatitude="90"
+            proj4Definition="+proj=longlat +datum=WGS84 +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:3857" label="WGS 84 / Pseudo-Mercator (Web Mercator)" axisOrder="enu" minLongitude="-180" minLatitude="-85.06" maxLongitude="180" maxLatitude="85.06" projectedExtent="-20037508.342789244,-20037508.342789244,20037508.342789244,20037508.342789244"
+            proj4Definition="+proj=merc +a=6378137 +b=6378137 +lat_ts=0 +lon_0=0 +x_0=0 +y_0=0 +k=1 +units=m +nadgrids=@null +wktext +no_defs"
+            transformNote="WGS84 on a sphere" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:4269" label="NAD83" axisOrder="neu" minLongitude="-172.54" minLatitude="14.92" maxLongitude="-47.74" maxLatitude="86.46"
+            proj4Definition="+proj=longlat +datum=NAD83 +no_defs"
+            transformNote="Taken as WGS84: NAD83 (2011) and WGS84 differ by about 1 to 2 m" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32601" label="WGS 84 / UTM zone 1N" axisOrder="enu" minLongitude="-180" minLatitude="0" maxLongitude="-174" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=1 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32602" label="WGS 84 / UTM zone 2N" axisOrder="enu" minLongitude="-174" minLatitude="0" maxLongitude="-168" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=2 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32603" label="WGS 84 / UTM zone 3N" axisOrder="enu" minLongitude="-168" minLatitude="0" maxLongitude="-162" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=3 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32604" label="WGS 84 / UTM zone 4N" axisOrder="enu" minLongitude="-162" minLatitude="0" maxLongitude="-156" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=4 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32605" label="WGS 84 / UTM zone 5N" axisOrder="enu" minLongitude="-156" minLatitude="0" maxLongitude="-150" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=5 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32606" label="WGS 84 / UTM zone 6N" axisOrder="enu" minLongitude="-150" minLatitude="0" maxLongitude="-144" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=6 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32607" label="WGS 84 / UTM zone 7N" axisOrder="enu" minLongitude="-144" minLatitude="0" maxLongitude="-138" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=7 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32608" label="WGS 84 / UTM zone 8N" axisOrder="enu" minLongitude="-138" minLatitude="0" maxLongitude="-132" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=8 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32609" label="WGS 84 / UTM zone 9N" axisOrder="enu" minLongitude="-132" minLatitude="0" maxLongitude="-126" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=9 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32610" label="WGS 84 / UTM zone 10N" axisOrder="enu" minLongitude="-126" minLatitude="0" maxLongitude="-120" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=10 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32611" label="WGS 84 / UTM zone 11N" axisOrder="enu" minLongitude="-120" minLatitude="0" maxLongitude="-114" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=11 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32612" label="WGS 84 / UTM zone 12N" axisOrder="enu" minLongitude="-114" minLatitude="0" maxLongitude="-108" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=12 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32613" label="WGS 84 / UTM zone 13N" axisOrder="enu" minLongitude="-108" minLatitude="0" maxLongitude="-102" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=13 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32614" label="WGS 84 / UTM zone 14N" axisOrder="enu" minLongitude="-102" minLatitude="0" maxLongitude="-96" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=14 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32615" label="WGS 84 / UTM zone 15N" axisOrder="enu" minLongitude="-96" minLatitude="0" maxLongitude="-90" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=15 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32616" label="WGS 84 / UTM zone 16N" axisOrder="enu" minLongitude="-90" minLatitude="0" maxLongitude="-84" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=16 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32617" label="WGS 84 / UTM zone 17N" axisOrder="enu" minLongitude="-84" minLatitude="0" maxLongitude="-78" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=17 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32618" label="WGS 84 / UTM zone 18N" axisOrder="enu" minLongitude="-78" minLatitude="0" maxLongitude="-72" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=18 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32619" label="WGS 84 / UTM zone 19N" axisOrder="enu" minLongitude="-72" minLatitude="0" maxLongitude="-66" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=19 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32620" label="WGS 84 / UTM zone 20N" axisOrder="enu" minLongitude="-66" minLatitude="0" maxLongitude="-60" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=20 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32621" label="WGS 84 / UTM zone 21N" axisOrder="enu" minLongitude="-60" minLatitude="0" maxLongitude="-54" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=21 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32622" label="WGS 84 / UTM zone 22N" axisOrder="enu" minLongitude="-54" minLatitude="0" maxLongitude="-48" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=22 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32623" label="WGS 84 / UTM zone 23N" axisOrder="enu" minLongitude="-48" minLatitude="0" maxLongitude="-42" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=23 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32624" label="WGS 84 / UTM zone 24N" axisOrder="enu" minLongitude="-42" minLatitude="0" maxLongitude="-36" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=24 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32625" label="WGS 84 / UTM zone 25N" axisOrder="enu" minLongitude="-36" minLatitude="0" maxLongitude="-30" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=25 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32626" label="WGS 84 / UTM zone 26N" axisOrder="enu" minLongitude="-30" minLatitude="0" maxLongitude="-24" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=26 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32627" label="WGS 84 / UTM zone 27N" axisOrder="enu" minLongitude="-24" minLatitude="0" maxLongitude="-18" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=27 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32628" label="WGS 84 / UTM zone 28N" axisOrder="enu" minLongitude="-18" minLatitude="0" maxLongitude="-12" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=28 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32629" label="WGS 84 / UTM zone 29N" axisOrder="enu" minLongitude="-12" minLatitude="0" maxLongitude="-6" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=29 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32630" label="WGS 84 / UTM zone 30N" axisOrder="enu" minLongitude="-6" minLatitude="0" maxLongitude="0" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=30 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32631" label="WGS 84 / UTM zone 31N" axisOrder="enu" minLongitude="0" minLatitude="0" maxLongitude="6" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=31 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32632" label="WGS 84 / UTM zone 32N" axisOrder="enu" minLongitude="6" minLatitude="0" maxLongitude="12" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=32 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32633" label="WGS 84 / UTM zone 33N" axisOrder="enu" minLongitude="12" minLatitude="0" maxLongitude="18" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=33 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32634" label="WGS 84 / UTM zone 34N" axisOrder="enu" minLongitude="18" minLatitude="0" maxLongitude="24" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=34 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32635" label="WGS 84 / UTM zone 35N" axisOrder="enu" minLongitude="24" minLatitude="0" maxLongitude="30" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=35 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32636" label="WGS 84 / UTM zone 36N" axisOrder="enu" minLongitude="30" minLatitude="0" maxLongitude="36" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=36 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32637" label="WGS 84 / UTM zone 37N" axisOrder="enu" minLongitude="36" minLatitude="0" maxLongitude="42" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=37 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32638" label="WGS 84 / UTM zone 38N" axisOrder="enu" minLongitude="42" minLatitude="0" maxLongitude="48" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=38 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32639" label="WGS 84 / UTM zone 39N" axisOrder="enu" minLongitude="48" minLatitude="0" maxLongitude="54" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=39 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32640" label="WGS 84 / UTM zone 40N" axisOrder="enu" minLongitude="54" minLatitude="0" maxLongitude="60" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=40 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32641" label="WGS 84 / UTM zone 41N" axisOrder="enu" minLongitude="60" minLatitude="0" maxLongitude="66" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=41 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32642" label="WGS 84 / UTM zone 42N" axisOrder="enu" minLongitude="66" minLatitude="0" maxLongitude="72" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=42 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32643" label="WGS 84 / UTM zone 43N" axisOrder="enu" minLongitude="72" minLatitude="0" maxLongitude="78" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=43 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32644" label="WGS 84 / UTM zone 44N" axisOrder="enu" minLongitude="78" minLatitude="0" maxLongitude="84" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=44 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32645" label="WGS 84 / UTM zone 45N" axisOrder="enu" minLongitude="84" minLatitude="0" maxLongitude="90" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=45 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32646" label="WGS 84 / UTM zone 46N" axisOrder="enu" minLongitude="90" minLatitude="0" maxLongitude="96" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=46 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32647" label="WGS 84 / UTM zone 47N" axisOrder="enu" minLongitude="96" minLatitude="0" maxLongitude="102" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=47 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32648" label="WGS 84 / UTM zone 48N" axisOrder="enu" minLongitude="102" minLatitude="0" maxLongitude="108" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=48 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32649" label="WGS 84 / UTM zone 49N" axisOrder="enu" minLongitude="108" minLatitude="0" maxLongitude="114" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=49 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32650" label="WGS 84 / UTM zone 50N" axisOrder="enu" minLongitude="114" minLatitude="0" maxLongitude="120" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=50 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32651" label="WGS 84 / UTM zone 51N" axisOrder="enu" minLongitude="120" minLatitude="0" maxLongitude="126" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=51 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32652" label="WGS 84 / UTM zone 52N" axisOrder="enu" minLongitude="126" minLatitude="0" maxLongitude="132" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=52 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32653" label="WGS 84 / UTM zone 53N" axisOrder="enu" minLongitude="132" minLatitude="0" maxLongitude="138" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=53 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32654" label="WGS 84 / UTM zone 54N" axisOrder="enu" minLongitude="138" minLatitude="0" maxLongitude="144" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=54 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32655" label="WGS 84 / UTM zone 55N" axisOrder="enu" minLongitude="144" minLatitude="0" maxLongitude="150" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=55 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32656" label="WGS 84 / UTM zone 56N" axisOrder="enu" minLongitude="150" minLatitude="0" maxLongitude="156" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=56 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32657" label="WGS 84 / UTM zone 57N" axisOrder="enu" minLongitude="156" minLatitude="0" maxLongitude="162" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=57 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32658" label="WGS 84 / UTM zone 58N" axisOrder="enu" minLongitude="162" minLatitude="0" maxLongitude="168" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=58 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32659" label="WGS 84 / UTM zone 59N" axisOrder="enu" minLongitude="168" minLatitude="0" maxLongitude="174" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=59 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32660" label="WGS 84 / UTM zone 60N" axisOrder="enu" minLongitude="174" minLatitude="0" maxLongitude="180" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=60 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32701" label="WGS 84 / UTM zone 1S" axisOrder="enu" minLongitude="-180" minLatitude="-80" maxLongitude="-174" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=1 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32702" label="WGS 84 / UTM zone 2S" axisOrder="enu" minLongitude="-174" minLatitude="-80" maxLongitude="-168" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=2 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32703" label="WGS 84 / UTM zone 3S" axisOrder="enu" minLongitude="-168" minLatitude="-80" maxLongitude="-162" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=3 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32704" label="WGS 84 / UTM zone 4S" axisOrder="enu" minLongitude="-162" minLatitude="-80" maxLongitude="-156" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=4 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32705" label="WGS 84 / UTM zone 5S" axisOrder="enu" minLongitude="-156" minLatitude="-80" maxLongitude="-150" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=5 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32706" label="WGS 84 / UTM zone 6S" axisOrder="enu" minLongitude="-150" minLatitude="-80" maxLongitude="-144" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=6 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32707" label="WGS 84 / UTM zone 7S" axisOrder="enu" minLongitude="-144" minLatitude="-80" maxLongitude="-138" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=7 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32708" label="WGS 84 / UTM zone 8S" axisOrder="enu" minLongitude="-138" minLatitude="-80" maxLongitude="-132" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=8 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32709" label="WGS 84 / UTM zone 9S" axisOrder="enu" minLongitude="-132" minLatitude="-80" maxLongitude="-126" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=9 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32710" label="WGS 84 / UTM zone 10S" axisOrder="enu" minLongitude="-126" minLatitude="-80" maxLongitude="-120" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=10 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32711" label="WGS 84 / UTM zone 11S" axisOrder="enu" minLongitude="-120" minLatitude="-80" maxLongitude="-114" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=11 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32712" label="WGS 84 / UTM zone 12S" axisOrder="enu" minLongitude="-114" minLatitude="-80" maxLongitude="-108" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=12 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32713" label="WGS 84 / UTM zone 13S" axisOrder="enu" minLongitude="-108" minLatitude="-80" maxLongitude="-102" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=13 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32714" label="WGS 84 / UTM zone 14S" axisOrder="enu" minLongitude="-102" minLatitude="-80" maxLongitude="-96" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=14 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32715" label="WGS 84 / UTM zone 15S" axisOrder="enu" minLongitude="-96" minLatitude="-80" maxLongitude="-90" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=15 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32716" label="WGS 84 / UTM zone 16S" axisOrder="enu" minLongitude="-90" minLatitude="-80" maxLongitude="-84" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=16 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32717" label="WGS 84 / UTM zone 17S" axisOrder="enu" minLongitude="-84" minLatitude="-80" maxLongitude="-78" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=17 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32718" label="WGS 84 / UTM zone 18S" axisOrder="enu" minLongitude="-78" minLatitude="-80" maxLongitude="-72" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=18 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32719" label="WGS 84 / UTM zone 19S" axisOrder="enu" minLongitude="-72" minLatitude="-80" maxLongitude="-66" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=19 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32720" label="WGS 84 / UTM zone 20S" axisOrder="enu" minLongitude="-66" minLatitude="-80" maxLongitude="-60" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=20 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32721" label="WGS 84 / UTM zone 21S" axisOrder="enu" minLongitude="-60" minLatitude="-80" maxLongitude="-54" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=21 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32722" label="WGS 84 / UTM zone 22S" axisOrder="enu" minLongitude="-54" minLatitude="-80" maxLongitude="-48" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=22 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32723" label="WGS 84 / UTM zone 23S" axisOrder="enu" minLongitude="-48" minLatitude="-80" maxLongitude="-42" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=23 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32724" label="WGS 84 / UTM zone 24S" axisOrder="enu" minLongitude="-42" minLatitude="-80" maxLongitude="-36" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=24 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32725" label="WGS 84 / UTM zone 25S" axisOrder="enu" minLongitude="-36" minLatitude="-80" maxLongitude="-30" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=25 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32726" label="WGS 84 / UTM zone 26S" axisOrder="enu" minLongitude="-30" minLatitude="-80" maxLongitude="-24" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=26 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32727" label="WGS 84 / UTM zone 27S" axisOrder="enu" minLongitude="-24" minLatitude="-80" maxLongitude="-18" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=27 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32728" label="WGS 84 / UTM zone 28S" axisOrder="enu" minLongitude="-18" minLatitude="-80" maxLongitude="-12" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=28 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32729" label="WGS 84 / UTM zone 29S" axisOrder="enu" minLongitude="-12" minLatitude="-80" maxLongitude="-6" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=29 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32730" label="WGS 84 / UTM zone 30S" axisOrder="enu" minLongitude="-6" minLatitude="-80" maxLongitude="0" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=30 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32731" label="WGS 84 / UTM zone 31S" axisOrder="enu" minLongitude="0" minLatitude="-80" maxLongitude="6" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=31 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32732" label="WGS 84 / UTM zone 32S" axisOrder="enu" minLongitude="6" minLatitude="-80" maxLongitude="12" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=32 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32733" label="WGS 84 / UTM zone 33S" axisOrder="enu" minLongitude="12" minLatitude="-80" maxLongitude="18" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=33 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32734" label="WGS 84 / UTM zone 34S" axisOrder="enu" minLongitude="18" minLatitude="-80" maxLongitude="24" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=34 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32735" label="WGS 84 / UTM zone 35S" axisOrder="enu" minLongitude="24" minLatitude="-80" maxLongitude="30" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=35 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32736" label="WGS 84 / UTM zone 36S" axisOrder="enu" minLongitude="30" minLatitude="-80" maxLongitude="36" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=36 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32737" label="WGS 84 / UTM zone 37S" axisOrder="enu" minLongitude="36" minLatitude="-80" maxLongitude="42" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=37 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32738" label="WGS 84 / UTM zone 38S" axisOrder="enu" minLongitude="42" minLatitude="-80" maxLongitude="48" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=38 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32739" label="WGS 84 / UTM zone 39S" axisOrder="enu" minLongitude="48" minLatitude="-80" maxLongitude="54" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=39 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32740" label="WGS 84 / UTM zone 40S" axisOrder="enu" minLongitude="54" minLatitude="-80" maxLongitude="60" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=40 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32741" label="WGS 84 / UTM zone 41S" axisOrder="enu" minLongitude="60" minLatitude="-80" maxLongitude="66" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=41 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32742" label="WGS 84 / UTM zone 42S" axisOrder="enu" minLongitude="66" minLatitude="-80" maxLongitude="72" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=42 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32743" label="WGS 84 / UTM zone 43S" axisOrder="enu" minLongitude="72" minLatitude="-80" maxLongitude="78" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=43 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32744" label="WGS 84 / UTM zone 44S" axisOrder="enu" minLongitude="78" minLatitude="-80" maxLongitude="84" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=44 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32745" label="WGS 84 / UTM zone 45S" axisOrder="enu" minLongitude="84" minLatitude="-80" maxLongitude="90" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=45 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32746" label="WGS 84 / UTM zone 46S" axisOrder="enu" minLongitude="90" minLatitude="-80" maxLongitude="96" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=46 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32747" label="WGS 84 / UTM zone 47S" axisOrder="enu" minLongitude="96" minLatitude="-80" maxLongitude="102" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=47 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32748" label="WGS 84 / UTM zone 48S" axisOrder="enu" minLongitude="102" minLatitude="-80" maxLongitude="108" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=48 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32749" label="WGS 84 / UTM zone 49S" axisOrder="enu" minLongitude="108" minLatitude="-80" maxLongitude="114" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=49 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32750" label="WGS 84 / UTM zone 50S" axisOrder="enu" minLongitude="114" minLatitude="-80" maxLongitude="120" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=50 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32751" label="WGS 84 / UTM zone 51S" axisOrder="enu" minLongitude="120" minLatitude="-80" maxLongitude="126" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=51 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32752" label="WGS 84 / UTM zone 52S" axisOrder="enu" minLongitude="126" minLatitude="-80" maxLongitude="132" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=52 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32753" label="WGS 84 / UTM zone 53S" axisOrder="enu" minLongitude="132" minLatitude="-80" maxLongitude="138" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=53 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32754" label="WGS 84 / UTM zone 54S" axisOrder="enu" minLongitude="138" minLatitude="-80" maxLongitude="144" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=54 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32755" label="WGS 84 / UTM zone 55S" axisOrder="enu" minLongitude="144" minLatitude="-80" maxLongitude="150" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=55 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32756" label="WGS 84 / UTM zone 56S" axisOrder="enu" minLongitude="150" minLatitude="-80" maxLongitude="156" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=56 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32757" label="WGS 84 / UTM zone 57S" axisOrder="enu" minLongitude="156" minLatitude="-80" maxLongitude="162" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=57 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32758" label="WGS 84 / UTM zone 58S" axisOrder="enu" minLongitude="162" minLatitude="-80" maxLongitude="168" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=58 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32759" label="WGS 84 / UTM zone 59S" axisOrder="enu" minLongitude="168" minLatitude="-80" maxLongitude="174" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=59 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:32760" label="WGS 84 / UTM zone 60S" axisOrder="enu" minLongitude="174" minLatitude="-80" maxLongitude="180" maxLatitude="0"
+            proj4Definition="+proj=utm +zone=60 +south +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:26901" label="NAD83 / UTM zone 1N" axisOrder="enu" minLongitude="-180" minLatitude="14.92" maxLongitude="-174" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=1 +datum=NAD83 +units=m +no_defs"
+            transformNote="Taken as WGS84: NAD83 (2011) and WGS84 differ by about 1 to 2 m" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:26902" label="NAD83 / UTM zone 2N" axisOrder="enu" minLongitude="-174" minLatitude="14.92" maxLongitude="-168" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=2 +datum=NAD83 +units=m +no_defs"
+            transformNote="Taken as WGS84: NAD83 (2011) and WGS84 differ by about 1 to 2 m" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:26903" label="NAD83 / UTM zone 3N" axisOrder="enu" minLongitude="-168" minLatitude="14.92" maxLongitude="-162" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=3 +datum=NAD83 +units=m +no_defs"
+            transformNote="Taken as WGS84: NAD83 (2011) and WGS84 differ by about 1 to 2 m" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:26904" label="NAD83 / UTM zone 4N" axisOrder="enu" minLongitude="-162" minLatitude="14.92" maxLongitude="-156" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=4 +datum=NAD83 +units=m +no_defs"
+            transformNote="Taken as WGS84: NAD83 (2011) and WGS84 differ by about 1 to 2 m" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:26905" label="NAD83 / UTM zone 5N" axisOrder="enu" minLongitude="-156" minLatitude="14.92" maxLongitude="-150" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=5 +datum=NAD83 +units=m +no_defs"
+            transformNote="Taken as WGS84: NAD83 (2011) and WGS84 differ by about 1 to 2 m" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:26906" label="NAD83 / UTM zone 6N" axisOrder="enu" minLongitude="-150" minLatitude="14.92" maxLongitude="-144" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=6 +datum=NAD83 +units=m +no_defs"
+            transformNote="Taken as WGS84: NAD83 (2011) and WGS84 differ by about 1 to 2 m" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:26907" label="NAD83 / UTM zone 7N" axisOrder="enu" minLongitude="-144" minLatitude="14.92" maxLongitude="-138" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=7 +datum=NAD83 +units=m +no_defs"
+            transformNote="Taken as WGS84: NAD83 (2011) and WGS84 differ by about 1 to 2 m" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:26908" label="NAD83 / UTM zone 8N" axisOrder="enu" minLongitude="-138" minLatitude="14.92" maxLongitude="-132" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=8 +datum=NAD83 +units=m +no_defs"
+            transformNote="Taken as WGS84: NAD83 (2011) and WGS84 differ by about 1 to 2 m" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:26909" label="NAD83 / UTM zone 9N" axisOrder="enu" minLongitude="-132" minLatitude="14.92" maxLongitude="-126" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=9 +datum=NAD83 +units=m +no_defs"
+            transformNote="Taken as WGS84: NAD83 (2011) and WGS84 differ by about 1 to 2 m" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:26910" label="NAD83 / UTM zone 10N" axisOrder="enu" minLongitude="-126" minLatitude="14.92" maxLongitude="-120" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=10 +datum=NAD83 +units=m +no_defs"
+            transformNote="Taken as WGS84: NAD83 (2011) and WGS84 differ by about 1 to 2 m" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:26911" label="NAD83 / UTM zone 11N" axisOrder="enu" minLongitude="-120" minLatitude="14.92" maxLongitude="-114" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=11 +datum=NAD83 +units=m +no_defs"
+            transformNote="Taken as WGS84: NAD83 (2011) and WGS84 differ by about 1 to 2 m" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:26912" label="NAD83 / UTM zone 12N" axisOrder="enu" minLongitude="-114" minLatitude="14.92" maxLongitude="-108" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=12 +datum=NAD83 +units=m +no_defs"
+            transformNote="Taken as WGS84: NAD83 (2011) and WGS84 differ by about 1 to 2 m" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:26913" label="NAD83 / UTM zone 13N" axisOrder="enu" minLongitude="-108" minLatitude="14.92" maxLongitude="-102" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=13 +datum=NAD83 +units=m +no_defs"
+            transformNote="Taken as WGS84: NAD83 (2011) and WGS84 differ by about 1 to 2 m" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:26914" label="NAD83 / UTM zone 14N" axisOrder="enu" minLongitude="-102" minLatitude="14.92" maxLongitude="-96" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=14 +datum=NAD83 +units=m +no_defs"
+            transformNote="Taken as WGS84: NAD83 (2011) and WGS84 differ by about 1 to 2 m" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:26915" label="NAD83 / UTM zone 15N" axisOrder="enu" minLongitude="-96" minLatitude="14.92" maxLongitude="-90" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=15 +datum=NAD83 +units=m +no_defs"
+            transformNote="Taken as WGS84: NAD83 (2011) and WGS84 differ by about 1 to 2 m" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:26916" label="NAD83 / UTM zone 16N" axisOrder="enu" minLongitude="-90" minLatitude="14.92" maxLongitude="-84" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=16 +datum=NAD83 +units=m +no_defs"
+            transformNote="Taken as WGS84: NAD83 (2011) and WGS84 differ by about 1 to 2 m" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:26917" label="NAD83 / UTM zone 17N" axisOrder="enu" minLongitude="-84" minLatitude="14.92" maxLongitude="-78" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=17 +datum=NAD83 +units=m +no_defs"
+            transformNote="Taken as WGS84: NAD83 (2011) and WGS84 differ by about 1 to 2 m" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:26918" label="NAD83 / UTM zone 18N" axisOrder="enu" minLongitude="-78" minLatitude="14.92" maxLongitude="-72" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=18 +datum=NAD83 +units=m +no_defs"
+            transformNote="Taken as WGS84: NAD83 (2011) and WGS84 differ by about 1 to 2 m" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:26919" label="NAD83 / UTM zone 19N" axisOrder="enu" minLongitude="-72" minLatitude="14.92" maxLongitude="-66" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=19 +datum=NAD83 +units=m +no_defs"
+            transformNote="Taken as WGS84: NAD83 (2011) and WGS84 differ by about 1 to 2 m" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:26920" label="NAD83 / UTM zone 20N" axisOrder="enu" minLongitude="-66" minLatitude="14.92" maxLongitude="-60" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=20 +datum=NAD83 +units=m +no_defs"
+            transformNote="Taken as WGS84: NAD83 (2011) and WGS84 differ by about 1 to 2 m" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:26921" label="NAD83 / UTM zone 21N" axisOrder="enu" minLongitude="-60" minLatitude="14.92" maxLongitude="-54" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=21 +datum=NAD83 +units=m +no_defs"
+            transformNote="Taken as WGS84: NAD83 (2011) and WGS84 differ by about 1 to 2 m" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:26922" label="NAD83 / UTM zone 22N" axisOrder="enu" minLongitude="-54" minLatitude="14.92" maxLongitude="-48" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=22 +datum=NAD83 +units=m +no_defs"
+            transformNote="Taken as WGS84: NAD83 (2011) and WGS84 differ by about 1 to 2 m" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:26923" label="NAD83 / UTM zone 23N" axisOrder="enu" minLongitude="-48" minLatitude="14.92" maxLongitude="-42" maxLatitude="84"
+            proj4Definition="+proj=utm +zone=23 +datum=NAD83 +units=m +no_defs"
+            transformNote="Taken as WGS84: NAD83 (2011) and WGS84 differ by about 1 to 2 m" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:27700" label="OSGB36 / British National Grid" axisOrder="enu" minLongitude="-9.01" minLatitude="49.75" maxLongitude="2.01" maxLatitude="61.01"
+            proj4Definition="+proj=tmerc +lat_0=49 +lon_0=-2 +k=0.9996012717 +x_0=400000 +y_0=-100000 +ellps=airy +towgs84=446.448,-125.157,542.06,0.15,0.247,0.842,-20.489 +units=m +no_defs"
+            transformNote="Helmert shift of seven parameters from OSGB36 to WGS84: about 5 m (the OSTN15 grid, good to centimetres, is not used)" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:2154" label="RGF93 v1 / Lambert-93 (France)" axisOrder="enu" minLongitude="-9.86" minLatitude="41.15" maxLongitude="10.38" maxLatitude="51.56"
+            proj4Definition="+proj=lcc +lat_0=46.5 +lon_0=3 +lat_1=49 +lat_2=44 +x_0=700000 +y_0=6600000 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs"
+            transformNote="Taken as WGS84: RGF93 (ETRS89) and WGS84 differ by about 1 m" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:3035" label="ETRS89-extended / LAEA Europe" axisOrder="neu" minLongitude="-35.58" minLatitude="24.6" maxLongitude="44.83" maxLatitude="84.73"
+            proj4Definition="+proj=laea +lat_0=52 +lon_0=10 +x_0=4321000 +y_0=3210000 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs"
+            transformNote="Taken as WGS84: ETRS89 and WGS84 differ by about 1 m" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:5070" label="NAD83 / Conus Albers" axisOrder="enu" minLongitude="-124.79" minLatitude="24.41" maxLongitude="-66.91" maxLatitude="49.38"
+            proj4Definition="+proj=aea +lat_0=23 +lon_0=-96 +lat_1=29.5 +lat_2=45.5 +x_0=0 +y_0=0 +datum=NAD83 +units=m +no_defs"
+            transformNote="Taken as WGS84: NAD83 (2011) and WGS84 differ by about 1 to 2 m" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:3413" label="WGS 84 / NSIDC Sea Ice Polar Stereographic North" axisOrder="enu" minLongitude="-180" minLatitude="30" maxLongitude="180" maxLatitude="90" projectedExtent="-4194304,-4194304,4194304,4194304"
+            proj4Definition="+proj=stere +lat_0=90 +lat_ts=70 +lon_0=-45 +k=1 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+    <moqui.maps.MapProjection projectionId="EPSG:3031" label="WGS 84 / Antarctic Polar Stereographic" axisOrder="enu" minLongitude="-180" minLatitude="-90" maxLongitude="180" maxLatitude="-60" projectedExtent="-4194304,-4194304,4194304,4194304"
+            proj4Definition="+proj=stere +lat_0=-90 +lat_ts=-71 +lon_0=0 +k=1 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs"
+            transformNote="WGS84 itself" sourceNote="EPSG Geodetic Parameter Dataset (IOGP), its parameters as PROJ writes them"/>
+</entity-facade-xml>

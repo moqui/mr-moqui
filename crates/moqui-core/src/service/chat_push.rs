@@ -57,6 +57,7 @@ use serde_json::json;
 use sha2::Digest;
 
 use super::chat_bridge::{current_factory, force_new, millis_of, node_id, now_millis, param, stamp, text_of};
+use crate::context::framework_thread;
 use crate::context::{ExecutionContext, ExecutionContextFactory};
 use crate::entity::{EntityFacade, EntityValue};
 use crate::notify::push_crypto;
@@ -333,7 +334,7 @@ pub fn start(factory: &Arc<ExecutionContextFactory>) {
     let weak: Weak<ExecutionContextFactory> = Arc::downgrade(factory);
     let spawned = std::thread::Builder::new()
         .name("moqui-chat-push".to_string())
-        .spawn(move || {
+        .spawn(framework_thread(move || {
             let mut first = true;
             loop {
                 // the factory is held only for a round, not while waiting, so a stopped server releases it
@@ -392,7 +393,7 @@ pub fn start(factory: &Arc<ExecutionContextFactory>) {
                     Err(_) => tracing::error!("the chat push round panicked"),
                 }
             }
-        });
+        }));
     match spawned {
         Ok(handle) => *lock(&state.thread) = Some(handle),
         Err(error) => tracing::error!("the chat push worker did not start: {error}"),

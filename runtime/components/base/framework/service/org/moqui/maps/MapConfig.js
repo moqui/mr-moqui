@@ -1,4 +1,4 @@
-// The map configuration of org.moqui.maps.MapServices (plans/Maps.md §3.2, §4.2): the effective configuration m-map draws
+// The map configuration of org.moqui.maps.MapServices (plans/archive/Maps.md §3.2, §4.2): the effective configuration m-map draws
 // (webroot/screen/webroot/js/WebrootMap.js documents its shape), personal preferences and saved views.
 //
 // Precedence (§4.2): the installation's policy (maps@external-requests) constrains every choice; the consumer's profile
@@ -11,9 +11,10 @@
 // an explanation; an installation with no OUTLINE row or no maps.profile preference still draws the outline, and an
 // administrator is told so, with the link to Configuration only for a user who may open it.
 //
-// What reaches a browser: no provider's key (a provider with one is not offered to a browser at all: its key would be
-// in the tile and style URLs, and no provider kind of P1 has a key meant to be public; a proxied provider, which keeps the
-// key on the server, is a later option), no service, entity or resource name, only paths of this server and outside URLs
+// What reaches a browser: no provider's key (a provider with one is offered only through this server's proxy, its
+// proxyRequests Y: its key would be in the tile and style URLs, and no provider kind has a key meant to be public; a
+// proxied provider's layers are handed the proxy's same-origin paths, LocalMap.xml providerProxy, only to a caller the
+// proxy lets reach it, MapProviders.js proxyOffered), no service, entity or resource name, only paths of this server and outside URLs
 // of an enabled provider that passed its test as it is configured now, on that provider's own origin (a layer with no
 // provider, or a URL of another origin than its provider's, is a layer error), and with outside requests off only this
 // server's. allowedOrigins are those origins, each tile subdomain ({s}, {a-c}) by itself. A profile or layer the caller
@@ -27,6 +28,14 @@
 // restoreLastView, lastView, layers: {layerId: visible}}. A preference names only an enabled provider's layer and a
 // profile the user is permitted, so it cannot turn on an unapproved provider. No location is collected: the last view
 // is kept only when the user opted in, and turning that off clears it.
+//
+// Projections (P4c, moqui.maps.MapProjection): a profile's view is drawn in EPSG:3857 unless it names another
+// (viewProjection: EPSG:4326 or a registered row), and a basemap of vector tiles (a MapLibre style, a vector PMTiles archive),
+// which a map cannot reproject, is drawn only in EPSG:3857: a profile with one in another view is refused with that reason,
+// and the other basemaps offered are those its view can draw. The configuration hands the browser the rows of the
+// projections it needs (its view's, its COG layers'), whose PROJ.4 text m-map registers with proj4js: no definition is
+// fetched from anywhere else. A Cloud Optimized GeoTIFF layer (MLF_COG) carries its header's bands and its band settings:
+// the user's own (maps.preferences rasters, by layer), else the layer's defaults (rasterJson).
 //
 // Saved views (moqui.maps.MapSavedView, shaped as GridView): the owner's, and others' to read when shared; only the owner
 // changes or deletes one. A layer a shared view names that the reader may not see is left out of what they read; a view
@@ -61,7 +70,10 @@ const BASEMAP_KINDS = {
     MLF_VECTOR_STYLE: "style",
     MLF_RASTER_XYZ: "xyz",
     MLF_PMTILES_VECTOR: "pmtiles",
-    MLF_PMTILES_RASTER: "pmtiles"
+    MLF_PMTILES_RASTER: "pmtiles",
+    MLF_WMS: "wms",
+    MLF_WMTS: "wmts",
+    MLF_COG: "cog"
 }
 const OVERLAY_KINDS = {
     MLF_GEOJSON: "geojson",
@@ -71,8 +83,16 @@ const OVERLAY_KINDS = {
     MLF_RASTER_XYZ: "xyz",
     MLF_PMTILES_VECTOR: "pmtiles",
     MLF_PMTILES_RASTER: "pmtiles",
-    MLF_ADAPTER: "features"
+    MLF_ADAPTER: "features",
+    MLF_WMS: "wms",
+    MLF_WMTS: "wmts",
+    MLF_WFS: "wfs",
+    MLF_COG: "cog"
 }
+const PROJECTION = "moqui.maps.MapProjection"
+const WEB_MERCATOR = "EPSG:3857"
+const BUILT_IN_PROJECTIONS = ["EPSG:3857", "EPSG:4326"]
+const COLORMAPS = ["grey", "viridis", "terrain", "magma"]
 const GEOMETRY_TYPES = ["Point", "MultiPoint", "LineString", "MultiLineString", "Polygon", "MultiPolygon"]
 const OVERRIDES = ["basemap", "layers", "extent", "units"]
 
@@ -168,9 +188,10 @@ function geometryOf(value) {
 // a path of this server: /..., never //host
 const isLocal = url => /^\/(?!\/)/.test(text(url))
 const isWeb = url => /^https?:\/\/[^\/?#@\s]+/i.test(text(url))
-// scheme://host[:port], lower case, without the scheme's default port
+// scheme://host[:port], lower case, without the scheme's default port; null for a URL with credentials (user@host): its
+// host is the part after the @, which a check of the part before it would miss
 function originOf(url) {
-    const parts = /^(https?):\/\/([^\/?#@\s]+)/i.exec(text(url))
+    const parts = /^(https?):\/\/([^\/?#@\s\\]+)(?=[\/?#]|$)/i.exec(text(url))
     if (!parts) return null
     const scheme = parts[1].toLowerCase()
     const host = parts[2].toLowerCase().replace(scheme === "https" ? /:443$/ : /:80$/, "")
@@ -220,35 +241,93 @@ function providerRefusal(provider, providerId) {
     if (!provider) return refusal("PROVIDER_MISSING", say("its provider ${providerId} is not registered", {providerId}))
     const name = text(provider.providerName) || provider.providerId
     if (provider.disabled === "Y") return refusal("PROVIDER_DISABLED", say("its provider ${name} is not enabled", {name}))
-    // a key is never sent to a browser, and no provider kind has one meant to be public
-    if (text(provider.apiKey))
+    // a key is never sent to a browser, and no provider kind has one meant to be public: one with a key is drawn only
+    // through this server's proxy, which adds it
+    if (text(provider.apiKey) && provider.proxyRequests !== "Y")
         return refusal("PROVIDER_KEYED", say("its provider ${name} needs a key, which is never sent to a browser", {name}))
     return null
 }
 // The map archives (MapSources.js), loaded when a layer has one
 let sources = null
+// The OGC services (MapOgc.js), loaded when a layer is of one
+let ogcModule = null
+const ogc = () => (ogcModule = ogcModule || ec.resource.script("component://framework/service/org/moqui/maps/MapOgc.js"))
+const OGC_FORMATS = ["MLF_WMS", "MLF_WMTS", "MLF_WFS"]
+const PROXY_PATH = "/apps/maps/LocalMap/providerProxy"
+// The URLs an OGC layer's browser asks for (MapOgc.js layerSource, from what its provider's last test recorded): {url, styleUrl,
+// ogc}, or a refusal. Always of an enabled, tested provider of its service, on that provider's origin or through this
+// server's proxy.
+function ogcUrls(layer, provider) {
+    if (!provider)
+        return refusal("SOURCE_UNTESTED", L("it asks a host outside this server that is not an enabled, tested map provider's"))
+    if (offline())
+        return refusal(
+            "EXTERNAL_REQUESTS_OFF",
+            L("it is drawn from a host outside this server, and outside requests are turned off (maps@external-requests)")
+        )
+    if (!providerTested(provider))
+        return refusal(
+            "PROVIDER_UNTESTED",
+            say("its provider ${name} has not passed a test as it is configured now", {
+                name: text(provider.providerName) || provider.providerId
+            })
+        )
+    const proxiedProvider = provider.proxyRequests === "Y"
+    if (proxiedProvider) {
+        providerKind = providerKind || ec.resource.script("component://framework/service/org/moqui/maps/MapProviders.js")
+        if (!providerKind.proxyOffered(provider))
+            return refusal("LAYER_MISSING", say("the layer ${layerId} is not registered", {layerId: layer.layerId}))
+    }
+    const built = ogc().layerSource(
+        layer,
+        provider,
+        proxiedProvider ? PROXY_PATH + "/" + encodeURIComponent(provider.providerId) : null
+    )
+    if (!built.ok) return built
+    // a direct one: on its provider's own origin only (each a provider's recorded address or the endpoint's)
+    if (!proxiedProvider) {
+        const own = new Set(originsOf(provider.endpointUrl))
+        const asked = originsOf(built.url)
+        if (!asked.length || !asked.every(origin => own.has(origin)))
+            return refusal("URL_NOT_PROVIDERS", L("its address is not on its provider's host"))
+    }
+    return {url: built.url, styleUrl: "", ogc: built.ogc}
+}
+// A raster provider's endpoint that is a Cloud Optimized GeoTIFF rather than a tile template or a TileJSON: a path ending
+// in .tif or .tiff, with no placeholder (MapProviders.js tests such a provider by a range of that COG)
+const cogEndpoint = url => !/[{}]/.test(text(url)) && /\.tiff?$/i.test(text(url).split(/[?#]/)[0])
 // The URLs a layer's browser asks for: {url, styleUrl}, or a refusal.
 function layerUrls(layer, provider, kind) {
     const format = text(layer.formatEnumId)
     let url = ""
     let styleUrl = ""
     if (format === "MLF_VECTOR_STYLE") url = text(layer.styleLocation) || text(provider?.endpointUrl)
-    else if (format === "MLF_RASTER_XYZ") url = text(layer.sourceUrl) || text(provider?.endpointUrl)
-    else if (format === "MLF_ADAPTER") return {url: "", styleUrl: ""}
+    else if (format === "MLF_RASTER_XYZ") {
+        // a COG provider's URL is a GeoTIFF, never a tile template
+        if (!text(layer.sourceUrl) && cogEndpoint(provider?.endpointUrl))
+            return refusal(
+                "SOURCE_NOT_TILES",
+                L("its provider's URL is a GeoTIFF, not a tile template: give the layer its own tile URL")
+            )
+        url = text(layer.sourceUrl) || text(provider?.endpointUrl)
+    } else if (format === "MLF_ADAPTER") return {url: "", styleUrl: ""}
+    else if (OGC_FORMATS.includes(format)) return ogcUrls(layer, provider)
     else {
         url = text(layer.sourceUrl)
         if (kind === "pmtiles") styleUrl = text(layer.styleLocation)
     }
     if (!url && text(layer.resourceLocation)) {
-        if (kind !== "pmtiles")
-            return refusal("SOURCE_NOT_SERVED", L("its file is a registered resource, which this server does not hand to a map here"))
+        if (kind !== "pmtiles" && kind !== "cog")
+            return refusal(
+                "SOURCE_NOT_SERVED",
+                L("its file is a registered resource, which this server does not hand to a map here")
+            )
         // a registered archive: the map-source transition's same-origin URL with its revision, for a caller it lets read the
         // archive now (MapSources.js); one it does not is, to a caller who may not configure, one that is not there
         sources = sources || ec.resource.script("component://framework/service/org/moqui/maps/MapSources.js")
         const served = sources.servedUrl(layer)
         if (!served.ok)
-            return served.reasonCode === "SOURCE_MISSING" ||
-                (served.reasonCode === "SOURCE_NOT_PERMITTED" && !canConfigure())
+            return served.reasonCode === "SOURCE_MISSING" || (served.reasonCode === "SOURCE_NOT_PERMITTED" && !canConfigure())
                 ? refusal("LAYER_MISSING", say("the layer ${layerId} is not registered", {layerId: layer.layerId}))
                 : refusal(served.reasonCode, served.reason)
         url = served.url
@@ -282,6 +361,30 @@ function layerUrls(layer, provider, kind) {
                     name: text(provider.providerName) || provider.providerId
                 })
             )
+    }
+    // a provider's COG is read by the browser itself, by range: never through the proxy
+    if (kind === "cog" && provider?.proxyRequests === "Y" && isWeb(url))
+        return refusal("PROVIDER_PROXIED", L("a GeoTIFF is read by the browser itself, not through this server"))
+    // a proxied provider: the browser asks this server's proxy, at the same paths of the provider's origin, the key added
+    // there; only a caller the proxy lets reach the provider is handed them
+    if (provider?.proxyRequests === "Y" && isWeb(url)) {
+        providerKind = providerKind || ec.resource.script("component://framework/service/org/moqui/maps/MapProviders.js")
+        if (!providerKind.proxyOffered(provider))
+            return refusal("LAYER_MISSING", say("the layer ${layerId} is not registered", {layerId: layer.layerId}))
+        const proxiedUrl = providerKind.proxyUrl(provider, url)
+        if (!proxiedUrl) return refusal("URL_NOT_PROVIDERS", L("its address is not on its provider's host"))
+        // the proxy forwards only what the provider's last test reached: a layer added since needs a new test
+        if (!providerKind.proxyRecorded(provider, url))
+            return refusal(
+                "PROVIDER_UNTESTED",
+                say(
+                    "its address is not one a test of its provider ${name} reached through this server: test the provider again",
+                    {
+                        name: text(provider.providerName) || provider.providerId
+                    }
+                )
+            )
+        return {url: proxiedUrl, styleUrl}
     }
     return {url, styleUrl}
 }
@@ -322,13 +425,157 @@ function resolveLayer(layer, layerId, asBasemap) {
         attributionUrls: lines(provider?.attributionUrls)
     }
     if (urls.styleUrl) entry.styleUrl = urls.styleUrl
+    // an OGC layer: what m-map builds its source from (MapOgc.js layerSource), its URL the service's or the proxy's
+    if (urls.ogc) entry.ogc = urls.ogc
     if (format === "MLF_PMTILES_RASTER") entry.raster = true
+    if (kind === "cog") {
+        const raster = cogRaster(layer)
+        if (!raster.ok) return raster
+        entry.raster = raster.raster
+    }
     if (num(layer.minZoom) !== null) entry.minZoom = num(layer.minZoom)
     if (num(layer.maxZoom) !== null) entry.maxZoom = num(layer.maxZoom)
     if (kind === "features") entry.adapterKey = text(layer.adapterKey)
     const origins = [urls.url, urls.styleUrl].flatMap(originsOf)
     return {ok: true, entry, origins}
 }
+// The basemap of a page a visitor opens with no sign-in, a guest location link's (Maps/SharedLocation.xml;
+// plans/archive/Location-Sharing.md §3.7): the first enabled basemap the installation marks public (MapLayer isPublic Y) that has
+// no viewPermission, no registered resource (its map-source transition is a signed-in user's), no proxied provider
+// (the proxy is for signed-in users) and no provider on a private network (allowPrivateNetwork Y: an address inside this
+// installation's network is not a guest's to reach), resolved as for anyone (resolveLayer: outside requests and the provider's test
+// hold); else the built-in country outline. Nothing of the installation's profiles, other layers or providers is
+// answered: {basemaps: [entry], basemap, allowedOrigins}.
+function publicBasemap() {
+    for (const layer of find(LAYER, {isPublic: "Y", isBasemap: "Y"}).orderBy("layerId").limit(20).list()) {
+        if (layer.disabled === "Y" || text(layer.viewPermission) || text(layer.resourceLocation)) continue
+        const provider = text(layer.providerId) ? one(PROVIDER, {providerId: layer.providerId}) : null
+        if (provider && (provider.proxyRequests === "Y" || provider.allowPrivateNetwork === "Y")) continue
+        const resolved = resolveLayer(layer, layer.layerId, true)
+        if (!resolved.ok || resolved.entry.kind === "cog") continue
+        return {basemaps: [resolved.entry], basemap: resolved.entry.id, allowedOrigins: Array.from(new Set(resolved.origins))}
+    }
+    return {basemaps: [Object.assign({}, BUILT_IN_OUTLINE)], basemap: BUILT_IN_OUTLINE.id, allowedOrigins: []}
+}
+// ===== projections and rasters (P4c) =====
+// A projection a map may be drawn in or read a COG in: EPSG:3857 and EPSG:4326, which every map has, or an enabled row of
+// the registry with a definition; null otherwise. The rows a configuration uses are collected for its projections list.
+const usedProjections = new Map()
+function projectionOf(code) {
+    const value = text(code).toUpperCase()
+    if (!value) return null
+    if (BUILT_IN_PROJECTIONS.includes(value)) return {code: value, builtIn: true}
+    const row = one(PROJECTION, {projectionId: value})
+    if (!row || row.disabled === "Y" || !text(row.proj4Definition)) return null
+    const projected = text(row.projectedExtent)
+        .split(",")
+        .map(num)
+        .filter(value => value !== null)
+    const out = {
+        code: value,
+        label: text(row.label) || value,
+        proj4: text(row.proj4Definition),
+        bounds: extentOf([row.minLongitude, row.minLatitude, row.maxLongitude, row.maxLatitude]),
+        extent: projected.length === 4 ? projected : null
+    }
+    usedProjections.set(value, out)
+    return out
+}
+// The projection a profile's map is drawn in: its viewProjection when that is one a map draws, else EPSG:3857
+const viewProjectionOf = profile => projectionOf(profile?.viewProjection)?.code || WEB_MERCATOR
+// Whether a basemap or layer of a kind may be drawn in a projection: everything in EPSG:3857; vector tiles (a MapLibre
+// style, a vector PMTiles archive, a user's overlay simplified into tiles) only there, since a map cannot reproject them;
+// rasters (XYZ, WMS, WMTS, a raster archive, a COG) are reprojected, and vector files read in any.
+const drawableIn = (entry, projection) =>
+    projection === WEB_MERCATOR ||
+    !(entry.kind === "style" || entry.kind === "mvt" || (entry.kind === "pmtiles" && !entry.raster))
+const projectionRefusal = (entry, projection) =>
+    refusal(
+        "PROJECTION_INCOMPATIBLE",
+        say("${label} is drawn only in Web Mercator (EPSG:3857), not in ${projection}: its vector tiles are not reprojected", {
+            label: entry.label,
+            projection
+        })
+    )
+// A COG's band settings checked against its band count: {rgb: [r, g, b]} or {band, colormap}, with min and max (min below
+// max) and an optional nodata; null when they do not read
+function rasterStyleOf(value, bands) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null
+    const bandOk = band => Number.isInteger(band) && band >= 1 && band <= (bands || 64)
+    const out = {}
+    if (Array.isArray(value.rgb)) {
+        const rgb = value.rgb.map(num)
+        if (rgb.length !== 3 || !rgb.every(bandOk)) return null
+        out.rgb = rgb
+    } else {
+        const band = num(value.band)
+        if (!bandOk(band)) return null
+        out.band = band
+        const colormap = text(value.colormap) || COLORMAPS[0]
+        if (!COLORMAPS.includes(colormap)) return null
+        out.colormap = colormap
+    }
+    const min = num(value.min)
+    const max = num(value.max)
+    if (min === null || max === null || !(min < max)) return null
+    out.min = min
+    out.max = max
+    if (value.nodata !== undefined && value.nodata !== null && value.nodata !== "") {
+        const nodata = num(value.nodata)
+        if (nodata === null) return null
+        out.nodata = nodata
+    }
+    return out
+}
+// What m-map draws a COG layer with: its header's bands and type, its CRS (registered), its band settings (the user's
+// own, else the layer's defaults) and whether its provider answers CORS; a refusal when its header was never read or its CRS
+// is not a projection a map draws
+let rasterPreferences = null
+function cogRaster(layer) {
+    let raster = null
+    try {
+        raster = JSON.parse(text(layer.rasterJson) || "null")
+    } catch (error) {
+        raster = null
+    }
+    if (!raster || typeof raster !== "object")
+        return refusal(
+            "SOURCE_NOT_REGISTERED",
+            L("its GeoTIFF's header has not been read: register it under Maps › Configuration › Archives")
+        )
+    const projection = projectionOf(raster.epsg || layer.crs)
+    if (!projection) {
+        const crs = text(raster.epsg || layer.crs).toUpperCase() || "?"
+        const row = one(PROJECTION, {projectionId: crs})
+        return refusal(
+            "PROJECTION_UNREGISTERED",
+            !row
+                ? say("its CRS ${crs} is not a registered map projection", {crs})
+                : row.disabled === "Y"
+                  ? say("its CRS ${crs} is a disabled map projection", {crs})
+                  : say("its CRS ${crs} is registered with no definition", {crs})
+        )
+    }
+    const bands = num(raster.bands) || 1
+    rasterPreferences = rasterPreferences || storedPreferences().rasters || {}
+    const own = rasterStyleOf(rasterPreferences[layer.layerId], bands)
+    const style = own || rasterStyleOf(raster.defaults, bands) || {band: 1, min: 0, max: 255, colormap: COLORMAPS[0]}
+    return {
+        ok: true,
+        raster: {
+            bands,
+            sampleType: text(raster.sampleType),
+            projection: projection.code,
+            nodata: num(raster.nodata),
+            statistics: Array.isArray(raster.statistics) ? raster.statistics.slice(0, 64) : [],
+            cors: raster.cors !== false,
+            style,
+            defaults: rasterStyleOf(raster.defaults, bands),
+            own: !!own
+        }
+    }
+}
+
 const overridesOf = profile =>
     text(profile?.allowedOverrides)
         .split(",")
@@ -352,6 +599,11 @@ function resolveProfile(profile, profileId) {
     const basemap = resolveLayer(one(LAYER, {layerId: profile.basemapLayerId}), text(profile.basemapLayerId) || "(none)", true)
     if (!basemap.ok)
         return refusal("BASEMAP_UNAVAILABLE", say("its basemap is not available: ${reason}", {reason: basemap.reason}))
+    const projection = viewProjectionOf(profile)
+    if (!drawableIn(basemap.entry, projection)) {
+        const refused = projectionRefusal(basemap.entry, projection)
+        return refusal("BASEMAP_UNAVAILABLE", say("its basemap is not available: ${reason}", {reason: refused.reason}))
+    }
     return {ok: true, basemap}
 }
 const profileName = (profile, profileId) => (profile && text(profile.profileName) ? L(profile.profileName) : profileId)
@@ -436,6 +688,38 @@ function postalPlace(postalCode, countryGeoId) {
     return matches.length === 1 ? matches[0] : null
 }
 
+// An address with no point, matched by the installation's local geocoder (MPK_GEOCODER_OVERTURE: this server's own index of
+// Overture address points, no outside request) when one is enabled, tested and its data active: {candidates, ambiguous} of
+// the address matches only, none whose postal code or locality differs (an estimate is no better than the postal area), or
+// null when there is no such geocoder. Searched as this read's own step (the adapter let the caller read the record), so a
+// user with no Maps app grant has it too.
+const UNIT_LINE = /^\s*(#|apt\b|apartment\b|unit\b|suite\b|ste\b|fl\b|floor\b|rm\b|room\b|int\b|interno\b|app\b)/i
+function addressMatch(out) {
+    const geocoders = ec.resource.script("component://framework/service/org/moqui/maps/MapGeocoders.js")
+    const line = [text(out.address1), UNIT_LINE.test(text(out.address2)) ? text(out.address2) : ""].filter(Boolean).join(" ")
+    const place = [text(out.postalCode), text(out.city)].filter(Boolean).join(" ")
+    let found = null
+    ec.message.pushErrors()
+    try {
+        found = geocoders.localSearch([line, place].filter(Boolean).join(", ").slice(0, 200), text(out.countryGeoId) || null, 5)
+    } catch (error) {
+        ec.logger.warn("The local address match of a record failed: " + (error?.message ?? error))
+        found = null
+    } finally {
+        ec.message.clearErrors()
+        ec.message.popErrors()
+    }
+    if (!found) return null
+    const candidates = Array.from(found.candidates || []).filter(
+        candidate =>
+            candidate.precisionEnumId === "GPP_ADDRESS_MATCH" &&
+            candidate.matchKind === "address" &&
+            candidate.postcodeAgrees !== false &&
+            candidate.localityAgrees !== false
+    )
+    return {candidates, ambiguous: candidates.length > 1, providerName: text(found.providerName)}
+}
+
 function effectiveConfig(p) {
     const configurer = canConfigure()
     const fallbacks = []
@@ -503,6 +787,7 @@ function effectiveConfig(p) {
         fallbacks.push({kind: "profile", id: row.profileId, reasonCode: row.refused.reasonCode, message})
     }
     const profile = chosen?.profile || null
+    const viewProjection = profile ? viewProjectionOf(profile) : WEB_MERCATOR
     const overrides = profile ? overridesOf(profile) : []
     const allowed = name => overrides.includes(name)
 
@@ -516,7 +801,8 @@ function effectiveConfig(p) {
             for (const layer of others) {
                 if (layer.layerId === profile.basemapLayerId || layer.disabled === "Y") continue
                 const resolved = resolveLayer(layer, layer.layerId, true)
-                if (!resolved.ok) continue
+                // one the profile's view cannot draw is not offered
+                if (!resolved.ok || !drawableIn(resolved.entry, viewProjection)) continue
                 basemaps.push(resolved.entry)
                 resolved.origins.forEach(origin => origins.add(origin))
                 if (basemaps.length >= 20) break
@@ -529,13 +815,18 @@ function effectiveConfig(p) {
         if (basemaps.some(entry => entry.id === preferredBasemap)) basemap = preferredBasemap
         else {
             const resolved = resolveLayer(one(LAYER, {layerId: preferredBasemap}), preferredBasemap, true)
+            const incompatible = resolved.ok && !drawableIn(resolved.entry, viewProjection)
             fallbacks.push({
                 kind: "basemap",
                 id: preferredBasemap,
-                reasonCode: resolved.ok ? "BASEMAP_UNAVAILABLE" : resolved.reasonCode,
+                reasonCode: incompatible ? "PROJECTION_INCOMPATIBLE" : resolved.ok ? "BASEMAP_UNAVAILABLE" : resolved.reasonCode,
                 message: say("Your basemap ${id} is not available (${reason}): the profile's is shown.", {
                     id: preferredBasemap,
-                    reason: resolved.ok ? L("the profile does not offer it") : resolved.reason
+                    reason: incompatible
+                        ? projectionRefusal(resolved.entry, viewProjection).reason
+                        : resolved.ok
+                          ? L("the profile does not offer it")
+                          : resolved.reason
                 })
             })
         }
@@ -566,7 +857,10 @@ function effectiveConfig(p) {
         for (const row of wanted) if (Object.hasOwn(visibility, row.layerId)) row.visible = yes(visibility[row.layerId])
     for (const row of wanted) {
         const layer = one(LAYER, {layerId: row.layerId})
-        const resolved = resolveLayer(layer, row.layerId, false)
+        const found = resolveLayer(layer, row.layerId, false)
+        // a layer of vector tiles over a view in another projection is named, not drawn
+        const resolved =
+            found.ok && !drawableIn(found.entry, viewProjection) ? projectionRefusal(found.entry, viewProjection) : found
         if (!resolved.ok) {
             const label =
                 layer && resolved.reasonCode !== "LAYER_MISSING" && text(layer.layerName) ? L(layer.layerName) : row.layerId
@@ -604,6 +898,7 @@ function effectiveConfig(p) {
 
     // ----- the viewport: the profile's, the user's extent, the last view (when kept), then the record's place -----
     const config = {profileId: chosen ? chosen.profileId : OUTLINE_ID}
+    if (viewProjection !== WEB_MERCATOR) config.projection = viewProjection
     if (profile) {
         const center = centerOf([profile.centerLongitude, profile.centerLatitude])
         if (center) config.center = center
@@ -681,6 +976,20 @@ function effectiveConfig(p) {
                             .map(link => ({label: text(link.label), route: text(link.route), parameters: link.parameters || {}})),
                         located: !!geometry
                     }
+                    // the links a registered route (moqui.maps.MapRoute) of the host app (routeApp), else of no app, resolves
+                    // to a screen the user's own grants open (MapRoutes.js); record.links stay as the adapter named them
+                    try {
+                        record.resolvedLinks = record.links.length
+                            ? ec.resource
+                                  .script("component://framework/service/org/moqui/maps/MapRoutes.js")
+                                  .resolveLinks(record.links, text(p.routeApp) || null, recordKey)
+                            : []
+                    } catch (err) {
+                        ec.logger.warn(
+                            "Map adapter " + adapterKey + ": the record's links were not resolved: " + (err?.message ?? err)
+                        )
+                        record.resolvedLinks = []
+                    }
                     if (geometry && geometry.type === "Point") {
                         const [lon, lat] = geometry.coordinates.map(num)
                         const point = {id: "record", lon, lat}
@@ -698,10 +1007,53 @@ function effectiveConfig(p) {
                             properties: {label: record.label, precisionEnumId: record.precisionEnumId}
                         })
                         if (extent) setView({extent})
-                    } else if (text(out.postalCode)) {
-                        // an address with no point: its local postal-area position, approximate, with a broad extent
-                        // (§6.1); no outside service is asked and nothing is saved to the record
-                        const postal = postalPlace(out.postalCode, out.countryGeoId)
+                    } else if (text(out.postalCode) || text(out.address1)) {
+                        // an address with no point (§6.1): the address point the local geocoder matches, when the
+                        // installation has one (this server's index); else its local postal-area position, approximate,
+                        // with a broad extent. No outside service is asked and nothing is saved to the record: Choose
+                        // location saves through the adapter
+                        const matched = text(out.address1) ? addressMatch(out) : null
+                        const postal =
+                            matched?.candidates.length === 1 || !text(out.postalCode)
+                                ? null
+                                : postalPlace(out.postalCode, out.countryGeoId)
+                        if (matched?.candidates.length === 1) {
+                            const found = matched.candidates[0]
+                            Object.assign(record, {
+                                precisionEnumId: found.precisionEnumId,
+                                precisionText: found.precisionText,
+                                sourceText: found.sourceText,
+                                approximate: true,
+                                addressMatched: true,
+                                addressNote: say(
+                                    "Found from the record's address by ${name}, not saved to the record: Choose location saves a point",
+                                    {name: matched.providerName}
+                                )
+                            })
+                            points.push({
+                                id: "record",
+                                lon: found.lon,
+                                lat: found.lat,
+                                label: record.label || found.label,
+                                precision: found.precisionText,
+                                source: found.sourceText
+                            })
+                            setView(found.extent ? {extent: found.extent} : {center: [found.lon, found.lat], zoom: 17})
+                        } else if (matched?.candidates.length > 1) {
+                            // several address points: choices on the map, none chosen; the postal area is the view
+                            record.addressNote = L(
+                                "Several address points match the record's address: they are shown, none is chosen; Choose location saves one"
+                            )
+                            record.addressChoices = matched.candidates.map((found, index) => ({
+                                id: "address:" + index,
+                                label: found.label,
+                                lon: found.lon,
+                                lat: found.lat,
+                                precision: found.precisionText,
+                                source: found.sourceText
+                            }))
+                            points.push(...record.addressChoices)
+                        }
                         if (postal) {
                             Object.assign(record, {
                                 precisionEnumId: postal.precisionEnumId,
@@ -718,7 +1070,19 @@ function effectiveConfig(p) {
                                 source: postal.sourceText
                             })
                             setView({extent: postal.extent})
-                        } else if (extent) setView({extent})
+                        } else if (record.addressChoices) {
+                            const lons = record.addressChoices.map(choice => choice.lon)
+                            const lats = record.addressChoices.map(choice => choice.lat)
+                            const pad = 0.002
+                            setView({
+                                extent: [
+                                    Math.min(...lons) - pad,
+                                    Math.min(...lats) - pad,
+                                    Math.max(...lons) + pad,
+                                    Math.max(...lats) + pad
+                                ]
+                            })
+                        } else if (!record.addressMatched && extent) setView({extent})
                     } else if (extent) setView({extent})
                 }
             }
@@ -806,6 +1170,10 @@ function effectiveConfig(p) {
         notice
     }
     config.layers = shownLayers
+    // the definitions of the registered projections the map needs (its view's, its COG layers'): m-map registers each with
+    // proj4js, and fetches none
+    const projections = Array.from(usedProjections.values()).filter(row => !BUILT_IN_PROJECTIONS.includes(row.code))
+    if (projections.length) config.projections = projections.slice(0, 50)
     // the record layers, drawn as features: each with whether it is shown (a hidden one's adapter was not asked)
     if (recordLayers.length) config.recordLayers = recordLayers
     config.points = points
@@ -815,7 +1183,132 @@ function effectiveConfig(p) {
     config.fallbacks = fallbacks
     config.layerErrors = layerErrors
     config.externalRequests = !offline()
+    if (yes(p.locationShares)) {
+        const live = liveShares()
+        config.locationShares = live.locationShares
+        // a read that failed is said for each half (the own shares, those shared with the user), so a page keeps what it had
+        if (live.mineFailed) config.locationSharesMineFailed = true
+        if (live.theirsFailed) config.locationSharesTheirsFailed = true
+    }
     return {config}
+}
+
+// ===== live location (plans/archive/Location-Sharing.md §3.3) =====
+// The viewer's own active shares and those shared with them, for m-map's live layer, Browse's panels and the terminal. Read
+// only through org.moqui.maps.LocationServices, whose reads check the caller against each share's current audience
+// (find#MyShares, find#SharedWithMe, get#Share for a kept trail): no entity of a share is read here. Nothing of it is
+// logged or cached, and a failed read leaves that part out.
+const LIVE_SERVICES = "org.moqui.maps.LocationServices."
+// the most points of a trail handed to a map, its latest ones, and the most shares whose trail is read
+const LIVE_TRAIL_POINTS = 500
+const LIVE_TRAIL_SHARES = 10
+const wholeSetting = (name, fallback) => {
+    const number = Number(text(ec.factory.getConfValue("location@" + name)))
+    return Number.isInteger(number) && number >= 0 ? number : fallback
+}
+function livePosition(row) {
+    if (!row || row.latitude == null || row.longitude == null) return null
+    return {
+        latitude: Number(row.latitude),
+        longitude: Number(row.longitude),
+        accuracy: row.accuracy == null ? null : Number(row.accuracy),
+        heading: row.heading == null ? null : Number(row.heading),
+        speed: row.speed == null ? null : Number(row.speed),
+        observedDate: row.observedDate == null ? null : Number(row.observedDate),
+        ageSeconds: row.ageSeconds == null ? null : Number(row.ageSeconds)
+    }
+}
+// a share's kept trail as [longitude, latitude] pairs, its latest LIVE_TRAIL_POINTS in time order (get#Share's pages)
+function liveTrail(shareId, knownCount) {
+    const page = (index, size) => {
+        const found = probe(LIVE_SERVICES + "get#Share", {shareId, trailPageIndex: index, trailPageSize: size})
+        return found.failed || found.out.reasonCode ? null : found.out
+    }
+    let count = knownCount
+    if (count == null) {
+        const head = page(0, 1)
+        if (!head) return []
+        count = Number(head.trailCount) || 0
+    }
+    if (!count) return []
+    let rows = []
+    if (count <= LIVE_TRAIL_POINTS) rows = Array.from(page(0, LIVE_TRAIL_POINTS)?.trailList || [])
+    else {
+        const last = Math.floor((count - 1) / LIVE_TRAIL_POINTS)
+        for (const index of [last - 1, last]) rows = rows.concat(Array.from(page(index, LIVE_TRAIL_POINTS)?.trailList || []))
+        rows = rows.slice(-LIVE_TRAIL_POINTS)
+    }
+    return rows
+        .map(livePosition)
+        .filter(point => point)
+        .map(point => [point.longitude, point.latitude])
+}
+// who an own share is with, as names: its entries that are not revoked
+function audienceNames(list) {
+    return Array.from(list || [])
+        .filter(row => row && !row.revoked)
+        .map(row => ({
+            audienceSeqId: row.audienceSeqId,
+            audienceTypeEnumId: row.audienceTypeEnumId,
+            userGroupId: row.userGroupId || null,
+            name:
+                row.audienceTypeEnumId === "LsaLink"
+                    ? L("A guest link")
+                    : text(row.userName || row.groupName || row.jid || row.userId || row.userGroupId)
+        }))
+}
+function liveShares() {
+    if (!ec.user.userId) return {locationShares: []}
+    const minimum = wholeSetting("min-interval-seconds", 5)
+    const approximate = Math.max(minimum, wholeSetting("approximate-interval-seconds", 60))
+    const shares = []
+    const mine = probe(LIVE_SERVICES + "find#MyShares", {})
+    for (const share of mine.failed ? [] : Array.from(mine.out.shareList || []))
+        shares.push({
+            shareId: share.shareId,
+            role: "owner",
+            label: text(share.label),
+            purposeText: share.purposeText || null,
+            fromDate: share.fromDate,
+            thruDate: share.thruDate,
+            approximate: share.approximate === true,
+            keepTrail: share.keepTrail === true,
+            trailKeepDays: share.trailKeepDays ?? null,
+            trailCount: Number(share.trailCount) || 0,
+            audience: audienceNames(share.audienceList),
+            reportIntervalSeconds: share.approximate === true ? approximate : minimum,
+            // where it is sent from (plans/archive/Location-Sharing.md §3.4): a device of the owner's by its name, and whether
+            // that is this request's (the app's Send from this device), or a browser page
+            sentFromDevice: share.sentFromDevice === true,
+            deviceName: share.deviceName || null,
+            fromThisDevice: share.fromThisDevice === true,
+            audienceVersion: Number(share.audienceVersion) || 0,
+            // the owner's XMPP app feeds it too (to its XMPP contacts only), the age of its last position from there, and
+            // where the last position came from (plans/archive/Location-Sharing.md §3.6)
+            takeXmppLocation: share.takeXmppLocation === true,
+            xmppAgeSeconds: share.xmppAgeSeconds ?? null,
+            lastSource: share.lastSource || null,
+            latest: livePosition(share.latest)
+        })
+    const theirs = probe(LIVE_SERVICES + "find#SharedWithMe", {})
+    // a read that failed is said, so a page does not take its empty list for the user's having no share
+    const failed = mine.failed || theirs.failed
+    for (const share of theirs.failed ? [] : Array.from(theirs.out.shareList || []))
+        shares.push({
+            shareId: share.shareId,
+            role: "viewer",
+            label: text(share.label) || text(share.ownerName),
+            ownerName: text(share.ownerName),
+            purposeText: share.purposeText || null,
+            fromDate: share.fromDate,
+            thruDate: share.thruDate,
+            approximate: share.approximate === true,
+            keepTrail: share.keepTrail === true,
+            latest: livePosition(share.latest)
+        })
+    for (const share of shares.filter(one => one.keepTrail).slice(0, LIVE_TRAIL_SHARES))
+        share.trail = liveTrail(share.shareId, share.role === "owner" ? share.trailCount : null)
+    return {locationShares: shares, failed, mineFailed: mine.failed, theirsFailed: theirs.failed}
 }
 
 // ===== get#Preferences and store#Preferences =====
@@ -848,7 +1341,8 @@ function getPreferences() {
             units: ["metric", "imperial"].includes(text(stored.units)) ? text(stored.units) : null,
             restoreLastView: yes(stored.restoreLastView),
             lastView: yes(stored.restoreLastView) && stored.lastView && centerOf(stored.lastView.center) ? stored.lastView : null,
-            layers: Object.fromEntries(Object.keys(layers).map(layerId => [layerId, yes(layers[layerId])]))
+            layers: Object.fromEntries(Object.keys(layers).map(layerId => [layerId, yes(layers[layerId])])),
+            rasters: stored.rasters && typeof stored.rasters === "object" ? stored.rasters : {}
         },
         installationProfileId: installationProfileId() || null,
         profileOptions: profileOptions(),
@@ -918,6 +1412,37 @@ function storePreferences(p) {
         }
         next.layers = Object.fromEntries(ids.map(layerId => [layerId, yes(layers[layerId])]))
     }
+    // a COG layer's band settings, each checked against the layer's bands; a layer's null clears its own
+    if (given(p.rasters)) {
+        const rasters = p.rasters && typeof p.rasters === "object" && !Array.isArray(p.rasters) ? p.rasters : null
+        if (!rasters) throw new Error(L("The band settings are each COG layer's ID with its settings"))
+        const kept = Object.assign({}, next.rasters || {})
+        for (const layerId of Object.keys(rasters).slice(0, MAX_LAYERS)) {
+            if (rasters[layerId] === null || rasters[layerId] === "") {
+                delete kept[layerId]
+                continue
+            }
+            const layer = one(LAYER, {layerId})
+            const resolved = resolveLayer(layer, layerId, false)
+            if (!resolved.ok || resolved.entry.kind !== "cog")
+                return refused("LAYER_UNAVAILABLE", say("The layer ${layerId} is not a COG layer you may be offered", {layerId}))
+            const style = rasterStyleOf(rasters[layerId], resolved.entry.raster.bands)
+            if (!style)
+                return refused(
+                    "RASTER_INVALID",
+                    say(
+                        "The band settings of ${layerId} are bands of the layer, a minimum below a maximum and a known colormap",
+                        {
+                            layerId
+                        }
+                    )
+                )
+            kept[layerId] = style
+        }
+        if (Object.keys(kept).length > MAX_LAYERS) throw new Error(say("At most ${count} layers", {count: MAX_LAYERS}))
+        if (Object.keys(kept).length) next.rasters = kept
+        else delete next.rasters
+    }
     // the last view is kept only while the user wants it restored; turning that off clears it
     if (given(p.restoreLastView)) next.restoreLastView = yes(p.restoreLastView)
     if (!yes(next.restoreLastView)) {
@@ -972,9 +1497,19 @@ function normalizedView(value) {
     if (!out.extent && !out.center) throw new Error(L("A saved view has a center or an extent"))
     const projection = text(view.projection).toUpperCase()
     if (projection) {
-        if (!["EPSG:3857", "EPSG:4326"].includes(projection))
-            throw new Error(L("The view's projection is EPSG:3857 or EPSG:4326"))
+        if (!projectionOf(projection))
+            throw new Error(L("The view's projection is EPSG:3857, EPSG:4326 or a registered map projection"))
         out.projection = projection
+    }
+    // the band settings of its COG layers, as a user's preferences hold them (each layer's bands checked when it is drawn)
+    if (view.rasters && typeof view.rasters === "object" && !Array.isArray(view.rasters)) {
+        const rasters = {}
+        for (const layerId of Object.keys(view.rasters).slice(0, MAX_LAYERS)) {
+            const style = rasterStyleOf(view.rasters[layerId], 64)
+            if (!style) throw new Error(say("The view's band settings of ${layerId} do not read", {layerId}))
+            rasters[layerId] = style
+        }
+        if (Object.keys(rasters).length) out.rasters = rasters
     }
     const layers = view.layers == null ? [] : Array.isArray(view.layers) ? view.layers : text(view.layers).split(",")
     out.layers = Array.from(new Set(layers.map(text).filter(id => id)))
@@ -1197,6 +1732,7 @@ function findConfiguration() {
             externalAccess: profile.externalAccess === "Y",
             enabled: profile.disabled !== "Y",
             installationDefault: profile.profileId === installed,
+            viewProjection: viewProjectionOf(profile),
             drawable: resolved.ok,
             reason: resolved.ok ? "" : resolved.reason
         }
@@ -1208,6 +1744,15 @@ function findConfiguration() {
         externalRequests: !offline(),
         maxFeatures: setting("max-features") || null,
         importMaxBytes: setting("import-max-bytes") || null,
+        // the projections a profile's view may be drawn in: the two every map has, and the registry's (P4c)
+        projectionList: BUILT_IN_PROJECTIONS.map(code => ({
+            code,
+            label: code === WEB_MERCATOR ? L("Web Mercator") : L("WGS 84 (degrees)")
+        })).concat(
+            Array.from(find(PROJECTION, {}).orderBy("projectionId").limit(500).list())
+                .filter(row => row.disabled !== "Y" && !BUILT_IN_PROJECTIONS.includes(row.projectionId))
+                .map(row => ({code: row.projectionId, label: text(row.label) || row.projectionId}))
+        ),
         profileList,
         layerList
     }
@@ -1240,6 +1785,24 @@ function storeProfileSettings(p) {
             "DEFAULT_PROFILE",
             L("This profile is the installation's default map profile: choose another default before disabling it")
         )
+    // the projection its view is drawn in: one a map draws, in which its basemap can be drawn
+    if (given(p.viewProjection)) {
+        const code = text(p.viewProjection).toUpperCase() || WEB_MERCATOR
+        if (!projectionOf(code))
+            return refused("PROJECTION_UNKNOWN", say("${code} is not a projection a map draws: register it first", {code}))
+        const basemap = resolveLayer(
+            one(LAYER, {layerId: profile.basemapLayerId}),
+            text(profile.basemapLayerId) || "(none)",
+            true
+        )
+        if (basemap.ok && !drawableIn(basemap.entry, code))
+            return refused("PROJECTION_INCOMPATIBLE", projectionRefusal(basemap.entry, code).reason)
+        const stored = code === WEB_MERCATOR ? null : code
+        if (text(profile.viewProjection) !== text(stored)) {
+            profile.viewProjection = stored
+            asCaller(() => ec.entity.makeValue(PROFILE).setAll({profileId, viewProjection: stored}).update())
+        }
+    }
     if (enable !== null && (profile.disabled !== "Y") !== enable) {
         profile.disabled = enable ? "N" : "Y"
         asCaller(() =>
@@ -1271,15 +1834,239 @@ function storeProfileSettings(p) {
     return {applied: true, reason: enable === false ? say("${name} is disabled", {name}) : say("${name} is saved", {name})}
 }
 
+// ===== the projection registry (P4c; Configuration › Projections) =====
+// A PROJ.4 definition a browser registers: plain parameters only, no URL, no grid but Web Mercator's @null (as m-map's
+// moqui.map.normalizeProjections takes them)
+const BROWSER_DEFINITION = /^\+proj=[a-z]+(\s+\+[a-z_0-9]+(=[A-Za-z0-9_.,+@-]+)?)*$/
+const definitionRefusal = definition =>
+    definition.length > 600 || !BROWSER_DEFINITION.test(definition) || /\+(nadgrids|geoidgrids)=(?!@null)/.test(definition)
+// Whether the server reads a definition (moqui-lib geo/proj.rs): {readable, reason, transform}
+function serverReads(definition) {
+    const out = ec.service
+        .sync()
+        .name("org.moqui.maps.MapSourceServices.check#ProjectionDefinition")
+        .parameters({definition})
+        .disableAuthz()
+        .call()
+    return {readable: out?.readable === true, reason: text(out?.reason), transform: text(out?.transform)}
+}
+const browserOnlyNote = reason =>
+    say(
+        "A map draws it, but the server does not read its definition (${reason}): an overlay in it is refused, and a COG in it has no recorded bounds",
+        {
+            reason
+        }
+    )
+// find#Projections
+function findProjections() {
+    if (!canConfigure()) return refused("PERMISSION_DENIED", L("Maps configuration is not available to you"))
+    const projectionList = Array.from(ec.entity.find(PROJECTION).orderBy("projectionId").limit(2000).disableAuthz().list()).map(
+        row => {
+            const builtIn = BUILT_IN_PROJECTIONS.includes(row.projectionId)
+            const server = builtIn ? {readable: true, reason: "", transform: ""} : serverReads(text(row.proj4Definition))
+            return {
+                projectionId: row.projectionId,
+                label: text(row.label) || row.projectionId,
+                proj4Definition: text(row.proj4Definition),
+                axisOrder: text(row.axisOrder) || null,
+                bounds: extentOf([row.minLongitude, row.minLatitude, row.maxLongitude, row.maxLatitude]),
+                projectedExtent: text(row.projectedExtent) || null,
+                enabled: row.disabled !== "Y",
+                builtIn,
+                serverReadable: server.readable,
+                serverNote: builtIn ? L("Every map's own") : server.readable ? server.transform : browserOnlyNote(server.reason),
+                transformNote: text(row.transformNote) || null,
+                sourceNote: text(row.sourceNote) || null
+            }
+        }
+    )
+    return {applied: true, projectionList}
+}
+// store#Projection
+function storeProjection(p) {
+    if (!canConfigure() || !canChangeConfiguration())
+        return refused("PERMISSION_DENIED", L("Changing the maps configuration is not available to you"))
+    const code = text(p.projectionId).toUpperCase()
+    if (!/^EPSG:[0-9]{1,6}$/.test(code)) return refused("CODE_INVALID", L("A projection's code is EPSG: and its number"))
+    if (BUILT_IN_PROJECTIONS.includes(code)) return refused("BUILT_IN", L("EPSG:4326 and EPSG:3857 are every map's own"))
+    const existing = ec.entity.find(PROJECTION).condition({projectionId: code}).disableAuthz().one()
+    const disabled = text(p.disabled).toUpperCase()
+    if (disabled && !["Y", "N"].includes(disabled)) return refused("VALUE_INVALID", L("Disabled is Y or N"))
+    // enable or disable alone
+    if (existing && !given(p.proj4Definition) && !given(p.label) && disabled) {
+        asCaller(() => ec.entity.makeValue(PROJECTION).setAll({projectionId: code, disabled}).update())
+        return {applied: true, reason: say(disabled === "Y" ? "${code} is disabled" : "${code} is enabled", {code})}
+    }
+    const definition = text(p.proj4Definition).replace(/\s+/g, " ")
+    if (!definition) return refused("DEFINITION_INVALID", L("Give its PROJ.4 definition"))
+    if (definitionRefusal(definition))
+        return refused(
+            "DEFINITION_INVALID",
+            L("The definition is PROJ.4 parameters (+proj=... +name=value), with no URL and no grid file but +nadgrids=@null")
+        )
+    const axisOrder = text(p.axisOrder).toLowerCase() || null
+    if (axisOrder && !["enu", "neu"].includes(axisOrder))
+        return refused("VALUE_INVALID", L("The axis order is enu (easting first) or neu (northing first)"))
+    const bounds = text(p.bounds) ? extentOf(p.bounds) : null
+    if (text(p.bounds) && !bounds) return refused("VALUE_INVALID", L("The area of use is west, south, east and north in degrees"))
+    const extent = text(p.projectedExtent)
+        .split(",")
+        .map(num)
+        .filter(value => value !== null)
+    if (text(p.projectedExtent) && (extent.length !== 4 || !(extent[0] < extent[2] && extent[1] < extent[3])))
+        return refused("VALUE_INVALID", L("The extent is the least and greatest x and y in its units"))
+    const server = serverReads(definition)
+    const fields = {
+        projectionId: code,
+        label: text(p.label) || text(existing?.label) || code,
+        proj4Definition: definition,
+        axisOrder,
+        minLongitude: bounds ? bounds[0] : null,
+        minLatitude: bounds ? bounds[1] : null,
+        maxLongitude: bounds ? bounds[2] : null,
+        maxLatitude: bounds ? bounds[3] : null,
+        projectedExtent: extent.length === 4 ? extent.join(",") : null,
+        transformNote: server.readable ? server.transform.slice(0, 250) : null,
+        sourceNote: existing ? text(existing.sourceNote) || null : L("Added under Maps › Configuration")
+    }
+    if (disabled) fields.disabled = disabled
+    asCaller(() => ec.entity.makeValue(PROJECTION).setAll(fields).createOrUpdate())
+    return {
+        applied: true,
+        serverReadable: server.readable,
+        serverReason: server.readable ? null : server.reason,
+        reason: server.readable
+            ? say("${code} is saved; the server reads it too: ${transform}", {code, transform: server.transform})
+            : say("${code} is saved. ${note}", {code, note: browserOnlyNote(server.reason)})
+    }
+}
+
+// ===== Add OGC layer (Configuration) =====
+const OGC_LAYER_FORMATS = {MPK_WMS: "MLF_WMS", MPK_WMTS: "MLF_WMTS", MPK_WFS: "MLF_WFS"}
+// An OGC provider the caller may add a layer from: a tested one of an OGC kind
+function ogcProvider(providerId) {
+    const provider = text(providerId) ? one(PROVIDER, {providerId: text(providerId)}) : null
+    return provider && OGC_LAYER_FORMATS[text(provider.providerKindEnumId)] && providerTested(provider) ? provider : null
+}
+// get#OgcLayerOptions: the tested OGC providers, and what one's recorded capabilities offer for a layer (MapOgc.js layerOptions)
+function ogcLayerOptions(p) {
+    if (!canConfigure()) return refused("PERMISSION_DENIED", L("Maps configuration is not available to you"))
+    // the fields the test state reads, not each provider's recorded capabilities
+    const providers = Array.from(
+        find(PROVIDER, {})
+            .selectFields([
+                "providerId",
+                "providerName",
+                "providerKindEnumId",
+                "endpointUrl",
+                "apiKey",
+                "apiKeyParameter",
+                "proxyRequests",
+                "lastUpdatedStamp"
+            ])
+            .orderBy("providerName")
+            .limit(200)
+            .list()
+    )
+        .filter(row => OGC_LAYER_FORMATS[text(row.providerKindEnumId)] && providerTested(row))
+        .map(row => ({value: row.providerId, label: text(row.providerName) || row.providerId}))
+    const provider = ogcProvider(p.providerId)
+    return Object.assign({applied: true, providers}, provider ? ogc().layerOptions(provider, p.ogcLayers) : {})
+}
+// store#OgcLayer: a layer of a tested OGC provider, from what its last test recorded, checked as a map would draw it before it
+// is kept; with a profileId, also one of that profile's layers (an overlay) or that profile's basemap (a basemap layer)
+function storeOgcLayer(p) {
+    if (!canConfigure() || !canChangeConfiguration())
+        return refused("PERMISSION_DENIED", L("Changing the maps configuration is not available to you"))
+    const provider = ogcProvider(p.providerId)
+    if (!provider)
+        return refused("PROVIDER_UNAVAILABLE", L("Choose an OGC provider (WMS, WMTS or WFS) that passed its test as it is now"))
+    const format = OGC_LAYER_FORMATS[text(provider.providerKindEnumId)]
+    const isBasemap = yes(p.isBasemap) && format !== "MLF_WFS"
+    const fields = {
+        providerId: provider.providerId,
+        formatEnumId: format,
+        ogcLayers: text(p.ogcLayers),
+        ogcStyles: text(p.ogcStyles) || null,
+        ogcFormat: text(p.ogcFormat) || null,
+        crs: text(p.crs) || null,
+        ogcMatrixSet: format === "MLF_WMTS" ? text(p.ogcMatrixSet) || null : null,
+        ogcTime: text(p.ogcTime) || null,
+        ogcSingleImage: format === "MLF_WMS" && yes(p.ogcSingleImage) ? "Y" : "N",
+        isBasemap: isBasemap ? "Y" : "N",
+        disabled: "N"
+    }
+    const built = ogc().layerSource(Object.assign({layerId: "new"}, fields), provider, null)
+    if (!built.ok)
+        return refused("LAYER_UNAVAILABLE", say("This layer cannot be drawn: ${reason}", {reason: built.reason}), {
+            cause: built.reasonCode
+        })
+    const title = ogc().layerOptions(provider, fields.ogcLayers.split(",")[0]).title
+    let layerName
+    try {
+        layerName = lib().plainText(text(p.layerName) || title || fields.ogcLayers, "The name", 255)
+    } catch (error) {
+        return refused("NAME_INVALID", String(error?.message ?? error))
+    }
+    let layerId = text(p.layerId)
+    if (layerId && !/^[A-Za-z0-9][A-Za-z0-9_]{0,39}$/.test(layerId))
+        return refused("LAYER_ID_INVALID", L("A layer's id is up to 40 letters, digits or underscores"))
+    if (layerId && one(LAYER, {layerId}))
+        return refused("LAYER_EXISTS", say("The layer ${layerId} is already registered", {layerId}))
+    const profileId = text(p.profileId)
+    const profile = profileId ? one(PROFILE, {profileId}) : null
+    if (profileId && !profile)
+        return refused("RECORD_UNAVAILABLE", say("The map profile ${profileId} is not registered", {profileId}))
+    const value = ec.entity.makeValue(LAYER).setAll(Object.assign(fields, {layerName}))
+    asCaller(() => {
+        if (layerId) value.set("layerId", layerId)
+        else value.setSequencedIdPrimary()
+        value.create()
+        layerId = String(value.layerId)
+        if (profile && isBasemap) ec.entity.makeValue(PROFILE).setAll({profileId, basemapLayerId: layerId}).update()
+        else if (profile) {
+            const count = Number(ec.entity.find(PROFILE_LAYER).condition({profileId}).disableAuthz().count())
+            ec.entity
+                .makeValue(PROFILE_LAYER)
+                .setAll({profileId, layerId, sequenceNum: (count + 1) * 10, defaultVisible: "Y"})
+                .createOrUpdate()
+        }
+    })
+    return {
+        applied: true,
+        layerId,
+        reason:
+            profile && isBasemap
+                ? say("${name} is added, and is the basemap of the profile ${profile}", {
+                      name: layerName,
+                      profile: profileName(profile, profileId)
+                  })
+                : profile
+                  ? say("${name} is added, and shown in the profile ${profile}", {
+                        name: layerName,
+                        profile: profileName(profile, profileId)
+                    })
+                  : say("${name} is added", {name: layerName})
+    }
+}
+let libModule = null
+const lib = () =>
+    (libModule = libModule || ec.resource.script("component://framework/service/org/moqui/admin/ConfigurationLib.js"))
+
 const operations = {
+    ogcLayerOptions,
+    storeOgcLayer,
     effectiveConfig,
+    liveShares,
     getPreferences,
     storePreferences,
     storeSavedView,
     deleteSavedView,
     findSavedViews,
     findConfiguration,
-    storeProfileSettings
+    storeProfileSettings,
+    findProjections,
+    storeProjection
 }
 ;({
     execute: (op, parameters) => {
@@ -1289,8 +2076,11 @@ const operations = {
     // for the readiness checks and the provider kind (MapProviders.js)
     resolveProfile,
     resolveLayer,
+    // a guest location link's page (LocationShares.js linkRead)
+    publicBasemap,
     installationProfileId,
     originOf,
     templateUrls,
+    cogEndpoint,
     OUTLINE_ID
 })

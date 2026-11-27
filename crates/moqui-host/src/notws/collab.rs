@@ -129,8 +129,17 @@ fn broadcast(doc: &str, except: Option<&str>, message: &Json) {
     }
 }
 
+/// Whether a document's frames go to the other servers: not a co-edited file's (`DevFile:`), whose room each server
+/// would seed apart from the others' (`moqui_collab::text`, one server only).
+fn crosses_cluster(doc: &str) -> bool {
+    !moqui_collab::text::is_key(doc)
+}
+
 /// Publish to the other servers of the cluster; a single server has no peers and it is a local no-op.
 fn publish_remote(factory: &ExecutionContextFactory, body: Json) {
+    if !body.get("doc").and_then(Json::as_str).is_some_and(crosses_cluster) {
+        return;
+    }
     match remote_message(body) {
         Ok(message) => publish_message(factory, &message),
         Err(err) => tracing::warn!("co-editing: not published to the cluster: {}", err.message()),
@@ -142,6 +151,14 @@ fn remote_message(body: Json) -> Result<TopicMessage, moqui_core::context::Error
 }
 
 fn publish_message(factory: &ExecutionContextFactory, message: &TopicMessage) {
+    if !message
+        .body
+        .get("doc")
+        .and_then(Json::as_str)
+        .is_some_and(crosses_cluster)
+    {
+        return;
+    }
     let Some(facade) = factory.entity() else { return };
     if let Err(err) = moqui_core::cluster::publish(&facade, COLLAB_UPDATE, message) {
         tracing::warn!("co-editing: not published to the cluster: {}", err.message());
@@ -232,6 +249,17 @@ fn join(
         Ok(vector) => vector,
         Err(_) => return error(slot, &doc, &client, 400, "sv is not base64"),
     };
+    // a co-edited file's room is one server's (moqui_collab::text): not in a cluster, whose other servers' editors of
+    // the file would be in rooms of their own
+    if moqui_collab::text::is_key(&doc) && moqui_core::cluster::has_live_peers(factory) {
+        return error(
+            slot,
+            &doc,
+            &client,
+            409,
+            "files are co-edited on a single server; this one has cluster peers",
+        );
+    }
     let awareness = message.get("awareness").cloned().unwrap_or(Json::Null);
     // a socket's presence is bounded: its joins a minute, its clients on one page, an awareness's size (SEC-TLS-113)
     let caps = super::PresenceCaps::of(factory);
@@ -286,8 +314,15 @@ fn join(
         let Some(peers) = admit(&factory, &slot, &doc, member) else {
             return;
         };
-        let answer = json!({"topic": topic(&doc), "type": "joined", "client": client, "canEdit": joined.can_edit,
+        let mut answer = json!({"topic": topic(&doc), "type": "joined", "client": client, "canEdit": joined.can_edit,
             "update": b64().encode(&joined.update), "sv": b64().encode(&joined.state_vector), "peers": peers});
+        // a co-edited file's room: its seed (new each time it is seeded) and the hash of the file it was seeded from
+        if let Some(seed) = &joined.seed {
+            answer["seed"] = json!(seed);
+        }
+        if let Some(hash) = &joined.base_hash {
+            answer["hash"] = json!(hash);
+        }
         send(&slot, &if guest { for_guest(&answer) } else { answer });
         peer["topic"] = json!(topic(&doc));
         peer["type"] = json!("peer");
@@ -518,6 +553,10 @@ fn deliver_remote(message: &TopicMessage) {
     let Some(doc) = message.body.get("doc").and_then(Json::as_str) else {
         return;
     };
+    // a co-edited file's room is this server's alone: another's frames of one are not applied or passed on
+    if !crosses_cluster(doc) {
+        return;
+    }
     if let Some(update) = message
         .body
         .get("frame")
@@ -566,9 +605,14 @@ pub(crate) fn deliver_events(factory: &ExecutionContextFactory, events: Vec<moqu
                             .collect()
                     })
                     .unwrap_or_default();
+                let why = if moqui_collab::text::is_key(&document_key) {
+                    "you may no longer edit this file"
+                } else {
+                    "you may no longer view this page"
+                };
                 for (slot_id, client, slot) in slots {
                     if let Some(slot) = slot.upgrade() {
-                        error(&slot, &document_key, &client, 403, "you may no longer view this page");
+                        error(&slot, &document_key, &client, 403, why);
                     }
                     leave(factory, slot_id, &document_key, Some(&client));
                 }
@@ -702,6 +746,49 @@ mod tests {
         let small = remote_message(json!({"doc":"document", "frame":{"type":"update", "update":"AAAA"}})).unwrap();
         assert!(small.body.get("update").is_none(), "the update is carried once");
         assert_eq!(small.body["frame"]["update"], "AAAA");
+    }
+
+    /// A co-edited file's room is one server's: another server's frame of one is neither applied nor passed on, and
+    /// its frames are not published (each server would seed the file's room apart).
+    #[test]
+    fn a_co_edited_files_frames_stay_on_their_server() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        let slot = Arc::new(Slot {
+            id: super::super::NEXT_SOCKET.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            user_id: "editor".into(),
+            session_id: "session".into(),
+            topics: Mutex::new(Default::default()),
+            tx,
+            overflow: tokio::sync::Notify::new(),
+        });
+        let member = || Member {
+            slot: Arc::downgrade(&slot),
+            slot_id: slot.id,
+            client: "client".into(),
+            user_id: "editor".into(),
+            name: "Editor".into(),
+            awareness: Json::Null,
+            meeting: None,
+        };
+        let file = "DevFile:site:service/Things.xml";
+        let page = "WikiPage:cluster-frame-regression";
+        lock(members()).insert(file.into(), vec![member()]);
+        lock(members()).insert(page.into(), vec![member()]);
+        let remote = |doc: &str| TopicMessage {
+            origin_id: "another-server".into(),
+            message_id: "m1".into(),
+            body: json!({"doc": doc, "frame": {"topic": topic(doc), "type": "awareness", "client": "other", "update": "AA"}}),
+        };
+        deliver_remote(&remote(file));
+        assert!(
+            rx.try_recv().is_err(),
+            "a file's frame from another server is not passed on"
+        );
+        deliver_remote(&remote(page));
+        assert!(rx.try_recv().is_ok(), "a wiki page's is");
+        lock(members()).remove(file);
+        lock(members()).remove(page);
+        assert!(!crosses_cluster(file) && crosses_cluster(page));
     }
 
     /// SEC-TLS-113: a socket keeps at most four clients on one page, and an awareness over 4 KiB goes to no one; both

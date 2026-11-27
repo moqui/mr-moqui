@@ -78,7 +78,8 @@ pub fn is_site_host(factory: &ExecutionContextFactory, host: &str) -> bool {
 /// path a servlet other than the screens' takes, `servlet_route`) is refused on its host: a `<public-site>` of the host
 /// names a `host-check-service`, which is called with the site, host and path and answers `restricted` true (a site's
 /// theme preview host, Commerce F87). Such a host serves its site and static files only, so nobody signs in to the
-/// framework or reaches its apps, REST, token routes or servlets on it. A static route counts only when the screen path
+/// framework or reaches its apps, REST, token routes or servlets on it: there every path its site's mounts do not take
+/// counts as a framework route, the root's transitions and a `//name` search among them (SEC-RTE-11). A static route counts only when the screen path
 /// stays under it: `/libs/../apps` is the apps. A service that fails refuses the route (the error is logged): the check
 /// guards a security boundary.
 pub(super) fn refuses_framework_route(
@@ -93,23 +94,63 @@ pub(super) fn refuses_framework_route(
     {
         return true;
     }
-    let first = request.path.trim_start_matches('/').split('/').next().unwrap_or("");
-    if !servlet_route && !framework_route(&request.path) {
-        return false;
-    }
-    if !servlet_route && static_route(first) && screen_path_first(&request.path) == first {
-        return false;
-    }
-    match MNode::parse_shared("moqui-conf", &factory.conf_text()) {
-        Ok(conf) => host_restricted(factory, &conf, request),
+    let token_route = super::token_route::find(factory, &request.path).is_some();
+    let framework = servlet_route || token_route || framework_route(&request.path);
+    let conf = match MNode::parse_shared("moqui-conf", &factory.conf_text()) {
+        Ok(conf) => conf,
         Err(err) => {
             tracing::error!(
                 "Public site host check of {}: the conf did not parse: {err}",
                 super::token_route::redact(factory, &request.path)
             );
-            true
+            return framework;
+        }
+    };
+    // only a host with a `host-check-service` is ever restricted; on it every path its site's mounts do not take is
+    // the framework's (a root transition such as `/menuData`, a `//name` search, a token route), not only the reserved
+    // list's (SEC-RTE-11)
+    let Some(mounts) = checked_site_mounts(&conf, request) else {
+        return false;
+    };
+    if !framework && mounts.iter().any(|prefix| under_mount(&request.path, prefix)) {
+        return false;
+    }
+    let first = request.path.trim_start_matches('/').split('/').next().unwrap_or("");
+    if !servlet_route && !token_route && static_route(first) && screen_path_first(&request.path) == first {
+        return false;
+    }
+    host_restricted(factory, &conf, request)
+}
+
+/// Whether `path` is at or under the mount `prefix`, as [`resolve`] routes it.
+fn under_mount(path: &str, prefix: &str) -> bool {
+    path == prefix || path.starts_with(&(prefix.trim_end_matches('/').to_string() + "/"))
+}
+
+/// The mount paths of the `public-site` routes of the request's host, when one of them names a `host-check-service`
+/// (a host that may be restricted); None for every other host.
+fn checked_site_mounts(conf: &MNode, request: &WebRequest) -> Option<Vec<String>> {
+    let host = request_host(request);
+    let list = conf.first_named("webapp-list")?;
+    let mut checked = false;
+    let mut mounts = Vec::new();
+    for webapp in list
+        .named_iter("webapp")
+        .filter(|webapp| webapp.attribute_is("name", "webroot"))
+    {
+        for route in webapp.named_iter("public-site") {
+            if route.attribute("host").map(|h| normalize_host(&h)).as_deref() != Some(host.as_str()) {
+                continue;
+            }
+            checked |= route.attribute("host-check-service").is_some_and(|s| !s.is_empty());
+            mounts.extend(
+                route
+                    .named_iter("mount")
+                    .map(|mount| mount.attribute("path").unwrap_or_default().to_string()),
+            );
         }
     }
+    checked.then_some(mounts)
 }
 
 /// The first name of the screen path a request path resolves to ([`screen_path_names`]).

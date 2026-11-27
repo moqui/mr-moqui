@@ -51,6 +51,9 @@ use moqui_vault_server as _;
 // CalcGrid, the same way, where xlsx (the spreadsheet engine) is built in.
 #[cfg(feature = "xlsx")]
 use moqui_calc as _;
+// Optional Overture data for Maps, the same way, under its feature.
+#[cfg(feature = "overture")]
+use moqui_maps as _;
 // The business messaging channels (the sms chat bridge adapter), the same way.
 #[cfg(feature = "channels")]
 use moqui_channels as _;
@@ -322,7 +325,7 @@ fn stop_asked() -> bool {
 }
 
 /// Run this binary again with the arguments it was given, after a restart asked for from the app has shut the server
-/// down (plans/design-dev-aide.md 6.5). On Unix the process is replaced, so its id and `./moq run` stay; elsewhere the
+/// down (plans/archive/design-dev-aide.md 6.5). On Unix the process is replaced, so its id and `./moq run` stay; elsewhere the
 /// new process is started and this one ends.
 #[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
 fn run_again() -> Result<(), moqui_lib::error::Error> {
@@ -1740,7 +1743,7 @@ fn serve_thread(
         .ok_or_else(|| moqui_lib::error::Error::new("http server has no factory"))?;
     // what uploads cut short by a stop left behind
     moqui_core::web::multipart::Spool::under(factory.runtime_dir()).sweep();
-    // The dev file watcher (plans/design-dev-aide.md 6.3) for the server a `moqui` run starts, not one a test starts on
+    // The dev file watcher (plans/archive/design-dev-aide.md 6.3) for the server a `moqui` run starts, not one a test starts on
     // a port of its own: on a dev instance a changed file reloads what it defines.
     #[cfg(feature = "devtools")]
     if matches!(bind, ListenBind::Property) {
@@ -1757,12 +1760,12 @@ fn serve_thread(
             build_package()
         );
     }
-    // The artifact index (plans/design-dev-aide.md 7.1) of the same server, built in the background; a test's server
+    // The artifact index (plans/archive/design-dev-aide.md 7.1) of the same server, built in the background; a test's server
     // builds it at first use.
     if matches!(bind, ListenBind::Property) {
         moqui_devkit::index::start(&factory);
     }
-    // The dev-aide gives its users code execution as this process's user (plans/design-dev-aide.md 15): say so when the
+    // The dev-aide gives its users code execution as this process's user (plans/archive/design-dev-aide.md 15): say so when the
     // listener is reachable from other machines.
     if moqui_core::devtools::is_dev_instance()
         && factory
@@ -2788,7 +2791,7 @@ fn load_one(
     tracing::info!("Loading entity data from {location}");
     let loaded = moqui_core::entity::load_feed::load_entity_data(facade, location, options)?;
     let records = loaded.records;
-    *failed_files += loaded.failed_files;
+    *failed_files += u64::try_from(loaded.failures.len()).unwrap_or(u64::MAX);
     report_message_errors(location);
     tracing::info!(
         "Loaded {records} records from {location} in {:.2}s",

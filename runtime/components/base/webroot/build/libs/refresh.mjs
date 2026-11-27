@@ -1,8 +1,8 @@
 // Build and verify the browser assets from both npm lockfiles: the webroot component's script of
 // build/js-build.json. The steps every component's build shares are in ../js-kit.mjs.
 import { checkManifest, componentName, esbuildBinary, installProject, mode, outputDir, outputLabel, publish, run, sha256, status, summary, toLf, withWork } from '../js-kit.mjs';
-import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { assetPack, fontLibraries, packs } from '../fonts/build.mjs';
@@ -30,8 +30,7 @@ const TIPTAP_PACKAGES = [
   '@tiptap/extension-strike', '@tiptap/extension-table', '@tiptap/extension-table-cell', '@tiptap/extension-table-header',
   '@tiptap/extension-table-row', '@tiptap/extension-text', '@tiptap/extension-underline', '@tiptap/extensions',
   '@tiptap/pm', '@tiptap/starter-kit', '@tiptap/suggestion', '@tiptap/y-tiptap',
-  'yjs', 'y-protocols', 'lib0', 'isomorphic.js',
-  '@floating-ui/core', '@floating-ui/dom', '@floating-ui/utils', 'linkifyjs',
+  'lib0', '@floating-ui/core', '@floating-ui/dom', '@floating-ui/utils', 'linkifyjs',
   'orderedmap', 'prosemirror-changeset', 'prosemirror-commands', 'prosemirror-dropcursor',
   'prosemirror-gapcursor', 'prosemirror-history', 'prosemirror-inputrules', 'prosemirror-keymap',
   'prosemirror-model', 'prosemirror-schema-list', 'prosemirror-state', 'prosemirror-tables',
@@ -48,6 +47,21 @@ const CODEMIRROR_PACKAGES = [
   '@lezer/xml', '@lezer/yaml', '@marijn/find-cluster-break', '@replit/codemirror-indentation-markers',
   'crelt', 'style-mod', 'w3c-keyname',
 ];
+// The packages of the libraries beside CodeMirror's bundle, each loaded only when an editor needs it: Yjs with its
+// awareness protocol (co-editing, and Tiptap's collaboration), y-codemirror.next (a co-edited code editor), the Vim
+// keymap and the legacy language modes.
+const YJS_PACKAGES = ['yjs', 'y-protocols', 'lib0'];
+const Y_CODEMIRROR_PACKAGES = ['y-codemirror.next', 'lib0'];
+const CODEMIRROR_VIM_PACKAGES = ['@replit/codemirror-vim', '@replit/codemirror-vim-core'];
+// The second bundle of CodeMirror's languages (plans/archive/design-dev-aide.md 5.1): the legacy modes of @codemirror/legacy-modes
+// that lang-* has no package for, each a stream parser's spec that js/WebrootCode.js gives StreamLanguage.define. SQL and
+// YAML are lang-sql's and lang-yaml's, in the main bundle.
+const LEGACY_MODES = [['shell', 'shell'], ['groovy', 'groovy'], ['properties', 'properties'], ['toml', 'toml'],
+  ['dockerfile', 'dockerFile'], ['nginx', 'nginx']];
+const LEGACY_ENTRY = LEGACY_MODES.map(([file, name]) => `export { ${name} } from '@codemirror/legacy-modes/mode/${file}';`).join('\n') + '\n';
+// The TypeScript compiler's declarations of the language the server's scripts are checked against (ES2023, no DOM), as
+// one script that sets self.MoquiTsLibs for the checker's worker: lib.es5 to lib.es2023 and the decorators.
+const TS_LIB = /^lib\.(es5|es20(1[5-9]|2[0-3])(\.[a-z.]+)?|decorators(\.legacy)?)\.d\.ts$/;
 // What the CodeMirror bundle exports as the global CodeMirror: the state and view, the commands, search, completion, lint
 // and merge view, the languages, the highlight tags for a theme, and the indentation markers
 // (js/WebrootCode.js builds m-code-editor, m-diff-view and the dev-aide's editor from these).
@@ -56,14 +70,19 @@ const CODEMIRROR_ENTRY = `export { EditorState, EditorSelection, Compartment, St
 export { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection, dropCursor,
   rectangularSelection, crosshairCursor, highlightSpecialChars, Decoration, ViewPlugin, WidgetType, gutter, GutterMarker,
   placeholder, showPanel, hoverTooltip, tooltips } from '@codemirror/view';
-export { defaultKeymap, history, historyKeymap, indentWithTab, undo, redo, undoDepth, redoDepth, toggleComment }
+export { defaultKeymap, history, historyKeymap, indentWithTab, undo, redo, undoDepth, redoDepth, toggleComment,
+  deleteLine, selectLine, insertBlankLine, moveLineUp, moveLineDown, copyLineUp, copyLineDown, indentMore, indentLess,
+  toggleBlockComment, lineComment, lineUncomment, cursorMatchingBracket, undoSelection, selectParentSyntax }
   from '@codemirror/commands';
-export { search, searchKeymap, highlightSelectionMatches, openSearchPanel } from '@codemirror/search';
+export { search, searchKeymap, highlightSelectionMatches, openSearchPanel, selectNextOccurrence, selectSelectionMatches,
+  gotoLine, findNext, findPrevious } from '@codemirror/search';
 export { autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap, startCompletion, snippetCompletion }
   from '@codemirror/autocomplete';
-export { linter, lintGutter, lintKeymap, setDiagnostics, forceLinting } from '@codemirror/lint';
+export { linter, lintGutter, lintKeymap, setDiagnostics, forceLinting, nextDiagnostic, previousDiagnostic, openLintPanel }
+  from '@codemirror/lint';
 export { syntaxHighlighting, defaultHighlightStyle, HighlightStyle, indentOnInput, bracketMatching, foldGutter, foldKeymap,
-  indentUnit, syntaxTree, ensureSyntaxTree, LanguageSupport, StreamLanguage, foldAll, unfoldAll } from '@codemirror/language';
+  indentUnit, syntaxTree, ensureSyntaxTree, LanguageSupport, StreamLanguage, foldAll, unfoldAll, foldCode, unfoldCode }
+  from '@codemirror/language';
 export { MergeView, unifiedMergeView, getChunks, goToNextChunk, goToPreviousChunk, acceptChunk, rejectChunk }
   from '@codemirror/merge';
 export { xml, xmlLanguage } from '@codemirror/lang-xml';
@@ -78,10 +97,42 @@ export { yaml } from '@codemirror/lang-yaml';
 export { rust } from '@codemirror/lang-rust';
 export { tags } from '@lezer/highlight';
 export { indentationMarkers } from '@replit/codemirror-indentation-markers';
+// the whole modules, for the bundles built against this one (the Vim keymap, y-codemirror.next): each reads them here, so
+// an editor has one copy of the state and the view (CM_SHIM)
+import * as cmState from '@codemirror/state';
+import * as cmView from '@codemirror/view';
+import * as cmLanguage from '@codemirror/language';
+import * as cmCommands from '@codemirror/commands';
+import * as cmSearch from '@codemirror/search';
+export const modules = { '@codemirror/state': cmState, '@codemirror/view': cmView, '@codemirror/language': cmLanguage,
+  '@codemirror/commands': cmCommands, '@codemirror/search': cmSearch };
+`;
+
+// A bundle built against CodeMirror's or Yjs' takes those packages from its global (esbuild --alias to these shims), so a
+// page has one copy of each: two of @codemirror/state break its instanceof checks, two of yjs its constructor checks.
+const CM_SHIM = (name) => `if (!globalThis.CodeMirror || !globalThis.CodeMirror.modules) throw new Error('load /libs/codemirror/codemirror.min.js first');
+module.exports = globalThis.CodeMirror.modules['${name}'];
+`;
+const YJS_SHIM = (member) => `if (!globalThis.Yjs) throw new Error('load /libs/yjs/yjs.min.js first');
+module.exports = ${member};
+`;
+// What the Yjs library exports as the global Yjs: the yjs namespace (Y) and the awareness protocol, for m-coedit,
+// Tiptap's collaboration (its bundle reads them here), the whiteboard and a co-edited code editor.
+const YJS_ENTRY = `export * as Y from 'yjs';
+export { Awareness, encodeAwarenessUpdate, applyAwarenessUpdate, removeAwarenessStates } from 'y-protocols/awareness';
+`;
+// What the y-codemirror.next bundle exports as the global YCodeMirror (against the globals CodeMirror and Yjs).
+const Y_CODEMIRROR_ENTRY = `export { yCollab, ySync, ySyncFacet, ySyncAnnotation, yRemoteSelections, yRemoteSelectionsTheme, yUndoManagerKeymap,
+  YRange } from 'y-codemirror.next';
+`;
+// What the Vim bundle exports as the global CodeMirrorVim (against the global CodeMirror): the extension, Vim for its ex
+// commands and mappings, and its CodeMirror adapter, whose commands undo and redo a shared text's editor takes over.
+const CODEMIRROR_VIM_ENTRY = `export { vim, Vim, getCM, CodeMirror } from '@replit/codemirror-vim';
 `;
 
 // What the Tiptap bundle exports as the global Tiptap: the editor and the extensions m-rich-text uses, and for m-coedit the
-// Yjs namespace (Y), the collaboration extensions and the awareness protocol.
+// Yjs namespace (Y), the collaboration extensions and the awareness protocol. Y and the awareness are the Yjs library's
+// (the global Yjs, loaded first), not a copy in this bundle.
 const TIPTAP_ENTRY = `export { Editor, Extension, Node, Mark, mergeAttributes } from '@tiptap/core';
 export { default as StarterKit } from '@tiptap/starter-kit';
 export { default as Link } from '@tiptap/extension-link';
@@ -111,7 +162,7 @@ const OPENUI_PATCHES = [
   'patches/openui-lang-core-0.2.18-failed-query.patch',
 ];
 
-// The map of m-map (js/WebrootMap.js, plans/Maps.md §3.2): OpenLayers with ol-mapbox-style, ol-pmtiles and pmtiles, bundled
+// The map of m-map (js/WebrootMap.js, plans/archive/Maps.md §3.2): OpenLayers with ol-mapbox-style, ol-pmtiles and pmtiles, bundled
 // as the global MoquiOl. OPENLAYERS_PACKAGES are the packages the bundle holds whose license file is in the package;
 // pmtiles and ol-pmtiles carry none, so their license is PMTILES_LICENSE. The build fails when the bundle holds a package
 // that is in neither list, or a second copy of one under another's node_modules.
@@ -124,11 +175,19 @@ const OPENLAYERS_PACKAGES = [
   'pbf', 'rbush', 'quickselect', 'fflate',
 ];
 const PMTILES_PACKAGES = ['pmtiles', 'ol-pmtiles'];
+// The lazy raster and projection part (plans/archive/Maps.md P4c): geotiff.js and its decoders, proj4 with mgrs and wkt-parser.
+// Each carries its license file but lerc, whose notice is LERC_NOTICE. web-worker, a dependency of geotiff, is not in the
+// bundle: GEOTIFF_WORKER_CREATE replaces the module that would use it (and that holds every decoder again as a string).
+const RASTER_PACKAGES = ['geotiff', '@petamoriken/float16', 'pako', 'quick-lru', 'xml-utils', 'zstddec', 'proj4', 'mgrs',
+  'wkt-parser'];
+const LERC_PACKAGE = 'lerc';
 // What m-map uses: the map and view, the projection and extent helpers, the layers and sources, the formats of overlays
 // and of the Natural Earth outline (TopoJSON), the controls, the default interactions with Select, Modify and Draw to
 // pick a point, the style classes, an Overlay for a popup, Geolocation, ol-mapbox-style's apply, applyStyle and
 // applyBackground for a MapLibre style, and the PMTiles sources, with pmtiles' FetchSource and FileSource for a source
-// m-map makes itself.
+// m-map makes itself. The OGC layers (plans/archive/Maps.md P4a): TileWMS and ImageWMS with the Image layer, WMTS with its tile
+// grid made from a matrix set the server recorded (createFromCapabilitiesMatrixSet), and the bbox loading strategy of a
+// WFS layer read as GeoJSON.
 const OPENLAYERS_ENTRY = `export { default as Map } from 'ol/Map.js';
 export { default as View } from 'ol/View.js';
 export { default as Overlay } from 'ol/Overlay.js';
@@ -145,6 +204,12 @@ export { default as LayerGroup } from 'ol/layer/Group.js';
 export { default as XYZ } from 'ol/source/XYZ.js';
 export { default as VectorSource } from 'ol/source/Vector.js';
 export { default as VectorTileSource } from 'ol/source/VectorTile.js';
+export { default as ImageLayer } from 'ol/layer/Image.js';
+export { default as TileWMS } from 'ol/source/TileWMS.js';
+export { default as ImageWMS } from 'ol/source/ImageWMS.js';
+export { default as WMTS } from 'ol/source/WMTS.js';
+export { createFromCapabilitiesMatrixSet } from 'ol/tilegrid/WMTS.js';
+export { bbox as bboxStrategy } from 'ol/loadingstrategy.js';
 export { default as GeoJSON } from 'ol/format/GeoJSON.js';
 export { default as GPX } from 'ol/format/GPX.js';
 export { default as KML } from 'ol/format/KML.js';
@@ -161,6 +226,7 @@ export { defaults as defaultInteractions } from 'ol/interaction/defaults.js';
 export { default as Select } from 'ol/interaction/Select.js';
 export { default as Modify } from 'ol/interaction/Modify.js';
 export { default as Draw } from 'ol/interaction/Draw.js';
+export { default as Snap } from 'ol/interaction/Snap.js';
 export { default as Style } from 'ol/style/Style.js';
 export { default as Fill } from 'ol/style/Fill.js';
 export { default as Stroke } from 'ol/style/Stroke.js';
@@ -171,6 +237,65 @@ export { apply, applyStyle, applyBackground } from 'ol-mapbox-style';
 export { PMTilesVectorSource, PMTilesRasterSource } from 'ol-pmtiles';
 export { PMTiles, FetchSource, FileSource } from 'pmtiles';
 `;
+// The lazy part m-map imports only when a map needs it (a COG layer, a view or layer in a registered projection;
+// js/WebrootMap.js map.needsRaster): OpenLayers' GeoTIFF source and WebGL tile layer, and proj4 with OpenLayers' register.
+// It is built with the main bundle as ES modules split into shared chunks (esbuild --splitting), so it reuses the main
+// bundle's OpenLayers (one projection registry, one getUid counter) and adds only what the main one lacks. On load it sets
+// the projection lookup of ol/proj/proj4 to a refusal (the default asks spatialreference.org for a code it does not know:
+// a map registers its projections from the effective configuration, and fetches none). It exports setWorkerFactory
+// (GEOTIFF_WORKER_CREATE), which m-map calls with the decoder worker of the same build (ol-tiff-decoder, by the name
+// OPENLAYERS_FILES gives it).
+const RASTER_ENTRY = `import { setProjectionCodeLookup } from 'ol/proj/proj4.js';
+setProjectionCodeLookup((code) => Promise.reject(new Error('The projection ' + code + ' is not registered for this map: an administrator registers it')));
+export { setWorkerFactory } from './node_modules/geotiff/dist-module/worker/create.js';
+export { default as GeoTIFF } from 'ol/source/GeoTIFF.js';
+export { default as WebGLTileLayer } from 'ol/layer/WebGLTile.js';
+export { register as registerProj4, fromProjectionCode } from 'ol/proj/proj4.js';
+export { default as proj4 } from 'proj4';
+`;
+// geotiff's decoder worker, a module worker (ol-tiff-decoder.js): what geotiff's own worker/decoder.js does, as an entry of
+// the split build, so its decoders are the chunks the page would import too and each loads only when a tile of its
+// compression is decoded (LERC's and Zstandard's WebAssembly among them).
+const TIFF_WORKER_ENTRY = `import { getDecoder } from 'geotiff';
+self.addEventListener('message', async (e) => {
+  const { compression, decoderParameters, buffer, ...extra } = e.data;
+  try {
+    const decoder = await getDecoder(compression, decoderParameters);
+    const decoded = await decoder.decode(buffer);
+    self.postMessage({ decoded, ...extra }, [decoded]);
+  } catch (error) {
+    self.postMessage({ error: error instanceof Error ? error.message : String(error), ...extra });
+  }
+});
+`;
+// geotiff's worker/create.js makes its decoder worker from a 246 KB string of every decoder again (LERC's and Zstandard's
+// WebAssembly as base64 among them) through a Blob URL, and imports web-worker for Node. It is replaced, before the bundle
+// is built, by this reviewed file: the worker is the one RASTER_ENTRY sets (ol-tiff-decoder.js). The original's SHA-256 is
+// checked first, so a geotiff that changes it stops the build for review.
+const GEOTIFF_WORKER_CREATE = 'patches/geotiff-3.1.0-beta.0-worker-create.js';
+// Every file of the OpenLayers build is named by its content (esbuild's [hash], with .min. so the server keeps it a year,
+// immutable), so a browser never pairs an entry with another build's chunks or raster part after an upgrade. The one file
+// with a fixed name is this map of the entries, openlayers/ol-map.json ({main, raster, decoder}), which m-map fetches with
+// cache: "no-cache" (revalidated each time, a 304 when it is unchanged) before it imports the main entry by its name.
+const OPENLAYERS_FILES = 'openlayers/ol-map.json';
+// The files of each part a client bundles alone (plans/archive/Maps-Offline.md §2.5): {main: [...]}, each path relative to
+// openlayers/, the main entry with every chunk it imports (statically or dynamically) and ol.css and ol-map.json. The
+// desktop and mobile shell stages only these (crates/moqui-desktop/shell/libs.txt "openlayers main"): no COG layer is
+// packaged, so the raster part and its decoders stay out.
+const OPENLAYERS_PARTS = 'openlayers/parts.json';
+const GEOTIFF_WORKER_CREATE_ORIGINAL = '22990a381113766c0fd034548948f3de3ae4de4c392d278304b33fd1634078bd';
+// lerc's package carries no license file: the notice of its LercDecode.js, and the Apache License 2.0's text, which is the
+// web-worker package's LICENSE file in the same tree (the license itself, unchanged)
+const LERC_NOTICE = `Copyright 2015-2021 Esri
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the
+License. You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an
+"AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific
+language governing permissions and limitations under the License.
+
+A copy of the license and additional notices are located with the source distribution at: http://github.com/Esri/lerc/`;
 // The map loads what its layers name, so it fetches (styles, TileJSON, sprites, tiles: fetch and XMLHttpRequest), and the
 // raster source behind a hillshade layer runs its operation in a Worker made from a Blob. It must not evaluate code or
 // keep state of its own, and every URL it names (absolute, ws, or a protocol-relative //host in a string) is one of these,
@@ -191,10 +316,12 @@ export { PMTiles, FetchSource, FileSource } from 'pmtiles';
 //   read and its image loaded. m-map reads KML with an iconUrlFunction that answers a blank data: icon for every href (the
 //   pushpin's too), with extractStyles: false, and styles the layer itself.
 // - https://github.com: a link in an error message.
+// - https://spatialreference.org: ol/proj/proj4's default lookup of a projection code it does not know (in the lazy raster
+//   part). RASTER_ENTRY replaces it with a refusal when the part loads, before any source is made, so it is never asked.
 const OPENLAYERS_HOSTS = [
   'http://earth.google.com', 'http://www.google.com', 'http://www.opengis.net', 'http://www.topografix.com',
   'http://www.w3.org', 'https://api.mapbox.com', 'https://${…}.tiles.mapbox.com', 'https://cdn.jsdelivr.net',
-  'https://developers.google.com', 'https://github.com', 'https://maps.google.com',
+  'https://developers.google.com', 'https://github.com', 'https://maps.google.com', 'https://spatialreference.org',
 ];
 // The license of pmtiles and ol-pmtiles, whose npm packages carry no license file: the LICENSE of their repository at the
 // commit each release names (gitHead 3b10e67e for pmtiles 4.5.0, 3f8279aa for ol-pmtiles 2.0.2; the same text at both).
@@ -237,7 +364,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.`;
 // (OPENLAYERS_HOSTS). That is the Fontsource layout, so each face is that package's own CSS (every subset, each by
 // unicode-range), with only the woff2 sources.
 const MAP_FONT_FACES = ['400', '400-italic', '500', '700'];
-// The local Protomaps profile (plans/Maps.md §4.1, §5): a regional Protomaps PMTiles archive registered as a layer draws
+// The local Protomaps profile (plans/archive/Maps.md §4.1, §5): a regional Protomaps PMTiles archive registered as a layer draws
 // with these. The styles are the output of @protomaps/basemaps (layers() of a namedFlavor, lang "en"), generated here
 // with Node from the package's CommonJS build into protomaps/light.json and protomaps/dark.json, each with one vector
 // source, "protomaps", that m-map binds to the archive (applyStyle, updateSource false), its sprite at
@@ -587,20 +714,21 @@ licenses/Unicode-3.0.txt, from ${UNICODE_URL}.
     licenseNote: 'Bundles @tiptap/core, starter-kit (and the extensions it includes), extension-link, extension-image, ' +
       'extension-mention, extension-placeholder, extension-table, extension-table-row, extension-table-cell, ' +
       'extension-table-header, extension-collaboration, extension-collaboration-caret, extensions, suggestion and pm 3.31.4, ' +
-      'the prosemirror-* packages, @tiptap/y-tiptap, yjs, y-protocols, lib0, isomorphic.js, @floating-ui/*, linkifyjs, ' +
-      'orderedmap, rope-sequence and w3c-keyname: all MIT. Each license text is below once, ' +
-      'with the packages it is the license of.',
+      'the prosemirror-* packages, @tiptap/y-tiptap, lib0, @floating-ui/*, linkifyjs, ' +
+      'orderedmap, rope-sequence and w3c-keyname: all MIT. yjs and y-protocols are the Yjs library\'s (libs/yjs), which ' +
+      'the bundle reads from the global Yjs. Each license text is below once, with the packages it is the license of.',
     copy: [],
     noticePackages: TIPTAP_PACKAGES,
     noticeDedupe: true,
     build: 'esbuild --bundle --minify --format=iife --global-name=Tiptap --platform=browser --target=es2020 ' +
       '--legal-comments=none of an entry that exports Editor, Extension, Node, Mark, mergeAttributes, StarterKit, Link, ' +
       'Image, Mention, Placeholder, Table, TableRow, TableCell, TableHeader, PluginKey, Collaboration, CollaborationCaret, Y ' +
-      '(the yjs namespace), Awareness, encodeAwarenessUpdate, applyAwarenessUpdate and removeAwarenessStates. Exposes the global Tiptap.',
+      '(the yjs namespace), Awareness, encodeAwarenessUpdate, applyAwarenessUpdate and removeAwarenessStates, with yjs and ' +
+      'y-protocols aliased to shims that read the global Yjs (libs/yjs/yjs.min.js, loaded first). Exposes the global Tiptap.',
     produce: (ctx) => [['tiptap/tiptap.min.js', ctx.esbuildTiptap()]],
   },
   {
-    // The code editor of m-code-editor, m-diff-view and the dev-aide (plans/design-dev-aide.md 5.1), loaded only when an
+    // The code editor of m-code-editor, m-diff-view and the dev-aide (plans/archive/design-dev-aide.md 5.1), loaded only when an
     // editor mounts. CodeMirror ships ES modules, so this is a bundle of the packages in CODEMIRROR_DEPS.
     id: 'codemirror', name: 'CodeMirror 6 (bundled)', npm: '@codemirror/view', license: 'MIT',
     licenseNote: 'Bundles @codemirror/state, view, language, commands, search, autocomplete, lint, merge, streamparser, ' +
@@ -618,29 +746,118 @@ licenses/Unicode-3.0.txt, from ${UNICODE_URL}.
     produce: (ctx) => [['codemirror/codemirror.min.js', ctx.esbuildCodeMirror()]],
   },
   {
-    // The map of m-map (js/WebrootMap.js, plans/Maps.md §3.2), loaded with moqui.loadScript when the first map mounts.
+    // Yjs and its awareness protocol, the shared types of co-editing (m-coedit, Tiptap's collaboration, the whiteboard, a
+    // co-edited code editor: plans/archive/design-dev-aide.md F15), loaded before any of them. One library, so a page has one
+    // copy of Yjs: two break its constructor checks.
+    id: 'yjs', name: 'Yjs with y-protocols (bundled)', npm: 'yjs', license: 'MIT',
+    licenseNote: 'Bundles yjs, y-protocols (its awareness protocol) and the lib0 modules they use: all MIT. Each license ' +
+      'text is below once, with the packages it is the license of.',
+    copy: [],
+    noticePackages: YJS_PACKAGES,
+    noticeDedupe: true,
+    build: 'esbuild --bundle --minify --format=iife --global-name=Yjs --platform=browser --target=es2020 ' +
+      '--legal-comments=none of an entry (YJS_ENTRY) that exports Y (the yjs namespace), Awareness, encodeAwarenessUpdate, ' +
+      'applyAwarenessUpdate and removeAwarenessStates. Exposes the global Yjs.',
+    produce: (ctx) => [['yjs/yjs.min.js', ctx.esbuildYjs()]],
+  },
+  {
+    // The binding of a CodeMirror editor to a Y.Text (a co-edited file of the dev-aide, F15): its sync, the others' carets
+    // and selections with their names, and Yjs' undo. Built against the CodeMirror and Yjs globals, loaded after them.
+    id: 'y-codemirror', name: 'y-codemirror.next (bundled)', npm: 'y-codemirror.next', license: 'MIT',
+    licenseNote: 'Bundles y-codemirror.next and the lib0 modules it uses: both MIT. @codemirror/state and view are read ' +
+      'from the global CodeMirror, yjs from the global Yjs.',
+    copy: [],
+    noticePackages: Y_CODEMIRROR_PACKAGES,
+    noticeDedupe: true,
+    build: 'esbuild --bundle --minify --format=iife --global-name=YCodeMirror --platform=browser --target=es2020 ' +
+      '--legal-comments=none of an entry (Y_CODEMIRROR_ENTRY) that exports yCollab, ySync, ySyncFacet, ySyncAnnotation, ' +
+      'yRemoteSelections, yRemoteSelectionsTheme, yUndoManagerKeymap and YRange, with @codemirror/* and yjs aliased to shims ' +
+      'that read the globals CodeMirror and Yjs. Exposes the global YCodeMirror.',
+    produce: (ctx) => [['codemirror/y-codemirror.min.js', ctx.esbuildYCodeMirror()]],
+  },
+  {
+    // The Vim keymap of the code editor (the editor settings' keymap "vim", plans/archive/design-dev-aide.md 5.1), loaded only for
+    // a user who picks it. Built against the CodeMirror global.
+    id: 'codemirror-vim', name: 'Vim keybindings for CodeMirror 6 (bundled)', npm: '@replit/codemirror-vim', license: 'MIT',
+    licenseNote: 'Bundles @replit/codemirror-vim and @replit/codemirror-vim-core: both MIT. @codemirror/* are read from ' +
+      'the global CodeMirror.',
+    copy: [],
+    noticePackages: CODEMIRROR_VIM_PACKAGES,
+    noticeDedupe: true,
+    build: 'esbuild --bundle --minify --format=iife --global-name=CodeMirrorVim --platform=browser --target=es2020 ' +
+      '--legal-comments=none of an entry (CODEMIRROR_VIM_ENTRY) that exports vim, Vim, getCM and CodeMirror, with @codemirror/* aliased ' +
+      'to shims that read the global CodeMirror. Exposes the global CodeMirrorVim.',
+    produce: (ctx) => [['codemirror/vim.min.js', ctx.esbuildCodeMirrorVim()]],
+  },
+  {
+    // The second bundle of the code editor's languages (plans/archive/design-dev-aide.md 5.1): legacy stream modes, loaded only
+    // when a file needs one (js/WebrootCode.js LEGACY_EXTENSIONS).
+    id: 'codemirror-legacy', name: 'CodeMirror legacy modes (bundled)', npm: '@codemirror/legacy-modes', license: 'MIT',
+    licenseNote: 'The shell, groovy, properties, toml, dockerfile and nginx modes of @codemirror/legacy-modes (MIT), with ' +
+      'its simple-mode helper.',
+    copy: [],
+    licenseFiles: ['LICENSE'],
+    build: 'esbuild --bundle --minify --format=iife --global-name=CodeMirrorLegacy --platform=browser --target=es2020 ' +
+      '--legal-comments=none of an entry (LEGACY_ENTRY) that exports the modes LEGACY_MODES names. ' +
+      'Exposes the global CodeMirrorLegacy.',
+    produce: (ctx) => [['codemirror/legacy-modes.min.js', ctx.esbuildLegacyModes()]],
+  },
+  {
+    // The TypeScript compiler of the dev-aide's type checker (plans/archive/design-dev-aide.md 5.4, question 10): a browser worker
+    // runs it over the project's `moqui types` declarations, loaded only on the first JS tab with checking turned on. It
+    // is large (lib/typescript.js is 8.8 MB, about 3.4 MB minified) and never loads with a page.
+    id: 'typescript', name: 'TypeScript', npm: 'typescript', license: 'Apache-2.0',
+    licenseNote: 'lib/typescript.js minified (its license header kept), and the ES5 to ES2023 and decorators ' +
+      'declarations of lib/ as one script. ThirdPartyNoticeText.txt is the package\'s notice of what its declarations ' +
+      'derive from.',
+    copy: [],
+    licenseFiles: ['LICENSE.txt', 'ThirdPartyNoticeText.txt'],
+    build: 'esbuild --minify --legal-comments=inline on lib/typescript.js (a transform, no bundling), and lib-es2023.js: ' +
+      'self.MoquiTsLibs set to the text of each lib/ file TS_LIB matches, by name.',
+    produce: (ctx) => ctx.typescriptFiles(),
+  },
+  {
+    // The map of m-map (js/WebrootMap.js, plans/archive/Maps.md §3.2), imported (an ES module, import()) when the first map mounts.
     // OpenLayers, ol-mapbox-style, ol-pmtiles and pmtiles ship ES modules, so this is a bundle of what OPENLAYERS_ENTRY
-    // exports. Pinned Nov 25, 2026: each is the newest release of its line at least two weeks old (ol 10.11.0 of Oct 4,
-    // ol-mapbox-style 13.9.0 of Nov 1, ol-pmtiles 2.0.2, which needs ol 9 or later, and pmtiles 4.5.0 of Aug 10).
-    id: 'openlayers', name: 'OpenLayers with ol-mapbox-style and PMTiles (bundled)', npm: 'ol',
-    license: 'BSD-2-Clause AND BSD-3-Clause AND ISC AND MIT',
+    // exports, split by esbuild with the lazy raster part (RASTER_ENTRY) and its decoder worker (TIFF_WORKER_ENTRY) so the
+    // three share one copy of OpenLayers. Pinned Nov 25, 2026: each is the newest release of its line at least two weeks old
+    // (ol 10.11.0 of Oct 4, ol-mapbox-style 13.9.0 of Nov 1, ol-pmtiles 2.0.2, which needs ol 9 or later, and pmtiles 4.5.0
+    // of Aug 10). The raster part (P4c, Nov 26, 2026): proj4 2.22.0 of Aug 31 (2.23.0 of Nov 12 is inside the cooldown), and
+    // geotiff 3.1.0-beta.0 of Mar 30, a prerelease: ol 10.11.0 depends on geotiff ^3.1.0-beta.0, which no release satisfies
+    // (3.0.5 is below it and no 3.1.0 is published), so it is the version OpenLayers was built and tested against.
+    id: 'openlayers', name: 'OpenLayers with ol-mapbox-style, PMTiles, geotiff.js and proj4 (bundled)', npm: 'ol',
+    license: 'BSD-2-Clause AND BSD-3-Clause AND ISC AND MIT AND Apache-2.0 AND Zlib AND CC0-1.0',
     licenseNote: 'Bundles ol, ol-mapbox-style, mapbox-to-css-font and @mapbox/unitbezier (BSD-2-Clause), ol-pmtiles, ' +
       'pmtiles, pbf and @maplibre/maplibre-gl-style-spec (BSD-3-Clause: the style spec\'s package.json says ISC, its ' +
       'LICENSE.txt is the BSD-3-Clause text of MapLibre and of the Mapbox code it contains), quickselect and tinyqueue ' +
-      '(ISC), rbush and fflate (MIT). ' +
+      '(ISC), rbush and fflate (MIT); and in the lazy raster part geotiff, @petamoriken/float16, quick-lru, proj4, mgrs and ' +
+      'wkt-parser (MIT), zstddec (MIT, with the BSD-3-Clause license of the Zstandard decoder it compiles to WebAssembly), ' +
+      'pako (MIT, its inflate a port of zlib under the zlib license), xml-utils (CC0-1.0) and lerc (Apache-2.0, its package ' +
+      'carrying no license file: its source\'s notice, with the License\'s text as the web-worker package carries it). ' +
+      'web-worker itself is not bundled. ' +
       'ol.css is OpenLayers\'. Each license text is below once, with the packages it is the license of.',
     copy: [['ol.css', 'openlayers/ol.css']],
-    noticeText: () => `--- ${PMTILES_PACKAGES.map((p) => p + ' ' + pins[p]).join(', ')}: LICENSE of the repository ---\n${PMTILES_LICENSE}\n`,
-    noticePackages: OPENLAYERS_PACKAGES,
+    patches: [GEOTIFF_WORKER_CREATE],
+    noticeText: (ctx) => `--- ${PMTILES_PACKAGES.map((p) => p + ' ' + pins[p]).join(', ')}: LICENSE of the repository ---\n${PMTILES_LICENSE}\n\n` +
+      `--- ${LERC_PACKAGE} ${ctx.installedVersion(LERC_PACKAGE)}: the notice of LercDecode.js (the package carries no license file) ---\n${LERC_NOTICE}\n\n` +
+      `--- The Apache License, Version 2.0 (lerc's), as web-worker ${ctx.installedVersion('web-worker')}'s LICENSE carries it ---\n${ctx.packageText('web-worker', 'LICENSE').trimEnd()}\n\n` +
+      `--- pako ${ctx.installedVersion('pako')}: the zlib license of lib/zlib, which its inflate is a port of ---\n${ctx.zlibNotice()}\n`,
+    noticePackages: [...OPENLAYERS_PACKAGES, ...RASTER_PACKAGES],
     noticeDedupe: true,
-    build: 'esbuild --bundle --minify --format=iife --global-name=MoquiOl --platform=browser --target=es2020 ' +
-      '--legal-comments=none of an entry (OPENLAYERS_ENTRY) that exports Map, View, Overlay, Geolocation, Feature, ' +
-      'Collection, unByKey, the projection and extent helpers, the Tile, Vector, VectorTile and Group layers, the XYZ, ' +
-      'Vector and VectorTile sources, the GeoJSON, GPX, KML, TopoJSON and MVT formats, Point and polygonFromExtent, the ' +
-      'controls, the interactions, the style classes, ol-mapbox-style\'s apply, applyStyle and applyBackground, ' +
-      'PMTilesVectorSource and PMTilesRasterSource, and PMTiles, FetchSource and FileSource. Exposes the global MoquiOl. ' +
+    build: 'geotiff\'s dist-module/worker/create.js replaced by ' + GEOTIFF_WORKER_CREATE + ' (its original\'s SHA-256 checked ' +
+      'first), then esbuild --bundle --minify --splitting --format=esm --platform=browser --target=es2020 ' +
+      '--legal-comments=none of three entries, ol-map (OPENLAYERS_ENTRY), ol-raster (RASTER_ENTRY: the GeoTIFF source, the ' +
+      'WebGL tile layer, proj4 and its register, the projection lookup refused) and ol-tiff-decoder (TIFF_WORKER_ENTRY, a ' +
+      'module worker), into shared chunks under openlayers/chunks/, every file named by its hash ([name]-[hash].min.js), ' +
+      'with openlayers/ol-map.json naming the three entries and openlayers/parts.json the files of the main part (its entry and ' +
+      'the chunks it imports, ol.css and ol-map.json), which the desktop and mobile shell bundles alone. ol-map is an entry (OPENLAYERS_ENTRY) that exports Map, View, Overlay, Geolocation, Feature, ' +
+      'Collection, unByKey, the projection and extent helpers, the Tile, Vector, VectorTile, Image and Group layers, the ' +
+      'XYZ, Vector, VectorTile, TileWMS, ImageWMS and WMTS sources, the WMTS tile grid from a recorded matrix set, the bbox ' +
+      'loading strategy, the GeoJSON, GPX, KML, TopoJSON and MVT formats, Point and polygonFromExtent, the ' +
+      'controls, the interactions (Select, Modify, Draw and Snap among them), the style classes, ol-mapbox-style\'s apply, applyStyle and applyBackground, ' +
+      'PMTilesVectorSource and PMTilesRasterSource, and PMTiles, FetchSource and FileSource; m-map sets it as the global MoquiOl. ' +
       'The build fails when the bundle holds an unreviewed package, evaluates code, or names an unreviewed host.',
-    produce: (ctx) => [['openlayers/ol-map.min.js', ctx.esbuildOpenLayers()]],
+    produce: (ctx) => ctx.esbuildOpenLayers(),
     licenseFiles: [],
   },
   {
@@ -655,7 +872,7 @@ licenses/Unicode-3.0.txt, from ${UNICODE_URL}.
     licenseFiles: ['LICENSE'],
   },
   {
-    // The local Protomaps profile's styles and sprites (PROTOMAPS_FLAVORS; plans/Maps.md §4.1), for a regional archive
+    // The local Protomaps profile's styles and sprites (PROTOMAPS_FLAVORS; plans/archive/Maps.md §4.1), for a regional archive
     // registered as the LOCAL_PROTOMAPS layers (framework data/MapsSetupData.xml). Pinned Nov 25, 2026: 5.7.2 of Mar 10.
     id: 'protomaps', name: 'Protomaps basemap styles (generated) and sprites', npm: '@protomaps/basemaps',
     license: 'BSD-3-Clause AND CC0-1.0 AND MIT',
@@ -767,6 +984,24 @@ function main() {
   withWork(workArg, buildAssets);
 }
 
+// One file of the OpenLayers build (an entry or a chunk): it must not evaluate code, keep state of its own or open a socket,
+// and every URL it names (absolute, ws, or a protocol-relative //host in a string) is one of OPENLAYERS_HOSTS.
+function checkOpenLayersText(name, bytes) {
+  const text = bytes.toString('utf8');
+  for (const banned of ['eval(', 'new function(', 'importscripts', 'websocket', 'sendbeacon', 'document.cookie',
+    'localstorage', 'sessionstorage', 'indexeddb']) {
+    if (text.toLowerCase().includes(banned)) throw new Error(`the OpenLayers bundle's ${name} names ${banned}`);
+  }
+  // every scheme://host and string-literal //host, a template placeholder in it written ${…}
+  const host = (found) => found.replace(/\$\{[^}]*\}/g, '${…}').toLowerCase();
+  const hosts = new Set([
+    ...[...text.matchAll(/\b((?:https?|wss?):)\/\/([^\s"'`/\\)<>,;?#]+)/gi)].map((m) => m[1].toLowerCase() + '//' + host(m[2])),
+    ...[...text.matchAll(/["'`]\/\/([^\s"'`/\\)<>,;?#]+\.[^\s"'`/\\)<>,;?#]+)/g)].map((m) => '//' + host(m[1])),
+  ]);
+  const unlisted = [...hosts].filter((found) => !OPENLAYERS_HOSTS.includes(found)).sort();
+  if (unlisted.length) throw new Error(`the OpenLayers bundle's ${name} names ${unlisted.join(', ')} (a \${…} is a host built at run time): review each and add it`);
+}
+
 function buildAssets(work) {
   const outputs = new Map(); // path under libs/ -> Buffer
   const libMeta = [];
@@ -790,6 +1025,19 @@ function buildAssets(work) {
   };
   const ctx = {
     package: id => packages[id],
+    installedVersion: (pkg) => JSON.parse(readFileSync(join(build, 'node_modules', pkg, 'package.json'))).version,
+    packageText: (pkg, file) => readFileSync(join(build, 'node_modules', pkg, file), 'utf8'),
+    // the zlib license of pako's lib/zlib (the comment at the top of its inflate.js), its comment markers taken off
+    zlibNotice() {
+      const lines = readFileSync(join(build, 'node_modules/pako/lib/zlib/inflate.js'), 'utf8').split('\n');
+      const notice = [];
+      for (const line of lines.slice(1)) {
+        if (!line.startsWith('//')) { if (notice.length) break; continue; }
+        notice.push(line.replace(/^\/\/ ?/, ''));
+      }
+      if (!notice.some((line) => line.includes('This notice may not be removed'))) throw new Error('pako\'s zlib notice moved: review it');
+      return notice.join('\n').trim();
+    },
     version: (id) => LIBS.find((l) => l.id === id).version,
     esbuildCompilerDom() {
       writeFileSync(join(build, 'cd-entry.js'), "module.exports = require('@vue/compiler-dom');\n");
@@ -846,7 +1094,56 @@ export const atob = typeof globalThis.atob === 'function' ? globalThis.atob.bind
     esbuildTiptap() {
       writeFileSync(join(build, 'tt-entry.js'), TIPTAP_ENTRY);
       return esbuild(['tt-entry.js', '--bundle', '--minify', '--format=iife', '--global-name=Tiptap', '--platform=browser',
+        '--target=es2020', '--legal-comments=none', ...ctx.yjsShims()]);
+    },
+    // esbuild --alias arguments that take yjs and y-protocols' awareness from the global Yjs
+    yjsShims() {
+      mkdirSync(join(build, 'shims/y-protocols'), { recursive: true });
+      writeFileSync(join(build, 'shims/yjs.js'), YJS_SHIM('globalThis.Yjs.Y'));
+      writeFileSync(join(build, 'shims/y-protocols/awareness.js'), YJS_SHIM('globalThis.Yjs'));
+      return ['--alias:yjs=./shims/yjs.js', '--alias:y-protocols=./shims/y-protocols'];
+    },
+    // esbuild --alias arguments that take @codemirror/* from the global CodeMirror (its modules)
+    codemirrorShims() {
+      const args = [];
+      mkdirSync(join(build, 'shims/codemirror'), { recursive: true });
+      for (const name of ['state', 'view', 'language', 'commands', 'search']) {
+        writeFileSync(join(build, `shims/codemirror/${name}.js`), CM_SHIM('@codemirror/' + name));
+        args.push(`--alias:@codemirror/${name}=./shims/codemirror/${name}.js`);
+      }
+      return args;
+    },
+    esbuildYjs() {
+      writeFileSync(join(build, 'yjs-entry.js'), YJS_ENTRY);
+      return esbuild(['yjs-entry.js', '--bundle', '--minify', '--format=iife', '--global-name=Yjs', '--platform=browser',
         '--target=es2020', '--legal-comments=none']);
+    },
+    esbuildYCodeMirror() {
+      writeFileSync(join(build, 'ycm-entry.js'), Y_CODEMIRROR_ENTRY);
+      return esbuild(['ycm-entry.js', '--bundle', '--minify', '--format=iife', '--global-name=YCodeMirror',
+        '--platform=browser', '--target=es2020', '--legal-comments=none', ...ctx.codemirrorShims(), '--alias:yjs=./shims/yjs.js']);
+    },
+    esbuildCodeMirrorVim() {
+      writeFileSync(join(build, 'cmvim-entry.js'), CODEMIRROR_VIM_ENTRY);
+      return esbuild(['cmvim-entry.js', '--bundle', '--minify', '--format=iife', '--global-name=CodeMirrorVim',
+        '--platform=browser', '--target=es2020', '--legal-comments=none', ...ctx.codemirrorShims()]);
+    },
+    esbuildLegacyModes() {
+      writeFileSync(join(build, 'cmlegacy-entry.js'), LEGACY_ENTRY);
+      return esbuild(['cmlegacy-entry.js', '--bundle', '--minify', '--format=iife', '--global-name=CodeMirrorLegacy',
+        '--platform=browser', '--target=es2020', '--legal-comments=none']);
+    },
+    typescriptFiles() {
+      const root = packages.typescript.root;
+      const compiler = esbuild([join(root, 'lib', 'typescript.js'), '--minify', '--legal-comments=inline']);
+      const libs = {};
+      for (const name of readdirSync(join(root, 'lib')).sort()) {
+        if (TS_LIB.test(name)) libs[name] = toLf(readFileSync(join(root, 'lib', name))).toString('utf8');
+      }
+      if (!libs['lib.es2023.d.ts'] || !libs['lib.es5.d.ts']) throw new Error('typescript has no lib.es5.d.ts or lib.es2023.d.ts');
+      const script = '/* The ES5 to ES2023 declarations of TypeScript ' + pins.typescript + ' (Apache-2.0), by file name. */\n' +
+        'self.MoquiTsLibs = ' + JSON.stringify(libs) + ';\n';
+      return [['typescript/typescript.min.js', compiler], ['typescript/lib-es2023.js', Buffer.from(script, 'utf8')]];
     },
     esbuildCodeMirror() {
       writeFileSync(join(build, 'cm-entry.js'), CODEMIRROR_ENTRY);
@@ -860,38 +1157,64 @@ export const atob = typeof globalThis.atob === 'function' ? globalThis.atob.bind
       return out;
     },
     esbuildOpenLayers() {
+      // geotiff's worker module replaced by the reviewed one (GEOTIFF_WORKER_CREATE), its original checked first
+      const create = join(build, 'node_modules/geotiff/dist-module/worker/create.js');
+      if (sha256(readFileSync(create)) !== GEOTIFF_WORKER_CREATE_ORIGINAL)
+        throw new Error('geotiff\'s dist-module/worker/create.js is not the one ' + GEOTIFF_WORKER_CREATE + ' replaces: review it');
+      writeFileSync(create, readFileSync(join(source, GEOTIFF_WORKER_CREATE)));
       writeFileSync(join(build, 'ol-entry.js'), OPENLAYERS_ENTRY);
-      const out = esbuild(['ol-entry.js', '--bundle', '--minify', '--format=iife', '--global-name=MoquiOl',
-        '--platform=browser', '--target=es2020', '--legal-comments=none', '--metafile=ol-inputs.json']);
+      writeFileSync(join(build, 'ol-raster-entry.js'), RASTER_ENTRY);
+      writeFileSync(join(build, 'ol-tiff-decoder-entry.js'), TIFF_WORKER_ENTRY);
+      const outdir = join(build, 'out', 'openlayers');
+      rmSync(outdir, { recursive: true, force: true });
+      run(esbuildBinary(join(build, 'node_modules')), ['ol-map=ol-entry.js', 'ol-raster=ol-raster-entry.js',
+        'ol-tiff-decoder=ol-tiff-decoder-entry.js', '--bundle', '--minify', '--splitting', '--format=esm',
+        '--platform=browser', '--target=es2020', '--legal-comments=none', '--entry-names=[name]-[hash].min',
+        '--chunk-names=chunks/[name]-[hash].min',
+        `--outdir=${outdir}`, '--metafile=ol-inputs.json', '--log-level=error'], { cwd: build });
       // the packages in the bundle are the reviewed ones, each the single top-level copy whose license is printed
-      const output = Object.values(JSON.parse(readFileSync(join(build, 'ol-inputs.json'))).outputs)[0];
-      const reviewed = [...OPENLAYERS_PACKAGES, ...PMTILES_PACKAGES];
-      for (const [path, input] of Object.entries(output.inputs)) {
-        if (!input.bytesInOutput || path === 'ol-entry.js') continue;
-        // the style spec's dist carries its own copies of a few small dependencies (STYLE_SPEC_INLINED)
-        const inlined = path.match(/^node_modules\/@maplibre\/maplibre-gl-style-spec\/dist\/node_modules\/((?:@[^/]+\/)?[^/]+)\//);
-        if (inlined && STYLE_SPEC_INLINED.includes(inlined[1])) continue;
-        const pkg = path.match(/^node_modules\/((?:@[^/]+\/)?[^/]+)\/(.*)$/);
-        if (!pkg || pkg[2].includes('node_modules/')) throw new Error(`the OpenLayers bundle holds ${path}, not a top-level package`);
-        if (!reviewed.includes(pkg[1])) throw new Error(`the OpenLayers bundle holds ${pkg[1]}: review its license and add it`);
+      const outputs = JSON.parse(readFileSync(join(build, 'ol-inputs.json'))).outputs;
+      const reviewed = [...OPENLAYERS_PACKAGES, ...PMTILES_PACKAGES, ...RASTER_PACKAGES, LERC_PACKAGE];
+      const entries = ['ol-entry.js', 'ol-raster-entry.js', 'ol-tiff-decoder-entry.js'];
+      const unreviewed = new Set();
+      const files = [];
+      const entryNames = {};
+      for (const [outPath, output] of Object.entries(outputs)) {
+        for (const [path, input] of Object.entries(output.inputs)) {
+          // a Node built-in a package's browser field turns off (esbuild's empty stand-in, "(disabled):http")
+          if (!input.bytesInOutput || entries.includes(path) || path.startsWith('(disabled):')) continue;
+          // the style spec's dist carries its own copies of a few small dependencies (STYLE_SPEC_INLINED)
+          const inlined = path.match(/^node_modules\/@maplibre\/maplibre-gl-style-spec\/dist\/node_modules\/((?:@[^/]+\/)?[^/]+)\//);
+          if (inlined && STYLE_SPEC_INLINED.includes(inlined[1])) continue;
+          const pkg = path.match(/^node_modules\/((?:@[^/]+\/)?[^/]+)\/(.*)$/);
+          if (!pkg || pkg[2].includes('node_modules/')) throw new Error(`the OpenLayers bundle holds ${path}, not a top-level package`);
+          if (!reviewed.includes(pkg[1])) unreviewed.add(pkg[1]);
+        }
+        const name = relative(outdir, join(build, outPath)).split(sep).join('/');
+        files.push(['openlayers/' + name, readFileSync(join(build, outPath))]);
+        const role = { 'ol-entry.js': 'main', 'ol-raster-entry.js': 'raster', 'ol-tiff-decoder-entry.js': 'decoder' }[output.entryPoint];
+        if (role && outPath.endsWith('.js')) entryNames[role] = name;
       }
-      const text = out.toString('utf8');
-      for (const banned of ['eval(', 'new function(', 'importscripts', 'websocket', 'sendbeacon', 'document.cookie',
-        'localstorage', 'sessionstorage', 'indexeddb']) {
-        if (text.toLowerCase().includes(banned)) throw new Error(`the OpenLayers bundle names ${banned}`);
-      }
-      // every scheme://host and string-literal //host, a template placeholder in it written ${…}
-      const host = (name) => name.replace(/\$\{[^}]*\}/g, '${…}').toLowerCase();
-      const hosts = new Set([
-        ...[...text.matchAll(/\b((?:https?|wss?):)\/\/([^\s"'`/\\)<>,;?#]+)/gi)].map((m) => m[1].toLowerCase() + '//' + host(m[2])),
-        ...[...text.matchAll(/["'`]\/\/([^\s"'`/\\)<>,;?#]+\.[^\s"'`/\\)<>,;?#]+)/g)].map((m) => '//' + host(m[1])),
-      ]);
-      for (const name of hosts) {
-        if (OPENLAYERS_HOSTS.includes(name)) continue;
-        throw new Error(name.includes('${') ? `the OpenLayers bundle builds a URL host at run time, ${name}: review it and add it`
-          : `the OpenLayers bundle names ${name}: review it and add it`);
-      }
-      return out;
+      if (!entryNames.main || !entryNames.raster || !entryNames.decoder) throw new Error('the OpenLayers build lacks an entry');
+      files.push([OPENLAYERS_FILES, Buffer.from(JSON.stringify(entryNames) + '\n')]);
+      // the main part: its entry and what it imports, by esbuild's own account of the outputs (OPENLAYERS_PARTS)
+      const mainOut = Object.keys(outputs).find((outPath) => outputs[outPath].entryPoint === 'ol-entry.js' && outPath.endsWith('.js'));
+      const mainFiles = new Set();
+      const visit = (outPath) => {
+        const name = relative(outdir, join(build, outPath)).split(sep).join('/');
+        if (mainFiles.has(name)) return;
+        if (!outputs[outPath]) throw new Error(`the OpenLayers main part imports ${outPath}, which the build did not write`);
+        mainFiles.add(name);
+        for (const imported of outputs[outPath].imports || []) if (!imported.external) visit(imported.path);
+      };
+      visit(mainOut);
+      if ([...mainFiles].some((name) => name === entryNames.raster || name === entryNames.decoder)) throw new Error('the OpenLayers main part imports the raster part');
+      const parts = { main: ['ol-map.json', 'ol.css', ...[...mainFiles].sort()] };
+      files.push([OPENLAYERS_PARTS, Buffer.from(JSON.stringify(parts) + '\n')]);
+      if (unreviewed.size) throw new Error(`the OpenLayers bundle holds ${[...unreviewed].join(', ')}: review each license and add it`);
+      for (const [name, bytes] of files) if (name.endsWith('.js')) checkOpenLayersText(name, bytes);
+      files.sort((a, b) => a[0].localeCompare(b[0]));
+      return files;
     },
     mapFonts() {
       const root = packages.mapfonts.root;
@@ -1002,7 +1325,7 @@ process.stdout.write(JSON.stringify(out));`;
       files.push({ path: to, from: lib.produce ? 'build' : 'generated' });
     }
     let text = '';
-    if (lib.noticeText) text += lf(lib.noticeText()) + '\n';
+    if (lib.noticeText) text += lf(lib.noticeText(ctx)) + '\n';
     for (const f of lib.licenseFiles ?? []) text += `--- ${f} ---\n${readFileSync(join(root, f), 'utf8').trimEnd()}\n\n`;
     // noticeDedupe: a license text that several packages share is printed once, after the list of them
     const shared = new Map();

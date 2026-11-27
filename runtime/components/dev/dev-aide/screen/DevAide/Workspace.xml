@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The Workspace (plans/design-dev-aide.md 4 and 5): the IDE of the roots' files, the editor, changes and commits. The
+<!-- The Workspace (plans/archive/design-dev-aide.md 4 and 5): the IDE of the roots' files, the editor, changes and commits. The
     page is Workspace.qvue, which loads the client (screen/devstatic/DevAide.js: m-dev-workspace); these transitions answer
     it with JSON, each the service of the same work (WorkspaceServices, VcsServices, the framework's DevToolsServices),
     which checks the instance purpose and the user's tier. Reads are GETs; writes are POSTs with the session token. The
@@ -65,6 +65,8 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="editorSettings" read-only="true"><service-call name="org.moqui.devaide.WorkspaceServices.get#EditorSettings" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
     <transition name="check"><service-call name="org.moqui.devaide.WorkspaceServices.check#File" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="typeDeclarations" read-only="true"><service-call name="org.moqui.devaide.WorkspaceServices.get#TypeDeclarations" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
     <transition name="presence"><service-call name="org.moqui.devaide.WorkspaceServices.set#Presence" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>

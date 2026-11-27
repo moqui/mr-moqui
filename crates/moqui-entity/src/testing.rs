@@ -13,7 +13,7 @@
  */
 
 //! An in-memory SQL database for unit tests. It understands the statements the entity layer writes
-//! for the framework entities: single-table inserts, updates, deletes, and selects with `AND`,
+//! for the framework entities: single-table inserts, updates, deletes, and selects (`DISTINCT` too) with `AND`,
 //! `OR`, `IN`, `IS NULL`, `UPPER(...) LIKE UPPER(?)`, ordering, and paging, view selects that join member tables on
 //! equal columns, and the sequence refill.
 
@@ -631,7 +631,36 @@ impl MemConn {
             Stmt::Insert {
                 table,
                 columns,
+                conflict: None,
+                rows,
+            } if rows > 1 => {
+                let width = columns.len();
+                if params.len() < width * rows {
+                    return Err(Error::new("insert is missing a parameter"));
+                }
+                let added: Vec<BTreeMap<String, Value>> = params
+                    .chunks(width)
+                    .take(rows)
+                    .map(|values| columns.iter().cloned().zip(values.iter().cloned()).collect())
+                    .collect();
+                let mut stored = self.read_table(&table);
+                stored.extend(added.iter().cloned());
+                self.put_table(&table, stored);
+                for row in added {
+                    self.record(Change {
+                        table: table.clone(),
+                        old: None,
+                        new: Some(row),
+                        key: None,
+                    });
+                }
+                Ok((u64::try_from(rows).unwrap_or(u64::MAX), Vec::new()))
+            }
+            Stmt::Insert {
+                table,
+                columns,
                 conflict,
+                ..
             } => {
                 let mut row = BTreeMap::new();
                 for (index, column) in columns.iter().enumerate() {
@@ -838,6 +867,17 @@ impl MemConn {
             matched = group_rows(matched, &query.group, &query.columns);
         }
         matched.sort_by(|left, right| sort_rows(left, right, &query.order));
+        if query.distinct {
+            let mut seen = Vec::new();
+            matched.retain(|row| {
+                let selected = project(row, &query.columns).columns;
+                let first = !seen.contains(&selected);
+                if first {
+                    seen.push(selected);
+                }
+                first
+            });
+        }
         let mut idx = start + pred_slots(&query.pred);
         // The statement reads LIMIT then OFFSET, and the parameters follow that order.
         let take_n = if query.limit {
@@ -1302,6 +1342,8 @@ enum Stmt {
         /// `ON CONFLICT (columns) DO NOTHING`, or `DO UPDATE SET column = EXCLUDED.column, ...`: a row equal on the
         /// conflict columns is not inserted again, and gets the update columns' new values.
         conflict: Option<(Vec<String>, Vec<String>)>,
+        /// The rows: a values list of `columns` each, bound one after another.
+        rows: usize,
     },
     Update {
         table: String,
@@ -1317,6 +1359,8 @@ enum Stmt {
 
 struct SelectQuery {
     count: bool,
+    /// `SELECT DISTINCT`: rows whose selected columns are equal are returned once, the first in order.
+    distinct: bool,
     columns: Vec<String>,
     /// The name each column is returned as.
     names: Vec<String>,
@@ -1438,14 +1482,22 @@ fn parse_insert(cur: &mut Cur) -> Result<Stmt, Error> {
     }
     cur.expect_symbol(b')')?;
     cur.expect_keyword("VALUES")?;
-    cur.expect_symbol(b'(')?;
-    for index in 0..columns.len() {
-        if index > 0 {
-            cur.expect_symbol(b',')?;
+    // one values list a row, `(?, ?), (?, ?)` for several (moqui-db `insert_rows`)
+    let mut rows = 0;
+    loop {
+        cur.expect_symbol(b'(')?;
+        for index in 0..columns.len() {
+            if index > 0 {
+                cur.expect_symbol(b',')?;
+            }
+            cur.expect_symbol(b'?')?;
         }
-        cur.expect_symbol(b'?')?;
+        cur.expect_symbol(b')')?;
+        rows += 1;
+        if !cur.eat_symbol(b',') {
+            break;
+        }
     }
-    cur.expect_symbol(b')')?;
     let conflict = if cur.eat_keyword("ON") {
         cur.expect_keyword("CONFLICT")?;
         cur.expect_symbol(b'(')?;
@@ -1481,10 +1533,14 @@ fn parse_insert(cur: &mut Cur) -> Result<Stmt, Error> {
         None
     };
     cur.expect_end()?;
+    if rows > 1 && conflict.is_some() {
+        return Err(cur.fail("an upsert of several rows"));
+    }
     Ok(Stmt::Insert {
         table,
         columns,
         conflict,
+        rows,
     })
 }
 
@@ -1522,6 +1578,7 @@ fn parse_delete(cur: &mut Cur) -> Result<Stmt, Error> {
 }
 
 fn parse_select(cur: &mut Cur) -> Result<Stmt, Error> {
+    let distinct = cur.eat_keyword("DISTINCT");
     let start = cur.i;
     let count = if cur.eat_keyword("COUNT") && cur.eat_symbol(b'(') && cur.eat_symbol(b'*') {
         cur.expect_symbol(b')')?;
@@ -1650,8 +1707,13 @@ fn parse_select(cur: &mut Cur) -> Result<Stmt, Error> {
         }
     }
     cur.expect_end()?;
+    // as Postgres refuses it: the order of rows made one by DISTINCT would be undefined
+    if distinct && order.iter().any(|key| !columns.contains(&key.field)) {
+        return Err(cur.fail("for SELECT DISTINCT, ORDER BY expressions must appear in select list"));
+    }
     Ok(Stmt::Select(Box::new(SelectQuery {
         count,
+        distinct,
         columns,
         names,
         table,

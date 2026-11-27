@@ -13,7 +13,7 @@
  */
 
 //! `org.moqui.git.GitRestServices`, the framework's REST for hosting (`/rest/s1/moqui/git` and `/rest/s1/moqui/hosting`
-//! in `tools/service/moqui.rest.xml`; plans/Dogfood.md F9, plans/design-dev-aide.md F18): what the server offers its
+//! in `tools/service/moqui.rest.xml`; plans/Dogfood.md F9, plans/archive/design-dev-aide.md F18): what the server offers its
 //! clients, the repository behind a clone or page URL with the caller's rights and settings, whether an author signed a
 //! repository's agreement, and the merge request, review and pipeline resources over the framework's services, by the
 //! repository's own numbers. Each service under them checks the repository's rights as without REST. Before each write
@@ -318,7 +318,8 @@ fn get_hosting_offer(_parameters: &Parameters, _facade: &EntityFacade) -> Out {
         ),
         ("forks", Value::Bool(false)),
         // a repository's pages for a person (a file at a line, a commit, a branch), as templates: the framework has
-        // none to offer; an application that shows repositories offers its own (application.pages)
+        // none to offer; an application that shows repositories offers its own (application.pages for those it keeps,
+        // pages for this hosting's, as IronStone Projects' Code does)
         ("pages", Value::Null),
     ]);
     let parameters = crate::ci::parameters([
@@ -547,9 +548,9 @@ fn author_signed(id: &str, user_id: Option<&str>, email: Option<&str>) -> Value 
 }
 
 /// `get#AuthorSigned`: [`author_signed`] for a viewer of the repository, of `authorUserId` or `authorEmail` (the caller
-/// when both are empty). Out: `known`, `required`, `signed`, `message`, `signUrl`, `application`,
+/// when both are empty); of another author only for a holder of the update right. Out: `known`, `required`, `signed`, `message`, `signUrl`, `application`,
 /// `applicationRestUrl`.
-fn get_author_signed(parameters: &Parameters, _facade: &EntityFacade) -> Out {
+fn get_author_signed(parameters: &Parameters, facade: &EntityFacade) -> Out {
     let Some(id) = text(parameters, "repositoryId") else {
         add_error("repositoryId is required");
         return none();
@@ -559,12 +560,27 @@ fn get_author_signed(parameters: &Parameters, _facade: &EntityFacade) -> Out {
         return none();
     }
     let email = text(parameters, "authorEmail");
-    let user = text(parameters, "authorUserId").or_else(|| {
-        email
-            .is_none()
-            .then(|| moqui_core::user::current_user_id().ok().flatten())
-            .flatten()
-    });
+    let caller = moqui_core::user::current_user_id().ok().flatten();
+    let user = text(parameters, "authorUserId").or_else(|| email.is_none().then(|| caller.clone()).flatten());
+    // another author's answer (by another user's id, or an e-mail address that is not the caller's own) is a reviewer's:
+    // a viewer learns only their own, as Dev AIDE asks of its git user.email (SEC-GIT-21)
+    let own_email = |email: &str| {
+        let Some(caller) = &caller else { return false };
+        let _rows = crate::rows_guard();
+        facade
+            .find("moqui.security.UserAccount")
+            .ok()
+            .and_then(|find| find.eq("userId", Value::string(caller)).one().ok().flatten())
+            .and_then(|row| row.get("emailAddress").map(to_plain_string))
+            .is_some_and(|address| address.trim().eq_ignore_ascii_case(email.trim()))
+    };
+    let another = email.as_deref().is_some_and(|email| !own_email(email)) || user.is_some() && user != caller;
+    if another && !may(&id, "update") {
+        add_error(format!(
+            "only a holder of the update right on repository {id} asks whether another author signed"
+        ));
+        return none();
+    }
     match author_signed(&id, user.as_deref(), email.as_deref()) {
         Value::Map(entries) => Ok(entries.into_iter().collect()),
         _ => none(),

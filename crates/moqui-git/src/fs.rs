@@ -356,6 +356,35 @@ fn public_only_options(repo: &gix::Repository, url: &str) -> Result<Option<Box<d
     Ok(Some(options))
 }
 
+/// gitoxide's text of a failed connect or fetch, as it is stored (`lastFetchError`) and answered: the user and password
+/// of any URL in it (`https://user:password@host` is how gitoxide prints a transport's URL), the token and a basic
+/// authorization value replaced by `***` (SEC-GIT-87).
+pub(crate) fn redact_error(text: &str, token: Option<&str>) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find("://") {
+        let start = at + 3;
+        out.push_str(&rest[..start]);
+        let tail = &rest[start..];
+        let authority_len = tail
+            .find(|ch: char| {
+                ch == '/' || ch == '?' || ch == '#' || ch.is_whitespace() || matches!(ch, '"' | '\'' | '`' | ')' | '>')
+            })
+            .unwrap_or(tail.len());
+        let authority = &tail[..authority_len];
+        match authority.rfind('@') {
+            Some(user_end) => {
+                out.push_str("***");
+                out.push_str(&authority[user_end..]);
+            }
+            None => out.push_str(authority),
+        }
+        rest = &tail[authority_len..];
+    }
+    out.push_str(rest);
+    crate::server::smart_http::redact(&out, token)
+}
+
 /// HTTPS credentials for a fetch.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Credentials {
@@ -443,10 +472,12 @@ pub(crate) fn fetch(
         .map(|remote| remote.with_fetch_tags(gix::remote::fetch::Tags::None))
         .and_then(|remote| remote.with_refspecs(specs.iter().map(String::as_str), gix::remote::Direction::Fetch))
         .map_err(|err| Error::new(format!("bad git remote {}: {err}", moqui_core::outbound::redacted(url))))?;
+    let secret = credentials.token.clone();
     let connection = remote.connect(gix::remote::Direction::Fetch).map_err(|err| {
         Error::new(format!(
-            "cannot connect to {}: {err}",
-            moqui_core::outbound::redacted(url)
+            "cannot connect to {}: {}",
+            moqui_core::outbound::redacted(url),
+            redact_error(&err.to_string(), secret.as_deref())
         ))
     })?;
     let connection = match public_only {
@@ -476,7 +507,13 @@ pub(crate) fn fetch(
     let outcome = connection
         .prepare_fetch(gix::progress::Discard, gix::remote::ref_map::Options::default())
         .and_then(|prepare| prepare.receive(gix::progress::Discard, &interrupt))
-        .map_err(|err| Error::new(format!("fetching {}: {err}", moqui_core::outbound::redacted(url))))?;
+        .map_err(|err| {
+            Error::new(format!(
+                "fetching {}: {}",
+                moqui_core::outbound::redacted(url),
+                redact_error(&err.to_string(), secret.as_deref())
+            ))
+        })?;
     let mut refused = Vec::new();
     if mirror {
         let remote_names: HashSet<String> = outcome

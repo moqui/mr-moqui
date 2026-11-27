@@ -14,9 +14,11 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- Geo data's Import dialog (GeoData.xml, a dynamic-dialog, so its form is loaded only when opened): for a data set
     downloaded whole, Start import; for a set read a country at a time, the country among those it has files for (its
-    countryCodes, GeoDataServices find through GeoData.js countryOptions); for an operator's file, the country and the file.
-    startImport is org.moqui.maps.GeoDataServices.start#GeoDataImport: a run of the GeoDataImport ServiceJob, never the import
-    in the request. MAPS_ADMIN, as Configuration. -->
+    countryCodes, GeoDataServices find through GeoData.js countryOptions), or every country of them as a queue of runs, after
+    a confirmation with the estimate of GeoData.js everyCountryEstimate (plans/archive/Maps.md §6.3); for an operator's file, the
+    country and the file.
+    startImport is org.moqui.maps.GeoDataServices.start#GeoDataImport: a run of the GeoDataImport ServiceJob (every country: the
+    first run of its queue), never the import in the request. MAPS_ADMIN, as Configuration. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Import" default-menu-include="false" history="false">
     <parameter name="dataSetId"/>
@@ -24,10 +26,13 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="startImport" method="post">
         <actions><script><![CDATA[
             const started = ec.service.sync().name('org.moqui.maps.GeoDataServices.start#GeoDataImport').parameters({dataSetId: dataSetId || null,
-                countryGeoId: context.countryGeoId || null, file: context.file || null, force: context.force === 'Y' || context.force === 'true'}).call() || {}
-            if (!ec.message.hasError()) ec.message.addMessage(started.jobRunId
-                ? ec.resource.expand(ec.l10n.localize('Import ${id} started in the background: you are notified when it ends.'), '', {id: started.geoDataImportId})
-                : ec.l10n.localize('The import did not start: see its run below.'), started.jobRunId ? 'success' : 'warning')
+                countryGeoId: context.countryGeoId || null, file: context.file || null, force: context.force === 'Y' || context.force === 'true',
+                everyCountry: context.everyCountry === 'Y'}).call() || {}
+            if (!ec.message.hasError()) ec.message.addMessage(!started.jobRunId ? ec.l10n.localize('The import did not start: see its run below.')
+                : started.queueId ? ec.resource.expand(ec.l10n.localize('Every country of ${id} is queued: ${count} imports, one after another in the background; you are notified as each ends.'), '',
+                    {id: dataSetId, count: started.countryCount})
+                : ec.resource.expand(ec.l10n.localize('Import ${id} started in the background: you are notified when it ends.'), '', {id: started.geoDataImportId}),
+                started.jobRunId ? 'success' : 'warning')
         ]]></script></actions>
         <default-response url=".."/>
         <error-response url=".."/>
@@ -39,11 +44,14 @@ along with this software (see the LICENSE.md file). If not, see
             setFound = !!set
             operatorFile = !!set && !set.urlTemplate
             needsCountry = !!set && !set.coverageGeoId && (set.perCountry === 'Y' || operatorFile)
-            countryOptions = needsCountry ? ec.resource.script('component://framework/service/org/moqui/maps/GeoData.js')
-                .execute('countryOptions', {dataSetId: set.dataSetId}).countryOptions : []
+            const geoData = ec.resource.script('component://framework/service/org/moqui/maps/GeoData.js')
+            countryOptions = needsCountry ? geoData.execute('countryOptions', {dataSetId: set.dataSetId}).countryOptions : []
+            // every country, as a queue of runs: a set downloaded a country at a time
+            estimate = needsCountry && !operatorFile ? geoData.execute('everyCountryEstimate', {dataSetId: set.dataSetId}) : {countryCount: 0}
+            everyCountryOffered = estimate.countryCount > 1
             introText = !set ? '' : operatorFile
                 ? ec.l10n.localize('A CSV with a header: country, code, place, admin1, admin2, latitude, longitude, precision (postal, place, street or address). Its rows are for the country you choose; a code it no longer has is retired in that country only.')
-                : needsCountry ? ec.l10n.localize('Downloads the data set for one country and loads it in the background. Import each country you need, one at a time.')
+                : needsCountry ? ec.l10n.localize('Downloads the data set for one country and loads it in the background. Import each country you need, or every country below.')
                 : ec.l10n.localize('Downloads the data set and loads it in the background. A source that has not changed since the edition in use ends as current.')
         ]]></script>
     </actions>
@@ -67,6 +75,18 @@ along with this software (see the LICENSE.md file). If not, see
                     <field name="force"><default-field title="Fetch again, and accept a file with far fewer rows than the edition in use">
                         <check><option key="Y" text=" "/></check></default-field></field>
                     <field name="submitButton"><default-field title="Start import"><submit/></default-field></field>
+                </form-single>
+            </widgets>
+        </section>
+        <section name="EveryCountrySection" condition="setFound &amp;&amp; everyCountryOffered">
+            <widgets>
+                <label type="h6" text="Every country"/>
+                <label type="p" text="${estimate.estimateText}"/>
+                <form-single name="ImportEveryCountry" transition="startImport" map="{dataSetId: dataSetId, everyCountry: 'Y'}">
+                    <field name="dataSetId"><default-field><hidden/></default-field></field>
+                    <field name="everyCountry"><default-field><hidden/></default-field></field>
+                    <field name="submitButton"><default-field title="Import every country">
+                        <submit confirmation="Import every country of ${dataSetId}? ${estimate.estimateText} Cancel stops the rest."/></default-field></field>
                 </form-single>
             </widgets>
         </section>

@@ -708,12 +708,14 @@ function selectionOf(target, p) {
     return selection
 }
 const joined = parts => parts.filter(Boolean).join(" · ")
+// "1 row", "2 rows"
+const counted = (count, noun) => count + " " + noun + (Number(count) === 1 ? "" : "s")
 // What a run counted, as one text: an export's rows and fields, a delivery's recipients and outcomes.
 const countText = run =>
     run.kind === "export"
-        ? joined([run.rowCount != null ? run.rowCount + " rows" : null, run.fieldCount ? run.fieldCount + " fields" : null])
+        ? joined([run.rowCount != null ? counted(run.rowCount, "row") : null, run.fieldCount ? counted(run.fieldCount, "field") : null])
         : joined([
-              run.recipientCount != null ? run.recipientCount + " recipients" : null,
+              run.recipientCount != null ? counted(run.recipientCount, "recipient") : null,
               run.sentCount + " sent",
               run.failedCount ? run.failedCount + " failed" : null,
               run.uncertainCount ? run.uncertainCount + " unknown" : null,

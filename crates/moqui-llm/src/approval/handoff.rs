@@ -158,7 +158,7 @@ impl HandoffView {
 /// What the model reads of the user's own save: the values saved, each marked when it is not the one proposed, and the
 /// messages.
 fn saved_text(outcome: &Json, approval: &ApprovalView) -> String {
-    // a change set the user reviewed in the editor and saved (plans/design-dev-aide.md 13.3)
+    // a change set the user reviewed in the editor and saved (plans/archive/design-dev-aide.md 13.3)
     if let Some(review) = outcome.get("review").and_then(Json::as_str) {
         return format!("The user reviewed your change set in the editor and saved it: {review}.");
     }
@@ -560,7 +560,7 @@ pub fn observe(factory: &Arc<ExecutionContextFactory>, outcome: &TransitionOutco
     Ok(None)
 }
 
-/// A hand-off to the editor ended by the user's own save (a change set's Review, plans/design-dev-aide.md 13.3): the
+/// A hand-off to the editor ended by the user's own save (a change set's Review, plans/archive/design-dev-aide.md 13.3): the
 /// approval Executed with what the user did, and the run resumes with it. `review` is that, in words ("accepted 3 of 4
 /// hunks; edited OrderServices.xml lines 120 to 131"). `false` when `user_id` has no open watch of the approval.
 ///

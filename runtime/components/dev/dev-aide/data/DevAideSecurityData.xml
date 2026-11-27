@@ -12,15 +12,17 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Who may use Dev AIDE (plans/design-dev-aide.md 3.4): the app's screens for ADMIN and the two dev-aide groups, and the
+<!-- Who may use Dev AIDE (plans/archive/design-dev-aide.md 3.4): the app's screens for ADMIN and the two dev-aide groups, and the
     three tiers the services check: DEV_AIDE_VIEW reads, DEV_AIDE_EXTEND writes inside site components, DEV_AIDE does
     everything. Seed of the dev-aide, so it exists only where the component loads (a dev instance). -->
 <entity-facade-xml type="seed">
     <moqui.security.UserGroup userGroupId="DEV_AIDE_USERS" description="Dev AIDE developers (the full tier)"/>
-    <moqui.security.UserGroup userGroupId="DEV_AIDE_EXTENDERS" description="Dev AIDE extenders (writes in site components)"/>
+    <!-- the extend tier runs code as the server (a service run for real, JavaScript in the sim, specs, seed loads, a ci.xml
+        script in a host terminal): give it only to whom the server itself is given (SEC-DEV-07) -->
+    <moqui.security.UserGroup userGroupId="DEV_AIDE_EXTENDERS" description="Dev AIDE extenders (writes in site components; runs code as the server)"/>
 
     <moqui.security.UserPermission userPermissionId="DEV_AIDE_VIEW" description="Dev AIDE: browse, search and read files"/>
-    <moqui.security.UserPermission userPermissionId="DEV_AIDE_EXTEND" description="Dev AIDE: write site components, publish"/>
+    <moqui.security.UserPermission userPermissionId="DEV_AIDE_EXTEND" description="Dev AIDE: write site components, publish, and run code as the server (services for real, scripts, specs, seed loads, ci.xml in a terminal)"/>
     <moqui.security.UserPermission userPermissionId="DEV_AIDE" description="Dev AIDE: everything, upstream edits and every git command"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="DEV_AIDE" fromDate="0"/>
     <moqui.security.UserGroupPermission userGroupId="DEV_AIDE_USERS" userPermissionId="DEV_AIDE" fromDate="0"/>

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The US Census files (plans/Maps.md §6.2, §6.4): the Gazetteer's ZCTA, Counties and Places files, and the 2020
+//! The US Census files (plans/archive/Maps.md §6.2, §6.4): the Gazetteer's ZCTA, Counties and Places files, and the 2020
 //! ZCTA-to-county relationship file. Each is delimited text with a header line, read by column name: pipe-delimited
 //! (the 2026 files; the delimiter is told from the header, so the older tab-delimited years read too), no quoting, a
 //! byte order mark on the relationship file's header. A ZCTA's GEOID keeps its leading zeros.
@@ -153,7 +153,7 @@ fn field<'f>(fields: &[&'f str], columns: &BTreeMap<String, usize>, column: &str
 }
 
 /// The Gazetteer's ZCTA file: each ZCTA as a US postal code (full, leading zeros kept) with its internal point, a
-/// postal-area point.
+/// postal-area point, and its land area in square meters (`ALAND`) where the file has it.
 ///
 /// # Errors
 ///
@@ -174,6 +174,12 @@ pub fn parse_zcta(
                 Ok(point) => point,
                 Err((name, message)) => return Some(RowError::new(line, name, message, text)),
             };
+            // the land area sizes the lookup's extent: optional (an older file, or a column left empty), never a reason
+            // to pass the row over
+            let land_area = field(fields, columns, "ALAND")
+                .parse::<u64>()
+                .ok()
+                .filter(|area| *area > 0);
             (each.borrow_mut())(Ok(PostalRecord {
                 line,
                 country: "US".to_string(),
@@ -186,6 +192,7 @@ pub fn parse_zcta(
                 point: Some(point),
                 accuracy: None,
                 precision: Precision::PostalArea,
+                land_area,
             }));
             None
         },

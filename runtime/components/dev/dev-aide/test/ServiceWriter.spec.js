@@ -1,4 +1,4 @@
-// The service writer and the ECA rules on a dev instance (plans/design-dev-aide.md P7, 9, 10): a service's view with its
+// The service writer and the ECA rules on a dev instance (plans/archive/design-dev-aide.md P7, 9, 10): a service's view with its
 // parameters nested and implied ones marked, Try in sim with the rows it would write and nothing kept, a snippet run in
 // sim, the generated JavaScript of an actions block, and the ECA rules as the framework holds them. Save as spec, Run
 // spec and a site SECA's save are in the host's integration test (crates/moqui-host/tests/it/devaide.rs), which has a
@@ -291,3 +291,27 @@ feature("a SECA rule's trigger is not one of Dev AIDE's own writes", {
         refusal.includes("the sim cannot hold that")
     },
 })
+
+// SEC-DEV-81: a development tool that writes the server's files or restarts it never runs in the sim, where no fence
+// would hold it; its reads still do
+feature("a framework development tool that writes or restarts is refused in the sim", {
+    when() {
+        const ask = (serviceName) => {
+            try {
+                const answer = svc("try#Service", { serviceName, parameters: "{}" })
+                return { result: answer?.result, refusal: String(ec.message.getErrorsString() || "") }
+            } catch (error) {
+                return { refusal: String(error) }
+            } finally {
+                ec.message.clearAll()
+            }
+        }
+        return { restart: ask("org.moqui.dev.DevToolsServices.restart#Server"), save: ask("org.moqui.dev.ComponentServices.save#ConfFile") }
+    },
+    then({ restart, save }) {
+        restart.result == null
+        restart.refusal.includes("the sim cannot hold that")
+        save.result == null
+    },
+})
+

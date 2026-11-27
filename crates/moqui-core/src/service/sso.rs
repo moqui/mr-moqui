@@ -723,13 +723,23 @@ fn sync_account_rows(
     let auth_flow_id = field(flow, "authFlowId");
     let mut mapped = map_fields(facade, &auth_flow_id, &profile.attributes)?;
     // An address the provider has not verified is not the account's: a password reset by email finds an account by it
-    // (SEC-ADM-11). The account keeps the address it has; a new one gets none.
-    if mapped.contains_key("emailAddress") && !email_verified(profile) {
-        mapped.remove("emailAddress");
-        tracing::info!(
-            "AuthFlow {auth_flow_id}: the email address of {username} is not taken, as the provider did not say it is \
-             verified (email_verified)"
-        );
+    // (SEC-ADM-11). `email_verified` speaks of the `email` claim only, so a mapped address is taken only when it is
+    // that claim's value: a field map of another claim (`nickname`, which the user sets) onto `emailAddress` writes
+    // nothing (SEC-ADM-85). The account keeps the address it has; a new one gets none.
+    if let Some(address) = mapped.get("emailAddress") {
+        let verified_email = profile.attributes.get("email").map(to_plain_string).unwrap_or_default();
+        let is_verified_email = email_verified(profile)
+            && !verified_email.trim().is_empty()
+            && to_plain_string(address)
+                .trim()
+                .eq_ignore_ascii_case(verified_email.trim());
+        if !is_verified_email {
+            mapped.remove("emailAddress");
+            tracing::info!(
+                "AuthFlow {auth_flow_id}: the email address of {username} is not taken, as the provider did not say it \
+                 is verified (email_verified of the email claim)"
+            );
+        }
     }
     let existing = match linked_account(facade, &auth_flow_id, &profile.id)? {
         Some(account) => Some(account),

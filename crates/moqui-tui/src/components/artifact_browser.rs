@@ -13,7 +13,7 @@
  */
 
 //! `artifact-browser`: a reference graph as Miller columns (the terminal form of the Dev AIDE's Artifact Browser,
-//! plans/design-dev-aide.md 7.3): what uses the center on the left, the center in the middle, what it uses on the
+//! plans/archive/design-dev-aide.md 7.3): what uses the center on the left, the center in the middle, what it uses on the
 //! right, each side in sections by kind. Enter on a row makes it the center and puts it on the trail, which Backspace
 //! and `]` walk back and forward; a row already on the trail is marked `↺`. Narrower than [`STACK_BELOW`] columns the
 //! three panes stack and one shows at a time. `k`, `h` and `x` change the filter, which the source applies; the

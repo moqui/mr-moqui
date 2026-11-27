@@ -349,7 +349,7 @@ along with this software (see the LICENSE.md file). If not, see
             </resource>
         </id>
     </resource>
-    <!-- What a client asks before it knows a repository (plans/design-dev-aide.md F18): what the server offers (open to
+    <!-- What a client asks before it knows a repository (plans/archive/design-dev-aide.md F18): what the server offers (open to
         a caller with no credentials), the repository behind a clone or page URL, and the merge requests of every
         repository the caller may view (MOQUI_API_HOSTING in ToolsSecurityData.xml). -->
     <resource name="hosting" description="What the server offers, and the repository behind a URL">
@@ -359,7 +359,7 @@ along with this software (see the LICENSE.md file). If not, see
         <resource name="repository" key-scope="git"><method type="get"><service name="org.moqui.git.GitRestServices.resolve#RepositoryUrl"/></method></resource>
         <resource name="mergeRequests" key-scope="git"><method type="get"><service name="org.moqui.git.GitRestServices.find#MergeRequests"/></method></resource>
         <resource name="agreement" key-scope="git"><method type="get"><service name="org.moqui.git.GitRestServices.get#AuthorSigned"/></method></resource>
-        <!-- a client's own keys (plans/design-dev-aide.md 21.2, question 18): a key for one service alone (the LLM gateway,
+        <!-- a client's own keys (plans/archive/design-dev-aide.md 21.2, question 18): a key for one service alone (the LLM gateway,
             git or tasks: scope), made by the account's key only, and the end of a key it holds, when it is let go, which
             a scoped key may ask for itself alone -->
         <resource name="gatewayKey"><method type="post"><service name="org.moqui.impl.UserServices.create#UserScopedKey"/></method></resource>
@@ -375,7 +375,7 @@ along with this software (see the LICENSE.md file). If not, see
     </resource>
 
     <!-- The artifact index of a project an admin allowed (DevArtifactProject), read only, on any instance
-        (plans/design-dev-aide.md 7.4): for the AIDE_READ permission (AIDE_READ_API in the framework's
+        (plans/archive/design-dev-aide.md 7.4): for the AIDE_READ permission (AIDE_READ_API in the framework's
         DevToolsSecurityData.xml). Each answer has the index's indexStamp. Rebuilding stays on dev instances. -->
     <resource name="aide" description="The artifact index of allowed projects, read only">
         <resource name="projects">
