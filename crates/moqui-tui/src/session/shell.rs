@@ -270,7 +270,7 @@ impl Session {
             }
         }
         let mut seen = BTreeSet::new();
-        for location in self.nav.history().iter().rev() {
+        for location in self.nav.history().rev() {
             let url = location_text(location);
             if hit(&url) && seen.insert(url.clone()) && seen.len() <= 8 {
                 rows.push(row("Recent", &location.path, &url, MenuAct::Url(url.clone())));
