@@ -967,6 +967,158 @@ function rasterCspCheck(layers) {
     })
 }
 
+// ===== room to replace an archive =====
+// Registering a new revision keeps the old one while maps move to it (a drive's old content blob until it is collected, the
+// git version a map still reads, the file on disk until it is replaced), so the filesystem an archive is on needs free room
+// for the largest archive on it once more. An archive on disk (runtime://maps/) is on the runtime's filesystem (the status
+// map's row that holds "runtime"; a maps directory mounted apart is not watched, and is taken as the runtime's). A drive's
+// archive and a Git LFS object are content blobs in the database: on the filesystem of runtime/db (the row that holds
+// "database", else the runtime's, which runtime/db is then on) when the database is the embedded one, and not measured when
+// it is external. A local backup of the embedded database copies those blobs again, so when the backups are written on a
+// watched filesystem the next one needs the database's archives once more there.
+//
+// layers: MapLayer rows (each registered location counted once, by its sourceSize); filesystems: the status map's
+// Resources.Filesystems rows ({mountPoint, holds, availableBytes}; none off Unix); backup: {embedded: whether the database is
+// the embedded one, holds: the watched directory the local backups are written under ("database", "runtime", ...), or null
+// when none is written or where cannot be told}. The check row, or null when no archive is registered.
+function archiveSpace(layers, filesystems, backup) {
+    const archives = new Map()
+    for (const layer of Array.from(layers || [])) {
+        const location = text(layer.resourceLocation)
+        if (!location || !text(layer.sourceRevision) || archives.has(location)) continue
+        const scheme = schemeOf(location)
+        const where =
+            scheme === "runtime" || scheme === "file" ? "disk" : scheme === "dbresource" || scheme === "git" ? "database" : ""
+        if (where) archives.set(location, {where, size: num(layer.sourceSize) || 0})
+    }
+    if (!archives.size) return null
+    const base = {
+        checkKey: "maps.archive.space",
+        title: L("Room to replace map archives"),
+        subject: L("Disk space"),
+        fixRoute: "mapsConfiguration"
+    }
+    const rows = Array.from(filesystems || [])
+    if (!rows.length)
+        return Object.assign(base, {
+            state: "unavailable",
+            reasonCode: "ARCHIVE_SPACE_UNREAD",
+            message: L(
+                "This server reports no filesystem's free space (only on Unix): the room to replace a map archive is not measured"
+            )
+        })
+    const holding = label =>
+        rows.find(row =>
+            Array.from(row.holds || [])
+                .map(String)
+                .includes(label)
+        )
+    // a runtime directory not on a filesystem of its own is on the runtime's
+    const rowOf = label => holding(label) || holding("runtime")
+    const embedded = backup?.embedded === true
+    const inDatabase = Array.from(archives.values()).filter(archive => archive.where === "database")
+    const needs = new Map()
+    const need = (row, field, bytes) => {
+        const entry = needs.get(row) || {largest: 0, backup: 0}
+        entry[field] = field === "largest" ? Math.max(entry.largest, bytes) : entry.backup + bytes
+        needs.set(row, entry)
+    }
+    let unread = false
+    for (const archive of archives.values()) {
+        if (archive.where === "database" && !embedded) continue
+        const row = rowOf(archive.where === "disk" ? "runtime" : "database")
+        if (row) need(row, "largest", archive.size)
+        else unread = true
+    }
+    if (embedded && inDatabase.length && text(backup?.holds)) {
+        const row = rowOf(text(backup.holds))
+        if (row)
+            need(
+                row,
+                "backup",
+                inDatabase.reduce((sum, archive) => sum + archive.size, 0)
+            )
+    }
+    const external = inDatabase.length && !embedded
+    const notes = []
+    if (external) notes.push(L("Archives in drives and git are kept in an external database, whose room is not measured here"))
+    if (unread) notes.push(L("The filesystem an archive is on is not reported, so its room is not measured"))
+    const short = []
+    const fits = []
+    for (const [row, entry] of needs) {
+        const values = {
+            mount: text(row.mountPoint),
+            free: bytesText(num(row.availableBytes)),
+            needed: bytesText(entry.largest + entry.backup),
+            largest: bytesText(entry.largest),
+            backup: bytesText(entry.backup)
+        }
+        if ((num(row.availableBytes) ?? 0) < entry.largest + entry.backup)
+            short.push(
+                entry.backup
+                    ? say(
+                          "${mount} has ${free} free and needs ${needed}: the largest archive on it (${largest}) once more to replace it, and the database's archives (${backup}) in the next local backup",
+                          values
+                      )
+                    : say(
+                          "${mount} has ${free} free and needs ${needed}: the largest archive on it once more to replace it",
+                          values
+                      )
+            )
+        else fits.push(say("${mount} has ${free} free, room for ${needed}", values))
+    }
+    if (short.length)
+        return Object.assign(base, {state: "warning", reasonCode: "ARCHIVE_SPACE_LOW", message: short.concat(notes).join(". ")})
+    if (notes.length)
+        return Object.assign(base, {
+            state: "unavailable",
+            reasonCode: external ? "ARCHIVE_SPACE_EXTERNAL_DB" : "ARCHIVE_SPACE_UNREAD",
+            message: notes.concat(fits).join(". ")
+        })
+    return Object.assign(base, {
+        state: "ready",
+        reasonCode: "",
+        message: fits.join(". ")
+    })
+}
+// What archiveSpace reads of this server: the filesystems and the database's kind from the status map (only those), and
+// where the local backups go. The backup job's directory is its backupDir parameter, else database-backup@dir, else
+// runtime/db/backup (crates/moqui-drivers/src/backup.rs); it counts only while the job runs (not paused) for an embedded
+// database. A directory inside the runtime is placed by its watched directory; one outside it (or relative) is left out,
+// since no host API names the filesystem of a path and a mount point's prefix would put a separately mounted backup disk
+// on "/".
+function spaceSetup() {
+    let status = {}
+    try {
+        // Filesystems is in the plain map too; whether the database is embedded only in the sensitive one
+        status = ec.factory.getStatusMap(true) || {}
+    } catch (error) {
+        ec.logger.error("Maps archive space: the status map could not be read: " + String(error?.message ?? error))
+    }
+    const filesystems = Array.from(status.Resources?.Filesystems || []).map(row => ({
+        mountPoint: row.mountPoint,
+        holds: Array.from(row.holds || []),
+        availableBytes: row.availableBytes
+    }))
+    const sources = Array.from(status.DataSources || [])
+    const embedded = sources.length > 0 && sources.every(source => source.embedded === true)
+    let holds = null
+    if (embedded) {
+        const job = one("moqui.service.job.ServiceJob", {jobName: "backup_EmbeddedDatabase_daily"})
+        if (job && text(job.serviceName) === "org.moqui.impl.ServerServices.backup#EmbeddedDatabase" && job.paused !== "Y") {
+            const parameter = one("moqui.service.job.ServiceJobParameter", {jobName: job.jobName, parameterName: "backupDir"})
+            const directory = text(parameter?.parameterValue) || conf("database-backup@dir")
+            const runtime = String(ec.factory.getRuntimePath() || "").replace(/\/+$/, "")
+            const path = directory.replace(/^file:(\/\/)?/i, "")
+            const labels = {db: "database", log: "logs", tmp: "temp", txlog: "transaction log", opensearch: "search"}
+            if (!directory) holds = "database"
+            else if (runtime && path.startsWith(runtime + "/") && !/(^|\/)\.\.(\/|$)/.test(path))
+                holds = labels[path.slice(runtime.length + 1).split("/")[0]] || "runtime"
+        }
+    }
+    return {filesystems, backup: {embedded, holds}}
+}
+
 // check#ArchiveReadiness: the maps.archives provider, for ADMIN_OVERVIEW_VIEW
 function readiness(p) {
     if (text(p.providerKey) !== "maps.archives") throw new Error("Unknown Maps readiness check " + text(p.providerKey))
@@ -1001,6 +1153,9 @@ function readiness(p) {
         })
     const csp = rasterCspCheck(layers)
     if (csp) checks.push(csp)
+    const setup = spaceSetup()
+    const space = archiveSpace(layers, setup.filesystems, setup.backup)
+    if (space) checks.push(space)
     if (!checks.length)
         checks.push({
             checkKey: "maps.archive.none",
@@ -1021,5 +1176,7 @@ const operations = {sourceAccess, archiveTile, register, findArchives, readiness
     // for the effective configuration (MapConfig.js)
     servedUrl,
     tileUrl,
+    // the room to replace archives, from given rows (MapsSource.spec.js)
+    archiveSpace,
     SOURCE_PATH
 })

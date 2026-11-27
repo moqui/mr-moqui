@@ -9,7 +9,8 @@
 // (and 304, and 204 for no tile) and refuses a non-holder and a stale revision. The archive is a tiny valid PMTiles
 // version 3 file made here. A Cloud Optimized GeoTIFF (P4c) is registered by its header (its CRS and bands recorded, one in
 // strips refused), read by range by a holder of its share and not by another user, and handed to the holder's map with its
-// projection's definition.
+// projection's definition. Readiness's room to replace archives (archiveSpace) is checked on given filesystem rows: room,
+// too little on the runtime's or the database's filesystem, an external database not measured, no filesystems reported.
 // Run: ./moq test framework --spec MapsSource
 const S = "org.moqui.maps.MapSourceServices."
 const HOLDER = "MAPS_SRC_HOLDER"
@@ -283,6 +284,7 @@ feature("registering records the revision of a drive's archive and a file's, and
         }
     },
     then({drive, file, fileUri, outside, driveRow, fileRow, broken, mismatch, git, together, mixed, refused, readiness}) {
+        const checks = Array.from(readiness.checks || [])
         drive.applied && file.applied && fileUri.applied
         layerRow(layers.fileUri).sourceRevision == fileRow.sourceRevision && layerRow(layers.fileUri).sourceAddressKind == "file"
         // outside every drive: registering says every user who may see the layer reads it
@@ -302,7 +304,9 @@ feature("registering records the revision of a drive's archive and a file's, and
         !mixed.applied && mixed.reasonCode == "FORMAT_MISMATCH"
         layerRow(layers.raster).disabled == "Y" && !layerRow(layers.git).sourceRevision
         refused.applied !== true && (refused.reasonCode == "PERMISSION_DENIED" || /authoriz/i.test(refused.error))
-        Array.from(readiness.checks || []).find(check => check.checkKey == "maps.archive." + layers.drive)?.state == "ready"
+        checks.find(check => check.checkKey == "maps.archive." + layers.drive)?.state == "ready"
+        // this server's own filesystems: measured on Unix
+        checks.some(check => check.checkKey == "maps.archive.space" && check.state != "failed")
     }
 })
 
@@ -536,5 +540,53 @@ feature("a provider's COG is read by one range from its URL: a 206 this site may
         out.notProviders.applied === false && out.notProviders.reasonCode == "URL_NOT_PROVIDERS"
         out.untested.applied === false && out.untested.reasonCode == "PROVIDER_UNTESTED"
         out.proxied.applied === false && out.proxied.reasonCode == "PROVIDER_PROXIED"
+    }
+})
+
+feature("readiness says whether the filesystem an archive is on has room to replace it, from given rows", {
+    when() {
+        const space = ec.resource.script("component://framework/service/org/moqui/maps/MapSources.js").archiveSpace
+        const MIB = 1048576
+        const archive = (layerId, resourceLocation, mib) => ({
+            layerId,
+            resourceLocation,
+            sourceRevision: "r" + layerId,
+            sourceSize: mib * MIB
+        })
+        // a disk archive of 100 MiB, a drive's of 50 MiB drawn by two layers (counted once), and one never registered
+        const rows = [
+            archive("DISK", "runtime://maps/region.pmtiles", 100),
+            archive("LIGHT", "dbresource://drive/region.pmtiles", 50),
+            archive("DARK", "dbresource://drive/region.pmtiles", 50),
+            {layerId: "NEW", resourceLocation: "runtime://maps/new.pmtiles", sourceSize: 900 * MIB}
+        ]
+        const runtimeRow = availableBytes => ({mountPoint: "/", holds: ["runtime", "system temp"], availableBytes})
+        const backup = {embedded: true, holds: "database"}
+        return {
+            // one filesystem: the largest (100 MiB) once more and the drive's 50 MiB for the next local backup
+            fits: space(rows, [runtimeRow(10240 * MIB)], backup),
+            tight: space(rows, [runtimeRow(149 * MIB)], backup),
+            // runtime/db on a filesystem of its own: the drive's archive and its backup are measured there
+            dbShort: space(
+                rows,
+                [runtimeRow(10240 * MIB), {mountPoint: "/srv/db", holds: ["database"], availableBytes: 60 * MIB}],
+                backup
+            ),
+            external: space([rows[1]], [runtimeRow(10240 * MIB)], {embedded: false, holds: null}),
+            unread: space(rows, [], backup),
+            none: space([rows[3]], [runtimeRow(MIB)], backup)
+        }
+    },
+    then({fits, tight, dbShort, external, unread, none}) {
+        fits.checkKey == "maps.archive.space" && fits.state == "ready" && fits.fixRoute == "mapsConfiguration"
+        fits.message == "/ has 10 GiB free, room for 150 MiB"
+        tight.state == "warning" && tight.reasonCode == "ARCHIVE_SPACE_LOW"
+        tight.message.startsWith("/ has 149 MiB free and needs 150 MiB")
+        dbShort.state == "warning" && dbShort.message.startsWith("/srv/db has 60 MiB free and needs 100 MiB")
+        !dbShort.message.includes("/ has")
+        external.state == "unavailable" && external.reasonCode == "ARCHIVE_SPACE_EXTERNAL_DB"
+        external.message.includes("external database")
+        unread.state == "unavailable" && unread.reasonCode == "ARCHIVE_SPACE_UNREAD"
+        none === null
     }
 })

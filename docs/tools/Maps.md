@@ -203,7 +203,11 @@ Enable the profile and make it the default on the same page. To replace an archi
 location and register it again: a map drawing the old revision is refused it (409) and loads its configuration again,
 so no map mixes the two. The readiness provider `maps.archives` says when a newer revision is stored but not registered
 (`NEWER_REVISION`), and when the registered one is gone, or a file on disk has changed in place (a change of its size or
-modification time, which also makes the map-source transition answer 409 until it is registered again).
+modification time, which also makes the map-source transition answer 409 until it is registered again). Its
+`maps.archive.space` check warns (`ARCHIVE_SPACE_LOW`) when the filesystem an archive is on has less free room than the
+largest archive on it once more (the old revision is kept while maps move): the runtime's for one on disk, the database's
+for one in a drive or git when the database is the embedded one (with the database's archives once more when the nightly
+backup writes there), from the status map's filesystems; an external database's room is not measured, and off Unix none is.
 
 **Reading.** A map reads an archive at `/apps/maps/LocalMap/source?layerId=...&revision=...` (the effective configuration
 hands that URL to a user it lets read the archive, and to no other). Every request, each range included, checks the
@@ -856,7 +860,7 @@ rules); the configuration services' rules are `framework/test/MapsConfig.spec.js
 app's route, else one of no app, and left out for a non-holder, and a profile's view projection: a registered one handed
 to the map with its definition, refused for a vector-style basemap and for an unknown code), and the archives'
 (registering, the map-source transition's access, ranges, revocation and stale revisions, and the tile transition's tile,
-304, 204, non-holder and stale revision) `framework/test/MapsSource.spec.js`, with the header's, the tile IDs', the
+304, 204, non-holder and stale revision, and readiness's room to replace an archive) `framework/test/MapsSource.spec.js`, with the header's, the tile IDs', the
 directories' and the archive writer's in Rust (`moqui-lib` `pmtiles_tests.rs`) and the tile reader's (`moqui-tools`
 `maps_tiles_tests.rs`: gzip or plain by the client, a missing tile, `If-None-Match`, a changed archive, the cache's
 bound). Overlays and places: `framework/test/MapsOverlays.spec.js`
