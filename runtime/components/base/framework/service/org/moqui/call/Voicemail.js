@@ -336,6 +336,11 @@ function boxOfRoute(phoneNumber) {
   return null
 }
 
+/** Whether this node takes edge links (instance@node-role front, front_edge, edge or all-in-one). */
+function takesLinks() {
+  return ['front', 'front_edge', 'edge', 'all-in-one'].includes(String(ec.factory.getConfValue('instance@node-role') || '').trim().toLowerCase())
+}
+
 /**
  * The queue kind voicemail (receive#EdgeVoicemail), as _edge_ only: a message the edge node's SIP engine recorded. Its
  * box is the one begin#Voicemail chose for the call when this node routed it (the session's, its media on the edge
@@ -343,6 +348,9 @@ function boxOfRoute(phoneNumber) {
  */
 function receiveEdge(p) {
   if (!isEdgeCaller()) return refuse('notAllowed', 'Only the edge link queue stores a message the edge node recorded')
+  // the items go from an edge node to its local node: a node that takes links (an edge or all-in-one node) stores none
+  // a paired node sends it (SEC-CLU-86)
+  if (takesLinks()) return refuse('notAllowed', 'A node that takes links stores no voicemail a paired node sends')
   let item
   try {
     item = JSON.parse(p.payload || '{}')

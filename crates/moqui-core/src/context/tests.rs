@@ -344,6 +344,9 @@ fn generated_secrets_are_32_random_bytes_and_secret_names_are_known() {
     assert!(parameter("downloadToken"));
     assert!(!parameter("primaryKeyId"));
     assert!(!parameter("returnKeyId"));
+    // a voicemail PIN (SEC-COM-95) and a terminal's ticket in the /termws query (SEC-FIL-64); not an id named by them
+    assert!(parameter("pin") && parameter("PIN") && parameter("ha1") && parameter("ticket"));
+    assert!(!parameter("pinned") && !parameter("ticketId"));
 }
 
 /// SEC-WEB-13: a session cookie key (`webapp-list/webapp[webroot]/session-config@cookie-key`) an operator set is

@@ -16,9 +16,22 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use super::{
-    conf_listen_target, dialog_expired_within, git_allowed, listen_target, Counts, GitAccess, GitLogin, SessionRefused,
-    Slot, SlotRefused, Who, MAX_PREAUTH, PREAUTH_PER_SOURCE,
+    conf_listen_target, dialog_expired_within, for_log, git_allowed, listen_target, Counts, GitAccess, GitLogin,
+    SessionRefused, Slot, SlotRefused, Who, MAX_LOGGED_NAME, MAX_PREAUTH, PREAUTH_PER_SOURCE,
 };
+
+/// SEC-FIL-92: a client's user name goes to the log quoted, its control characters escaped, and cut short.
+#[test]
+fn a_clients_user_name_is_logged_escaped_and_cut() {
+    assert_eq!(for_log("alice", MAX_LOGGED_NAME), "\"alice\"");
+    let logged = for_log("x\u{1b}[2J\r\nFAKE line", MAX_LOGGED_NAME);
+    assert!(
+        !logged.contains('\u{1b}') && !logged.contains('\n') && !logged.contains('\r'),
+        "{logged}"
+    );
+    assert!(logged.contains("\\u{1b}") && logged.contains("\\r\\n"), "{logged}");
+    assert_eq!(for_log(&"a".repeat(500), MAX_LOGGED_NAME).len(), MAX_LOGGED_NAME + 2);
+}
 
 #[test]
 fn enabled_false_keeps_the_server_off_with_a_port_set() {

@@ -22,6 +22,7 @@ fn a_flood_from_one_source_is_held_to_its_rate_while_another_goes_on() {
         max_transactions: 0,
         max_connections: 0,
         max_connections_per_source: 0,
+        ..Default::default()
     });
     let t0 = Instant::now();
     let flood: IpAddr = "203.0.113.9".parse().unwrap();
@@ -52,22 +53,23 @@ fn the_transaction_and_connection_caps() {
         max_transactions: 10,
         max_connections: 2,
         max_connections_per_source: 0,
+        ..Default::default()
     });
     let t0 = Instant::now();
     let source: IpAddr = "198.51.100.4".parse().unwrap();
     assert_eq!(gate.admit(source, 9, t0), Admit::Pass);
     assert_eq!(gate.admit(source, 10, t0), Admit::Busy);
-    assert!(gate.connection_opened(None));
-    assert!(gate.connection_opened(None));
-    assert!(!gate.connection_opened(None), "the third is closed");
-    gate.connection_closed(None);
+    assert!(gate.connection_opened(None, true));
+    assert!(gate.connection_opened(None, true));
+    assert!(!gate.connection_opened(None, true), "the third is closed");
+    gate.connection_closed(None, true);
     assert!(
-        !gate.connection_opened(None),
+        !gate.connection_opened(None, true),
         "still two open with the one past the cap counted until its close"
     );
-    gate.connection_closed(None);
-    gate.connection_closed(None);
-    assert!(gate.connection_opened(None));
+    gate.connection_closed(None, true);
+    gate.connection_closed(None, true);
+    assert!(gate.connection_opened(None, true));
     assert_eq!(RequestLimits::default().max_connections, 500);
 }
 
@@ -80,23 +82,73 @@ fn one_source_cannot_hold_every_connection() {
     });
     let flood: IpAddr = "203.0.113.9".parse().unwrap();
     let office: IpAddr = "198.51.100.4".parse().unwrap();
-    assert!(gate.connection_opened(Some(flood)));
-    assert!(gate.connection_opened(Some(flood)));
+    assert!(gate.connection_opened(Some(flood), true));
+    assert!(gate.connection_opened(Some(flood), true));
     assert!(
-        !gate.connection_opened(Some(flood)),
+        !gate.connection_opened(Some(flood), true),
         "the third from one source is closed"
     );
-    assert!(gate.connection_opened(Some(office)), "another source still connects");
+    assert!(
+        gate.connection_opened(Some(office), true),
+        "another source still connects"
+    );
     // the one past the cap closes, then one of the two: the source may open one again
-    gate.connection_closed(Some(flood));
-    gate.connection_closed(Some(flood));
-    assert!(gate.connection_opened(Some(flood)));
+    gate.connection_closed(Some(flood), true);
+    gate.connection_closed(Some(flood), true);
+    assert!(gate.connection_opened(Some(flood), true));
     // the same /64 is the same source
     let a: IpAddr = "2001:db8:1:2::1".parse().unwrap();
     let b: IpAddr = "2001:db8:1:2::2".parse().unwrap();
-    assert!(gate.connection_opened(Some(a)));
-    assert!(gate.connection_opened(Some(b)));
-    assert!(!gate.connection_opened(Some(a)));
+    assert!(gate.connection_opened(Some(a), true));
+    assert!(gate.connection_opened(Some(b), true));
+    assert!(!gate.connection_opened(Some(a), true));
+}
+
+/// SEC-COM-26: a source with no trunk's address, authenticated connection or binding holds far fewer connections than
+/// a known one.
+#[test]
+fn an_unknown_source_holds_fewer_connections() {
+    let mut gate = RequestGate::new(RequestLimits {
+        max_connections: 100,
+        max_connections_per_source: 5,
+        max_connections_per_unknown_source: 2,
+        ..Default::default()
+    });
+    let stranger: IpAddr = "203.0.113.9".parse().unwrap();
+    let office: IpAddr = "198.51.100.4".parse().unwrap();
+    assert!(gate.connection_opened(Some(stranger), false));
+    assert!(gate.connection_opened(Some(stranger), false));
+    assert!(
+        !gate.connection_opened(Some(stranger), false),
+        "the third of an unknown source"
+    );
+    for _ in 0..5 {
+        assert!(gate.connection_opened(Some(office), true));
+    }
+    assert!(
+        !gate.connection_opened(Some(office), true),
+        "a known source has the full share"
+    );
+    assert_eq!(RequestLimits::default().max_connections_per_unknown_source, 10);
+    // the unknown sources together hold at most their total; a known source is not counted in it
+    let mut gate = RequestGate::new(RequestLimits {
+        max_connections: 100,
+        max_connections_per_unknown_source: 2,
+        max_unknown_connections: 3,
+        ..Default::default()
+    });
+    let stranger = |n: u8| Some(IpAddr::from([203, 0, 113, n]));
+    assert!(gate.connection_opened(stranger(1), false));
+    assert!(gate.connection_opened(stranger(2), false));
+    assert!(gate.connection_opened(stranger(3), false));
+    assert!(
+        !gate.connection_opened(stranger(4), false),
+        "past the unknown sources' total"
+    );
+    assert!(gate.connection_opened(Some(office), true));
+    gate.connection_closed(stranger(4), false);
+    gate.connection_closed(stranger(1), false);
+    assert!(gate.connection_opened(stranger(5), false), "room again");
 }
 
 #[test]

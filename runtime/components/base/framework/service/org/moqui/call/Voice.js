@@ -307,6 +307,8 @@ function notifyEmergency(userId, location, callSessionId) {
     ec.logger.error(`Emergency call ${callSessionId}: the admins were not notified: ${err && err.message ? err.message : err}`)
   }
   try {
+    // the email's subject and first line, the caller and the location by name as data, never as a template (SEC-COM-30)
+    const title = ec.resource.expand(ec.l10n.localize('Emergency call by ${who} from ${place}'), '', { who, place })
     const email = ec.entity.makeValue('moqui.basic.email.EmailMessage')
     email.setSequencedIdPrimary()
     email.setFields({ statusId: 'ES_READY', subject: title, toAddresses: location.notifyEmailAddress, emailServerId: 'SYSTEM',

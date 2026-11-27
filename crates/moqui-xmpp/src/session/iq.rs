@@ -25,7 +25,6 @@ use serde_json::{json, Value as Json};
 use super::xml::{attr, form, iq_result, text_el, E};
 use super::Session;
 use crate::backend::{self, services};
-use crate::registry::Inbound;
 use crate::{features, jids, ns};
 
 /// Where a stanza is addressed.
@@ -138,6 +137,10 @@ impl Session {
 
     /// Send a stanza to another local user's sessions: one resource, or every available one.
     pub(crate) async fn route_to(&mut self, user_id: &str, resource: Option<&str>, stanza: Element) {
+        // another user's detached session (waiting for its resumption) is not sent routed stanzas, which no archive
+        // holds: it is offline to them, so one user cannot fill its unacknowledged queue and end its resumption
+        // (SEC-COM-19, SEC-COM-93). The user's own resources still reach it.
+        let own = user_id == self.user_id();
         let entries = match resource {
             Some(resource) => self.server.registry.session(user_id, resource).into_iter().collect(),
             None => self
@@ -148,25 +151,55 @@ impl Session {
                 .filter(|entry| entry.is_available())
                 .collect::<Vec<_>>(),
         };
+        let entries: Vec<_> = entries
+            .into_iter()
+            .filter(|entry| own || !entry.is_detached())
+            .collect();
         if entries.is_empty() {
             if stanza.is("iq", ns::CLIENT) || resource.is_some() && stanza.is("message", ns::CLIENT) {
                 self.refuse(&stanza, "cancel", "service-unavailable", None);
             }
             return;
         }
+        let (sender, sender_bare) = (self.user_id(), self.my_bare());
+        let mut limited = false;
         for entry in entries {
-            self.server.registry.send(&entry, Inbound::Stanza(stanza.clone()));
+            let routed = self
+                .server
+                .registry
+                .route(&sender, &sender_bare, &entry, stanza.clone());
+            limited |= routed == crate::registry::Routed::Limited;
+        }
+        // past the sender's allowance or the target's queue: the sender is told, the target's session goes on
+        // (SEC-COM-19)
+        if limited {
+            self.refuse(
+                &stanza,
+                "wait",
+                "resource-constraint",
+                Some("too many stanzas to this user"),
+            );
         }
     }
 
     /// A stanza another session routed here.
     pub(super) async fn on_routed(&mut self, stanza: Element) {
         let from = attr(&stanza, "from");
+        let mut from_other = false;
         if let Some(sender) = jids::parse(&from) {
             let bare = sender.bare();
             if self.is_blocked(&bare).await {
                 return;
             }
+            from_other = bare != self.my_bare();
+        }
+        // a detached session keeps what it is sent as unacknowledged stanzas for its resumption: another user's routed
+        // stanza (no archive holds it), which a sender queued before the session detached, is dropped, so another
+        // user cannot end the resumption by filling it (SEC-COM-19, SEC-COM-93); senders see it offline
+        // ([`Self::route_to`])
+        if self.detached && from_other {
+            tracing::debug!("XMPP: another user's routed stanza to a detached session is dropped");
+            return;
         }
         let mut stanza = stanza;
         super::xml::set_attr(&mut stanza, "to", self.my_full());
@@ -388,16 +421,27 @@ impl Session {
     }
 
     pub(crate) async fn is_blocked(&mut self, bare: &str) -> bool {
-        if self.blocked.is_none() {
+        if moqui_lib::sync::lock(&self.blocked).is_none() {
             let found = self.call(services::BLOCKS, json!({})).await.unwrap_or(Json::Null);
             let set = backend::list(&found, "jidList")
                 .iter()
                 .filter_map(Json::as_str)
                 .map(str::to_string)
                 .collect();
-            self.blocked = Some(set);
+            *moqui_lib::sync::lock(&self.blocked) = Some(set);
         }
-        self.blocked.as_ref().is_some_and(|blocked| blocked.contains(bare))
+        moqui_lib::sync::lock(&self.blocked)
+            .as_ref()
+            .is_some_and(|blocked| blocked.contains(bare))
+    }
+
+    /// The block list changed: every session of the user reads it again, not this one alone, so a sender newly
+    /// blocked is dropped before any of them queues it (SEC-COM-19).
+    fn forget_blocks(&mut self) {
+        *moqui_lib::sync::lock(&self.blocked) = None;
+        for entry in self.server.registry.sessions_of(&self.user_id()) {
+            *moqui_lib::sync::lock(&entry.blocked) = None;
+        }
     }
 
     async fn blocking(&mut self, iq: &Element, payload: &Element) {
@@ -410,7 +454,8 @@ impl Session {
             ("get", "blocklist") => {
                 self.is_blocked("").await;
                 let mut list = E::new("blocklist", ns::BLOCKING);
-                for jid in self.blocked.clone().unwrap_or_default() {
+                let blocked = moqui_lib::sync::lock(&self.blocked).clone().unwrap_or_default();
+                for jid in blocked {
                     list = list.c(E::new("item", ns::BLOCKING).a("jid", jid));
                 }
                 self.send(iq_result(iq).c(list).build());
@@ -424,14 +469,14 @@ impl Session {
                     }
                     Ok(_) => {}
                 }
-                self.blocked = None;
+                self.forget_blocks();
                 self.send(iq_result(iq).build());
             }
             ("set", "unblock") => {
                 if self.call(services::UNBLOCK, json!({"jidList": jids})).await.is_err() {
                     return self.refuse(iq, "wait", "internal-server-error", None);
                 }
-                self.blocked = None;
+                self.forget_blocks();
                 self.send(iq_result(iq).build());
             }
             _ => self.refuse(iq, "modify", "bad-request", None),

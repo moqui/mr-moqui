@@ -56,8 +56,8 @@ pub type PepNode = (String, Vec<(String, String)>);
 #[derive(Default)]
 pub struct State {
     pub rooms: Vec<Room>,
-    /// (fastTokenId, userId, token, lastCount, appPasswordId)
-    pub fast: Vec<(String, String, String, i64, String)>,
+    /// Each FAST token: id, user, token, last count, app password, mechanism.
+    pub fast: Vec<(String, String, String, i64, String, String)>,
     /// The app passwords revoked (`AP-<userId>`).
     pub revoked: Vec<String>,
     pub pep: HashMap<(String, String), PepNode>,
@@ -273,9 +273,14 @@ impl Fake {
                 if credential.is_empty() {
                     return refuse("appPasswordId is required");
                 }
-                state
-                    .fast
-                    .push((id, text(p, "userId"), text(p, "token"), -1, credential));
+                state.fast.push((
+                    id,
+                    text(p, "userId"),
+                    text(p, "token"),
+                    -1,
+                    credential,
+                    text(p, "mechanism"),
+                ));
                 Ok(json!({"expiry": "2030-01-01T00:00:00Z"}))
             }
             services::FAST_TOKEN => {
@@ -285,8 +290,10 @@ impl Fake {
                 let list: Vec<Json> = state
                     .fast
                     .iter()
-                    .filter(|(_, owner, _, _, credential)| owner == user && !state.revoked.contains(credential))
-                    .map(|(id, _, token, _, credential)| json!({"fastTokenId": id, "token": token, "appPasswordId": credential}))
+                    .filter(|(_, owner, _, _, credential, _)| owner == user && !state.revoked.contains(credential))
+                    .map(|(id, _, token, _, credential, mechanism)| {
+                        json!({"fastTokenId": id, "token": token, "appPasswordId": credential, "mechanism": mechanism})
+                    })
                     .collect();
                 Ok(json!({"tokenList": list}))
             }

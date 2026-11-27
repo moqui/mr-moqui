@@ -662,13 +662,33 @@ fn to_room(room: &str, frame: Json) {
     }
 }
 
+/// The notice of a call's captions: who transcribes, and with `store` that the text is kept, for how many days
+/// (`calls/captions@retention-days`, 0 for as long as the call's records are kept), so the people of the call know
+/// (SEC-COM-85).
+fn notice_of(options: &StartOptions, store: bool, property: &dyn Fn(&str) -> String) -> Json {
+    let mut notice =
+        json!({"rtc": "captions", "state": "on", "provider": options.provider_label, "local": options.local});
+    if store {
+        notice["stored"] = Json::Bool(true);
+        notice["retentionDays"] = json!(property("calls/captions@retention-days")
+            .trim()
+            .parse::<u64>()
+            .unwrap_or(30));
+    }
+    notice
+}
+
 /// Starts a call's captions on this node: every leg is told they are on and who transcribes (the notice), before the
 /// tap is attached, so no audio is taken before the notice is out; then the thread runs until [`stop`] or the room
 /// closes. Already running, the notice goes out again. A start that fails tells the legs captions are unavailable,
 /// with the reason, and takes the notice down.
 pub(crate) fn start(factory: &Arc<ExecutionContextFactory>, room: &str, options: StartOptions) {
     let settings = Settings::from_properties(&moqui_core::context::conf_env::setting_or_property);
-    let notice = json!({"rtc": "captions", "state": "on", "provider": options.provider_label, "local": options.local});
+    let notice = notice_of(
+        &options,
+        settings.store,
+        &moqui_core::context::conf_env::setting_or_property,
+    );
     // the table stays locked while the notice is sent, so a stop that follows sends its "off" after it
     let mut table = lock(calls_running());
     if table.contains_key(room) {

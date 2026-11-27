@@ -63,6 +63,9 @@ fn the_listeners_are_off_until_a_port_is_set_and_take_their_hosts() {
             max_transactions: 300,
             max_connections: 500,
             max_connections_per_source: 100,
+            max_connections_per_unknown_source: 10,
+            unauthenticated_seconds: 30,
+            max_unknown_connections: 250,
         },
         "one that is not a number keeps its default"
     );

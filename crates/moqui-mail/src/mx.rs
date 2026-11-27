@@ -71,7 +71,7 @@ use moqui_lib::error::Error as LibError;
 use moqui_lib::object::Value;
 use moqui_lib::sync::{lock, wait_timeout};
 
-const DELIVERY: &str = "moqui.edge.EdgeMailDelivery";
+pub(crate) const DELIVERY: &str = "moqui.edge.EdgeMailDelivery";
 const PENDING: &str = "EmdPending";
 const SENT: &str = "EmdSent";
 const BOUNCED: &str = "EmdBounced";
@@ -189,7 +189,7 @@ pub(super) fn record(
     facade: &EntityFacade,
     node: &str,
     item: &str,
-    mail_from: &str,
+    mail_from: &dyn Fn(&str) -> String,
     to: &[String],
     local: &[String],
     refused: &[String],
@@ -233,7 +233,9 @@ pub(super) fn record(
             "recipientsJson",
             Value::string(serde_json::json!(recipients).to_string()),
         );
-        row.set("mailFrom", Value::string(mail_from));
+        // every recipient as recorded, which a later report is checked against (SEC-MAIL-91)
+        row.set("envelopeJson", Value::string(serde_json::json!(recipients).to_string()));
+        row.set("mailFrom", Value::string(mail_from(domain)));
         row.set("contentLocation", Value::string(&location));
         row.set("attemptCount", Value::I64(0));
         row.set("bouncedCount", Value::I64(0));
@@ -927,6 +929,109 @@ fn report(factory: &ExecutionContextFactory, facade: &EntityFacade, id: &str) ->
     })
 }
 
+/// The domain of the row the relay (the MTA beside moqui) records for the recipients of an item it took.
+pub(crate) const RELAY_DOMAIN: &str = "(relay)";
+
+/// Record that the relay took local node `node`'s `mailOut` item `item` from `mail_from` for `to`: one finished row of
+/// [`RELAY_DOMAIN`], so a later delivery status notification to its VERP address counts only for these recipients
+/// (SEC-MAIL-91). In the caller's transaction; removed with the other finished rows after the retention period.
+///
+/// # Errors
+///
+/// Returns why when the row could not be written.
+pub(crate) fn record_relayed(
+    facade: &EntityFacade,
+    node: &str,
+    item: &str,
+    mail_from: &str,
+    to: &[String],
+) -> Result<(), LibError> {
+    let now = now_millis();
+    let recipients = serde_json::json!(to).to_string();
+    let mut row = facade.make_value(DELIVERY)?;
+    row.set("mailDeliveryId", Value::string(moqui_core::entity::uuid_v4()?));
+    row.set("pairedNodeId", Value::string(node));
+    row.set("queueItemId", Value::string(item));
+    row.set("domain", Value::string(RELAY_DOMAIN));
+    row.set("recipientsJson", Value::string(&recipients));
+    row.set("envelopeJson", Value::string(&recipients));
+    row.set("mailFrom", Value::string(mail_from));
+    row.set("statusEnumId", Value::string(SENT));
+    row.set("attemptCount", Value::I64(1));
+    row.set("bouncedCount", Value::I64(0));
+    row.set("sentCount", Value::I64(i64::try_from(to.len()).unwrap_or(0)));
+    row.set("reportPending", Value::string("N"));
+    row.set("lastReplyText", Value::string("taken by the relay"));
+    row.set("createdDate", stamp_value(now));
+    row.set("finishedDate", stamp_value(now));
+    row.create(facade)?;
+    Ok(())
+}
+
+/// The recipients a row of an item was recorded for ([`record`], [`record_relayed`]): `envelopeJson`, else (a row of
+/// before it) `recipientsJson`, which may hold only some of them (those still waiting at its last try), so such a row's
+/// item is never bounced ([`note_failed`]).
+pub(crate) fn envelope_of(row: &EntityValue) -> Vec<String> {
+    let envelope = field_text(row, "envelopeJson");
+    let text = if envelope.is_empty() {
+        field_text(row, "recipientsJson")
+    } else {
+        envelope
+    };
+    serde_json::from_str(&text).unwrap_or_default()
+}
+
+/// Mark `failed` (recorded recipients of item `item`) failed on the item's rows, from a later delivery status
+/// notification (SEC-MAIL-91): true when every recipient recorded for the item has failed now. In the caller's
+/// transaction, or one of its own.
+///
+/// # Errors
+///
+/// Returns why when the rows could not be read or written.
+pub(crate) fn note_failed(facade: &EntityFacade, item: &str, failed: &[String]) -> Result<bool, LibError> {
+    facade
+        .transactions_for(DELIVERY)?
+        .run(TransactionAttribute::UseOrBegin, None, || {
+            let rows = facade
+                .find(DELIVERY)?
+                .eq("queueItemId", Value::string(item))
+                .for_update(true)
+                .disable_authz()
+                .list()?;
+            let mut all_failed = !rows.values().is_empty();
+            let mut recorded = 0usize;
+            for row in rows.values() {
+                let envelope = envelope_of(row);
+                let mut marked: Vec<String> = serde_json::from_str(&field_text(row, "failedJson")).unwrap_or_default();
+                let before = marked.len();
+                for address in failed {
+                    let ours = envelope.iter().any(|recipient| recipient.eq_ignore_ascii_case(address));
+                    if ours && !marked.iter().any(|seen| seen.eq_ignore_ascii_case(address)) {
+                        marked.push(address.clone());
+                    }
+                }
+                if marked.len() != before {
+                    facade
+                        .find(DELIVERY)?
+                        .eq("mailDeliveryId", Value::string(field_text(row, "mailDeliveryId")))
+                        .disable_authz()
+                        .update_all([(
+                            "failedJson".to_string(),
+                            Value::string(serde_json::json!(marked).to_string()),
+                        )])?;
+                }
+                recorded += envelope.len();
+                // a row of before `envelopeJson` holds in `recipientsJson` only those still waiting at its last try:
+                // its recipients are not known whole, so its item is never bounced, only partial
+                all_failed &= !field_text(row, "envelopeJson").is_empty();
+                all_failed &= envelope
+                    .iter()
+                    .all(|recipient| marked.iter().any(|seen| seen.eq_ignore_ascii_case(recipient)));
+            }
+            Ok(all_failed && recorded > 0)
+        })
+}
+
 /// Remove the rows finished more than the queue's retention period ago.
 fn clean(factory: &ExecutionContextFactory) {
     let Some(facade) = factory.entity() else {
@@ -1047,7 +1152,10 @@ fn hosts(domain: &str, policy: Option<&sts::Policy>) -> Result<Hosts, Answer> {
     for (_, host) in mx {
         match super::dns::ips(&host) {
             Ok(ips) if !ips.is_empty() => {
-                let public: Vec<IpAddr> = ips.into_iter().filter(|ip| !moqui_lib::net::internal_address(*ip)).collect();
+                let public: Vec<IpAddr> = ips
+                    .into_iter()
+                    .filter(|ip| !moqui_lib::net::internal_address(*ip))
+                    .collect();
                 if public.is_empty() {
                     failed.push(format!("{host} {NO_PUBLIC_ADDRESS}"));
                 } else {

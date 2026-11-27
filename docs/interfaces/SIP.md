@@ -41,6 +41,9 @@ Every listener is off until its setting is set.
 | `sip-server/limits@max-transactions` | `2000` | New requests are dropped while the engine runs this many transactions; calls going on are not cut. `0` turns it off |
 | `sip-server/limits@max-connections` | `500` | TCP and TLS connections open at once; one past it is closed. `0` turns it off |
 | `sip-server/limits@max-connections-per-source` | `100` | TCP and TLS connections open at once from one source (an IPv6 /64 is one), so one source cannot hold every connection phones keep open; one past it is closed. `0` turns it off |
+| `sip-server/limits@max-connections-per-unknown-source` | `10` | The same for a source with no trunk's address, no phone's binding and no connection that authenticated, so unauthenticated hosts hold few of the slots. `0` turns it off |
+| `sip-server/limits@max-unknown-connections` | `250` | TCP and TLS connections open at once from unknown sources (as above) all together, so many such sources do not hold every slot. `0` turns it off |
+| `sip-server/limits@unauthenticated-seconds` | `30` | An accepted TCP or TLS connection on which no request authenticated (a phone's REGISTER, a PBX trunk's digest) and that is not a trunk's is closed after this long, so a connection that only sends keepalives does not hold a slot. `0` turns it off |
 | `sip-server/registrar@enabled` | `false` | The registrar for desk and soft phones ([Registrar](#registrar)); off even with the listeners on. Read when the engine starts, as the listeners' settings are: a change takes a restart |
 | `sip-server@domain` | `sip-server@public-address`, else `moqui` | The realm of the digest challenges and the domain phones register to. The phones' verifiers are for it: after a change, each phone needs a new password |
 | `sip-server/registrar@min-expires`, `sip-server/registrar@max-expires` | `60`, `3600` | A phone binding's expiry is held between these, in seconds; under the minimum is refused (423) |

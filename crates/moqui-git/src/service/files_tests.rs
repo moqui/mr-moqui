@@ -1410,6 +1410,48 @@ fn the_trash_is_not_reached_through_a_link_to_the_whole_drive_or_by_its_path() {
         names(&ok("list#Folder", &[("driveId", text(&bin)), ("path", text(".trash"))])),
         [trash_id.as_str()]
     );
+    // a member who edits the drive reaches no path in its trash, whatever the service (SEC-FIL-98)
+    ok(
+        "add#DriveMember",
+        &[
+            ("driveId", text(&bin)),
+            ("userId", text("bob")),
+            ("permissionEnumId", text("RdpEdit")),
+        ],
+    );
+    login("bob");
+    let copied = ok(
+        "copy#Resource",
+        &[("driveId", text(&bin)), ("path", text(&in_trash)), ("toPath", text(""))],
+    );
+    assert_eq!(field(&maps(&copied, "copiedList")[0], "outcome"), "failed");
+    refused(
+        "rename#Resource",
+        &[
+            ("driveId", text(&bin)),
+            ("path", text(&in_trash)),
+            ("newName", text("mine.txt")),
+        ],
+        "File not found",
+    );
+    refused(
+        "save#Text",
+        &[
+            ("driveId", text(&bin)),
+            ("path", text(&in_trash)),
+            ("text", text("over")),
+        ],
+        "File not found",
+    );
+    refused(
+        "create#Folder",
+        &[("driveId", text(&bin)), ("path", text(".trash")), ("name", text("x"))],
+        "Folder not found",
+    );
+    // its name in any case, as a store may read it
+    assert_eq!(level(&bin, Some(".Trash/x")), 0);
+    assert_eq!(level(&bin, Some("pub.txt")), 2, "the drive itself still");
+    login("alice");
 
     logout();
     assert_eq!(names(&ok("list#PublicShare", &[("token", text(&token))])), ["a.txt"]);
@@ -1466,15 +1508,16 @@ fn the_trash_is_not_reached_through_a_link_to_the_whole_drive_or_by_its_path() {
         &[("driveId", text(&bin)), ("path", text(&in_trash))],
         "File not found",
     );
-    let found = ok(
+    // a search under the trash folder's path is refused as a drive the member does not reach (SEC-FIL-98)
+    refused(
         "find#Resources",
         &[
             ("driveId", text(&bin)),
             ("path", text(".trash")),
             ("text", text("secret")),
         ],
+        "not found",
     );
-    assert!(maps(&found, "resultList").is_empty(), "{found:?}");
     let everywhere = ok("find#Resources", &[("text", text("secret"))]);
     assert!(maps(&everywhere, "resultList").is_empty(), "{everywhere:?}");
 }
@@ -3117,4 +3160,121 @@ fn a_mirror_url_with_a_user_or_password_is_refused() {
             "user or password",
         );
     }
+}
+
+/// SEC-FIL-101: a mirror's access token answers every fetch's credential request, so a mirror with a token fetches
+/// over https or ssh: an http or git URL is refused with a token, at the start and when a manager changes it.
+#[test]
+fn a_mirror_with_an_access_token_is_refused_over_plain_http() {
+    let (context, facade) = setup();
+    let _entered = context.enter();
+    install();
+    users(&facade);
+    login("alice");
+    let _authz = context.disable_authz();
+    let mirror = |url: &str, token: &str| {
+        vec![
+            ("driveName", text("Mirror")),
+            ("storage", text("mirror")),
+            ("remoteUrl", text(url)),
+            ("username", text("bot")),
+            ("accessToken", text(token)),
+        ]
+    };
+    for url in [
+        "http://git.example.com/app.git",
+        "git://git.example.com/app.git",
+        "HTTP://git.example.com/x",
+    ] {
+        refused("create#Drive", &mirror(url, "t0ken"), "fetches over https or ssh");
+    }
+    // a plain URL with no token is not refused for it (its first fetch fails here, which only warns)
+    let made = call("create#Drive", &mirror("http://127.0.0.1:9/app.git", ""));
+    assert!(!errors().contains("fetches over https or ssh"));
+    let drive_id = out_text(&made, "driveId");
+    assert!(!drive_id.is_empty(), "{made:?}");
+    refused(
+        "update#Drive",
+        &[("driveId", text(&drive_id)), ("accessToken", text("t0ken"))],
+        "fetches over https or ssh",
+    );
+}
+
+/// SEC-FIL-10: a link a member made ends when the member is removed, and the former owner's when the drive changes
+/// owner; another member's link stays.
+#[test]
+fn a_link_ends_when_its_maker_loses_the_drive() {
+    let (context, facade) = setup();
+    let _entered = context.enter();
+    install();
+    users(&facade);
+    login("alice");
+    let team = drive("folder", "Team", &[]);
+    ok("create#Folder", &[("driveId", text(&team)), ("name", text("pub"))]);
+    // managers, who make links
+    for member in ["bob", "carol"] {
+        ok(
+            "add#DriveMember",
+            &[
+                ("driveId", text(&team)),
+                ("userId", text(member)),
+                ("permissionEnumId", text("RdpManage")),
+            ],
+        );
+    }
+    let link_of = |user: &str| {
+        login(user);
+        let link = ok(
+            "share#Resource",
+            &[("driveId", text(&team)), ("path", text("pub")), ("isLink", text("Y"))],
+        );
+        out_text(&link, "linkToken")
+    };
+    let (alices, bobs, carols) = (link_of("alice"), link_of("bob"), link_of("carol"));
+    let valid = |token: &str| {
+        logout();
+        ok("check#PublicShareToken", &[("token", text(token))]).get("valid") == Some(&Value::Bool(true))
+    };
+    assert!(valid(&alices) && valid(&bobs) && valid(&carols));
+    login("alice");
+    ok(
+        "remove#DriveMember",
+        &[("driveId", text(&team)), ("userId", text("bob"))],
+    );
+    assert!(!valid(&bobs), "the removed member's link");
+    assert!(valid(&carols) && valid(&alices), "the others' links");
+    // a maker who no longer manages the drive (a lower permission) ends their link at its next use
+    login("alice");
+    ok(
+        "add#DriveMember",
+        &[
+            ("driveId", text(&team)),
+            ("userId", text("dave")),
+            ("permissionEnumId", text("RdpManage")),
+        ],
+    );
+    let daves = link_of("dave");
+    assert!(valid(&daves));
+    login("alice");
+    ok(
+        "add#DriveMember",
+        &[
+            ("driveId", text(&team)),
+            ("userId", text("dave")),
+            ("permissionEnumId", text("RdpView")),
+        ],
+    );
+    assert!(!valid(&daves), "a maker who only views now");
+    login("alice");
+    let _authz = context.disable_authz();
+    ok(
+        "transfer#DriveOwner",
+        &[
+            ("driveId", text(&team)),
+            ("fromUserId", text("alice")),
+            ("toUserId", text("carol")),
+        ],
+    );
+    assert!(!valid(&alices), "the former owner's link");
+    assert!(valid(&carols), "the new owner's link");
 }

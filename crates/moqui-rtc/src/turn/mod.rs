@@ -182,6 +182,11 @@ pub struct TurnConfig {
     pub pairings: bool,
     /// Each allocation's relayed data, each way, in kilobits a second.
     pub max_kbps: u64,
+    /// This host's own addresses (its interfaces', its public and its services' public ones): never a peer of an XMPP
+    /// user's credential, whatever the listeners are bound to, nor any address in the /64 of an IPv6 one, whose other
+    /// addresses the host may also hold (privacy addresses, a prefix routed to it) (SEC-COM-18). The host reads its
+    /// interfaces again now and then ([`Turn::set_own_addresses`]).
+    pub own_addresses: Vec<std::net::IpAddr>,
 }
 
 impl Default for TurnConfig {
@@ -194,7 +199,16 @@ impl Default for TurnConfig {
             max_per_user: 2,
             max_kbps: 4_000,
             pairings: false,
+            own_addresses: Vec::new(),
         }
+    }
+}
+
+/// Whether `ip` is the host address `own`: the same IPv4 address, or an IPv6 address in `own`'s /64.
+fn same_host(own: IpAddr, ip: IpAddr) -> bool {
+    match (own, ip) {
+        (IpAddr::V6(own), IpAddr::V6(ip)) => own.octets()[..8] == ip.octets()[..8],
+        (own, ip) => own == ip,
     }
 }
 
@@ -361,6 +375,16 @@ impl Turn {
                 .servers
                 .iter()
                 .any(|s| s.listen_address().ip().to_canonical() == ip)
+            && !self
+                .config
+                .own_addresses
+                .iter()
+                .any(|own| same_host(own.to_canonical(), ip))
+    }
+
+    /// This host's own addresses from now on ([`TurnConfig::own_addresses`]), as its interfaces are now.
+    pub fn set_own_addresses(&mut self, own: Vec<IpAddr>) {
+        self.config.own_addresses = own;
     }
 
     /// A leg refused now: revoked, or of a pairing that is not taken.

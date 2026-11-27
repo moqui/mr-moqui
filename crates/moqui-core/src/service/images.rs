@@ -359,11 +359,13 @@ fn upload_rich_text_image(
         .ok_or_else(|| LibError::new("Sign in to upload an image"))?;
     let bytes = content_file_bytes(parameters)?;
     // SEC-CLI-92: a user at either limit is refused before the image is decoded, and one it would pass before it is
-    // written. The counts are read in the slot, so an upload waiting for one holds no database connection. Uploads of
-    // one user at the same moment are not serialized: each that passes adds its one image.
+    // written. The counts are read in the slot, so an upload waiting for one holds no database connection. The
+    // uploader's account row is locked first, in the service's transaction until it commits, so the uploads of one
+    // user (on any node) are counted one after another and none passes a limit by the others' images.
     let limits = RichTextImageLimits::read();
     let (ext, stored, size) = {
         let _slot = image_slot();
+        lock_uploader(facade, &user_id)?;
         let used = rich_text_image_usage(facade, &user_id)?;
         limits.check(used, 0)?;
         let (ext, stored) = rich_text_image_bytes(&bytes)?;
@@ -543,6 +545,18 @@ impl RichTextImageLimits {
         }
         Ok(())
     }
+}
+
+/// Lock `user_id`'s account row in the caller's transaction: its rich-text uploads are counted one at a time.
+fn lock_uploader(facade: &EntityFacade, user_id: &str) -> Result<(), LibError> {
+    facade
+        .find("moqui.security.UserAccount")?
+        .eq("userId", Value::string(user_id))
+        .select_field("userId")
+        .for_update(true)
+        .disable_authz()
+        .one()?;
+    Ok(())
 }
 
 fn rich_text_image_usage(facade: &EntityFacade, user_id: &str) -> Result<RichTextImageUsage, LibError> {

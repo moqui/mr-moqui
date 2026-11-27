@@ -701,14 +701,29 @@ pub fn note_all_applied(facade: &EntityFacade) {
     });
 }
 
+/// The most bytes of one replicated record, its key and fields together (SEC-CLU-92): far above any replicated
+/// set's fields, so the pairing's record cap bounds its bytes too.
+pub const MAX_RECORD_BYTES: usize = 64 * 1024;
+
 /// Why the edge node refuses a batch before it applies it (SEC-CLU-02), or `None`: more records than a sender puts in
-/// one ([`BATCH`]), a set this node's `<replicate>` conf (`sets`) does not name, or an entity that set does not have.
-/// A paired node then cannot write rows of any set or entity it names into the edge node's database.
+/// one ([`BATCH`]), a record over [`MAX_RECORD_BYTES`], a set this node's `<replicate>` conf (`sets`) does not name, or
+/// an entity that set does not have. A paired node then cannot write rows of any set or entity it names into the edge
+/// node's database, nor large ones.
 pub fn batch_refused(sets: &[ReplicaSet], batch: &Batch) -> Option<String> {
     if batch.changes.len() > BATCH {
         return Some(format!(
             "a batch carries at most {BATCH} records, and this one {}",
             batch.changes.len()
+        ));
+    }
+    if let Some(large) = batch
+        .changes
+        .iter()
+        .find(|change| change.pk_json.len() + change.fields_json.as_ref().map_or(0, String::len) > MAX_RECORD_BYTES)
+    {
+        return Some(format!(
+            "a replicated record is at most {MAX_RECORD_BYTES} bytes, and one of {} is larger",
+            large.entity_name
         ));
     }
     let Some(set) = sets.iter().find(|set| set.name == batch.set_name) else {
@@ -724,20 +739,62 @@ pub fn batch_refused(sets: &[ReplicaSet], batch: &Batch) -> Option<String> {
 /// Apply a batch from local node `node` on the edge node, with its cursor, in one transaction; once it commits, the
 /// set's [`applied_count`] moves.
 pub fn apply_batch(facade: &EntityFacade, node: &str, batch: &Batch) -> Result<BatchAnswer, Error> {
-    let answer = apply_batch_rows(facade, node, batch)?;
+    match apply_batch_rows(facade, node, batch, None)? {
+        Ok(answer) => Ok(applied(facade, batch, answer)),
+        // no caps are checked without settings
+        Err(_) => Ok(BatchAnswer::Resync),
+    }
+}
+
+/// [`apply_batch`] within pairing `node`'s caps ([`super::caps::admit_batch`]): the pairing's row is locked and its
+/// records counted in the apply's transaction, so two batches of the pairing (of two sets, or two members) cannot
+/// both pass the count (SEC-CLU-92). `Err` is why the batch is refused for now: the pairing is paused, or this batch
+/// paused it at its cap.
+///
+/// # Errors
+///
+/// As [`apply_batch`].
+pub fn apply_batch_within_caps(
+    facade: &EntityFacade,
+    settings: &super::EdgeSettings,
+    node: &str,
+    batch: &Batch,
+) -> Result<Result<BatchAnswer, String>, Error> {
+    match apply_batch_rows(facade, node, batch, Some(settings))? {
+        Ok(answer) => Ok(Ok(applied(facade, batch, answer))),
+        Err(super::caps::Verdict::OverCap(reason)) => super::caps::refuse_over_cap(facade, node, reason).map(Err),
+        Err(super::caps::Verdict::Paused(why)) => Ok(Err(why)),
+        Err(super::caps::Verdict::Take) => Ok(Ok(BatchAnswer::Resync)),
+    }
+}
+
+fn applied(facade: &EntityFacade, batch: &Batch, answer: BatchAnswer) -> BatchAnswer {
     if answer == BatchAnswer::Applied {
         note_applied(facade, &batch.set_name);
         // the other members of an edge cluster build what they keep from this set again (plans/Edge-Node2.md §4.6)
         super::cluster_state::tell(facade, false, &[batch.set_name.as_str()]);
     }
-    Ok(answer)
+    answer
 }
 
-fn apply_batch_rows(facade: &EntityFacade, node: &str, batch: &Batch) -> Result<BatchAnswer, Error> {
+fn apply_batch_rows(
+    facade: &EntityFacade,
+    node: &str,
+    batch: &Batch,
+    caps: Option<&super::EdgeSettings>,
+) -> Result<Result<BatchAnswer, super::caps::Verdict>, Error> {
     // a record that claims an item the server (on an all-in-one node, §10) or another pairing (Edge-Node2 §4.1)
     // holds is not applied
     let owners = conflicts::owners(facade);
     transaction(facade, VALUE, TransactionAttribute::ForceNew, || {
+        // the pairing's row first, then the count: no other batch of the pairing between the count and the apply
+        if let Some(settings) = caps.filter(|settings| settings.takes_links()) {
+            super::caps::lock_client(facade, node)?;
+            match super::caps::judge_batch(facade, settings, node, batch)? {
+                super::caps::Verdict::Take => {}
+                refused => return Ok(Err(refused)),
+            }
+        }
         let cursor = facade
             .find(CURSOR)?
             .eq("pairedNodeId", Value::string(node))
@@ -761,7 +818,7 @@ fn apply_batch_rows(facade: &EntityFacade, node: &str, batch: &Batch) -> Result<
         let follows =
             |(epoch, seq): &(String, u64)| *epoch == batch.epoch && (*seq == batch.base_seq || *seq == batch.seq);
         if !starts && !at.as_ref().is_some_and(follows) {
-            return Ok(BatchAnswer::Resync);
+            return Ok(Ok(BatchAnswer::Resync));
         }
         let now = stamp_value(now_millis());
         if let Some((owners, factory)) = owners.as_ref().and_then(|owners| Some((owners, owners.factory()?))) {
@@ -830,7 +887,7 @@ fn apply_batch_rows(facade: &EntityFacade, node: &str, batch: &Batch) -> Result<
             row.set("snapshotDate", now);
         }
         row.create_or_update(facade)?;
-        Ok(BatchAnswer::Applied)
+        Ok(Ok(BatchAnswer::Applied))
     })
 }
 

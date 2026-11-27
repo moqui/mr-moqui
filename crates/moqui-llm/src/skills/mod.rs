@@ -1047,24 +1047,32 @@ pub fn tail_skills(
     out
 }
 
-/// The risk a write of `target` (a screen path or a service name) carries by the skills loaded in the conversation
-/// that name it in `screens` or `services`: the highest, with the skill that says it. None when no loaded skill names
-/// it.
+/// The risk a write of any of `targets` (a screen path, a screen write's location, a service name) carries by the
+/// skills loaded in the conversation that name it in `screens` or `services`: the highest, with the skill that says it.
+/// None when no loaded skill names it. A screen write is asked with its `location#transition` and the URL path of the
+/// screen it was pressed on, which is what skills name in `screens` (SEC-BOS-133).
 pub fn risk_for(
     facade: &EntityFacade,
     index: &SkillIndex,
     conversation_id: &str,
-    target: &str,
+    targets: &[&str],
 ) -> Option<(String, Risk)> {
-    let target = target.trim();
-    let mut best: Option<(String, Risk)> = None;
-    for skill in &index.skills {
-        let names = skill.services.iter().any(|service| service == target)
+    let targets: Vec<&str> = targets
+        .iter()
+        .map(|target| target.trim())
+        .filter(|target| !target.is_empty())
+        .collect();
+    let names_target = |skill: &Skill, target: &str| {
+        skill.services.iter().any(|service| service == target)
             || skill
                 .screens
                 .iter()
-                .any(|screen| !screen.is_empty() && (target == screen || target.starts_with(&format!("{screen}/"))));
-        if !names {
+                .map(|screen| screen.trim_end_matches('/'))
+                .any(|screen| !screen.is_empty() && (target == screen || target.starts_with(&format!("{screen}/"))))
+    };
+    let mut best: Option<(String, Risk)> = None;
+    for skill in &index.skills {
+        if !targets.iter().any(|target| names_target(skill, target)) {
             continue;
         }
         let was_loaded = crate::run::quietly(|| loaded_in(facade, conversation_id, &skill.name))
@@ -1079,7 +1087,7 @@ pub fn risk_for(
 }
 
 /// [`risk_for`] in a run: the skills of its user, agent and surface loaded in its conversation. None with no run.
-pub fn risk_of_write(ctx: &crate::run::context::TurnContext<'_>, target: &str) -> Option<(String, Risk)> {
+pub fn risk_of_write(ctx: &crate::run::context::TurnContext<'_>, targets: &[&str]) -> Option<(String, Risk)> {
     let run = ctx.run?;
     let (factory, facade) = (factory()?, facade()?);
     let index = SkillIndex::for_audience(
@@ -1091,5 +1099,5 @@ pub fn risk_of_write(ctx: &crate::run::context::TurnContext<'_>, target: &str) -
             surface: Some(ctx.surface),
         },
     );
-    risk_for(&facade, &index, &run.conversation_id, target)
+    risk_for(&facade, &index, &run.conversation_id, targets)
 }

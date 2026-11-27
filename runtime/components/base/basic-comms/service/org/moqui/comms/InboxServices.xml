@@ -606,7 +606,7 @@ along with this software (see the LICENSE.md file). If not, see
                     if (invitation) invitation.canRespond = canRespondInvitations()
                     const html = isHtml(message.contentType, message.body) ? message.body : null
                     return {key: 'email:' + message.emailMessageId, store: 'email', emailMessageId: message.emailMessageId, communicationEventId: eventOf[message.emailMessageId] || null,
-                        emailAccountId: message.emailAccountId, from: from, toList: splitAddresses(message.toAddresses).map(person),
+                        emailAccountId: message.emailAccountId, from: from, fromVerdict: message.fromVerdict ?? null, toList: splitAddresses(message.toAddresses).map(person),
                         ccList: splitAddresses(message.ccAddresses).map(person), bccList: from.isMe ? splitAddresses(message.bccAddresses).map(person) : [],
                         date: message.messageDate || message.sentDate || message.receivedDate, subject: message.subject, html: html,
                         text: message.bodyText || (html ? null : message.body), snippet: message.snippet, isUnread: message.isUnread === true,

@@ -166,6 +166,58 @@ fn a_bad_file_is_left_out_by_name_and_the_others_are_read() {
     assert_eq!(index.alias_words("buyer"), ["customer"]);
 }
 
+/// SEC-BOS-133: a screen write is matched to a loaded skill by the URL path of its screen as well as its location, so a
+/// BOSS skill's `screens` (`/qapps/...` paths) carry its risk to the approval card; a skill not loaded in the
+/// conversation, or naming another screen, carries none.
+#[test]
+fn a_screen_writes_risk_comes_from_a_loaded_skill_that_names_its_path() {
+    let ctx = ExecutionContextFactory::test_context();
+    let facade = moqui_core::testing::open();
+    ctx.factory().set_entity(facade.clone());
+    let _entered = ctx.enter();
+    let text = "---\nname: invite-staff\ndescription: Use when inviting staff.\nkind: procedure\n\
+                screens: [/qapps/Admin/Users/InviteStaff]\nrisk: irreversible\n---\nSteps.\n";
+    let mut row = facade.make_value(SKILL).unwrap();
+    row.set_sequenced_id_primary(&facade).unwrap();
+    let mut invite = Skill {
+        provenance: Provenance::Admin,
+        ..skill(text)
+    };
+    invite.fill_row(&mut row);
+    row.set("statusId", Value::string("AgskPublished"));
+    row.create(&facade).unwrap();
+    invite.skill_id = text_of(&row, "skillId").unwrap();
+    let index = SkillIndex {
+        skills: vec![invite.clone()],
+        aliases: BTreeMap::new(),
+    };
+    let write = [
+        "component://mr-boss/screen/qapps/Admin/Users/InviteStaff.xml#sendInvite",
+        "/qapps/Admin/Users/InviteStaff",
+    ];
+    assert_eq!(risk_for(&facade, &index, "C1", &write), None, "not loaded");
+    uses::record(&facade, None, Some("C1"), &invite, "");
+    assert_eq!(
+        risk_for(&facade, &index, "C1", &write),
+        Some(("invite-staff".to_string(), Risk::Irreversible))
+    );
+    assert_eq!(
+        risk_for(&facade, &index, "C1", &["/qapps/Admin/Users/InviteStaff/Detail"]),
+        Some(("invite-staff".to_string(), Risk::Irreversible)),
+        "a screen under it"
+    );
+    assert_eq!(
+        risk_for(&facade, &index, "C1", &write[..1]),
+        None,
+        "the location alone names no skill"
+    );
+    assert_eq!(
+        risk_for(&facade, &index, "C1", &["/qapps/Admin/Users/InviteStaffing"]),
+        None
+    );
+    assert_eq!(risk_for(&facade, &index, "C2", &write), None, "another conversation");
+}
+
 fn row(text: &str, provenance: Provenance, owner: Option<&str>) -> Skill {
     Skill {
         provenance,

@@ -24,15 +24,19 @@
 //!   edge node instead ([`enqueue_outbound`]), so a send does not wait on or fail with the link; it is Sent once
 //!   queued. The edge node's `deliver#EdgeOutboundMail` relays it to the MTA beside it (Postfix at
 //!   `mail-delivery@relay-host` and `mail-delivery@relay-port`, which signs it with DKIM through Rspamd and delivers it to the
-//!   MX), with the envelope sender `bounce+<item id>@<mail-delivery@bounce-domain>` (VERP) when that is set. A relay that
+//!   MX), with the envelope sender `bounce+<item id>.<tag>@<mail-delivery@bounce-domain>` (VERP, [`bounce_address`])
+//!   when that is set. A relay that
 //!   cannot be reached, answers 4xx or drops the connection answers `retryLater`: the item waits, not counted, to the
 //!   end of the retention period. An answer, accepted or refused with 5xx, goes back as kind `mailStatus` for the
 //!   `mailOut` item, queued in a transaction of its own right after the relay, so a later failure never relays twice.
 //!   With the MTA in moqui (E5b, `mail-delivery@mta` `moqui`, the default) the message is DKIM-signed and recorded for MX
 //!   delivery in the item's transaction instead ([`super::mx`]), which sends the `mailStatus` answers.
 //! - **Bounces after the relay**: a delivery status notification (RFC 3464) to the VERP address comes back to the edge
-//!   node's listener, which takes it only for a `mailOut` item it received from a paired node, reads it
-//!   ([`parse_dsn`]) and queues a `mailStatus` for that item ([`dsn_status_item`]) instead of mail.
+//!   node's listener, which takes it only for a `mailOut` item it received from a paired node and only with the tag
+//!   this node made for it ([`bounce_scope`]), reads it ([`parse_dsn`]) and queues a `mailStatus` for that item
+//!   ([`dsn_status_item`]) instead of mail. Every copy of the message carries its VERP address, so a report is never
+//!   taken as the item's bounce: it names as not delivered only the recipients it reports failed that the address was
+//!   for (the MTA in moqui gives each recipient domain its own tag), and the message stays Sent (SEC-MAIL-91).
 //! - **Status** (kind `mailStatus`): `note#EdgeMailStatus` on the local node finds its own `mailOut` item by id, never
 //!   by what the edge node names, and puts a refused message still Sent back in its account's Outbox (`ES_READY` with
 //!   `sendError`), or marks a template's message `ES_BOUNCED`. A `mailOut` item that fails for good on the local node
@@ -70,6 +74,10 @@ const RELAY_TIMEOUT: Duration = Duration::from_secs(30);
 const RELAY_SESSION: Duration = Duration::from_secs(10 * 60);
 /// The local part of a VERP envelope sender, before the `mailOut` item's id.
 const BOUNCE_PREFIX: &str = "bounce+";
+/// The label of the key of a VERP address's tag, derived from the session cookie key, so the tag is no session's.
+const BOUNCE_TAG_LABEL: &str = "moqui mail bounce address v1";
+/// Bytes of the HMAC kept in a VERP address's tag: 80 bits, 20 hex digits, so `bounce+<uuid>.<tag>` is 64 characters.
+const BOUNCE_TAG_BYTES: usize = 10;
 
 const MESSAGE: &str = "moqui.basic.email.EmailMessage";
 
@@ -89,9 +97,50 @@ pub fn bounce_domain() -> String {
         .to_ascii_lowercase()
 }
 
-/// The `mailOut` item id of a VERP address `bounce+<id>@<domain>` of `domain`, or none.
+/// The tag of `mailOut` item `item`'s VERP address for recipient domain `scope` (empty: every recipient): a keyed MAC
+/// of both, so only this node makes the address of an item, and a domain's recipients see only their domain's.
+///
+/// # Errors
+///
+/// Returns an error when the session cookie key is not set or not usable.
+pub fn bounce_tag(item: &str, scope: &str) -> Result<String, LibError> {
+    let key =
+        moqui_core::user::session::derived_cookie_key(BOUNCE_TAG_LABEL).map_err(|err| LibError::new(err.message()))?;
+    let mac = moqui_lib::sigv4::hmac(
+        &key,
+        &format!("{}\n{}", item.to_ascii_lowercase(), scope.trim().to_ascii_lowercase()),
+    );
+    Ok(mac[..BOUNCE_TAG_BYTES]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
+}
+
+/// The VERP envelope sender of `mailOut` item `item` for recipient domain `scope` (empty for every recipient):
+/// `bounce+<item>.<tag>@<bounce_domain>` ([`bounce_tag`]).
+///
+/// # Errors
+///
+/// Returns an error when the tag's key cannot be had.
+pub fn bounce_address(item: &str, scope: &str, bounce_domain: &str) -> Result<String, LibError> {
+    Ok(format!(
+        "{BOUNCE_PREFIX}{item}.{}@{bounce_domain}",
+        bounce_tag(item, scope)?
+    ))
+}
+
+/// The parts of a VERP address, not yet checked against the items ([`bounce_scope`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BounceAddress {
+    /// The `mailOut` item id, in lower case.
+    pub item: String,
+    /// The tag, in lower case.
+    pub tag: String,
+}
+
+/// The item and tag of a VERP address `bounce+<id>.<tag>@<domain>` of `domain`, or none.
 #[must_use]
-pub fn bounce_item_id(address: &str, domain: &str) -> Option<String> {
+pub fn bounce_item_id(address: &str, domain: &str) -> Option<BounceAddress> {
     if domain.is_empty() {
         return None;
     }
@@ -99,12 +148,64 @@ pub fn bounce_item_id(address: &str, domain: &str) -> Option<String> {
     if !at.eq_ignore_ascii_case(domain) {
         return None;
     }
-    let id = local
+    let rest = local
         .get(..BOUNCE_PREFIX.len())?
         .eq_ignore_ascii_case(BOUNCE_PREFIX)
         .then(|| &local[BOUNCE_PREFIX.len()..])?;
+    let (id, tag) = rest.rsplit_once('.')?;
     let plain = !id.is_empty() && id.len() <= 64 && id.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '-');
-    plain.then(|| id.to_ascii_lowercase())
+    let tagged = tag.len() == 2 * BOUNCE_TAG_BYTES && tag.chars().all(|ch| ch.is_ascii_hexdigit());
+    (plain && tagged).then(|| BounceAddress {
+        item: id.to_ascii_lowercase(),
+        tag: tag.to_ascii_lowercase(),
+    })
+}
+
+/// What a VERP address with a right tag is for: its item, the recipient domain it was made for (empty: every
+/// recipient, the relay's), and that domain's recipients as recorded for delivery (empty: none, so no report counts).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct BounceScope {
+    pub item: String,
+    pub domain: String,
+    pub recipients: Vec<String>,
+}
+
+/// The scope of `address` (SEC-MAIL-91): its tag checked, in constant time, against the tag of every recipient domain
+/// the item was recorded for by the MTA in moqui, and against the whole item's; none for a wrong tag.
+///
+/// # Errors
+///
+/// Returns an error when the delivery rows cannot be read.
+#[cfg(feature = "imap")]
+pub fn bounce_scope(facade: &EntityFacade, address: &BounceAddress) -> Result<Option<BounceScope>, LibError> {
+    let matches = |scope: &str| {
+        bounce_tag(&address.item, scope)
+            .is_ok_and(|tag| moqui_lib::codec::constant_time_eq(tag.as_bytes(), address.tag.as_bytes()))
+    };
+    let rows = facade
+        .find(super::mx::DELIVERY)?
+        .eq("queueItemId", Value::string(&address.item))
+        .disable_authz()
+        .list()?;
+    let mut domains: Vec<(String, Vec<String>)> = Vec::new();
+    for row in rows.values() {
+        domains.push((field_text(row, "domain"), super::mx::envelope_of(row)));
+    }
+    if matches("") {
+        return Ok(Some(BounceScope {
+            item: address.item.clone(),
+            domain: String::new(),
+            recipients: domains.into_iter().flat_map(|(_, recipients)| recipients).collect(),
+        }));
+    }
+    Ok(domains
+        .into_iter()
+        .find(|(domain, _)| !domain.is_empty() && matches(domain))
+        .map(|(domain, recipients)| BounceScope {
+            item: address.item.clone(),
+            domain,
+            recipients,
+        }))
 }
 
 /// What a delivery status notification says of its recipients: the worst action (`failed` over `delayed`), with each
@@ -114,6 +215,21 @@ pub struct DsnReport {
     /// `failed`, `delayed`, or empty when no recipient failed or was delayed (a `delivered` or `relayed` report).
     pub action: String,
     /// `Final-Recipient`, `Status` and `Diagnostic-Code` of each such recipient, for the message's send error.
+    pub detail: String,
+    /// Each such recipient: its action, its `Final-Recipient` address (the type before `;` taken off) and its detail.
+    pub recipients: Vec<DsnRecipient>,
+}
+
+/// One failed or delayed recipient of a [`DsnReport`].
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DsnRecipient {
+    pub action: String,
+    /// The `Final-Recipient` address.
+    pub address: String,
+    /// The `Original-Recipient` address, when the report has one.
+    pub original: String,
+    /// The `Status` code (`5.1.1`), digits and dots only.
+    pub status: String,
     pub detail: String,
 }
 
@@ -144,41 +260,128 @@ pub fn parse_dsn(raw: &[u8]) -> Option<DsnReport> {
             continue;
         }
         if report.action != "failed" {
-            report.action = action;
+            report.action.clone_from(&action);
         }
-        details.push(
-            [field("final-recipient"), field("status"), field("diagnostic-code")]
-                .into_iter()
-                .filter(|part| !part.is_empty())
-                .collect::<Vec<_>>()
-                .join("; "),
-        );
+        let final_recipient = field("final-recipient");
+        let detail = [final_recipient.clone(), field("status"), field("diagnostic-code")]
+            .into_iter()
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join("; ");
+        let bare = |typed: &str| {
+            typed
+                .rsplit_once(';')
+                .map_or(typed, |(_, address)| address)
+                .trim()
+                .trim_start_matches('<')
+                .trim_end_matches('>')
+                .to_string()
+        };
+        let status: String = field("status")
+            .chars()
+            .take_while(|ch| ch.is_ascii_digit() || *ch == '.')
+            .take(12)
+            .collect();
+        details.push(detail.clone());
+        report.recipients.push(DsnRecipient {
+            action,
+            address: bare(&final_recipient),
+            original: bare(&field("original-recipient")),
+            status,
+            detail,
+        });
     }
     report.detail = details.join(" | ");
     Some(report)
 }
 
-/// The `mailStatus` item for the local node's `mailOut` item `mail_out_id`, from a delivery status notification
-/// (`bounced` for a failed action, `delayed` for a delayed one). Keyed by the item and the report, so the MTA's retry of
-/// the same notification is one item.
+/// The recipients of `scope` that `report` says failed (`action` `failed`) or were delayed, each as recorded, with its
+/// status code: a report counts only for a `Final-Recipient` or `Original-Recipient` the address was recorded for
+/// (SEC-MAIL-91), never one it names alone.
 #[must_use]
-pub fn dsn_status_item(mail_out_id: &str, report: &DsnReport) -> NewItem {
-    let status = if report.action == "failed" {
-        "bounced"
-    } else {
-        "delayed"
+pub fn reported_recipients(scope: &BounceScope, report: &DsnReport, action: &str) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    for entry in report.recipients.iter().filter(|entry| entry.action == action) {
+        let recorded = scope
+            .recipients
+            .iter()
+            .map(|recipient| recipient.trim())
+            .find(|recipient| {
+                recipient.eq_ignore_ascii_case(&entry.address)
+                    || (!entry.original.is_empty() && recipient.eq_ignore_ascii_case(&entry.original))
+            });
+        if let Some(recorded) = recorded {
+            if !out.iter().any(|(seen, _)| seen.eq_ignore_ascii_case(recorded)) {
+                out.push((recorded.to_string(), entry.status.clone()));
+            }
+        }
+    }
+    out
+}
+
+/// The `mailStatus` item for the local node's `mailOut` item of `scope`, from a delivery status notification to its
+/// VERP address, or none when it reports no failed or delayed recipient the address was recorded for
+/// ([`reported_recipients`]). `all_failed`: every recipient recorded for the item has now been reported failed
+/// ([`dsn_status`]), and the item is `bounced` (`late`, which marks the message `ES_BOUNCED`); else the failed are
+/// `partial`, which leaves the message Sent with them in its send error, and the delayed `delayed`, which is logged.
+/// The reply names each recorded address with its status code, nothing of the report's own text. Keyed by the item
+/// and the reply, so the MTA's retry of the same notification is one item.
+#[must_use]
+pub fn dsn_status_item(scope: &BounceScope, report: &DsnReport, all_failed: bool) -> Option<NewItem> {
+    let named = |list: Vec<(String, String)>| {
+        list.into_iter()
+            .map(|(address, status)| {
+                if status.is_empty() {
+                    address
+                } else {
+                    format!("{address} ({status})")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
     };
-    let key = moqui_lib::json::canonical_sha256(&serde_json::json!([mail_out_id, status, report.detail]));
-    NewItem {
+    let failed = reported_recipients(scope, report, "failed");
+    let delayed = reported_recipients(scope, report, "delayed");
+    let (status, detail) = match (failed.is_empty(), delayed.is_empty()) {
+        (false, _) if all_failed => ("bounced", named(failed)),
+        (false, _) => ("partial", named(failed)),
+        (true, false) => ("delayed", named(delayed)),
+        (true, true) => return None,
+    };
+    let mail_out_id = scope.item.as_str();
+    let key = moqui_lib::json::canonical_sha256(&serde_json::json!([mail_out_id, status, detail]));
+    Some(NewItem {
         kind: KIND_STATUS.to_string(),
         conversation_key: format!("mailStatus:{mail_out_id}"),
         idempotency_key: format!("dsn:{key}"),
         payload: Some(
-            serde_json::json!({"queueItemId": mail_out_id, "status": status, "reply": report.detail}).to_string(),
+            serde_json::json!({"queueItemId": mail_out_id, "status": status, "reply": detail, "late": true})
+                .to_string(),
         ),
         content: None,
         content_location: None,
-    }
+    })
+}
+
+/// The `mailStatus` item of a delivery status notification `raw` to a VERP address of `scope` ([`dsn_status_item`]):
+/// its failed recipients are marked on the item's delivery rows first, so a report that makes every recorded
+/// recipient failed, with the ones before, bounces the message. None for mail that is no such report. In the caller's
+/// transaction.
+///
+/// # Errors
+///
+/// Returns why when the delivery rows could not be read or written.
+#[cfg(feature = "imap")]
+pub fn dsn_status(facade: &EntityFacade, scope: &BounceScope, raw: &[u8]) -> Result<Option<NewItem>, LibError> {
+    let Some(report) = parse_dsn(raw) else {
+        return Ok(None);
+    };
+    let failed: Vec<String> = reported_recipients(scope, &report, "failed")
+        .into_iter()
+        .map(|(address, _)| address)
+        .collect();
+    let all_failed = !failed.is_empty() && super::mx::note_failed(facade, &scope.item, &failed)?;
+    Ok(dsn_status_item(scope, &report, all_failed))
 }
 
 /// Whether an `EmailServer`'s `smtpHost` sends through the edge node.
@@ -618,11 +821,15 @@ pub(super) fn deliver_edge_outbound_mail(
     #[cfg(feature = "imap")]
     let original_from = from.clone();
     let domain = bounce_domain();
-    // the null reverse path (a notice) stays null; any other gets the VERP sender, so a bounce names this item
-    let sender = if from.trim().is_empty() || domain.is_empty() {
-        from
-    } else {
-        format!("{BOUNCE_PREFIX}{item}@{domain}")
+    // the null reverse path (a notice) stays null; any other gets the VERP sender, so a bounce names this item: one for
+    // the relay, one per recipient domain for the MTA in moqui (SEC-MAIL-91). Without the tag's key, the sender's own.
+    let verp = |scope: &str| -> Option<String> {
+        if from.trim().is_empty() || domain.is_empty() {
+            return None;
+        }
+        bounce_address(&item, scope, &domain)
+            .inspect_err(|err| tracing::warn!("Edge outbound mail item {item} goes without a VERP sender: {err}"))
+            .ok()
     };
     // a paired node never sends as the server's or another pairing's addresses or domains, whichever MTA sends it: the
     // MTA beside the node may sign for any domain it is set up for (SEC-MAIL-90)
@@ -672,7 +879,7 @@ pub(super) fn deliver_edge_outbound_mail(
             facade,
             &node,
             &item,
-            &sender,
+            &|scope: &str| verp(scope).unwrap_or_else(|| from.clone()),
             &split.external,
             &local,
             &own.refused,
@@ -687,6 +894,7 @@ pub(super) fn deliver_edge_outbound_mail(
         );
         return Ok(BTreeMap::new());
     }
+    let sender = verp("").unwrap_or_else(|| from.clone());
     let (status, reply) = match relay(&sender, &to, &raw) {
         Relayed::Accepted(reply) => ("accepted", reply),
         Relayed::Refused(reply) => ("bounced", reply),
@@ -703,9 +911,15 @@ pub(super) fn deliver_edge_outbound_mail(
         content_location: None,
     };
     // its own transaction, committed now: the relay took it, so whatever happens to this apply it is not relayed again
+    let paired_node = node.clone();
     let node = Some(node.as_str()).filter(|node| !node.is_empty());
     let queued = facade.transactions_for(queue::QUEUE_ITEM).and_then(|tx| {
         tx.run(moqui_core::transaction::TransactionAttribute::ForceNew, None, || {
+            // the recipients a later report to the VERP address may name (SEC-MAIL-91)
+            #[cfg(feature = "imap")]
+            if status == "accepted" && sender != from {
+                super::mx::record_relayed(facade, &paired_node, &item, &sender, &to)?;
+            }
             queue::enqueue(&factory, facade, node, &back)
         })
     });
@@ -821,7 +1035,42 @@ fn sender_refusal(
     Ok(None)
 }
 
-/// [`sender_refusal`] of `from` (the envelope sender) and the `From` field of `raw`, on this server.
+/// Why the sender rule, the signature and the mailbox could read different senders in `raw`'s `From` (SEC-MAIL-89):
+/// more than one `From` field, other than one mailbox in it as the store reads it (`mail-parser`), or that mailbox
+/// not the address [`super::auth::from_address`] reads; none when they agree or the message has no `From`.
+#[cfg(feature = "imap")]
+fn ambiguous_from(raw: &[u8]) -> Option<String> {
+    let (head, _) = super::delivery::split_head(raw);
+    let fields = super::delivery::header_fields(head)
+        .into_iter()
+        .map(super::delivery::field_name_value)
+        .filter(|(name, _)| name.eq_ignore_ascii_case("From"))
+        .count();
+    match fields {
+        0 => return None,
+        1 => {}
+        count => return Some(format!("the message has {count} From fields")),
+    }
+    let parsed = mail_parser::MessageParser::default().parse(raw);
+    let mailboxes: Vec<String> = parsed
+        .as_ref()
+        .and_then(|message| message.from())
+        .map(|list| {
+            list.mailboxes()
+                .map(|mailbox| mailbox.address().unwrap_or_default().trim().to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+    let [stored] = mailboxes.as_slice() else {
+        return Some(format!("its From field has {} mailboxes, not one", mailboxes.len()));
+    };
+    let read = super::auth::from_address(raw).unwrap_or_default();
+    (!stored.eq_ignore_ascii_case(&read))
+        .then(|| format!("its From field reads as {stored} to the mailbox but as {read} to the sender rule"))
+}
+
+/// [`sender_refusal`] of `from` (the envelope sender) and the `From` field of `raw`, on this server; first a `From`
+/// read two ways ([`ambiguous_from`]).
 #[cfg(feature = "imap")]
 fn refused_sender(
     factory: &ExecutionContextFactory,
@@ -830,6 +1079,9 @@ fn refused_sender(
     raw: &[u8],
     paired: &std::collections::BTreeSet<String>,
 ) -> Result<Option<String>, LibError> {
+    if let Some(why) = ambiguous_from(raw) {
+        return Ok(Some(why));
+    }
     let mut senders: Vec<String> = Vec::new();
     for address in [Some(from.trim().to_string()), super::auth::from_address(raw)]
         .into_iter()
@@ -977,6 +1229,18 @@ fn deliver_own(
     )
 }
 
+/// What [`queue_back`] queues of `signed`: without an `Authentication-Results` that claims `hostname`, which the local
+/// node trusts as this node's (SEC-MAIL-95; [`deliver_own`] drops it too), with this node's own on top when `internal`.
+#[cfg(feature = "imap")]
+fn queued_back_message(signed: &[u8], hostname: &str, internal: bool) -> Vec<u8> {
+    let fields: Vec<String> = internal
+        .then(|| super::auth::verify_internal(signed, hostname))
+        .flatten()
+        .into_iter()
+        .collect();
+    super::auth::rewrite_head(signed, hostname, &[], &fields)
+}
+
 /// Queue `signed` back to local node `node` as mail for its own accounts `local` (internal mail through the edge node),
 /// in the item's transaction, with the `Authentication-Results` of this node's own key on it when `internal` (from the
 /// node's own domain).
@@ -994,14 +1258,7 @@ fn queue_back(
 ) -> Result<(), LibError> {
     use super::delivery::{Envelope, Options, RecipientDsn};
     let hostname = super::mx::hostname();
-    let mut raw = Vec::with_capacity(signed.len() + 512);
-    if let Some(field) = internal
-        .then(|| super::auth::verify_internal(signed, &hostname))
-        .flatten()
-    {
-        raw.extend_from_slice(field.as_bytes());
-    }
-    raw.extend_from_slice(signed);
+    let raw = queued_back_message(signed, &hostname, internal);
     let envelope = Envelope {
         mail_from: from.to_string(),
         helo: hostname.clone(),
@@ -1048,13 +1305,15 @@ fn outbound_message(facade: &EntityFacade, item: &str) -> Result<Option<(String,
 }
 
 /// Put message `email_message_id` back where a failed send leaves it, with `error`: a mail client's message in its
-/// account's Outbox (`ES_READY` with `sendError`, no folder), another `ES_BOUNCED` with `sendError`. Only while it is
+/// account's Outbox (`ES_READY` with `sendError`, no folder), another `ES_BOUNCED` with `sendError`; with
+/// `bounced_late` (a later report that every recipient failed), any message `ES_BOUNCED` where it is. Only while it is
 /// still as the send left it (Sent, with Message-ID `message_id`), so a message sent again or cancelled since is left.
 fn back_to_outbox(
     facade: &EntityFacade,
     email_message_id: &str,
     message_id: &str,
     error: &str,
+    bounced_late: bool,
 ) -> Result<(), LibError> {
     let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
     let Some(message) = find_one(facade, MESSAGE, "emailMessageId", email_message_id)? else {
@@ -1076,7 +1335,7 @@ fn back_to_outbox(
     let mut row = facade.make_value(MESSAGE)?;
     row.set("emailMessageId", Value::string(email_message_id));
     row.set("sendError", Value::string(error.chars().take(4000).collect::<String>()));
-    if client {
+    if client && !bounced_late {
         // the Outbox: ready with an error and no folder (EmailClientServices record#SendResult)
         row.set("statusId", Value::string("ES_READY"));
         row.set("emailFolderId", Value::Null);
@@ -1155,7 +1414,15 @@ pub(super) fn note_edge_mail_status(
         );
         return Ok(BTreeMap::new());
     }
-    back_to_outbox(facade, &email_message_id, &message_id, &format!("Bounced: {reply}"))?;
+    // a later report that every recipient failed (SEC-MAIL-91): bounced where it is, not back in the Outbox
+    let late = payload["late"].as_bool().unwrap_or(false);
+    back_to_outbox(
+        facade,
+        &email_message_id,
+        &message_id,
+        &format!("Bounced: {reply}"),
+        late,
+    )?;
     Ok(BTreeMap::new())
 }
 
@@ -1181,6 +1448,7 @@ pub(super) fn fail_edge_outbound_mail(
         &email_message_id,
         &json_text(&payload, "messageId"),
         &format!("Not sent through the edge node: {}", param_text(parameters, "error")),
+        false,
     )?;
     Ok(BTreeMap::new())
 }

@@ -231,7 +231,9 @@ empty. Its rules:
   (100.64/10), multicast or documentation ranges, nor an IPv6 address that carries an inside IPv4 one (6to4 of one,
   IPv4-compatible, NAT64, Teredo), nor another port of a media node's address (the `allowed_peers` addresses, which hold
   the media node's public
-  address and its bind address when that is not a wildcard), nor the address a TURN listener is bound to
+  address and its bind address when that is not a wildcard), nor the address a TURN listener is bound to, nor any
+  of the host's own addresses (`TurnConfig::own_addresses`: its interfaces' as read at start, the TURN and media public
+  addresses, `sip-server@public-address` and the webroot's `http-host` when they are addresses; SEC-COM-18)
   (a relay there would come from the server itself, past a firewall that keeps the outside off those ports).
   A public address of the host that is neither (the address behind `media-server/turn-server@public-host` when it differs from the media
   address, another interface) is not refused.
@@ -434,8 +436,10 @@ The SIP engine (`crates/moqui-sip` on rsipstack, host `src/sip/`) runs beside a 
   still dropped first. Answers sent before an incoming call's decision expire after 30 seconds (1,000 at most).
   A TLS client has 10 seconds to finish its handshake; at most 128 handshakes run at once and 8 from one source (an IPv6
   /64 is one), and a connection past either is closed. A TCP or TLS connection that sends no byte for 300 seconds is
-  closed (rsipstack's default; a CRLF keepalive counts as a byte). No deadline closes a connection that never sends a
-  valid request. A SIP message over a stream is at most 65,535 bytes.
+  closed (rsipstack's default; a CRLF keepalive counts as a byte). An accepted TCP or TLS connection on which no
+  request authenticated (a phone's REGISTER or call, a PBX trunk's digest) and that is not from a trunk's address is
+  closed after `sip-server/limits@unauthenticated-seconds` (30), and a source with no trunk address, phone binding or
+  authenticated connection holds at most `sip-server/limits@max-connections-per-unknown-source` (10) (SEC-COM-26). A SIP message over a stream is at most 65,535 bytes.
 - **Limits.** A leg's jitter buffer holds 10 packets; a leg's consumer queue a second of frames; datagrams over 2 KiB
   are cut. A leg's RTP socket is read until it is empty each tick, with no count. The engine registers its node (`SipNode`) every 20 seconds.
 - **Settings that name addresses and audio.** `sip-server@public-address` is the address put in Contact headers and SDP, and
@@ -513,7 +517,7 @@ for 600 seconds is closed, and a write the client does not take for 60 seconds e
   (SEC-COM-82). rxml does not refuse an element for its number of attributes (a token is at most 8,192 bytes); the
   count bounds them. Over `/xmpp-websocket` a frame is at most `max_stanza_bytes`.
   Stream management keeps at
-  most 1,000 unacknowledged stanzas, with no byte bound, and 10 detached sessions a user; PEP 200 nodes a user and 256 items a node;
+  most 1,000 unacknowledged stanzas and 4 MiB of them (SEC-COM-93), and 10 detached sessions a user; PEP 200 nodes a user and 256 items a node;
   uploads 60 slots a user an hour. A detached session is resumed only by a sign-in of the same user. It runs no
   credential check (`conn.rs` `wait_detached` calls no `tick`), so for up to `xmpp-server@resume-seconds` (300, at most 3600)
   a session of a revoked app password or a disabled account goes on taking pushes into its unacknowledged queue.
@@ -533,9 +537,12 @@ for 600 seconds is closed, and a write the client does not take for 60 seconds e
 - **Stanzas routed with no service call.** An `iq` to another local user's full JID, a `message` to a local user that
   carries no body, OMEMO payload, correction, retraction, reaction, displayed marker or chat state, and a directed
   `presence` to a local user are handed as they are to that user's sessions on the same node (`route_to`). The server
-  sets `from` to the sender's full JID. No room or other relation between the two users is checked. The stanza enters
-  the receiving session's queue (the 512 above); that session then drops it when the sender's bare JID is in its user's
-  block list. A message with a body to a local user's JID opens or reuses the direct room with that user
+  sets `from` to the sender's full JID. No room or other relation between the two users is checked. `Registry::route`
+  drops it before the receiving session's queue when that session's block list (as it read it) holds the sender, holds
+  one user to `xmpp-server@routed-rate` (20) a second and `routed-burst` (200) at once towards another user's
+  sessions, and past those or a full queue (the 512 above) refuses it to the sender with `resource-constraint`; the
+  receiving session is never closed for it (SEC-COM-19). A PEP notification to another user is routed the same way.
+  The session also drops one whose sender is in its block list when it takes it. A message with a body to a local user's JID opens or reuses the direct room with that user
   (`XmppServices.get#DirectRoom`, which calls `ChatServices.create#Room` with `CrtDirect`) and is stored by
   `send#Message`.
 - **Chat pushes to a session.** The users a `chatRoom:` push names are read from the member rows when each event is

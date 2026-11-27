@@ -437,6 +437,9 @@ str0m = { version = "0.25.0", default-features = false, features = ["aws-lc-rs"]
 # host owns its listeners and relay sockets and wraps TLS with its own rustls. The client half is for the tests.
 turn-server-proto = { version = "0.8.0", default-features = false, features = ["std"] }
 turn-client-proto = { version = "0.8.0", default-features = false, features = ["std"] }
+# The host's interface addresses, which an XMPP user's TURN credential may not relay to (SEC-COM-18). Already in the
+# graph through rsipstack.
+if-addrs = "0.14"
 # SFrame (RFC 9605) for the tests of encrypted calls only (W8): moqui-rtc's tests check the RFC's vectors, which the browser's
 # own SFrame (webroot js/WebrootSFrame.js) runs too, against this independent implementation. rust-crypto: the CTR suites
 # as well, on the aes-gcm, hkdf, sha2, ctr and cipher already in the graph; not ring.

@@ -310,16 +310,23 @@ feature("a message the edge node queued is stored in the number's box, only from
         const payload = JSON.stringify({toNumber: USER_NUMBER, fromNumber: "+15557771111", durationMs: 1500, receivedMs: Date.now() - 60000})
         const item = {queueItemId: "edge-voice-spec-1", pairedNodeId: "local", kind: "voicemail", payload, contentLocation: location}
         const refused = as(A, "org.moqui.call.VoicemailServices.receive#EdgeVoicemail", item)
+        // on a node that takes links (an all-in-one node) a paired node's item is refused, a recording's too (SEC-CLU-86)
+        const onEdge = withConf("instance@node-role", "all-in-one", () => as("_edge_", "org.moqui.call.VoicemailServices.receive#EdgeVoicemail", item))
+        const recordingOnEdge = withConf("instance@node-role", "all-in-one", () => as("_edge_",
+            "org.moqui.call.CallRecordingServices.receive#EdgeRecording", {queueItemId: "edge-voice-spec-2", pairedNodeId: "local",
+                kind: "callRecording", payload: JSON.stringify({op: "end", callRecordingId: "NO_SUCH_RECORDING"})}))
         const stored = as("_edge_", "org.moqui.call.VoicemailServices.receive#EdgeVoicemail", item)
         const outside = as("_edge_", "org.moqui.call.VoicemailServices.receive#EdgeVoicemail",
             Object.assign({}, item, {contentLocation: "dbresource://moqui/call/voicemail/elsewhere.ogg"}))
         const row = stored.voicemailId ? sys(() => ec.entity.find("moqui.call.Voicemail").condition("voicemailId", stored.voicemailId).one()) : null
         const box = row ? sys(() => ec.entity.find(BOX).condition("voicemailBoxId", row.voicemailBoxId).one()) : null
         const audio = row ? sys(() => ec.resource.getLocationReference(row.audioLocation).getText()) : null
-        return {refused, stored, outside, row, box, audio}
+        return {refused, onEdge, recordingOnEdge, stored, outside, row, box, audio}
     },
-    then({refused, stored, outside, row, box, audio}) {
+    then({refused, onEdge, recordingOnEdge, stored, outside, row, box, audio}) {
         refused.reasonCode == "notAllowed"
+        onEdge.reasonCode == "notAllowed"
+        recordingOnEdge.errors.includes("stores no recording a paired node sends")
         stored.errors == ""
         row.fromNumber == "+15557771111"
         row.statusId == "VmsStored"

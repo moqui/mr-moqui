@@ -290,6 +290,11 @@ pub(crate) fn checked(text: String) -> Option<String> {
         tracing::warn!("a calendar event's RRULE is longer than {MAX_RULE_TEXT} bytes; it was left out");
         return None;
     }
+    // a line break would be written into every copy of the event as a content line of its own (SEC-FIL-94)
+    if text.chars().any(char::is_control) {
+        tracing::warn!("a calendar event's RRULE holds a control character; it was left out");
+        return None;
+    }
     match Rule::parse(&text) {
         Ok(_) => Some(text),
         Err(err) => {

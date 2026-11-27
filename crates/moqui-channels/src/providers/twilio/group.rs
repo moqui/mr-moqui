@@ -546,7 +546,8 @@ fn existing_group(provider: &Twilio, client: &RestClient, config: &Config, out: 
         page = listed
             .pointer("/meta/next_page_url")
             .and_then(Json::as_str)
-            .filter(|next| next.starts_with(&config.conversations_base_url))
+            // its origin, not a prefix: the base has no trailing slash (SEC-COM-96)
+            .filter(|next| crate::sms::same_origin(next, &config.conversations_base_url))
             .map(str::to_string);
     }
     None

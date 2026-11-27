@@ -645,7 +645,7 @@ pub fn store_received(
 }
 
 /// Whether `location` is an upload this node kept for item `queue_item_id` of node `node` ([`store_received`]).
-fn is_received(node: &str, queue_item_id: &str, location: &str) -> bool {
+pub(crate) fn is_received(node: &str, queue_item_id: &str, location: &str) -> bool {
     let Ok(prefix) = received_location(node, queue_item_id) else {
         return false;
     };

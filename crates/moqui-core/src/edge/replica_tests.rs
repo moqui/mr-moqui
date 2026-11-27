@@ -350,4 +350,8 @@ fn the_edge_node_takes_only_the_sets_and_entities_of_its_conf_in_batches_a_sende
     // more records than a sender puts in a batch
     let many = (0..=BATCH).map(|n| change(&format!("G{n}"), Some("x"))).collect();
     assert!(batch_refused(&sets, &batch("e1", 0, 1, false, many)).is_some());
+    // a record past the byte cap, though the pairing's count holds (SEC-CLU-92)
+    let large = change("A", Some(&"x".repeat(MAX_RECORD_BYTES)));
+    let refused = batch_refused(&sets, &batch("e1", 0, 1, false, vec![large]));
+    assert!(refused.is_some_and(|why| why.contains("at most 65536 bytes")));
 }

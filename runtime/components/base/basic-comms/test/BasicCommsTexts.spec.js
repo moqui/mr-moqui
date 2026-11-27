@@ -291,3 +291,30 @@ feature("Chat's text members: a moderator adds a number on a number for room tex
         stranger.memberList == null
     }
 })
+
+feature("New phone rooms a user opens by typing numbers are capped an hour; a room that is there still opens", {
+    when() {
+        ec.user.internalLoginUser("basic.comms.texter")
+        const open = (toNumber) => {
+            const out = sys(() => ec.service.sync().name("org.moqui.call.SmsServices.open#PairRoom").parameters({toNumber, fromNumber: OURS}).call()) || {}
+            ec.message.clearErrors()
+            return out
+        }
+        let refused = null
+        let opened = 0
+        for (let n = 0; n < 31 && !refused; n++) {
+            const out = open("+1555333" + String(4000 + n))
+            if (out.reasonCode) refused = out.reasonCode
+            else opened++
+        }
+        const existing = open(THEIRS)
+        // the hour's counts start over for the specs after this one
+        sys(() => ec.entity.find("moqui.security.public.AccountAttempt").deleteAll())
+        return {refused, opened, existing}
+    },
+    then({refused, opened, existing}) {
+        refused == "tooManyRooms"
+        opened <= 30
+        existing.chatRoomId != null
+    }
+})

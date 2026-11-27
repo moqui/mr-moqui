@@ -83,6 +83,18 @@ const MAX_CHANNEL_TEXT: usize = 256;
 pub(super) const IDLE: Duration = Duration::from_secs(600);
 /// How long a connection has from accept to a successful login.
 const PREAUTH_TIMEOUT: Duration = Duration::from_secs(30);
+/// The most characters of a client's user name a log line keeps.
+const MAX_LOGGED_NAME: usize = 64;
+/// The most characters of a failed login's reason a log line keeps.
+const MAX_LOGGED_MESSAGE: usize = 512;
+
+/// Text a client sent (a user name, or a reason that names it) for a log line: cut to `max` characters and quoted
+/// with its control characters escaped, so a terminal tailing the log never gets the client's bytes as they came
+/// (SEC-FIL-92).
+fn for_log(text: &str, max: usize) -> String {
+    let cut: String = text.chars().take(max).collect();
+    format!("{cut:?}")
+}
 /// Connections that have not logged in yet, at once; one more is closed. They do not count toward `ssh-server` `max-sessions`.
 const MAX_PREAUTH: usize = 16;
 /// Of [`MAX_PREAUTH`], those one source may hold (plans/archive/High-Level-Review.md HL-032).
@@ -706,6 +718,7 @@ impl Intake {
             peer,
             via_edge,
             username: None,
+            logged_in_at: None,
             login_name: None,
             dialog_used: false,
             by_password: false,
@@ -766,6 +779,10 @@ struct Connection {
     via_edge: bool,
     /// The user logged in by key or password; `None` before, and for a connection let in for the login dialog.
     username: Option<String>,
+    /// When [`Self::username`] logged in: the sign-in `sh` and `attach` hold to `terminal` `remote-reauth-minutes`
+    /// (SEC-FIL-97).
+    #[cfg_attr(not(all(feature = "devtools", feature = "tui", unix)), allow(dead_code))]
+    logged_in_at: Option<std::time::Instant>,
     /// Let in with no user (keyboard-interactive): the name the client gave, which the login dialog starts with. Such
     /// a connection gets `apps` on a pty and nothing else.
     login_name: Option<String>,
@@ -842,6 +859,39 @@ fn ssh_permissions() -> Result<Permissions, CoreError> {
     })
 }
 
+/// The SSH permissions of `username` now, read again at each channel request (SEC-FIL-11), so a permission taken away
+/// refuses what an open connection asks for next; `None` for an account that is gone or may no longer sign in
+/// (disabled, locked, terminated, a display account, a password change due: [`moqui_core::user::account_may_sign_in`],
+/// which changes nothing).
+fn permissions_of(factory: &ExecutionContextFactory, username: &str) -> Result<Option<Permissions>, CoreError> {
+    // read only: an internal login would reset the account's failed-login count at every request (SEC-FIL-11)
+    if !moqui_core::user::account_may_sign_in(username)? {
+        return Ok(None);
+    }
+    let _authz =
+        moqui_core::context::ExecutionContext::with_current(moqui_core::context::ExecutionContext::disable_authz);
+    let facade = factory
+        .entity()
+        .ok_or_else(|| CoreError::new("the entity facade is not installed"))?;
+    let Some(account) = facade
+        .find("moqui.security.UserAccount")?
+        .eq("username", Value::string(username))
+        .one()?
+    else {
+        return Ok(None);
+    };
+    let user_id = account
+        .get("userId")
+        .map(moqui_lib::object::to_plain_string)
+        .unwrap_or_default();
+    let has = |permission: &str| moqui_core::user::user_has_permission(&user_id, permission);
+    Ok(Some(Permissions {
+        sftp: has("SSH_SFTP")?,
+        shell: has("SSH_SHELL")?,
+        git: has("SSH_GIT")?,
+    }))
+}
+
 /// How a connection logged in, and what the conf says of git over SSH.
 #[cfg_attr(not(feature = "git"), allow(dead_code))]
 #[derive(Clone, Copy, Debug)]
@@ -901,6 +951,41 @@ impl Connection {
         self.git_protocol.remove(&channel);
     }
 
+    /// Read the user's SSH permissions again ([`permissions_of`]) before a channel request is answered: false, with
+    /// none kept, when the account may no longer sign in (an app password's login too) or the read fails; a login by
+    /// app password keeps no permission either way.
+    async fn refresh_permissions(&mut self) -> bool {
+        let Some(username) = self.username.clone() else {
+            return true;
+        };
+        let read = on_pool(&self.shared.factory, move |factory| permissions_of(factory, &username)).await;
+        let read = read.unwrap_or_else(|err| {
+            tracing::warn!(
+                "SSH permissions of a connection from {} not read: {}",
+                self.peer,
+                err.message()
+            );
+            None
+        });
+        let signs_in = read.is_some();
+        let none = Permissions {
+            sftp: false,
+            shell: false,
+            git: false,
+        };
+        let Permissions { sftp, shell, git } = read.filter(|_| !self.by_app_password).unwrap_or(none);
+        self.can_sftp = sftp;
+        self.can_shell = shell;
+        self.can_git = git;
+        if !signs_in {
+            tracing::info!(
+                "SSH connection from {}: its account may no longer sign in; refused",
+                self.peer
+            );
+        }
+        signs_in
+    }
+
     /// Let the user in, with what the permissions allow; every user gets `apps`, but for a login by app password, which
     /// gets the drives over SFTP only.
     fn accept(&mut self, username: &str, permissions: Permissions, by: LoginBy) -> Auth {
@@ -924,6 +1009,7 @@ impl Connection {
         }
         tracing::info!("SSH login of {username} from {}", self.peer);
         self.username = Some(username.to_string());
+        self.logged_in_at = Some(std::time::Instant::now());
         self.by_password = by != LoginBy::Key;
         self.by_app_password = by_app_password;
         self.can_sftp = sftp;
@@ -972,6 +1058,7 @@ impl Connection {
             size: pty.size.subscribe(),
             facts: crate::term::access::Facts::over_ssh(self.peer.ip(), self.via_edge),
             session_id: format!("ssh-{}", self.peer),
+            signed_in: self.logged_in_at,
         })
     }
 
@@ -1109,9 +1196,10 @@ impl russh::server::Handler for Connection {
             Ok((permissions, by)) => Ok(self.accept(user, permissions, by)),
             Err(err) => {
                 tracing::warn!(
-                    "SSH password login of {user} from {} failed: {}",
+                    "SSH password login of {} from {} failed: {}",
+                    for_log(user, MAX_LOGGED_NAME),
                     self.peer,
-                    err.message()
+                    for_log(err.message(), MAX_LOGGED_MESSAGE)
                 );
                 Ok(Auth::reject())
             }
@@ -1180,7 +1268,12 @@ impl russh::server::Handler for Connection {
         match checked {
             Ok(permissions) => Ok(self.accept(user, permissions, LoginBy::Key)),
             Err(err) => {
-                tracing::warn!("SSH key login of {user} from {} failed: {}", self.peer, err.message());
+                tracing::warn!(
+                    "SSH key login of {} from {} failed: {}",
+                    for_log(user, MAX_LOGGED_NAME),
+                    self.peer,
+                    for_log(err.message(), MAX_LOGGED_MESSAGE)
+                );
                 Ok(Auth::reject())
             }
         }
@@ -1199,7 +1292,8 @@ impl russh::server::Handler for Connection {
         }
         if let Err(refused) = self.slot.log_in(Who::Dialog) {
             tracing::warn!(
-                "SSH login dialog for {user} from {} refused: ssh-server {} sessions are open",
+                "SSH login dialog for {} from {} refused: ssh-server {} sessions are open",
+                for_log(user, MAX_LOGGED_NAME),
                 self.peer,
                 refused.limit()
             );
@@ -1207,8 +1301,9 @@ impl russh::server::Handler for Connection {
         }
         self.slot.dialog.store(true, Ordering::Release);
         tracing::info!(
-            "SSH connection from {} let in for the login dialog as {user:?}",
-            self.peer
+            "SSH connection from {} let in for the login dialog as {}",
+            self.peer,
+            for_log(user, MAX_LOGGED_NAME)
         );
         self.login_name = Some(user.to_string());
         Ok(Auth::Accept)
@@ -1289,6 +1384,9 @@ impl russh::server::Handler for Connection {
         let Some(username) = self.username.clone().filter(|_| name == "sftp" && !self.cluster) else {
             return session.channel_failure(channel);
         };
+        if !self.refresh_permissions().await {
+            return session.channel_failure(channel);
+        }
         let held = Held::new(&username);
         let backend = if self.can_sftp {
             Backend::Root(self.shared.root.clone())
@@ -1349,6 +1447,9 @@ impl russh::server::Handler for Connection {
         if moqui_git::server::parse_ssh_command(&line).is_some()
             || moqui_git::server::lfs::parse_ssh_command(&line).is_some()
         {
+            if !self.refresh_permissions().await {
+                return session.channel_failure(channel);
+            }
             let may_git = git_allowed(GitLogin {
                 has_permission: self.can_git,
                 by_password: self.by_password,
@@ -1424,6 +1525,9 @@ impl russh::server::Handler for Connection {
         }
         if self.username.is_none() && self.login_name.is_some() {
             return refuse_channel(self.channels.remove(&channel), channel, session, DIALOG_ONLY);
+        }
+        if !self.refresh_permissions().await {
+            return session.channel_failure(channel);
         }
         let (Some(username), true) = (self.username.clone(), self.can_shell) else {
             return session.channel_failure(channel);
@@ -1501,6 +1605,8 @@ impl russh::server::Handler for Connection {
         let factory = std::sync::Weak::clone(&self.shared.factory);
         let handle = session.handle();
         let pty = self.ptys.contains_key(&channel);
+        // an account that may no longer sign in keeps no permission; its `apps` login meets the same gate
+        let _ = self.refresh_permissions().await;
         let access = self.apps_access(channel);
         if !self.can_shell || self.username.is_none() {
             let newline = if pty { "\r\n" } else { "\n" };

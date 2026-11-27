@@ -328,22 +328,58 @@ Status: 4.4.1\r
 --b1--\r
 ";
 
+/// SEC-MAIL-91: a VERP address carries a keyed tag of its item and recipient domain, and a report to it names as not
+/// delivered only the failed recipients the address was for, never bouncing the message.
 #[test]
 fn a_delivery_status_notification_to_a_verp_address_names_its_item_and_failure() {
-    assert_eq!(
-        bounce_item_id("Bounce+k1234abcd@Bounce.Example.com", "bounce.example.com").as_deref(),
-        Some("k1234abcd")
+    let _lock = moqui_core::user::session::cookie_property_lock();
+    moqui_lib::env::set_property(
+        "moqui_conf__webapp_list__webapp__WEBROOT__session_config__cookie_key",
+        "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+    );
+    let address = bounce_address("k1234abcd", "example.net", "bounce.example.com").unwrap();
+    let tag = bounce_tag("k1234abcd", "example.net").unwrap();
+    assert_eq!(address, format!("bounce+k1234abcd.{tag}@bounce.example.com"));
+    assert_eq!(tag.len(), 20);
+    assert_ne!(tag, bounce_tag("k1234abcd", "").unwrap(), "a domain's tag is its own");
+    assert_ne!(
+        tag,
+        bounce_tag("k1234abce", "example.net").unwrap(),
+        "an item's tag is its own"
+    );
+    let parts = bounce_item_id(
+        &address
+            .to_uppercase()
+            .replace("BOUNCE.EXAMPLE.COM", "Bounce.Example.com"),
+        "bounce.example.com",
     );
     assert_eq!(
-        bounce_item_id("bounce+k1234abcd@example.com", "bounce.example.com"),
+        parts,
+        Some(BounceAddress {
+            item: "k1234abcd".to_string(),
+            tag: tag.clone()
+        })
+    );
+    assert_eq!(bounce_item_id(&address, "example.com"), None, "another domain");
+    assert_eq!(
+        bounce_item_id("bounce+k1234abcd@bounce.example.com", "bounce.example.com"),
+        None,
+        "no tag"
+    );
+    assert_eq!(
+        bounce_item_id(&format!("bounce+../x.{tag}@bounce.example.com"), "bounce.example.com"),
         None
     );
     assert_eq!(
-        bounce_item_id("bounce+../x@bounce.example.com", "bounce.example.com"),
+        bounce_item_id(&format!("bounce+.{tag}@bounce.example.com"), "bounce.example.com"),
         None
     );
-    assert_eq!(bounce_item_id("bounce+@bounce.example.com", "bounce.example.com"), None);
-    assert_eq!(bounce_item_id("bounce+k1@bounce.example.com", ""), None);
+    assert_eq!(
+        bounce_item_id("bounce+k1.0123@bounce.example.com", "bounce.example.com"),
+        None,
+        "a short tag"
+    );
+    assert_eq!(bounce_item_id(&address, ""), None);
     let report = parse_dsn(DSN.as_bytes()).unwrap();
     assert_eq!(report.action, "failed", "failed outranks delayed");
     assert!(
@@ -356,18 +392,187 @@ fn a_delivery_status_notification_to_a_verp_address_names_its_item_and_failure()
         report.detail.contains("Recipient address rejected"),
         "folded lines: {report:?}"
     );
-    let item = dsn_status_item("k1234abcd", &report);
+    assert_eq!(report.recipients[0].address, "nobody@example.net");
+    let scope = |recipients: &[&str]| BounceScope {
+        item: "k1234abcd".to_string(),
+        domain: "example.net".to_string(),
+        recipients: recipients.iter().map(ToString::to_string).collect(),
+    };
+    let item = dsn_status_item(&scope(&["Nobody@example.net", "later@example.net"]), &report, false).unwrap();
     assert_eq!(item.kind, KIND_STATUS);
     let payload: serde_json::Value = serde_json::from_str(item.payload.as_deref().unwrap()).unwrap();
     assert_eq!(payload["queueItemId"], "k1234abcd");
-    assert_eq!(payload["status"], "bounced");
+    assert_eq!(payload["status"], "partial", "not every recipient failed");
     assert_eq!(
-        dsn_status_item("k1234abcd", &report).idempotency_key,
-        item.idempotency_key
+        payload["reply"], "Nobody@example.net (5.1.1)",
+        "the recorded address and the status code, none of the report's text"
     );
-    let delayed = DSN.replace("Action: failed", "Action: relayed");
-    assert_eq!(parse_dsn(delayed.as_bytes()).unwrap().action, "delayed");
+    assert_eq!(
+        dsn_status_item(&scope(&["nobody@example.net"]), &report, false)
+            .unwrap()
+            .idempotency_key,
+        dsn_status_item(&scope(&["nobody@example.net"]), &report, false)
+            .unwrap()
+            .idempotency_key
+    );
+    let bounced = dsn_status_item(&scope(&["nobody@example.net"]), &report, true).unwrap();
+    let payload: serde_json::Value = serde_json::from_str(bounced.payload.as_deref().unwrap()).unwrap();
+    assert_eq!(
+        (payload["status"].as_str(), payload["late"].as_bool()),
+        (Some("bounced"), Some(true))
+    );
+    // a failure of a recipient the address was not for is not taken; the delay of one that was is logged only
+    let delayed = dsn_status_item(&scope(&["later@example.net"]), &report, false).unwrap();
+    let payload: serde_json::Value = serde_json::from_str(delayed.payload.as_deref().unwrap()).unwrap();
+    assert_eq!(payload["status"], "delayed");
+    assert_eq!(dsn_status_item(&scope(&["else@example.net"]), &report, false), None);
+    // no recorded recipients: no report counts
+    assert_eq!(dsn_status_item(&scope(&[]), &report, false), None);
+    // an Original-Recipient that was recorded counts, under a Final-Recipient the remote side rewrote
+    let forwarded = DSN.replace(
+        "Final-Recipient: rfc822; nobody@example.net\r\n",
+        "Final-Recipient: rfc822; nobody@inner.example.net\r\nOriginal-Recipient: rfc822; nobody@example.net\r\n",
+    );
+    let report = parse_dsn(forwarded.as_bytes()).unwrap();
+    assert_eq!(
+        reported_recipients(&scope(&["nobody@example.net"]), &report, "failed"),
+        vec![("nobody@example.net".to_string(), "5.1.1".to_string())]
+    );
+    let relayed = DSN.replace("Action: failed", "Action: relayed");
+    assert_eq!(parse_dsn(relayed.as_bytes()).unwrap().action, "delayed");
     assert_eq!(parse_dsn(b"Subject: Out of office\r\n\r\nAway\r\n"), None);
+}
+
+/// The `mailStatus` payload of a delivery status notification `raw` to an address of `scope`, if any.
+#[cfg(feature = "imap")]
+fn reported(facade: &EntityFacade, scope: &BounceScope, raw: &str) -> Option<serde_json::Value> {
+    dsn_status(facade, scope, raw.as_bytes())
+        .unwrap()
+        .map(|item| serde_json::from_str(item.payload.as_deref().unwrap()).unwrap())
+}
+
+/// A report of `address` failed with status 5.1.1.
+#[cfg(feature = "imap")]
+fn failure_of(address: &str) -> String {
+    DSN.replace("nobody@example.net", address)
+}
+
+/// SEC-MAIL-91: through the relay the recipients are recorded too, and a later report counts only for them: a forged
+/// report naming another address is dropped; a report for one of two recipients is partial, and once the other has
+/// failed as well the message is bounced. Each failure is marked on the delivery row.
+#[cfg(feature = "imap")]
+#[test]
+fn a_later_report_counts_for_the_recorded_recipients_and_bounces_when_all_failed() {
+    let (ctx, facade) = setup();
+    let _entered = ctx.enter();
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let to = vec!["ann@example.net".to_string(), "bob@example.org".to_string()];
+    crate::mx::record_relayed(&facade, "local-a", "item1", "bounce+item1.x@bounce.example.com", &to).unwrap();
+    let scope = bounce_scope_of_relay(&facade, "item1");
+    assert_eq!(
+        scope.recipients, to,
+        "the relay's address is for every recipient recorded"
+    );
+
+    assert_eq!(
+        reported(&facade, &scope, &failure_of("mallory@example.com")),
+        None,
+        "not a recipient"
+    );
+    let first = reported(&facade, &scope, &failure_of("ANN@example.net")).unwrap();
+    assert_eq!(first["status"], "partial");
+    assert_eq!(first["reply"], "ann@example.net (5.1.1)");
+    // the same report again changes nothing
+    assert_eq!(
+        reported(&facade, &scope, &failure_of("ann@example.net")).unwrap()["status"],
+        "partial"
+    );
+    let last = reported(&facade, &scope, &failure_of("bob@example.org")).unwrap();
+    assert_eq!(
+        (last["status"].as_str(), last["late"].as_bool()),
+        (Some("bounced"), Some(true))
+    );
+    let row = facade
+        .find(crate::mx::DELIVERY)
+        .unwrap()
+        .eq("queueItemId", Value::string("item1"))
+        .one()
+        .unwrap()
+        .unwrap();
+    let failed: Vec<String> = serde_json::from_str(&field(&row, "failedJson")).unwrap();
+    assert_eq!(failed, to);
+
+    // with the MTA in moqui a domain's address counts for that domain's recipients only, whatever the row still holds
+    // to deliver
+    let mut rows = Vec::new();
+    for (domain, recipients) in [
+        ("example.net", vec!["cy@example.net", "di@example.net"]),
+        ("example.org", vec!["ed@example.org"]),
+    ] {
+        let mut row = facade.make_value(crate::mx::DELIVERY).unwrap();
+        row.set("mailDeliveryId", Value::string(format!("d-{domain}")));
+        row.set("pairedNodeId", Value::string("local-a"));
+        row.set("queueItemId", Value::string("item2"));
+        row.set("domain", Value::string(domain));
+        row.set("recipientsJson", Value::string("[]"));
+        row.set("envelopeJson", Value::string(serde_json::json!(recipients).to_string()));
+        row.set("statusEnumId", Value::string("EmdSent"));
+        row.create(&facade).unwrap();
+        rows.push(row);
+    }
+    let net = BounceScope {
+        item: "item2".to_string(),
+        domain: "example.net".to_string(),
+        recipients: vec!["cy@example.net".to_string(), "di@example.net".to_string()],
+    };
+    assert_eq!(
+        reported(&facade, &net, &failure_of("ed@example.org")),
+        None,
+        "another domain's recipient"
+    );
+    assert_eq!(
+        reported(&facade, &net, &failure_of("cy@example.net")).unwrap()["status"],
+        "partial"
+    );
+    assert_eq!(
+        reported(&facade, &net, &failure_of("di@example.net")).unwrap()["status"],
+        "partial",
+        "ed@example.org has not failed"
+    );
+
+    // a row of before envelopeJson: its recipientsJson may be a part of them, so its item is never bounced
+    let mut old = facade.make_value(crate::mx::DELIVERY).unwrap();
+    old.set("mailDeliveryId", Value::string("d-old"));
+    old.set("pairedNodeId", Value::string("local-a"));
+    old.set("queueItemId", Value::string("item3"));
+    old.set("domain", Value::string("example.net"));
+    old.set("recipientsJson", Value::string(r#"["fy@example.net"]"#));
+    old.set("statusEnumId", Value::string("EmdSent"));
+    old.create(&facade).unwrap();
+    let older = BounceScope {
+        item: "item3".to_string(),
+        domain: "example.net".to_string(),
+        recipients: vec!["fy@example.net".to_string()],
+    };
+    assert_eq!(
+        reported(&facade, &older, &failure_of("fy@example.net")).unwrap()["status"],
+        "partial"
+    );
+}
+
+/// The scope of the relay's VERP address of `item`, as the listener reads it with the right tag.
+#[cfg(feature = "imap")]
+fn bounce_scope_of_relay(facade: &EntityFacade, item: &str) -> BounceScope {
+    let _lock = moqui_core::user::session::cookie_property_lock();
+    moqui_lib::env::set_property(
+        "moqui_conf__webapp_list__webapp__WEBROOT__session_config__cookie_key",
+        "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+    );
+    let address = BounceAddress {
+        item: item.to_string(),
+        tag: bounce_tag(item, "").unwrap(),
+    };
+    bounce_scope(facade, &address).unwrap().unwrap()
 }
 
 #[cfg(feature = "imap")]
@@ -472,12 +677,52 @@ fn a_dedicated_edge_node_refuses_a_sender_of_another_pairings_domain() {
     assert_eq!(neither, None, "a domain of no pairing");
 }
 
+/// SEC-MAIL-95: mail queued back to the local node keeps no `Authentication-Results` claiming the edge node's name,
+/// which the local node trusts; another server's stays.
+#[cfg(feature = "imap")]
+#[test]
+fn mail_queued_back_drops_a_forged_verdict_of_the_edge_nodes_name() {
+    let signed = b"Authentication-Results: Edge.Example.com; dmarc=pass header.from=server.example\r\n\
+Authentication-Results: mx.other.example; spf=pass\r\nFrom: ann@desk.example\r\nSubject: x\r\n\r\nbody\r\n";
+    let queued = String::from_utf8(queued_back_message(signed, "edge.example.com", false)).unwrap();
+    assert!(!queued.contains("dmarc=pass"), "{queued}");
+    assert!(
+        queued.starts_with("Authentication-Results: mx.other.example; spf=pass\r\nFrom:"),
+        "{queued}"
+    );
+    assert!(queued.ends_with("\r\n\r\nbody\r\n"), "{queued}");
+}
+
+/// SEC-MAIL-89: a `From` the sender rule and the mailbox would read differently (two fields, two mailboxes, a comment
+/// holding an angle address) is refused before the rule, so a paired node's message is never stored as from the
+/// server's own user.
+#[cfg(feature = "imap")]
+#[test]
+fn a_from_read_two_ways_is_refused() {
+    let head = |from: &str| format!("{from}\r\nSubject: x\r\n\r\nbody\r\n").into_bytes();
+    assert_eq!(ambiguous_from(&head("From: Ann <ann@desk.example>")), None);
+    assert_eq!(ambiguous_from(&head("From: ann@desk.example")), None);
+    assert_eq!(
+        ambiguous_from(b"Subject: x\r\n\r\nbody\r\n"),
+        None,
+        "no From: the envelope decides"
+    );
+    let two_fields = ambiguous_from(&head("From: a@desk.example\r\nFrom: ceo@server.example")).unwrap();
+    assert!(two_fields.contains("2 From fields"), "{two_fields}");
+    let two_mailboxes = ambiguous_from(&head("From: a@desk.example, ceo@server.example")).unwrap();
+    assert!(two_mailboxes.contains("2 mailboxes"), "{two_mailboxes}");
+    let comment = ambiguous_from(&head("From: ceo@server.example (<a@desk.example>)")).unwrap();
+    assert!(
+        comment.contains("ceo@server.example") && comment.contains("a@desk.example"),
+        "{comment}"
+    );
+}
+
 #[cfg(feature = "imap")]
 #[test]
 fn a_paired_node_may_not_send_as_the_servers_addresses_or_domains() {
-    let set = |domains: &[&str]| -> std::collections::BTreeSet<String> {
-        domains.iter().map(ToString::to_string).collect()
-    };
+    let set =
+        |domains: &[&str]| -> std::collections::BTreeSet<String> { domains.iter().map(ToString::to_string).collect() };
     let paired = set(&["desk.example", "split.example"]);
     let own_domains = set(&["server.example", "split.example"]);
     let claim = |address: &str| {
@@ -494,7 +739,10 @@ fn a_paired_node_may_not_send_as_the_servers_addresses_or_domains() {
     assert_eq!(refusal(&["ann@split.example"]), None, "a domain split by address");
     assert_eq!(refusal(&["me@gmail.example"]), None, "a domain of neither side");
     let text = refusal(&["ann@desk.example", "Sales@split.example"]).expect("the server's address");
-    assert!(text.contains("Sales@split.example") && text.contains("100010"), "{text}");
+    assert!(
+        text.contains("Sales@split.example") && text.contains("100010"),
+        "{text}"
+    );
     let text = refusal(&["ceo@Server.Example"]).expect("the server's domain");
     assert!(text.contains("server.example"), "{text}");
     assert!(refusal(&["x@bounce.server.example"]).is_some(), "the bounce domain");

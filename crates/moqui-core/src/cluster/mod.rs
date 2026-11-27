@@ -985,11 +985,13 @@ fn window_millis(factory: &ExecutionContextFactory) -> i64 {
     millis.saturating_mul(3)
 }
 
+/// Whether a heartbeat at `stamp` is live at `now` (both by the database's clock): within `window` before now, and not
+/// more than a window after it, so a row with a heartbeat set in the future is not a member for ever (SEC-CLU-89).
 fn is_live(heartbeat: Option<i64>, now: i64, window: i64) -> bool {
     let Some(stamp) = heartbeat else {
         return false;
     };
-    now.saturating_sub(stamp) <= window
+    now.saturating_sub(stamp) <= window && stamp.saturating_sub(now) <= window
 }
 
 fn reject_peer_mismatch(
@@ -1107,7 +1109,8 @@ pub fn heartbeat(factory: &ExecutionContextFactory) {
         Ok(_) => {}
         Err(err) => tracing::warn!("cluster heartbeat failed: {err}"),
     }
-    if let Err(err) = delete_dead_members(&facade, now.saturating_sub(window_millis(factory) * DEAD_WINDOWS)) {
+    let dead = window_millis(factory) * DEAD_WINDOWS;
+    if let Err(err) = delete_dead_members(&facade, now.saturating_sub(dead), now.saturating_add(dead)) {
         tracing::warn!("cluster member cleanup failed: {err}");
     }
     refresh_peers(&state, factory);
@@ -1646,10 +1649,14 @@ fn millis_value(millis: i64) -> Value {
     jiff::Timestamp::from_millisecond(millis).map_or_else(|_| now_value(), Value::Timestamp)
 }
 
-/// Remove the rows of members that stopped long ago, so the table does not keep every instance that ever ran.
-fn delete_dead_members(facade: &EntityFacade, before: i64) -> Result<(), Error> {
+/// Remove the rows of members that stopped long ago, so the table does not keep every instance that ever ran, and of
+/// any whose heartbeat is set past `after`, which no member's clock writes (SEC-CLU-89).
+fn delete_dead_members(facade: &EntityFacade, before: i64, after: i64) -> Result<(), Error> {
     let _authz = entered_authz();
-    let condition = Condition::less("heartbeat", millis_value(before));
+    let condition = Condition::or(vec![
+        Condition::less("heartbeat", millis_value(before)),
+        Condition::greater("heartbeat", millis_value(after)),
+    ]);
     let statement = facade
         .with_entity(MEMBER, |entity, dialect, _| {
             sql_delete(entity, dialect, Some(&condition))

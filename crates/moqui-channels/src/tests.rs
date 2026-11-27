@@ -904,6 +904,35 @@ fn a_reply_goes_out_and_its_receipts_come_back() {
     bed.receipt(&remote, "delivery_failed");
     let (state, reason, ..) = bed.delivery(&room, second);
     assert_eq!((state.as_str(), reason.as_str()), ("CdsFailed", "deliveryFailed"));
+    // the provider's text of a failure (its API address, the account) is a bridge administrator's: a reader of the
+    // room gets the reason code (SEC-COM-98)
+    {
+        let _authz = bed.ctx.disable_authz();
+        let mut row = bed
+            .facade
+            .find("moqui.chat.ChatBridgeDelivery")
+            .unwrap()
+            .eq("chatRoomId", text(&room))
+            .eq("eventSeq", Value::I64(second))
+            .one()
+            .unwrap()
+            .unwrap();
+        row.set(
+            "lastErrorText",
+            text("HTTP POST https://api.example.test/v1/accounts/AC123 failed"),
+        );
+        row.update(&bed.facade).unwrap();
+    }
+    login("alice");
+    let read = ok(
+        "org.moqui.chat.ChatBridgeServices.get#EventDeliveries",
+        &[
+            ("chatRoomId", text(&room)),
+            ("eventSeqList", Value::List(vec![Value::I64(second)])),
+        ],
+    );
+    let read = out_text(&read, "deliveryMap");
+    assert!(read.contains("deliveryFailed") && !read.contains("AC123"), "{read}");
     // a receipt of a message we do not know (another system's on the account) is answered and left
     assert_eq!(body_json(&bed.receipt("msg-unknown", "delivered"))["found"], false);
 }
