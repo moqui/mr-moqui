@@ -79,3 +79,52 @@ fn settings_read_on_each_use_are_live() {
     assert!(live(&["search-facade"], "query-max-clauses"));
     assert!(!live(&["search-facade"], "backend"));
 }
+
+/// The web listeners' HTTPS port and HTTP address are read once when they bind, as the ports beside them are, so a
+/// change waits for a restart rather than falling under the webapp's live default (plans/Runtime-Config.md §3.2).
+#[test]
+fn the_https_port_and_http_bind_are_listener_settings() {
+    let webapp = unit(&["webapp-list", "webapp"]).expect("the webapp unit");
+    assert_eq!(webapp.attr_class("https-listen-port"), super::LISTENER);
+    assert_eq!(webapp.attr_class("http-bind"), super::LISTENER);
+    assert_eq!(webapp.attr_class("http-host"), super::Class::Live);
+    assert_eq!(super::Group::Listeners.name(), "listeners");
+    // the switches wait for a restart as the ports beside them do, until RC2 makes the web listeners live
+    for switch in ["http-listen-enabled", "https-listen-enabled", "grpc-listen-enabled"] {
+        assert_eq!(webapp.attr_class(switch), super::LISTENER, "{switch}");
+    }
+}
+
+/// `attribute_class` walks the catalog as the reload's diff does: a keyed unit's own class, an attribute's class in
+/// its unit, the nearest unit's class for an element no unit names, and a component's class at the top.
+#[test]
+fn attribute_class_walks_the_catalog_as_the_diff_does() {
+    use super::{attribute_class, Class, Group, COMPONENT, LISTENER, UNKNOWN};
+    let webapp = ["webapp-list", "webapp"];
+    assert_eq!(attribute_class(&webapp, "https-listen-port"), LISTENER);
+    assert_eq!(attribute_class(&webapp, "http-host"), Class::Live);
+    // a keyed unit below it
+    let rate_limit = ["webapp-list", "webapp", "web-protection", "rate-limit"];
+    assert_eq!(
+        attribute_class(&rate_limit, "limit"),
+        Class::Apply(Group::WebProtection)
+    );
+    // an element no unit names is its parent unit's content: that unit's class, not the class of an attribute of the
+    // same name on the unit's own element
+    assert_eq!(
+        attribute_class(
+            &["webapp-list", "webapp", "web-protection", "rate-limit", "note"],
+            "text"
+        ),
+        Class::Apply(Group::WebProtection)
+    );
+    assert_eq!(
+        attribute_class(&["webapp-list", "webapp", "no-unit", "deeper"], "https-listen-port"),
+        Class::Live
+    );
+    assert_eq!(attribute_class(&["ssh-server"], "port"), LISTENER);
+    // a top-level element no unit names is a component's settings
+    assert_eq!(attribute_class(&["pass"], "backend-url"), COMPONENT);
+    assert_eq!(attribute_class(&["pass", "inner"], "backend-url"), COMPONENT);
+    assert_eq!(attribute_class(&[], "anything"), UNKNOWN);
+}

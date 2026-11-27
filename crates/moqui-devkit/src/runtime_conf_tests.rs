@@ -111,6 +111,10 @@ fn every_runtime_conf_parses_merges_over_the_default_and_passes_the_schema() {
             .map(line),
     );
     let base_count = problems.len();
+    // no retired property, attribute or value (plans/Runtime-Config.md §8.2): the boot would refuse it
+    if let Err(err) = moqui_core::context::conf_env::refuse_retired(&base) {
+        problems.push(format!("MoquiDefaultConf.xml: {err}"));
+    }
 
     for file in &files {
         let display = file.strip_prefix(&repo).unwrap_or(file).display().to_string();
@@ -137,6 +141,9 @@ fn every_runtime_conf_parses_merges_over_the_default_and_passes_the_schema() {
         );
         let merged = MNode::parse_text("MoquiDefaultConf.xml", &base_text).unwrap();
         merge_conf(&merged, &conf);
+        if let Err(err) = moqui_core::context::conf_env::refuse_retired(&merged) {
+            problems.push(format!("{display} merged: {err}"));
+        }
         let merged_problems = schema_problems(&xsd, &merged, &format!("{display} merged"), "");
         // The merged conf holds the default's own problems, already named above
         if merged_problems.len() > base_count {

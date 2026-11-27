@@ -1057,6 +1057,7 @@ fn a_local_node_is_attached_from_the_wizard() {
                 "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
                 &edge_port_text,
             ),
+            ("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_enabled", "true"),
             ("moqui_conf__smtp_server__listen_port", "0"),
             ("moqui_conf__smtp_server__hostname", "edge.example.net"),
             ("moqui_conf__mail_delivery__mta", "moqui"),

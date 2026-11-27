@@ -372,6 +372,7 @@ fn the_apps_reach_the_local_node_through_the_edge_node_in_both_modes() {
                 "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
                 &local_port_text,
             ),
+            ("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_enabled", "true"),
             ("moqui_conf__ssh_server__port", "0"),
             ("moqui_conf__ssh_server__host_key", &host_key),
             // the terminal's command line, through the edge node (plans/Terminal-Fancy.md §12)
@@ -390,6 +391,7 @@ fn the_apps_reach_the_local_node_through_the_edge_node_in_both_modes() {
                 "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
                 &edge_port_text,
             ),
+            ("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_enabled", "true"),
             ("moqui_conf__edge__ssh_tunnel_port", &tunnel_port_text),
             ("moqui_conf__edge__ssh_tunnel_host", "127.0.0.1"),
         ],

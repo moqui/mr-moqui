@@ -86,6 +86,7 @@ pub(crate) fn start_edge(label: &str, certs: &Certs, port: u16) -> Gate {
         &[
             ("moqui_conf__instance__node_role", "front_edge"),
             ("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port", &port),
+            ("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_enabled", "true"),
         ],
         &[
             ("cert/default.crt", &certs.cert_pem),
@@ -518,6 +519,7 @@ fn refused_strangers_do_not_block_a_paired_node_from_their_address() {
                 "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
                 &port_text,
             ),
+            ("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_enabled", "true"),
             ("moqui_conf__edge__up_refusals", "2"),
         ],
         &[

@@ -417,6 +417,7 @@ impl Domains {
                     "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
                     &edge_port_text,
                 ),
+                ("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_enabled", "true"),
                 ("moqui_conf__smtp_server__listen_port", "0"),
                 ("moqui_conf__smtp_server__allowed_addresses", "127.0.0.1"),
                 ("moqui_conf__smtp_server__hostname", "edge.example.com"),

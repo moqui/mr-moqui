@@ -260,10 +260,13 @@ fn an_instance_pairs_once_links_sealed_then_unsealed_and_a_revoke_cuts_it() {
             &token_hash,
             &moqui_vault::text::hex(approver.verifying_key().as_bytes()),
         )),
-        &[(
-            "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
-            &port_text,
-        )],
+        &[
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                &port_text,
+            ),
+            ("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_enabled", "true"),
+        ],
         &[
             ("cert/default.crt", &pem("CERTIFICATE", cert.der())),
             ("cert/default.key", &pem("PRIVATE KEY", &key.serialize_der())),
@@ -570,6 +573,7 @@ fn transit_unseals_only_a_pinned_instance_under_its_policy_and_unsealed_is_taken
                 "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
                 &port_text,
             ),
+            ("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_enabled", "true"),
             ("moqui_conf__instance__purpose", "test"),
         ],
         &[

@@ -49,20 +49,14 @@ pub fn local_web_ports(runtime: &std::path::Path, framework: &std::path::Path) -
             .unwrap_or_else(|| crate::context::conf_env::webroot_setting(attr))
     };
     let mut ports = Vec::new();
-    for (scheme, raw, fallback) in [
-        ("https", setting("https-listen-port"), 8443),
-        (
-            "http",
-            setting("http-listen-port"),
-            effective_http_port(&setting("http-port")).unwrap_or(8080),
-        ),
-    ] {
-        let port = if raw.is_empty() {
-            Some(fallback)
-        } else {
-            raw.parse().ok()
-        };
-        if let Some(port) = port.filter(|p| *p != 0) {
+    // each listener that is on, at its written port (plans/Runtime-Config.md §3.2); 0 is a port of the kernel's choosing,
+    // which no client can know beforehand
+    for (scheme, listener) in [("https", "https-listen"), ("http", "http-listen")] {
+        if !crate::context::conf_env::switch_on(&setting(&format!("{listener}-enabled"))) {
+            continue;
+        }
+        let port: Option<u16> = setting(&format!("{listener}-port")).trim().parse().ok();
+        if let Some(port) = port.filter(|port| *port != 0) {
             ports.push((scheme, port));
         }
     }

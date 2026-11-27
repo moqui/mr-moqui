@@ -209,6 +209,7 @@ fn only_the_lock_holder_sends_replication_and_a_new_holder_sends_whole() {
                 "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
                 &edge_port_text,
             ),
+            ("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_enabled", "true"),
         ],
         &[("cert/default.crt", &cert), ("cert/default.key", &key)],
     );

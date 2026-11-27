@@ -771,22 +771,31 @@ along with this software (see the LICENSE.md file). If not, see
                 per-client parts of web-protection are on by default. Empty, the header is believed from any peer
                 (first hop), as before. No Java counterpart.
             </xs:documentation></xs:annotation></xs:attribute>
-            <xs:attribute name="http-listen-port" type="xs:string"><xs:annotation><xs:documentation>The port the
-                built-in plain HTTP listener binds: empty is http-port (8080 when that is empty too), off opens no HTTP
-                listener. The dev conf sets off, so a dev server listens on HTTPS only (https-listen-port, 8443).
-                http-port stays the port of the http:// URLs the server writes, which differs behind a reverse proxy.
+            <xs:attribute name="http-listen-enabled" type="boolean" default="true"><xs:annotation><xs:documentation>
+                Whether the built-in plain HTTP listener is on (plans/Runtime-Config.md 3.2). The dev conf sets false, so a
+                dev server listens on HTTPS only (https-listen-port, 8443). Turning it off keeps http-listen-port.
             </xs:documentation></xs:annotation></xs:attribute>
-            <xs:attribute name="grpc-listen-port" type="xs:string"><xs:annotation><xs:documentation>The port of the
-                dedicated gRPC listener, shared by the OTLP receiver (telemetry/receiver@grpc-enabled) and the PASS
-                authority (pass-authority@grpc-enabled); it opens only when one of them is on. Empty is 4317, off none
-                (the dev conf), and then the services still answer gRPC over HTTP/2 on the HTTPS listener. Replaces
-                pass-authority@grpc-port and telemetry/receiver@grpc-port, which a conf may no longer set.
+            <xs:attribute name="http-listen-port" type="port" default="8080"><xs:annotation><xs:documentation>The port
+                the built-in plain HTTP listener binds when http-listen-enabled is true; 0 is one of the kernel's
+                choosing. It no longer follows http-port, which stays the port of the http:// URLs the server writes
+                (it differs behind a reverse proxy). off or empty is refused: set http-listen-enabled="false".
+            </xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="grpc-listen-enabled" type="boolean" default="true"><xs:annotation><xs:documentation>
+                Whether the dedicated gRPC listener may open: it opens when this is true and the OTLP receiver
+                (telemetry/receiver@grpc-enabled) or the PASS authority (pass-authority@grpc-enabled) is on. The dev conf
+                sets false, and then the services still answer gRPC over HTTP/2 on the HTTPS listener.
+            </xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="grpc-listen-port" type="port" default="4317"><xs:annotation><xs:documentation>The port
+                of the dedicated gRPC listener, shared by the OTLP receiver and the PASS authority. off or empty is
+                refused: set grpc-listen-enabled="false". Replaces pass-authority@grpc-port and
+                telemetry/receiver@grpc-port, which a conf may no longer set.
             </xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="grpc-listen-bind" type="xs:string"><xs:annotation><xs:documentation>The IP address
                 the dedicated gRPC listener binds; empty is http-bind's. Replaces pass-authority@grpc-host and
                 telemetry/receiver@grpc-bind, which a conf may no longer set.</xs:documentation></xs:annotation>
             </xs:attribute>
-            <xs:attribute name="https-listen-port" type="xs:string"><xs:annotation><xs:documentation>The port the built-in HTTPS listener binds, with certificates from runtime/cert: empty is 8443, off none. https-port is the port clients see in generated URLs, which differs behind a reverse proxy.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="https-listen-enabled" type="boolean" default="true"><xs:annotation><xs:documentation>Whether the built-in HTTPS listener is on. With no certificate in runtime/cert it stands by until a name is set up with ACME. Turning it off keeps https-listen-port. https-enabled is apart: the scheme of the URLs the server writes.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="https-listen-port" type="port" default="8443"><xs:annotation><xs:documentation>The port the built-in HTTPS listener binds when https-listen-enabled is true, with certificates from runtime/cert; 0 is one of the kernel's choosing. off or empty is refused: set https-listen-enabled="false". https-port is the port clients see in generated URLs, which differs behind a reverse proxy.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="http-bind" type="xs:string"><xs:annotation><xs:documentation>The IP address the HTTP and HTTPS listeners bind, and the gRPC listener's when grpc-listen-bind is empty: every address when empty; 127.0.0.1 (or localhost) keeps them local. http-host stays the host name of the URLs the server writes.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="allowed-hosts" type="xs:string"><xs:annotation><xs:documentation>The Host names (with the port, as the header gives it: 127.0.0.1:8080) a request straight to a listener must name, comma separated, or it is answered 421; empty takes any.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="csp-append" type="xs:string" default=""><xs:annotation><xs:documentation>Directives added to every screen response's Content-Security-Policy, or the whole policy where none is set; empty adds none (the Desktop app's sidecar: upgrade-insecure-requests).</xs:documentation></xs:annotation></xs:attribute>

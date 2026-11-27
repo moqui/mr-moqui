@@ -69,6 +69,7 @@ fn empty_db_recreates_factory_once_and_existing_db_does_not() {
     let framework = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     moqui_lib::env::set_property("moqui_conf__cluster_member__https_port", "0");
     moqui_lib::env::set_property("cluster_ssh_port", "0");
+    crate::common::listeners_off();
     let bind = ([127, 0, 0, 1], 0).into();
     let server = moqui_host::start_server(&runtime, &framework, root.join("db"), bind).unwrap();
     assert_eq!(*EVENTS.lock().unwrap(), ["empty", "destroy", "seeded"]);

@@ -36,6 +36,7 @@ fn the_remote_link_logs_in_with_a_key_and_reads_screens() {
         &[
             ("instance@purpose", "dev"),
             ("webapp-list/webapp[webroot]@https-listen-port", "0"),
+            ("webapp-list/webapp[webroot]@https-listen-enabled", "true"),
         ],
     );
     moqui_lib::env::set_property("MOQUI_INSTALLED_RUNTIME", gate.runtime.to_string_lossy());

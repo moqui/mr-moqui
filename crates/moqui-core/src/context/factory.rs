@@ -439,6 +439,9 @@ impl ExecutionContextFactory {
             seal_keeper: std::sync::OnceLock::new(),
             secrets_in_env: false,
         });
+        // what set each overridden value, for the listeners' upgrade warning and their settings' sources
+        // (plans/Runtime-Config.md §8.2)
+        super::conf_env::keep_boot_overrides(&factory, overrides);
         if artifacts_only {
             factory.pools.attach(&factory);
             return Ok(factory);

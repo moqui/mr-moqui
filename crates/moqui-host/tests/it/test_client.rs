@@ -73,6 +73,7 @@ fn client_specs_run_against_a_server_and_a_failure_fails_the_run() {
     let mut properties = vec![
         ("instance@purpose", "dev"),
         ("webapp-list/webapp[webroot]@https-listen-port", "0"),
+        ("webapp-list/webapp[webroot]@https-listen-enabled", "true"),
     ];
     #[cfg(all(feature = "ssh", feature = "tui"))]
     let seed = {

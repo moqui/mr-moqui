@@ -328,6 +328,10 @@ pub(crate) fn listen_properties(port: u16) -> Vec<(&'static str, String)> {
             port.to_string(),
         ),
         (
+            "moqui_conf__webapp_list__webapp__WEBROOT__http_listen_enabled",
+            "true".to_string(),
+        ),
+        (
             "moqui_conf__webapp_list__webapp__WEBROOT__https_enabled",
             "false".to_string(),
         ),
@@ -335,9 +339,10 @@ pub(crate) fn listen_properties(port: u16) -> Vec<(&'static str, String)> {
             "moqui_conf__webapp_list__webapp__WEBROOT__allowed_hosts",
             format!("127.0.0.1:{port},localhost:{port}"),
         ),
+        // no public HTTPS: the switch off, its port as the conf writes it (plans/Runtime-Config.md §3.2)
         (
-            "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
-            "off".to_string(),
+            "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_enabled",
+            "false".to_string(),
         ),
         ("moqui_conf__cluster_member__bind_address", "127.0.0.1".to_string()),
         ("moqui_conf__cluster_member__https_port", "0".to_string()),

@@ -1196,6 +1196,53 @@ fn the_control_reconciles_through_the_worker_and_a_deferred_request_waits() {
     );
 }
 
+/// The conf's `listeners` hook only queues a pass on the worker (plans/Runtime-Config.md §8.2): it returns while a pass
+/// holds the registry's lock, and the pass it queued runs once the lock is free, with the cause of what ran the hook (a
+/// reload, or the selectors a set changed). A registry installed on the factory later takes the hook over.
+#[test]
+fn the_conf_hook_queues_a_pass_without_waiting_for_it() {
+    use moqui_core::context::conf_reload::{self, HookCause};
+    use moqui_core::context::conf_schema::Group;
+    let log = log();
+    let fake = Fake::new("A", &log);
+    let registry = registry(&[&fake]);
+    boot(&registry);
+    let factory = Arc::clone(&registry.0.factory);
+    control::install_control(&factory, &registry);
+    fake.on(1, 0);
+    let held = lock(&registry.0.entries);
+    let asked = Instant::now();
+    let problems = conf_reload::run_hooks(&factory, &[Group::Listeners], &HookCause::Reload);
+    assert!(problems.is_empty(), "{problems:?}");
+    assert!(
+        asked.elapsed() < Duration::from_secs(2),
+        "the hook waited {:?}",
+        asked.elapsed()
+    );
+    assert_eq!(registry.address("A"), None, "the queued pass waits for the lock");
+    drop(held);
+    eventually("the queued pass", || registry.address("A") == address(1));
+    assert_eq!(row(&registry, "A").cause.as_deref(), Some("conf reload"));
+    // a later registry on the factory takes the hook over; a set names its selectors on the row
+    let second_fake = Fake::new("B", &log);
+    second_fake.on(2, 0);
+    let second = Registry::new(Arc::clone(&factory), boot_inputs());
+    second.add(second_fake.clone());
+    boot(&second);
+    control::install_control(&factory, &second);
+    second_fake.off("fake@enabled is false");
+    let set = HookCause::Set(vec!["fake@enabled".to_string(), "fake@port".to_string()]);
+    conf_reload::run_hooks(&factory, &[Group::Listeners], &set);
+    eventually("the second registry's pass", || second.address("B").is_none());
+    assert_eq!(row(&second, "B").cause.as_deref(), Some("set fake@enabled, fake@port"));
+    // the first registry is asked no more: a pass asked of it now runs after anything queued before, and is the only
+    // one since its conf reload
+    requested(&registry, ReconcileRequest::new(Cause::Signal("probe")));
+    assert_eq!(fake.seen(), ["boot", "conf reload", "signal probe"]);
+    second.close();
+    registry.close();
+}
+
 #[test]
 fn close_drops_what_still_runs_and_ends_the_worker() {
     let log = log();
@@ -1428,30 +1475,29 @@ fn the_boot_entries_stop_in_the_order_of_before_the_registry() {
 }
 
 /// The web entries' wants, read as `http::listen` read them before the registry: off for a node reached in process
-/// only, with HTTP's port off, or with no HTTPS plan; HTTPS's plan bound, or standing by.
+/// only, or by the listener's switch, which the row names (plans/Runtime-Config.md §3.2); HTTPS's plan bound, or
+/// standing by.
 #[test]
 fn the_web_entries_say_why_they_are_off() {
     use super::web::{http_wanted, https_wanted, HttpsBind};
-    fn webroot(port: &'static str) -> impl Fn(&str) -> String {
-        move |name: &str| {
-            if name == "http-listen-port" {
-                port.to_string()
-            } else {
-                String::new()
-            }
+    fn webroot(enabled: &'static str, port: &'static str) -> impl Fn(&str) -> String {
+        move |name: &str| match name {
+            "http-listen-enabled" => enabled.to_string(),
+            "http-listen-port" => port.to_string(),
+            _ => String::new(),
         }
     }
     const IN_PROCESS: &str = "no port, reached in process only";
     assert_eq!(
-        http_wanted(&ListenBind::None, &webroot("8080")),
+        http_wanted(&ListenBind::None, &webroot("true", "8080")),
         Wanted::Off(IN_PROCESS.to_string())
     );
     assert_eq!(
-        http_wanted(&ListenBind::Property, &webroot("off")),
-        Wanted::Off("http-listen-port".to_string())
+        http_wanted(&ListenBind::Property, &webroot("false", "8080")),
+        Wanted::Off("webapp-list/webapp[webroot]@http-listen-enabled is false".to_string())
     );
     assert_eq!(
-        http_wanted(&ListenBind::Property, &webroot("8081")),
+        http_wanted(&ListenBind::Property, &webroot("true", "8081")),
         Wanted::On {
             bind: "0.0.0.0:8081".parse().unwrap(),
             in_place: ()
@@ -1459,7 +1505,7 @@ fn the_web_entries_say_why_they_are_off() {
     );
     let address: SocketAddr = "127.0.0.1:9".parse().unwrap();
     assert_eq!(
-        http_wanted(&ListenBind::Address(address), &webroot("off")),
+        http_wanted(&ListenBind::Address(address), &webroot("false", "8080")),
         Wanted::On {
             bind: address,
             in_place: ()
@@ -1477,7 +1523,7 @@ fn the_web_entries_say_why_they_are_off() {
     );
     assert_eq!(
         https_wanted(&ListenBind::Property, None),
-        Wanted::Off("no certificate in runtime/cert, or the webroot webapp's https-listen-port is off".to_string())
+        Wanted::Off("webapp-list/webapp[webroot]@https-listen-enabled is false".to_string())
     );
     assert_eq!(
         https_wanted(&ListenBind::Property, plan(true)),

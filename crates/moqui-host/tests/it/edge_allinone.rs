@@ -120,6 +120,10 @@ fn server_process() {
             "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port".to_string(),
             port,
         ),
+        (
+            "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_enabled".to_string(),
+            "true".to_string(),
+        ),
     ];
     if let Some(map) = setup["properties"].as_object() {
         properties.extend(

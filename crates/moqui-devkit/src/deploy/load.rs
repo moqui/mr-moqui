@@ -129,7 +129,8 @@ pub struct LoadReport {
     pub millis: u64,
 }
 
-/// What a load needs besides its preview: the components with it, and the conf they make.
+/// What a load needs besides its preview: the components with it, and the conf they make (`None` when it does not
+/// merge).
 struct Plan {
     preview: LoadPreview,
     component: ComponentInfo,
@@ -367,10 +368,10 @@ fn load_held(
         report.status = "pending-restart".to_string();
         return report;
     }
-    let Some(conf) = plan.conf else {
+    if plan.conf.is_none() {
         report.problems.push("the conf does not merge with it".to_string());
         return report;
-    };
+    }
     let previous = factory.components();
     // 1. its entities: the tables made against the new model, then the model swapped in; a failure changes nothing
     if let Some(facade) = factory.entity() {
@@ -388,8 +389,9 @@ fn load_held(
     }
     // 2. the component registered, its `component://` root first
     factory.replace_components(plan.components.clone());
-    // 3. the conf merged again with it, what can be live applied
-    match conf_reload::apply_conf(factory, &conf) {
+    // 3. the conf merged again with it, what can be live applied: merged now, with the component registered, under the
+    // lock a setting set while running holds, so one set since the preview is not undone (plans/Runtime-Config.md §8.2)
+    match conf_reload::apply(factory) {
         Ok(applied) => {
             report.problems.extend(applied.problems.iter().cloned());
             report.conf = Some(applied);

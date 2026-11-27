@@ -280,8 +280,11 @@ fn otlp_over_grpc_on_the_https_port() {
     let gate = common::start_with_conf_files(
         "monitor-grpc-https",
         None,
-        r#"<telemetry sample-ratio="0"><receiver grpc-enabled="true"/></telemetry><webapp-list><webapp name="webroot" grpc-listen-port="off"/></webapp-list>"#,
-        &[("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port", "0")],
+        r#"<telemetry sample-ratio="0"><receiver grpc-enabled="true"/></telemetry><webapp-list><webapp name="webroot" grpc-listen-enabled="false"/></webapp-list>"#,
+        &[
+            ("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port", "0"),
+            ("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_enabled", "true"),
+        ],
         &[("cert/localhost.crt", &cert_pem), ("cert/localhost.key", &key_pem)],
     );
     let factory = gate.server.factory();

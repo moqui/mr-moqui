@@ -18,7 +18,8 @@
 //! - the PASS authority for direct clients (`crate::pass_authority`, plans/archive/Edge-Node.md §5.5), when
 //!   `moqui_conf__pass_authority__grpc_enabled=true` (the `edge` feature; in Maximal and Enterprise).
 //!
-//! The webroot webapp's grpc-listen-port and grpc-listen-bind select the dedicated socket for both services.
+//! The webroot webapp's grpc-listen-enabled, grpc-listen-port and grpc-listen-bind select the dedicated socket for both
+//! services (plans/Runtime-Config.md §3.2).
 //! With the HTTPS listener's certificates it serves TLS (ALPN h2), else
 //! plain h2c; then the PASS authority, whose clients send their secrets, is left off (an error logged) unless the
 //! address is loopback or `moqui_conf__pass_authority__grpc_insecure=true`. The edge guard admits each connection as it does for HTTP.
@@ -47,8 +48,9 @@ pub(crate) fn bind_address(factory: &ExecutionContextFactory, ip: std::net::IpAd
     )
 }
 
-/// [`bind_address`] from the settings `setting` and `webroot`; the PASS authority's h2c refusal is logged when `log`
-/// (the listener's own start), not by the port check before it, so it is logged once.
+/// [`bind_address`] from the settings `setting` and `webroot`: none while `grpc-listen-enabled` is not true or no
+/// service is on. The PASS authority's h2c refusal is logged when `log` (the listener's own start), not by the port
+/// check before it, so it is logged once.
 pub(crate) fn bind_address_by(
     setting: crate::monitor::grpc::Setting,
     webroot: &dyn Fn(&str) -> String,
@@ -56,16 +58,19 @@ pub(crate) fn bind_address_by(
     tls: bool,
     log: bool,
 ) -> Option<SocketAddr> {
-    let port = match webroot("grpc-listen-port").trim() {
-        "off" => return None,
-        "" => 4317,
-        text => match text.parse() {
-            Ok(port) => port,
-            Err(err) => {
-                tracing::error!("invalid grpc-listen-port {text}: {err}");
-                return None;
-            }
-        },
+    if !moqui_core::context::conf_env::switch_on(&webroot("grpc-listen-enabled")) {
+        return None;
+    }
+    let text = webroot("grpc-listen-port");
+    let port = match text.trim().parse() {
+        Ok(port) => port,
+        Err(err) => {
+            tracing::error!(
+                "invalid grpc-listen-port \"{}\": {err} (set grpc-listen-enabled=\"false\" to keep it closed)",
+                text.trim()
+            );
+            return None;
+        }
     };
     let ip = match webroot("grpc-listen-bind").trim() {
         "" => web_ip,

@@ -56,15 +56,45 @@ pub(crate) fn client_offering(cert: &Path, alpn: &[&[u8]]) -> tokio_rustls::TlsC
     tokio_rustls::TlsConnector::from(Arc::new(client))
 }
 
+/// The listener is on by its switch, at its written port (plans/Runtime-Config.md §3.2): off keeps it closed whatever
+/// the port says; on, the port is digits, 0 for one of the kernel's choosing, and anything else is refused.
 #[test]
 fn port_rules() {
-    assert_eq!(listen_port("", true).unwrap(), Some(8443));
-    assert_eq!(listen_port("", false).unwrap(), None);
-    assert_eq!(listen_port("0", false).unwrap(), Some(0));
-    assert_eq!(listen_port(" 9443 ", false).unwrap(), Some(9443));
-    assert_eq!(listen_port("off", true).unwrap(), None);
-    assert!(listen_port("-1", true).is_err());
-    assert!(listen_port("abc", true).is_err());
+    let listen = |enabled: &str, port: &str| {
+        Listen::of(&|name: &str| match name {
+            LISTEN_ENABLED => enabled.to_string(),
+            LISTEN_PORT => port.to_string(),
+            _ => String::new(),
+        })
+    };
+    assert_eq!(listen("true", "8443").port().unwrap(), Some(8443));
+    assert_eq!(listen(" TRUE ", " 9443 ").port().unwrap(), Some(9443));
+    assert_eq!(listen("true", "0").port().unwrap(), Some(0));
+    assert_eq!(listen("false", "8443").port().unwrap(), None);
+    assert_eq!(listen("", "8443").port().unwrap(), None, "a switch not written is off");
+    assert_eq!(listen("false", "off").port().unwrap(), None);
+    for refused in ["", "off", "-1", "abc"] {
+        let err = listen("true", refused).port().unwrap_err().to_string();
+        assert!(err.contains("https-listen-enabled"), "{err}");
+    }
+    // the port check requires the port only while the listener will bind it at the start: on, with a certificate or
+    // on a dev instance, which makes one; on with none elsewhere it stands by, binding nothing until ACME
+    let dir = temp_dir("planned");
+    assert_eq!(planned_port(&dir, &listen("false", "8443")).unwrap(), None);
+    assert_eq!(planned_port_on(&dir, &listen("false", "8443"), true).unwrap(), None);
+    assert_eq!(planned_port_on(&dir, &listen("true", "8443"), false).unwrap(), None);
+    assert_eq!(
+        planned_port_on(&dir, &listen("true", "8443"), true).unwrap(),
+        Some(8443)
+    );
+    std::fs::create_dir_all(dir.join("cert")).unwrap();
+    write_pair(&dir.join("cert"), "localhost");
+    assert_eq!(
+        planned_port_on(&dir, &listen("true", "9443"), false).unwrap(),
+        Some(9443)
+    );
+    assert_eq!(planned_port_on(&dir, &listen("false", "9443"), false).unwrap(), None);
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

@@ -1039,11 +1039,6 @@ impl Termination {
     }
 }
 
-/// Empty `webapp-list/webapp[webroot]@http-port` is 8080.
-pub(crate) fn http_port(raw: &str) -> Result<u16, Error> {
-    moqui_core::web::effective_http_port(raw)
-}
-
 async fn health(
     State(state): State<Arc<HttpState>>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,

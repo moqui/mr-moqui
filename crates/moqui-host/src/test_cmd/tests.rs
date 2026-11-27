@@ -587,3 +587,17 @@ fn a_live_agent_run_carries_only_the_llm_settings_of_the_dotenv() {
         ]
     );
 }
+
+/// `--serve` sees a port or switch the user set in any spelling of its environment name, as the conf merge takes it.
+#[cfg(feature = "embedded-postgres")]
+#[test]
+fn serve_sees_a_setting_the_user_named_in_any_spelling() {
+    let selector = "webapp-list/webapp[webroot]@rc1-named-port";
+    assert!(!serve::user_named(selector));
+    let name = "MOQUI_CONF__WEBAPP_LIST__WEBAPP__WEBROOT__RC1_NAMED_PORT";
+    moqui_lib::env::set_property(name, "9443");
+    assert!(serve::user_named(selector));
+    moqui_lib::env::set_property(name, "");
+    assert!(!serve::user_named(selector), "an empty value names nothing");
+    moqui_lib::env::clear_property(name);
+}

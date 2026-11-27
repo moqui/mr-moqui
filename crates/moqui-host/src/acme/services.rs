@@ -268,8 +268,8 @@ fn setup_acme_name(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade)
     if !Acme::of(&factory).has_https() {
         return refuse(
             "httpsOff",
-            "This node has no HTTPS listener (the webroot webapp's https-listen-port is off), so it cannot answer the authority's \
-             challenge",
+            "This node has no HTTPS listener (the webroot webapp's https-listen-enabled is false), so it cannot answer the \
+             authority's challenge",
         );
     }
     let host = normal_name(&text(parameters, "hostName"));

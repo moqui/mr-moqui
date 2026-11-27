@@ -272,3 +272,139 @@ fn a_renamed_attribute_is_refused_naming_its_replacement_from_a_file_or_the_envi
     .unwrap();
     assert!(super::refuse_retired(&current).is_ok());
 }
+
+/// A retired value is refused by name wherever it is set (plans/Runtime-Config.md §8.2): in a conf file, under a keyed
+/// element or not, and by an environment name, which the merged conf holds too; the message names the attribute and its
+/// environment name, and the replacement and its own. Another value of the attribute is not refused.
+#[test]
+fn a_retired_value_is_refused_from_a_file_or_the_environment() {
+    use moqui_lib::node::path::{self, AttrPath};
+    const TABLE: &[super::RetiredValue] = &[
+        (
+            "webapp-list/webapp[webroot]@rc1-listen-port",
+            &["off", ""],
+            "webapp-list/webapp[webroot]@rc1-listen-enabled",
+            "rc1-listen-enabled=\"false\" turns it off and keeps the port",
+        ),
+        ("rc1-server@port", &[""], "rc1-server@enabled", ""),
+    ];
+    let keyed = AttrPath::parse(TABLE[0].0).unwrap();
+    let file = MNode::parse_text("moqui-conf", "<moqui-conf/>").unwrap();
+    let target = path::resolve(&file, &keyed, &crate::context::conf_schema::keying, true).unwrap();
+    target.node.set_attribute(target.attribute.clone(), " OFF ");
+    let err = super::refuse_retired_with(&file, TABLE).unwrap_err().to_string();
+    for named in [
+        "webapp-list/webapp[webroot]@rc1-listen-port",
+        "moqui_conf__webapp_list__webapp__WEBROOT__rc1_listen_port",
+        "webapp-list/webapp[webroot]@rc1-listen-enabled",
+        "moqui_conf__webapp_list__webapp__WEBROOT__rc1_listen_enabled",
+        "\"OFF\"",
+        "keeps the port",
+    ] {
+        assert!(err.contains(named), "{named} not in {err}");
+    }
+    target.node.set_attribute(target.attribute.clone(), "8080");
+    assert!(super::refuse_retired_with(&file, TABLE).is_ok());
+    target.node.set_attribute(target.attribute.clone(), "");
+    let err = super::refuse_retired_with(&file, TABLE).unwrap_err().to_string();
+    assert!(err.contains("set empty"), "{err}");
+
+    // the environment form, in any spelling of the name
+    let conf = MNode::parse_text(
+        "moqui-conf",
+        r#"<moqui-conf><webapp-list><webapp name="webroot"/></webapp-list></moqui-conf>"#,
+    )
+    .unwrap();
+    assert!(super::refuse_retired_with(&conf, TABLE).is_ok());
+    let _ = apply_from(
+        &conf,
+        vec![name(
+            "MOQUI_CONF__WEBAPP_LIST__WEBAPP__WEBROOT__RC1_LISTEN_PORT",
+            "off",
+            Source::Environment,
+        )],
+    );
+    let err = super::refuse_retired_with(&conf, TABLE).unwrap_err().to_string();
+    assert!(
+        err.contains("moqui_conf__webapp_list__webapp__WEBROOT__rc1_listen_port") && err.contains("rc1-listen-enabled"),
+        "{err}"
+    );
+
+    // what a set while running checks, by the path it resolved
+    let server = AttrPath::parse("rc1-server@port").unwrap();
+    assert!(super::retired_value_in(TABLE, &server, " ").is_some());
+    assert!(super::retired_value_in(TABLE, &server, "22").is_none());
+    assert!(super::retired_value_in(TABLE, &AttrPath::parse("rc1-server@host").unwrap(), "").is_none());
+}
+
+/// Each retired value's row names attributes with environment names, its values trimmed and in lower case as they are
+/// compared.
+#[test]
+fn every_retired_value_row_names_attributes_and_compares_its_values() {
+    for (selector, values, replacement, _) in super::RETIRED_VALUES {
+        assert!(!super::env_name_of(selector).is_empty(), "{selector}");
+        assert!(!super::env_name_of(replacement).is_empty(), "{replacement}");
+        for value in *values {
+            assert_eq!(*value, value.trim().to_ascii_lowercase(), "{selector}");
+        }
+    }
+}
+
+/// The web listeners' old spellings of "off" (a port of `off` or empty) are refused, from a conf file or by an
+/// environment name, naming the switch that replaced them; a written port is not (plans/Runtime-Config.md §8.2).
+#[test]
+fn the_web_listeners_old_spellings_of_off_are_refused() {
+    for listener in ["http", "https", "grpc"] {
+        for retired in ["off", " OFF ", ""] {
+            let file = MNode::parse_text(
+                "moqui-conf",
+                &format!(
+                    r#"<moqui-conf><webapp-list><webapp name="webroot" {listener}-listen-port="{retired}"/></webapp-list></moqui-conf>"#
+                ),
+            )
+            .unwrap();
+            let err = super::refuse_retired(&file).unwrap_err().to_string();
+            let switch = format!("webapp-list/webapp[webroot]@{listener}-listen-enabled");
+            assert!(
+                err.contains(&switch) && err.contains(&super::env_name_of(&switch)),
+                "{listener} {retired:?}: {err}"
+            );
+        }
+        let written = MNode::parse_text(
+            "moqui-conf",
+            &format!(
+                r#"<moqui-conf><webapp-list><webapp name="webroot" {listener}-listen-enabled="false" {listener}-listen-port="0"/></webapp-list></moqui-conf>"#
+            ),
+        )
+        .unwrap();
+        assert!(super::refuse_retired(&written).is_ok(), "{listener}");
+        let conf = MNode::parse_text(
+            "moqui-conf",
+            r#"<moqui-conf><webapp-list><webapp name="webroot"/></webapp-list></moqui-conf>"#,
+        )
+        .unwrap();
+        let _ = apply_from(
+            &conf,
+            vec![name(
+                &format!("moqui_conf__webapp_list__webapp__WEBROOT__{listener}_listen_port"),
+                "off",
+                Source::Environment,
+            )],
+        );
+        let err = super::refuse_retired(&conf).unwrap_err().to_string();
+        assert!(err.contains(&format!("{listener}-listen-enabled")), "{err}");
+    }
+}
+
+/// Two spellings of one environment name resolve to one attribute; a name of no conf attribute to none.
+#[test]
+fn an_environment_name_resolves_to_its_attribute_in_any_spelling() {
+    use moqui_lib::node::path::AttrPath;
+    let canonical = super::env_name_path("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_enabled").unwrap();
+    let shouted = super::env_name_path("MOQUI_CONF__WEBAPP_LIST__WEBAPP__WEBROOT__HTTPS_LISTEN_ENABLED").unwrap();
+    assert_eq!(super::compare_key(&canonical), super::compare_key(&shouted));
+    let selector = AttrPath::parse("webapp-list/webapp[webroot]@https-listen-enabled").unwrap();
+    assert_eq!(super::compare_key(&canonical), super::compare_key(&selector));
+    assert!(super::env_name_path("MOQUI_CONF").is_none());
+    assert!(super::env_name_path("cluster_ssh_port").is_none());
+}

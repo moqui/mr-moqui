@@ -396,10 +396,12 @@ RUN_OPTIONS_HELP="$PACKAGE_OPTIONS_HELP
 $EMBED_OPTIONS_HELP"'
   -c, --conf FILE      Runtime conf merged over MoquiDefaultConf.xml (sets MOQUI_CONF); relative to
                        the runtime directory, like conf/MoquiProductionConf.xml, or a path
-  -p, --port N         Plain HTTP port to listen on (also --http-port N, or off); the dev conf has no HTTP
-                       listener without it and serves https://localhost:8443 (for test-client and
-                       test-load, -p is the HTTPS port of the server they reach)
-      --https-port N   HTTPS port to listen on (its https-listen-port), or off
+  -p, --port N         Plain HTTP port to listen on (also --http-port N): N turns http-listen-enabled on
+                       at N, off turns it off; the dev conf has no HTTP listener without it and serves
+                       https://localhost:8443 (for test-client and test-load, -p is the HTTPS port of the
+                       server they reach)
+      --https-port N   HTTPS port to listen on (its https-listen-port, turning https-listen-enabled on),
+                       or off (https-listen-enabled false)
   -D name=value        Set a conf attribute by its environment name (moqui_conf__ssh_server__port;
                        moqui conf env lists them) or a conf property, as an environment variable;
                        repeatable. Use the underscore name, not a dotted one

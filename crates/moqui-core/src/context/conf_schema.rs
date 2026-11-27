@@ -58,6 +58,10 @@ pub enum Group {
     Caches,
     /// The webapp's `web-protection` rules, which the host's guard takes in place, keeping its counters.
     WebProtection,
+    /// The listeners' settings (plans/Runtime-Config.md §3.2): the host's hook queues a reconcile of its listener
+    /// registry, which starts, stops or binds again what changed. A listener's attributes join it in the phase that
+    /// makes that listener live; until then they are restart-class.
+    Listeners,
 }
 
 impl Group {
@@ -69,6 +73,7 @@ impl Group {
             Self::Derived => "derived",
             Self::Caches => "caches",
             Self::WebProtection => "web-protection",
+            Self::Listeners => "listeners",
         }
     }
 }
@@ -198,7 +203,14 @@ pub static CATALOG: &[Unit] = &[
     single("webapp-list", BOOT).children(&[keyed("webapp", &["name"], Class::Live)
         .attrs(&[
             ("http-port", LISTENER),
+            // the web listeners' switches and ports, read once when they bind until RC2 makes them live
+            // (plans/Runtime-Config.md §3.2)
+            ("http-listen-enabled", LISTENER),
             ("http-listen-port", LISTENER),
+            ("https-listen-enabled", LISTENER),
+            ("https-listen-port", LISTENER),
+            ("http-bind", LISTENER),
+            ("grpc-listen-enabled", LISTENER),
             ("grpc-listen-port", LISTENER),
             ("grpc-listen-bind", LISTENER),
             ("https-port", LISTENER),
@@ -480,6 +492,58 @@ pub fn unit(path: &[&str]) -> Option<&'static Unit> {
         units = unit.children;
     }
     found
+}
+
+/// The class of a change to the attribute `attr` of the elements at `path` (the element names from below the root), as
+/// the conf reload's diff takes it: the attribute's class in its unit when a unit names the whole path; the class of the
+/// nearest unit above an element no unit names, whose content it is; [`COMPONENT`] under a top-level element no unit
+/// names (a component's settings); [`UNKNOWN`] for no element at all. What [`super::conf_reload::set`] reports and
+/// runs the hooks of (plans/Runtime-Config.md §8.2).
+#[must_use]
+pub fn attribute_class(path: &[&str], attr: &str) -> Class {
+    match nearest_unit(path) {
+        Nearest::Whole(unit) => unit.attr_class(attr),
+        Nearest::Within(unit) => unit.class,
+        Nearest::Component => COMPONENT,
+        Nearest::Root => UNKNOWN,
+    }
+}
+
+/// The class of a change to the element at `path` itself (added, removed, or its other content), as the conf reload's
+/// diff takes it: its unit's class, the nearest unit's above when no unit names it, [`COMPONENT`] under a top-level
+/// element no unit names, [`UNKNOWN`] for no element at all.
+#[must_use]
+pub fn element_class(path: &[&str]) -> Class {
+    match nearest_unit(path) {
+        Nearest::Whole(unit) | Nearest::Within(unit) => unit.class,
+        Nearest::Component => COMPONENT,
+        Nearest::Root => UNKNOWN,
+    }
+}
+
+/// The unit the elements at `path` belong to.
+enum Nearest {
+    /// A unit names the whole path.
+    Whole(&'static Unit),
+    /// An element on the path no unit names is the content of this unit, the nearest above it.
+    Within(&'static Unit),
+    /// Under a top-level element no unit names.
+    Component,
+    /// No element.
+    Root,
+}
+
+fn nearest_unit(path: &[&str]) -> Nearest {
+    let mut units: &'static [Unit] = CATALOG;
+    let mut found: Option<&'static Unit> = None;
+    for name in path {
+        let Some(unit) = units.iter().find(|unit| unit.name == *name) else {
+            return found.map_or(Nearest::Component, Nearest::Within);
+        };
+        found = Some(unit);
+        units = unit.children;
+    }
+    found.map_or(Nearest::Root, Nearest::Whole)
 }
 
 /// How the elements at `path` are told apart: their unit's key, or the first of the name ([`Key::Single`]) for an

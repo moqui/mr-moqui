@@ -213,7 +213,8 @@ fn lsof_holders_pairs_pid_and_command() {
 fn disabling_http_preserves_the_web_bind_address_and_explicit_test_ports() {
     let setting = |name: &str| match name {
         "http-bind" => "::1".to_owned(),
-        "http-listen-port" => "off".to_owned(),
+        "http-listen-enabled" => "false".to_owned(),
+        "http-listen-port" => "8080".to_owned(),
         _ => String::new(),
     };
     let web = crate::listen_address(&ListenBind::Property, &setting).unwrap().unwrap();
@@ -222,4 +223,30 @@ fn disabling_http_preserves_the_web_bind_address_and_explicit_test_ports() {
     let explicit = ListenBind::Address("127.0.0.1:0".parse().unwrap());
     let web = crate::listen_address(&explicit, &setting).unwrap().unwrap();
     assert_eq!(web.http_port, Some(0));
+}
+
+/// The HTTP listener binds its own written port when its switch is on, and no longer follows http-port, the port of the
+/// URLs the server writes (plans/Runtime-Config.md §3.2); an empty or "off" port is not one.
+#[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
+#[test]
+fn http_listens_on_its_own_port_when_its_switch_is_on() {
+    let setting = |port: &'static str| {
+        move |name: &str| match name {
+            "http-listen-enabled" => " True ".to_owned(),
+            "http-listen-port" => port.to_owned(),
+            "http-port" => "9090".to_owned(),
+            _ => String::new(),
+        }
+    };
+    let web = crate::listen_address(&ListenBind::Property, &setting("8081"))
+        .unwrap()
+        .unwrap();
+    assert_eq!(web.ip, std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
+    assert_eq!(web.http_port, Some(8081));
+    for refused in ["", "off"] {
+        let Err(err) = crate::listen_address(&ListenBind::Property, &setting(refused)) else {
+            panic!("{refused:?} is not a port");
+        };
+        assert!(err.to_string().contains("http-listen-port"), "{err}");
+    }
 }

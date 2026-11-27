@@ -40,6 +40,12 @@ const GRPC: &str = "gRPC";
 /// The row of a web listener of a node reached in process only.
 const IN_PROCESS: &str = "no port, reached in process only";
 
+/// The web listeners' switches (plans/Runtime-Config.md §3.2), which their Off rows name.
+const HTTP_ENABLED: &str = "webapp-list/webapp[webroot]@http-listen-enabled";
+const HTTPS_ENABLED: &str = "webapp-list/webapp[webroot]@https-listen-enabled";
+#[cfg(feature = "grpc")]
+const GRPC_ENABLED: &str = "webapp-list/webapp[webroot]@grpc-listen-enabled";
+
 /// How long a bind on the axum runtime may take before it is given up (`worker::on_runtime`).
 const BIND_LIMIT: Duration = Duration::from_secs(30);
 
@@ -112,8 +118,8 @@ impl Listener for Http {
 
     fn selectors(&self) -> &'static [&'static str] {
         &[
+            HTTP_ENABLED,
             "webapp-list/webapp[webroot]@http-listen-port",
-            "webapp-list/webapp[webroot]@http-port",
             "webapp-list/webapp[webroot]@http-bind",
         ]
     }
@@ -157,7 +163,7 @@ impl Listener for Http {
 pub(super) fn http_wanted(bind: &crate::ListenBind, webroot: &dyn Fn(&str) -> String) -> Wanted<SocketAddr, ()> {
     match crate::listen_address(bind, webroot) {
         Ok(None) => Wanted::Off(IN_PROCESS.to_string()),
-        Ok(Some(crate::WebBind { http_port: None, .. })) => Wanted::Off("http-listen-port".to_string()),
+        Ok(Some(crate::WebBind { http_port: None, .. })) => Wanted::Off(format!("{HTTP_ENABLED} is false")),
         Ok(Some(crate::WebBind {
             ip,
             http_port: Some(port),
@@ -189,9 +195,8 @@ pub(super) fn https_wanted(bind: &crate::ListenBind, plan: Option<HttpsPlan>) ->
             },
             in_place: (),
         },
-        None => {
-            Wanted::Off("no certificate in runtime/cert, or the webroot webapp's https-listen-port is off".to_string())
-        }
+        // with no certificate the plan stands by: only the switch leaves none
+        None => Wanted::Off(format!("{HTTPS_ENABLED} is false")),
     }
 }
 
@@ -221,6 +226,7 @@ impl Listener for Https {
 
     fn selectors(&self) -> &'static [&'static str] {
         &[
+            HTTPS_ENABLED,
             "webapp-list/webapp[webroot]@https-listen-port",
             "webapp-list/webapp[webroot]@http-bind",
         ]
@@ -310,7 +316,7 @@ impl Listener for Grpc {
     }
 
     fn selectors(&self) -> &'static [&'static str] {
-        &["webapp-list/webapp[webroot]@grpc-listen-port"]
+        &[GRPC_ENABLED, "webapp-list/webapp[webroot]@grpc-listen-port"]
     }
 
     /// The PASS authority's h2c refusal is logged by the boot's reading only, so it is logged once.
@@ -318,7 +324,16 @@ impl Listener for Grpc {
         let Some(web) = ctx.web else {
             return Wanted::NotYet;
         };
-        let off = || Wanted::Off("grpc-listen-port is off or no dedicated gRPC service is enabled".to_string());
+        let off = || {
+            if moqui_core::context::conf_env::switch_on(&webroot_setting("grpc-listen-enabled")) {
+                Wanted::Off(
+                    "no dedicated gRPC service is enabled (telemetry/receiver@grpc-enabled, pass-authority@grpc-enabled)"
+                        .to_string(),
+                )
+            } else {
+                Wanted::Off(format!("{GRPC_ENABLED} is false"))
+            }
+        };
         let Ok(Some(web_bind)) = crate::listen_address(&ctx.boot.bind, &webroot_setting) else {
             return off();
         };

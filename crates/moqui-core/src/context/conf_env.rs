@@ -206,6 +206,52 @@ pub fn apply_from(conf: &MNode, names: Vec<(String, String, Source)>) -> Vec<Ove
     out
 }
 
+/// The environment names the boot's merge took into a factory's conf, each with its source and selector
+/// (plans/Runtime-Config.md §8.2): kept so that what set a value can be told later (the listeners' upgrade warning, where
+/// each listener setting comes from), and what outranks a value [`super::conf_reload::set`] keeps.
+struct BootOverrides(Vec<Override>);
+
+/// Keep `overrides`, what the boot's merge did with each environment name, on `factory` ([`boot_overrides`]); the
+/// boot calls it once.
+pub(crate) fn keep_boot_overrides(factory: &super::ExecutionContextFactory, overrides: Vec<Override>) {
+    factory.extension(move |_| BootOverrides(overrides));
+}
+
+/// What the boot's merge did with each environment name of `factory`'s conf, highest source first: set or added an
+/// attribute, shadowed by a higher name, or refused. Empty for a factory not booted from the conf files (a test's).
+#[must_use]
+pub fn boot_overrides(factory: &super::ExecutionContextFactory) -> Vec<Override> {
+    factory
+        .extension_if_present::<BootOverrides>()
+        .map(|kept| kept.0.clone())
+        .unwrap_or_default()
+}
+
+/// The sources whose names set or named the attribute at `path` at the boot, each once, highest first: a `-D` that set
+/// it, then the environment when it names it too, and so on. A refused name names nothing.
+#[must_use]
+pub fn boot_sources(factory: &super::ExecutionContextFactory, path: &AttrPath) -> Vec<Source> {
+    let Some(kept) = factory.extension_if_present::<BootOverrides>() else {
+        return Vec::new();
+    };
+    let key = compare_key(path);
+    let mut sources = Vec::new();
+    for item in &kept.0 {
+        if matches!(item.outcome, Outcome::Refused(_)) || sources.contains(&item.source) {
+            continue;
+        }
+        let names = item
+            .selector
+            .as_deref()
+            .and_then(|selector| AttrPath::parse(selector).ok())
+            .is_some_and(|named| compare_key(&named) == key);
+        if names {
+            sources.push(item.source);
+        }
+    }
+    sources
+}
+
 /// A path as names compare: each element, key and the attribute normalized; two paths that name one attribute have one
 /// key.
 #[must_use]
@@ -455,6 +501,13 @@ pub fn setting_or_property(name: &str) -> String {
     }
 }
 
+/// Whether a listener's switch (`http-listen-enabled`, plans/Runtime-Config.md §8.2) is on: `true`, trimmed and in any
+/// case. Anything else, empty included, is off.
+#[must_use]
+pub fn switch_on(value: &str) -> bool {
+    value.trim().eq_ignore_ascii_case("true")
+}
+
 /// [`setting`] of an attribute of the `webroot` webapp (`http-host`).
 #[must_use]
 pub fn webroot_setting(attribute: &str) -> String {
@@ -507,12 +560,19 @@ pub fn attribute_secret(path: &AttrPath) -> bool {
 /// conf tree needed. False for any other name.
 #[must_use]
 pub fn env_name_secret(name: &str) -> bool {
-    let Some(segments) = path::env_segments(name) else {
-        return false;
-    };
+    env_name_path(name).is_some_and(|path| attribute_secret(&path))
+}
+
+/// The attribute the environment name `name` sets, in any of its spellings, as the conf merge resolves it ([`apply_from`]),
+/// its segments split as the schema keys them, with no conf tree needed; `None` for a name that is not one of the conf.
+/// Two names of one attribute have paths with one [`compare_key`].
+#[must_use]
+pub fn env_name_path(name: &str) -> Option<AttrPath> {
+    let segments = path::env_segments(name)?;
     let scratch = MNode::new("moqui-conf");
     path::resolve_env(&scratch, &segments, &conf_schema::keying, true)
-        .is_ok_and(|target| attribute_secret(&target.path))
+        .ok()
+        .map(|target| target.path)
 }
 
 /// Whether `selector` names a secret attribute, by the conf schema or by its name ([`attribute_secret`]); true for
@@ -556,16 +616,88 @@ pub const RETIRED_ATTRIBUTES: &[(&str, &str)] = &[
     ),
 ];
 
+/// A conf value retired while its attribute stays (plans/Runtime-Config.md §3.2): the attribute's selector, the values
+/// no longer read (trimmed and in lower case, `""` for empty), the attribute that replaced them, and a hint saying what
+/// to write.
+pub type RetiredValue = (&'static str, &'static [&'static str], &'static str, &'static str);
+
+/// The conf values retired, each refused by name wherever it is set: in a conf file, by its environment name
+/// ([`refuse_retired`]) or while running ([`super::conf_reload::set`]). The listeners' old spellings of "off" (a port of
+/// `off` or empty, plans/Runtime-Config.md §8.2) join it as each family gets its `enabled` switch.
+pub const RETIRED_VALUES: &[RetiredValue] = &[
+    (
+        "webapp-list/webapp[webroot]@http-listen-port",
+        &["off", ""],
+        "webapp-list/webapp[webroot]@http-listen-enabled",
+        "false keeps it closed; otherwise write the port, 8080 by default: http-listen-port no longer follows http-port",
+    ),
+    (
+        "webapp-list/webapp[webroot]@https-listen-port",
+        &["off", ""],
+        "webapp-list/webapp[webroot]@https-listen-enabled",
+        "false keeps it closed; otherwise write the port, 8443 by default",
+    ),
+    (
+        "webapp-list/webapp[webroot]@grpc-listen-port",
+        &["off", ""],
+        "webapp-list/webapp[webroot]@grpc-listen-enabled",
+        "false keeps it closed; otherwise write the port, 4317 by default",
+    ),
+];
+
+/// Why `value` of the attribute at `path` is refused, when it is a retired value ([`RETIRED_VALUES`]): the message names
+/// the attribute and its environment name, and the replacement and its own; `None` for any other value.
+#[must_use]
+pub fn retired_value(path: &AttrPath, value: &str) -> Option<String> {
+    retired_value_in(RETIRED_VALUES, path, value)
+}
+
+/// [`retired_value`] by the rows of `table`.
+pub(crate) fn retired_value_in(table: &[RetiredValue], path: &AttrPath, value: &str) -> Option<String> {
+    table.iter().find_map(|row| retired_row_message(row, path, value))
+}
+
+/// The message for `value` of the attribute at `path` when `row` retires it.
+fn retired_row_message(row: &RetiredValue, path: &AttrPath, value: &str) -> Option<String> {
+    let (selector, values, replacement, hint) = row;
+    let retired = AttrPath::parse(selector).ok()?;
+    let given = value.trim().to_ascii_lowercase();
+    if compare_key(&retired) != compare_key(path) || !values.contains(&given.as_str()) {
+        return None;
+    }
+    let shown = match value.trim() {
+        "" => "empty".to_string(),
+        trimmed => format!("\"{trimmed}\""),
+    };
+    let hint = if hint.is_empty() {
+        String::new()
+    } else {
+        format!(" ({hint})")
+    };
+    Some(format!(
+        "{} ({}) set {shown} is a retired value: set {replacement} ({}) instead{hint}",
+        path.selector(),
+        path.env_name().unwrap_or_default(),
+        env_name_of(replacement)
+    ))
+}
+
 /// Refuse a merged conf that still uses the retired properties (plans/archive/Conf-Paths.md, phase 7): a `default-property`,
 /// which nothing reads, and an attribute holding `${`, which is not expanded (an `actions` block's XML actions are not
-/// conf attributes and keep theirs); and a renamed attribute ([`RETIRED_ATTRIBUTES`]), from a conf file or from its
-/// environment name, which the merged conf holds too. Each is logged, naming its attribute and the environment name
-/// that sets it, and for a renamed one its replacement.
+/// conf attributes and keep theirs); a renamed attribute ([`RETIRED_ATTRIBUTES`]); and a retired value
+/// ([`RETIRED_VALUES`]); from a conf file or from its environment name, which the merged conf holds too. Each is logged,
+/// naming its attribute and the environment name that sets it, and for a renamed one or a retired value its
+/// replacement.
 ///
 /// # Errors
 ///
 /// When the conf has any.
 pub fn refuse_retired(conf: &MNode) -> Result<(), Error> {
+    refuse_retired_with(conf, RETIRED_VALUES)
+}
+
+/// [`refuse_retired`] with the retired values of `values`.
+pub(crate) fn refuse_retired_with(conf: &MNode, values: &[RetiredValue]) -> Result<(), Error> {
     let mut found = Vec::new();
     for (retired, replacement) in RETIRED_ATTRIBUTES {
         let set = AttrPath::parse(retired)
@@ -578,6 +710,21 @@ pub fn refuse_retired(conf: &MNode) -> Result<(), Error> {
                 env_name_of(retired),
                 env_name_of(replacement)
             ));
+        }
+    }
+    for row in values {
+        let Ok(path) = AttrPath::parse(row.0) else {
+            continue;
+        };
+        let Ok(target) = path::resolve(conf, &path, &conf_schema::keying, false) else {
+            continue;
+        };
+        let message = target
+            .node
+            .attribute(&target.attribute)
+            .and_then(|value| retired_row_message(row, &target.path, &value));
+        if let Some(message) = message {
+            found.push(message);
         }
     }
     for node in conf.children_named("default-property") {
@@ -595,7 +742,7 @@ pub fn refuse_retired(conf: &MNode) -> Result<(), Error> {
         tracing::error!("Conf: {item}");
     }
     Err(Error::new(format!(
-        "the conf uses retired properties or attributes (plans/archive/Conf-Paths.md, docs/Run-Deploy.md): {}",
+        "the conf uses retired properties, attributes or values (plans/archive/Conf-Paths.md, docs/Run-Deploy.md): {}",
         found.join("; ")
     )))
 }

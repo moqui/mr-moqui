@@ -196,7 +196,7 @@ pub(crate) fn start(
         (true, None) => {
             tracing::error!(
                 "instance@node-role is {}, but the HTTPS listener is off (no certificate in runtime/cert, or \
-                 https-listen-port off): this node takes no links",
+                 webapp-list/webapp[webroot]@https-listen-enabled is false): this node takes no links",
                 role.as_str()
             );
             None

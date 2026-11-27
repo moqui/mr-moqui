@@ -43,6 +43,8 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:simpleType><xs:restriction base="xs:token"><xs:enumeration value="true"/><xs:enumeration value="false"/></xs:restriction></xs:simpleType>
         <xs:simpleType><xs:restriction base="xs:string"><xs:pattern value="\$\{.*"/></xs:restriction></xs:simpleType>
     </xs:union></xs:simpleType>
+    <!-- A TCP or UDP port: digits, 0 for one of the kernel's choosing -->
+    <xs:simpleType name="port"><xs:restriction base="xs:string"><xs:pattern value="[0-9]{1,5}"/></xs:restriction></xs:simpleType>
     <xs:simpleType name="non-neg-int-expandable"><xs:union>
         <xs:simpleType><xs:restriction base="xs:nonNegativeInteger"/></xs:simpleType>
         <xs:simpleType><xs:restriction base="xs:string"><xs:pattern value="\$\{.*"/></xs:restriction></xs:simpleType>

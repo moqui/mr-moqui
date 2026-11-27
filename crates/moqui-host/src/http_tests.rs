@@ -22,9 +22,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Semaphore;
 
-use super::{
-    header_map, http_port, serve, status_allowed, status_request_allowed, ListenLimits, TlsConnection, WebApp,
-};
+use super::{header_map, serve, status_allowed, status_request_allowed, ListenLimits, TlsConnection, WebApp};
 use crate::guard::Guard;
 use crate::tls;
 
@@ -812,12 +810,14 @@ fn repeated_headers_join_and_cookies_join_as_pairs() {
     );
 }
 
+/// The port of the URLs the server writes (the HTTP listener no longer follows it, plans/Runtime-Config.md §3.2).
 #[test]
 fn empty_webapp_http_port_is_8080() {
-    assert_eq!(http_port("").unwrap(), 8080);
-    assert_eq!(http_port("  ").unwrap(), 8080);
-    assert_eq!(http_port("9090").unwrap(), 9090);
-    assert!(http_port("nope").is_err());
+    use moqui_core::web::effective_http_port;
+    assert_eq!(effective_http_port("").unwrap(), 8080);
+    assert_eq!(effective_http_port("  ").unwrap(), 8080);
+    assert_eq!(effective_http_port("9090").unwrap(), 9090);
+    assert!(effective_http_port("nope").is_err());
 }
 
 #[test]

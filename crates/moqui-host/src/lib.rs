@@ -558,9 +558,10 @@ pub fn start_server(
 }
 
 /// Start the server in the calling program on the runtime at `runtime_dir`, as `moqui` run does: the listeners from
-/// the properties (`webapp-list/webapp[webroot]@http-port`, `webapp-list/webapp[webroot]@http-bind`, `cluster-member@https-port` and the rest, which the caller sets
-/// with [`moqui_lib::env::set_property`] first), the embedded cluster in `db/embedded`, and the framework from
-/// `MOQUI_FRAMEWORK` or beside the runtime. For a program that hosts the node itself, such as the desktop app
+/// the conf and the properties the caller sets with [`moqui_lib::env::set_property`] first (each listener's switch and
+/// port, `webapp-list/webapp[webroot]@http-listen-enabled` and `@http-listen-port`, `@http-bind`,
+/// `cluster-member@https-port` and the rest; plans/Runtime-Config.md §3.2), the embedded cluster in `db/embedded`, and
+/// the framework from `MOQUI_FRAMEWORK` or beside the runtime. For a program that hosts the node itself, such as the desktop app
 /// (plans/Mobile-Desktop.md, configuration 2). Drop the returned server to stop it and the postmaster.
 ///
 /// # Errors
@@ -1816,15 +1817,8 @@ fn serve_thread(
         .as_ref()
         .ok_or_else(|| moqui_lib::error::Error::new("http server has no runtime"))?;
     // After the boot, as for the HTTP port: conf defaults and runtime/.env are read there.
-    let listen_port = moqui_core::context::conf_env::webroot_setting("https-listen-port");
-    let https = match address.map(|address| {
-        tls::plan(
-            &runtime_dir,
-            address.ip,
-            matches!(bind, ListenBind::Property),
-            &listen_port,
-        )
-    }) {
+    let https_listen = tls::Listen::of(&moqui_core::context::conf_env::webroot_setting);
+    let https = match address.map(|address| tls::plan(&runtime_dir, address.ip, &https_listen)) {
         None => None,
         Some(Ok(https)) => https,
         Some(Err(err)) => {
@@ -1907,10 +1901,12 @@ fn listen_address(
             http_port: Some(address.port()),
         })),
         ListenBind::Property => {
-            let http_port = match webroot("http-listen-port").trim() {
-                "off" => None,
-                "" => Some(http::http_port(&webroot("http-port"))?),
-                port => Some(http::http_port(port)?),
+            // the listener's switch and its own port (plans/Runtime-Config.md §3.2); http-port is the port of the URLs
+            // the server writes, which it no longer follows
+            let http_port = if moqui_core::context::conf_env::switch_on(&webroot("http-listen-enabled")) {
+                Some(web_listen_port("http-listen-port", &webroot("http-listen-port"))?)
+            } else {
+                None
             };
             // http-bind: the address to listen on, every address when empty (127.0.0.1 keeps a dev instance local);
             // http-host stays the host name of the URLs the server writes
@@ -1927,6 +1923,18 @@ fn listen_address(
             Ok(Some(WebBind { ip, http_port }))
         }
     }
+}
+
+/// A web listener's written port `text` (`name`, for the message): digits, 0 for one of the kernel's choosing.
+///
+/// # Errors
+///
+/// When it is not a port, empty included (a retired value the boot refuses by name; plans/Runtime-Config.md §8.2).
+#[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
+fn web_listen_port(name: &str, text: &str) -> Result<u16, moqui_lib::error::Error> {
+    text.trim().parse().map_err(|_| {
+        moqui_lib::error::Error::new(format!("the webroot webapp's {name} \"{}\" is not a port", text.trim()))
+    })
 }
 
 #[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]

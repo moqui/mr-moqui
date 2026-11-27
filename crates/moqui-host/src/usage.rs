@@ -60,12 +60,14 @@ Help
   version                                                   The version, package and features of this binary
 
 Server options
-  -p, --port N       The plain HTTP port to listen on, or off (--http-port N); it sets http-port and
-                     http-listen-port. Without it HTTP follows http-listen-port: off in the dev conf, which
-                     listens on HTTPS 8443 only; 8080 otherwise. (For moqui test-client and test-load, -p is
-                     the HTTPS port of the server they reach.) Also: port=N, -port=N, --port=N.
-  --https-port N     HTTPS port to listen on (the webroot webapp's https-listen-port, default 8443), or 'off'. Certificates
-                     are looked up by domain in runtime/cert (<domain>.crt and <domain>.key). Also: https-port=N.
+  -p, --port N       The plain HTTP port to listen on, or off (--http-port N): N sets http-port and
+                     http-listen-port and turns http-listen-enabled on; off sets http-listen-enabled false.
+                     Without it HTTP follows http-listen-enabled: false in the dev conf, which listens on
+                     HTTPS 8443 only; on 8080 otherwise. (For moqui test-client and test-load, -p is the
+                     HTTPS port of the server they reach.) Also: port=N, -port=N, --port=N.
+  --https-port N     HTTPS port to listen on, or off: N sets https-listen-port (default 8443) and turns
+                     https-listen-enabled on; off sets it false. Certificates are looked up by domain in
+                     runtime/cert (<domain>.crt and <domain>.key). Also: https-port=N.
   -c, --conf FILE    Runtime conf, relative to the runtime directory or absolute.
                      Also: conf=FILE, -conf=FILE, --conf=FILE. Same as MOQUI_CONF for this run.
   --no-run-es        Do not start OpenSearch (search-facade/cluster@run false). Also: no-run-es, -no-run-es.
@@ -94,10 +96,11 @@ Environment
                      <dir>/chromium (default: install in the runtime directory)
   MOQUI_EMBEDDED_SHA256_RUNTIME, _POSTGRES, _OPENSEARCH, _CHROMIUM
                      The checksum each part built in must have, checked at startup (moqui help embedded)
-  moqui_conf__webapp_list__webapp__WEBROOT__http_port
-                     HTTP port (default 8080); __https_listen_port the HTTPS one (8443),
-                     moqui_conf__cluster_member__https_port the cluster's (8444); __https_port is the HTTPS port
-                     in generated URLs (empty is 443).
+  moqui_conf__webapp_list__webapp__WEBROOT__http_listen_port
+                     HTTP port (default 8080), on while __http_listen_enabled is true; __https_listen_port the
+                     HTTPS one (8443, __https_listen_enabled), moqui_conf__cluster_member__https_port the
+                     cluster's (8444); __http_port and __https_port are the ports in generated URLs (empty is
+                     80 and 443).
   moqui_conf__entity_facade__datasource__TRANSACTIONAL__database_conf_name
                      postgres, mysql, or mysql8 for an external server; otherwise embedded (moqui help conf)
 
@@ -999,11 +1002,14 @@ impl ServerOptions {
     }
 }
 
-/// The webroot webapp's `http-port` by its environment name, which `-p` sets (plans/archive/Conf-Paths.md §1).
+/// The webroot webapp's HTTP listener's port and switch, and `http-port` (the port of the URLs it writes), by their
+/// environment names, which `-p` sets (plans/archive/Conf-Paths.md §1, plans/Runtime-Config.md §3.2).
 pub const HTTP_LISTEN_PORT: &str = "moqui_conf__webapp_list__webapp__WEBROOT__http_listen_port";
+pub const HTTP_LISTEN_ENABLED: &str = "moqui_conf__webapp_list__webapp__WEBROOT__http_listen_enabled";
 pub const HTTP_PORT: &str = "moqui_conf__webapp_list__webapp__WEBROOT__http_port";
-/// The webroot webapp's `https-listen-port` by its environment name, which `--https-port` sets.
+/// The webroot webapp's HTTPS listener's port and switch by their environment names, which `--https-port` sets.
 pub const HTTPS_LISTEN_PORT: &str = "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port";
+pub const HTTPS_LISTEN_ENABLED: &str = "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_enabled";
 
 /// Parse server options. This does not start the server or set properties.
 ///
@@ -1024,10 +1030,10 @@ pub fn parse_server_args(args: &[impl AsRef<str>]) -> Result<ServerOptions, Erro
             set_http_port(&mut opts, value)?;
             index += 1;
         } else if let Some(value) = equals_value(arg, "https-port") {
-            opts.push(HTTPS_LISTEN_PORT, parse_https_port(value)?);
+            set_https_port(&mut opts, value)?;
         } else if arg == "--https-port" {
             let value = next_value(&args, index, arg, "a port number or off")?;
-            opts.push(HTTPS_LISTEN_PORT, parse_https_port(value)?);
+            set_https_port(&mut opts, value)?;
             index += 1;
         } else if let Some(value) = equals_value(arg, "conf") {
             require_conf(value)?;
@@ -1083,14 +1089,28 @@ fn require_conf(value: &str) -> Result<(), Error> {
     }
 }
 
-/// An explicit empty or non-numeric port is an error. An unset `http-port` still means 8080.
+/// `-p N`: the HTTP listener on, at N, which the URLs name too; `-p off`: the listener off, its port kept (shorthand for
+/// the switch, plans/Runtime-Config.md §3.2). An explicit empty or non-numeric port is an error.
 fn set_http_port(opts: &mut ServerOptions, raw: &str) -> Result<(), Error> {
     if raw.trim() == "off" {
-        opts.push(HTTP_LISTEN_PORT, "off".to_string());
+        opts.push(HTTP_LISTEN_ENABLED, "false");
     } else {
         let port = parse_port(raw)?.to_string();
         opts.push(HTTP_PORT, port.clone());
         opts.push(HTTP_LISTEN_PORT, port);
+        opts.push(HTTP_LISTEN_ENABLED, "true");
+    }
+    Ok(())
+}
+
+/// `--https-port N`: the HTTPS listener on, at N; `--https-port off`: off, its port kept.
+fn set_https_port(opts: &mut ServerOptions, raw: &str) -> Result<(), Error> {
+    match parse_https_port(raw)? {
+        Some(port) => {
+            opts.push(HTTPS_LISTEN_PORT, port.to_string());
+            opts.push(HTTPS_LISTEN_ENABLED, "true");
+        }
+        None => opts.push(HTTPS_LISTEN_ENABLED, "false"),
     }
     Ok(())
 }
@@ -1104,14 +1124,14 @@ fn parse_port(raw: &str) -> Result<u16, Error> {
         .map_err(|_| Error::new(format!("http-port {raw} is not a port")))
 }
 
-/// A port, or `off` to turn the HTTPS listener off.
-fn parse_https_port(raw: &str) -> Result<String, Error> {
+/// A port, or `None` for `off`, which turns the HTTPS listener off.
+fn parse_https_port(raw: &str) -> Result<Option<u16>, Error> {
     let raw = raw.trim();
     if raw == "off" {
-        return Ok(raw.to_string());
+        return Ok(None);
     }
     raw.parse::<u16>()
-        .map(|port| port.to_string())
+        .map(Some)
         .map_err(|_| Error::new(format!("https-listen-port {raw} is not a port or off")))
 }
 

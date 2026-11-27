@@ -29,12 +29,17 @@ fn owned(args: &[&str]) -> Vec<String> {
     args.iter().copied().map(str::to_string).collect()
 }
 
+/// `-p N` turns the HTTP listener on at N, which the URLs name too; `-p off` turns it off and keeps its port
+/// (plans/Runtime-Config.md §3.2).
 #[test]
 fn usage_port_forms_set_the_http_port() {
     let off = parse(&["--http-port=off"]);
-    assert_eq!(off.value(super::HTTP_LISTEN_PORT), Some("off"));
+    assert_eq!(off.value(super::HTTP_LISTEN_ENABLED), Some("false"));
+    assert_eq!(off.value(super::HTTP_LISTEN_PORT), None);
     assert_eq!(off.value(super::HTTP_PORT), None);
-    assert_eq!(parse(&["--http-port", "0"]).value(super::HTTP_LISTEN_PORT), Some("0"));
+    let on = parse(&["--http-port", "0"]);
+    assert_eq!(on.value(super::HTTP_LISTEN_PORT), Some("0"));
+    assert_eq!(on.value(super::HTTP_LISTEN_ENABLED), Some("true"));
     assert_eq!(parse(&["--port", "8081"]).value(super::HTTP_PORT), Some("8081"));
     assert_eq!(parse(&["--port=8081"]).value(super::HTTP_PORT), Some("8081"));
     assert_eq!(parse(&["-port=8081"]).value(super::HTTP_PORT), Some("8081"));
@@ -62,12 +67,16 @@ fn usage_port_errors_name_the_problem() {
     assert!(spaced.contains("unknown option '-port'"), "{spaced}");
 }
 
+/// `--https-port N` turns the HTTPS listener on at N; `off` turns it off and keeps its port.
 #[test]
 fn usage_https_port_forms_set_the_https_listen_port() {
-    let listen = super::HTTPS_LISTEN_PORT;
+    let (listen, enabled) = (super::HTTPS_LISTEN_PORT, super::HTTPS_LISTEN_ENABLED);
     assert_eq!(parse(&["--https-port", "9443"]).value(listen), Some("9443"));
+    assert_eq!(parse(&["--https-port", "9443"]).value(enabled), Some("true"));
     assert_eq!(parse(&["--https-port=9443"]).value(listen), Some("9443"));
-    assert_eq!(parse(&["https-port=off"]).value(listen), Some("off"));
+    let off = parse(&["https-port=off"]);
+    assert_eq!(off.value(enabled), Some("false"));
+    assert_eq!(off.value(listen), None);
     assert_eq!(
         parse(&["--https-port", "9443"]).value("moqui_conf__webapp_list__webapp__WEBROOT__https_port"),
         None

@@ -99,9 +99,14 @@ fn both_modes_listen_on_loopback_only() {
         Some("51234")
     );
     assert_eq!(
-        get("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port"),
-        Some("off")
+        get("moqui_conf__webapp_list__webapp__WEBROOT__http_listen_enabled"),
+        Some("true")
     );
+    assert_eq!(
+        get("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_enabled"),
+        Some("false")
+    );
+    assert_eq!(get("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port"), None);
     assert_eq!(get("moqui_conf__cluster_member__bind_address"), Some("127.0.0.1"));
     assert_eq!(
         get("moqui_conf__webapp_list__webapp__WEBROOT__allowed_hosts"),

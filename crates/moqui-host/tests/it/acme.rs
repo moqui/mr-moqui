@@ -272,6 +272,7 @@ fn https_starts_for_a_name_set_up_with_acme_and_answers_only_its_challenge() {
                 "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
                 &https_port_text,
             ),
+            ("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_enabled", "true"),
             ("moqui_conf__acme__directory_url", &directory),
             // the reachability check connects where the authority would, here the node's own HTTPS port
             ("moqui_conf__acme__challenge_port", &https_port_text),
@@ -475,6 +476,7 @@ fn an_order_gets_a_certificate_the_listener_serves_and_the_job_renews_it() {
                 "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
                 &https_port_text,
             ),
+            ("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_enabled", "true"),
             ("moqui_conf__acme__directory_url", &authority.directory),
             ("moqui_conf__acme__directory_ca", "acme-root.pem"),
         ],
@@ -584,10 +586,13 @@ fn a_challenge_another_member_writes_or_closes_is_answered_as_it_is_now() {
     let (_member, _member_runtime) = crate::common::start_member(
         "acme-member",
         &gate.cluster_dir,
-        &[(
-            "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
-            &port_text,
-        )],
+        &[
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                &port_text,
+            ),
+            ("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_enabled", "true"),
+        ],
     );
     let member = SocketAddr::from(([127, 0, 0, 1], port));
     wait_until(
@@ -658,10 +663,13 @@ fn the_edge_node_passes_a_passthrough_names_challenge_down_the_tunnel() {
         "acme-local",
         None,
         "",
-        &[(
-            "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
-            &local_port,
-        )],
+        &[
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                &local_port,
+            ),
+            ("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_enabled", "true"),
+        ],
     );
     let edge_port_text = edge_port.to_string();
     let edge = crate::common::start_second_with(
@@ -673,6 +681,7 @@ fn the_edge_node_passes_a_passthrough_names_challenge_down_the_tunnel() {
                 "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
                 &edge_port_text,
             ),
+            ("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_enabled", "true"),
         ],
         &[("cert/default.crt", &edge_cert), ("cert/default.key", &edge_key)],
     );
@@ -818,10 +827,13 @@ fn acceptance_certificates_for_an_edge_node_and_its_local_node() {
         ("moqui_conf__acme__directory_ca", "acme-root.pem"),
         ("moqui_conf__acme__challenge_port", edge_port_text.as_str()),
     ];
-    let mut local_properties = vec![(
-        "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
-        local_port.as_str(),
-    )];
+    let mut local_properties = vec![
+        (
+            "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+            local_port.as_str(),
+        ),
+        ("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_enabled", "true"),
+    ];
     local_properties.extend(acme);
     // the local node has no certificate at all
     let local = crate::common::start_with_conf_files(
@@ -837,6 +849,7 @@ fn acceptance_certificates_for_an_edge_node_and_its_local_node() {
             "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
             edge_port_text.as_str(),
         ),
+        ("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_enabled", "true"),
     ];
     edge_properties.extend(acme);
     let edge = crate::common::start_second_with(

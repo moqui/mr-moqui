@@ -21,7 +21,7 @@ task_test_client() {
     server=()
     for prop in "${OPT_PROPS[@]}"; do
         case $prop in
-            moqui_conf__webapp_list__webapp__WEBROOT__http_listen_port=off) die 'client -p needs a numeric HTTPS port' ;;
+            moqui_conf__webapp_list__webapp__WEBROOT__http_listen_enabled=false) die 'client -p needs a numeric HTTPS port' ;;
             moqui_conf__webapp_list__webapp__WEBROOT__http_port=*) server=(--server "https://localhost:${prop#moqui_conf__webapp_list__webapp__WEBROOT__http_port=}") ;;
         esac
     done
@@ -37,7 +37,7 @@ task_test_load() {
     server=()
     for prop in "${OPT_PROPS[@]}"; do
         case $prop in
-            moqui_conf__webapp_list__webapp__WEBROOT__http_listen_port=off) die 'client -p needs a numeric HTTPS port' ;;
+            moqui_conf__webapp_list__webapp__WEBROOT__http_listen_enabled=false) die 'client -p needs a numeric HTTPS port' ;;
             moqui_conf__webapp_list__webapp__WEBROOT__http_port=*) server=(--server "https://localhost:${prop#moqui_conf__webapp_list__webapp__WEBROOT__http_port=}") ;;
         esac
     done

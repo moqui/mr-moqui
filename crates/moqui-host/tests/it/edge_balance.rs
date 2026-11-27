@@ -58,6 +58,7 @@ fn start_edge(label: &str, root_cert: &(String, String)) -> (Gate, u16) {
                 "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
                 &port_text,
             ),
+            ("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_enabled", "true"),
         ],
         &[("cert/default.crt", &root_cert.0), ("cert/default.key", &root_cert.1)],
     );

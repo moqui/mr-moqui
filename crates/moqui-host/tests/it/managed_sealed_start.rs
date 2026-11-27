@@ -245,6 +245,7 @@ fn managed_sealed_start() {
                 "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
                 &port_text,
             ),
+            ("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_enabled", "true"),
             ("moqui_conf__instance__purpose", "test"),
         ],
         &[

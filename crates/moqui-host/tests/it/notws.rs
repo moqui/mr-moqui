@@ -141,6 +141,7 @@ fn notws_push_and_one_cluster_invalidation() {
 
     // 0 binds an ephemeral cluster port. Empty would listen on 8444. This does not touch the repo .env.
     moqui_lib::env::set_property("moqui_conf__cluster_member__https_port", "0");
+    crate::common::listeners_off();
     let server = start_server(
         &runtime,
         &framework,

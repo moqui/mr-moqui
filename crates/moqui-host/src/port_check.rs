@@ -150,8 +150,7 @@ fn targets(bind: &ListenBind, runtime_dir: &Path, conf: &MNode) -> Result<Vec<Ta
         if let Some(port) = http.http_port {
             targets.push(required("HTTP", "http-listen-port", http.ip.to_string(), port));
         }
-        let listen_port = webroot("https-listen-port");
-        if let Some(port) = crate::tls::planned_port(runtime_dir, matches!(bind, ListenBind::Property), &listen_port)? {
+        if let Some(port) = crate::tls::planned_port(runtime_dir, &crate::tls::Listen::of(&webroot))? {
             https = true;
             targets.push(required("HTTPS", "https-listen-port", http.ip.to_string(), port));
         }

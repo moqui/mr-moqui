@@ -54,6 +54,7 @@ fn empty_db_startup_persists_audit_artifact_stack() {
     moqui_core::context::layout::link_base_set(&base, &runtime).unwrap();
     let framework = base.join("framework");
     moqui_lib::env::set_property("moqui_conf__cluster_member__https_port", "0");
+    crate::common::listeners_off();
 
     // No pre-seeding: startup itself must load the checked-in WebrootSecurityDemoData user.
     let server = start_server(
@@ -149,6 +150,7 @@ fn rest_enum_types_login_and_session_survive_restart() {
 
     // 0 binds an ephemeral cluster port, so a test run beside another server does not need 8444 free.
     moqui_lib::env::set_property("moqui_conf__cluster_member__https_port", "0");
+    crate::common::listeners_off();
     let bind = SocketAddr::from(([127, 0, 0, 1], 0));
     let server = start_server(&runtime, &framework, &cluster_dir, bind).unwrap();
     let address = server.address();

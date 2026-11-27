@@ -88,6 +88,11 @@ fn startup_speed() {
         ("moqui_conf__ssh_server__port", "0"),
         ("moqui_conf__cluster_member__https_port", "0"),
         ("cluster_ssh_port", "0"),
+        // HTTPS closed, as in the regression tests (tests/common TEST_LISTENERS_OFF): 8443 is a running server's
+        (
+            "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_enabled",
+            "false",
+        ),
     ] {
         moqui_lib::env::set_property(name, value);
     }

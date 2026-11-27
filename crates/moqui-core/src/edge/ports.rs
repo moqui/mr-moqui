@@ -60,12 +60,15 @@ const FRONT_NEVER: [&str; 10] = [
 ];
 
 /// The settings of this node's own listeners (a conf selector, or a property not yet moved to the conf), whose ports
-/// no row may take, each with its port when it is unset (0 for none): a row never takes a service's usual port, set or
-/// not.
-const OWN_PORTS: [(&str, u16); 18] = [
+/// no row may take, each with its port when it is unset (0 for none): the port set, else that usual one. A usual port
+/// set elsewhere is free for a row (SSH on 2222 leaves 22 to a paired Git host, docs/interfaces/Git-Hosting.md). The
+/// web listeners' ports are written in the conf (plans/Runtime-Config.md §3.2), so theirs are the ports set.
+const OWN_PORTS: [(&str, u16); 20] = [
     ("webapp-list/webapp[webroot]@http-port", 80),
+    ("webapp-list/webapp[webroot]@http-listen-port", 80),
     ("webapp-list/webapp[webroot]@https-port", 443),
     ("webapp-list/webapp[webroot]@https-listen-port", 443),
+    ("webapp-list/webapp[webroot]@grpc-listen-port", 4317),
     ("cluster-member@https-port", 0),
     ("smtp-server@listen-port", 25),
     ("mail-delivery@relay-port", 10025),

@@ -528,6 +528,7 @@ fn delivered_items_go_again_and_the_receipts_make_the_repeat_do_nothing() {
                 "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
                 &port_text,
             ),
+            ("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_enabled", "true"),
         ],
         &[
             ("cert/default.crt", &certs.cert_pem),
@@ -731,6 +732,7 @@ fn edge_for(
                 "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
                 &port_text,
             ),
+            ("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_enabled", "true"),
         ],
         &[
             ("cert/default.crt", &certs.cert_pem),

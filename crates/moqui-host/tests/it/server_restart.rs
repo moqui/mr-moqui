@@ -187,8 +187,9 @@ fn start(label: &str) -> Running {
             setting("webapp-list/webapp[webroot]@http-listen-port"),
             port.to_string(),
         )
+        .env(setting("webapp-list/webapp[webroot]@http-listen-enabled"), "true")
         .env(setting("webapp-list/webapp[webroot]@http-bind"), "127.0.0.1")
-        .env(setting("webapp-list/webapp[webroot]@https-listen-port"), "off")
+        .env(setting("webapp-list/webapp[webroot]@https-listen-enabled"), "false")
         .env(setting("cluster-member@https-port"), "0")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

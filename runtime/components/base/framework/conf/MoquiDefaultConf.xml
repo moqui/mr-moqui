@@ -517,10 +517,14 @@
             (moqui_conf__webapp_list__webapp__WEBROOT__http_port):
             http-host: this server's public host name, for generated URLs; an empty https-host takes it.
             http-port, https-port: the ports clients see in generated URLs (they differ from the listeners' behind a
-                reverse proxy); http-listen-port selects the HTTP listener (empty uses http-port, default 8080; off disables it).
-            grpc-listen-port selects the dedicated gRPC port (off disables it); grpc-listen-bind defaults to http-bind.
-            https-listen-port: the port the built-in HTTPS listener binds, with certificates from runtime/cert: empty is
-                8443, "off" none.
+                reverse proxy).
+            The listeners (plans/Runtime-Config.md 3.2): each has a switch and a port written here; turning one off
+                keeps its port. http-listen-enabled and http-listen-port: the plain HTTP listener, on 8080.
+                https-listen-enabled and https-listen-port: the built-in HTTPS listener, on 8443, with the certificates
+                in runtime/cert (with none it stands by until a name is set up with ACME). grpc-listen-enabled and
+                grpc-listen-port: the dedicated gRPC port, 4317, opened only when the OTLP receiver or the PASS
+                authority serves gRPC; grpc-listen-bind defaults to http-bind. A switch is true or false; a port is
+                digits (0 is a port of the kernel's choosing). "off" or an empty port is refused: write the switch.
             http-bind: the address the HTTP listener binds, every address when empty; 127.0.0.1 keeps it local (a dev
                 instance with the dev-aide gives code execution to its users: plans/archive/design-dev-aide.md 15).
             allowed-hosts: the Host names (with the port, as the header gives it: 127.0.0.1:8080) a request straight to a
@@ -546,7 +550,8 @@
                 whole policy where none is set; empty adds none. The Desktop app's sidecar sets upgrade-insecure-requests,
                 so a page's http:// loads of other hosts go over https there too (SEC-CLI-105). -->
         <webapp name="webroot" http-port="" http-host="" https-port="" https-host="" https-enabled="false"
-                http-listen-port="" https-listen-port="" grpc-listen-port="4317" grpc-listen-bind="" http-bind="" allowed-hosts="" http2="true" csp-append=""
+                http-listen-enabled="true" http-listen-port="8080" https-listen-enabled="true" https-listen-port="8443"
+                grpc-listen-enabled="true" grpc-listen-port="4317" grpc-listen-bind="" http-bind="" allowed-hosts="" http2="true" csp-append=""
                 handle-cors="true" allow-origins="" require-session-token="true" upload-executable-allow="false"
                 websocket-timeout="600000" client-ip-header="" trusted-proxies="" status-ips="127.0.0.1"
                 dev-marker-color="#2196f3" qvt-static-only="false" transfer-workers="4"

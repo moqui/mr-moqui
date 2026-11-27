@@ -119,7 +119,7 @@ fn usage_overview_lists_commands_and_environment() {
         "test",
         "[component ...]",
         "MOQUI_CONF",
-        "moqui_conf__webapp_list__webapp__WEBROOT__http_port",
+        "moqui_conf__webapp_list__webapp__WEBROOT__http_listen_port",
         "--port",
         "--conf",
         "--no-run-es",
