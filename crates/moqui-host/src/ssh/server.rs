@@ -860,8 +860,12 @@ fn ssh_permissions() -> Result<Permissions, CoreError> {
 }
 
 /// The SSH permissions of `username` now, read again at each channel request (SEC-FIL-11), so a permission taken away
-/// refuses what an open connection asks for next; none for an account that is gone.
-fn permissions_of(factory: &ExecutionContextFactory, username: &str) -> Result<Permissions, CoreError> {
+/// refuses what an open connection asks for next; `None` for an account that is gone or may no longer sign in
+/// (disabled, locked, terminated, a display account: the gate of every internal login).
+fn permissions_of(factory: &ExecutionContextFactory, username: &str) -> Result<Option<Permissions>, CoreError> {
+    if moqui_core::user::internal_login_user(username).is_err() {
+        return Ok(None);
+    }
     let _authz =
         moqui_core::context::ExecutionContext::with_current(moqui_core::context::ExecutionContext::disable_authz);
     let facade = factory
@@ -872,22 +876,18 @@ fn permissions_of(factory: &ExecutionContextFactory, username: &str) -> Result<P
         .eq("username", Value::string(username))
         .one()?
     else {
-        return Ok(Permissions {
-            sftp: false,
-            shell: false,
-            git: false,
-        });
+        return Ok(None);
     };
     let user_id = account
         .get("userId")
         .map(moqui_lib::object::to_plain_string)
         .unwrap_or_default();
     let has = |permission: &str| moqui_core::user::user_has_permission(&user_id, permission);
-    Ok(Permissions {
+    Ok(Some(Permissions {
         sftp: has("SSH_SFTP")?,
         shell: has("SSH_SHELL")?,
         git: has("SSH_GIT")?,
-    })
+    }))
 }
 
 /// How a connection logged in, and what the conf says of git over SSH.
@@ -949,35 +949,40 @@ impl Connection {
         self.git_protocol.remove(&channel);
     }
 
-    /// Let the user in, with what the permissions allow; every user gets `apps`, but for a login by app password, which
-    /// gets the drives over SFTP only.
-    /// Read the user's SSH permissions again ([`permissions_of`]) before a channel request is answered; a login by app
-    /// password keeps none, and a read that fails refuses.
-    async fn refresh_permissions(&mut self) {
+    /// Read the user's SSH permissions again ([`permissions_of`]) before a channel request is answered: false, with
+    /// none kept, when the account may no longer sign in (an app password's login too) or the read fails; a login by
+    /// app password keeps no permission either way.
+    async fn refresh_permissions(&mut self) -> bool {
         let Some(username) = self.username.clone() else {
-            return;
+            return true;
         };
-        if self.by_app_password {
-            return;
-        }
         let read = on_pool(&self.shared.factory, move |factory| permissions_of(factory, &username)).await;
-        let Permissions { sftp, shell, git } = read.unwrap_or_else(|err| {
+        let read = read.unwrap_or_else(|err| {
             tracing::warn!(
                 "SSH permissions of a connection from {} not read: {}",
                 self.peer,
                 err.message()
             );
-            Permissions {
-                sftp: false,
-                shell: false,
-                git: false,
-            }
+            None
         });
+        let signs_in = read.is_some();
+        let none = Permissions {
+            sftp: false,
+            shell: false,
+            git: false,
+        };
+        let Permissions { sftp, shell, git } = read.filter(|_| !self.by_app_password).unwrap_or(none);
         self.can_sftp = sftp;
         self.can_shell = shell;
         self.can_git = git;
+        if !signs_in {
+            tracing::info!("SSH connection from {}: its account may no longer sign in; refused", self.peer);
+        }
+        signs_in
     }
 
+    /// Let the user in, with what the permissions allow; every user gets `apps`, but for a login by app password, which
+    /// gets the drives over SFTP only.
     fn accept(&mut self, username: &str, permissions: Permissions, by: LoginBy) -> Auth {
         let by_app_password = by == LoginBy::AppPassword;
         let Permissions { sftp, shell, git } = if by_app_password {
@@ -1374,7 +1379,9 @@ impl russh::server::Handler for Connection {
         let Some(username) = self.username.clone().filter(|_| name == "sftp" && !self.cluster) else {
             return session.channel_failure(channel);
         };
-        self.refresh_permissions().await;
+        if !self.refresh_permissions().await {
+            return session.channel_failure(channel);
+        }
         let held = Held::new(&username);
         let backend = if self.can_sftp {
             Backend::Root(self.shared.root.clone())
@@ -1435,7 +1442,9 @@ impl russh::server::Handler for Connection {
         if moqui_git::server::parse_ssh_command(&line).is_some()
             || moqui_git::server::lfs::parse_ssh_command(&line).is_some()
         {
-            self.refresh_permissions().await;
+            if !self.refresh_permissions().await {
+                return session.channel_failure(channel);
+            }
             let may_git = git_allowed(GitLogin {
                 has_permission: self.can_git,
                 by_password: self.by_password,
@@ -1512,7 +1521,9 @@ impl russh::server::Handler for Connection {
         if self.username.is_none() && self.login_name.is_some() {
             return refuse_channel(self.channels.remove(&channel), channel, session, DIALOG_ONLY);
         }
-        self.refresh_permissions().await;
+        if !self.refresh_permissions().await {
+            return session.channel_failure(channel);
+        }
         let (Some(username), true) = (self.username.clone(), self.can_shell) else {
             return session.channel_failure(channel);
         };
@@ -1589,7 +1600,8 @@ impl russh::server::Handler for Connection {
         let factory = std::sync::Weak::clone(&self.shared.factory);
         let handle = session.handle();
         let pty = self.ptys.contains_key(&channel);
-        self.refresh_permissions().await;
+        // an account that may no longer sign in keeps no permission; its `apps` login meets the same gate
+        let _ = self.refresh_permissions().await;
         let access = self.apps_access(channel);
         if !self.can_shell || self.username.is_none() {
             let newline = if pty { "\r\n" } else { "\n" };

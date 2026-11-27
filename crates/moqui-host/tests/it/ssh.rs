@@ -835,6 +835,32 @@ fn sftp_and_the_admin_shell_run_on_the_built_in_server() {
     member.update(&entity).unwrap();
     let second = moqui_host::edge::block_on(async move { run(&handle, "help").await }).unwrap();
     assert_eq!(second, Err("channel request refused".to_string()));
+    // and an account disabled while its connection is open is refused its next request, whatever it holds
+    let (handle, first) = moqui_host::edge::block_on(async move {
+        let config = Arc::new(russh::client::Config::default());
+        let mut handle = russh::client::connect(config, address, Accept).await.unwrap();
+        assert!(handle.authenticate_password("john.doe", "moqui").await.unwrap().success());
+        let first = run(&handle, "help").await;
+        (handle, first)
+    })
+    .unwrap();
+    assert!(first.is_ok(), "{first:?}");
+    let set_disabled = |disabled: &str| {
+        let mut account = entity
+            .find("moqui.security.UserAccount")
+            .unwrap()
+            .disable_authz()
+            .eq("username", Value::string("john.doe"))
+            .one()
+            .unwrap()
+            .unwrap();
+        account.set("disabled", Value::string(disabled));
+        account.update(&entity).unwrap();
+    };
+    set_disabled("Y");
+    let disabled = moqui_host::edge::block_on(async move { run(&handle, "help").await }).unwrap();
+    set_disabled("N");
+    assert_eq!(disabled, Err("channel request refused".to_string()));
 
     drop(authz);
     drop(_entered);
