@@ -118,3 +118,16 @@ fn under_the_guard_only_a_network_address_is_fetched() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// SEC-FIL-101: a mirror's stored token is offered at fetch time only over https or ssh, so a mirror stored with a
+/// plain address before the rule sends none in clear.
+#[test]
+fn a_mirrors_token_is_offered_only_over_https_or_ssh() {
+    use super::token_offered_to;
+    for url in ["https://git.example.com/a.git", "SSH://git@host/a.git", "git@git.example.com:team/a.git"] {
+        assert!(token_offered_to(url), "{url}");
+    }
+    for url in ["http://git.example.com/a.git", "git://git.example.com/a.git", "file:///srv/a.git", "/srv/a.git"] {
+        assert!(!token_offered_to(url), "{url}");
+    }
+}
