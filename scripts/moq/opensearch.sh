@@ -145,6 +145,9 @@ task_opensearch_download() {
             run_cmd curl -fL --progress-bar -o "$cached.part" "$url" || die "download failed"
         fi
         verify_published_sha512 "$cached.part" "$url.sha512"
+        # and against the SHA-256 recorded at its first download, so a changed archive and its sum published together
+        # are not taken (SEC-OUT-91)
+        check_download_sum "$cached.part" "opensearch:$name"
         run_cmd mv "$cached.part" "$cached" || die "could not move the archive into $cache"
     fi
     if [ -n "$cache_only" ]; then
