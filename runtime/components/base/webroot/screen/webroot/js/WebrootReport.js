@@ -725,6 +725,48 @@
     };
     // Leaving the page for another view, in one place so a test can watch it.
     report.navigate = (href) => root.location.assign(href);
+    // Back from Maps to the geomap place that opened it (plans/ui-review-maps.md MAP-UI-001): the page loads again and its
+    // outline after it, so leaving keeps the page, the panel and the place ({country} or {point}) in the tab's
+    // sessionStorage, and the panel focuses that place once it has drawn it on the page Back brought.
+    report.geomapReturnKey = "moqui.report.geomapReturn";
+    const pageOf = (href) => { const url = new root.URL(href, root.location.href); return url.pathname + url.search; };
+    let geomapReturn = null;
+    report.leaveGeomap = (href, panelId, place) => {
+        try { root.sessionStorage.setItem(report.geomapReturnKey, JSON.stringify(Object.assign({ page: pageOf(root.location.href), panel: panelId || "" }, place))); }
+        catch (error) { /* no storage: Back lands on the page without the focus */ }
+        report.navigate(href);
+    };
+    // How this page came: "back_forward" for Back or Forward, "navigate" for a link, "" when the browser does not say.
+    report.navigationType = () => {
+        try { const entry = root.performance.getEntriesByType("navigation")[0]; return entry && entry.type || ""; } catch (error) { return ""; }
+    };
+    const savedReturn = () => {
+        try { const saved = JSON.parse(root.sessionStorage.getItem(report.geomapReturnKey) || "null"); return saved && saved.page === pageOf(root.location.href) ? saved : null; }
+        catch (error) { return null; }
+    };
+    const dropSavedReturn = () => { try { root.sessionStorage.removeItem(report.geomapReturnKey); } catch (error) { /* no storage */ } };
+    // Read once as the page loads. A place left from this page leaves storage either way, and is held for its panel only
+    // when Back or Forward brought the page (a later visit by a link is no return); one left from another page (Maps loads
+    // this script too) stays for that page. Once the viewer acts, the return is past, so a panel drawn later takes no focus.
+    report.takeGeomapReturn = () => {
+        geomapReturn = null;
+        const saved = savedReturn();
+        if (!saved) return;
+        dropSavedReturn();
+        if (report.navigationType() !== "back_forward") return;
+        geomapReturn = saved;
+        const drop = () => { geomapReturn = null; };
+        for (const type of ["keydown", "pointerdown"]) root.addEventListener(type, drop, { capture: true, once: true });
+    };
+    // The place held for this page's panel, or null; it is held until the panel has drawn and focused it.
+    report.geomapReturn = (panelId) => geomapReturn && geomapReturn.page === pageOf(root.location.href) && geomapReturn.panel === (panelId || "") ? geomapReturn : null;
+    report.clearGeomapReturn = () => { geomapReturn = null; };
+    // takeGeomapReturn and the saved-place helpers catch storage errors; reading root.sessionStorage here could throw where storage is blocked
+    if (root.addEventListener) {
+        report.takeGeomapReturn();
+        // a page the back-forward cache restored was not loaded again: its own focus stands, and the place it saved is dropped
+        root.addEventListener("pageshow", (event) => { if (event.persisted) { geomapReturn = null; if (savedReturn()) dropSavedReturn(); } });
+    }
     // Whether the text went to the clipboard; a browser that refuses, or does not answer within a second, leaves it to the viewer.
     report.copyText = async (text) => { try { if (!root.navigator.clipboard) return false; return await Promise.race([root.navigator.clipboard.writeText(text).then(() => true), new Promise((resolve) => root.setTimeout(() => resolve(false), 1000))]); } catch (_) { return false; } };
     report.mergeLogHits = (previous, incoming, limit) => {
@@ -1393,8 +1435,8 @@
         emits:["filter"],
         data: () => ({ sortField: -1, descending: false, inspector: false, inspection: null, busy: false, actionError: "", menu: false, shared: "", status: "", flameFocus: null, outline: report.currentOutline(), outlineError: "" }),
         computed: { themeDark() { return !!(this.$q && this.$q.dark && this.$q.dark.isActive); } },
-        mounted() { this.needOutline(); this.colorFlameLabels(); },
-        updated() { this.needOutline(); this.colorFlameLabels(); },
+        mounted() { this.needOutline(); this.colorFlameLabels(); this.focusGeomapReturn(); },
+        updated() { this.needOutline(); this.colorFlameLabels(); this.focusGeomapReturn(); },
         watch: {
             themeDark() {
                 // Resolve the palette and translucent fills after Quasar has changed the body theme.
@@ -1443,6 +1485,17 @@
                 if ((this.panel.visualization || this.panel.type) !== "geomap" || this.outline || this.outlineError || this.outlineRequested) return;
                 this.outlineRequested = true;
                 report.loadOutline().then((outline) => { this.outline = outline; }).catch((error) => { this.outlineError = String(error && error.message || error); });
+            },
+            // Back from Maps: the country or point that opened it is focused again once drawn (report.leaveGeomap).
+            focusGeomapReturn() {
+                if ((this.panel.visualization || this.panel.type) !== "geomap" || !this.outline || !this.$el || !this.$el.querySelectorAll) return;
+                const saved = report.geomapReturn(this.panelId);
+                if (!saved) return;
+                const mark = saved.country != null ? "data-country" : "data-point", value = String(saved.country != null ? saved.country : saved.point);
+                const place = Array.from(this.$el.querySelectorAll("svg [" + mark + "][data-maps-url]")).find((node) => node.getAttribute(mark) === value);
+                if (!place) return;
+                report.clearGeomapReturn();
+                place.focus();
             },
             // The app's links: the dashboard's, or a standalone panel's own (Explore's histogram).
             links(){return this.appLinks || this.panel.appLinks;},
@@ -1595,15 +1648,15 @@
             } else if (visual === "geomap" && report.geomap(frame, this.panel, this.outline)) {
                 const map = report.geomap(frame, this.panel, this.outline), formatted = (value) => report.format(value, map.field || { type: "number" });
                 // a country or a point opens Maps there, where the dashboard's screen offers it (appLinks.maps); else nothing changes
-                const maps = (this.links() || {}).maps, opens = (place, name) => {
-                    const url = report.mapsUrl(maps, place);
+                const maps = (this.links() || {}).maps, opens = (place, name, mark) => {
+                    const url = report.mapsUrl(maps, place), leave = () => report.leaveGeomap(url, this.panelId, mark);
                     return url ? { tabindex: 0, role: "link", "aria-label": T("Open in Maps") + ": " + name, "data-maps-url": url, style: { cursor: "pointer" },
-                        onClick: () => report.navigate(url), onKeydown: (event) => { if (event.key === "Enter") report.navigate(url); } } : {};
+                        onClick: leave, onKeydown: (event) => { if (event.key === "Enter") leave(); } } : {};
                 };
                 const base = map.countries.map((country, at) => h("path", Object.assign({ key: "c" + at, d: report.countryPath(country), fill: country.value != null ? "var(--q-primary)" : "rgba(127,127,127,0.18)", "fill-opacity": country.value != null ? country.shade : 1,
-                    stroke: "var(--m-panel-bg, white)", "stroke-width": "0.2", "data-country": country.id }, opens({ extent: report.countryExtent(country) }, country.name)), [h("title", country.name + (country.value != null ? ": " + formatted(country.value) : ""))]));
+                    stroke: "var(--m-panel-bg, white)", "stroke-width": "0.2", "data-country": country.id }, opens({ extent: report.countryExtent(country) }, country.name, { country: country.id })), [h("title", country.name + (country.value != null ? ": " + formatted(country.value) : ""))]));
                 const points = (map.points || []).map((point, at) => h("circle", Object.assign({ key: "p" + at, cx: point.x, cy: point.y, r: point.r, fill: "var(--q-negative)", "fill-opacity": "0.6", "data-point": point.label || at },
-                    opens({ lon: point.lon, lat: point.lat }, point.label || report.format(point.lat, { type: "number" }) + ", " + report.format(point.lon, { type: "number" }))), [h("title", (point.label ? point.label + ": " : "") + formatted(point.value))]));
+                    opens({ lon: point.lon, lat: point.lat }, point.label || report.format(point.lat, { type: "number" }) + ", " + report.format(point.lon, { type: "number" }), { point: String(point.label || at) })), [h("title", (point.label ? point.label + ": " : "") + formatted(point.value))]));
                 content = h("figure", { class: "m-report-geomap q-ma-none" }, [
                     h("svg", { viewBox: "0 0 360 150", width: "100%", style: { maxHeight: this.height }, role: "img", "aria-label": map.mode === "points" ? "Map of " + map.points.length + " places" : "Map of " + map.listed.length + " countries" }, [...base, ...points]),
                     !this.outline ? h("p", { role: "status", class: "text-caption" }, this.outlineError || "Loading the map outline…") : null,
