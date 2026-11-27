@@ -844,20 +844,42 @@ fn clean_markdown(call: &mut Call<'_>) -> Result<Ret, HostError> {
 /// The longest pattern [`linear_regex`] takes.
 const LINEAR_PATTERN_MAX: usize = 1000;
 
+/// How many compiled patterns [`linear_regex`] keeps; past it the cache starts again.
+const LINEAR_CACHE_MAX: usize = 256;
+
+/// The patterns [`linear_regex`] compiled, by pattern and case: a forum post runs each of up to 200 rules on many pieces
+/// of its text, so a pattern is compiled once, not on every call.
+fn linear_cache() -> &'static std::sync::Mutex<std::collections::HashMap<(String, bool), regex::Regex>> {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<(String, bool), regex::Regex>>> =
+        std::sync::OnceLock::new();
+    CACHE.get_or_init(Default::default)
+}
+
 /// `pattern` compiled by the Rust `regex` crate, whose matching takes time linear in the text: no back-references or
 /// look-around, so a pattern a user writes (a forum's content rule, SEC-PFS-90) cannot backtrack for as long as the
-/// request lasts. An error for a pattern over [`LINEAR_PATTERN_MAX`] characters or one that does not compile.
+/// request lasts. Kept compiled in a bounded cache ([`LINEAR_CACHE_MAX`]). An error for a pattern over
+/// [`LINEAR_PATTERN_MAX`] characters or one that does not compile.
 fn linear_regex(pattern: &str, ignore_case: bool) -> Result<regex::Regex, HostError> {
     if pattern.chars().count() > LINEAR_PATTERN_MAX {
         return Err(HostError::message(format!(
             "a pattern has at most {LINEAR_PATTERN_MAX} characters"
         )));
     }
-    regex::RegexBuilder::new(pattern)
+    let key = (pattern.to_string(), ignore_case);
+    if let Some(found) = moqui_lib::sync::lock(linear_cache()).get(&key) {
+        return Ok(found.clone());
+    }
+    let compiled = regex::RegexBuilder::new(pattern)
         .case_insensitive(ignore_case)
         .size_limit(1 << 20)
         .build()
-        .map_err(|err| HostError::message(format!("not a pattern this matcher takes: {err}")))
+        .map_err(|err| HostError::message(format!("not a pattern this matcher takes: {err}")))?;
+    let mut cache = moqui_lib::sync::lock(linear_cache());
+    if cache.len() >= LINEAR_CACHE_MAX {
+        cache.clear();
+    }
+    cache.insert(key, compiled.clone());
+    Ok(compiled)
 }
 
 /// `StringUtilities.regexTest(pattern, text, ignoreCase)`: whether `text` has a match of `pattern`, in linear time

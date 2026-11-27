@@ -145,20 +145,30 @@ function passwordAllowed(password) {
             Number(rules.minOthers)
     )
 }
+/* The account a registration's address names, by its email address or its user name, either ignoring case, as
+   create#UserAccount refuses one (SEC-PSA-06). */
+function accountNamed(field, email) {
+    return Array.from(
+        ec.entity
+            .find('moqui.security.UserAccount')
+            .condition(ec.entity.conditionFactory.makeCondition(field, 'equals', email).ignoreCase())
+            .limit(2)
+            .list(),
+    )[0] || null
+}
 function beginRegistration(p) {
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(p.emailAddress || ''))
         fail('Unprocessable', ec.l10n.localize('A valid email address is required'))
     const email = p.emailAddress.trim().toLowerCase(),
         template = ec.factory.getConfValue('pass-authority@verification-template')
     if (!template) fail('Unavailable', ec.l10n.localize('Verification mail is not configured'))
-    const old = ec.entity
-        .find('moqui.security.UserAccount')
-        .condition('emailAddress', email)
-        .one()
+    const old = accountNamed('emailAddress', email)
     const own = old && old.userId === ec.user.userId
-    const neutral = ec.l10n.localize('If eligible, verification instructions will be sent to the address.')
+    const neutral = { message: ec.l10n.localize('If eligible, verification instructions will be sent to the address.') }
     if (ec.user.userId && !own)
         fail('Unprocessable', ec.l10n.localize('Sign out before registering another address'))
+    // Every request costs one password hash, as a new account's creation does, so the time of the answer does not tell a
+    // new address from a claimed, unclaimed or refused one (SEC-PSA-06); the mail goes after the commit, on a worker.
     // A disabled account that never verified its address belongs to nobody yet; a later request replaces its challenge.
     const unclaimed =
         old &&
@@ -170,17 +180,19 @@ function beginRegistration(p) {
             newAccount: 'Y',
         }).one()
     // an address another account has as its user name (not its email address) cannot make an account: answered as every
-    // other request is, so the answer does not tell it apart (SEC-PSA-06)
-    const nameTaken =
-        !old &&
-        !!ec.entity
-            .find('moqui.security.UserAccount')
-            .condition('username', email)
-            .one()
-    if (!nameTaken && (!old || own || unclaimed)) {
-        let userId = old?.userId
-        if (!old) {
-            const placeholder = unusablePassword()
+    // other request is, so the answer does not tell it apart
+    const nameTaken = !old && !!accountNamed('username', email)
+    if (nameTaken || (old && !own && !unclaimed)) {
+        ec.user.hashPassword(unusablePassword())
+        return neutral
+    }
+    let userId = old?.userId
+    if (!old) {
+        const placeholder = unusablePassword()
+        // its own transaction and error frame: a refusal (a name taken since the check) is logged and answered as every
+        // other request is, never as a failure that tells the address apart
+        ec.message.pushErrors()
+        try {
             userId = ec.service
                 .sync()
                 .name('org.moqui.impl.UserServices.create#UserAccount')
@@ -192,46 +204,75 @@ function beginRegistration(p) {
                     disabled: 'Y',
                     deferIdentityLink: true,
                 })
-                .call().userId
-            if (ec.message.hasError() || !userId) {
-                ec.message.clearErrors()
-                fail('Unavailable', ec.l10n.localize('Registration is temporarily unavailable'))
-            }
+                .requireNewTransaction(true)
+                .call()?.userId
+            if (ec.message.hasError()) userId = null
+        } catch (error) {
+            userId = null
+        } finally {
+            ec.message.clearErrors()
+            ec.message.popErrors()
         }
-        for (const earlier of find('RegistrationChallenge', { userId })
-            .forUpdate(true)
-            .list())
-            if (!earlier.consumedAt) {
-                earlier.set('consumedAt', ec.user.nowTimestamp)
-                earlier.update()
-            }
-        const token = ec.user.randomString(64)
-        create('RegistrationChallenge', {
-            challengeId: ec.user.randomString(32),
-            userId,
-            emailAddress: email,
-            tokenHash: digest(token),
-            expiresAt: now() + 3600000,
-            newAccount: own ? 'N' : 'Y',
+        if (!userId) {
+            ec.logger.error('Registration could not make an account for a requested address')
+            return neutral
+        }
+    } else ec.user.hashPassword(unusablePassword())
+    for (const earlier of find('RegistrationChallenge', { userId })
+        .forUpdate(true)
+        .list())
+        if (!earlier.consumedAt) {
+            earlier.set('consumedAt', ec.user.nowTimestamp)
+            earlier.update()
+        }
+    // the challenge's code is made by the worker that mails it (sendVerification): nothing of it is in this request's
+    // parameters, so a call queued to the database when the service queue is full holds no code; until then the digest
+    // is of a value nobody knows
+    const challengeId = ec.user.randomString(32)
+    create('RegistrationChallenge', {
+        challengeId,
+        userId,
+        emailAddress: email,
+        tokenHash: digest(ec.user.randomString(64)),
+        expiresAt: now() + 3600000,
+        newAccount: own ? 'N' : 'Y',
+    })
+    ec.service
+        .special()
+        .name('org.moqui.public.AccountServices.send#RegistrationVerification')
+        .parameters({ challengeId })
+        .registerOnCommit()
+    return neutral
+}
+/* send#RegistrationVerification, after the registration's commit: a new code for the challenge (its digest kept, the code
+   only in the mail) and the verification mail. A challenge consumed or expired since gets none; a failed send is logged,
+   and asking again resends. */
+function sendVerification(p) {
+    const c = find('RegistrationChallenge', { challengeId: p.challengeId || '' })
+        .forUpdate(true)
+        .one()
+    if (!c || c.consumedAt || ec.user.timestampMillis(c.expiresAt) <= now()) return {}
+    const template = ec.factory.getConfValue('pass-authority@verification-template')
+    if (!template) return {}
+    const token = ec.user.randomString(64)
+    c.set('tokenHash', digest(token))
+    c.update()
+    ec.service
+        .sync()
+        .name('org.moqui.mail.EmailServices.send#EmailTemplate')
+        .parameters({
+            emailTemplateId: template,
+            toAddresses: c.emailAddress,
+            bodyParameters: { verificationToken: token },
+            // no EmailMessage row: its body would keep the token in clear (SEC-MAIL-65)
+            createEmailMessage: false,
         })
-        // sent on a worker, not in the request: the time of the answer does not tell a new address from a claimed one
-        // (SEC-PSA-06). A failed send is logged by the worker; the challenge remains, so asking again resends.
-        ec.service
-            .async()
-            .name('org.moqui.mail.EmailServices.send#EmailTemplate')
-            .parameters({
-                emailTemplateId: template,
-                toAddresses: email,
-                bodyParameters: { verificationToken: token },
-                // no EmailMessage row: its body would keep the token in clear (SEC-MAIL-65)
-                createEmailMessage: false,
-            })
-            .call()
-    } else {
-        // a claimed address costs the password hash a new account's creation does (SEC-PSA-06)
-        ec.user.hashPassword(unusablePassword())
+        .call()
+    if (ec.message.hasError()) {
+        ec.message.clearErrors()
+        ec.logger.error('Registration verification mail failed for challenge ' + c.challengeId)
     }
-    return { message: neutral }
+    return {}
 }
 function verifyRegistration(p) {
     const c = find('RegistrationChallenge', {
@@ -548,6 +589,7 @@ function execute(op, p) {
             throttle('registration', p.emailAddress)
             return beginRegistration(p)
         }
+        if (op === 'sendVerification') return sendVerification(p)
         if (op === 'verifyRegistration') {
             throttle('verification')
             return verifyRegistration(p)
