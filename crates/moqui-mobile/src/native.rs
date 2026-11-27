@@ -840,27 +840,55 @@ pub(crate) fn package_download(
     runner: &str,
     last: bool,
 ) -> i32 {
-    if ENDING.load(std::sync::atomic::Ordering::SeqCst) || !network_ready() {
+    // a process that is ending makes no client: its state goes with it, and the work runs again in another
+    if ENDING.load(std::sync::atomic::Ordering::SeqCst) {
         return PACKAGE_RETRY;
     }
     let core = match core_in(dir) {
         Ok(core) => core,
         Err(err) => {
+            // no client, so no state of the download in this process to make final
             log::warn!("Map packages: no client for the download: {err}");
             return PACKAGE_RETRY;
         }
     };
+    if !network_ready() {
+        return if last {
+            package_give_up(&core, account, package_id)
+        } else {
+            PACKAGE_RETRY
+        };
+    }
     let host = moqui_lib::sync::lock(&APP_HOST)
         .clone()
         .unwrap_or_else(|| Arc::new(NoPages));
     let ended = core.download_package(Some(host.as_ref()), account, package_id, revision, Some(runner));
     let outcome = package_outcome(&ended);
-    if last && outcome == PACKAGE_RETRY && matches!(ended, moqui_client::packages::Status::Failed { .. }) {
-        log::warn!("Map packages: the download of {package_id} is given up after its runs");
-        core.packages().give_up(account, package_id);
-        return PACKAGE_DONE;
+    if last && outcome == PACKAGE_RETRY && package_gives_up(&ended) {
+        return package_give_up(&core, account, package_id);
     }
     outcome
+}
+
+/// Whether the last run's end is given up: a failure to try again, but not a pause (WorkManager's stop, which runs
+/// the work again itself) nor a run of it still under way.
+pub(crate) fn package_gives_up(ended: &moqui_client::packages::Status) -> bool {
+    matches!(ended, moqui_client::packages::Status::Failed { retry: true, code, .. } if code != "PAUSED")
+}
+
+/// The worker's last run ended without the download: its state made final for the shell; done.
+fn package_give_up(core: &Client, account: &str, package_id: &str) -> i32 {
+    log::warn!("Map packages: the download of {package_id} is given up after its runs");
+    core.packages().give_up(account, package_id);
+    PACKAGE_DONE
+}
+
+/// The worker's last run failed in the native code (an exception): the download's state made final, with the
+/// process's client when it has one.
+pub(crate) fn package_given_up(account: &str, package_id: &str) {
+    if let Some(core) = moqui_lib::sync::lock(&CORE).clone() {
+        package_give_up(&core, account, package_id);
+    }
 }
 
 /// The worker's word for a download's state.
@@ -1115,6 +1143,21 @@ mod entries {
             }))
         })
         .resolve::<LogErrorAndDefault>()
+    }
+
+    /// `Native.packageGiveUp(account, packageId)`: the worker's last run failed before Rust could answer.
+    #[no_mangle]
+    pub extern "system" fn Java_org_moqui_mobile_Native_packageGiveUp<'caller>(
+        mut env: EnvUnowned<'caller>,
+        _class: JClass<'caller>,
+        account: JString<'caller>,
+        package_id: JString<'caller>,
+    ) {
+        env.with_env(|env| -> Result<(), jni::errors::Error> {
+            super::package_given_up(&account.try_to_string(env)?, &package_id.try_to_string(env)?);
+            Ok(())
+        })
+        .resolve::<LogErrorAndDefault>();
     }
 
     /// `Native.packagePause(account, packageId, runner)`: WorkManager stopped the worker `runner`.

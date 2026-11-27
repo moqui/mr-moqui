@@ -62,6 +62,8 @@ object Native {
         runner: String,
         last: Boolean,
     ): Int
+    /** The worker's last run failed before Rust answered (an exception): the download's state is made final. */
+    @JvmStatic external fun packageGiveUp(account: String, packageId: String)
     /** WorkManager stopped the work `runner`: Rust stops its download at its next range and keeps its part. */
     @JvmStatic external fun packagePause(account: String, packageId: String, runner: String)
 
