@@ -1707,3 +1707,28 @@ fn a_sealed_dump_opens_for_a_restore_only_with_its_key_and_leaves_no_plain_file(
     );
     assert!(plain.exists(), "a plain dump is deleted after");
 }
+
+/// SEC-TLS-98: a restore takes beside the chosen dump only the `moqui_<name>` dumps one save wrote with it; another file
+/// that shares the suffix (a template's or the superuser database's name, one someone put in the folder) is not restored.
+#[test]
+fn a_restore_takes_only_moqui_sibling_dumps() {
+    let saves = std::env::temp_dir().join(format!("moqui-sibling-dumps-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&saves);
+    std::fs::create_dir_all(&saves).unwrap();
+    for name in [
+        "moqui.dump",
+        "moqui_content.dump",
+        "template1.dump",
+        "template0.dump",
+        "postgres.dump",
+        "planted.dump",
+        "moqui_.dump",
+    ] {
+        std::fs::write(saves.join(name), b"").unwrap();
+    }
+    assert_eq!(
+        sibling_dumps(&saves.join("moqui.dump")),
+        vec![("moqui_content".to_string(), saves.join("moqui_content.dump"))]
+    );
+    let _ = std::fs::remove_dir_all(&saves);
+}

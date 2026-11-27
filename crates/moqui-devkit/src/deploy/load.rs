@@ -658,6 +658,60 @@ fn clone_changes(location: &Path) -> Vec<String> {
     changes
 }
 
+/// A component name as a directory and a repository id may hold it.
+///
+/// # Errors
+///
+/// When it is empty, longer than 100, starts with `.` or has a character other than a letter, digit, `-`, `_` or `.`.
+pub(crate) fn check_name(name: &str) -> Result<(), String> {
+    let good = !name.is_empty()
+        && name.len() <= 100
+        && !name.starts_with('.')
+        && name
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'));
+    if good {
+        Ok(())
+    } else {
+        Err(format!("{name:?} is not a component name a deploy takes"))
+    }
+}
+
+/// The directory of the deployed component `name` as its row's `location` names it, which a removal moves aside and a
+/// deploy stages beside: only a directory under a `components` directory, named for the component or the one the
+/// component was found at (`known`: a component's directory may have another name), for a name a deploy takes. A row
+/// that names another directory (the runtime's `conf` or `db`, another component) is refused, so a row written some
+/// other way moves nothing (SEC-TLS-104).
+///
+/// # Errors
+///
+/// When `name` is not a component name or `location` is not such a directory.
+pub(crate) fn component_location(name: &str, location: &str, known: Option<&Path>) -> Result<PathBuf, String> {
+    check_name(name)?;
+    let path = PathBuf::from(location);
+    let named = path.file_name().is_some_and(|file| file == std::ffi::OsStr::new(name))
+        || known.is_some_and(|known| known == path);
+    let normal = path.components().all(|part| {
+        matches!(
+            part,
+            std::path::Component::Normal(_) | std::path::Component::RootDir | std::path::Component::Prefix(_)
+        )
+    });
+    let under_components = path.ancestors().skip(1).any(|ancestor| {
+        ancestor
+            .file_name()
+            .is_some_and(|file| file == std::ffi::OsStr::new("components"))
+    });
+    if named && normal && under_components {
+        Ok(path)
+    } else {
+        Err(format!(
+            "the deployed component {name} names the directory {location:?}, which is not its own under a components \
+             directory"
+        ))
+    }
+}
+
 /// What [`remove`] did.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Removed {
@@ -687,7 +741,20 @@ pub fn remove(factory: &Arc<ExecutionContextFactory>, name: &str, confirm_dirty:
     })
     .map_err(|err| err.to_string())?
     .ok_or_else(|| format!("{name} was not loaded by a deploy; take it out of its component directory instead"))?;
-    let location = PathBuf::from(text(&row, "location"));
+    // where the component is, loaded or found in a component directory, whatever its directory's name
+    let known = factory
+        .components()
+        .iter()
+        .find(|component| component.name == name)
+        .map(|component| component.location.clone())
+        .or_else(|| {
+            moqui_core::context::discover_again(factory)
+                .ok()?
+                .into_iter()
+                .find(|component| component.name == name)
+                .map(|component| component.location)
+        });
+    let location = component_location(name, &text(&row, "location"), known.as_deref())?;
     if text(&row, "storage") == "clone" && location.is_dir() && !confirm_dirty {
         let changes = clone_changes(&location);
         if !changes.is_empty() {

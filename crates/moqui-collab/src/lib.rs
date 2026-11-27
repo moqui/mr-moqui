@@ -44,6 +44,7 @@
 mod board;
 pub mod markdown;
 mod meeting;
+mod nesting;
 pub use meeting::Meeting;
 pub mod service;
 pub mod text;
@@ -186,12 +187,29 @@ impl Codec {
             Self::Board => board::search_text(doc),
         }
     }
+
+    /// What its documents may hold (SEC-TLS-118): a page, its fragment of XML elements and texts; a board, its three
+    /// maps of plain values.
+    fn shape(self) -> nesting::Shape {
+        match self {
+            Self::Markdown => nesting::Shape {
+                roots: &[markdown::FRAGMENT],
+                nested: nesting::Nested::Xml,
+            },
+            Self::Board => nesting::Shape {
+                roots: &["elements", "files", "app"],
+                nested: nesting::Nested::None,
+            },
+        }
+    }
 }
 
 struct Room {
     saving: Arc<Mutex<()>>,
     doc: Doc,
     board_candidate: Option<Doc>,
+    /// The depth of the document's shared types, which an editor's update may not take past its bound (SEC-TLS-118).
+    nesting: nesting::Nesting,
     target: WikiTarget,
     /// Changed since the state was last written.
     dirty: bool,
@@ -591,6 +609,7 @@ fn load(key: &str, page_id: &str, on_database: bool) -> Result<Arc<Mutex<Room>>,
         saving: Arc::default(),
         doc,
         board_candidate: None,
+        nesting: nesting::Nesting::default(),
         target,
         dirty: false,
         changed_at: Instant::now(),
@@ -907,6 +926,14 @@ pub fn apply(key: &str, user_id: &str, update: &[u8]) -> Result<(), Refusal> {
     };
     if room.state_bytes.saturating_add(update.len()) > max {
         return Err(Refusal::new(413, format!("the document is larger than {max} bytes")));
+    }
+    // its roots and nested types, before anything of it is applied, here or to the board's candidate (SEC-TLS-118)
+    let shape = room.target.codec.shape();
+    {
+        let Room { doc, nesting, .. } = &mut *room;
+        nesting
+            .check(doc, shape, update)
+            .map_err(|(status, why)| Refusal::new(status, why))?;
     }
     if matches!(room.target.codec, Codec::Board) {
         let Room {
