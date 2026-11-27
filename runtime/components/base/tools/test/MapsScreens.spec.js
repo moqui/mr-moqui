@@ -1,7 +1,8 @@
 // The Maps app's screens (plans/archive/Maps.md §3.1, §3.2; docs/tools/Maps.md): Browse's terminal template (Browse.tui.json over
 // terminalMap; Browse.qvue's one render is in a browser, test/client/MapsBrowseExtent) for a Maps user, with its live
 // location list (LocationSharesTui, plans/Location-Sharing.md §3.3: the user's own share and one shared with them, ages and
-// coordinates, Stop for their own only), and the app refused to a user with ALL_USERS alone; the local-map dialog,
+// coordinates, Stop for their own only), and the app refused to a user with ALL_USERS alone; My location shares, rendered
+// once in qvt for an owner with ALL_USERS alone (MAPS_SHARES), and its Stop, the owner's only; the local-map dialog,
 // a plain XML screen rendered once in qvt and once in html: for a Maps user the adapter lets write, the record's place,
 // precision and source from the adapter's answer, Choose location and Open in Maps; for a user with ALL_USERS alone (no
 // MAPS_APP, no System), who opens it, a record the adapter refuses them (DENIED) not available, with nothing of it, no Save
@@ -235,6 +236,37 @@ feature("Browse renders its terminal twin for a Maps user, and the app is refuse
         // the app is MAPS_APP's
         refused(plainConfig)
         !plainConfig.output.includes("profileId")
+    }
+})
+
+feature("My location shares opens for an owner with ALL_USERS alone, lists their share and stops it; another user stops nothing of it", {
+    when() {
+        // where the app bar's "Sharing location" chip goes (plans/Location-Sharing.md §3.3; MAPS_SHARES), for a user with no Maps
+        const shareId = shareCall(PLAIN, "create#Share", {
+            audienceList: [{audienceTypeEnumId: "LsaUser", userId: WRITER}],
+            thruDate: new Date(Date.now() + 3600000),
+            label: "Plain errand"
+        }).shareId
+        const page = as(PLAIN, "apps/maps/MyShares", {}, null, "qvt")
+        as(WRITER, "apps/maps/MyShares/stopShare", {shareId}, "post")
+        const afterOther = Array.from(shareCall(PLAIN, "find#MyShares").shareList || []).some(row => row.shareId === shareId)
+        as(PLAIN, "apps/maps/MyShares/stopShare", {shareId}, "post")
+        const afterOwn = Array.from(shareCall(PLAIN, "find#MyShares").shareList || []).some(row => row.shareId === shareId)
+        return {shareId, page, afterOther, afterOwn}
+    },
+    then({shareId, page, afterOther, afterOwn}) {
+        page.status == 200
+        page.errors == ""
+        !refused(page)
+        page.output.includes("Plain errand")
+        page.output.includes("Maps screens MAPS_SCR_WRITER")
+        page.output.includes("stopShare")
+        page.output.includes("extendShare")
+        page.output.includes(shareId)
+        // no Open in Maps for a user whose grants do not open Browse
+        !page.output.includes("Open in Maps")
+        afterOther == true
+        afterOwn == false
     }
 })
 

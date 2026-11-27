@@ -47,8 +47,9 @@ function sys(run) {
     }
 }
 const username = userId => (userId === "EX_JOHN_DOE" ? "john.doe" : userId.toLowerCase().replace(/_/g, "."))
-// a call as the user, with authorization on: its results, and its errors as text
-function as(userId, verbNoun, parameters) {
+// a call as the user, with authorization on: its results, and its errors as text; a service of LocationServices unless
+// another prefix is given
+function as(userId, verbNoun, parameters, prefix) {
     ec.user.internalLoginUser(username(userId))
     ec.artifactExecution.enableAuthz()
     let out = {}
@@ -57,7 +58,7 @@ function as(userId, verbNoun, parameters) {
         out =
             ec.service
                 .sync()
-                .name(S + verbNoun)
+                .name((prefix || S) + verbNoun)
                 .parameters(parameters || {})
                 .call() || {}
     } catch (err) {
@@ -856,7 +857,7 @@ feature(
             indicator.indicators.length == 1
             indicator.indicators[0].key == "locationSharing"
             indicator.indicators[0].label.startsWith("Sharing location")
-            indicator.indicators[0].url == "/qapps/maps/Browse?panel=live"
+            indicator.indicators[0].url == "/qapps/maps/MyShares"
             indicator.indicators[0].refreshInSeconds > 0
             indicator.refreshOn[0].topicPrefix == "locationShare:"
             noIndicator.indicators.length == 0
@@ -891,27 +892,11 @@ feature(
     {
         when() {
             later(6000)
+            // A's earlier shares stopped, so the chip says this one alone and goes with its stop
+            for (const share of Array.from(as(A, "find#MyShares").shareList || [])) as(A, "stop#Share", {shareId: share.shareId})
             const shareId = as(A, "create#Share", {audienceList: [toUser(B)], thruDate: new Date(shared.now + HOUR)}).shareId
             // org.moqui.ui.ShellServices as the user (who has ALL_USERS alone, no Maps), authorization on
-            const shell = (userId, verbNoun, parameters) => {
-                ec.user.internalLoginUser(username(userId))
-                ec.artifactExecution.enableAuthz()
-                let out = {}
-                let thrown = ""
-                try {
-                    out =
-                        ec.service
-                            .sync()
-                            .name("org.moqui.ui.ShellServices." + verbNoun)
-                            .parameters(parameters || {})
-                            .call() || {}
-                } catch (err) {
-                    thrown = String(err.message || err)
-                }
-                const errors = thrown + (ec.message.hasError() ? ec.message.errorsString : "")
-                ec.message.clearErrors()
-                return Object.assign({errors}, out)
-            }
+            const shell = (userId, verbNoun, parameters) => as(userId, verbNoun, parameters, "org.moqui.ui.ShellServices.")
             const out = {
                 owner: shell(A, "get#ShellIndicators"),
                 none: shell(J, "get#ShellIndicators"),
@@ -923,13 +908,18 @@ feature(
         },
         then({owner, none, direct, stopped}) {
             owner.errors == ""
-            owner.indicators.some(row => row.key == "locationSharing" && row.sourceId == "framework.locationSharing")
+            owner.indicators.some(
+                row =>
+                    row.key == "locationSharing" && row.sourceId == "framework.locationSharing" && row.label == "Sharing location"
+            )
+            owner.indicators[0].url == "/qapps/maps/MyShares"
             none.errors == ""
             none.indicators.length == 0
             none.refreshOn.some(rule => rule.topicPrefix == "locationShare:")
             direct.errors.includes("not authorized")
             Array.from(direct.results || []).length == 0
             stopped.errors == ""
+            stopped.indicators.length == 0
         }
     }
 )
