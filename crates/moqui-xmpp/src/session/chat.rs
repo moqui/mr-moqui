@@ -675,6 +675,8 @@ impl Session {
             }
         } else if topic == "userStatus" && backend::text(message, "userId") != self.user_id() {
             self.presence_out(message).await;
+        } else if topic.starts_with(crate::registry::LOCATION_TOPIC) {
+            self.geoloc_out(message).await;
         }
     }
 

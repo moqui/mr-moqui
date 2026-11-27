@@ -70,6 +70,20 @@ pub struct State {
     pub refused_from: Vec<IpAddr>,
     pub statuses: HashMap<String, String>,
     pub push: Vec<(String, Json)>,
+    /// The user's location share with XMPP contacts that `report#XmppPosition` reports (plans/Location-Sharing.md
+    /// §3.6), else none, which the service answers `NO_XMPP_SHARE`.
+    pub location_share: Option<LocationShare>,
+    /// What `report#XmppPosition` answers in place of taking the report (a 429, a 400), when set.
+    pub location_answer: Option<Json>,
+    /// The parameters of each `report#XmppPosition`.
+    pub location_reports: Vec<Json>,
+}
+
+/// A location share as `report#XmppPosition` stands in for it: its XMPP contacts' users, and whether it is approximate.
+#[derive(Clone)]
+pub struct LocationShare {
+    pub audience: Vec<String>,
+    pub approximate: bool,
 }
 
 pub struct Fake {
@@ -542,6 +556,32 @@ impl Fake {
                     .map(|(_, target)| target.clone())
                     .collect();
                 Ok(json!({"targetList": list}))
+            }
+            // the service takes the report through report#Position and pushes what the share's audience may see to its
+            // XMPP contacts' users alone: here an approximate share's "cell" is the fix to two places, a stand-in for
+            // the services' grid
+            services::LOCATION_REPORT => {
+                state.location_reports.push(p.clone());
+                if let Some(answer) = state.location_answer.clone() {
+                    return Ok(answer);
+                }
+                let Some(share) = state.location_share.clone() else {
+                    return Ok(json!({"statusCode": 403, "reasonCode": "NO_XMPP_SHARE"}));
+                };
+                let number = |field: &str| text(p, field).parse::<f64>().ok();
+                let (mut latitude, mut longitude, mut accuracy) =
+                    (number("latitude"), number("longitude"), number("accuracy"));
+                if share.approximate {
+                    let cell = |value: Option<f64>| value.map(|value| (value * 100.0).round() / 100.0);
+                    (latitude, longitude, accuracy) = (cell(latitude), cell(longitude), Some(1000.0));
+                }
+                let body = json!({"topic": format!("{}S1", crate::registry::LOCATION_TOPIC), "userIds": share.audience,
+                    "message": {"shareId": "S1", "ownerUserId": me, "event": "position", "latitude": latitude,
+                        "longitude": longitude, "accuracy": accuracy, "observedDate": p.get("observedMillis")}});
+                if let Some(server) = self.server.get().and_then(Weak::upgrade) {
+                    server.registry.deliver_notice(&body);
+                }
+                Ok(json!({"statusCode": 200}))
             }
             services::BLOCKS => Ok(json!({"jidList": []})),
             services::STATUSES => Ok(json!({"statusMap": {}})),

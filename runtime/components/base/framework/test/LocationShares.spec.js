@@ -13,7 +13,10 @@
 // is refused before its snapshot is written (the LL1 review); and the effective configuration's locationShares (LL2, Maps
 // › Browse) hold the owner's own share and the audience's, nobody else's; a share started on a device (LL3, §3.4) takes
 // that device's reports only, another device or a browser is refused as OTHER_DEVICE, Send from here and Send from this
-// device move it, the app's reportClientLocation and stopClientLocation take it, and the device key's renewal keeps it. It
+// device move it, the app's reportClientLocation and stopClientLocation take it, and the device key's renewal keeps it; and
+// over XMPP (LL5, §3.6) an XMPP client's position reports the owner's share with XMPP contacts sent from no device (none:
+// refused), and each report goes to those contacts' users alone, rounded when approximate, a contact added later only
+// from then on, an end and a revoke as an empty item. It
 // ends its memberships and stops its shares in cleanup, so it runs again on --db existing.
 // Run: ./moq test framework --spec LocationShares
 const S = "org.moqui.maps.LocationServices."
@@ -1360,5 +1363,143 @@ feature("the time the audience reached a viewer is the server's receive time: an
         out.bNext.latest.latitude == 43.5
         out.bNext.trailList.map(point => point.latitude).join() == "43.5"
         out.bNext.latest.receivedDate === undefined
+    }
+})
+
+feature("over XMPP: a client's position reports the share with XMPP contacts, and each report reaches those contacts alone, rounded when approximate, an end as an empty item", {
+    when() {
+        const XMPP = "report#XmppPosition"
+        const out = {}
+        withConf("xmpp-server@domain", "loc.example.test", () => {
+            // C is A's contact: a direct room of the two (the XMPP roster)
+            ec.user.internalLoginUser(username(A))
+            sys(() =>
+                ec.service
+                    .sync()
+                    .name("org.moqui.chat.ChatServices.create#Room")
+                    .parameters({roomTypeEnumId: "CrtDirect", memberUserIdList: [C]})
+                    .call()
+            )
+            ec.message.clearErrors()
+            const contact = {audienceTypeEnumId: "LsaXmpp", jid: username(C) + "@loc.example.test"}
+            const xmppPushes = shareId =>
+                capture()
+                    .getMessages("locationShareXmpp:" + shareId)
+                    .map(row =>
+                        Object.assign(
+                            {userIds: Array.from(row.userIds || [])},
+                            typeof row.message === "string" ? JSON.parse(row.message) : row.message
+                        )
+                    )
+            // no share with an XMPP contact: refused, nothing written
+            later(6000)
+            out.none = as(A, XMPP, {latitude: "44.1", longitude: "-111.9"})
+            // a share with B and with C over XMPP
+            later(6000)
+            const made = as(A, "create#Share", {audienceList: [toUser(B), contact], thruDate: new Date(shared.now + HOUR)})
+            out.made = made
+            const shareId = made.shareId
+            out.contactRow = rows("moqui.maps.LocationShareAudience", {shareId, audienceTypeEnumId: "LsaXmpp"})[0] || null
+            capture().clear()
+            out.taken = as(A, XMPP, {latitude: "44.2", longitude: "-111.9", accuracy: "15", observedMillis: shared.now})
+            out.latest = latestOf(shareId)
+            out.xmpp = xmppPushes(shareId)
+            out.web = pushes(shareId)
+            // C reads nothing on the web: an XMPP contact is no web audience
+            out.cRead = as(C, "get#Share", {shareId}).reasonCode
+            // the rate holds as for any report
+            out.soon = as(A, XMPP, {latitude: "44.3", longitude: "-111.9"})
+            // a value out of range: refused with no error and nothing written
+            later(6000)
+            out.bad = as(A, XMPP, {latitude: "95", longitude: "-111.9"})
+            // a share sent from a device is that device's alone: the XMPP client's position does not reach it
+            const deviceShare = as(A, "create#Share", {audienceList: [contact], thruDate: new Date(shared.now + HOUR)}).shareId
+            sys(() =>
+                ec.entity
+                    .find("moqui.maps.LocationShare")
+                    .condition("shareId", deviceShare)
+                    .updateAll({userLoginKeyId: "LOC_SHARE_NO_SUCH_KEY"})
+            )
+            as(A, "stop#Share", {shareId})
+            later(6000)
+            out.deviceOnly = as(A, XMPP, {latitude: "44.4", longitude: "-111.9"})
+            out.deviceLatest = latestOf(deviceShare)
+            as(A, "stop#Share", {shareId: deviceShare})
+            out.ended = xmppPushes(shareId).filter(push => push.event === "ended")
+
+            // an approximate share: its XMPP contacts get the cell, never the fix
+            later(6000)
+            const rough = as(A, "create#Share", {
+                audienceList: [contact],
+                thruDate: new Date(shared.now + HOUR),
+                precisionEnumId: "LspApproximate"
+            }).shareId
+            capture().clear()
+            out.roughTaken = as(A, XMPP, {latitude: "44.12345", longitude: "-111.98765", accuracy: "8"})
+            out.rough = xmppPushes(rough)
+            as(A, "stop#Share", {shareId: rough})
+
+            // a contact added later: the audience version raised, nothing of before, the next report from then on; a revoke
+            // as an empty item
+            later(6000)
+            const late = as(A, "create#Share", {audienceList: [toUser(B)], thruDate: new Date(shared.now + HOUR)}).shareId
+            capture().clear()
+            report(late, "44.5", "-111.9")
+            const versionOf = shareId =>
+                sys(() => ec.entity.find("moqui.maps.LocationShare").condition("shareId", shareId).one().audienceVersion)
+            const versionBefore = versionOf(late)
+            out.lateAdded = as(A, "update#Share", {shareId: late, addAudienceList: [contact]})
+            out.versionRaised = versionOf(late) - versionBefore
+            out.lateBefore = xmppPushes(late).length
+            later(6000)
+            // a browser page's report (no device) reaches the contact too
+            report(late, "44.6", "-111.9")
+            out.lateAfter = xmppPushes(late)
+            const row = rows("moqui.maps.LocationShareAudience", {shareId: late, audienceTypeEnumId: "LsaXmpp"})[0]
+            as(A, "revoke#Audience", {shareId: late, audienceSeqId: row.audienceSeqId})
+            out.revoked = xmppPushes(late).filter(push => push.event === "revoked")
+            as(A, "stop#Share", {shareId: late})
+            out.afterRevoke = xmppPushes(late).filter(push => push.event === "ended").length
+        })
+        return out
+    },
+    then(out) {
+        out.none.reasonCode == "NO_XMPP_SHARE"
+        out.none.errors == ""
+        out.made.errors == ""
+        out.contactRow.userId == C
+        out.taken.statusCode == 200
+        out.latest.latitude == 44.2
+        out.xmpp.length == 1
+        out.xmpp[0].userIds.join() == C
+        out.xmpp[0].ownerUserId == A
+        out.xmpp[0].event == "position"
+        out.xmpp[0].latitude == 44.2
+        out.xmpp[0].accuracy == 15
+        out.xmpp[0].heading === undefined
+        out.web.filter(push => push.event === "position").map(push => push.userIds.join()).join() == B
+        out.cRead == "SHARE_NOT_FOUND"
+        out.soon.statusCode == 429
+        out.bad.statusCode == 400
+        out.bad.reasonCode == "BAD_POSITION"
+        out.bad.errors == ""
+        out.deviceOnly.reasonCode == "NO_XMPP_SHARE"
+        out.deviceLatest == null
+        out.ended.length == 1
+        out.ended[0].userIds.join() == C
+        out.ended[0].latitude === undefined
+        out.roughTaken.statusCode == 200
+        out.rough.length == 1
+        out.rough[0].latitude == 44.125
+        out.rough[0].accuracy == 1000
+        !JSON.stringify(out.rough).includes("44.12345")
+        out.lateAdded.errors == ""
+        out.versionRaised == 1
+        out.lateBefore == 0
+        out.lateAfter.length == 1
+        out.lateAfter[0].latitude == 44.6
+        out.revoked.length == 1
+        out.revoked[0].userIds.join() == C
+        out.afterRevoke == 0
     }
 })

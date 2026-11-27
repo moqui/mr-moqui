@@ -56,6 +56,8 @@ pub const PUBSUB_ERRORS: &str = "http://jabber.org/protocol/pubsub#errors";
 pub const BOOKMARKS: &str = "urn:xmpp:bookmarks:1";
 pub const AVATAR_DATA: &str = "urn:xmpp:avatar:data";
 pub const AVATAR_METADATA: &str = "urn:xmpp:avatar:metadata";
+/// User location (XEP-0080), mapped onto Moqui's location shares (plans/Location-Sharing.md §3.6).
+pub const GEOLOC: &str = "http://jabber.org/protocol/geoloc";
 pub const OMEMO_LEGACY: &str = "eu.siacs.conversations.axolotl";
 pub const OMEMO_LEGACY_DEVICES: &str = "eu.siacs.conversations.axolotl.devicelist";
 pub const OMEMO_LEGACY_BUNDLES: &str = "eu.siacs.conversations.axolotl.bundles:";

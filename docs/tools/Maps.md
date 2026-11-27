@@ -996,8 +996,9 @@ A person shares where they are, until a time they choose, with people they choos
 entities `LocationShare`, `LocationShareAudience`, `LocationShareAudienceMember`, `LocationShareOwner` (the lock of an
 owner's share count), `LocationLatest` and `LocationTrailPoint` (`moqui.maps`,
 `framework/entity/MapLocationEntities.xml`) and the hourly clean, Maps shows them (below, "In Maps"), and the Android
-app sends a share from the phone, also in the background (below, "From the Android app"). Chat's live location, XMPP
-and the guest page for a link are still to come.
+app sends a share from the phone, also in the background (below, "From the Android app"), and a share's XMPP contacts
+follow it in their XMPP apps (below, "Over XMPP"). Chat's live location and the guest page for a link are still to
+come.
 
 **In Maps** (Browse; LL2):
 
@@ -1098,6 +1099,17 @@ and the guest page for a link are still to come.
   the owner sees every active share wherever they are.
 - **The terminal.** Browse's twin lists, under its map, the user's own shares (with whom, until, the last position's age
   and coordinates, Stop) and those shared with them (`Maps/LocationSharesTui.xml`).
+- **Over XMPP** (LL5; [XMPP, User location](../interfaces/XMPP.md#user-location)). A share with XMPP contacts in its
+  audience sends each position it takes, from any device or page, to those contacts' XMPP apps as user location
+  (XEP-0080): a `geoloc` event from the owner's JID to each of their sessions that asked for it, with the values the
+  audience sees (an approximate share's cell), and an empty `geoloc` item when it ends, is stopped or revokes them. A
+  contact reads nothing of it on the web (`find#SharedWithMe`, `get#Share` read people and groups), gets only positions
+  received after they were added, and adding one raises the audience version. The owner's own XMPP client can send it
+  too: its location publish is `report#XmppPosition`, a report of each of the owner's active shares with an XMPP
+  contact that is sent from no device (a browser page's, or one taken over by Send from here: an XMPP client is no
+  device key, so a share the phone sends stays the phone's), through `report#Position`'s rules; with no such share it
+  is refused, so a client's setting never starts a share, and its "stopped" (an empty item) ends none: the share is
+  the owner's to stop here. XMPP contacts are users of this server only: there is no federation.
 
 - **The owner's acts.** `create#Share` (the audience, the end, exact or approximate, a trail or not), `update#Share`
   (extend or shorten, add to the audience, change the label or purpose), `stop#Share`, `revoke#Audience` (one person,
@@ -1107,7 +1119,8 @@ and the guest page for a link are still to come.
 - **Who a share is for.** A user the owner may message (the chat directory's rule, `ChatServices.get#RefusedUsers`: a
   user it refuses, or one who blocked the owner, answers as one that does not exist), a group the owner is in now (never
   `ALL_USERS` or a group of external users), a contact of the owner's XMPP roster (`username@xmpp-server@domain`, a
-  person of one of the owner's direct rooms; kept for the XMPP server to deliver to), or one guest link a share, whose
+  person of one of the owner's direct rooms, a user of this server since XMPP has no federation; the entry keeps the
+  contact's user, whose XMPP sessions get the share's positions, "Over XMPP" above), or one guest link a share, whose
   token is answered once by the call that makes it and kept only as its digest (as `ResourceShare`'s link). Each person
   added is told who shares with them and until when (the `LocationShared` notification, in their own time zone). A
   person has at most `location@max-active-shares` shares on at once, and a share at most `location@max-audience` people
@@ -1182,8 +1195,9 @@ its map, opened on an extent across the antimeridian at the first load, and the 
 with a guest link, sent from the page, drawn on the live layer and stopped). The live layer's pushes, stale style, end and
 escaped labels are `webroot/test/client/pages/WebrootMap.page.js`; the share services' rules, with who sees what in the
 effective configuration's `locationShares` and a share's device (another device or a browser refused, Send from here
-and Send from this device, the app's `reportClientLocation` and `stopClientLocation`, a renewed key),
-`framework/test/LocationShares.spec.js`; the phone's sending, `moqui-client` `location_tests.rs` (`report_location`: the
+and Send from this device, the app's `reportClientLocation` and `stopClientLocation`, a renewed key, and over XMPP an
+XMPP position taken by the share with XMPP contacts only and each report pushed to those contacts alone),
+`framework/test/LocationShares.spec.js`, with the XMPP session's side in `moqui-xmpp` (`session::tests`, user location); the phone's sending, `moqui-client` `location_tests.rs` (`report_location`: the
 newest point only, 429, stale, the clock, a 410, 404, another device or a sign-out stopping it), `moqui-mobile`
 `location_tests.rs` and the Kotlin `LocationRulesTest` (the interval, the stop rules, the start only from the app in
 front). The configuration services' rules are `framework/test/MapsConfig.spec.js` (with a record link resolved to the host

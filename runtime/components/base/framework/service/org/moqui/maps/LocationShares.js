@@ -236,6 +236,46 @@ function latestSince(latest, reached) {
     return shown
 }
 
+/**
+ * The users of a share's XMPP contacts, of the entries given (LsaXmpp, each with the contact's userId, written when the
+ * owner added the JID from their roster) or else of its entries not revoked, the owner never among them.
+ */
+function xmppUserIds(share, rows) {
+    return Array.from(
+        new Set(
+            (rows || activeAudience(share.shareId))
+                .filter(
+                    row =>
+                        row.audienceTypeEnumId === "LsaXmpp" &&
+                        row.revokedDate == null &&
+                        row.userId &&
+                        row.userId !== share.ownerUserId
+                )
+                .map(row => row.userId)
+        )
+    )
+}
+
+/**
+ * A share's position or end for its XMPP contacts (plans/Location-Sharing.md §3.6): on locationShareXmpp:<shareId> to
+ * those contacts' users only, which the XMPP server (moqui-xmpp session/geoloc.rs) sends to each of their sessions that
+ * asked for user location as a geoloc event from the owner, and an empty geoloc item for an end. The same values the
+ * share's audience is sent (an approximate share's cell), at the time of the report, so a contact added later gets only
+ * positions received after it was added. Sent when the transaction commits, never saved or sent to a phone; no web
+ * client follows the topic.
+ */
+function pushXmpp(share, userIds, message) {
+    if (!userIds.length) return
+    ec.makeNotificationMessage()
+        .topic("locationShareXmpp:" + share.shareId)
+        .userIds(userIds)
+        .directOnly()
+        .persistOnSend(false)
+        .showAlert(false)
+        .message(Object.assign({shareId: share.shareId, ownerUserId: share.ownerUserId}, message))
+        .send()
+}
+
 /** A push on the share's topic to these users only: sent when the transaction commits, never saved or sent to a phone. */
 function push(share, userIds, message) {
     const ids = Array.from(new Set(userIds.filter(id => id)))
@@ -347,27 +387,37 @@ function checkGroups(groupIds) {
     return {}
 }
 
-/** Whether these bare JIDs are contacts of the owner's XMPP roster (the other people of the owner's direct rooms). */
+/** A JID's localpart as a username: XEP-0106's escapes undone (jane\40example.com is jane@example.com), in lower case. */
+function jidUsername(local) {
+    const escapes = {"20": " ", "22": '"', "26": "&", "27": "'", "2f": "/", "3a": ":", "3c": "<", "3e": ">", "40": "@"}
+    escapes["5c"] = "\\"
+    return local.replace(/\\(20|22|26|27|2f|3a|3c|3e|40|5c)/gi, (_, code) => escapes[code.toLowerCase()]).toLowerCase()
+}
+
+/**
+ * Whether these bare JIDs are contacts of the owner's XMPP roster (the other people of the owner's direct rooms): local
+ * users of this server's XMPP domain only, since the XMPP server has no federation (C3b) to reach another server's.
+ * Out jidUsers, each JID's userId, which its entry keeps so the share's positions reach that user's XMPP sessions.
+ */
 function checkJids(jids) {
-    if (!jids.length) return {}
+    if (!jids.length) return {jidUsers: {}}
     const domain = text(ec.factory.getConfValue("xmpp-server@domain")).toLowerCase()
     if (!domain) return refuse("XMPP_OFF", "This server has no XMPP")
     const roster = ec.service.sync().name("org.moqui.chat.XmppServices.get#Roster").call()
     if (ec.message.hasError()) return {reasonCode: "XMPP_NOT_CONTACT"}
     const contactIds = Array.from((roster && roster.userIdList) || [])
-    const usernames = new Set(
-        contactIds.length
-            ? Array.from(find(ACCOUNT).condition("userId", "in", contactIds).selectField("username").list()).map(row =>
-                  text(row.username).toLowerCase()
-              )
-            : []
-    )
+    const contacts = {}
+    if (contactIds.length)
+        for (const row of find(ACCOUNT).condition("userId", "in", contactIds).selectField("userId,username").list())
+            contacts[text(row.username).toLowerCase()] = row.userId
+    const jidUsers = {}
     for (const jid of jids) {
         const parts = /^([^@/\s]+)@([^@/\s]+)$/.exec(jid)
-        if (!parts || parts[2] !== domain || !usernames.has(parts[1]))
-            return refuse("XMPP_NOT_CONTACT", "Share over XMPP only with a contact of yours")
+        const userId = parts && parts[2] === domain ? contacts[jidUsername(parts[1])] : null
+        if (!userId) return refuse("XMPP_NOT_CONTACT", "Share over XMPP only with a contact of yours")
+        jidUsers[jid] = userId
     }
-    return {}
+    return {jidUsers}
 }
 
 /** The audience entries asked for, checked by the rules of who an owner may share with. */
@@ -393,14 +443,13 @@ function checkAudience(list, now) {
     }
     if (links > 1) return refuse("ONE_LINK", "A share has one guest link")
     const of = type => entries.filter(entry => entry.type === type).map(entry => entry.key)
-    for (const check of [
-        () => checkUsers(of("LsaUser"), now),
-        () => checkGroups(of("LsaUserGroup")),
-        () => checkJids(of("LsaXmpp"))
-    ]) {
+    for (const check of [() => checkUsers(of("LsaUser"), now), () => checkGroups(of("LsaUserGroup"))]) {
         const out = check()
         if (out.reasonCode) return out
     }
+    const jids = checkJids(of("LsaXmpp"))
+    if (jids.reasonCode) return jids
+    for (const entry of entries) if (entry.type === "LsaXmpp") entry.userId = jids.jidUsers[entry.key]
     return {entries}
 }
 
@@ -414,7 +463,10 @@ function addAudience(share, entries, now) {
         } else if (entry.type === "LsaUserGroup") {
             fields.userGroupId = entry.key
         } else if (entry.type === "LsaXmpp") {
+            // the contact's user, whose XMPP sessions get the share's positions (plans/Location-Sharing.md §3.6); never
+            // a reader of the share on the web, which reads LsaUser and group entries only
             fields.jid = entry.key
+            fields.userId = entry.userId
         } else if (entry.type === "LsaLink") {
             linkToken = ec.user.randomString(32)
             fields.tokenDigest = ec.user.singleUseCodeHash(linkToken)
@@ -612,6 +664,7 @@ function update(p) {
 /** A share's end acted on: its latest position deleted, the audience and the owner told. */
 function endShare(share, now) {
     const userIds = currentUserIds(share)
+    const contacts = xmppUserIds(share)
     share.endedDate = new Date(now)
     if (share.keepTrail === "Y") {
         const maxDays = setting("trail-max-days", 30)
@@ -621,6 +674,8 @@ function endShare(share, now) {
     share.update()
     find(LATEST).condition("shareId", share.shareId).deleteAll()
     push(share, userIds.concat([share.ownerUserId]), {event: "ended"})
+    // the XEP-0080 "stopped": an empty geoloc item to the share's XMPP contacts
+    pushXmpp(share, contacts, {event: "ended"})
 }
 
 /** stop#Share: the caller's own share ended now. */
@@ -642,10 +697,14 @@ function revoke(p) {
     const row = find(AUDIENCE).condition("shareId", share.shareId).condition("audienceSeqId", text(p.audienceSeqId)).one()
     if (!row || row.revokedDate != null) return refuse("AUDIENCE_NOT_FOUND", "That person or link is not in this share")
     const before = currentUserIds(share)
+    const contactsBefore = xmppUserIds(share)
     row.revokedDate = new Date(now)
     row.update()
     const after = new Set(currentUserIds(share))
     push(share, before.filter(id => !after.has(id)).concat([share.ownerUserId]), {event: "revoked"})
+    // an XMPP contact taken out gets an empty geoloc item (one still in the share by another entry does not)
+    const contactsAfter = new Set(xmppUserIds(share))
+    pushXmpp(share, contactsBefore.filter(id => !contactsAfter.has(id)), {event: "revoked"})
     return {}
 }
 
@@ -811,7 +870,80 @@ function report(p) {
             .createOrUpdate()
     const reached = currentUserIds(share)
     push(share, reached, Object.assign({event: "position", observedDate: position.observed, approximate: approximated}, values))
+    // its XMPP contacts as they are at this report: one added later gets only what is received after
+    pushXmpp(share, xmppUserIds(share), {
+        event: "position",
+        observedDate: position.observed,
+        latitude: values.latitude,
+        longitude: values.longitude,
+        accuracy: values.accuracy
+    })
     return {statusCode: 200}
+}
+
+/** One report#Position for a share, its refusal's error kept out of the caller's messages: its outcome alone. */
+function reportQuiet(parameters) {
+    ec.message.pushErrors()
+    try {
+        return report(parameters) || {}
+    } finally {
+        ec.message.clearErrors()
+        ec.message.popErrors()
+    }
+}
+
+/**
+ * report#XmppPosition (plans/Location-Sharing.md §3.6, LL5): a user location publish (XEP-0080) from the caller's own
+ * XMPP client as a report of each of the caller's active shares with an XMPP contact in its audience that is sent from
+ * no device (a browser page's share; one sent from the Android app is that device's alone, and an XMPP client is no
+ * device key), through report#Position with the share's rules: the rate, approximate rounding, the audience's reach.
+ * None: NO_XMPP_SHARE, so a client's setting never starts a share. A client clock more than a minute ahead is sent
+ * again with the server's time, as a browser page does. Out the outcome of the best of them: 200 when one took it,
+ * else 429 when one was too soon, else STALE, else the first refusal.
+ */
+function xmppReport(p) {
+    const me = ec.user.userId
+    const now = nowMillis()
+    const noShare = {statusCode: 403, reasonCode: "NO_XMPP_SHARE"}
+    if (!me) return noShare
+    const shareIds = Array.from(
+        find(SHARE)
+            .condition("ownerUserId", me)
+            .condition("userLoginKeyId", null)
+            .condition("revokedDate", null)
+            .condition("endedDate", null)
+            .condition("thruDate", "greater", new Date(now))
+            .selectField("shareId")
+            .orderBy("shareId")
+            .list()
+    ).map(row => row.shareId)
+    if (!shareIds.length) return noShare
+    const withXmpp = new Set(
+        Array.from(
+            find(AUDIENCE)
+                .condition("shareId", "in", shareIds)
+                .condition("audienceTypeEnumId", "LsaXmpp")
+                .condition("revokedDate", null)
+                .selectField("shareId")
+                .list()
+        ).map(row => row.shareId)
+    )
+    const outcomes = []
+    for (const shareId of shareIds.filter(id => withXmpp.has(id))) {
+        const asked = {shareId, latitude: p.latitude, longitude: p.longitude, accuracy: p.accuracy}
+        const observed = blank(p.observedMillis) ? null : new Date(Number(p.observedMillis))
+        let out = reportQuiet(Object.assign({observedDate: observed}, asked))
+        if (out.reasonCode === "CLOCK_AHEAD") out = reportQuiet(asked)
+        outcomes.push(out)
+    }
+    if (!outcomes.length) return noShare
+    const first = test => outcomes.find(test)
+    const best =
+        first(out => out.statusCode === 200) ||
+        first(out => out.statusCode === 429) ||
+        first(out => out.reasonCode === "STALE") ||
+        outcomes[0]
+    return {statusCode: best.statusCode, reasonCode: best.reasonCode || null, retryAfterSeconds: best.retryAfterSeconds || null}
 }
 
 function positionOf(row, now) {
@@ -1301,7 +1433,7 @@ function deviceShares(p) {
     return {stoppedCount}
 }
 
-const operations = {create, update, stop, revoke, report, findMine, findShared, get, deleteTrail, clean, indicator, appShare, deviceShares}
+const operations = {create, update, stop, revoke, report, xmppReport, findMine, findShared, get, deleteTrail, clean, indicator, appShare, deviceShares}
 
 function execute(op, parameters) {
     if (!operations[op]) throw new Error("Unknown location share operation " + op)

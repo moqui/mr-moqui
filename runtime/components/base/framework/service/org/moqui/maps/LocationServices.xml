@@ -26,7 +26,9 @@ along with this software (see the LICENSE.md file). If not, see
     Positions are never logged, audited, cached or put in an error message: the position parameters are plain text read
     by LocationShares.js (so no conversion error repeats a value), report#Position remembers no parameters, and a
     refusal names its reason only. A position is pushed on the topic locationShare:<shareId> to the audience's current
-    users only (directOnly), never saved as a notification or pushed to a phone (persistOnSend false); an approximate
+    users only (directOnly), and to its XMPP contacts' users on locationShareXmpp:<shareId>, which the XMPP server sends
+    as geoloc events (plans/Location-Sharing.md §3.6), never saved as a notification or pushed to a phone
+    (persistOnSend false); an approximate
     share's is its cell of about 1 km on one fixed grid, kept until a fix is well inside another cell, before it is
     stored or sent. Start, extension, stop and an audience added or revoked are in the entity audit log (LocationShare
     thruDate and revokedDate, the audience's fields), never a position. -->
@@ -163,6 +165,35 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="retryAfterSeconds" type="Integer"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('report', context))</script></actions>
+    </service>
+
+    <service verb="report" noun="XmppPosition" no-remember-parameters="true" allow-remote="false">
+        <description>A user location publish (XEP-0080) from the current user's own XMPP client, which the XMPP server
+            (moqui-xmpp session/geoloc.rs) calls with the fields it read and checked (plans/Location-Sharing.md §3.6,
+            LL5): a report#Position of each of the user's active shares that has an XMPP contact in its audience (an
+            LsaXmpp entry not revoked) and is sent from no device. A share sent from the Android app takes that device's
+            reports only, and an XMPP client is no device key, so its publish never reaches such a share; a browser
+            page's share (or one moved there by Send from here) takes the XMPP client's too. The share's rules hold:
+            the rate, approximate rounding, the audience's reach; the audience version is not asked, as of a browser
+            page. A time more than a minute ahead is taken as now, as a browser page does. No such share: statusCode
+            403, NO_XMPP_SHARE, which the session answers not-allowed, so a client's setting never starts a share. Else
+            the best outcome of the shares reported: 200, else 429 (RATE_LIMITED, retryAfterSeconds), else 409 STALE,
+            else the first refusal (400 BAD_POSITION, BAD_ACCURACY, BEFORE_SHARE). Each accepted report reaches the
+            share's audience and its XMPP contacts as any report does. A refusal names no value, and adds no error.</description>
+        <in-parameters>
+            <!-- plain text, read and checked by LocationShares.js, so that no conversion error repeats a position -->
+            <parameter name="latitude"/>
+            <parameter name="longitude"/>
+            <parameter name="accuracy"/>
+            <parameter name="observedMillis" type="Long"><description>XEP-0080's timestamp, epoch milliseconds; now when
+                not given</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="statusCode" type="Integer"/>
+            <parameter name="reasonCode"/>
+            <parameter name="retryAfterSeconds" type="Integer"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('xmppReport', context))</script></actions>
     </service>
 
     <service verb="get" noun="AppShare">
