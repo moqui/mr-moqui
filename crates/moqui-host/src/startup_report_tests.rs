@@ -19,6 +19,8 @@ fn entry(section: Section, name: &str, state: State) -> Entry {
         section,
         name: name.to_string(),
         state,
+        since: jiff::Timestamp::UNIX_EPOCH,
+        cause: None,
     }
 }
 
@@ -61,6 +63,20 @@ fn the_report_orders_listeners_and_lists_what_is_not_built() {
   Tools: VCard
   Not in this build: IPP printing
   Routes: /health, /metrics"
+    );
+}
+
+/// The log's report shows the state alone: a row the listener registry recorded later, with its time and cause, reads
+/// as one recorded at startup.
+#[test]
+fn the_report_leaves_out_the_time_and_cause_of_a_row() {
+    let mut caused = entry(Section::Listener, "SSH", State::On("tcp 127.0.0.1:2222".into()));
+    caused.since = jiff::Timestamp::now();
+    caused.cause = Some("set ssh-server@port".to_string());
+    let plain = entry(Section::Listener, "SSH", State::On("tcp 127.0.0.1:2222".into()));
+    assert_eq!(
+        render(&header(), &[caused], &[], ""),
+        render(&header(), &[plain], &[], "")
     );
 }
 

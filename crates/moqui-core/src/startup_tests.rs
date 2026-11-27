@@ -27,6 +27,28 @@ fn a_second_record_replaces_the_first_and_order_is_kept() {
     assert_eq!(entries[1].state, State::on("postgres"));
 }
 
+/// The registry sets the cause after it records a state (plans/Runtime-Config.md §3.1); the next record, by the
+/// registry or a subsystem, stamps a new time and starts with no cause.
+#[test]
+fn a_record_stamps_its_time_and_set_cause_names_why() {
+    let report = StartupReport::default();
+    let before = jiff::Timestamp::now();
+    report.record(Section::Listener, "SSH", State::On("tcp 127.0.0.1:2222".into()));
+    let first = report.entries()[0].clone();
+    assert!(first.since >= before, "{first:?}");
+    assert_eq!(first.cause, None);
+    assert!(report.set_cause(Section::Listener, "SSH", "conf reload"));
+    assert_eq!(report.entries()[0].cause.as_deref(), Some("conf reload"));
+    // by section and name: an integration of the same name, or a name not recorded, is not this row
+    assert!(!report.set_cause(Section::Integration, "SSH", "boot"));
+    assert!(!report.set_cause(Section::Listener, "SMTP", "boot"));
+    report.record(Section::Listener, "SSH", State::off("ssh-server@enabled is false"));
+    let second = report.entries()[0].clone();
+    assert!(second.since >= first.since, "{second:?}");
+    assert_eq!(second.cause, None);
+    assert_eq!(report.entries().len(), 1);
+}
+
 fn identity() -> Identity {
     Identity {
         version: "1.2.3".into(),
@@ -147,4 +169,33 @@ fn a_boot_with_no_listeners_lists_none() {
     assert!(rows(&value, "listeners").is_empty());
     assert!(texts(&value, "notBuilt").is_empty());
     assert_eq!(rows(&value, "integrations").len(), 1);
+}
+
+/// A row's `since` and `cause` follow `name`, `state` and `detail`, which System Home, the attention check and the
+/// protocol facts read; `cause` is null until the registry sets one.
+#[test]
+fn the_script_value_carries_since_and_cause_after_the_first_three() {
+    let report = StartupReport::default();
+    report.record(Section::Listener, "SSH", State::On("tcp 127.0.0.1:2222".into()));
+    report.record(Section::Listener, "HTTP", State::On("tcp 0.0.0.0:8080".into()));
+    report.set_cause(Section::Listener, "SSH", "set ssh-server@port");
+    let value = report.to_value(&identity(), &[]);
+    let Some(Value::List(listeners)) = value.get("listeners") else {
+        panic!("listeners is a list");
+    };
+    let fields = |row: &Value| -> Vec<String> {
+        let Value::Map(row) = row else { panic!("a row is a map") };
+        row.keys().cloned().collect()
+    };
+    assert_eq!(fields(&listeners[0]), ["name", "state", "detail", "since", "cause"]);
+    let Value::Map(http) = &listeners[0] else {
+        panic!("a row is a map")
+    };
+    let Value::Map(ssh) = &listeners[1] else {
+        panic!("a row is a map")
+    };
+    assert_eq!(http["name"].as_str(), Some("HTTP"));
+    assert!(http["cause"].is_null());
+    assert!(matches!(http["since"], Value::Timestamp(_)), "{http:?}");
+    assert_eq!(ssh["cause"].as_str(), Some("set ssh-server@port"));
 }

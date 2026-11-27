@@ -93,6 +93,47 @@ fn port_zero_is_not_checked() {
     );
 }
 
+/// One target checked alone (a listener turned on while the server runs): a held port says what the start check says
+/// of it, and a free one or port 0 passes.
+#[test]
+fn check_one_explains_a_held_port_as_the_start_check_does() {
+    let held = TcpListener::bind("127.0.0.1:0").unwrap();
+    let held_port = held.local_addr().unwrap().port();
+    let target = required("SSH", "ssh-server@port", held_port);
+    let err = check_one(&target).unwrap_err();
+    assert!(
+        err.starts_with(&format!("{held_port} (ssh-server@port) on 127.0.0.1: ")),
+        "{err}"
+    );
+    #[cfg(target_os = "linux")]
+    assert!(err.contains(&format!("held by pid {}", std::process::id())), "{err}");
+    let whole = check(std::slice::from_ref(&target)).unwrap_err().to_string();
+    assert_eq!(whole, format!("Ports not available, not starting: {err}"));
+    drop(held);
+    assert!(check_one(&required("Cluster", "cluster-member@https-port", 0)).is_ok());
+    let free_port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    // a freed ephemeral port can be taken at once on a busy machine, so a failure must only not name this process
+    if let Err(err) = check_one(&required("SSH", "ssh-server@port", free_port)) {
+        assert!(!err.contains(&format!("pid {} ", std::process::id())), "{err}");
+    }
+}
+
+#[test]
+fn explain_names_the_port_property_host_and_error() {
+    let err = std::io::Error::new(std::io::ErrorKind::AddrInUse, "address in use");
+    // port 1 of 127.0.0.2: nothing listens there, so no holder is named
+    let tcp = Target::optional("SMTP", "smtp-server@listen-port", "127.0.0.2", 1, Proto::Tcp);
+    assert_eq!(
+        explain(&tcp, &err),
+        "1 (smtp-server@listen-port) on 127.0.0.2: address in use"
+    );
+    let udp = Target::optional("Call media", "media-server@port", "127.0.0.2", 1, Proto::Udp);
+    assert_eq!(
+        explain(&udp, &err),
+        "1/udp (media-server@port) on 127.0.0.2: address in use"
+    );
+}
+
 #[test]
 fn busy_names_the_port_of_a_skipped_listener() {
     *lock(&BUSY) = vec![("SIP", 5060)];

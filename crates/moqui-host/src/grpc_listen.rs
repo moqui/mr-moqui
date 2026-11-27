@@ -209,7 +209,9 @@ pub(crate) async fn serve(bound: Bound, guard: Arc<crate::guard::Guard>, stop: i
         acceptor,
     } = bound;
     let (connections, incoming) = tokio::sync::mpsc::channel::<std::io::Result<Connection>>(64);
-    let accepting = tokio::spawn(accept(listener, acceptor, guard, connections));
+    // the accept task owns the listener: aborted when this serve ends or is dropped (a stop past its wait aborts it),
+    // so the port is freed either way
+    let _accepting = AbortOnDrop(tokio::spawn(accept(listener, acceptor, guard, connections)));
     let incoming = futures_util::stream::unfold(incoming, |mut incoming| async move {
         incoming.recv().await.map(|connection| (connection, incoming))
     });
@@ -228,7 +230,15 @@ pub(crate) async fn serve(bound: Bound, guard: Arc<crate::guard::Guard>, stop: i
     {
         tracing::error!("the gRPC listener ({label}) stopped: {error}");
     }
-    accepting.abort();
+}
+
+/// A task aborted when this is dropped.
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
 }
 
 /// Accept connections, each TLS handshake in a task of its own so a slow client does not hold up the others.

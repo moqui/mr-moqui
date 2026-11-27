@@ -77,11 +77,10 @@ pub(crate) fn listen(
     let config = super::server_config(&material)?;
     let port = super::listen_port(&moqui_core::context::conf_env::setting("cluster-member@https-port"))?;
     let bind = SocketAddr::from((super::bind_address()?, port));
-    let apply_posts = Arc::clone(&posts);
     let members = Members::default();
     crate::edge::handle().spawn(refresh_members(Arc::downgrade(&factory), Arc::clone(&members)));
-    let apply: Apply = Arc::new(move |topic, body| super::apply_topic(&factory, &apply_posts, topic, body));
-    listen_with(bind, config, super::protocol()?, apply, posts, members)
+    let apply: Apply = Arc::new(move |topic, body| super::apply_topic(&factory, &posts, topic, body));
+    listen_with(bind, config, super::protocol()?, apply, members)
 }
 
 /// Read the members' addresses now and every [`MEMBERS_EVERY`], while the factory runs.
@@ -108,7 +107,6 @@ pub(super) fn listen_with(
     mut config: rustls::ServerConfig,
     protocol: Protocol,
     apply: Apply,
-    posts: Arc<Mutex<Vec<String>>>,
     members: Members,
 ) -> Result<ClusterEdge, HostError> {
     config.alpn_protocols = super::alpn_protocols(protocol);
@@ -129,7 +127,6 @@ pub(super) fn listen_with(
     let task = crate::edge::handle().spawn(accept_loop(listener, Arc::new(config), app, members, stopped));
     Ok(ClusterEdge {
         address,
-        posts,
         stop,
         task: Some(task),
     })
@@ -139,7 +136,6 @@ pub(super) fn listen_with(
 /// waits for that.
 pub(crate) struct ClusterEdge {
     address: SocketAddr,
-    posts: Arc<Mutex<Vec<String>>>,
     stop: watch::Sender<bool>,
     task: Option<tokio::task::JoinHandle<()>>,
 }
@@ -147,10 +143,6 @@ pub(crate) struct ClusterEdge {
 impl ClusterEdge {
     pub(crate) fn address(&self) -> SocketAddr {
         self.address
-    }
-
-    pub(crate) fn posts(&self) -> Arc<Mutex<Vec<String>>> {
-        Arc::clone(&self.posts)
     }
 }
 

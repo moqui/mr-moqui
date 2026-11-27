@@ -2,7 +2,7 @@
 
 Status 2026-11-27: reviewed against the code and being built, RC0 to RC10 in one run. Its open points were decided
 with the user the same day (§6). The review's corrections are in place below, and the implementation design is §8.
-Built so far: none.
+Built so far: RC0.
 
 Goal: an administrator turns services and ports on and off while the server runs, from a dialog on System Home, from
 the terminal, or by editing the conf, and no listener setting waits for a restart. It serves two tasks: setting a
@@ -200,8 +200,8 @@ never (for `transport="ssh"` or `notify`). It and `lone-check-seconds` come in R
 
 `boot_server_factory` no longer requires the listener, `Server::cluster_address` answers an `Option`, and the port
 check treats the cluster port as optional in every mode (a busy port, at boot or when it opens later, is a Failed row
-on Home and a Needs attention item, and the boot goes on). `record_web_listeners` stops using a cluster port of 0 to
-mean "reached in process only". The startup report says "off: no other member" for a lone member. A forged `ClusterMember` row
+on Home and a Needs attention item, and the boot goes on). Nothing may use a cluster port of 0 to mean "reached in
+process only" any more (RC0 moved the Cluster row from `record_web_listeners`, now gone, to the cluster entry). The startup report says "off: no other member" for a lone member. A forged `ClusterMember` row
 with copied fingerprints can make a member open the port; what it exposes is the mTLS handshake pinned to the shared
 certificate, as today (SEC-CLU-89 in [Security-Review-Low](Security-Review-Low.md)).
 

@@ -107,7 +107,6 @@ mod on_the_port {
             server_config(material).unwrap(),
             protocol,
             apply,
-            Arc::default(),
             members,
         )
         .unwrap();
@@ -359,7 +358,6 @@ mod shares {
             server_config(&material).unwrap(),
             Protocol::Rest,
             apply,
-            Arc::default(),
             Arc::clone(&members),
         )
         .unwrap();

@@ -215,14 +215,7 @@ fn check(targets: &[Target]) -> Result<Vec<(&'static str, u16)>, Error> {
             free.push(target);
             continue;
         };
-        let text = format!(
-            "{}{} ({}) on {}: {err}{}",
-            target.port,
-            if target.proto == Proto::Udp { "/udp" } else { "" },
-            target.property,
-            target.host,
-            holder_text(target.port, target.proto)
-        );
+        let text = explain(target, &err);
         if target.required {
             busy_required.push(text);
         } else {
@@ -246,6 +239,31 @@ fn check(targets: &[Target]) -> Result<Vec<(&'static str, u16)>, Error> {
         tracing::info!("Ports checked free: {}", free.join(", "));
     }
     Ok(busy_optional)
+}
+
+/// Bind `target` and let it go, as the start check does for each port: the pre-check of a listener turned on while the
+/// server runs (plans/Runtime-Config.md §3.6), with the busy port explained ([`explain`]). Port 0 is always free.
+// the listener services call it from RC4 on (plans/Runtime-Config.md §8.1)
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn check_one(target: &Target) -> Result<(), String> {
+    if target.port == 0 {
+        return Ok(());
+    }
+    bind(&target.host, target.port, target.proto).map_err(|err| explain(target, &err))
+}
+
+/// Why `target` could not bind: `8080 (http-listen-port) on 0.0.0.0: <err>, held by pid 12 name (exe)`, the port,
+/// the property that sets it, the host, the error and the processes holding it when this user can see them. The start
+/// check and the listener registry's failed binds say the same.
+pub(crate) fn explain(target: &Target, err: &std::io::Error) -> String {
+    format!(
+        "{}{} ({}) on {}: {err}{}",
+        target.port,
+        if target.proto == Proto::Udp { "/udp" } else { "" },
+        target.property,
+        target.host,
+        holder_text(target.port, target.proto)
+    )
 }
 
 fn bind(host: &str, port: u16, proto: Proto) -> std::io::Result<()> {

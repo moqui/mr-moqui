@@ -190,6 +190,10 @@ mod guard_share;
 mod http;
 #[cfg(feature = "axum")]
 pub mod in_process;
+// the listener registry (plans/Runtime-Config.md §3.1), where a server boots: the boot starts and stops its listeners
+// through it
+#[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
+mod listeners;
 #[cfg(all(feature = "axum", feature = "llm"))]
 mod llm;
 #[cfg(feature = "axum")]
@@ -1792,11 +1796,20 @@ fn serve_thread(
     if !matches!(bind, ListenBind::None) {
         moqui_core::user::log_initial_admin_setup(&factory);
     }
-    let (cluster_address, posts) = match process.cluster_edge.as_ref() {
-        Some(cluster) => (cluster.address(), cluster.posts()),
+    let cluster = process
+        .listeners
+        .as_ref()
+        .and_then(|registry| registry.address(listeners::CLUSTER));
+    let (cluster_address, posts) = match cluster {
+        Some(address) => (address, std::sync::Arc::clone(&process.cluster_posts)),
         None if matches!(bind, ListenBind::None) => (unbound, std::sync::Arc::default()),
         None => return Err(moqui_lib::error::Error::new("http server has no cluster listener")),
     };
+    // the web listeners start and stop through the registry too, inside the listen below
+    let registry = process
+        .listeners
+        .clone()
+        .ok_or_else(|| moqui_lib::error::Error::new("http server has no listener registry"))?;
     let sender = ready.handoff()?;
     let runtime = process
         .runtime
@@ -1846,10 +1859,10 @@ fn serve_thread(
     operator::set_serving(true);
     let listened = runtime.block_on(http::listen(
         factory,
-        address,
         https,
         cluster_address,
         posts,
+        registry,
         stop,
         termination,
         sender,
@@ -1924,13 +1937,12 @@ fn boot_server(
     bind: &ListenBind,
 ) -> Result<ServeProcess, moqui_lib::error::Error> {
     let ports = port_check::hook(bind.clone(), runtime_dir.to_path_buf());
-    let cluster_port = !matches!(bind, ListenBind::None);
     boot_server_factory(
         runtime_dir,
         framework_dir,
         cluster_dir,
         true,
-        Listeners::All(ports, cluster_port),
+        Listeners::All(ports, bind.clone()),
     )
 }
 
@@ -1940,8 +1952,9 @@ fn boot_server(
 #[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
 #[derive(Clone)]
 enum Listeners {
-    /// The port check, and whether the cluster listener opens (not for a node reached in process only).
-    All(moqui_core::context::BeforeInit, bool),
+    /// The port check, and the bind the listeners start for: the cluster port opens unless it is
+    /// [`ListenBind::None`], a node reached in process only.
+    All(moqui_core::context::BeforeInit, ListenBind),
     None,
 }
 
@@ -2117,49 +2130,47 @@ fn boot_server_factory(
     moqui_core::notify::install();
     // scripts' calls to a PASS authority over gRPC (plans/archive/Edge-Node.md §5.5), with or without listeners
     let pass_sender = install_pass_sender();
-    if matches!(listeners, Listeners::None) {
-        tracing::info!(
-            "Moqui Framework initialized in {:.3} seconds, with no listeners",
-            boot_started.elapsed().as_secs_f64()
-        );
-        startup_report::log(&factory, "", false);
-        return Ok(ServeProcess {
-            runtime: None,
-            pdf: Some(pdf),
-            pass_sender: Some(pass_sender),
-            smtpd: None,
-            #[cfg(feature = "ssh")]
-            sshd: None,
-            cluster_edge: None,
-            notify_listener: None,
-            rtc: None,
-            sip: None,
-            xmpp: None,
-            factory: Some(factory),
-            search,
-            facade: Some(facade),
-            sim: Some(sim),
-            db: Some(db),
-        });
-    }
-    // The SSH server binds before the member row is written: with moqui_conf__cluster_member__transport=ssh the row carries its address
-    // and host key.
+    let bind = match &listeners {
+        Listeners::All(_, bind) => bind.clone(),
+        Listeners::None => {
+            tracing::info!(
+                "Moqui Framework initialized in {:.3} seconds, with no listeners",
+                boot_started.elapsed().as_secs_f64()
+            );
+            startup_report::log(&factory, "", false);
+            return Ok(ServeProcess {
+                runtime: None,
+                pdf: Some(pdf),
+                pass_sender: Some(pass_sender),
+                listeners: None,
+                cluster_posts: Arc::default(),
+                notify_listener: None,
+                factory: Some(factory),
+                search,
+                facade: Some(facade),
+                sim: Some(sim),
+                db: Some(db),
+            });
+        }
+    };
+    // The listeners start and stop through the registry (plans/Runtime-Config.md §3.1), in staged passes between the
+    // boot work below. It is made here, after the empty-database re-boot, so it belongs to the factory that serves.
     let cluster_posts = Arc::new(std::sync::Mutex::new(Vec::new()));
-    #[cfg(feature = "ssh")]
-    let sshd = ssh::server::start(&factory, &runtime_dir, Arc::clone(&cluster_posts))?;
-    #[cfg(feature = "ssh")]
-    match &sshd {
-        Some(server) => moqui_core::startup::listener(
-            &factory,
-            "SSH",
-            moqui_core::startup::State::On(format!("tcp {}", server.address())),
-        ),
-        None => moqui_core::startup::listener(
-            &factory,
-            "SSH",
-            moqui_core::startup::State::off("ssh-server@port is not set, or ssh-server@enabled is false"),
-        ),
-    }
+    let registry = listeners::Registry::new(
+        Arc::clone(&factory),
+        listeners::BootInputs {
+            bind,
+            runtime_dir: runtime_dir.clone(),
+            cluster_posts: Arc::clone(&cluster_posts),
+        },
+    );
+    listeners::add_boot_entries(&registry);
+    // The SSH server binds before the member row is written: with moqui_conf__cluster_member__transport=ssh the row carries its address
+    // and host key. A failed start stops the boot.
+    registry.run(
+        listeners::Scope::Stage(listeners::Stage::BeforeCluster),
+        moqui_core::listeners::Cause::Boot,
+    )?;
     // One sender for every transport: a peer's base URL picks HTTPS, SSH, or Postgres NOTIFY.
     cluster_notify::install_sender(&factory, db.is_postgres())?;
     let notify_listener = cluster_notify::listen_if_configured(&factory, &db, Arc::clone(&cluster_posts))?;
@@ -2213,10 +2224,11 @@ fn boot_server_factory(
             moqui_core::startup::State::off("cluster-member@transport is not notify")
         },
     );
-    let cluster_edge = match &listeners {
-        Listeners::All(_, true) => Some(cluster_edge::listen(Arc::clone(&factory), cluster_posts)?),
-        _ => None,
-    };
+    // the cluster port, unless the node is reached in process only; a failed bind stops the boot
+    registry.run(
+        listeners::Scope::Stage(listeners::Stage::ClusterPort),
+        moqui_core::listeners::Cause::Boot,
+    )?;
     notws::install_push().map_err(moqui_lib::error::Error::from)?;
     #[cfg(feature = "ssh")]
     ssh::install_client(&factory, &runtime_dir);
@@ -2226,14 +2238,15 @@ fn boot_server_factory(
     llm::screens::install(&factory);
     #[cfg(feature = "print")]
     ipp::install();
-    // call media (media-server@port), after the cluster so the node registers under its instance id
-    let rtc = rtc::start(&factory);
-    // phone calls (sip-server@port, sip-server@tls-port), beside the call media they join
-    let sip = sip::start(&factory);
-    // XMPP for local users (xmpp-server@domain): its listeners, and the chat pushes to its sessions
-    let xmpp = xmpp::start(&factory);
-    // last, so mail is taken only once everything it runs is up
-    let smtpd = start_smtp(&factory);
+    // call media (media-server@port), after the cluster so the node registers under its instance id; phone calls
+    // (sip-server@port, sip-server@tls-port), beside the call media they join; XMPP for local users (xmpp-server@domain);
+    // SMTP last, so mail is taken only once everything it runs is up. None of them stops the boot.
+    if let Err(err) = registry.run(
+        listeners::Scope::Stage(listeners::Stage::Comms),
+        moqui_core::listeners::Cause::Boot,
+    ) {
+        tracing::error!("The comms listeners did not all start, the server starts without them: {err}");
+    }
     // the webapp's listeners and after-startup actions, as Java's MoquiContextListener runs them
     moqui_core::web::servlet::started(&factory);
     // the /rest/sm remotes that take a message of any type, one warning each (SEC-RTE-86)
@@ -2250,14 +2263,9 @@ fn boot_server_factory(
         runtime: Some(runtime),
         pdf: Some(pdf),
         pass_sender: Some(pass_sender),
-        smtpd: Some(smtpd),
-        #[cfg(feature = "ssh")]
-        sshd,
-        cluster_edge,
+        listeners: Some(registry),
+        cluster_posts,
         notify_listener,
-        rtc,
-        sip,
-        xmpp,
         factory: Some(factory),
         search,
         facade: Some(facade),
@@ -2270,10 +2278,14 @@ fn boot_server_factory(
 #[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
 const RUNTIME_SHUTDOWN: std::time::Duration = std::time::Duration::from_secs(5);
 
-/// Drop order is the axum runtime, the PDF browser, the SMTP listener, the SSH server, the cluster listeners (while the request pool is still up),
-/// the factory, the search store, the facade, the sim overlay, then the entity database (its driver, then its cluster). The search store
-/// outlives the factory so a dedicated postmaster stops after the facade's clients, and the overlay outlives the facade
-/// for its sim pool.
+/// Drop order is the axum runtime; the XMPP listeners, the SIP engine and call media (before the factory shuts down:
+/// call media's last act deregisters the node, and SIP's legs are in it); the factory's shutdown; the PASS sender and
+/// the PDF browser; the SMTP listener, the SSH server and the cluster listener (while the request pool is still up);
+/// the notification listener; the factory, the search store, the facade, the sim overlay, then the entity database
+/// (its driver, then its cluster). The listeners stop through their registry, in those turns.
+/// The search store outlives the factory so a dedicated postmaster stops after the facade's clients, and the overlay
+/// outlives the facade for its sim pool. It is dropped on the thread that booted it, never a Tokio worker: some
+/// listeners' drops block or drop their own runtimes.
 #[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
 struct ServeProcess {
     /// Stopped with [`RUNTIME_SHUTDOWN`] as its limit.
@@ -2281,17 +2293,12 @@ struct ServeProcess {
     pdf: Option<PdfSlot>,
     /// The PASS authority sender, cleared after the factory stops.
     pass_sender: Option<PassSenderSlot>,
-    smtpd: Option<SmtpSlot>,
-    #[cfg(feature = "ssh")]
-    sshd: Option<ssh::server::SshServer>,
-    cluster_edge: Option<crate::cluster_edge::ClusterEdge>,
+    /// SSH, the cluster port, call media, SIP, XMPP, SMTP and the web listeners; none for a boot that opens no
+    /// listener.
+    listeners: Option<listeners::Registry>,
+    /// The topics cluster peers posted, over the cluster port or SSH (`Server::cluster_posts`).
+    cluster_posts: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
     notify_listener: Option<crate::cluster_notify::NotifyListener>,
-    /// The call media socket, stopped before the factory (its last act deregisters the node).
-    rtc: Option<crate::rtc::RtcNode>,
-    /// The SIP engine, stopped before the call media its legs are in.
-    sip: Option<crate::sip::SipNode>,
-    /// The XMPP listeners and their subscription to the notification bus.
-    xmpp: Option<crate::xmpp::XmppNode>,
     factory: Option<std::sync::Arc<moqui_core::context::ExecutionContextFactory>>,
     search: Option<crate::search::SearchStore>,
     facade: Option<moqui_core::entity::EntityFacade>,
@@ -2302,22 +2309,35 @@ struct ServeProcess {
 #[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
 impl Drop for ServeProcess {
     fn drop(&mut self) {
+        use listeners::StopPhase;
+        // each phase's whole wait: the connections' shutdown-timeout and a margin (the listeners of today stop in their
+        // own drops, with their own limits)
+        let wait = self
+            .factory
+            .as_deref()
+            .map_or(std::time::Duration::from_secs(35), http::conf_stop_wait);
+        if let Some(listeners) = &self.listeners {
+            // no pass starts anything after this; `http::listen` has stopped the web listeners already, unless it
+            // failed before its stop
+            listeners.join_worker();
+            listeners.stop(StopPhase::Web, wait);
+        }
         if let Some(runtime) = self.runtime.take() {
             // The listener has already waited out its shutdown deadline; a blocking task still running is left.
             runtime.shutdown_timeout(RUNTIME_SHUTDOWN);
         }
-        self.xmpp.take();
-        self.sip.take();
-        self.rtc.take();
+        if let Some(listeners) = &self.listeners {
+            listeners.stop(StopPhase::BeforeFactory, wait);
+        }
         if let Some(factory) = &self.factory {
             factory.shutdown();
         }
         self.pass_sender.take();
         self.pdf.take();
-        self.smtpd.take();
-        #[cfg(feature = "ssh")]
-        self.sshd.take();
-        self.cluster_edge.take();
+        if let Some(listeners) = self.listeners.take() {
+            listeners.stop(StopPhase::AfterFactory, wait);
+            listeners.close();
+        }
         self.notify_listener.take();
         self.factory.take();
         self.search.take();
@@ -2325,66 +2345,6 @@ impl Drop for ServeProcess {
         self.sim.take();
         self.db.take();
     }
-}
-
-#[cfg(feature = "inbound-smtp")]
-type SmtpSlot = Option<smtp::SmtpServer>;
-#[cfg(not(feature = "inbound-smtp"))]
-type SmtpSlot = NoSmtp;
-
-/// No SMTP listener in this build.
-#[cfg(not(feature = "inbound-smtp"))]
-struct NoSmtp;
-
-/// The inbound SMTP listener when `smtp-server@listen-port` is set. A listener that cannot start is logged and the server
-/// starts without it; an empty or bad `smtp-server@allowed-addresses` never starts one.
-#[cfg(feature = "inbound-smtp")]
-fn start_smtp(factory: &std::sync::Arc<moqui_core::context::ExecutionContextFactory>) -> SmtpSlot {
-    use moqui_core::startup::{listener, State};
-    if let Some(busy) = port_check::busy(smtp::LISTENER) {
-        listener(factory, smtp::LISTENER, State::Skipped(busy));
-        return None;
-    }
-    // a front node's port 25 is a TCP port to its pool, never this listener (plans/Edge-Node2.md §4.7)
-    let configured = !moqui_core::context::conf_env::setting("smtp-server@listen-port")
-        .trim()
-        .is_empty();
-    if moqui_core::edge::front_refuses(factory, "smtp-server@listen-port", configured) {
-        listener(factory, smtp::LISTENER, State::off(moqui_core::edge::FRONT_ONLY));
-        return None;
-    }
-    match smtp::start(factory) {
-        Ok(Some(server)) => {
-            listener(factory, smtp::LISTENER, State::On(format!("tcp {}", server.address())));
-            Some(server)
-        }
-        Ok(None) => {
-            listener(
-                factory,
-                smtp::LISTENER,
-                State::off("smtp-server@listen-port is not set"),
-            );
-            None
-        }
-        Err(err) => {
-            tracing::error!("The SMTP listener did not start, the server starts without it: {err}");
-            listener(factory, smtp::LISTENER, State::failed(err.message()));
-            None
-        }
-    }
-}
-
-#[cfg(not(feature = "inbound-smtp"))]
-fn start_smtp(_factory: &std::sync::Arc<moqui_core::context::ExecutionContextFactory>) -> SmtpSlot {
-    if !moqui_core::context::conf_env::setting("smtp-server@listen-port")
-        .trim()
-        .is_empty()
-    {
-        tracing::error!(
-            "smtp-server@listen-port is set but this build has no SMTP listener (the inbound-smtp feature)"
-        );
-    }
-    NoSmtp
 }
 
 #[cfg(all(feature = "axum", feature = "edge", any(feature = "postgres", feature = "mysql")))]

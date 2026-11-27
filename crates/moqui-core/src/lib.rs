@@ -28,6 +28,8 @@ pub mod entity_hooks;
 pub mod extension;
 pub mod google_auth;
 pub mod l10n;
+/// The host's listener registry as core reaches it (plans/Runtime-Config.md §8.1).
+pub mod listeners;
 pub mod live_settings;
 pub mod llm_hooks;
 pub mod native;

@@ -15,7 +15,9 @@
 //! What each listener and integration did at startup, for the one report the host logs when the server is ready
 //! (`moqui_host::startup_report`). A subsystem records its state here instead of logging its own "started" or "not
 //! starting" line; its warnings and errors are still logged where they happen. The report is a factory extension, so
-//! the second factory after an empty-database load starts with an empty one.
+//! the second factory after an empty-database load starts with an empty one. Each row carries the time it was recorded
+//! and, once the host's listener registry records a later state, what caused it (plans/Runtime-Config.md §3.1), so a
+//! row says the state now and not only the state at startup.
 //!
 //! Scripts read the same report as `ec.factory.getStartupReport()` ([`script_value`], plans/archive/Tools-Fancy.md
 //! B1): the host records the routes and the ready time when it logs ([`StartupReport::record_ready`]).
@@ -125,6 +127,12 @@ pub struct Entry {
     pub section: Section,
     pub name: String,
     pub state: State,
+    /// When this state was recorded ([`StartupReport::record`] stamps it), so a state recorded after startup reads as
+    /// the state now and since when (plans/Runtime-Config.md §3.1).
+    pub since: jiff::Timestamp,
+    /// What caused this state, when the listener registry set it ([`StartupReport::set_cause`]); none for a state its
+    /// subsystem recorded on its own, and cleared by each new record.
+    pub cause: Option<String>,
 }
 
 /// The entries recorded so far, in the order they were first recorded.
@@ -135,17 +143,28 @@ pub struct StartupReport {
 }
 
 impl StartupReport {
-    /// Record `name`'s state. A second record of the same name in the same section replaces the first, so a
-    /// subsystem can record `On` and later `Failed`.
+    /// Record `name`'s state, stamped with the time now. A second record of the same name in the same section
+    /// replaces the first, so a subsystem can record `On` and later `Failed`; it clears the cause the first had.
     pub fn record(&self, section: Section, name: impl Into<String>, state: State) {
         let name = name.into();
+        let since = jiff::Timestamp::now();
         let mut entries = lock(&self.entries);
         match entries
             .iter_mut()
             .find(|entry| entry.section == section && entry.name == name)
         {
-            Some(entry) => entry.state = state,
-            None => entries.push(Entry { section, name, state }),
+            Some(entry) => {
+                entry.state = state;
+                entry.since = since;
+                entry.cause = None;
+            }
+            None => entries.push(Entry {
+                section,
+                name,
+                state,
+                since,
+                cause: None,
+            }),
         }
     }
 
@@ -157,7 +176,29 @@ impl StartupReport {
             .iter()
             .any(|entry| entry.section == section && entry.name == name)
         {
-            entries.push(Entry { section, name, state });
+            entries.push(Entry {
+                section,
+                name,
+                state,
+                since: jiff::Timestamp::now(),
+                cause: None,
+            });
+        }
+    }
+
+    /// Set what caused the state of `name` in `section`, as the listener registry does after each of its actions, so
+    /// the subsystems that record a state need not know why it changed. False when nothing is recorded for `name`.
+    pub fn set_cause(&self, section: Section, name: &str, cause: impl Into<String>) -> bool {
+        let mut entries = lock(&self.entries);
+        match entries
+            .iter_mut()
+            .find(|entry| entry.section == section && entry.name == name)
+        {
+            Some(entry) => {
+                entry.cause = Some(cause.into());
+                true
+            }
+            None => false,
         }
     }
 
@@ -217,7 +258,8 @@ impl StartupReport {
 
     /// The report as a script reads it (`ec.factory.getStartupReport()`): `version`, `package`, `purpose`, `role`,
     /// `readySeconds` (null until the host logged the report), `listeners` and `integrations` (each `{name, state,
-    /// detail}`, state one of `on`, `off`, `failed`, `skipped`), `tools`, `notBuilt` and `routes` (a list).
+    /// detail, since, cause}`, state one of `on`, `off`, `failed`, `skipped`, since a timestamp and cause null when no
+    /// cause was set), `tools`, `notBuilt` and `routes` (a list).
     #[must_use]
     pub fn to_value(&self, identity: &Identity, tools: &[String]) -> ValueMap {
         let sections = self.sections();
@@ -230,6 +272,8 @@ impl StartupReport {
                             ("name".to_string(), Value::string(&entry.name)),
                             ("state".to_string(), entry.state.word().map_or(Value::Null, Value::string)),
                             ("detail".to_string(), Value::string(entry.state.detail())),
+                            ("since".to_string(), Value::Timestamp(entry.since)),
+                            ("cause".to_string(), entry.cause.as_deref().map_or(Value::Null, Value::string)),
                         ]))
                     })
                     .collect(),
@@ -319,6 +363,11 @@ pub fn integration(factory: &ExecutionContextFactory, name: impl Into<String>, s
 /// Record a listener's state in the factory's report.
 pub fn listener(factory: &ExecutionContextFactory, name: impl Into<String>, state: State) {
     report(factory).record(Section::Listener, name, state);
+}
+
+/// Set what caused the recorded state of `name` in the factory's report ([`StartupReport::set_cause`]).
+pub fn set_cause(factory: &ExecutionContextFactory, section: Section, name: &str, cause: impl Into<String>) -> bool {
+    report(factory).set_cause(section, name, cause)
 }
 
 #[cfg(test)]
