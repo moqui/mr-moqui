@@ -506,7 +506,10 @@ function update(p) {
     // Send from here (a browser page: no device) or Send from this device (the app): the reports of the device that
     // sent it until now are refused from here on as another device's, which stops it (plans/Location-Sharing.md §3.4)
     const moved = yes(p.sendFromHere) && (share.userLoginKeyId || null) !== deviceKeyId()
-    if (moved) share.userLoginKeyId = deviceKeyId()
+    if (moved) {
+        share.userLoginKeyId = deviceKeyId()
+        share.renewedFromKeyId = null
+    }
     let added = {linkToken: null}
     const before = currentUserIds(share)
     if (Array.from(p.addAudienceList || []).length) {
@@ -705,7 +708,11 @@ function report(p) {
     // a share sent from a device takes that device's reports only, and one sent from a browser page (no device) no
     // device's: the owner on another device, or in a browser, is told another device sends it, and stops; update#Share's
     // sendFromHere moves it (plans/Location-Sharing.md §3.4)
-    if ((share.userLoginKeyId || null) !== deviceKeyId())
+    // a renewed device key's predecessor is taken while it still signs in (its few minutes' grace): a report on its way as
+    // the key was renewed is the same device's
+    const device = deviceKeyId()
+    const renewed = device != null && share.renewedFromKeyId != null && share.renewedFromKeyId === device
+    if ((share.userLoginKeyId || null) !== device && !renewed)
         return refuse("OTHER_DEVICE", "Another device sends this share's location: choose Send from this device to send it from here", 409)
     const latest = find(LATEST).condition("shareId", share.shareId).one()
     const approximated = share.precisionEnumId === "LspApproximate"
@@ -1109,7 +1116,61 @@ function indicator() {
     }
 }
 
-const operations = {create, update, stop, revoke, report, findMine, findShared, get, deleteTrail, clean, indicator}
+/** Whom an own share is with, in words: "Sam and Pat", "Sam, Pat and 2 others"; its revoked entries left out. */
+function audienceWords(audienceList) {
+    const names = Array.from(audienceList || [])
+        .filter(entry => !entry.revoked)
+        .map(entry => entry.userName || entry.groupName || entry.jid || (entry.hasLink ? ec.l10n.localize("a guest link") : null))
+        .filter(Boolean)
+    if (!names.length) return ec.l10n.localize("nobody now")
+    if (names.length <= 2) return names.join(" " + ec.l10n.localize("and") + " ")
+    return names.slice(0, 2).join(", ") + " " + ec.l10n.localize("and") + " " + (names.length - 2) + " " + ec.l10n.localize("others")
+}
+
+/**
+ * get#AppShare: an active share of the caller's own as the Android app confirms and shows it before it sends it
+ * (plans/Location-Sharing.md §3.4): whom with, until when, exact or approximate, its report interval, and whether this
+ * request's device sends it; from the server, never the page's words.
+ */
+function appShare(p) {
+    const now = nowMillis()
+    const share = ownShare(p.shareId, false)
+    if (!share) return notFound()
+    if (!isActive(share, now)) return refuse("SHARE_ENDED", "This share has ended: start a new one")
+    const view = ownerView(share, now)
+    const approximate = share.precisionEnumId === "LspApproximate"
+    const minimum = setting("min-interval-seconds", 5)
+    return {
+        share: {
+            shareId: share.shareId,
+            thruDate: millis(share.thruDate),
+            approximate,
+            intervalSeconds: approximate ? Math.max(minimum, setting("approximate-interval-seconds", 60)) : minimum,
+            audienceText: audienceWords(view.audienceList),
+            fromThisDevice: view.fromThisDevice
+        }
+    }
+}
+
+/**
+ * stop#DeviceShares: a device key revoked (its owner's sign-out, the device list): every active share it sends is
+ * stopped, as stop#Share does, so none stays on with nothing sending it, also when the device could not tell the
+ * server itself (plans/Location-Sharing.md §3.4). Called by the framework (login.rs) with the key's stored hash.
+ */
+function deviceShares(p) {
+    const id = text(p.userLoginKeyId)
+    if (!id) return {stoppedCount: 0}
+    const now = nowMillis()
+    let stoppedCount = 0
+    for (const share of Array.from(find(SHARE).condition("userLoginKeyId", id).condition("endedDate", null).forUpdate(true).list())) {
+        if (share.revokedDate == null && millis(share.thruDate) > now) share.revokedDate = new Date(now)
+        endShare(share, now)
+        stoppedCount++
+    }
+    return {stoppedCount}
+}
+
+const operations = {create, update, stop, revoke, report, findMine, findShared, get, deleteTrail, clean, indicator, appShare, deviceShares}
 
 function execute(op, parameters) {
     if (!operations[op]) throw new Error("Unknown location share operation " + op)

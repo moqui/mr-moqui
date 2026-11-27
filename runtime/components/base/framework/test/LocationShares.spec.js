@@ -994,7 +994,7 @@ function postApp(transition, parameters, key) {
     } catch (err) {
         json = null
     }
-    return {status: str.status, json}
+    return {status: str.status, json, text: json ? null : String(str.output || "").slice(0, 300)}
 }
 const deviceOf = shareId => sys(() => ec.entity.find("moqui.maps.LocationShare").condition("shareId", shareId).one().userLoginKeyId)
 
@@ -1031,6 +1031,10 @@ feature(
             out.renewedBound = deviceOf(shareId)
             later(6000)
             out.renewedReport = postApp("reportClientLocation", {shareId, latitude: "40.78", longitude: "-111.9"}, renewedKey)
+            // the key the renewal replaced still signs in for its grace: a report on its way as it was renewed is taken
+            out.oldKeyReport = reportFrom(tablet, shareId, "40.785")
+            // the app's confirmation reads the share's words from the server
+            out.appShare = postApp("clientLocationShare", {shareId}, renewedKey)
             // a share started in a browser has no device
             later(6000)
             const browserShare = asDevice(null, "create#Share", {audienceList: [toUser(B)], thruDate: new Date(shared.now + HOUR)}).shareId
@@ -1070,9 +1074,48 @@ feature(
             out.renewedBound != null
             out.renewedBound != out.tablet.hash
             out.renewedReport.json.statusCode == 200
+            out.oldKeyReport.statusCode == 200
+            out.appShare.text == null
+            out.appShare.json.found == true
+            out.appShare.json.share.audienceText == "Loc B"
+            out.appShare.json.share.fromThisDevice == true
+            out.appShare.json.share.intervalSeconds == 5
+            out.appShare.json.share.approximate == false
             out.browserShareBound == null
             out.stopped.json.stopped == true
             out.afterStop.statusCode == 410
         }
     }
 )
+
+feature("revoking a device key stops the shares it sends, and its audience is told", {
+    when() {
+        const phone = deviceKey("Spec revoked phone")
+        later(6000)
+        const shareId = asDevice(phone, "create#Share", {audienceList: [toUser(B)], thruDate: new Date(shared.now + HOUR)}).shareId
+        const before = sharedWith(B).some(row => row.shareId === shareId)
+        // the device signed out from the device list (revoke#UserDeviceKey, by its stored hash, as qapps
+        // revokeClientDevice calls it), the device never told
+        ec.user.internalLoginUser(username(A))
+        ec.service.sync().name("org.moqui.impl.UserServices.revoke#UserDeviceKey").parameters({loginKey: phone.hash}).disableAuthz().call()
+        const errors = ec.message.hasError() ? ec.message.errorsString : ""
+        ec.message.clearErrors()
+        const row = sys(() => ec.entity.find("moqui.maps.LocationShare").condition("shareId", shareId).one())
+        return {
+            errors,
+            before,
+            revoked: row.revokedDate != null,
+            ended: row.endedDate != null,
+            after: sharedWith(B).some(one => one.shareId === shareId),
+            told: pushes(shareId).some(one => one.event === "ended")
+        }
+    },
+    then({errors, before, revoked, ended, after, told}) {
+        errors == ""
+        before == true
+        revoked == true
+        ended == true
+        after == false
+        told == true
+    }
+})

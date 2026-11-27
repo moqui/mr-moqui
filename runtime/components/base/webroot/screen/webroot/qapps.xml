@@ -175,6 +175,20 @@ along with this software (see the LICENSE.md file). If not, see
             ]]></script></actions>
         <default-response type="none"/>
     </transition>
+    <!-- The share as the app confirms and names it before its location service sends it (get#AppShare): whom with,
+        until when, exact or approximate and its interval, the server's words, never a page's. -->
+    <transition name="clientLocationShare" method="post">
+        <actions><script><![CDATA[
+            if (!ec.user.userId) ec.web.sendJsonError(401, ec.l10n.localize('Authentication required'))
+            else {
+                const out = ec.service.sync().name('org.moqui.maps.LocationServices.get#AppShare')
+                    .parameters({shareId: String(ec.web.parameters.shareId ?? '')}).call() || {}
+                if (ec.message.hasError()) { const reason = ec.message.errorsString; ec.message.clearErrors(); ec.web.sendJsonResponse({found: false, reasonCode: out.reasonCode || null, reason}) }
+                else ec.web.sendJsonResponse({found: true, share: out.share})
+            }
+            ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
     <transition name="stopClientLocation" method="post">
         <actions><script><![CDATA[
             if (!ec.user.userId) ec.web.sendJsonError(401, ec.l10n.localize('Authentication required'))

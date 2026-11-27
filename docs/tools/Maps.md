@@ -1014,11 +1014,16 @@ and the guest page for a link are still to come.
   key), or none for a browser page; `report#Position` takes that device's reports only, and for a share with none no
   device's, so the owner on another device or page gets 409 `OTHER_DEVICE` ("Another device sends this share's
   location") until they take it over (Send from here, Send from this device: `sendFromHere`). The renewal of the
-  device's key moves its shares to the new key (`renew_device_key`). The owner's reads say where each share is sent from
-  (`sentFromDevice`, the device's `deviceName`, `fromThisDevice`), never the key's id.
+  device's key moves its shares to the new key (`renew_device_key`), keeping the replaced key as `renewedFromKeyId`,
+  whose reports are taken while it still signs in (its few minutes' grace; cleared by a takeover). Revoking a device
+  key (its sign-out, the device list) stops every active share it sends (`stop#DeviceShares`), also when the device
+  could not tell the server. The owner's reads say where each share is sent from (`sentFromDevice`, the device's
+  `deviceName`, `fromThisDevice`), never the key's id.
 - **From the Android app** (LL3; [Mobile-Client, Live location](../ui/Mobile-Client.md#live-location)). Browse in the app
   has `moquiDesktop.location`: Share asks for the phone's location permission first (approximate alone for an
-  approximate share), after the app's dialog that says why, from the person's act only, and once the share is made the app's foreground service of type `location` (`LocationShareService.kt`) sends it
+  approximate share), after the app's dialog that says why, and the app asks "Send your location from this phone to
+  ... until ...?" in its own dialog, with the server's words (`get#AppShare`, `/qapps/clientLocationShare`), which is
+  what lets it send in the background (a page cannot start it alone); once the share is made the app's foreground service of type `location` (`LocationShareService.kt`) sends it
   from the phone, also with the app in the background, under its notification ("Sharing your location with Sam until
   15:30", with Stop) for as long as it does; a share the service could not start (notifications off, the app not in
   front) is sent by the page while it is open, as a browser does. The service reads Android's `LocationManager` (the

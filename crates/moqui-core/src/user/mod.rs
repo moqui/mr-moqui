@@ -51,6 +51,7 @@ pub(crate) use filter::apply_view_filters;
 pub use filter::{apply_entity_filters, entity_filters_apply, find_filters_for_user};
 pub use login::{app_password_key, credential_user, APP_PASSWORD_SCOPES};
 pub(crate) use login::login_user_local;
+pub(crate) use login::stop_key_location_shares;
 pub use login::stamp_value;
 pub use login::{check_counted_code, count_failed_login, take_factor_code};
 pub use login::{

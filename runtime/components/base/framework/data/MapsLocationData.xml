@@ -48,7 +48,7 @@ along with this software (see the LICENSE.md file). If not, see
         (ChatServices.get#RefusedUsers) are authorized as the caller. -->
     <moqui.security.ArtifactGroup artifactGroupId="LocationShareServices" description="Shared live location: own shares and those shared with me"/>
     <moqui.security.ArtifactGroupMember artifactGroupId="LocationShareServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
-            artifactName="org\.moqui\.maps\.LocationServices\.(create#Share|update#Share|stop#Share|revoke#Audience|report#Position|find#MyShares|find#SharedWithMe|get#Share|delete#Trail|get#ShellIndicator)"/>
+            artifactName="org\.moqui\.maps\.LocationServices\.(create#Share|update#Share|stop#Share|revoke#Audience|report#Position|find#MyShares|find#SharedWithMe|get#Share|delete#Trail|get#ShellIndicator|get#AppShare)"/>
     <moqui.security.ArtifactAuthz artifactAuthzId="LocationShareServicesALL" userGroupId="ALL_USERS" artifactGroupId="LocationShareServices"
             authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
 </entity-facade-xml>

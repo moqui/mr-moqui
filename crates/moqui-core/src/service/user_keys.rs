@@ -728,8 +728,10 @@ fn revoke_device_key(
     if updated == 0 {
         add_error("you have no such device");
     } else {
-        // the device gets no more pushes (plans/Mobile-Desktop.md §5, native push)
+        // the device gets no more pushes (plans/Mobile-Desktop.md §5, native push), and its location shares stop
+        // (plans/Location-Sharing.md §3.4)
         super::web_push::forget_device_key(facade, &key);
+        crate::user::stop_key_location_shares(&key);
     }
     Ok(BTreeMap::new())
 }

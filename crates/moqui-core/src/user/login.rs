@@ -1427,8 +1427,10 @@ pub fn revoke_login_key(key: &str) -> Result<bool, Error> {
         .eq("userId", Value::string(&user_id))
         .update_all([("thruDate".to_string(), now_value())])?;
     if updated > 0 {
-        // a device signing out gets no more pushes (plans/Mobile-Desktop.md §5, native push)
+        // a device signing out gets no more pushes (plans/Mobile-Desktop.md §5, native push), and the location shares
+        // it sends stop (plans/Location-Sharing.md §3.4)
         crate::service::web_push::forget_device_key(&facade, &hashed);
+        stop_key_location_shares(&hashed);
     }
     Ok(updated > 0)
 }
@@ -1483,6 +1485,21 @@ pub fn renew_device_key(key: &str) -> Result<Option<(String, i64)>, Error> {
     Ok(Some((renewed, thru)))
 }
 
+/// The active location shares sent from the device key `hashed` (its stored hash), revoked, stop
+/// (`LocationServices.stop#DeviceShares`, plans/Location-Sharing.md §3.4): none stays on with nothing sending it, also
+/// when the device could not tell the server itself (a sign-out with no network, then its pending revoke). A failure
+/// is logged: the share then ends at its end.
+pub(crate) fn stop_key_location_shares(hashed: &str) {
+    if hashed.is_empty() {
+        return;
+    }
+    let mut parameters = std::collections::BTreeMap::new();
+    parameters.insert("userLoginKeyId".to_string(), Value::string(hashed));
+    if let Err(err) = crate::service::sync("org.moqui.maps.LocationServices.stop#DeviceShares", &parameters) {
+        tracing::warn!(error = %err, "the location shares of a revoked device key were not stopped");
+    }
+}
+
 /// The location shares sent from the device key `old_key` (`LocationShare.userLoginKeyId`, a stored hash) go with its
 /// renewal `new_key`, so the device goes on sending them past the old key's end (plans/Location-Sharing.md §3.4). In a
 /// transaction of its own, as the push registrations' move; a failure is logged, and the device's next report is then
@@ -1497,7 +1514,10 @@ fn move_location_shares(facade: &EntityFacade, old_key: &str, new_key: &str) {
             facade
                 .find(SHARE)?
                 .eq("userLoginKeyId", Value::string(old_key))
-                .update_all([("userLoginKeyId".to_string(), Value::string(new_key))])
+                .update_all([
+                    ("userLoginKeyId".to_string(), Value::string(new_key)),
+                    ("renewedFromKeyId".to_string(), Value::string(old_key)),
+                ])
         })
     });
     if let Err(err) = moved {

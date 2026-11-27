@@ -162,6 +162,30 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('report', context))</script></actions>
     </service>
 
+    <service verb="get" noun="AppShare">
+        <description>An active share of the current user's own as the Android app confirms it in its own dialog and names
+            it in its notification before it sends it from the phone (plans/Location-Sharing.md §3.4): share {shareId,
+            thruDate (epoch millis), approximate, intervalSeconds (the share's report interval), audienceText (whom with,
+            in words), fromThisDevice (this request's device key is the one it is sent from)}. The words are the
+            server's, never a page's. Refused: SHARE_NOT_FOUND (not the caller's), SHARE_ENDED.</description>
+        <in-parameters><parameter name="shareId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="share" type="Map"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('appShare', context))</script></actions>
+    </service>
+
+    <service verb="stop" noun="DeviceShares" authenticate="anonymous-all" allow-remote="false">
+        <description>A device key revoked (its owner's sign-out, or the device signed out from the device list; called by
+            the framework with the key's stored hash, user/login.rs): every active share sent from it
+            (LocationShare.userLoginKeyId) is stopped as stop#Share does, its audience told, so none stays on with nothing
+            sending it, also when the device could not tell the server (plans/Location-Sharing.md §3.4).</description>
+        <in-parameters><parameter name="userLoginKeyId" required="true"/></in-parameters>
+        <out-parameters><parameter name="stoppedCount" type="Integer"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('deviceShares', context))</script></actions>
+    </service>
+
     <service verb="find" noun="MyShares">
         <description>The current user's own shares: the active ones, and with includeEnded those ended too (for their
             kept trails), the newest first, at most 200. Each with its audience (every entry, revoked ones marked: a
