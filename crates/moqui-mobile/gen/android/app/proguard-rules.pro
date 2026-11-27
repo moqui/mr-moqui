@@ -47,6 +47,7 @@
 # ... and live location from the phone (src/android.rs location_allow, location_start, location_stop,
 # location_forget_account; plans/Location-Sharing.md §3.4)
 -keep class org.moqui.mobile.LocationShare { *; }
+-keep class org.moqui.mobile.LocationStops { *; }
 -keep class org.moqui.mobile.LocationStopWorker { public <init>(android.content.Context, androidx.work.WorkerParameters); }
 # ... and Firebase's start once an account signs in, and its token's deletion once none is (src/android.rs fcm_start,
 # fcm_stop; SEC-CLI-121)

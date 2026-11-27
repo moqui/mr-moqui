@@ -10425,6 +10425,7 @@
                     this.indicatorRules = (Array.isArray(json.refreshOn) ? json.refreshOn : []).filter((rule) => moqui.isPlainObject(rule) && moqui.isString(rule.topicPrefix) && rule.topicPrefix)
                         .map((rule) => ({ topicPrefix: rule.topicPrefix, events: Array.isArray(rule.events) ? rule.events.map(String) : null }));
                     if (next !== null) this.indicatorTimer = setTimeout(() => this.loadShellIndicators(), Math.min(Math.max(next * 1000 + 1000, 5000), 86400000));
+                    this.noteHostSending();
                 }, (err) => {
                     console.info("shell indicators not loaded", err && err.status);
                     // the last ask failed: asked again after a minute, doubling to half an hour, so a chip does not stay as
@@ -10436,6 +10437,19 @@
                         this.indicatorTimer = setTimeout(() => this.loadShellIndicators(), Math.min(60000 * Math.pow(2, this.indicatorFailures - 1), 1800000));
                     }
                 });
+            },
+            // The Android app's location service sends live location shares from the phone after Maps closes
+            // (plans/Location-Sharing.md §3.4, moquiDesktop.location): Maps' "Sharing location" chip says "sending from this
+            // phone" while it does, read from the app at each load of the indicators (a share's start, change and end are
+            // among their pushes), so the note goes when the service stops with Maps closed.
+            noteHostSending() {
+                const native = window.moquiDesktop && window.moquiDesktop.location;
+                if (!native || typeof native.status !== "function") return;
+                const text = locText("sending from this phone");
+                Promise.resolve(native.status()).then((list) => {
+                    if (Array.isArray(list) && list.length) moqui.shellIndicators.note("locationSharing", text);
+                    else if (moqui.shellIndicators.state.notes.locationSharing === text) moqui.shellIndicators.note("locationSharing", null);
+                }, () => {});
             },
             indicatorClick(indicator) {
                 const item = moqui.shellIndicators.get(indicator.key);

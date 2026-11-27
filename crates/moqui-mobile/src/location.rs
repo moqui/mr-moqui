@@ -219,6 +219,9 @@ pub(crate) fn stop_share(
         Ok((status, json)) if status < 400 && json.get("stopped").and_then(Value::as_bool) == Some(true) => {
             StopState::Stopped
         }
+        // an answer that is not the transition's JSON (a sign-in page): the key no longer signs in, as the reporter
+        // takes it
+        Ok((status, Value::Null)) if status < 400 => StopState::SignedOut,
         Ok((status, json))
             if status < 400 && json.get("reasonCode").and_then(Value::as_str) == Some("SHARE_NOT_FOUND") =>
         {
@@ -236,37 +239,71 @@ pub(crate) fn stop_share(
     }
 }
 
-/// `account` signs out, its key still held (`MobileHost::account_signing_out`): each share it sends from here is
-/// stopped on its server first, so none stays on with no device sending it. How many the server took.
-pub(crate) fn stop_account_on_server(account: &str, signed_in: (&Account, &str), poster: &dyn Poster) -> usize {
-    sending(account)
-        .iter()
-        .filter(|share| stop_share(account, share, true, Some(signed_in), poster) == StopState::Stopped)
-        .count()
-}
-
-/// The account whose page's gesture asked for the location (`location_allow`), and when: a share of it may start with
-/// no gesture of its own within [`ARMED_FOR`], once, as its request and Android's question take time.
-static ARMED: Mutex<Option<(String, std::time::Instant)>> = Mutex::new(None);
-
-/// How long a gesture's `location_allow` lets one `location_share_start` go without a gesture of its own.
-pub(crate) const ARMED_FOR: std::time::Duration = std::time::Duration::from_secs(120);
-
-/// The page's gesture asked for the location for a share of `account`.
-pub(crate) fn arm(account: &str) {
-    *moqui_lib::sync::lock(&ARMED) = Some((account.to_string(), std::time::Instant::now()));
-}
-
-/// Whether a share of `account` may start with no gesture of its own: one armed for it within [`ARMED_FOR`], taken.
-pub(crate) fn take_armed(account: &str) -> bool {
-    let mut armed = moqui_lib::sync::lock(&ARMED);
-    let ok = armed
-        .as_ref()
-        .is_some_and(|(of, at)| of == account && at.elapsed() <= ARMED_FOR);
-    if ok {
-        *armed = None;
+/// `account` signs out, its key still held (`MobileHost::account_signing_out`): each share it sends from here, and each
+/// whose stop still waits (`waiting`: `LocationStops`), is stopped on its server first, so none stays on with no device
+/// sending it. Each share with what its stop came to. One the server does not hear of now is stopped by the server when
+/// it takes the key's revoke (`stop#DeviceShares`).
+pub(crate) fn stop_account_on_server(
+    account: &str,
+    waiting: &[String],
+    signed_in: (&Account, &str),
+    poster: &dyn Poster,
+) -> Vec<(String, StopState)> {
+    let mut shares = sending(account);
+    for share in waiting {
+        if !shares.contains(share) {
+            shares.push(share.clone());
+        }
     }
-    ok
+    shares
+        .into_iter()
+        .map(|share| {
+            let state = stop_share(account, &share, true, Some(signed_in), poster);
+            (share, state)
+        })
+        .collect()
+}
+
+/// The app's read of a share it is asked to send (`/qapps/clientLocationShare`, `get#AppShare`).
+pub(crate) const SHARE_PATH: &str = "/qapps/clientLocationShare";
+
+/// The share `share_id` of the account as its server says it is, for the native confirmation and the notification
+/// (plans/Location-Sharing.md §3.4): whom with, until when, exact or approximate and its interval, all from the server
+/// with the account's device key, never from the page that asked. Refused when the server does not have it as an active
+/// share of the account's, or this device does not send it (Send from this device first).
+pub(crate) fn read_share(
+    share_id: &str,
+    signed_in: (&Account, &str),
+    poster: &dyn Poster,
+    now_ms: i64,
+) -> Result<ShareAsk, String> {
+    let (server, key) = signed_in;
+    let (status, json) = poster.post(server, key, SHARE_PATH, &[("shareId", share_id)])?;
+    if status >= 400 || json.get("found").and_then(Value::as_bool) != Some(true) {
+        return Err(json.get("reason").and_then(Value::as_str).map_or_else(
+            || format!("The server has no such share (HTTP {status})"),
+            str::to_string,
+        ));
+    }
+    let share = json.get("share").cloned().unwrap_or(Value::Null);
+    if share.get("shareId").and_then(Value::as_str) != Some(share_id) {
+        return Err("The server answered for another share".to_string());
+    }
+    if share.get("fromThisDevice").and_then(Value::as_bool) != Some(true) {
+        return Err("Another device sends this share: choose Send from this device".to_string());
+    }
+    ShareAsk {
+        share_id: share_id.to_string(),
+        thru_date: share.get("thruDate").and_then(Value::as_i64).unwrap_or(0),
+        approximate: share.get("approximate").and_then(Value::as_bool) == Some(true),
+        interval_seconds: share.get("intervalSeconds").and_then(Value::as_i64).unwrap_or(0),
+        audience: share
+            .get("audienceText")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+    }
+    .checked(now_ms)
 }
 
 /// The share `share_id` of `account` is no longer sent from here, with nothing told to its server.

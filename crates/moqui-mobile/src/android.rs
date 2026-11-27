@@ -409,19 +409,23 @@ pub(crate) fn location_allow(exact: bool) -> Result<bool, String> {
     })
 }
 
-/// A share sent from this phone by the location service (`LocationShare.start`, the share's JSON with its account):
-/// whether it started (the app in front, the permission and notifications allowed).
-pub(crate) fn location_start(share: &str) -> Result<bool, String> {
+/// A share sent from this phone by the location service (`LocationShare.start`, the share's JSON with its account,
+/// the server's words): `started` once the person said Send in the app's own dialog, `declined` on Not now, or
+/// `unavailable` (the app not in front, the permission or notifications off). Waits for the person's answer.
+pub(crate) fn location_start(share: &str) -> Result<String, String> {
     with_context(|env, app| {
         let class = app_class(env, app, jni_str!("org.moqui.mobile.LocationShare"))?;
         let share = env.new_string(share)?;
-        env.call_static_method(
-            &class,
-            jni_str!("start"),
-            jni_sig!("(Landroid/content/Context;Ljava/lang/String;)Z"),
-            &[JValue::Object(app), JValue::Object(&share)],
-        )?
-        .z()
+        let answer = env
+            .call_static_method(
+                &class,
+                jni_str!("start"),
+                jni_sig!("(Landroid/content/Context;Ljava/lang/String;)Ljava/lang/String;"),
+                &[JValue::Object(app), JValue::Object(&share)],
+            )?
+            .l()?;
+        let answer = env.cast_local::<jni::objects::JString>(answer)?;
+        answer.try_to_string(env)
     })
 }
 
@@ -436,6 +440,47 @@ pub(crate) fn location_stop(account: &str, share_id: &str) -> Result<(), String>
             jni_str!("stop"),
             jni_sig!("(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)V"),
             &[JValue::Object(app), JValue::Object(&account), JValue::Object(&share_id)],
+        )?;
+        Ok(())
+    })
+}
+
+/// The shares of `account` whose stop on the server still waits (`LocationStops.pendingFor`): posted at its sign-out.
+pub(crate) fn location_pending_stops(account: &str) -> Result<Vec<String>, String> {
+    let list = with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.LocationStops"))?;
+        let account = env.new_string(account)?;
+        let list = env
+            .call_static_method(
+                &class,
+                jni_str!("pendingFor"),
+                jni_sig!("(Landroid/content/Context;Ljava/lang/String;)Ljava/lang/String;"),
+                &[JValue::Object(app), JValue::Object(&account)],
+            )?
+            .l()?;
+        let list = env.cast_local::<jni::objects::JString>(list)?;
+        list.try_to_string(env)
+    })?;
+    serde_json::from_str(&list).map_err(|err| err.to_string())
+}
+
+/// What a stop of `account`'s share came to at its sign-out (`LocationStops.settledFor`): a settled one waits no more.
+pub(crate) fn location_stop_settled(account: &str, share_id: &str, state: &str) -> Result<(), String> {
+    with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.LocationStops"))?;
+        let account = env.new_string(account)?;
+        let share_id = env.new_string(share_id)?;
+        let state = env.new_string(state)?;
+        env.call_static_method(
+            &class,
+            jni_str!("settledFor"),
+            jni_sig!("(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V"),
+            &[
+                JValue::Object(app),
+                JValue::Object(&account),
+                JValue::Object(&share_id),
+                JValue::Object(&state),
+            ],
         )?;
         Ok(())
     })

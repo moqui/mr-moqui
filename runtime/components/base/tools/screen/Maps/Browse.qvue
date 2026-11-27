@@ -1288,7 +1288,7 @@ module.exports = {
                 const whom = form.users.map((user) => user.label).concat(this.shareTargets.groups.filter((group) => form.groups.includes(group.userGroupId))
                     .map((group) => group.label), this.shareTargets.contacts.filter((contact) => form.jids.includes(contact.jid)).map((contact) => contact.label),
                     form.link ? [t('a guest link')] : []);
-                this.sendShare(json.shareId, { approximate, thruDate: json.thruDate, whomText: whom.join(', '), fresh: true,
+                this.sendShare(json.shareId, { approximate, thruDate: json.thruDate, whomText: whom.join(', '), fresh: true, created: true,
                     intervalSeconds: approximate ? this.shareTargets.approximateIntervalSeconds : this.shareTargets.minIntervalSeconds });
                 if (!json.linkToken) this.shareShown = false;
                 moqui.notifyMessages([{ type: 'success', message: t('Your location is shared until') + ' ' + this.untilText(json.thruDate) }], null);
@@ -1305,20 +1305,23 @@ module.exports = {
             const native = desktop && desktop.location;
             return native && typeof native.start === 'function' ? native : null;
         },
-        // a share started here or taken over: sent by the app's service, else by this page
+        // a share started here or taken over: sent by the app's service once the person says Send in the app's own dialog
+        // (whose words are the server's), else by this page; the person's Not now there sends it from nowhere: a share just
+        // started (created) is stopped, one taken over is left with this device and not sent from it
         sendShare(shareId, info) {
             const native = this.nativeLocation();
             if (!native) { this.startSending(shareId, info); return Promise.resolve(false); }
-            return Promise.resolve(native.start({ shareId, thruDate: Number(info.thruDate) || 0, approximate: !!info.approximate,
-                intervalSeconds: Math.max(1, Number(info.intervalSeconds) || (info.approximate ? 60 : 5)), audience: info.whomText || '' }))
-                .then((started) => {
-                    if (started === true) {
-                        this.stopSending(shareId);
-                        if (!this.nativeSending.includes(shareId)) this.nativeSending = this.nativeSending.concat([shareId]);
-                        this.noteSending();
-                    } else this.startSending(shareId, info);
-                    return started === true;
-                }, () => { this.startSending(shareId, info); return false; });
+            return Promise.resolve(native.start({ shareId })).then((answer) => {
+                if (answer === 'started') {
+                    this.stopSending(shareId);
+                    if (!this.nativeSending.includes(shareId)) this.nativeSending = this.nativeSending.concat([shareId]);
+                    this.noteSending();
+                } else if (answer === 'declined') {
+                    if (info.created) this.shareAction('stopShare', { shareId });
+                    moqui.notifyMessages(null, [t('Your location is not sent from this phone')]);
+                } else this.startSending(shareId, info);
+                return answer === 'started';
+            }, () => { this.startSending(shareId, info); return false; });
         },
         // what the app's service sends now, read when the shares are (it stops a share by itself at its end, a 410, another
         // device's takeover, a sign-out, its notification's Stop or the permission taken away)

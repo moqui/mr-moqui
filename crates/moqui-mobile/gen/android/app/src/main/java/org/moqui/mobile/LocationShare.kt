@@ -40,7 +40,8 @@ import java.util.concurrent.TimeUnit
  * Send from this device, on the Maps page, sent by [LocationShareService], a foreground service of type location, also
  * while the app is in the background, with its notification ("Sharing your location with Sam until 15:30", Stop) for as
  * long as it runs. It is started only from the page's Share while the app is in front ([start], the host command
- * `location_share_start`), so the app has no background location permission. The page asks [allow] first, which gives
+ * `location_share_start`), so the app has no background location permission, and only once the person said Send in the
+ * app's own dialog, whose words (whom with, until when) are the server's: that dialog, not the page, is the control. The page asks [allow] first, which gives
  * the reason before Android's question. Each fix goes to Rust (`Native.reportLocation`, the host command
  * `report_location`) on this object's own thread ([work]), never the native code's shared one, which pushes and a
  * call's hang-up use; Rust keeps the newest point and sends it with the account's device key within 15 seconds. A share
@@ -100,6 +101,10 @@ object LocationShare {
         return true
     }
 
+    /** The share sent from here by its key, as it is now; null once it is no longer sent. */
+    @Synchronized
+    fun current(key: String): Sent? = shares[key]
+
     /** The shares of `account` sent from here now, a JSON list of ids (`location_share_status`). */
     @JvmStatic
     fun sending(account: String): String = JSONArray(sent().filter { it.account == account }.map { it.shareId }).toString()
@@ -134,9 +139,9 @@ object LocationShare {
     /**
      * Before a share from this phone: the location permission, asked after the app's dialog that says why. An exact
      * share asks for precise and approximate (the person may give either; given approximate only, it sends the phone's
-     * approximate fixes), once; an approximate share asks for approximate alone, so the phone itself gives fixes of about
-     * 2 km where precise was never given. Whether the app may read the location now. Waits for the answer, so never on
-     * the main thread.
+     * approximate fixes), once; an approximate share asks for approximate alone, so where precise was never given the
+     * phone itself gives approximate fixes (about 3 km² on Android 12+). Whether the app may read the location now: false
+     * on Not now or a dismissed dialog. Waits for the answer, so never on the main thread.
      */
     @JvmStatic
     fun allow(context: Context, exact: Boolean): Boolean {
@@ -144,23 +149,24 @@ object LocationShare {
         val prefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val wanted = LocationRules.permissionsToAsk(exact, fine(app), coarse(app), prefs.getBoolean("askedFine", false))
         if (wanted.isEmpty()) return permitted(app)
-        val activity = CallManager.appActivity() ?: return permitted(app)
-        prefs.edit().putBoolean("asked", true).apply { if ("fine" in wanted) putBoolean("askedFine", true) }.apply()
+        val activity = CallManager.appActivity() ?: return false
         val names = wanted.map { if (it == "fine") Manifest.permission.ACCESS_FINE_LOCATION else Manifest.permission.ACCESS_COARSE_LOCATION }
         val waiting = CountDownLatch(1)
         answer = waiting
+        var asked = false
         Handler(Looper.getMainLooper()).post {
             if (activity.isFinishing || activity.isDestroyed) {
                 waiting.countDown()
                 return@post
             }
-            var asked = false
             ObscuredTouches.show(
                 android.app.AlertDialog.Builder(activity)
                     .setTitle(R.string.ask_location_title)
                     .setMessage(if (exact) R.string.ask_location_reason else R.string.ask_location_reason_approximate)
                     .setPositiveButton(R.string.ask_continue) { _, _ ->
                         asked = true
+                        // asked only now that Android's question is: a Not now asks again at the next share
+                        prefs.edit().putBoolean("asked", true).apply { if ("fine" in wanted) putBoolean("askedFine", true) }.apply()
                         activity.requestPermissions(names.toTypedArray(), ASK_LOCATION)
                     }
                     .setNegativeButton(R.string.ask_not_now, null)
@@ -169,7 +175,8 @@ object LocationShare {
         }
         waiting.await(ASK_WAIT_S, TimeUnit.SECONDS)
         answer = null
-        return permitted(app)
+        // Not now, or the dialog dismissed: no share, whatever was given before
+        return LocationRules.allowed(asked, permitted(app))
     }
 
     /** Android's question was answered ([MainActivity.onRequestPermissionsResult]). */
@@ -179,11 +186,13 @@ object LocationShare {
 
     /**
      * The page's Share (`location_share_start`): the share in `json` ({account, shareId, thruDate, approximate,
-     * intervalSeconds, audience}) sent from here by the service from now on. Only with the app in front, the location
-     * permission and notifications allowed (the notification is what shows it is sent); whether it started.
+     * intervalSeconds, audience}, all of it the server's: Rust read it with the account's device key, `get#AppShare`)
+     * sent from here by the service from now on. Only with the app in front, the location permission and notifications
+     * allowed (the notification is what shows it is sent), and once the person said Send in [confirm]: `started`,
+     * `declined` (Not now) or `unavailable`. Waits for the answer, so never on the main thread.
      */
     @JvmStatic
-    fun start(context: Context, json: String): Boolean {
+    fun start(context: Context, json: String): String {
         val app = context.applicationContext
         val share = try {
             val o = JSONObject(json)
@@ -193,22 +202,56 @@ object LocationShare {
             )
         } catch (err: Exception) {
             Log.w(TAG, "Not a share to send: ${err.message}")
-            return false
+            return "unavailable"
         }
         ensureChannel(app)
         if (!LocationRules.mayStart(foreground, permitted(app), notificationsShown(app))) {
             Log.i(TAG, "Share ${share.shareId} is not sent by the service: the app is not in front, or location or notifications are off")
-            return false
+            return "unavailable"
+        }
+        if (!confirm(app, share)) {
+            Log.i(TAG, "Share ${share.shareId} is not sent from this phone: the person said Not now")
+            return "declined"
         }
         synchronized(this) { shares[share.key] = share }
         return try {
             ContextCompat.startForegroundService(app, Intent(app, LocationShareService::class.java))
-            true
+            "started"
         } catch (err: Exception) {
             Log.w(TAG, "The location service did not start: ${err.message}")
             remove(share.key)
-            false
+            "unavailable"
         }
+    }
+
+    /**
+     * The app's own question before a share is sent from this phone: "Send your location from this phone to Sam until
+     * 15:30?", Send or Not now, in a native dialog that refuses touches through another app's window
+     * ([ObscuredTouches]), with the server's words. A page's script can ask the host to start a share; only the person's
+     * Send here starts one. Whether they said Send (no activity, or no answer in a minute: no).
+     */
+    private fun confirm(context: Context, share: Sent): Boolean {
+        val activity = CallManager.appActivity() ?: return false
+        val until = DateFormat.getTimeFormat(context).format(Date(share.thruMs))
+        val text = LocationRules.confirmText(share.audience, until, share.approximate)
+        val waiting = CountDownLatch(1)
+        var send = false
+        Handler(Looper.getMainLooper()).post {
+            if (activity.isFinishing || activity.isDestroyed) {
+                waiting.countDown()
+                return@post
+            }
+            ObscuredTouches.show(
+                android.app.AlertDialog.Builder(activity)
+                    .setTitle(R.string.location_confirm_title)
+                    .setMessage(text)
+                    .setPositiveButton(R.string.location_confirm_send) { _, _ -> send = true }
+                    .setNegativeButton(R.string.ask_not_now, null)
+                    .setOnDismissListener { waiting.countDown() }
+            )
+        }
+        waiting.await(ASK_WAIT_S, TimeUnit.SECONDS)
+        return LocationRules.confirmed(send, foreground)
     }
 
     /** The page stopped a share, or it is sent elsewhere now (`location_share_stop`): no longer sent from here. */
@@ -226,14 +269,14 @@ object LocationShare {
     }
 
     /**
-     * The person's Stop, or notifications turned off: every share sent from here is no longer sent, and is stopped on
-     * its server, durably ([LocationStops]: tried until the server confirms, with a "Stopping" notification until then).
+     * The person's Stop, notifications turned off, or the permission gone while the process lives on: every share sent
+     * from here is no longer sent, and is stopped on its server, durably ([LocationStops]: tried until the server confirms, with a "Stopping" notification until then).
      */
     internal fun stopAll(context: Context) {
         val sent = sent()
         for (share in sent) {
             remove(share.key)
-            LocationStops.add(context, share.account, share.shareId)
+            LocationStops.add(context, share.account, share.shareId, share.thruMs)
         }
         if (sent.isNotEmpty()) Log.i(TAG, "Stop: ${sent.size} shares are no longer sent, and are stopped on their servers")
     }
@@ -397,6 +440,7 @@ class LocationShareService : Service(), LocationListener {
         val exact = sent.any { !it.approximate } && LocationShare.permitted(this, true)
         val provider = LocationRules.provider(
             exact,
+            LocationShare.fine(this),
             Build.VERSION.SDK_INT >= 31 && lm.allProviders.contains(LocationManager.FUSED_PROVIDER),
             lm.isProviderEnabled(LocationManager.GPS_PROVIDER),
             lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
@@ -419,8 +463,10 @@ class LocationShareService : Service(), LocationListener {
             }
             asked = Triple(provider, interval, quality)
         } catch (err: SecurityException) {
-            Log.i(LocationShare.TAG, "The location permission is gone: the shares are no longer sent")
-            dropAll()
+            // a provider this permission does not reach: wait for one (a provider turned on), as with none; the
+            // half-minute check stops the shares once the permission is gone
+            Log.i(LocationShare.TAG, "The location provider $provider is not allowed: the shares wait for one")
+            asked = null
         }
     }
 
@@ -463,11 +509,12 @@ class LocationShareService : Service(), LocationListener {
      * report of the share is under way the newest fix waits ([LocationRules.queueFix]), so reports never pile up.
      */
     private fun report(share: LocationShare.Sent, fix: String) {
-        if (share.key in inFlight) {
-            LocationRules.queueFix(queued, share.key, fix)
+        val key = share.key
+        if (key in inFlight) {
+            LocationRules.queueFix(queued, key, fix)
             return
         }
-        inFlight.add(share.key)
+        inFlight.add(key)
         val dir = Native.dataDir(this)
         val app = applicationContext
         LocationShare.work {
@@ -478,11 +525,10 @@ class LocationShareService : Service(), LocationListener {
                 JSONObject()
             }
             main.post {
-                inFlight.remove(share.key)
-                took(share, outcome)
-                queued.remove(share.key)?.let { next ->
-                    if (LocationShare.sent().any { it.key == share.key }) report(share, next)
-                }
+                inFlight.remove(key)
+                // the share as it is now (its end may have changed), or none once it is no longer sent
+                LocationShare.current(key)?.let { took(it, outcome) }
+                queued.remove(key)?.let { next -> LocationShare.current(key)?.let { report(it, next) } }
             }
         }
     }
@@ -497,9 +543,10 @@ class LocationShareService : Service(), LocationListener {
         }
         // a point waits (the interval, a 429, no network): sent again when the wait is over, once a share
         if (state == "waiting" && waiting.add(share.key)) {
+            val key = share.key
             main.postDelayed({
-                waiting.remove(share.key)
-                if (LocationShare.sent().any { it.key == share.key }) report(share, "")
+                waiting.remove(key)
+                LocationShare.current(key)?.let { report(it, "") }
             }, outcome.optLong("waitMs", 5_000L).coerceIn(0L, 3_600_000L))
         }
     }
@@ -511,10 +558,15 @@ class LocationShareService : Service(), LocationListener {
      */
     private fun checkShares() {
         val now = System.currentTimeMillis()
-        val permitted = LocationShare.permitted(this)
+        if (!LocationShare.permitted(this)) {
+            // the permission taken away while the process lives on (Android usually ends it): stopped on the servers
+            Log.i(LocationShare.TAG, "The location permission is gone: the shares stop")
+            dropAll()
+            return
+        }
         var gone = false
         for (share in LocationShare.sent()) {
-            val reason = LocationRules.stopReason(share.thruMs, now, permitted, true, null, null) ?: continue
+            val reason = LocationRules.stopReason(share.thruMs, now, true, true, null, null) ?: continue
             Log.i(LocationShare.TAG, "Share ${share.shareId} is no longer sent from here: $reason")
             gone = LocationShare.remove(share.key) || gone
         }
@@ -527,9 +579,9 @@ class LocationShareService : Service(), LocationListener {
         if (gone) changedHere() else post(LocationShare.sent())
     }
 
-    /** Every share no longer sent from here, with nothing told to their servers (the permission gone). */
+    /** Every share no longer sent from here (the permission gone), each stopped on its server, durably. */
     private fun dropAll() {
-        LocationShare.sent().forEach { LocationShare.remove(it.key) }
+        LocationShare.stopAll(this)
         end()
     }
 

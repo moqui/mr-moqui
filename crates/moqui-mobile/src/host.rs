@@ -784,13 +784,26 @@ impl ShellHost for MobileHost {
         // its live location shares are stopped on its server while the key is held, so none stays on with nothing
         // sending it, and are no longer sent from this phone (a removal has only this; plans/Location-Sharing.md §3.4)
         if let (Some(core), true) = (self.core(), self.network_ready()) {
+            #[cfg(target_os = "android")]
+            let waiting = crate::android::location_pending_stops(&account.id).unwrap_or_default();
+            #[cfg(not(target_os = "android"))]
+            let waiting: Vec<String> = Vec::new();
             let stopped = crate::location::stop_account_on_server(
                 &account.id,
+                &waiting,
                 (account, key),
                 &crate::native::LocationPoster(&core),
             );
-            if stopped > 0 {
-                log::info!("Location: {stopped} shares of {} stopped for its sign-out", account.id);
+            for (share, state) in &stopped {
+                #[cfg(target_os = "android")]
+                if let Err(err) = crate::android::location_stop_settled(&account.id, share, state.as_str()) {
+                    log::warn!("The location stops were not told of share {share}: {err}");
+                }
+                log::info!(
+                    "Location: share {share} of {} for its sign-out: {}",
+                    account.id,
+                    state.as_str()
+                );
             }
         }
         forget_location(&account.id);

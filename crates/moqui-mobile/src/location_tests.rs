@@ -254,13 +254,18 @@ fn a_sign_out_stops_the_accounts_shares_on_the_server_while_its_key_is_held() {
     let posts = Posts::answering(vec![
         (200, json!({ "stopped": true })),
         (200, json!({ "stopped": true })),
+        (200, json!({ "stopped": true })),
     ]);
     begin(&ann.id, "500", 5_000);
     begin(&ann.id, "501", 5_000);
-    assert_eq!(stop_account_on_server(&ann.id, (&ann, "device-key"), &posts), 2);
-    let mut stopped: Vec<String> = (0..2).filter_map(|index| posts.field(index, "shareId")).collect();
+    // with a stop still waiting from before (LocationStops), posted too
+    let waiting = ["502".to_string(), "500".to_string()];
+    let states = stop_account_on_server(&ann.id, &waiting, (&ann, "device-key"), &posts);
+    assert_eq!(states.len(), 3);
+    assert!(states.iter().all(|(_, state)| *state == StopState::Stopped));
+    let mut stopped: Vec<String> = (0..3).filter_map(|index| posts.field(index, "shareId")).collect();
     stopped.sort();
-    assert_eq!(stopped, vec!["500".to_string(), "501".to_string()]);
+    assert_eq!(stopped, vec!["500".to_string(), "501".to_string(), "502".to_string()]);
     assert!(sending(&ann.id).is_empty());
 }
 
@@ -297,9 +302,55 @@ fn a_report_refused_across_a_key_renewal_goes_again_with_the_new_key() {
 }
 
 #[test]
-fn a_gesture_lets_one_share_start_for_its_account() {
-    arm("location-test-armed");
-    assert!(!take_armed("location-test-other"));
-    assert!(take_armed("location-test-armed"));
-    assert!(!take_armed("location-test-armed"), "once");
+fn a_share_to_start_takes_its_words_from_the_server_not_the_page() {
+    let ann = account("location-test-read");
+    let now = 1_700_000_000_000_i64;
+    let server_share = json!({ "found": true, "share": { "shareId": "700", "thruDate": now + 3_600_000, "approximate": true,
+        "intervalSeconds": 60, "audienceText": "Sam and 2 others", "fromThisDevice": true } });
+    let posts = Posts::answering(vec![(200, server_share)]);
+    let read = read_share("700", (&ann, "device-key"), &posts, now).unwrap();
+    assert_eq!(posts.made.borrow()[0].0, SHARE_PATH);
+    assert_eq!(posts.field(0, "shareId").as_deref(), Some("700"));
+    assert_eq!(read.audience, "Sam and 2 others");
+    assert_eq!(read.thru_date, now + 3_600_000);
+    assert!(read.approximate);
+    assert_eq!(read.interval_seconds, 60);
+    // what the notification and the dialog are given is the server's
+    let json: Value = serde_json::from_str(&read.to_json(&ann.id)).unwrap();
+    assert_eq!(json["audience"], "Sam and 2 others");
+    // refused: another device sends it, no such share, an answer for another share, an end passed
+    let other = json!({ "found": true, "share": { "shareId": "701", "thruDate": now + 1000, "intervalSeconds": 5,
+        "audienceText": "Sam", "fromThisDevice": false } });
+    let wrong = json!({ "found": true, "share": { "shareId": "999", "thruDate": now + 1000, "intervalSeconds": 5,
+        "audienceText": "Sam", "fromThisDevice": true } });
+    let ended = json!({ "found": true, "share": { "shareId": "704", "thruDate": now - 1, "intervalSeconds": 5,
+        "audienceText": "Sam", "fromThisDevice": true } });
+    let posts = Posts::answering(vec![
+        (200, other),
+        (
+            200,
+            json!({ "found": false, "reasonCode": "SHARE_NOT_FOUND", "reason": "Location share not found" }),
+        ),
+        (200, wrong),
+        (200, ended),
+    ]);
+    assert!(read_share("701", (&ann, "device-key"), &posts, now)
+        .unwrap_err()
+        .contains("Another device"));
+    assert_eq!(
+        read_share("702", (&ann, "device-key"), &posts, now).unwrap_err(),
+        "Location share not found"
+    );
+    assert!(read_share("703", (&ann, "device-key"), &posts, now).is_err());
+    assert!(read_share("704", (&ann, "device-key"), &posts, now).is_err());
+}
+
+#[test]
+fn a_stop_answered_by_a_sign_in_page_is_signed_out() {
+    let ann = account("location-test-stop-page");
+    let posts = Posts::answering(vec![(200, Value::Null)]);
+    assert_eq!(
+        stop_share(&ann.id, "800", true, Some((&ann, "device-key")), &posts),
+        StopState::SignedOut
+    );
 }

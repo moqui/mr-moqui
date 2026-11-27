@@ -66,11 +66,11 @@ class LocationRulesTest {
 
     @Test
     fun theProviderIsThePlatformsWithNoPlayServices() {
-        assertEquals("fused", LocationRules.provider(true, true, true, true))
-        assertEquals("gps", LocationRules.provider(true, false, true, true))
-        assertEquals("network", LocationRules.provider(false, false, true, true))
-        assertEquals("gps", LocationRules.provider(false, false, true, false))
-        assertNull(LocationRules.provider(true, false, false, false))
+        assertEquals("fused", LocationRules.provider(true, true, true, true, true))
+        assertEquals("gps", LocationRules.provider(true, true, false, true, true))
+        assertEquals("network", LocationRules.provider(false, true, false, true, true))
+        assertEquals("gps", LocationRules.provider(false, true, false, true, false))
+        assertNull(LocationRules.provider(true, true, false, false, false))
     }
 
     @Test
@@ -118,20 +118,50 @@ class LocationRulesTest {
     }
 
     @Test
-    fun aStopIsKeptUntilItsServerSettlesIt() {
+    fun aStopIsKeptUntilItsServerSettlesItOrTheShareEnds() {
         val key = LocationRules.stopKey("chat.example.com-0123", "100")
         assertEquals("chat.example.com-0123" to "100", LocationRules.parseStopKey(key))
         assertNull(LocationRules.parseStopKey("no-share/"))
         assertNull(LocationRules.parseStopKey("/100"))
-        val pending = setOf(key, "b/200")
-        // no answer, or one that did not stop it: kept
-        assertEquals(pending, LocationRules.stopsAfter(pending, key, "retry"))
-        assertEquals(pending, LocationRules.stopsAfter(pending, key, ""))
-        // stopped, no such share there, or signed out: settled
-        for (state in listOf("stopped", "gone", "signedOut")) {
-            assertTrue(LocationRules.stopSettled(state))
-            assertEquals(setOf("b/200"), LocationRules.stopsAfter(pending, key, state))
-        }
+        val thru = 1_000_000L
+        // stopped or no such share: settled; no answer: kept until the share's end, which ends it on the server anyway
+        assertEquals("settled", LocationRules.stopOutcome("stopped", thru, 0))
+        assertEquals("settled", LocationRules.stopOutcome("gone", thru, 0))
+        assertEquals("keep", LocationRules.stopOutcome("retry", thru, thru - 1))
+        assertEquals("keep", LocationRules.stopOutcome("", thru, thru - 1))
+        assertEquals("settled", LocationRules.stopOutcome("retry", thru, thru))
+        // signed out here before its end: let go, the person told until when it shows the last position
+        assertEquals("unconfirmed", LocationRules.stopOutcome("signedOut", thru, thru - 1))
+        assertEquals("settled", LocationRules.stopOutcome("signedOut", thru, thru + 1))
+        assertTrue(LocationRules.stopSettled("gone"))
         assertFalse(LocationRules.stopSettled("retry"))
+    }
+
+    @Test
+    fun notNowStartsNothingAndTheSendIsThePersons() {
+        // the permission question: Not now or a dismissed dialog is no, whatever was given before
+        assertFalse(LocationRules.allowed(false, true))
+        assertFalse(LocationRules.allowed(true, false))
+        assertTrue(LocationRules.allowed(true, true))
+        // the app's own question: Send, with the app still in front
+        assertTrue(LocationRules.confirmed(true, true))
+        assertFalse(LocationRules.confirmed(false, true))
+        assertFalse(LocationRules.confirmed(true, false))
+        assertEquals(
+            "Send your location from this phone to Sam and 2 others until 15:30? It goes on while the app is in the " +
+                "background, with a notification and Stop.",
+            LocationRules.confirmText("Sam and 2 others", "15:30", false)
+        )
+        assertTrue(LocationRules.confirmText(" ", "9:05", true).startsWith("Send about where you are (to within about 1 km) " +
+            "from this phone to the people you chose until 9:05?"))
+    }
+
+    @Test
+    fun gpsIsNeverReadWithoutThePrecisePermission() {
+        assertEquals("network", LocationRules.provider(false, false, false, true, true))
+        assertNull(LocationRules.provider(false, false, false, true, false))
+        assertNull(LocationRules.provider(true, false, false, true, false))
+        assertEquals("gps", LocationRules.provider(true, true, false, true, false))
+        assertEquals("fused", LocationRules.provider(false, false, true, true, false))
     }
 }

@@ -536,17 +536,23 @@ emulator yet (LL7's walk).
 
 - **From the page's Share only.** A server page has `moquiDesktop.location` (`allow`, `start`, `stop`, `status`; the
   host commands `location_allow`, `location_share_start`, `location_share_stop`, `location_share_status`, each for the
-  page's account while it is the current one). `allow` and `start` take the person's act only: the bridge sends the
-  page's user activation (as `vault.memory` does), and a `start` with none is taken only within two minutes of an
-  `allow` with one, once (its share's request and Android's question outlast the activation). Browse's Share asks
-  `allow` first: without the location permission the app shows a dialog that says why (to send where you are to the
-  people you chose, until the time you chose, with a notification and Stop while it does), then Android's question: for
-  an exact share precise and approximate (the person may give either; given approximate only it sends the phone's
-  approximate fixes; precise is asked once), for an approximate share approximate alone, so where precise was never
-  given the phone's own fixes are approximate (about 2 km) before the server rounds them. Once the share is made,
-  `start` starts `LocationShareService`, a foreground service of type `location` (`FOREGROUND_SERVICE_LOCATION`), and
-  only while the app is in front (`LocationShare.foreground`), with the permission and notifications allowed
-  (`LocationRules.mayStart`); otherwise it answers false and the page sends while it is open, as a browser does. So the
+  page's account while it is the current one). Browse's Share asks `allow` first: without the location permission the
+  app shows a dialog that says why (to send where you are to the people you chose, until the time you chose, with a
+  notification and Stop while it does), then Android's question: for an exact share precise and approximate (the person
+  may give either; given approximate only it sends the phone's approximate fixes; precise is asked again only after a
+  Not now), for an approximate share approximate alone, so where precise was never given the phone's own fixes are
+  approximate (about 3 km² on Android 12+) before the server rounds them. Not now, or the dialog dismissed, answers no
+  and no share is started. Once the share is made, `start` names it (its id alone): the host reads it from the server
+  with the account's device key (`/qapps/clientLocationShare`, `get#AppShare`: whom with, until when, exact or
+  approximate, its interval, and that this device sends it), and the app asks in its own dialog, guarded against
+  touches through another app's window (`ObscuredTouches`): "Send your location from this phone to Sam and 2 others until
+  15:30? It goes on while the app is in the background, with a notification and Stop.", Send or Not now. **That native
+  dialog is the control**: a server page's script can reach the app's IPC and ask for a start, but nothing is sent from
+  the phone in the background without the person's Send there, and its words, like the notification's, are the
+  server's, never the page's. Send starts `LocationShareService`, a foreground service of type `location`
+  (`FOREGROUND_SERVICE_LOCATION`), only while the app is in front (`LocationShare.foreground`), with the permission and
+  notifications allowed (`LocationRules.mayStart`); `start` answers `started`, `declined` (Not now: a share just made
+  is stopped, and the page sends nothing) or `unavailable` (the page sends while it is open, as a browser does). So the
   app has no `ACCESS_BACKGROUND_LOCATION`: Android lets a foreground service started from the app in front keep reading
   the location once the app goes to the background. The service is not sticky: a process Android ended does not start
   it again, and the share goes stale until its end or a Stop.
@@ -555,14 +561,21 @@ emulator yet (LL7's walk).
   Stop and a tap that opens the app. One the person dismisses (Android 14+ lets them) is posted again by its delete
   intent, and the half-minute check posts it again too; with notifications turned off (Android 13+ lets the person
   during a share) the check stops every share, on its server too, since none is sent without the notification showing.
-- **Stop** (the notification's, or notifications turned off) is handled before anything else the service does: each
-  share is no longer sent, and its stop on the server (`/qapps/stopClientLocation`, so the audience is told at once) is
-  kept in the app's preferences and posted by `LocationStopWorker` (WorkManager, with a network, backing off from 30
-  seconds, also after the process ended) until the server says it stopped it, has no such share, or the account is
-  signed out here; a "Stopping location sharing" notification shows while one waits. A sign-out stops the account's
-  shares on its server while its key is still held (`MobileHost::account_signing_out`).
+- **Stop** (the notification's, notifications turned off, or the permission gone while the process lives on) is
+  handled before anything else the service does: each share is no longer sent, and its stop on the server
+  (`/qapps/stopClientLocation`, so the audience is told at once) is kept in the app's preferences with the share's end,
+  tried at once on the location thread and then by `LocationStopWorker` (WorkManager, with a network, backing off from
+  30 seconds, also after the process ended) until the server says it stopped it or has no such share, or the share's end
+  has passed (`LocationRules.stopOutcome`); a "Stopping location sharing" notification shows while one waits. An answer
+  that is not the transition's JSON (a sign-in page) is a signed-out account, as for a report; a stop let go so before
+  the share's end leaves a notice ("your server could not be told; the share shows your last position until 15:30").
+  A sign-out posts the account's shares' stops, and those still waiting, while its key is still held
+  (`MobileHost::account_signing_out`), when the app can reach the server; and the server stops every active share of a
+  device key it revokes (`stop#DeviceShares`), so a sign-out with no network stops them when its pending revoke reaches
+  the server (SEC-CLI-108).
 - **The fixes.** Android's `LocationManager`, no Google Play services: the platform's `fused` provider (Android 12+),
-  else GPS for an exact share and the network's for an approximate one, else whichever is on; on Android 12+ a
+  else GPS for an exact share and the network's for an approximate one, else whichever is on, never GPS without the
+  precise permission (a provider the permission does not reach waits, as with none); on Android 12+ a
   `LocationRequest` of high accuracy while an exact share is sent, else balanced. The interval is the shortest of the
   shares': 5 seconds while the phone moves, 30 while it is still (a speed of 0.8 m/s, or 25 m from the last fix), never
   under a share's own interval (`location@min-interval-seconds`), and an approximate share's own
@@ -575,9 +588,10 @@ emulator yet (LL7's walk).
   half-open connection gives up and the point waits). A 429 waits `retryAfterSeconds`, a stale point or another 400 is
   passed over, `CLOCK_AHEAD` and `BEFORE_SHARE` send from then on with the server's time, a 408 or a 429 that is not the
   transition's (a proxy, the server's tarpit) waits its `Retry-After` (else the interval, or 30 seconds), no answer
-  tries again after the interval; a point that waits is sent when its wait is over. An `OTHER_DEVICE` that came while
-  the account's key was renewed is tried again once with the new key (the server moves the device's shares to it before
-  the app keeps it).
+  tries again after the interval; a point that waits is sent when its wait is over. A report on its way as the account's
+  key is renewed is taken by the server from the key the renewal replaced, for that key's few minutes' grace
+  (`LocationShare.renewedFromKeyId`); an `OTHER_DEVICE` that came while the key changed is tried again once with the new
+  key too.
 - **It stops** a share at its end, on a 410 or 404, when another device sends it (409 `OTHER_DEVICE`: a Send from here
   in a browser or another phone), at the account's sign-out or removal (`MobileHost::account_signing_out` and
   `account_signed_out`, `LocationShare.forgetAccount`), on Stop (the notification's or the page's), with notifications

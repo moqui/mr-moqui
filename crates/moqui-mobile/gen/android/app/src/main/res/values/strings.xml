@@ -61,6 +61,10 @@
     <string name="channel_location_about">Shown while the app sends your location for a share you started</string>
     <string name="location_sharing_title">Sharing your location</string>
     <string name="location_stop">Stop</string>
+    <string name="location_confirm_title">Share your location from this phone?</string>
+    <string name="location_confirm_send">Send</string>
+    <string name="location_stop_unconfirmed_title">Your server was not told the share stopped</string>
+    <string name="location_stop_unconfirmed">This phone no longer sends your location, but your server could not be told; the share shows your last position until %1$s.</string>
     <string name="location_stopping_title">Stopping location sharing</string>
     <string name="location_stopping_text">Your location is no longer sent. The server is told the share stopped as soon as it can be reached.</string>
 

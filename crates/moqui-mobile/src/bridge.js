@@ -289,7 +289,9 @@
         // V5), which VaultClient.js calls in place of its wasm worker; memory is device memory (state, remember, restore,
         // forget), opened with the phone's lock or biometrics
         // the page's user activation (a click), read with the getter and navigator taken before any page script ran, so a
-    // script cannot fake it: remembering or opening the key from device memory needs one (moqui_client_tauri::vault)
+    // script cannot change what this reads; but a page's script can call the app's IPC itself with any flag, so the host
+    // takes it as a hint and never as the person's consent: device memory still asks for the phone's lock or biometrics,
+    // and live location for the person's Send in the app's own dialog (LocationShare.start)
     const userGesture = ((nav) => {
         let getter = null;
         try {
@@ -315,15 +317,14 @@
         // live location from the phone (plans/Location-Sharing.md §3.4): the permission, asked with the app's reason (allow:
         // exact for an exact share); a share sent by the app's foreground service, also in the background, with its
         // notification (start: whether it started; Maps' Share and Send from this device), no longer sent from here (stop),
-        // and the shares sent now (status). The host takes them for this page's account only.
-        // allow and start only from the person's act (its user activation, as vault.memory), which the host checks;
-        // a start just after an allow with one (its request and Android's question outlast the activation) needs none
+        // and the shares sent now (status). The host takes them for this page's account only. The page names the share
+        // only: the host reads its words from the server and starts nothing before the person says Send in the app's own
+        // dialog (LocationShare.start), which is the control, not anything the page sends
         const location = Object.freeze({
-            allow: (exact) => ask("location_allow", { exact: exact !== false, gesture: userGesture() }).then((ok) => ok === true, () => false),
-            start: (share) => ask("location_share_start", { gesture: userGesture(), share: {
-                shareId: String((share && share.shareId) || ""), thruDate: Number(share && share.thruDate) || 0,
-                approximate: !!(share && share.approximate), intervalSeconds: Number(share && share.intervalSeconds) || 0,
-                audience: String((share && share.audience) || "") } }).then((started) => started === true, () => false),
+            allow: (exact) => ask("location_allow", { exact: exact !== false }).then((ok) => ok === true, () => false),
+            // "started", "declined" (the person's Not now in the app's dialog) or "unavailable"
+            start: (share) => ask("location_share_start", { share: { shareId: String((share && share.shareId) || "") } })
+                .then((answer) => (answer === "started" || answer === "declined" ? answer : "unavailable"), () => "unavailable"),
             stop: (shareId) => invoke("location_share_stop", { shareId: String(shareId || "") }),
             status: () => ask("location_share_status").then((list) => (Array.isArray(list) ? list : []), () => [])
         });

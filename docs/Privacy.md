@@ -26,7 +26,9 @@ their own.
   also with the app in the background, and then only with its notification showing ("Sharing your location with ...
   until ...", with Stop; dismissed, it comes back, and with the app's notifications turned off the share stops). It
   stops at the share's end, when you stop it (the notification, Maps, another device taking it over: the notification's
-  Stop also tells your server, again until it hears), and when you sign out (your server is told first). Taking the
+  Stop also tells your server, again until it hears or the share's end has passed), and when you sign out (the app
+  tells your server while it still can; with no network your server stops the share when it hears of the sign-out,
+  and otherwise at its end). Taking the
   location permission away ends the app's process: nothing more is sent, and the share goes stale (its audience sees
   how old the last position is) until its end or until you stop it. For an approximate share the app asks only for
   approximate location; if you allowed precise location (an exact share, a chat place), the phone's fix is precise and

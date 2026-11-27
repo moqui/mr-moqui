@@ -77,13 +77,14 @@ object LocationRules {
 
     /**
      * The provider read: the platform's fused one where Android has it (12+; no Google Play services), else GPS for an
-     * exact share and the network's for an approximate one, else whichever is on; null with none.
+     * exact share and the network's for an approximate one, else whichever is on; GPS never without the precise
+     * permission (Android refuses it; an approximate share asks for approximate alone); null with none.
      */
-    fun provider(exact: Boolean, fused: Boolean, gps: Boolean, network: Boolean): String? = when {
+    fun provider(exact: Boolean, fine: Boolean, fused: Boolean, gps: Boolean, network: Boolean): String? = when {
         fused -> "fused"
-        exact && gps -> "gps"
+        exact && fine && gps -> "gps"
         network -> "network"
-        gps -> "gps"
+        fine && gps -> "gps"
         else -> null
     }
 
@@ -147,7 +148,36 @@ object LocationRules {
      */
     fun stopSettled(state: String): Boolean = state == "stopped" || state == "gone" || state == "signedOut"
 
-    /** The stops still waiting after `key`'s came to `state`. */
-    fun stopsAfter(pending: Set<String>, key: String, state: String): Set<String> =
-        if (stopSettled(state)) pending - key else pending
+    /**
+     * What a stop of a share ending at `thruMs` comes to at `nowMs` when its try came to `state`: `settled` (the server
+     * stopped it or has no such share, or its end has passed, when the server ends it anyway), `unconfirmed` (let go
+     * before its end with the server not told: the account signed out here; the person is told until when the share
+     * shows the last position) or `keep` (tried again).
+     */
+    fun stopOutcome(state: String, thruMs: Long, nowMs: Long): String = when {
+        state == "stopped" || state == "gone" -> "settled"
+        nowMs >= thruMs -> "settled"
+        state == "signedOut" -> "unconfirmed"
+        else -> "keep"
+    }
+
+    /**
+     * Whether the permission question let a share go on: only when the person went on to Android's question (not Not now,
+     * nor a dismissed dialog) and the location may be read now.
+     */
+    fun allowed(asked: Boolean, permitted: Boolean): Boolean = asked && permitted
+
+    /**
+     * The app's own question before a share is sent from this phone, with the server's words for whom and until when:
+     * "Send your location from this phone to Sam and 2 others until 15:30? ...".
+     */
+    fun confirmText(audience: String, until: String, approximate: Boolean): String {
+        val whom = audience.trim().ifEmpty { "the people you chose" }
+        val what = if (approximate) "about where you are (to within about 1 km)" else "your location"
+        return "Send $what from this phone to $whom until $until? It goes on while the app is in the background, " +
+            "with a notification and Stop."
+    }
+
+    /** Whether the share starts after the question: Send, with the app still in front. */
+    fun confirmed(send: Boolean, foreground: Boolean): Boolean = send && foreground
 }

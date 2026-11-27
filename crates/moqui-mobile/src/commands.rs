@@ -875,22 +875,12 @@ fn page_account(app: &AppHandle, webview: &tauri::Webview) -> Result<String, Str
 
 /// Before a share is started from this phone: the location permission, asked after a dialog that says why when it is
 /// not given yet (`LocationShare.allow`: fine and coarse for an exact share, which the person may answer with either,
-/// coarse alone for an approximate one). Whether the app may read the location now. A page of the current account's
-/// only, and only from the person's act (`gesture`: the page's user activation, read by the bridge as `vault.memory`'s
-/// is), which lets the one share it is for start within [`crate::location::ARMED_FOR`] with no gesture of its own: the
-/// share's request and Android's question outlast a page's activation.
+/// coarse alone for an approximate one). Whether the app may read the location now; false when the person chose Not
+/// now. A page of the current account's only. Android's own question is the person's act here; what starts sending is
+/// `location_share_start`'s native confirmation.
 #[tauri::command(async)]
-pub(crate) fn location_allow(
-    app: AppHandle,
-    webview: tauri::Webview,
-    exact: Option<bool>,
-    gesture: Option<bool>,
-) -> Result<bool, String> {
-    let account = page_account(&app, &webview)?;
-    if gesture != Some(true) {
-        return Err("Only from the person's act".to_string());
-    }
-    crate::location::arm(&account);
+pub(crate) fn location_allow(app: AppHandle, webview: tauri::Webview, exact: Option<bool>) -> Result<bool, String> {
+    page_account(&app, &webview)?;
     #[cfg(target_os = "android")]
     return crate::android::location_allow(exact != Some(false));
     #[cfg(not(target_os = "android"))]
@@ -903,35 +893,46 @@ pub(crate) fn location_allow(
 /// The page's Share (a share it just started, or its Send from this device): the share is sent from this phone by its
 /// foreground service (`LocationShareService.kt`, of type `location`), also while the app is in the background, with
 /// its notification for as long as it runs. Android starts it only from the app in front, with the location permission
-/// and notifications allowed; whether it started (false: the page sends while it is open, as a browser does). A page of
-/// the current account's only, for that account, from the person's act: its own `gesture`, or the `location_allow`
-/// of one just before.
+/// and notifications allowed, and only once the person said Send in the app's own dialog (`LocationShare.start`: "Send
+/// your location from this phone to Sam until 15:30?", guarded against touches through another app's window), which
+/// is the control: a page's script may call this, but sends nothing without the person's answer in a native dialog.
+/// The share's words there and in the notification are the server's (`get#AppShare` with the account's device key,
+/// [`crate::location::read_share`]), never the page's; the page names only the share. `started`; `declined` when the
+/// person said Not now (the page sends nothing either); `unavailable` when the service could not start (the page sends
+/// while it is open, as a browser does). A page of the current account's only, for that account, for a share this
+/// device sends (Send from this device first).
 #[tauri::command(async)]
 pub(crate) fn location_share_start(
     app: AppHandle,
     webview: tauri::Webview,
     share: crate::location::ShareAsk,
-    gesture: Option<bool>,
-) -> Result<bool, String> {
+) -> Result<String, String> {
     let account = page_account(&app, &webview)?;
-    if gesture != Some(true) && !crate::location::take_armed(&account) {
-        return Err("Only from the person's act".to_string());
-    }
-    let share = share.checked(crate::native::now_ms())?;
+    let state = moqui_client_tauri::state(&app)?;
+    let signed_in = crate::native::asked(&state.core)
+        .into_iter()
+        .find(|asked| asked.account.id == account)
+        .ok_or("The account is not signed in here")?;
+    let share = crate::location::read_share(
+        share.share_id.trim(),
+        (&signed_in.account, signed_in.key.as_str()),
+        &crate::native::LocationPoster(&state.core),
+        crate::native::now_ms(),
+    )?;
     crate::location::begin(&account, &share.share_id, share.interval_seconds * 1000);
     #[cfg(target_os = "android")]
     {
-        let started = crate::android::location_start(&share.to_json(&account))?;
-        if !started {
+        let answer = crate::android::location_start(&share.to_json(&account))?;
+        if answer != "started" {
             crate::location::forget_share(&account, &share.share_id);
         }
-        Ok(started)
+        Ok(answer)
     }
     #[cfg(not(target_os = "android"))]
     {
         crate::location::forget_share(&account, &share.share_id);
         log::info!("No location service here for share {}", share.share_id);
-        Ok(false)
+        Ok("unavailable".to_string())
     }
 }
 
