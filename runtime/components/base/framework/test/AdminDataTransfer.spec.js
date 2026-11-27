@@ -181,7 +181,8 @@ feature("an import is dispatched only by a registration, as the caller, and a fi
                 mappingRevision: out.run.staged.mappingRevision,
                 mapping: {}
             }),
-            list: invoke(T + "find#Transfers", {targetId: TARGET})
+            list: invoke(T + "find#Transfers", {targetId: TARGET}),
+            runs: invoke(T + "find#ImportRuns", {targetId: TARGET})
         }))
         // another holder of every permission reads it, and applies nothing of it: each row is its importer's own
         out.other = as(users.other, () => ({
@@ -252,6 +253,8 @@ feature("an import is dispatched only by a registration, as the caller, and a fi
         other.read.canEdit == false
         has(other.validate.error, /not available/)
         Array.from(view.list.transferList).some(found => found.runId === run.staged.operationKey && found.detail === true)
+        // a one-row import's count is "1 row" (SYS-UI-003)
+        Array.from(view.runs.transferList).find(found => found.runId === run.staged.operationKey).countText.split(" · ")[0] == "1 row"
         has(none.targets.error, /ADMIN_TRANSFER_VIEW is required/)
         has(none.list.error, /ADMIN_TRANSFER_VIEW is required/)
         has(none.read.error, /not available/)

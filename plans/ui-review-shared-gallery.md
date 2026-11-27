@@ -45,8 +45,8 @@ The change-led pass has now revisited **65 of 147 original IDs**. The other **82
 
 **Open findings from this batch**
 
-- **P2 · TOOL-UI-005.** Standard Tools Data Load returned HTTP 500 with “commit failed” for a two-row XML submission containing one bad foreign key. Neither row persisted. The page omitted the failing row and field. Correcting the value stored both rows. [Tools finding and receipt](ui-review-tools.md#tool-b05--november-26-inspection-follow-up).
-- **P3 · SYS-UI-003.** Standard System Import Detail showed “1 rows” for a successfully applied single row. The stored translation and the counts were correct. [System finding and receipt](ui-review-system.md#sys-b05--november-26-inspection-follow-up).
+- **P2 · TOOL-UI-005.** Standard Tools Data Load returned HTTP 500 with “commit failed” for a two-row XML submission containing one bad foreign key. Neither row persisted. The page omitted the failing row and field. Correcting the value stored both rows. [Tools finding and receipt](ui-review-tools.md#tool-b05--november-26-inspection-follow-up). **Fixed 2026-11-26**, not rechecked live: a form error names the refused record, and the input is kept.
+- **P3 · SYS-UI-003.** Standard System Import Detail showed “1 rows” for a successfully applied single row. The stored translation and the counts were correct. [System finding and receipt](ui-review-system.md#sys-b05--november-26-inspection-follow-up). **Fixed 2026-11-26**, not rechecked live.
 
 John Doe and independent scoped browser sessions exercised Standard and Material. Access Review had measured 1920×1080 light and dark, 1280×900 light and 390×844 dark samples with keyboard focus. The terminal walk used 120×40. The frame and mode checks apply to their named screens. The existing suites returned 125 passing component/browser features and 17 passing native cases. Download checks, database reads and listener cleanup are recorded in the [local evidence manifest](ui-refinement-evidence/inspection-fa75/manifest.json).
 
