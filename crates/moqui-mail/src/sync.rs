@@ -875,6 +875,8 @@ pub(super) struct SyncReport {
     /// A folder had more new mail than `email-client` `sync-batch`: the job syncs the account again at its next run, whatever
     /// its interval, until the backlog is in (a first sync of a large mailbox).
     pub(super) capped: bool,
+    /// The account reached its mailbox quota during the sync: no more new mail was fetched (SEC-MAIL-93).
+    pub(super) quota_reached: bool,
 }
 
 impl SyncReport {
@@ -2544,7 +2546,12 @@ fn sync_folder(
     // a message larger than this, by the size the server gives, is skipped: its answer would pass the connection's
     // limit (`inbound::Net`) and fail every session
     let max_message = super::inbound::max_message();
+    // the first UID not fetched because the account reached its quota (SEC-MAIL-93)
+    let mut stopped: Option<u32> = None;
     for chunk in wanted.chunks(HEADER_CHUNK) {
+        if stopped.is_some() {
+            break;
+        }
         session.lease.keep(session.facade)?;
         let heads = conn.session.uid_fetch(
             uid_set(chunk),
@@ -2603,6 +2610,11 @@ fn sync_folder(
         let sizes: Vec<Option<i64>> = to_fetch.iter().map(|item| item.3).collect();
         for range in fetch_batches(&sizes, FETCH_CHUNK, FETCH_BYTES) {
             let batch = &to_fetch[range];
+            // the store's quota is checked again before each batch: the next session starts at the first not fetched
+            if quota_reached(session.facade, &session.account.id, report) {
+                stopped = batch.first().map(|item| item.0);
+                break;
+            }
             let uids: Vec<u32> = batch.iter().map(|item| item.0).collect();
             let bodies = conn.session.uid_fetch(uid_set(&uids), "(UID BODY.PEEK[])")?;
             // a fetch can outlast the lease: nothing is stored once another session has the account
@@ -2700,12 +2712,16 @@ fn sync_folder(
             }
         }
     }
-    if capped || failed.is_some() {
+    if capped || failed.is_some() || stopped.is_some() {
         session.incomplete.insert(folder.id.clone());
     }
     // where the next session starts
-    let next = match &failed {
-        Some((uid, _, _)) => *uid,
+    let lowest_left = match (failed.as_ref().map(|(uid, _, _)| *uid), stopped) {
+        (Some(failed), Some(stopped)) => Some(failed.min(stopped)),
+        (left, None) | (None, left) => left,
+    };
+    let next = match lowest_left {
+        Some(uid) => uid,
         None if capped => wanted.last().map_or(start, |uid| uid + 1),
         None => mailbox.uid_next.unwrap_or_else(|| {
             wanted
@@ -2750,6 +2766,31 @@ fn sync_folder(
     }
     force_new(session.facade, || update_folder(session.facade, &folder.id, &fields))?;
     Ok(())
+}
+
+/// Whether account `account_id` is at its mailbox quota now, checked before each batch of new mail a sync fetches
+/// (SEC-MAIL-93): once it is, the rest of the session fetches no new mail, and the report says so. A check that cannot
+/// read the database is logged and the sync goes on (its stores would fail the same way).
+fn quota_reached(facade: &EntityFacade, account_id: &str, report: &mut SyncReport) -> bool {
+    if report.quota_reached {
+        return true;
+    }
+    match super::delivery::over_quota(facade, account_id) {
+        Ok(false) => false,
+        Ok(true) => {
+            tracing::warn!(
+                account = %account_id,
+                "Email account {account_id} reached its mailbox quota during a sync: no more new mail is fetched until \
+                 it is under (quotaBytes, email-client mailbox-quota)"
+            );
+            report.quota_reached = true;
+            true
+        }
+        Err(err) => {
+            tracing::error!("Email account {account_id}: its mailbox quota could not be checked: {err}");
+            false
+        }
+    }
 }
 
 /// The body fetches of messages of these sizes, in order, as index ranges: at most `count` messages and `budget` bytes
@@ -3266,7 +3307,11 @@ fn pop_sync(
     progress.new_mail(unknown.len(), pending, known.len());
     let mut new_ids = Vec::new();
     let max_message = super::inbound::max_message();
-    for (number, uidl) in unknown {
+    for (index, (number, uidl)) in unknown.into_iter().enumerate() {
+        // the store's quota checked again every batch (SEC-MAIL-93); a message not fetched stays unknown for the next
+        if index > 0 && index % FETCH_CHUNK == 0 && quota_reached(facade, &account.id, report) {
+            break;
+        }
         let size = pop
             .size(number)
             .map_err(|err| SyncFailure::Connect(format!("POP3 LIST {number} on {}: {}", server.host, err.message())))?;
@@ -3428,74 +3473,150 @@ fn has_backlog(account_id: &str) -> bool {
     backlog().is_some_and(|backlog| moqui_lib::sync::lock(&backlog.0).contains(account_id))
 }
 
-/// The most accounts the job syncs at once, each on a thread of its own, when the server has service workers: a slow
-/// server a user names holds one of them for at most its session's lease, not the job's pass over every other account
-/// (SEC-MAIL-93).
+/// The most threads that sync due accounts at once, when the server has service workers: a slow server a user names
+/// holds one of them for at most its session's lease, and the others go on with the other accounts (SEC-MAIL-93).
 const SYNC_WORKERS: usize = 4;
+/// A sync worker takes no new account once it has run this long; the job's next run starts workers again for what is
+/// left (the job runs every minute).
+const WORKER_LEASE: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 
-/// The accounts a thread of [`sync_in_background`] syncs now, across the process.
-static SYNCING: std::sync::Mutex<std::collections::BTreeSet<String>> =
-    std::sync::Mutex::new(std::collections::BTreeSet::new());
+/// An account due for a sync, with the owner whose accounts are synced one at a time.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct DueAccount {
+    account_id: String,
+    owner: String,
+}
 
-/// Takes an account out of [`SYNCING`] when its thread ends, a panic included.
-struct Syncing(String);
+/// The accounts waiting for a sync worker, those syncing now with their owners, and the workers running.
+#[derive(Debug, Default)]
+struct DueAccounts {
+    queue: std::collections::VecDeque<DueAccount>,
+    /// owner by account id
+    syncing: BTreeMap<String, String>,
+    workers: usize,
+}
 
-impl Drop for Syncing {
-    fn drop(&mut self) {
-        moqui_lib::sync::lock(&SYNCING).remove(&self.0);
+impl DueAccounts {
+    /// Queue `due` unless it waits or syncs already: true when queued.
+    fn offer(&mut self, due: DueAccount) -> bool {
+        if self.syncing.contains_key(&due.account_id)
+            || self.queue.iter().any(|queued| queued.account_id == due.account_id)
+        {
+            return false;
+        }
+        self.queue.push_back(due);
+        true
+    }
+
+    /// The first waiting account whose owner has none syncing now, taken from the queue and marked syncing: an owner
+    /// holds at most one worker, so one user's slow server does not hold the others' mail.
+    fn take(&mut self) -> Option<DueAccount> {
+        let position = self
+            .queue
+            .iter()
+            .position(|due| !self.syncing.values().any(|owner| *owner == due.owner))?;
+        let due = self.queue.remove(position)?;
+        self.syncing.insert(due.account_id.clone(), due.owner.clone());
+        Some(due)
+    }
+
+    fn done(&mut self, account_id: &str) {
+        self.syncing.remove(account_id);
     }
 }
 
-/// Sync account `account_id` on a thread of its own, without waiting for it: false when [`SYNC_WORKERS`] accounts
-/// are syncing already, this one among them, or no thread could be started; the next run of the job tries again.
-fn sync_in_background(
-    factory: &std::sync::Arc<moqui_core::context::ExecutionContextFactory>,
-    account_id: &str,
-) -> bool {
-    {
-        let mut syncing = moqui_lib::sync::lock(&SYNCING);
-        if syncing.len() >= SYNC_WORKERS || syncing.contains(account_id) {
-            return false;
+/// The due accounts of this process.
+static DUE: std::sync::Mutex<DueAccounts> = std::sync::Mutex::new(DueAccounts {
+    queue: std::collections::VecDeque::new(),
+    syncing: BTreeMap::new(),
+    workers: 0,
+});
+
+/// A worker's loop: take the next account [`DueAccounts::take`] gives and `sync` it, until none is left that may go
+/// now, `running` is false (the server stops) or `until` passed. An account is marked done however its sync ends, a
+/// panic included.
+fn work_due(
+    due: &std::sync::Mutex<DueAccounts>,
+    until: std::time::Instant,
+    running: &dyn Fn() -> bool,
+    sync: &dyn Fn(&DueAccount),
+) {
+    struct Done<'a>(&'a std::sync::Mutex<DueAccounts>, String);
+    impl Drop for Done<'_> {
+        fn drop(&mut self) {
+            moqui_lib::sync::lock(self.0).done(&self.1);
         }
-        syncing.insert(account_id.to_string());
     }
-    let weak = std::sync::Arc::downgrade(factory);
-    let id = account_id.to_string();
-    let spawned = std::thread::Builder::new()
-        .name(format!("moqui-email-sync-{account_id}"))
-        .spawn(moqui_core::context::framework_thread(move || {
-            let _syncing = Syncing(id.clone());
-            let Some(factory) = weak.upgrade() else {
-                return;
-            };
-            let ctx = factory.new_context();
-            let _entered = ctx.enter();
-            let _authz = ctx.disable_authz();
-            let Some(facade) = factory.entity() else {
-                return;
-            };
-            let report = run_sync(&facade, &id, &SyncOptions::default());
-            if report.outcome == "failed" {
-                tracing::warn!(
-                    "The sync of email account {id} failed: {}",
-                    take_errors_string().unwrap_or_default()
-                );
+    while running() && std::time::Instant::now() < until {
+        let Some(account) = moqui_lib::sync::lock(due).take() else {
+            return;
+        };
+        let _done = Done(due, account.account_id.clone());
+        if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| sync(&account))).is_err() {
+            tracing::error!("The sync of email account {} failed with a panic", account.account_id);
+        }
+    }
+}
+
+/// Start sync workers for the accounts [`DUE`] holds, up to [`SYNC_WORKERS`] running at once, on the factory's
+/// background threads (which its shutdown waits for). Each holds the factory only while it syncs an account.
+fn start_due_workers(factory: &std::sync::Arc<moqui_core::context::ExecutionContextFactory>) {
+    let wanted = {
+        let mut due = moqui_lib::sync::lock(&DUE);
+        let wanted = SYNC_WORKERS.saturating_sub(due.workers).min(due.queue.len());
+        due.workers += wanted;
+        wanted
+    };
+    for _ in 0..wanted {
+        let weak = std::sync::Arc::downgrade(factory);
+        let started = factory.spawn_background("moqui-email-sync", move || {
+            struct Worker;
+            impl Drop for Worker {
+                fn drop(&mut self) {
+                    let mut due = moqui_lib::sync::lock(&DUE);
+                    due.workers = due.workers.saturating_sub(1);
+                }
             }
-        }));
-    if let Err(err) = spawned {
-        moqui_lib::sync::lock(&SYNCING).remove(account_id);
-        tracing::error!("Could not start the sync of email account {account_id}: {err}");
-        return false;
+            let _worker = Worker;
+            let running = || weak.upgrade().is_some_and(|factory| !factory.is_shutting_down());
+            let sync = |due: &DueAccount| {
+                let Some(factory) = weak.upgrade() else {
+                    return;
+                };
+                let ctx = factory.new_context();
+                drop(factory);
+                let _entered = ctx.enter();
+                let _authz = ctx.disable_authz();
+                let Some(facade) = ctx.factory().entity() else {
+                    return;
+                };
+                let id = &due.account_id;
+                let report = run_sync(&facade, id, &SyncOptions::default());
+                if report.outcome == "failed" {
+                    tracing::warn!(
+                        "The sync of email account {id} failed: {}",
+                        take_errors_string().unwrap_or_default()
+                    );
+                }
+            };
+            work_due(&DUE, std::time::Instant::now() + WORKER_LEASE, &running, &sync);
+        });
+        if let Err(err) = started {
+            let mut due = moqui_lib::sync::lock(&DUE);
+            due.workers = due.workers.saturating_sub(1);
+            tracing::error!("Could not start an email sync worker: {err}");
+        }
     }
-    true
 }
 
 /// `sync#DueEmailAccounts`, the job `sync_EmailAccounts_frequent`: each account with an incoming server whose last
 /// sync is older than its interval (`syncIntervalMinutes`, else `email-client` `sync-interval`, 5 minutes; three times that
 /// after an error), or whose last sync stopped at `email-client` `sync-batch` with mail left (at every run of the job, so a
 /// large first sync goes on a batch a minute), each on its own. A paused account, one whose sign-in failed and one
-/// syncing now are left. With service workers the accounts are synced on [`SYNC_WORKERS`] threads of their own and
-/// the job does not wait for them (`syncedCount` counts those started); without (a test, a tool), one after another.
+/// syncing now are left. With service workers the accounts are queued for [`SYNC_WORKERS`] threads, each taking the
+/// next account until none is left, at most one of each owner at once, and the job does not wait for them
+/// (`syncedCount` counts those queued, `busyCount` those waiting or syncing already); without (a test, a tool), one
+/// after another.
 pub(super) fn sync_due_accounts(
     _parameters: &BTreeMap<String, Value>,
     facade: &EntityFacade,
@@ -3545,8 +3666,16 @@ pub(super) fn sync_due_accounts(
         {
             continue;
         }
-        if let Some(factory) = &background {
-            if sync_in_background(factory, &account.id) {
+        if background.is_some() {
+            let owner = [field_text(row, "ownerUserId"), field_text(row, "ownerPartyId")]
+                .into_iter()
+                .find(|owner| !owner.is_empty())
+                .unwrap_or_else(|| account.id.clone());
+            let due = DueAccount {
+                account_id: account.id.clone(),
+                owner,
+            };
+            if moqui_lib::sync::lock(&DUE).offer(due) {
                 synced += 1;
             } else {
                 busy += 1;
@@ -3562,6 +3691,9 @@ pub(super) fn sync_due_accounts(
         }
         let _ = take_errors_string();
     }
+    if let Some(factory) = &background {
+        start_due_workers(factory);
+    }
     out.insert("syncedCount".into(), Value::I64(synced));
     out.insert("failedCount".into(), Value::I64(failed));
     out.insert("busyCount".into(), Value::I64(busy));
@@ -3572,8 +3704,74 @@ pub(super) fn sync_due_accounts(
 mod tests {
     use super::{
         decode_mutf7, encode_mutf7, expand_set, fetch_batches, header_message_id, imap_date, label_keyword,
-        remote_kind, uid_chunks, uid_set, FLAG_CHUNK, UNKNOWN_SIZE,
+        remote_kind, uid_chunks, uid_set, work_due, DueAccount, DueAccounts, FLAG_CHUNK, UNKNOWN_SIZE,
     };
+
+    fn due(account: &str, owner: &str) -> DueAccount {
+        DueAccount {
+            account_id: account.to_string(),
+            owner: owner.to_string(),
+        }
+    }
+
+    /// SEC-MAIL-93: an account is queued once; an owner holds one worker at a time, so the next account taken is
+    /// another owner's while theirs syncs.
+    #[test]
+    fn due_accounts_are_taken_one_owner_at_a_time() {
+        let mut queue = DueAccounts::default();
+        assert!(queue.offer(due("a1", "ann")));
+        assert!(queue.offer(due("a2", "ann")));
+        assert!(queue.offer(due("b1", "bob")));
+        assert!(!queue.offer(due("a1", "ann")), "queued already");
+        assert_eq!(queue.take(), Some(due("a1", "ann")));
+        assert!(!queue.offer(due("a1", "ann")), "syncing now");
+        assert_eq!(queue.take(), Some(due("b1", "bob")), "ann's second waits");
+        assert_eq!(queue.take(), None);
+        queue.done("a1");
+        assert_eq!(queue.take(), Some(due("a2", "ann")));
+    }
+
+    /// SEC-MAIL-93: workers take the next due account until none is left: every account is synced, and one user's
+    /// slow server holds one worker while the others sync every other user's accounts; that user's second account
+    /// waits for the first.
+    #[test]
+    fn many_due_accounts_are_all_synced_and_a_slow_one_starves_none() {
+        let queue = std::sync::Mutex::new(DueAccounts::default());
+        {
+            let mut queue = queue.lock().unwrap();
+            queue.offer(due("slow-1", "slow"));
+            queue.offer(due("slow-2", "slow"));
+            for n in 0..20 {
+                queue.offer(due(&format!("quick-{n}"), &format!("user-{n}")));
+            }
+        }
+        let synced = std::sync::Mutex::new(Vec::<String>::new());
+        let sync = |account: &DueAccount| {
+            if account.account_id == "slow-1" {
+                std::thread::sleep(std::time::Duration::from_millis(300));
+            }
+            synced.lock().unwrap().push(account.account_id.clone());
+        };
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        std::thread::scope(|scope| {
+            for _ in 0..2 {
+                scope.spawn(|| work_due(&queue, until, &|| true, &sync));
+            }
+        });
+        let synced = synced.into_inner().unwrap();
+        assert_eq!(synced.len(), 22, "{synced:?}");
+        let at = |id: &str| synced.iter().position(|done| done == id).unwrap();
+        assert!((0..20).all(|n| at(&format!("quick-{n}")) < at("slow-1")), "{synced:?}");
+        assert!(at("slow-1") < at("slow-2"), "{synced:?}");
+        let queue = queue.into_inner().unwrap();
+        assert!(queue.queue.is_empty() && queue.syncing.is_empty());
+
+        // a worker stops taking accounts when the server stops
+        let stopped = std::sync::Mutex::new(DueAccounts::default());
+        stopped.lock().unwrap().offer(due("left", "ann"));
+        work_due(&stopped, until, &|| false, &|_| panic!("not synced"));
+        assert_eq!(stopped.into_inner().unwrap().queue.len(), 1);
+    }
 
     /// SEC-MAIL-85: a flag scan asks for at most FLAG_CHUNK UIDs at once up to UIDNEXT, the last set open so a message
     /// that came after the select is in it; a folder within one chunk is one open set, as before.
