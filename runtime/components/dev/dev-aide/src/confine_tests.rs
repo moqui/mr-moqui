@@ -173,7 +173,8 @@ struct UnderTarget {
     _scratch: Scratch,
     root: PathBuf,
     runtime: PathBuf,
-    /// The scratch runtime of a test run.
+    /// The scratch runtime of a test run (read only by the unix tests, which link its components).
+    #[cfg_attr(not(unix), allow(dead_code))]
     run: PathBuf,
     /// The component as the test run loads it, through its link.
     component: PathBuf,
