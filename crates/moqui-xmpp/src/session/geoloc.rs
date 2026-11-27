@@ -217,6 +217,14 @@ impl Session {
             }
             return;
         }
+        // a detached session (waiting for its resumption) keeps what it is sent as unacknowledged stanzas: another
+        // user's positions, which no archive holds, are not kept for it, so a share's reports cannot fill its queue
+        // and end the resumption (SEC-COM-19, SEC-COM-93); the end of a share whose position it was sent still is,
+        // at most one for each of [`GEOLOC_ENDS_MAX`] shares
+        let shown = self.geoloc_ends.contains_key(&share_id);
+        if self.detached && !(matches!(event.as_str(), "ended" | "revoked") && shown) {
+            return;
+        }
         match event.as_str() {
             "ended" | "revoked" => {
                 self.geoloc_ends.remove(&share_id);

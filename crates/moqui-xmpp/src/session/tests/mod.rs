@@ -939,7 +939,10 @@ async fn user_location_reports_the_share_with_xmpp_contacts_and_reaches_them_alo
         ),
         (json!({"statusCode": 409, "reasonCode": "STALE"}), "type='result'"),
         (json!({"statusCode": 410, "reasonCode": "SHARE_ENDED"}), "<not-allowed"),
-        (json!({"statusCode": 404, "reasonCode": "SHARE_NOT_FOUND"}), "<not-allowed"),
+        (
+            json!({"statusCode": 404, "reasonCode": "SHARE_NOT_FOUND"}),
+            "<not-allowed",
+        ),
         (json!({"statusCode": 409, "reasonCode": "OTHER_DEVICE"}), "<not-allowed"),
     ] {
         fake.state.lock().unwrap().location_answer = Some(answer);
@@ -1494,4 +1497,37 @@ async fn another_users_flood_does_not_end_a_detached_sessions_resumption() {
         "the chat notice is kept for the resumption"
     );
     assert!(john.session.resumable().is_some(), "still resumable");
+}
+
+/// SEC-COM-19, SEC-COM-93: a detached session is not kept another user's location positions, which no archive holds,
+/// so a share's reports cannot fill its unacknowledged stanzas; the end of a share whose position it was sent still is.
+#[tokio::test]
+async fn a_detached_session_keeps_no_location_positions_but_a_shown_shares_end() {
+    let (server, _) = server();
+    let (mut jane, _) = sign_in(&server, "jane", JANE_PASSWORD, "laptop").await;
+    wants_geoloc(&mut jane, "loc1=").await;
+    let push = |share: &str, event: &str| {
+        json!({"topic": format!("{}{share}", crate::registry::LOCATION_TOPIC), "userIds": ["U2"],
+            "message": {"shareId": share, "ownerUserId": "U1", "event": event, "thruDate": 1_900_000_000_000_i64,
+                "latitude": 48.85, "longitude": 2.35, "observedDate": 1_800_000_000_000_i64}})
+    };
+    server.registry.deliver_notice(&push("S1", "position"));
+    assert!(text_of(&jane.pump().await).contains("<lat>48.85</lat>"));
+    assert!(jane.session.detach());
+    let before = jane.session.unacked();
+    for _ in 0..50 {
+        server.registry.deliver_notice(&push("S1", "position"));
+    }
+    server.registry.deliver_notice(&push("S2", "position"));
+    server.registry.deliver_notice(&push("S2", "ended"));
+    jane.pump().await;
+    assert_eq!(
+        jane.session.unacked(),
+        before,
+        "no position, nor the end of a share never shown"
+    );
+    server.registry.deliver_notice(&push("S1", "ended"));
+    jane.pump().await;
+    assert_eq!(jane.session.unacked(), before + 1, "the shown share's end");
+    assert!(jane.session.resumable().is_some());
 }
