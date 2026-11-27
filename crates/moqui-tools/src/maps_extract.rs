@@ -920,6 +920,8 @@ fn report(facade: &EntityFacade, package_id: &str, build_key: &str, percent: i64
             }
             cancelled = field("cancelRequested") == "Y";
             row.set("progress", Value::I64(percent));
+            // the build's last word, by which a stalled run is told (MapPackages.js runEnded)
+            row.set("progressDate", Value::Timestamp(jiff::Timestamp::now()));
             row.update(facade)
         })
     });

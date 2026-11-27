@@ -908,7 +908,8 @@ installation has room: at most `maps@package-concurrent-builds` packages are bui
 with the scheduled jobs), another waits, pending ("Waiting for its turn"), and starts when one ends (the hourly clean
 starts any whose turn was missed); a user has at most one package pending or building (`PACKAGE_BUSY`). One scheduler
 runs at a time (`schedule#PackageBuilds`, after the commit of the request that asked), and it first ends any build whose
-run is gone or ended, silent for an hour once started, or never started six hours after it was asked for. A lost run (a
+run is gone or ended, silent for an hour once started, or never started six hours after it was handed to the job (each
+clock the run's own: a download or a cancel does not reset it). A lost run (a
 full worker queue when its request committed, a run-as user the job runner refused, a restart mid-build or while it was
 queued) so holds its turn for up to an hour or two (a queued one up to about seven), until a scheduler pass or the
 hourly clean ends it. The run is signed in as the package's owner, whoever's request or build's end started it, and cuts

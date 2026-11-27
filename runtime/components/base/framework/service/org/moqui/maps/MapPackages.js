@@ -36,8 +36,8 @@ const BUSY = ["MapPkgPending", "MapPkgBuilding"]
 // a started run with no word for this long has stalled: its row is written when its progress percent changes (at most once
 // a second), and when each member is done
 const STALE_MS = 60 * 60 * 1000
-// a run handed to the job that never started (the worker queue is in memory: a restart loses it, and its ServiceJobRun keeps
-// no start and no end) is judged lost after this long since its package's row was last written
+// a run handed to the job that never started (the worker queue is in memory: a restart loses it, and its ServiceJobRun
+// keeps no start and no end) is judged lost after this long since its ServiceJobRun row was written
 const QUEUED_STALE_MS = 6 * 60 * 60 * 1000
 const MAX_PACKAGES = 50
 const MAX_ZOOM = 16
@@ -534,12 +534,12 @@ function accountClosed(account) {
     return terminate !== null && millisNow() > terminate
 }
 // Locked for now as login.rs still_disabled reads it: disabled with a disabledDateTime within user-facade/login@disable-
-// minutes (policy.rs disable_minutes: 5 when not a number; 0 or less, no lock window at all)
+// minutes, read as policy.rs disable_minutes reads it (the raw text a whole number, else 5; 0 or less, no lock window)
 function accountLocked(account) {
     const at = account ? millisOf(account.disabledDateTime) : null
-    if (!account || text(account.disabled) !== "Y" || at === null) return false
-    const configured = Number.parseInt(conf("user-facade/login@disable-minutes"), 10)
-    const minutes = Number.isFinite(configured) ? configured : 5
+    if (!account || account.disabled !== "Y" || at === null) return false
+    const raw = ec.factory.getConfValue("user-facade/login@disable-minutes")
+    const minutes = typeof raw === "string" && /^[+-]?\d+$/.test(raw) ? Number(raw) : 5
     return at + minutes * 60000 > millisNow()
 }
 
@@ -608,22 +608,25 @@ function ownPackage(packageId, forUpdate) {
 }
 const notThere = () => refused("RECORD_UNAVAILABLE", L("The offline map is not available"))
 
-// Whether a busy package's run has ended without saying so: its ServiceJobRun gone or ended, or, once it started, no
-// word from it (its row's last write) for STALE_MS. A run still waiting for a worker (no startTime) is judged gone or ended,
-// or lost after QUEUED_STALE_MS since its row was written. A pending package not yet handed to the job waits its turn: it has not ended; a building one with no run
-// has.
+// Whether a busy package's run has ended without saying so: its ServiceJobRun gone or ended; once started, no word from
+// it for STALE_MS (its last progress, the package's progressDate, which only the build writes, else its start); still
+// waiting for a worker (no startTime), lost QUEUED_STALE_MS after its ServiceJobRun row was written (made when it was
+// handed to a worker, written next at its start). Neither clock is the package row's own stamp, which a download of an
+// earlier revision or a cancel also moves. A pending package not yet handed to the job waits its turn: it has not
+// ended; a building one with no run has.
 function runEnded(row) {
     const jobRunId = text(row.jobRunId)
     if (!jobRunId) return text(row.statusId) !== "MapPkgPending"
     const run = one("moqui.service.job.ServiceJobRun", {jobRunId})
     if (!run || run.endTime) return true
-    // queued and never started: lost after QUEUED_STALE_MS (a restart while it waited); a late start writes nothing, its key gone
+    // queued and never started: lost after QUEUED_STALE_MS (a restart while it waited); a late start writes nothing,
+    // its key gone
     if (millisOf(run.startTime) === null) {
-        const asked = millisOf(row.lastUpdatedStamp)
-        return asked !== null && Date.now() - asked > QUEUED_STALE_MS
+        const queued = millisOf(run.lastUpdatedStamp)
+        return queued !== null && Date.now() - queued > QUEUED_STALE_MS
     }
-    const since = millisOf(row.lastUpdatedStamp) ?? millisOf(run.startTime)
-    return since !== null && Date.now() - since > STALE_MS
+    const since = Math.max(millisOf(row.progressDate) ?? 0, millisOf(run.startTime) ?? 0)
+    return since > 0 && Date.now() - since > STALE_MS
 }
 // A busy package whose run has ended is ended here: failed, or cancelled when a cancel was asked. Its build's key goes,
 // so a run that was only slow stops at its next batch and writes nothing
@@ -1142,7 +1145,7 @@ function buildAsOwner(p) {
     ec.transaction.runRequireNew(60, "Error writing a map package's state", () => {
         const current = find(PACKAGE, {packageId}).forUpdate(true).one()
         if (current && text(current.buildKey) === buildKey) {
-            current.setAll({statusId: "MapPkgBuilding", progress: 0, statusNote: null})
+            current.setAll({statusId: "MapPkgBuilding", progress: 0, statusNote: null, progressDate: ec.user.nowTimestamp})
             writeRow(current, false)
         }
     })
@@ -1382,6 +1385,14 @@ function buildAsOwner(p) {
             "This package holds what its owner could read when it was built, and stays readable on a device until it is deleted there. Record layers and a provider's remote tiles are not packaged."
         )
     }
+    // the build's word between its members and its zip: a long lookup member is no silence
+    ec.transaction.runRequireNew(60, "Error writing a map package's progress", () => {
+        const current = find(PACKAGE, {packageId}).forUpdate(true).one()
+        if (current && text(current.buildKey) === buildKey) {
+            current.set("progressDate", ec.user.nowTimestamp)
+            writeRow(current, false)
+        }
+    })
     const manifestLocation = folder + "/manifest.json"
     try {
         writeText(manifestLocation, JSON.stringify(manifest))

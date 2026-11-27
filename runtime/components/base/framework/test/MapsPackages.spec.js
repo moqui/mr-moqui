@@ -581,15 +581,17 @@ feature("a build of an owner locked out under a configured window waits, and a r
         // out of the queue for what follows (its lock is past the default window: a scheduler would start it)
         waiting.set("statusId", "MapPkgCancelled")
         waiting.update()
-        // a run handed to the job and never started, its package's row last written a day ago (a restart while it was
-        // queued): the next scheduler ends it, and the next build runs. The stamp is set by SQL, as no entity write keeps one
+        // a run handed to the job a day ago and never started (a restart while it was queued), its package's row written
+        // just now (a download of an earlier revision, a cancel): the run's own clock decides, the next scheduler ends it,
+        // and the next build runs. The run row's stamp is set by SQL, as no entity write keeps one
         make("moqui.service.job.ServiceJobRun", {jobRunId: QUEUED_RUN, jobName: "MapPackageBuild"})
         packageOf("MAPS_PKG_QUEUED", {ownerUserId: OTHER, jobRunId: QUEUED_RUN, buildKey: "QUEUEDKEY"})
-        const definition = ec.entity.getEntityDefinition("moqui.maps.MapPackage")
+        const definition = ec.entity.getEntityDefinition("moqui.service.job.ServiceJobRun")
         const dayAgo = new Date(Date.now() - 24 * 3600000).toISOString().replace("T", " ").replace(/\.\d+Z$/, "")
-        ec.entity.runSqlStatement(definition.groupName || "transactional", "UPDATE " + definition.tableName + " SET LAST_UPDATED_STAMP = '" + dayAgo +
-            "' WHERE PACKAGE_ID = 'MAPS_PKG_QUEUED'", 1)
-        const stamped = Number(packageRow("MAPS_PKG_QUEUED").lastUpdatedStamp?.getTime?.() ?? packageRow("MAPS_PKG_QUEUED").lastUpdatedStamp)
+        ec.entity.runSqlStatement(definition.groupName || "transactional", "UPDATE " + definition.tableName +
+            " SET LAST_UPDATED_STAMP = '" + dayAgo + "' WHERE JOB_RUN_ID = '" + QUEUED_RUN + "'", 1)
+        const queuedRun = ec.entity.find("moqui.service.job.ServiceJobRun").condition("jobRunId", QUEUED_RUN).one()
+        const stamped = Number(queuedRun.lastUpdatedStamp?.getTime?.() ?? queuedRun.lastUpdatedStamp)
         const asked = Object.assign({name: "Spec after the queued", profileId: PROFILE, basemapLayerIds: [VISIBLE], includePostal: "N"}, REGION)
         const created = as(OWNER, () => invoke(S + "create#Package", asked))
         const deadline = Date.now() + 10000

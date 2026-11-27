@@ -380,6 +380,9 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="statusId" type="id"/>
         <field name="statusNote" type="text-medium"><description>Why it failed, or what it holds</description></field>
         <field name="progress" type="number-integer"><description>Percent of the build done</description></field>
+        <field name="progressDate" type="date-time"><description>The build's last word: when it started, when its percent
+            last changed, and when it wrote its manifest. Only the build writes it, so a stalled run is told by it and not
+            by the row's own stamp, which a download or a cancel also moves</description></field>
         <field name="cancelRequested" type="text-indicator"><description>Y: the build stops between its batches of
             tiles</description></field>
         <field name="jobRunId" type="id"><description>The MapPackageBuild run building it; empty while a pending package
