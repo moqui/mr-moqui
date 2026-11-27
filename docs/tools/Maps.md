@@ -1114,7 +1114,12 @@ one from Chat's Share live location (below, "In chat"), and a share's XMPP conta
   XMPP app by a headline, and Who sees my location and My location shares say where the last position came from
   ("from your XMPP app" or "from this page or phone") and the XMPP app's last position's age. With no such share a
   publish is refused, so a client's setting never starts or feeds a share, and its "stopped" (an empty item) ends
-  none: the share is the owner's to stop here. XMPP contacts are users of this server only: there is no federation.
+  none: the share is the owner's to stop here. A share the phone sends takes it too once opted in; the phone's dialog
+  then says "Your XMPP app's location also goes to your XMPP contacts", and the raised version pauses the phone until
+  its person confirms. While the phone or page and the XMPP app are on different devices, the XMPP contacts may see
+  the marker alternate between the two. The toggle is in Share my location, Who sees my location and My location
+  shares; turning it off deletes the XMPP app's last position. XMPP contacts are users of this server only: there is no
+  federation.
 - **In chat** (LL4; [Comms, Live location](Comms.md#live-location)). Chat's Share a location has Share live location:
   `ChatLocationServices.send#LiveLocation` makes an ordinary share through `create#Share` (no trail, purpose "In chat:
   the room's name") whose audience is the room's members of that moment as `LsaUser` entries, after the same directory

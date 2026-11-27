@@ -617,6 +617,8 @@ function update(p) {
     if (p.takeXmppLocation != null && !blank(p.takeXmppLocation)) {
         const take = yes(p.takeXmppLocation) ? "Y" : "N"
         if (take === "Y" && share.takeXmppLocation !== "Y") share.audienceVersion = (Number(share.audienceVersion) || 0) + 1
+        // turned off: the XMPP app's last position goes with it
+        if (take === "N" && share.takeXmppLocation === "Y") find(XMPP_LATEST).condition("shareId", share.shareId).deleteAll()
         share.takeXmppLocation = take
     }
     let added = {linkToken: null}
@@ -998,14 +1000,16 @@ function takeXmpp(shareId, p) {
     const latest = find(XMPP_LATEST).condition("shareId", share.shareId).one()
     const taken = takePosition(share, p, now, latest, () => latest || lastCellOf(share, now))
     if (!taken.position) return taken
-    const {position} = taken
+    const {position, approximated} = taken
+    // kept for the rate and staleness: no coordinates for an exact share, only the cell an approximate one holds (the
+    // base of its next cell)
     ec.entity
         .makeValue(XMPP_LATEST)
         .setAll({
             shareId: share.shareId,
-            latitude: position.latitude,
-            longitude: position.longitude,
-            accuracy: position.accuracy,
+            latitude: approximated ? position.latitude : null,
+            longitude: approximated ? position.longitude : null,
+            accuracy: approximated ? position.accuracy : null,
             observedDate: new Date(position.observed),
             receivedDate: new Date(now)
         })
@@ -1558,7 +1562,13 @@ function appShare(p) {
                 untilText: untilWords(thru, now, ec.user.timeZone),
                 approximate,
                 intervalSeconds: approximate ? Math.max(minimum, setting("approximate-interval-seconds", 60)) : minimum,
-                audienceText: audienceWords(share),
+                // the owner's XMPP app's location goes to the share's XMPP contacts too (plans/Location-Sharing.md §3.6):
+                // the app's dialog says so, from these words, and the version raised by turning it on asks for that
+                audienceText:
+                    audienceWords(share) +
+                    (share.takeXmppLocation === "Y"
+                        ? ". " + ec.l10n.localize("Your XMPP app's location also goes to your XMPP contacts")
+                        : ""),
                 audienceVersion: Number(share.audienceVersion) || 0,
                 fromThisDevice: view.fromThisDevice
             }

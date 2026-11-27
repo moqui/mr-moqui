@@ -223,10 +223,14 @@ and a subscription are `forbidden`, and a location kept before is not served.
 
 - **A publish from the user's own client** feeds only a share whose owner chose it in Moqui: "Also use my XMPP app's
   location (sent to my XMPP contacts only)" in Share my location (`takeXmppLocation`, `create#Share` and
-  `update#Share`, in the audit log; turning it on raises the share's `audienceVersion`, so a phone that sends the share
-  pauses until its person confirms). It is `LocationServices.report#XmppPosition`, taken by each of the user's active
+  `update#Share`, in the audit log, also offered in Who sees my location and My location shares; turning it on raises
+  the share's `audienceVersion`, so a phone that sends the share pauses until its person confirms, and the phone's
+  dialog says "Your XMPP app's location also goes to your XMPP contacts"; turning it off deletes the XMPP latest). A
+  share the phone sends takes it too, so its XMPP contacts may see the marker alternate between the phone and the XMPP
+  app while those are different devices. It is `LocationServices.report#XmppPosition`, taken by each of the user's active
   shares with the opt-in and an XMPP contact, with each share's rules (the rate, the values, staleness, approximate
-  rounding) against that share's XMPP latest (`LocationXmppLatest`). Such a position goes to the share's XMPP contacts
+  rounding) against that share's XMPP latest (`LocationXmppLatest`: its times, and for an approximate share the cell
+  it holds; no coordinates for an exact one). Such a position goes to the share's XMPP contacts
   only: it is never the share's latest position or trail, and never reaches its users, groups or guest link, which see
   the page's or the phone's. With no such share the publish is refused `not-allowed` (as is one for a share that ended
   meanwhile), so a client's setting alone never starts a share or feeds one. The first position a share takes tells the

@@ -156,8 +156,9 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- A share's latest position from its owner's XMPP app (a geoloc publish, when the share's takeXmppLocation is Y;
         plans/Location-Sharing.md §3.6): kept apart from LocationLatest, so it reaches the share's XMPP contacts only and
         never its users, groups or link; read for the rate, the staleness check and an approximate share's cell, and its
-        age (never the position) shown to the owner. Deleted when the share ends. Never cached, never audited, never in a
-        log. -->
+        age (never the position) shown to the owner. An exact share's row holds no coordinates (its times only), an
+        approximate one's only the cell it holds. Deleted when the share ends or its owner turns takeXmppLocation off.
+        Never cached, never audited, never in a log. -->
     <entity entity-name="LocationXmppLatest" package="moqui.maps" use="transactional" cache="never">
         <field name="shareId" type="id" is-pk="true"/>
         <field name="latitude" type="number-float" ai-opt-out="true"/>

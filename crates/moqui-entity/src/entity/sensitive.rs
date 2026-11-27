@@ -104,8 +104,9 @@ const AUDIT_ENTITY_KEYS: &[&str] = &[
     "etlrun",
     "etlrunerror",
     // a person's shared live location (plans/Location-Sharing.md §1, "No other reader"): its shares, their audiences and
-    // link digests, the latest position (and the XMPP app's, kept apart) and the trail, which only org.moqui.maps.LocationServices reads and writes, for
-    // the owner and the current audience; no generic tool, REST resource or agent reads them, an ADMIN's included
+    // link digests, the latest position (and the XMPP app's, kept apart) and the trail, which only
+    // org.moqui.maps.LocationServices reads and writes, for the owner and the current audience; no generic tool, REST
+    // resource or agent reads them, an ADMIN's included
     "locationshare",
     "locationshareaudience",
     "locationshareaudiencemember",

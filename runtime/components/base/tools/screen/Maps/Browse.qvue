@@ -279,10 +279,14 @@ along with this software (see the LICENSE.md file). If not, see
                     <div class="text-body2">{{share.label}}</div>
                     <div class="text-caption m-muted">{{[t('until') + ' ' + untilText(share.thruDate), share.approximate ? t('approximate, about 1 km') : t('exact'),
                         share.keepTrail ? t('trail kept') + ' (' + (share.trailCount || 0) + ' ' + t('points') + ')' : t('no trail kept')].join(' · ')}}</div>
-                    <div class="text-caption m-muted">{{t('Last position')}}: {{ageWords(share)}}<span v-if="share.lastSource">
-                        · {{share.lastSource === 'xmpp' ? t('from your XMPP app') : t('from this page or phone')}}</span></div>
-                    <div v-if="share.takeXmppLocation" class="text-caption m-muted" data-maps-xmpp-source="true">{{t('Your XMPP app\'s location, to your XMPP contacts only')}}:
-                        {{share.xmppAgeSeconds === null || share.xmppAgeSeconds === undefined ? t('No position yet') : secondsWords(share.xmppAgeSeconds)}}</div>
+                    <div class="text-caption m-muted" data-maps-last-source="true">{{t('Last position')}}:
+                        {{share.lastSource === 'xmpp' ? xmppAgeWords(share) + ' · ' + t('from your XMPP app')
+                            : ageWords(share) + (share.lastSource ? ' · ' + t('from this page or phone') : '')}}</div>
+                    <div v-if="share.takeXmppLocation && share.lastSource !== 'xmpp'" class="text-caption m-muted" data-maps-xmpp-source="true">
+                        {{t('Your XMPP app\'s location, to your XMPP contacts only')}}: {{xmppAgeWords(share)}}</div>
+                    <q-toggle v-if="share.audience.some((entry) => entry.audienceTypeEnumId === 'LsaXmpp')" dense size="sm" class="q-mt-xs"
+                            :model-value="share.takeXmppLocation === true" @update:model-value="(on) => takeXmpp(share, on)" data-maps-take-xmpp="true"
+                            :label="t('Also use my XMPP app\'s location (sent to my XMPP contacts only)')"></q-toggle>
                     <q-list dense>
                         <q-item v-for="entry in share.audience" :key="entry.audienceSeqId" class="q-px-none" :data-maps-audience="entry.audienceSeqId">
                             <q-item-section avatar style="min-width:28px"><q-icon :name="audienceIcon(entry)" size="xs"></q-icon></q-item-section>
@@ -1179,6 +1183,11 @@ module.exports = {
         // once: a configuration drawn or normalized again later keeps it, so a share that stopped reporting goes stale
         stampShares(list, receivedAt) {
             return (Array.isArray(list) ? list : []).map((share) => {
+                // the XMPP app's last position's age, stamped once as the read's clock (an owner's share)
+                const xmppAge = share ? Number(share.xmppAgeSeconds) : NaN;
+                if (share && typeof share.xmppSeenAt !== 'number' && share.xmppAgeSeconds !== null && share.xmppAgeSeconds !== undefined
+                        && Number.isFinite(xmppAge))
+                    share = Object.assign({}, share, { xmppSeenAt: receivedAt - Math.max(0, xmppAge) * 1000 });
                 const latest = share && share.latest;
                 if (!latest || typeof latest.seenAt === 'number') return share;
                 const age = Number(latest.ageSeconds);
@@ -1205,8 +1214,10 @@ module.exports = {
                 : seconds < 86400 ? Math.floor(seconds / 3600) + ' ' + t('h ago') : Math.floor(seconds / 86400) + ' ' + t('d ago');
             return seconds > 300 ? words + ' (' + t('stale') + ')' : words;
         },
-        // an age in words, from a read's seconds (the XMPP app's last position, which no push brings here)
-        secondsWords(seconds) {
+        // the age of the XMPP app's last position (no push brings it here: stamped at the read), moving with the clock
+        xmppAgeWords(share) {
+            if (typeof share.xmppSeenAt !== 'number') return t('No position yet');
+            const seconds = Math.max(0, Math.round((this.now - share.xmppSeenAt) / 1000));
             return seconds < 60 ? t('just now') : seconds < 3600 ? Math.floor(seconds / 60) + ' ' + t('min ago')
                 : seconds < 86400 ? Math.floor(seconds / 3600) + ' ' + t('h ago') : Math.floor(seconds / 86400) + ' ' + t('d ago');
         },
@@ -1391,6 +1402,8 @@ module.exports = {
             });
         },
         revokeAudience(share, entry) { this.shareAction('revokeAudience', { shareId: share.shareId, audienceSeqId: entry.audienceSeqId }); },
+        // the owner's XMPP app's location for this share's XMPP contacts, on or off (update#Share takeXmppLocation)
+        takeXmpp(share, on) { this.shareAction('takeXmppShare', { shareId: share.shareId, takeXmppLocation: on ? 'true' : 'false' }); },
         deleteTrail(share) {
             if (!window.confirm(t('Delete the trail of this share now?'))) return;
             this.shareAction('deleteTrail', { shareId: share.shareId });

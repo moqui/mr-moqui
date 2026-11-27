@@ -1428,7 +1428,12 @@ feature("over XMPP: a position from the owner's XMPP app feeds only a share they
             out.audited = sys(() =>
                 ec.entity
                     .find("moqui.entity.EntityAuditLog")
-                    .condition({changedEntityName: "moqui.maps.LocationShare", changedFieldName: "takeXmppLocation", pkPrimaryValue: shareId})
+                    .condition({
+                        changedEntityName: "moqui.maps.LocationShare",
+                        changedFieldName: "takeXmppLocation",
+                        pkPrimaryValue: shareId,
+                        newValueText: "Y"
+                    })
                     .count()
             )
             capture().clear()
@@ -1440,8 +1445,12 @@ feature("over XMPP: a position from the owner's XMPP app feeds only a share they
             out.bRead = as(B, "get#Share", {shareId})
             out.dRead = as(D, "get#Share", {shareId})
             out.ownerRead = own(shareId)
-            // the rate, then a clock ahead taken as now
+            // an exact share's XMPP latest holds its times, no coordinates
+            out.exactKept = xmppLatest(shareId).map(row => [row.latitude, row.longitude, row.accuracy].join("|")).join()
+            // the rate, then a value out of range, then a clock ahead taken as now
             out.soon = as(A, XMPP, {latitude: "44.3", longitude: "-111.9"})
+            later(6000)
+            out.bad = as(A, XMPP, {latitude: "95", longitude: "-111.9"})
             later(6000)
             capture().clear()
             out.ahead = as(A, XMPP, {latitude: "44.3", longitude: "-111.9", observedMillis: shared.now + 5 * MINUTE})
@@ -1469,6 +1478,32 @@ feature("over XMPP: a position from the owner's XMPP app feeds only a share they
             out.bothRough = xmppPushes(rough).filter(push => push.event === "position")
             out.feeding = xmppPushes(rough).filter(push => push.event === "feeding")
             out.feedingAgain = xmppPushes(shareId).filter(push => push.event === "feeding").length
+            // the approximate one keeps only its cell, the base of its next
+            out.roughKept = xmppLatest(rough).map(row => Number(row.latitude)).join()
+
+            // a share the phone sends takes it too once its owner opts in, which raises the version: the phone's report of
+            // the old version is refused until its person confirms, and its dialog's words say where the XMPP app's goes
+            const phone = deviceKey("Loc XMPP phone")
+            later(6000)
+            const sent = asDevice(phone, "create#Share", {audienceList: [contact], thruDate: new Date(shared.now + HOUR)}).shareId
+            const confirmed = versionOf(sent)
+            out.phoneBefore = asDevice(phone, "get#AppShare", {shareId: sent}).share.audienceText
+            asDevice(phone, "update#Share", {shareId: sent, takeXmppLocation: "true"})
+            out.phoneAfter = asDevice(phone, "get#AppShare", {shareId: sent}).share.audienceText
+            out.phoneOld = asDevice(phone, "report#Position", {shareId: sent, latitude: "44.6", longitude: "-111.9", audienceVersion: String(confirmed)}).reasonCode
+            out.phoneNew = asDevice(phone, "report#Position", {shareId: sent, latitude: "44.6", longitude: "-111.9", audienceVersion: String(versionOf(sent))}).statusCode
+            later(61000)
+            capture().clear()
+            out.phoneXmpp = as(A, XMPP, {latitude: "44.7", longitude: "-111.9"}).statusCode
+            out.phoneTook = xmppPushes(sent).filter(push => push.event === "position").length
+            // turned off: the XMPP latest goes, and the XMPP app's position no longer reaches it
+            as(A, "update#Share", {shareId: sent, takeXmppLocation: "false"})
+            out.offKept = xmppLatest(sent).length
+            later(61000)
+            capture().clear()
+            as(A, XMPP, {latitude: "44.8", longitude: "-111.9"})
+            out.offTook = xmppPushes(sent).filter(push => push.event === "position").length
+            as(A, "stop#Share", {shareId: sent})
 
             // a contact added later: told, the version raised, and the next position from then on; the end carried
             later(6000)
@@ -1508,7 +1543,7 @@ feature("over XMPP: a position from the owner's XMPP app feeds only a share they
         out.none.errors == ""
         out.optIn.errors == ""
         out.versionRaised.join() == "1,0"
-        out.audited >= 1
+        out.audited == 1
         out.taken.statusCode == 200
         out.xmpp.filter(push => push.event === "position").map(push => push.userIds.join()).join() == C
         out.xmpp.filter(push => push.event === "position")[0].latitude == 44.2
@@ -1519,13 +1554,19 @@ feature("over XMPP: a position from the owner's XMPP app feeds only a share they
         out.web.length == 0
         out.latest == null
         out.trail == 0
+        out.bRead.share != null
         out.bRead.latest == null
+        out.dRead.share != null
         out.dRead.latest == null
         out.ownerRead.latest == null
         out.ownerRead.share.lastSource == "xmpp"
         out.ownerRead.share.takeXmppLocation == true
         out.ownerRead.share.xmppAgeSeconds == 0
+        out.exactKept == "||"
         out.soon.statusCode == 429
+        out.bad.statusCode == 400
+        out.bad.reasonCode == "BAD_POSITION"
+        out.bad.errors == ""
         out.ahead.statusCode == 200
         out.aheadPush.length == 1
         out.aheadObserved == 0
@@ -1539,6 +1580,17 @@ feature("over XMPP: a position from the owner's XMPP app feeds only a share they
         out.bothRough.length == 1
         out.bothRough[0].latitude == 44.125
         out.bothRough[0].accuracy == 1000
+        out.bothRough[0].heading === undefined
+        !JSON.stringify(out.bothRough).includes("44.12345")
+        out.roughKept == "44.125"
+        !out.phoneBefore.includes("XMPP app")
+        out.phoneAfter.includes("Your XMPP app's location also goes to your XMPP contacts")
+        out.phoneOld == "AUDIENCE_CHANGED"
+        out.phoneNew == 200
+        out.phoneXmpp == 200
+        out.phoneTook == 1
+        out.offKept == 0
+        out.offTook == 0
         out.feeding.length == 1
         out.feedingAgain == 0
         out.noContactYet == 0

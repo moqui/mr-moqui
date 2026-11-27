@@ -181,6 +181,17 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
+    <!-- The owner's XMPP app's location for a share's XMPP contacts, on or off (update#Share takeXmppLocation;
+        plans/Location-Sharing.md §3.6) -->
+    <transition name="takeXmppShare" method="post">
+        <actions><script><![CDATA[
+            ec.service.sync().name('org.moqui.maps.LocationServices.update#Share').requireNewTransaction(true)
+                .parameters({shareId: String(shareId ?? ''), takeXmppLocation: String(context.takeXmppLocation) === 'true' ? 'true' : 'false'}).call()
+            if (ec.message.hasError()) { const reason = ec.message.getErrorsString(); ec.message.clearErrors(); ec.web.sendJsonResponse({applied: false, reason}) }
+            else ec.web.sendJsonResponse({applied: true})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
     <!-- Add the group again: the one act that sends a group to update#Share, which takes a new snapshot of its members (those
         who joined since are let in, those it leaves out told); addedUserList names whom it lets in -->
     <transition name="addGroupAgain" method="post">
