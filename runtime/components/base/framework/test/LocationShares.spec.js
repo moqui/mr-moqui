@@ -11,8 +11,10 @@
 // sent, an ADMIN reads nothing of another's, the audit rows hold no position, and a link's token is returned once with
 // only its digest kept; the owner's lock row is made on first use, and a group of more than four times the audience cap
 // is refused before its snapshot is written (the LL1 review); and the effective configuration's locationShares (LL2, Maps
-// › Browse) hold the owner's own share and the audience's, nobody else's. It ends its memberships and stops its shares in
-// cleanup, so it runs again on --db existing.
+// › Browse) hold the owner's own share and the audience's, nobody else's; a share started on a device (LL3, §3.4) takes
+// that device's reports only, another device or a browser is refused as OTHER_DEVICE, Send from here and Send from this
+// device move it, the app's reportClientLocation and stopClientLocation take it, and the device key's renewal keeps it. It
+// ends its memberships and stops its shares in cleanup, so it runs again on --db existing.
 // Run: ./moq test framework --spec LocationShares
 const S = "org.moqui.maps.LocationServices."
 const A = "LOC_SHARE_A"
@@ -882,6 +884,157 @@ feature(
             carried == true
             notAsked == true
             afterStop == null
+        }
+    }
+)
+
+// A share's device (LL3, plans/Location-Sharing.md §3.4): a device key of A's as the REST login's createLoginKey with
+// deviceName makes it, the key and its stored hash
+function deviceKey(deviceName) {
+    const ids = () =>
+        sys(() =>
+            Array.from(
+                ec.entity
+                    .find("moqui.security.UserLoginKey")
+                    .condition("userId", A)
+                    .list()
+            ).map(row => row.loginKey)
+        )
+    ec.user.internalLoginUser(username(A))
+    const before = ids()
+    const key = ec.user.getLoginKey()
+    const hash = ids().find(found => !before.includes(found))
+    sys(() => {
+        const row = ec.entity.find("moqui.security.UserLoginKey").condition("loginKey", hash).one()
+        row.deviceName = deviceName
+        row.update()
+    })
+    return {key, hash}
+}
+// a call as A signed in by a device key (none: a browser), with authorization on: its results and errors
+function asDevice(device, verbNoun, parameters) {
+    ec.user.internalLoginUser(username(A))
+    if (device && !ec.user.loginUserKey(device.key)) return {errors: "the device key did not sign in"}
+    const kind = ec.user.loginKeyKind
+    ec.artifactExecution.enableAuthz()
+    let out = {}
+    let thrown = ""
+    try {
+        out =
+            ec.service
+                .sync()
+                .name(S + verbNoun)
+                .parameters(parameters || {})
+                .call() || {}
+    } catch (err) {
+        thrown = String(err.message || err)
+    }
+    const errors = thrown + (ec.message.hasError() ? ec.message.errorsString : "")
+    ec.message.clearErrors()
+    return Object.assign({errors, kind}, out)
+}
+const reportFrom = (device, shareId, latitude) => {
+    later(6000)
+    return asDevice(device, "report#Position", {shareId, latitude, longitude: "-111.9", observedDate: new Date(shared.now)})
+}
+// a POST to the app's /qapps transition as the app sends it, signed in by the device key (as its login_key header signs
+// a request in; the header is given too, which renewClientDevice reads), or by none (this context's login ended alone: a
+// logout of the account would end its keys' sign-ins too)
+function postApp(transition, parameters, key) {
+    ec.user.logoutLocal()
+    if (key) {
+        ec.user.internalLoginUser(username(A))
+        if (!ec.user.loginUserKey(key)) return {status: 401, json: null}
+    }
+    let test = ec.screen.makeTest().rootScreen("component://webroot/screen/webroot.xml")
+    if (key) test = test.header("login_key", key)
+    const str = test.render("qapps/" + transition, parameters || {}, "post")
+    ec.message.clearErrors()
+    let json = null
+    try {
+        json = JSON.parse(String(str.output || ""))
+    } catch (err) {
+        json = null
+    }
+    return {status: str.status, json}
+}
+const deviceOf = shareId => sys(() => ec.entity.find("moqui.maps.LocationShare").condition("shareId", shareId).one().userLoginKeyId)
+
+feature(
+    "a share started on a device takes that device's reports only; another device or a browser is told so, Send from here and Send from this device move it, and a renewed key keeps it",
+    {
+        when() {
+            const phone = deviceKey("Spec phone")
+            const tablet = deviceKey("Spec tablet")
+            later(6000)
+            const made = asDevice(phone, "create#Share", {audienceList: [toUser(B)], thruDate: new Date(shared.now + HOUR)})
+            const shareId = made.shareId
+            const out = {made, boundTo: deviceOf(shareId), phone, tablet}
+            out.fromPhone = reportFrom(phone, shareId, "40.71")
+            out.fromBrowser = reportFrom(null, shareId, "40.72")
+            out.fromTablet = reportFrom(tablet, shareId, "40.73")
+            out.mineOnTablet = Array.from(asDevice(tablet, "find#MyShares").shareList || []).find(row => row.shareId === shareId)
+            // the browser's Send from here: no device from now on, and the phone is refused
+            out.toBrowser = asDevice(null, "update#Share", {shareId, sendFromHere: true})
+            out.browserBound = deviceOf(shareId)
+            out.phoneAfter = reportFrom(phone, shareId, "40.74")
+            out.browserAfter = reportFrom(null, shareId, "40.75")
+            // the tablet's Send from this device, then its report through the app's transition, and none without a user
+            out.toTablet = asDevice(tablet, "update#Share", {shareId, sendFromHere: true})
+            out.tabletBound = deviceOf(shareId)
+            later(6000)
+            out.appReport = postApp("reportClientLocation", {shareId, latitude: "40.76", longitude: "-111.9"}, tablet.key)
+            out.noUser = postApp("reportClientLocation", {shareId, latitude: "40.77", longitude: "-111.9"}, null)
+            out.mineOnPhone = Array.from(asDevice(phone, "find#MyShares").shareList || []).find(row => row.shareId === shareId)
+            // the tablet's key renewed: the share goes with it, and the new key reports
+            const renewed = postApp("renewClientDevice", {}, tablet.key)
+            const renewedKey = renewed.json && renewed.json.loginKey
+            out.renewed = renewed
+            out.renewedBound = deviceOf(shareId)
+            later(6000)
+            out.renewedReport = postApp("reportClientLocation", {shareId, latitude: "40.78", longitude: "-111.9"}, renewedKey)
+            // a share started in a browser has no device
+            later(6000)
+            const browserShare = asDevice(null, "create#Share", {audienceList: [toUser(B)], thruDate: new Date(shared.now + HOUR)}).shareId
+            out.browserShareBound = deviceOf(browserShare)
+            out.stopped = postApp("stopClientLocation", {shareId}, renewedKey)
+            out.afterStop = reportFrom(phone, shareId, "40.79")
+            as(A, "stop#Share", {shareId: browserShare})
+            return out
+        },
+        then(out) {
+            out.made.errors == ""
+            out.made.kind == "device"
+            out.boundTo == out.phone.hash
+            out.fromPhone.statusCode == 200
+            out.fromBrowser.statusCode == 409
+            out.fromBrowser.reasonCode == "OTHER_DEVICE"
+            out.fromBrowser.errors.includes("Another device sends")
+            out.fromTablet.statusCode == 409
+            out.fromTablet.reasonCode == "OTHER_DEVICE"
+            out.mineOnTablet.sentFromDevice == true
+            out.mineOnTablet.deviceName == "Spec phone"
+            out.mineOnTablet.fromThisDevice == false
+            JSON.stringify(out.mineOnTablet).includes(out.phone.hash) == false
+            out.toBrowser.errors == ""
+            out.browserBound == null
+            out.phoneAfter.reasonCode == "OTHER_DEVICE"
+            out.browserAfter.statusCode == 200
+            out.toTablet.errors == ""
+            out.tabletBound == out.tablet.hash
+            out.appReport.status == 200
+            out.appReport.json.statusCode == 200
+            out.noUser.json == null || out.noUser.json.statusCode == null
+            out.mineOnPhone.deviceName == "Spec tablet"
+            out.mineOnPhone.fromThisDevice == false
+            out.renewed.status == 200
+            out.renewed.json.loginKey != null
+            out.renewedBound != null
+            out.renewedBound != out.tablet.hash
+            out.renewedReport.json.statusCode == 200
+            out.browserShareBound == null
+            out.stopped.json.stopped == true
+            out.afterStop.statusCode == 410
         }
     }
 )

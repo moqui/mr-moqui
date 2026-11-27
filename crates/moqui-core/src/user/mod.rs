@@ -80,7 +80,7 @@ pub use preference::{
     is_in_group, set_preference, user_group_ids, user_has_permission, EXTERNAL_USER, EXTERNAL_WITHHELD,
 };
 pub use session::derived_cookie_key;
-pub use session::login_key_kind;
+pub use session::{login_key_id, login_key_kind};
 pub(crate) use session::Memory;
 pub use session::{
     bind, csrf_token, current_log_actor, current_user_id, current_username, end_request, end_user_sessions,

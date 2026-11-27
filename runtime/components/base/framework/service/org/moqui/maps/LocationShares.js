@@ -68,6 +68,22 @@ function endOf(share) {
 const isActive = (share, now) =>
     share != null && share.revokedDate == null && share.endedDate == null && millis(share.thruDate) > now
 
+/**
+ * The device this request comes from: the id of the device key that signed it in (ec.user.loginKeyId, the key's stored
+ * hash, never the key), or null for any other login (a browser page). A share records the device it is sent from, and
+ * takes reports from that device's requests only (plans/Location-Sharing.md §3.1, §3.4).
+ */
+function deviceKeyId() {
+    return text(ec.user.loginKeyKind) === "device" ? text(ec.user.loginKeyId) || null : null
+}
+
+/** The name the owner gave the device a share is sent from (UserLoginKey.deviceName), or null. */
+function deviceNameOf(userLoginKeyId) {
+    if (!userLoginKeyId) return null
+    const row = find("moqui.security.UserLoginKey").condition("loginKey", userLoginKeyId).selectField("deviceName").one()
+    return row ? text(row.deviceName) || null : null
+}
+
 /** The caller's own share, else null: another person's share is the same as none. */
 function ownShare(shareId, forUpdate) {
     const me = ec.user.userId
@@ -453,6 +469,8 @@ function create(p) {
         .makeValue(SHARE)
         .setAll({
             ownerUserId: me,
+            // the app's device that started it, or none for a browser page (plans/Location-Sharing.md §3.4)
+            userLoginKeyId: deviceKeyId(),
             label: text(p.label) || ownerName,
             purposeText: text(p.purposeText) || null,
             fromDate: new Date(now),
@@ -485,6 +503,10 @@ function update(p) {
     }
     if (p.label != null) share.label = text(p.label) || share.label
     if (p.purposeText != null) share.purposeText = text(p.purposeText) || null
+    // Send from here (a browser page: no device) or Send from this device (the app): the reports of the device that
+    // sent it until now are refused from here on as another device's, which stops it (plans/Location-Sharing.md §3.4)
+    const moved = yes(p.sendFromHere) && (share.userLoginKeyId || null) !== deviceKeyId()
+    if (moved) share.userLoginKeyId = deviceKeyId()
     let added = {linkToken: null}
     const before = currentUserIds(share)
     if (Array.from(p.addAudienceList || []).length) {
@@ -533,8 +555,8 @@ function update(p) {
     const addedUserList = fresh.map(userId => ({userId, userName: (people[userId] || {}).name || userId}))
     const thruDate = millis(share.thruDate)
     push(share, reached, {event: "changed", thruDate})
-    // the owner's devices are told whom the change lets in
-    push(share, [share.ownerUserId], {event: "changed", thruDate, addedUserList})
+    // the owner's devices are told whom the change lets in, and when another device sends it now
+    push(share, [share.ownerUserId], Object.assign({event: "changed", thruDate, addedUserList}, moved ? {sentFromMoved: true} : {}))
     return {thruDate, linkToken: added.linkToken, addedUserList}
 }
 
@@ -680,6 +702,11 @@ function report(p) {
     const share = ownShare(p.shareId, true)
     if (!share) return notFound(404)
     if (!isActive(share, now)) return {statusCode: 410, reasonCode: "SHARE_ENDED"}
+    // a share sent from a device takes that device's reports only, and one sent from a browser page (no device) no
+    // device's: the owner on another device, or in a browser, is told another device sends it, and stops; update#Share's
+    // sendFromHere moves it (plans/Location-Sharing.md §3.4)
+    if ((share.userLoginKeyId || null) !== deviceKeyId())
+        return refuse("OTHER_DEVICE", "Another device sends this share's location: choose Send from this device to send it from here", 409)
     const latest = find(LATEST).condition("shareId", share.shareId).one()
     const approximated = share.precisionEnumId === "LspApproximate"
     const minimum = setting("min-interval-seconds", 5)
@@ -783,6 +810,11 @@ function ownerView(share, now) {
         revokedDate: millis(share.revokedDate),
         endedDate: millis(share.endedDate),
         active: isActive(share, now),
+        // where it is sent from: a device of the owner's (its name, and whether it is this request's) or a browser page;
+        // never the device key's id
+        sentFromDevice: !!share.userLoginKeyId,
+        deviceName: deviceNameOf(share.userLoginKeyId),
+        fromThisDevice: !!share.userLoginKeyId && share.userLoginKeyId === deviceKeyId(),
         audienceList
     })
 }

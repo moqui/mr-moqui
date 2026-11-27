@@ -1257,6 +1257,11 @@ function liveShares() {
             trailCount: Number(share.trailCount) || 0,
             audience: audienceNames(share.audienceList),
             reportIntervalSeconds: share.approximate === true ? approximate : minimum,
+            // where it is sent from (plans/Location-Sharing.md §3.4): a device of the owner's by its name, and whether
+            // that is this request's (the app's Send from this device), or a browser page
+            sentFromDevice: share.sentFromDevice === true,
+            deviceName: share.deviceName || null,
+            fromThisDevice: share.fromThisDevice === true,
             latest: livePosition(share.latest)
         })
     const theirs = probe(LIVE_SERVICES + "find#SharedWithMe", {})

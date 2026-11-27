@@ -27,10 +27,16 @@ along with this software (see the LICENSE.md file). If not, see
         LocationTrailPoint for trailKeepDays (at most location@trail-max-days) after the share ends, until
         trailPurgeDate. An approximate share's positions are cells of one fixed grid that every share uses
         (LocationShares.js). A guest share for a record names it as MapAdapter does (recordAdapterKey, recordKey), set
-        only by the service that checks the caller may act on the record. -->
+        only by the service that checks the caller may act on the record. The device it is sent from, userLoginKeyId,
+        is the owner's app that started it, or none for a browser page. -->
     <entity entity-name="LocationShare" package="moqui.maps" use="transactional" cache="never">
         <field name="shareId" type="id" is-pk="true"/>
         <field name="ownerUserId" type="id" not-null="true"/>
+        <field name="userLoginKeyId" type="text-medium"><description>The device it is sent from: the
+            UserLoginKey (its stored hash, ec.user.loginKeyId) of the owner's device whose request started it or last took
+            it over (update#Share sendFromHere); none for a browser page, whose requests carry no device key. A share with a
+            device takes reports from that device's requests only, and one with none from no device's; the key's renewal
+            moves it (plans/Location-Sharing.md §3.1, §3.4)</description></field>
         <field name="label" type="text-medium"><description>What the audience sees: the owner's name by default</description></field>
         <field name="purposeText" type="text-medium"><description>Why or until what, in the owner's words (an ETA)</description></field>
         <field name="fromDate" type="date-time"/>

@@ -140,6 +140,53 @@ along with this software (see the LICENSE.md file). If not, see
             ]]></script></actions>
         <default-response type="none"/>
     </transition>
+    <!-- The Android app's live location (plans/Location-Sharing.md §3.4): a position of a share of the user's own, from
+        the app's foreground service (LocationShareService.kt, through the Rust host's report_location and its device key,
+        so a share sent from that device takes it; moqui_client::location), and that share stopped from its notification.
+        Maps' own transitions are under MAPS_APP, while every signed-in user may own a share: these call
+        org.moqui.maps.LocationServices (LocationShareServices, every signed-in user; the services take the owner's own
+        shares only) for any of them, POST only. reportClientLocation answers report#Position's outcome as statusCode in
+        its JSON (200, 400, 404, 409 STALE, CLOCK_AHEAD or OTHER_DEVICE, 410, 429 with retryAfterSeconds), with no
+        position: latitude, longitude, accuracy, heading and speed as text, observedDate epoch millis (none: the server's
+        time). Nothing posted is logged or answered. 401 without a user. -->
+    <transition name="reportClientLocation" method="post">
+        <actions><script><![CDATA[
+            if (!ec.user.userId) ec.web.sendJsonError(401, ec.l10n.localize('Authentication required'))
+            else {
+                const p = ec.web.parameters
+                const value = (name) => (p[name] == null ? null : String(p[name]).trim() || null)
+                const observed = Number(p.observedDate)
+                let answer = {statusCode: 500, reasonCode: 'FAILED'}
+                ec.message.pushErrors()
+                try {
+                    const out = ec.service.sync().name('org.moqui.maps.LocationServices.report#Position').requireNewTransaction(true)
+                        .parameters({shareId: value('shareId') || '', latitude: value('latitude'), longitude: value('longitude'),
+                            accuracy: value('accuracy'), heading: value('heading'), speed: value('speed'),
+                            observedDate: value('observedDate') && Number.isFinite(observed) ? new Date(observed) : null}).call() || {}
+                    answer = {statusCode: Number(out.statusCode) || (ec.message.hasError() ? 400 : 200), reasonCode: out.reasonCode || null,
+                        retryAfterSeconds: out.retryAfterSeconds == null ? null : Number(out.retryAfterSeconds),
+                        reason: ec.message.hasError() ? ec.message.errorsString : null}
+                } catch (err) {
+                    // the failure's text may hold what was posted: it is not logged or answered
+                    answer = {statusCode: 500, reasonCode: 'FAILED'}
+                } finally { ec.message.clearErrors(); ec.message.popErrors() }
+                ec.web.sendJsonResponse(answer)
+            }
+            ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="stopClientLocation" method="post">
+        <actions><script><![CDATA[
+            if (!ec.user.userId) ec.web.sendJsonError(401, ec.l10n.localize('Authentication required'))
+            else {
+                const out = ec.service.sync().name('org.moqui.maps.LocationServices.stop#Share').requireNewTransaction(true)
+                    .parameters({shareId: String(ec.web.parameters.shareId ?? '')}).call() || {}
+                if (ec.message.hasError()) { const reason = ec.message.errorsString; ec.message.clearErrors(); ec.web.sendJsonResponse({stopped: false, reasonCode: out.reasonCode || null, reason}) }
+                else ec.web.sendJsonResponse({stopped: true})
+            }
+            ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
     <!-- A test notification to this device through the full push path (send#TestPush; the app's notification check,
         plans/Comms-Messaging.md §7.6): {ackIdList, queuedDate, reasonCode}. -->
     <transition name="testClientPush" method="post">
