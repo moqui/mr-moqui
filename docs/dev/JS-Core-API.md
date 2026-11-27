@@ -1130,7 +1130,7 @@ empty, and a send needs a request.
 | `getFieldValidationErrors(fieldName)` | The validation errors of one field, of the submit that led here and of this request |
 | `saveScreenLastInfo(path)` | Remembers the current screen path, or the one given, so a login can go back to it |
 | `getScreenHistory()` | The pages the user got in `html`, newest first: `[{name, url, urlNoParams}]` |
-| `sendJsonResponse(value)` | The value as the JSON response; entity values and lists as plain maps and lists |
+| `sendJsonResponse(value)` | The value as the JSON response; entity values and lists as plain maps and lists. With errors in the message facade they are added as `errors` and the status is 500, or 400 when every one is a validation error |
 | `sendJsonError(status, message)` | A JSON error response |
 | `sendError(errorCode, message, throwable)` | An error response as HTML, JSON or plain text, by the request's `Accept` |
 | `sendTextResponse(text, contentType, filename)` | A text response, `text/plain` by default; a file name sends it as an attachment |

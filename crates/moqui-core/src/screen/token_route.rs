@@ -61,6 +61,10 @@ use crate::web::{WebRequest, WebResponse};
 /// The path of the public shell page under the webroot screen.
 pub const PUBLIC_SHELL_PATH: &str = "/PublicShell";
 
+/// The parameter the route's screens read the route from (`{name, token, basePath, title, context}`): set only by
+/// [`dispatch`]; a request parameter of the name is dropped before any screen (SEC-RTE-18).
+pub(super) const ROUTE_PARAMETER: &str = "tokenRoute";
+
 /// One `token-route` of the conf.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TokenRoute {
@@ -524,7 +528,7 @@ pub(super) fn dispatch(
         }
         RouteTarget::Below(path) => (found.route.screen_location.clone(), path.clone()),
     };
-    parameters.insert("tokenRoute".to_string(), Value::Map(route));
+    parameters.insert(ROUTE_PARAMETER.to_string(), Value::Map(route));
     let mut inner = request.clone();
     inner.path = path;
     // the named screen is the render's root, so its links, form actions and redirects start with the route's path: a

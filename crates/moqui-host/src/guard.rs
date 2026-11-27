@@ -55,7 +55,9 @@ use moqui_core::web::address::masked;
 mod conf;
 
 use conf::*;
-pub(crate) use conf::{ci_credential, protection_node, request_host, setting, Event, GuardConf, CI_TOKEN_HEADER};
+pub(crate) use conf::{
+    ci_credential, host_port_valid, protection_node, request_host, setting, Event, GuardConf, CI_TOKEN_HEADER,
+};
 
 const SHARDS: usize = 32;
 /// How long a scan of a full client table that found no idle client is believed ([`Guard::evict_idle`]).
