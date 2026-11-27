@@ -870,9 +870,9 @@ fallback), and a refresh is compared by address, not by ID.
 ## Offline packages
 
 A user downloads a region of their map to the Android app or the desktop client and browses it with no network
-([plans/Maps-Offline.md](../../plans/Maps-Offline.md)). The server part is built: the package, its build and its
-download. The device's store and download (OF2) and the offline Maps screen in the apps (OF3) are coming; until then a
-package is downloaded and checked by hand or by a client of the package transition.
+([plans/Maps-Offline.md](../../plans/Maps-Offline.md)). The server part is built (the package, its build and its
+download), and so is the apps' store of packages with their download and serving (OF2, [below](#on-the-device)); the
+offline Maps screen in the apps that reads them (OF3) is coming.
 
 **A package** (`moqui.maps.MapPackage`) is one region (west, south, east, north; a west east of its east crosses the
 antimeridian) at a zoom range (0 to 16), built on the server from what its owner may see when it is built. It is its
@@ -953,7 +953,37 @@ SHA-256 as the strong `ETag` (`sha256-…`), by range (one `Range`, `If-Range`),
 owner on every request (`get#PackageAccess`: another user's package is 404) and answers 409 for a revision that is no
 longer the package's. Each download is recorded (`moqui.maps.MapPackageDownload`: the package, the revision and, for a
 request signed in by a device's key, that `UserLoginKey` and its device name); the account's Devices list showing each
-device's packages is coming (OF4).
+device's packages is coming (OF4). The apps read the user's packages as JSON from `packageList`
+(`/apps/maps/Offline/packageList`, `find#Packages`: each package's revision, size, strong tag and download path).
+
+### On the device
+
+The Android app and the desktop client keep downloaded packages beside each account's store (`moqui-client`
+`packages`, [Desktop-Client](../ui/Desktop-Client.md#offline-map-packages),
+[Mobile-Client](../ui/Mobile-Client.md#offline-map-packages)):
+
+- **The store.** `client/data/<account>.packages/<packageId>/<revision>/`, owner-only as the store is, outside
+  `store-max-mb`, within `<client-conf packages-max-mb>` (4096) for the account's packages, and a download starts only
+  with room for its rest, its unpacked copy and 64 MB free. A personal device keeps them across sign-outs; a shared
+  device's go with the account's data at its sign-out, and removing an account always deletes them.
+- **The download**, through the account's own requests with its device key: `packageList` for the revision's tag and
+  size, then the zip by ranges of 4 MiB, each with `If-Range` the strong tag, into a part file resumed from its
+  length; the whole file's SHA-256 against the tag; then each member the manifest lists unpacked, within its size and
+  checked against its SHA-256 (a member the manifest does not list, one it lists that is missing, a compressed,
+  encrypted or symlink member, a path outside the package's folder, or one member past 2 GiB refuses the package),
+  and the revision's folder swapped in by rename, the previous revision removed after. A failed check keeps the
+  revision the device had. A 409 (the package built again) reads the list again and offers the new revision. On
+  Android `PackageDownloadWorker` (WorkManager) runs it, resumable, on any network or only on Wi-Fi; on the desktop a
+  task of the app.
+- **Serving to the offline screen.** The app's scheme answers `/__moqui-app/maps/<packageId>/<path>` on the shell's
+  origin only (no server page reads it) from the current account's installed revision: HEAD, GET and one `Range` as
+  a 206 slice read from the file, at most 16 MiB a slice (a file past 16 MiB is asked by range); the member's SHA-256
+  is its `ETag`, a path the manifest does not list is 404. The package's own `manifest.json` is served too. Android's
+  WebView reads an intercepted body's length as a 32-bit number, hence the 2 GiB member bound, within the server's
+  `maps@package-max-bytes` of 2 GiB.
+- **The shell's commands**: `packages_list` (the server's list and the device's), `packages_download` (a revision;
+  `wifiOnly` on the phone), `packages_cancel`, `packages_delete` and `packages_status`; ids, names, revisions, sizes
+  and states, never a path on the device.
 
 ## Live location
 

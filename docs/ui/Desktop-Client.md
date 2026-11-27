@@ -87,7 +87,8 @@ without booting a node (`client/conf.rs`: `MoquiDefaultConf.xml`, each component
 conf, merged as the framework would); the server does not read it.
 
 ```xml
-<client-conf device-mode="choose" mirror-days="90" prefetch-rooms="20" prefetch-mail="100" store-max-mb="512"/>
+<client-conf device-mode="choose" mirror-days="90" prefetch-rooms="20" prefetch-mail="100" store-max-mb="512"
+    packages-max-mb="4096"/>
 ```
 
 | Attribute | Default | What |
@@ -97,6 +98,7 @@ conf, merged as the framework would); the server does not read it.
 | `prefetch-rooms` | 20 | how many of the latest rooms a shared device reads ahead (each room's latest page); 0 for none |
 | `prefetch-mail` | 100 | how many of the inbox's latest threads a shared device reads ahead; 0 for none |
 | `store-max-mb` | 512 | the size cap of an account's store; past it the least recently read cached data goes, never unsent items or drafts |
+| `packages-max-mb` | 4096 | the size cap of an account's [offline map packages](#offline-map-packages), outside the store's; a download past it is refused |
 
 A bad value is logged and its default used; a runtime with no framework conf, or one that does not parse, gives the
 defaults. The element is in `mr-moqui-conf.xsd`; the parsing is `moqui_client::conf`.
@@ -105,8 +107,8 @@ defaults. The element is in `mr-moqui-conf.xsd`; the parsing is `moqui_client::c
   choice (password and SSO alike). An account already personal stays personal when shared is chosen: nothing is
   trimmed, and the shell says the account already has a personal device's mirrored data. An account with none follows
   the build's mode.
-- **Shared:** sign-out or a revocation deletes the account's store, its chat store keys and its entry in
-  `accounts.json`, and the pages clear its scoped browser storage and IndexedDB (the shell as it loads, the next app
+- **Shared:** sign-out or a revocation deletes the account's store, its offline map packages, its chat store keys and
+  its entry in `accounts.json`, and the pages clear its scoped browser storage and IndexedDB (the shell as it loads, the next app
   window once). Before a shared sign-out the shell lists what is unsent and asks. The next sign-in creates the account
   again with whatever mode is chosen then.
 - **Personal:** sign-out and revocation keep everything; removing the account deletes it.
@@ -198,6 +200,35 @@ while the window is hidden.
 
 The pages reach these through `moquiDesktop.outbox` and `moquiDesktop.drafts`, for the calling window's account
 ([Qvt-Client](Qvt-Client.md#in-the-desktop-app)); the shell's `outbox.unsent()` lists what a shared sign-out would delete.
+
+## Offline map packages
+
+A map region the user downloads to read with no network (plans/Maps-Offline.md §2.4, OF2; the server's part is
+[Maps, Offline packages](../tools/Maps.md#offline-packages)), kept by `moqui_client::packages`, the commands in
+`moqui_client_tauri::packages`. The offline Maps screen that reads them is OF3.
+
+- **Where:** `client/data/<account>.packages/<packageId>/<revision>/`, beside the store, owner-only as it is (folders
+  0700, files 0600), outside `store-max-mb`, within `packages-max-mb` for the account's packages; a download starts
+  only when the disk has room for the rest of the file, its unpacked copy and 64 MB more (the check is skipped, logged,
+  where the free space cannot be read: Windows). A personal account keeps them across sign-outs; a shared one's go at
+  its sign-out or revocation, and removing an account deletes them (`Packages::forget`, with the store).
+- **The download** is a task of the host (a thread of its own), with the account's key as the outbox's requests: the
+  server's `packageList` for the revision's tag and size, the zip by ranges of 4 MiB with `If-Range` the tag into
+  `<revision>.zip.part`, resumed from its length by the next try; the whole file's SHA-256 against the tag; each member
+  the manifest lists unpacked with its size and SHA-256 checked (a stored zip read by its central directory: a member
+  outside the manifest, a missing, compressed, encrypted or symlink one, a path outside the folder or one member past
+  2 GiB refuses the package); then the revision's folder put in place by rename and the earlier one removed. A failed
+  check keeps the revision the device had; a 409 reads the list again and offers the new revision (`stale`).
+- **The page reads it** at `/__moqui-app/maps/<packageId>/<path>` on the shell's origin only, never forwarded and never
+  on the app windows' origin (every account's server pages share it and run the server's code): the current account's
+  installed revision, HEAD, GET and one `Range` as a 206 slice read from the file (at most 16 MiB; the body is whole,
+  as the runtimes take it, so a file past 16 MiB is not answered whole: 413, ask by range), the member's SHA-256 its
+  `ETag`, a path the manifest does not list 404, no 304.
+- **Commands** (the shell's, with its nonce, `moquiDesktop.packages`): `list` (`packages_list`: the server's list, null
+  offline, and the device's), `download(packageId, revision)` (`packages_download`), `cancel` (`packages_cancel`, its
+  part goes), `remove` (`packages_delete`) and `status` (`packages_status`: each installed package's id, name, revision,
+  size, region and zooms, and a download's `state`: `queued`, `downloading` with `done` and `total`, `checking`,
+  `installed`, `failed` with `code` and `retry`, `cancelled` or `stale` with the new `revision`). Never a path.
 
 ## The server's sync contracts
 
@@ -517,7 +548,8 @@ leaves them alone (`pushDelivers`) and only tells the host which room shows (`ro
 All of these are framework tests in the regression suite, run while working on the client and before a commit
 ([the two suites](../Build-Test.md#the-two-suites)).
 
-- `cargo test -p moqui-client`: accounts, keys, sign-in, proxy, sockets, the store and the conf;
+- `cargo test -p moqui-client`: accounts, keys, sign-in, proxy, sockets, the store, the conf and the map packages
+  (`packages::tests`: ranges, resume, checksums, the manifest's bounds, the wipe, the caps, a 409);
   `scripts/check-android.sh` for the Android build.
 - `cd crates/moqui-desktop && cargo test`: the schemes, offline answers, pushes, the
   mirror, modes, the outbox and flusher, windows.
