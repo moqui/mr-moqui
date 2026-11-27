@@ -1,6 +1,6 @@
 # Location sharing: explicitly shared live location
 
-Status 2026-11-26: LL0 and LL1 built (§4); LL2 next. It carries the "explicitly shared person-location feeds" item of
+Status 2026-11-27: LL0 to LL2 built (§4); LL3 under review. It carries the "explicitly shared person-location feeds" item of
 [Maps §9, Later research](archive/Maps.md#9-delivery-and-acceptance) forward as work for now, on the user's decisions of
 November 26, 2026: a person shares where they are, for a time they choose, with people they choose (users, a group,
 their XMPP contacts, or a guest link for one record such as a delivery or a service visit); the Android app keeps
@@ -106,8 +106,9 @@ group takes a new snapshot of it (LL1 review).
   shows it.
 - Browse gets **Shared with me** (each person, the age, Show on map, Directions in the phone's maps app by `geo:`) and
   **Share my location** (audience, until, exact or approximate, keep a trail), and **Who sees my location** (each share
-  with its audience and end, Stop, Extend, Delete trail). An app-bar chip on every screen (the shell indicator hook) shows the user's own active shares and opens Browse's
-  live panel, where Stop is.
+  with its audience and end, Stop, Extend, Delete trail). An app-bar chip on every screen (the shell indicator hook) shows the user's own active shares and opens My location
+  shares (`Maps/MyShares.xml`, granted to every signed-in user), where Stop and an hour more are, with Open in Maps
+  for a Maps user.
 - In a browser, a share sends while its page is open (`watchPosition`), with a banner on the page saying so; when the
   page closes the share stays active but goes stale, and the audience sees its age.
 - The terminal lists shares with their ages and coordinates, and Stop.
@@ -161,7 +162,7 @@ an ended share an empty `geoloc` item (the XEP's "stopped"). Approximate shares 
 | --- | --- |
 | LL0 — the geoloc gap | The XMPP PEP `geoloc` node refused, nothing stored or pushed (built first, with the Maps leftovers). Built November 26, 2026: refused in the XMPP session and in `XmppServices` (`get#PepNodeRefused`), a trimmed, case-insensitive name, `forbidden` on every path |
 | LL1 — model and services | §3.1 and §3.2, the `location` conf element. Regression `framework/test/LocationShares.spec.js`: seen by its audience only; a group member removed loses it; an expired share shows nothing and its latest row is cleaned; a trail kept only when chosen, and purged; a non-owner's report refused; the rate; approximate rounding; no ADMIN read; the audit rows hold no position. Built November 26, 2026, after five review rounds: six entities (`LocationShareAudienceMember`, the group snapshot; `LocationShareOwner`, the owner's lock row; all in the audit class, so no generic tool, REST, agent or import reaches them; the agent `data` tool now refuses restricted entities), one fixed grid with hysteresis held per person, minute-rounded times and a 60 s interval for approximate shares, caps on active shares and audience, an ordered, time-bounded clean; operator routes that can still see a share are stated in Maps and Privacy (login-as, the SQL runner, `NotificationCapture`, the database) |
-| LL2 — Maps | §3.3: the live layer, Browse's panels and dialog, the tray, the terminal list. A page test of the live layer (pushes moving a marker, stale, ended) |
+| LL2 — Maps | §3.3: the live layer, Browse's panels and dialog, the tray, the terminal list. A page test of the live layer (pushes moving a marker, stale, ended). Built November 27, 2026, after five review rounds: `locationShares` in the effective configuration only when asked (Browse and the terminal), m-map's live layer (positions stamped once at read, stale after 300 s, removed only by an ended or revoked push), Browse's Shared with me, Share my location, Who sees my location and Add the group again (the only resend of a group), browser sending with a banner per sending share, fresh fixes and a keep-alive, a failed read kept apart and said, the sending list in sessionStorage per account and session hash, no watch after close; the shell indicator hook (`moqui.shellIndicators`, `beforeLogoutHooks`, a conf-level `shell-indicator` provider) with the Sharing location chip opening My location shares (`Maps/MyShares.xml`, every signed-in user) |
 | LL3 — Android | §3.4. Kotlin unit tests of the service's stop rules; the host command's tests in `moqui-client` (newest point only, a 410 stopping) |
 | LL4 — chat | §3.5 with the encrypted-room decision recorded here |
 | LL5 — XMPP | §3.6. Tests in `moqui-xmpp` and the XMPP spec |

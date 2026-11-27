@@ -57,6 +57,17 @@ along with this software (see the LICENSE.md file). If not, see
         <authz artifactAuthzId="MAPS_DIALOG_USERS" userGroupId="ALL_USERS" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
     </artifactGroups>
 
+    <!-- My location shares (Maps/MyShares.xml; plans/Location-Sharing.md §3.3): where the app bar's "Sharing location" chip
+        goes, for every signed-in user, since any user may share their location, not only a Maps user. ALWAYS, not
+        inherited, as MAPS_DIALOG: the screen and its transitions only. What it calls is LocationServices' (find#MyShares,
+        stop#Share, update#Share: LocationShareServices, every signed-in user), which act on the caller's own shares only. -->
+    <artifactGroups artifactGroupId="MAPS_SHARES" description="Maps: my location shares">
+        <artifacts artifactName="component://tools/screen/Maps/MyShares.xml" artifactTypeEnumId="AT_XML_SCREEN" inheritAuthz="N"/>
+        <artifacts artifactName="component://tools/screen/Maps/MyShares\.xml/[A-Za-z]+" artifactTypeEnumId="AT_XML_SCREEN_TRANS"
+                nameIsPattern="Y" inheritAuthz="N"/>
+        <authz artifactAuthzId="MAPS_SHARES_USERS" userGroupId="ALL_USERS" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
+    </artifactGroups>
+
     <!-- What the Maps app changes for its user: their preferences, saved views, overlays and saved places, each service acting
         on the signed-in user's own (a saved view another user shared is read, never changed; an overlay or a places file
         shared with them in Files is read through its drive's access, checked by the service, never changed here); and the
