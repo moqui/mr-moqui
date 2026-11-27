@@ -137,7 +137,8 @@ impl Registry {
             detached: Mutex::default(),
             next: AtomicU64::default(),
             routed: Mutex::default(),
-            routed_rate: rate.max(0.0),
+            // above 0, so an allowance always refills in time
+            routed_rate: rate.max(0.001),
             routed_burst: burst.max(1.0),
         }
     }
@@ -167,6 +168,13 @@ impl Registry {
         if routed.len() >= ROUTED_PAIRS {
             let (rate, burst) = (self.routed_rate, self.routed_burst);
             routed.retain(|_, (left, at)| *left + now.duration_since(*at).as_secs_f64() * rate < burst);
+            // none full again (a low rate): the pair used longest ago goes, so the map stays bounded
+            while routed.len() >= ROUTED_PAIRS {
+                let Some(oldest) = routed.iter().min_by_key(|(_, (_, at))| *at).map(|(key, _)| key.clone()) else {
+                    break;
+                };
+                routed.remove(&oldest);
+            }
         }
         let (left, at) = routed
             .entry((sender.to_string(), target.to_string()))

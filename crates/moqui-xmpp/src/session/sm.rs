@@ -121,6 +121,11 @@ impl Sm {
     pub fn unacked(&self) -> usize {
         self.unacked.len()
     }
+
+    /// Whether keeping `bytes` more as an unacknowledged stanza would let the oldest go (past either bound).
+    pub fn would_overflow(&self, bytes: usize) -> bool {
+        self.unacked.len() >= MAX_UNACKED || self.unacked_bytes + bytes > MAX_UNACKED_BYTES
+    }
 }
 
 impl Session {
@@ -246,6 +251,12 @@ impl Session {
 
     pub fn unacked(&self) -> usize {
         self.sm.as_ref().map_or(0, Sm::unacked)
+    }
+
+    /// Whether sending `stanza` would take the unacknowledged stanzas past their bounds (none with no stream
+    /// management).
+    pub(crate) fn unacked_would_overflow(&self, stanza: &Element) -> bool {
+        self.sm.as_ref().is_some_and(|sm| sm.would_overflow(stanza_bytes(stanza)))
     }
 }
 

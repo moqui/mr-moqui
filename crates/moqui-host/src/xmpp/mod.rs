@@ -193,7 +193,7 @@ pub(crate) fn config() -> Option<Config> {
         Duration::from_secs(number("xmpp-server@fast-token-days", 14_u64).clamp(1, 365) * 86_400);
     config.software_version = env!("CARGO_PKG_VERSION").to_string();
     config.turn_enabled = property("xmpp-server@turn-enabled") == "true";
-    config.routed_rate = number("xmpp-server@routed-rate", config.routed_rate).clamp(0.0, 10_000.0);
+    config.routed_rate = number("xmpp-server@routed-rate", config.routed_rate).clamp(0.01, 10_000.0);
     config.routed_burst = number("xmpp-server@routed-burst", config.routed_burst).clamp(1.0, 100_000.0);
     let decoy = property("xmpp-server@scram-decoy-key");
     if decoy.is_empty() || decoy.ends_with("CHANGEME") {

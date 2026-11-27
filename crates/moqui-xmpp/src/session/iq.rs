@@ -177,11 +177,20 @@ impl Session {
     /// A stanza another session routed here.
     pub(super) async fn on_routed(&mut self, stanza: Element) {
         let from = attr(&stanza, "from");
+        let mut from_other = false;
         if let Some(sender) = jids::parse(&from) {
             let bare = sender.bare();
             if self.is_blocked(&bare).await {
                 return;
             }
+            from_other = bare != self.my_bare();
+        }
+        // a detached session keeps what it is sent as unacknowledged stanzas for its resumption: another user's routed
+        // stanza (no archive holds it) that would take it past their bounds is dropped, so another user cannot end
+        // the resumption by flooding it (SEC-COM-19, SEC-COM-93)
+        if self.detached && from_other && self.unacked_would_overflow(&stanza) {
+            tracing::debug!("XMPP: a routed stanza to a detached session past its unacknowledged bounds is dropped");
+            return;
         }
         let mut stanza = stanza;
         super::xml::set_attr(&mut stanza, "to", self.my_full());
@@ -417,6 +426,15 @@ impl Session {
             .is_some_and(|blocked| blocked.contains(bare))
     }
 
+    /// The block list changed: every session of the user reads it again, not this one alone, so a sender newly
+    /// blocked is dropped before any of them queues it (SEC-COM-19).
+    fn forget_blocks(&mut self) {
+        *moqui_lib::sync::lock(&self.blocked) = None;
+        for entry in self.server.registry.sessions_of(&self.user_id()) {
+            *moqui_lib::sync::lock(&entry.blocked) = None;
+        }
+    }
+
     async fn blocking(&mut self, iq: &Element, payload: &Element) {
         let jids: Vec<String> = payload
             .children()
@@ -442,14 +460,14 @@ impl Session {
                     }
                     Ok(_) => {}
                 }
-                *moqui_lib::sync::lock(&self.blocked) = None;
+                self.forget_blocks();
                 self.send(iq_result(iq).build());
             }
             ("set", "unblock") => {
                 if self.call(services::UNBLOCK, json!({"jidList": jids})).await.is_err() {
                     return self.refuse(iq, "wait", "internal-server-error", None);
                 }
-                *moqui_lib::sync::lock(&self.blocked) = None;
+                self.forget_blocks();
                 self.send(iq_result(iq).build());
             }
             _ => self.refuse(iq, "modify", "bad-request", None),

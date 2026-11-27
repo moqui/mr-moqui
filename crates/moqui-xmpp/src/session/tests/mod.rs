@@ -1147,3 +1147,23 @@ async fn an_unknown_name_asks_for_verifiers_as_a_user_does() {
         "{calls:?}"
     );
 }
+
+/// SEC-COM-19, SEC-COM-93: another user's routed stanzas to a detached session are dropped once they would take its
+/// unacknowledged stanzas past their bounds, so a flood of large ones does not end its resumption; its own sessions'
+/// are not held so.
+#[tokio::test]
+async fn another_users_flood_does_not_end_a_detached_sessions_resumption() {
+    let (server, _) = server();
+    let (mut john, _) = sign_in(&server, "john.doe", JOHN_PASSWORD, "Monal").await;
+    assert!(john.session.detach());
+    let body = "x".repeat(250 * 1024);
+    for n in 0..40 {
+        john.session
+            .on_routed(stanza(&format!(
+                "<message from='jane@moqui.local/laptop' type='headline' id='f{n}'><body>{body}</body></message>"
+            )))
+            .await;
+    }
+    assert!(john.session.resumable().is_some(), "still resumable");
+    assert!(john.session.unacked() < 40, "the flood past the bounds was dropped");
+}
