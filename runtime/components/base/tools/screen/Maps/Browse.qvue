@@ -519,10 +519,12 @@ module.exports = {
                     this.marker = { id: 'given', lon, lat, label: String(p.label || '') };
                     this.view = { center: [lon, lat], zoom: 14 };
                 }
-                // an area to open on (a dashboard geomap's country): west,south,east,north, with no marker
+                // an area to open on (a dashboard geomap's country): west,south,east,north, with no marker; west greater than
+                // east crosses the antimeridian (Russia, Fiji), as m-map fits it
                 const box = String(p.extent || '').split(',').map((value) => value.trim() === '' ? NaN : Number(value));
-                if (!this.view && !this.marker && box.length === 4 && box.every(Number.isFinite) && box[0] >= -180 && box[2] <= 180
-                        && box[1] >= -90 && box[3] <= 90 && box[0] <= box[2] && box[1] <= box[3]) this.view = { extent: box };
+                const lonOk = (lon) => lon >= -180 && lon <= 180;
+                if (!this.view && !this.marker && box.length === 4 && box.every(Number.isFinite) && lonOk(box[0]) && lonOk(box[2])
+                        && box[1] >= -90 && box[3] <= 90 && box[1] <= box[3]) this.view = { extent: box };
             }, (err) => { this.error = t('The map settings did not load') + ': ' + (err && err.message || err); });
         },
         loadViews() {

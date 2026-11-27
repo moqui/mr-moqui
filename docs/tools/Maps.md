@@ -547,7 +547,7 @@ whose routes the record's [links](#record-links) resolve to; Open in Maps carrie
 
 A Dashboards geomap ([Monitoring](Monitoring.md)) opens Maps where a country or a point is clicked (or chosen with Enter):
 Browse centered on the country's largest land area (`extent=west,south,east,north`, so an overseas territory does not
-widen it) or on the point (`longitude`, `latitude`), and nothing else of the panel's rows. It is offered only to a viewer
+widen it; west greater than east for one across the antimeridian, such as Russia or Fiji) or on the point (`longitude`, `latitude`), and nothing else of the panel's rows. It is offered only to a viewer
 whose own grants open the Maps app (`Dashboard.xml` sets `appLinks.maps` by `isPermittedOwn` of `Maps.xml`; an app's
 grant on the screen that shows the dashboard does not count); without it the geomap is as it was. The terminal's geomap
 does the same where the link is offered: in a dashboard's table mode (`g`) or on a report panel of its own, `o` opens
