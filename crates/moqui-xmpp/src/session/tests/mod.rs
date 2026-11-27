@@ -1148,22 +1148,47 @@ async fn an_unknown_name_asks_for_verifiers_as_a_user_does() {
     );
 }
 
-/// SEC-COM-19, SEC-COM-93: another user's routed stanzas to a detached session are dropped once they would take its
-/// unacknowledged stanzas past their bounds, so a flood of large ones does not end its resumption; its own sessions'
-/// are not held so.
+/// SEC-COM-19, SEC-COM-93: another user's routed stanzas are not queued for a detached session at all: a sender sees
+/// it offline (an iq to its full JID is answered service-unavailable), and one queued before it detached is dropped, so no flood fills
+/// its unacknowledged stanzas; a chat notice afterwards is still kept for the resumption.
 #[tokio::test]
 async fn another_users_flood_does_not_end_a_detached_sessions_resumption() {
     let (server, _) = server();
     let (mut john, _) = sign_in(&server, "john.doe", JOHN_PASSWORD, "Monal").await;
+    let (mut jane, _) = sign_in(&server, "jane", JANE_PASSWORD, "laptop").await;
+    john.send("<presence/>").await;
+    jane.send("<presence/>").await;
+    john.pump().await;
+    let full = john.session.my_full();
     assert!(john.session.detach());
+    let before = john.session.unacked();
     let body = "x".repeat(250 * 1024);
+    let answer = jane
+        .send(&format!(
+            "<iq to='{full}' type='get' id='f-sent'><query xmlns='jabber:iq:version'/></iq>"
+        ))
+        .await;
+    assert!(
+        text_of(&answer).contains("service-unavailable"),
+        "{full}: {}",
+        text_of(&answer)
+    );
     for n in 0..40 {
+        // queued before the session detached
         john.session
             .on_routed(stanza(&format!(
                 "<message from='jane@moqui.local/laptop' type='headline' id='f{n}'><body>{body}</body></message>"
             )))
             .await;
     }
+    john.pump().await;
+    assert_eq!(john.session.unacked(), before, "nothing of the flood is kept");
+    jane.send("<message type='chat' to='john.doe@moqui.local' id='legit'><body>Lunch?</body></message>")
+        .await;
+    john.pump().await;
+    assert!(
+        john.session.unacked() > before,
+        "the chat notice is kept for the resumption"
+    );
     assert!(john.session.resumable().is_some(), "still resumable");
-    assert!(john.session.unacked() < 40, "the flood past the bounds was dropped");
 }

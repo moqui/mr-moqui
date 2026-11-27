@@ -137,6 +137,10 @@ impl Session {
 
     /// Send a stanza to another local user's sessions: one resource, or every available one.
     pub(crate) async fn route_to(&mut self, user_id: &str, resource: Option<&str>, stanza: Element) {
+        // another user's detached session (waiting for its resumption) is not sent routed stanzas, which no archive
+        // holds: it is offline to them, so one user cannot fill its unacknowledged queue and end its resumption
+        // (SEC-COM-19, SEC-COM-93). The user's own resources still reach it.
+        let own = user_id == self.user_id();
         let entries = match resource {
             Some(resource) => self.server.registry.session(user_id, resource).into_iter().collect(),
             None => self
@@ -147,6 +151,10 @@ impl Session {
                 .filter(|entry| entry.is_available())
                 .collect::<Vec<_>>(),
         };
+        let entries: Vec<_> = entries
+            .into_iter()
+            .filter(|entry| own || !entry.is_detached())
+            .collect();
         if entries.is_empty() {
             if stanza.is("iq", ns::CLIENT) || resource.is_some() && stanza.is("message", ns::CLIENT) {
                 self.refuse(&stanza, "cancel", "service-unavailable", None);
@@ -186,10 +194,11 @@ impl Session {
             from_other = bare != self.my_bare();
         }
         // a detached session keeps what it is sent as unacknowledged stanzas for its resumption: another user's routed
-        // stanza (no archive holds it) that would take it past their bounds is dropped, so another user cannot end
-        // the resumption by flooding it (SEC-COM-19, SEC-COM-93)
-        if self.detached && from_other && self.unacked_would_overflow(&stanza) {
-            tracing::debug!("XMPP: a routed stanza to a detached session past its unacknowledged bounds is dropped");
+        // stanza (no archive holds it), which a sender queued before the session detached, is dropped, so another
+        // user cannot end the resumption by filling it (SEC-COM-19, SEC-COM-93); senders see it offline
+        // ([`Self::route_to`])
+        if self.detached && from_other {
+            tracing::debug!("XMPP: another user's routed stanza to a detached session is dropped");
             return;
         }
         let mut stanza = stanza;

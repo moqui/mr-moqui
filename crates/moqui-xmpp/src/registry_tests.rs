@@ -30,6 +30,7 @@ fn entry(registry: &Registry, user_id: &str, resource: &str, queue: usize) -> (E
         available,
         carbons,
         blocked: Arc::new(Mutex::new(None)),
+        detached: Arc::new(AtomicBool::new(false)),
     };
     registry.register(entry.clone());
     (entry, rx)

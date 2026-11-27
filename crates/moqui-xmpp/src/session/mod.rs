@@ -181,8 +181,10 @@ pub struct Session {
     /// Capabilities (XEP-0115) asked of the client: iq id → ver; and what a ver answered.
     pub(crate) caps_asked: HashMap<String, String>,
     pub(crate) last_beat: Option<Instant>,
-    /// The session ended and was kept for resumption: its offline presence waits.
+    /// The session ended and was kept for resumption: its offline presence waits. Set through [`Self::set_detached`].
     pub(crate) detached: bool,
+    /// [`Self::detached`], shared with the registry entry.
+    pub(crate) detached_shared: Arc<AtomicBool>,
     /// The last push notification (XEP-0357), and how many messages waited for it.
     pub(crate) last_push: Option<Instant>,
     pub(crate) pushed_count: u64,
@@ -231,6 +233,7 @@ impl Session {
             caps_asked: HashMap::new(),
             last_beat: None,
             detached: false,
+            detached_shared: Arc::new(AtomicBool::new(false)),
             last_push: None,
             pushed_count: 0,
             out: Vec::new(),
@@ -612,6 +615,7 @@ impl Session {
             available: Arc::clone(&self.available),
             carbons: Arc::clone(&self.carbons),
             blocked: Arc::clone(&self.blocked),
+            detached: Arc::clone(&self.detached_shared),
         });
         self.tx = Some(tx);
         self.rx = Some(rx);
@@ -619,6 +623,13 @@ impl Session {
     }
 
     /// A stanza error back to the client.
+    /// Mark the session detached or attached again, here and on its registry entry.
+    pub(crate) fn set_detached(&mut self, detached: bool) {
+        self.detached = detached;
+        self.detached_shared
+            .store(detached, std::sync::atomic::Ordering::Relaxed);
+    }
+
     pub(crate) fn refuse(&mut self, stanza: &Element, kind: &str, condition: &str, text: Option<&str>) {
         if attr(stanza, "type") == "error" {
             return;

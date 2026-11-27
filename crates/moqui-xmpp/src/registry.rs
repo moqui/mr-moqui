@@ -89,6 +89,9 @@ pub struct Entry {
     pub carbons: Arc<AtomicBool>,
     /// The session's block list, as it read it (bare JIDs), checked before a routed stanza is queued (SEC-COM-19).
     pub blocked: SharedBlocks,
+    /// The session is detached, waiting for its resumption: another user's routed stanzas are not queued for it
+    /// (SEC-COM-19, SEC-COM-93).
+    pub detached: Arc<AtomicBool>,
 }
 
 /// A detached session's hand-over: send it a channel and it sends the session back.
@@ -329,6 +332,10 @@ impl Entry {
 
     pub fn is_available(&self) -> bool {
         self.available.load(Ordering::Relaxed)
+    }
+
+    pub fn is_detached(&self) -> bool {
+        self.detached.load(Ordering::Relaxed)
     }
 
     pub fn has_carbons(&self) -> bool {
