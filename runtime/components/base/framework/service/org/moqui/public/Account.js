@@ -156,6 +156,7 @@ function beginRegistration(p) {
         .condition('emailAddress', email)
         .one()
     const own = old && old.userId === ec.user.userId
+    const neutral = ec.l10n.localize('If eligible, verification instructions will be sent to the address.')
     if (ec.user.userId && !own)
         fail('Unprocessable', ec.l10n.localize('Sign out before registering another address'))
     // A disabled account that never verified its address belongs to nobody yet; a later request replaces its challenge.
@@ -168,7 +169,15 @@ function beginRegistration(p) {
             userId: old.userId,
             newAccount: 'Y',
         }).one()
-    if (!old || own || unclaimed) {
+    // an address another account has as its user name (not its email address) cannot make an account: answered as every
+    // other request is, so the answer does not tell it apart (SEC-PSA-06)
+    const nameTaken =
+        !old &&
+        !!ec.entity
+            .find('moqui.security.UserAccount')
+            .condition('username', email)
+            .one()
+    if (!nameTaken && (!old || own || unclaimed)) {
         let userId = old?.userId
         if (!old) {
             const placeholder = unusablePassword()
@@ -205,8 +214,10 @@ function beginRegistration(p) {
             expiresAt: now() + 3600000,
             newAccount: own ? 'N' : 'Y',
         })
+        // sent on a worker, not in the request: the time of the answer does not tell a new address from a claimed one
+        // (SEC-PSA-06). A failed send is logged by the worker; the challenge remains, so asking again resends.
         ec.service
-            .sync()
+            .async()
             .name('org.moqui.mail.EmailServices.send#EmailTemplate')
             .parameters({
                 emailTemplateId: template,
@@ -216,18 +227,11 @@ function beginRegistration(p) {
                 createEmailMessage: false,
             })
             .call()
-        // The answer stays the same either way; the challenge remains, so asking again resends.
-        if (ec.message.hasError()) {
-            ec.message.clearErrors()
-            ec.logger.error(
-                'Registration verification mail failed for user ' + userId,
-            )
-        }
+    } else {
+        // a claimed address costs the password hash a new account's creation does (SEC-PSA-06)
+        ec.user.hashPassword(unusablePassword())
     }
-    return {
-        message:
-            ec.l10n.localize('If eligible, verification instructions will be sent to the address.'),
-    }
+    return { message: neutral }
 }
 function verifyRegistration(p) {
     const c = find('RegistrationChallenge', {

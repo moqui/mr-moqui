@@ -702,14 +702,15 @@ fn is_property_set(call: &mut Call<'_>) -> Result<Ret, HostError> {
 }
 
 /// `System.propertyMatches(name, given)`: whether `given` is the value of the property, or of the conf attribute a
-/// selector names, compared by digest so the time does not depend on how much matched; false when either is empty. The
-/// value is not returned.
+/// selector names, compared by digest so the time does not depend on how much matched; false when either is empty, and
+/// when the value is the `CHANGEME` placeholder or ends with it, which is unset as `isConfValueSet` reads it
+/// (SEC-PSA-81: a PASS client left with the conf's placeholder is no client). The value is not returned.
 fn property_matches(call: &mut Call<'_>) -> Result<Ret, HostError> {
     use sha2::Digest as _;
     // a conf attribute by its selector (a PASS client's secret), else a property
     let value = crate::context::conf_env::setting_or_property(&call.text_or_empty(0));
     let given = call.opt_text(1).unwrap_or_default();
-    if value.is_empty() || given.is_empty() {
+    if value.trim().is_empty() || value.trim().ends_with("CHANGEME") || given.is_empty() {
         return Ok(false.into());
     }
     Ok((sha2::Sha256::digest(value.as_bytes()) == sha2::Sha256::digest(given.as_bytes())).into())
