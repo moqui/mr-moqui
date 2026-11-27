@@ -979,21 +979,25 @@ pub fn call(target: &Target, request: &ModelRequest, options: &mut CallOptions<'
 /// The refusal of a call made with a transaction open and no opt-in.
 pub const IN_TRANSACTION: &str = "a model call is not made while a transaction is open";
 
+/// The refusal, logged, of a call to model `model_id` while a transaction is open on this thread and the caller did
+/// not opt in (`allow`); `None` when the call may be made. [`call`] and `ec.llm.embed` share it.
+pub(crate) fn transaction_refusal(model_id: &str, allow: bool) -> Option<String> {
+    if allow || !moqui_core::transaction::thread_in_transaction() {
+        return None;
+    }
+    tracing::warn!(
+        "a call to model {model_id} was refused: a transaction is open on this thread and the caller did not opt in"
+    );
+    Some(format!(
+        "{IN_TRANSACTION}: make it outside the transaction (a screen transition with begin-transaction=\"false\", a \
+         service with transaction=\"ignore\" called with none open, an async task), or opt in with allowInTransaction"
+    ))
+}
+
 fn call_with_transaction(target: &Target, request: &ModelRequest, options: &mut CallOptions<'_>) -> Reply {
-    if !options.allow_in_transaction && moqui_core::transaction::thread_in_transaction() {
-        tracing::warn!(
-            "a call to model {} was refused: a transaction is open on this thread and the caller did not opt in",
-            target.model.id
-        );
+    if let Some(refusal) = transaction_refusal(&target.model.id, options.allow_in_transaction) {
         let mut reply = Reply::empty();
-        reply.finish = Finish::Error(ProviderError::new(
-            ErrorClass::BadRequest,
-            format!(
-                "{IN_TRANSACTION}: make it outside the transaction (a screen transition with begin-transaction=\"false\", \
-                 a service with transaction=\"ignore\" called with none open, an async task), or opt in with \
-                 allowInTransaction"
-            ),
-        ));
+        reply.finish = Finish::Error(ProviderError::new(ErrorClass::BadRequest, refusal));
         return reply;
     }
     let facade = options.recorder.as_ref().map(|recorder| recorder.facade);

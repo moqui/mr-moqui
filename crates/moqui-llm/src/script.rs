@@ -75,20 +75,34 @@ fn entity() -> Result<moqui_core::entity::EntityFacade, HostError> {
 }
 
 /// `ec.llm.embed(texts, {feature|model, allowInTransaction})`. One vector per text, from the model's `/v1/embeddings`
-/// ([`crate::embed`]); `texts` may be one string. A blank text is refused, naming its index, so the vectors stay one
-/// per text in the caller's order. An open transaction is refused unless `allowInTransaction` is set, and then it is
-/// suspended for the call, which is cut to the time it has left ([`crate::provider::outside_transaction`]). An empty
-/// list returns no vectors and does not call the model.
+/// ([`crate::embed`]); `texts` may be one string. A text that is blank, or not a string or a number, is refused,
+/// naming its index, so the vectors stay one per text in the caller's order. An open transaction is refused unless
+/// `allowInTransaction` is set, and then it is suspended for the call, which is cut to the time it has left
+/// ([`crate::provider::outside_transaction`]). An empty list returns no vectors and does not call the model.
 fn embed(call: &mut Call<'_>) -> Result<Ret, HostError> {
-    let texts: Vec<String> = match call.value_or_null(0) {
-        Value::List(items) => items.iter().map(moqui_lib::object::to_plain_string).collect(),
-        Value::String(text) => vec![text.to_string()],
+    let items = match call.value_or_null(0) {
+        Value::List(items) => items,
+        text @ Value::String(_) => vec![text],
         _ => return Err(HostError::message("ec.llm.embed takes a list of texts")),
     };
-    if let Some(index) = texts.iter().position(|text| text.trim().is_empty()) {
-        return Err(HostError::message(format!(
-            "ec.llm.embed text {index} is blank; every text gets a vector in its place, so pass none blank"
-        )));
+    let mut texts = Vec::with_capacity(items.len());
+    for (index, item) in items.iter().enumerate() {
+        let text = match item {
+            Value::String(_) | Value::I32(_) | Value::I64(_) | Value::F64(_) | Value::Decimal(_) => {
+                moqui_lib::object::to_plain_string(item)
+            }
+            _ => {
+                return Err(HostError::message(format!(
+                    "ec.llm.embed text {index} is not a string or a number"
+                )))
+            }
+        };
+        if text.trim().is_empty() {
+            return Err(HostError::message(format!(
+                "ec.llm.embed text {index} is blank; every text gets a vector in its place, so pass none blank"
+            )));
+        }
+        texts.push(text);
     }
     let options = call.value(1);
     let (model, feature, allow) = match options {
@@ -114,8 +128,8 @@ fn embed(call: &mut Call<'_>) -> Result<Ret, HostError> {
             },
         )
         .map_err(HostError::Lib)?;
-    if !allow && moqui_core::transaction::thread_in_transaction() {
-        return Err(HostError::message(crate::provider::IN_TRANSACTION));
+    if let Some(refusal) = crate::provider::transaction_refusal(&target.model.id, allow) {
+        return Err(HostError::message(refusal));
     }
     let vectors = crate::provider::outside_transaction(Some(&facade), &target.model.id, |ends| {
         llm.embed(&facade, &target, &texts, ends)
@@ -434,5 +448,128 @@ mod tests {
             .unwrap();
         assert!(no_api.contains("no embeddings API"), "{no_api}");
         assert!(resumed);
+        let refused = run_script(r#"ec.llm.embed(["hi", {a: 1}], {feature: "classify"})"#)
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains("text 1 is not a string or a number"), "{refused}");
+    }
+
+    const STUB_HOST: &str = "https://embed-stub.llm.test/";
+
+    /// Answers `/v1/embeddings` on [`STUB_HOST`] with the vectors out of `index` order, keeping each request; any other
+    /// request goes on, as a test elsewhere in the crate may make one meanwhile.
+    struct EmbeddingsStub {
+        seen: std::sync::Mutex<Vec<moqui_core::outbound::Request>>,
+    }
+
+    impl moqui_core::outbound::HttpSender for EmbeddingsStub {
+        fn send(
+            &self,
+            request: moqui_core::outbound::Request,
+        ) -> Result<moqui_core::outbound::Response, moqui_lib::error::Error> {
+            if !request.url.starts_with(STUB_HOST) {
+                return moqui_core::outbound::send_default(request);
+            }
+            self.seen.lock().unwrap().push(request);
+            let body = serde_json::json!({"data": [
+                {"index": 1, "embedding": [0.5, 2]},
+                {"index": 0, "embedding": [1.5, -0.25]}
+            ], "usage": {"prompt_tokens": 3}});
+            Ok(moqui_core::outbound::Response {
+                status: 200,
+                body: body.to_string(),
+                bytes: Vec::new(),
+                headers: vec![("content-type".to_string(), "application/json".to_string())],
+            })
+        }
+    }
+
+    /// `ec.llm.embed` gives the vectors back in the order of the texts, as numbers, with the model's id and name and
+    /// the dimension; with `allowInTransaction` the request is cut to the time the transaction has left.
+    #[test]
+    fn ec_llm_embed_returns_the_vectors_in_the_order_of_the_texts() {
+        let _turn = moqui_core::user::session::cookie_property_lock();
+        clear_context_stack();
+        let context = ExecutionContextFactory::test_context_with_conf(&format!(
+            r#"<moqui-conf><llm-facade>
+                <endpoint id="embed-stub" protocol="chat-completions" url="{STUB_HOST}" local="true"/>
+                <model id="embed-stub-model" endpoint="embed-stub" name="stub-embed-1"/>
+            </llm-facade></moqui-conf>"#
+        ));
+        let facade = moqui_core::testing::open();
+        context.factory().set_entity(facade.clone());
+        let _entered = context.enter();
+        let stub = std::sync::Arc::new(EmbeddingsStub {
+            seen: std::sync::Mutex::new(Vec::new()),
+        });
+        moqui_core::outbound::install_http_sender(stub.clone());
+        let embedded = |options: &str| {
+            let out = moqui_core::script::eval_value(&format!(
+                r#"JSON.stringify(ec.llm.embed(["first", "second"], {options}))"#
+            ))
+            .unwrap();
+            serde_json::from_str::<serde_json::Value>(&moqui_lib::object::to_plain_string(&out)).unwrap()
+        };
+        let expected = serde_json::json!({
+            "vectors": [[1.5, -0.25], [0.5, 2]],
+            "dimension": 2,
+            "modelId": "embed-stub-model",
+            "modelName": "stub-embed-1",
+        });
+        assert_eq!(embedded(r#"{model: "embed-stub-model"}"#), expected);
+        let transactions = facade.transactions_for("moqui.basic.Enumeration").unwrap();
+        let in_transaction = transactions
+            .run(
+                moqui_core::transaction::TransactionAttribute::UseOrBegin,
+                Some(std::time::Duration::from_secs(30)),
+                || Ok(embedded(r#"{model: "embed-stub-model", allowInTransaction: true}"#)),
+            )
+            .unwrap();
+        assert_eq!(in_transaction, expected);
+        // past its deadline nothing is sent
+        let llm = crate::facade(context.factory());
+        let target = llm
+            .resolve(
+                &facade,
+                &crate::registry::Want {
+                    model: Some("embed-stub-model"),
+                    ..crate::registry::Want::default()
+                },
+            )
+            .unwrap();
+        let late = llm
+            .embed_batches(
+                &facade,
+                &target,
+                &["late".to_string()],
+                std::time::Duration::from_secs(5),
+                Some(std::time::Instant::now()),
+            )
+            .unwrap();
+        assert!(late.vectors.is_empty());
+        assert_eq!(
+            late.error.map(|error| error.class),
+            Some(crate::provider::ErrorClass::Timeout)
+        );
+        moqui_core::outbound::clear_http_sender();
+        let seen = stub.seen.lock().unwrap();
+        assert_eq!(seen.len(), 2);
+        assert_eq!(seen[0].url, format!("{STUB_HOST}v1/embeddings"));
+        let body: serde_json::Value = serde_json::from_str(seen[0].body.as_deref().unwrap()).unwrap();
+        assert_eq!(
+            body,
+            serde_json::json!({"model": "stub-embed-1", "input": ["first", "second"]})
+        );
+        let limit = |request: &moqui_core::outbound::Request| request.timeout.unwrap();
+        assert!(
+            limit(&seen[0]) > std::time::Duration::from_secs(60),
+            "{:?}",
+            limit(&seen[0])
+        );
+        assert!(
+            limit(&seen[1]) <= std::time::Duration::from_secs(30),
+            "{:?}",
+            limit(&seen[1])
+        );
     }
 }

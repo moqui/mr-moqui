@@ -285,6 +285,14 @@ impl LlmFacade {
         let url = embeddings_url(&target.endpoint);
         let mut out = Batches::default();
         for batch in texts.chunks(BATCH) {
+            // past the deadline a request could only time out: none is sent and no call is logged
+            if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                out.error = Some(ProviderError::new(
+                    ErrorClass::Timeout,
+                    "the embeddings call ran out of time before this request was sent",
+                ));
+                break;
+            }
             let body = request_body(target, json!(batch));
             let ends = Instant::now() + timeout;
             let limits = pump::Limits::new(timeout, Some(deadline.map_or(ends, |deadline| deadline.min(ends))));
