@@ -293,14 +293,24 @@ function ogcUrls(layer, provider) {
     }
     return {url: built.url, styleUrl: "", ogc: built.ogc}
 }
+// A raster provider's endpoint that is a Cloud Optimized GeoTIFF rather than a tile template or a TileJSON: a path ending
+// in .tif or .tiff, with no placeholder (MapProviders.js tests such a provider by a range of that COG)
+const cogEndpoint = url => !/[{}]/.test(text(url)) && /\.tiff?$/i.test(text(url).split(/[?#]/)[0])
 // The URLs a layer's browser asks for: {url, styleUrl}, or a refusal.
 function layerUrls(layer, provider, kind) {
     const format = text(layer.formatEnumId)
     let url = ""
     let styleUrl = ""
     if (format === "MLF_VECTOR_STYLE") url = text(layer.styleLocation) || text(provider?.endpointUrl)
-    else if (format === "MLF_RASTER_XYZ") url = text(layer.sourceUrl) || text(provider?.endpointUrl)
-    else if (format === "MLF_ADAPTER") return {url: "", styleUrl: ""}
+    else if (format === "MLF_RASTER_XYZ") {
+        // a COG provider's URL is a GeoTIFF, never a tile template
+        if (!text(layer.sourceUrl) && cogEndpoint(provider?.endpointUrl))
+            return refusal(
+                "SOURCE_NOT_TILES",
+                L("its provider's URL is a GeoTIFF, not a tile template: give the layer its own tile URL")
+            )
+        url = text(layer.sourceUrl) || text(provider?.endpointUrl)
+    } else if (format === "MLF_ADAPTER") return {url: "", styleUrl: ""}
     else if (OGC_FORMATS.includes(format)) return ogcUrls(layer, provider)
     else {
         url = text(layer.sourceUrl)
@@ -1925,5 +1935,6 @@ const operations = {
     installationProfileId,
     originOf,
     templateUrls,
+    cogEndpoint,
     OUTLINE_ID
 })

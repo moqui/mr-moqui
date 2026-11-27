@@ -176,6 +176,7 @@ feature("a comparison side", { expect({ row }) { (row.name || "") == "" }, where
 feature("an empty list is not chosen", { expect() { ([] || "x") == "x" } })
 feature("&& keeps the false operand", { expect() { (0 && "x") === 0 } })
 feature("&& gives the right side", { expect() { ("a" && "b") == "b" } })
+feature("&& keeps an empty list, where JavaScript gives the right side", { expect() { Array.isArray([] && "x") && ([] && "x").length === 0 } })
 feature("each side once, the right only when chosen", { expect() { (count() || count()) == 1 && calls == 1 } })
 feature("a false && fails", { expect() { "a" && [] } })
 feature("a false || fails", { expect() { null || 0 } })
@@ -189,6 +190,7 @@ feature("a false || fails", { expect() { null || 0 } })
             ("an empty list is not chosen".to_string(), "passed"),
             ("&& keeps the false operand".to_string(), "passed"),
             ("&& gives the right side".to_string(), "passed"),
+            ("&& keeps an empty list, where JavaScript gives the right side".to_string(), "passed"),
             ("each side once, the right only when chosen".to_string(), "passed"),
             ("a false && fails".to_string(), "failed"),
             ("a false || fails".to_string(), "failed"),

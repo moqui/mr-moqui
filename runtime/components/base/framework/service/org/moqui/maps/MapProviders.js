@@ -342,9 +342,7 @@ function rasterTest(url, context) {
         hostsRow(strangeOrigins(tiles, url), url, L("The TileJSON"))
     ]
 }
-// A raster provider's endpoint that is a Cloud Optimized GeoTIFF rather than a tile template or a TileJSON: a path ending
-// in .tif or .tiff, with no placeholder
-const cogEndpoint = url => !/[{}]/.test(url) && /\.tiff?$/i.test(url.split(/[?#]/)[0])
+const cogEndpoint = url => mapConfig.cogEndpoint(url)
 function cogTest(provider, url, context) {
     const place = shownOrigin(mapConfig.originOf(url))
     if (proxied(provider) || text(provider.apiKey))
@@ -355,11 +353,9 @@ function cogTest(provider, url, context) {
                 text: L("A COG is read by the browser itself, so its provider has no key and is not reached through this server")
             }
         ]
-    const hadError = ec.message.hasError()
+    // an https URL with no credentials (LOCATION_INVALID otherwise), read as registering one of its COGs reads it
     const sources = ec.resource.script("component://framework/service/org/moqui/maps/MapSources.js")
     const read = sources.readCogHead(url, context.denyInternal)
-    // the header reader's error is this row's, not the test's
-    if (!hadError && ec.message.hasError()) ec.message.clearErrors()
     if (!read.ok)
         return [
             {

@@ -132,6 +132,15 @@ const jobParameters = () =>
     Object.fromEntries(rows(PARAMETER, {jobName: BACKUP_JOB}).map(row => [text(row.parameterName), text(row.parameterValue)]))
 const timeoutMs = job => Math.max(Number(job?.transactionTimeout) || 1800, 60) * 1000
 const paused = job => !(job.paused == null || job.paused === "N")
+// Whether now is within the job's fromDate and thruDate, both inclusive, as the scheduler has it
+// (crates/moqui-core/src/service/jobs.rs within_dates)
+const withinDates = (job, nowMs) => {
+    const from = ms(job.fromDate)
+    const thru = ms(job.thruDate)
+    return (from == null || from <= nowMs) && (thru == null || thru >= nowMs)
+}
+// Whether the scheduler runs the job on its schedule now: a cron expression, not paused, within its dates
+const scheduled = (job, nowMs) => !!job && !!text(job.cronExpression) && !paused(job) && withinDates(job, nowMs ?? now())
 // The run that holds the job's lock, or "": a lock is held only while the run it names has not ended.
 function lockHolder(lockRow) {
     const jobRunId = text(lockRow?.jobRunId)
@@ -211,10 +220,10 @@ const backupDirectory = () =>
     text(ec.factory.getConfValue(DIR_PROPERTY)) ||
     String(ec.factory.getRuntimePath()) + "/db/backup"
 // For other modules (MapSources.js, the room archives need): the directory the backup job writes its local archives to while
-// it runs on a schedule (a cron expression, not paused), else null. No caller check: it answers no archive and no state.
+// it runs on a schedule (scheduled: a cron expression, not paused, within its dates), else null. No caller check: it answers no archive and no state.
 function scheduledDirectory() {
     const job = backupJob()
-    return job && text(job.cronExpression) && !paused(job) ? backupDirectory() : null
+    return scheduled(job) ? backupDirectory() : null
 }
 // {archives} newest first, or {problem} why they could not be listed; the path is not answered.
 function archivesOf() {
@@ -351,17 +360,19 @@ function getCoverage() {
         let next = null
         try {
             description = cron ? text(ec.service.getCronDescription(cron)) : ""
-            next = cron && !paused(job) ? ec.service.nextCronExecution(cron, nowMs) : null
+            next = scheduled(job, nowMs) ? ec.service.nextCronExecution(cron, nowMs) : null
         } catch (error) {
             description = ""
         }
         schedule = {
-            scheduled: !!cron && !paused(job),
+            scheduled: scheduled(job, nowMs),
             text: !cron
                 ? ec.l10n.localize("No schedule: it runs only when asked for")
                 : paused(job)
                   ? ec.l10n.localize("Paused: no backup is made on a schedule until an instance administrator resumes the job")
-                  : "Scheduled" + (description ? ": " + description : ""),
+                  : !withinDates(job, nowMs)
+                    ? ec.l10n.localize("Outside its dates: the job's from and thru dates do not include now, so no backup is made on a schedule")
+                    : "Scheduled" + (description ? ": " + description : ""),
             nextRunText: next == null ? "" : zoned(next)
         }
     }
@@ -396,7 +407,11 @@ function getCoverage() {
         state = "unscheduled"
         stateText +=
             ". No next backup is scheduled: " +
-            (paused(job) ? "the backup job is paused" : "the backup job has no schedule") +
+            (paused(job)
+                ? "the backup job is paused"
+                : text(job.cronExpression)
+                  ? "the backup job's dates do not include now"
+                  : "the backup job has no schedule") +
             ", so the data changed since is not backed up until one is asked for"
     }
     if (database.kind === "mixed" && state === "success") {

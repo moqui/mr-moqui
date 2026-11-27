@@ -45,6 +45,8 @@ const COG = "MLF_COG"
 const ARCHIVE_FORMATS = PMTILES.concat([COG])
 // the bytes a provider's COG is first read in: its header and directories (a COG's are at its start)
 const COG_HEAD = 65536
+// a provider's COG URL: https, a host with no credentials, a path
+const COG_URL_PATTERN = /^https:\/\/[^\/?#@\s]+\//i
 // the band settings a COG layer starts with when nobody chose any, from its header (P4c; MapConfig.js reads them)
 const COLORMAPS = ["grey", "viridis", "terrain", "magma"]
 // storage that reads a range of a file without reading the rest (plans/Maps.md §5, the backend table)
@@ -466,6 +468,9 @@ const privateAllowed = row => row?.allowPrivateNetwork === "Y" || (row?.allowPri
 // provider's COG reads it so, and so does the test of a raster provider whose endpoint is a COG (MapProviders.js).
 function readCogHead(url, denyInternal) {
     const no = (reasonCode, reason, extra) => Object.assign({ok: false, reasonCode, reason}, extra || {})
+    // an https URL with no credentials: a browser reads it without the page's, and none is sent from here
+    if (!COG_URL_PATTERN.test(text(url)))
+        return no("LOCATION_INVALID", L("A provider's COG is at an https URL of the provider's own host"))
     const mapConfig = ec.resource.script("component://framework/service/org/moqui/maps/MapConfig.js")
     // this site's own origin, which a browser sends with its range requests; with none known only * passes
     const pageOrigin = mapConfig.originOf(text(ec.web ? ec.web.getWebappRootUrl(true, null) : "")) || ""
@@ -505,13 +510,25 @@ function readCogHead(url, denyInternal) {
     } catch (error) {
         return no("NO_RANGES", L("Its URL answered more than the range asked"))
     }
-    const header = ec.service
-        .sync()
-        .name("org.moqui.maps.MapSourceServices.read#CogHeader")
-        .parameters({bytes, size: range ? Number(range[1]) : bytes.length})
-        .disableAuthz()
-        .call()
-    if (ec.message.hasError()) return no("HEADER_UNREAD", ec.message.getErrorsString())
+    // the reader's own errors only, apart from any the caller already has
+    let header = null
+    let failure = ""
+    ec.message.pushErrors()
+    try {
+        header = ec.service
+            .sync()
+            .name("org.moqui.maps.MapSourceServices.read#CogHeader")
+            .parameters({bytes, size: range ? Number(range[1]) : bytes.length})
+            .disableAuthz()
+            .call()
+        if (ec.message.hasError()) failure = ec.message.getErrorsString()
+    } catch (error) {
+        failure = String(error?.message ?? error)
+    } finally {
+        ec.message.clearErrors()
+        ec.message.popErrors()
+    }
+    if (failure) return no("HEADER_UNREAD", failure)
     const problems = Array.from(header?.problems || []).map(text)
     if (problems.length)
         return no("COG_INVALID", say("A map cannot draw this GeoTIFF: ${problems}", {problems: problems.join("; ")}), {problems})
@@ -521,7 +538,7 @@ function readCogHead(url, denyInternal) {
 // of its start, which must be a 206 the page's origin may read by CORS, then its header read in Rust from those bytes
 function registerCogUrl(layer, refused) {
     const url = text(layer.sourceUrl)
-    if (!/^https:\/\/[^\/?#@\s]+\//i.test(url))
+    if (!COG_URL_PATTERN.test(url))
         return refused("LOCATION_INVALID", L("A provider's COG is at an https URL of the provider's own host"))
     if (text(ec.factory.getConfValue("maps@external-requests")) === "false")
         return refused("EXTERNAL_REQUESTS_OFF", L("Outside requests are turned off (maps@external-requests)"))
@@ -1107,6 +1124,27 @@ const spaceUnread = () => ({
 // (scheduledDirectory: a cron expression, not paused); a directory inside the runtime is placed by its watched directory;
 // one outside it (or relative) is left out, since no host API names the filesystem of a path and a mount point's prefix
 // would put a separately mounted backup disk on "/".
+// Whether the content blobs are in the embedded database, from the status map's DataSources rows ({group, embedded}): the
+// transactional datasource embedded and the content one absent or embedded; a read clone or another group does not count
+function embeddedOf(sources) {
+    const rows = Array.from(sources || [])
+    const group = name => rows.find(source => text(source.group) === name)
+    const content = group("content")
+    return group("transactional")?.embedded === true && (!content || content.embedded === true)
+}
+// The space check of these layers, setup() reading the server (spaceSetup): a failure of its reads is its own row's,
+// unavailable, never the provider's, and with no registered archive there is no row
+function spaceCheck(layers, setup) {
+    try {
+        const read = setup()
+        return archiveSpace(layers, read.filesystems, read.backup)
+    } catch (error) {
+        ec.logger.error("Map readiness maps.archive.space could not be checked: " + String(error?.message ?? error))
+        return Array.from(layers || []).some(layer => text(layer.resourceLocation) && text(layer.sourceRevision))
+            ? spaceUnread()
+            : null
+    }
+}
 function spaceSetup() {
     let status
     try {
@@ -1121,10 +1159,7 @@ function spaceSetup() {
         holds: Array.from(row.holds || []),
         availableBytes: row.availableBytes
     }))
-    const sources = Array.from(status.DataSources || [])
-    const group = name => sources.find(source => text(source.group) === name)
-    const content = group("content")
-    const embedded = group("transactional")?.embedded === true && (!content || content.embedded === true)
+    const embedded = embeddedOf(status.DataSources)
     let holds = null
     if (embedded) {
         const backups = ec.resource.script("component://framework/service/org/moqui/admin/Backups.js")
@@ -1174,15 +1209,8 @@ function readiness(p) {
         })
     const csp = rasterCspCheck(layers)
     if (csp) checks.push(csp)
-    // the room to replace archives: a failure of its own reads is its row's, never the provider's
-    try {
-        const setup = spaceSetup()
-        const space = archiveSpace(layers, setup.filesystems, setup.backup)
-        if (space) checks.push(space)
-    } catch (error) {
-        ec.logger.error("Map readiness maps.archive.space could not be checked: " + String(error?.message ?? error))
-        checks.push(spaceUnread())
-    }
+    const space = spaceCheck(layers, spaceSetup)
+    if (space) checks.push(space)
     if (!checks.length)
         checks.push({
             checkKey: "maps.archive.none",
@@ -1207,5 +1235,8 @@ const operations = {sourceAccess, archiveTile, register, findArchives, readiness
     archiveSpace,
     // a provider's COG read by one range (MapProviders.js, the test of a COG provider)
     readCogHead,
+    // the space check's parts, for MapsSource.spec.js
+    embeddedOf,
+    spaceCheck,
     SOURCE_PATH
 })
