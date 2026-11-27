@@ -1016,7 +1016,7 @@ const page = ec.service.rest().uri().protocol("https").host("example.com").port(
 | `isLastRunBeforeLastSchedule(cron, lastRun, description, now)` | Whether there is no last run, or it is before the latest time the expression came due |
 | `restApi.resolveService(path, method)` | The service of a Service REST API path (without `/rest/s1`): `{serviceName, path, method, pathParameters}`; not an authorization check |
 | `restApi.getRootResources()`, `restApi.getFreshRootResources()` | The root resources of the Service REST API |
-| `getServiceDefinition(serviceName)` | The definition with its auto-parameters expanded, or null: `inParameterNames`, `inParameterInfoMap`, `outParameterInfoMap` (each `{name, type, required, parameterNode}`), `serviceNode`, `getInParameter(name)`, `convertValidateCleanParameters(parameters)`. It does not run the service |
+| `getServiceDefinition(serviceName)` | The definition with its auto-parameters expanded, or null: `serviceName`, `verb`, `noun`, `inParameterNames`, `inParameterInfoMap`, `outParameterInfoMap` (each `{name, type, required, parameterNode}`), `serviceNode`, `getInParameter(name)`, `convertValidateCleanParameters(parameters)`. It does not run the service |
 | `getKnownServiceNames()` | The names of the defined services |
 | `getAllServiceInfo(levels)` | A row for each service package down a number of name levels (2) |
 | `getSecaRuleCount()`, `secaRulesByServiceName.get(serviceName)` | How many service ECA rules there are; the rules of a service, or null |
