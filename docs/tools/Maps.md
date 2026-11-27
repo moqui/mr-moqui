@@ -1134,7 +1134,9 @@ come.
   viewer sees the latest position and a kept trail the server received from when the audience first reached them only
   (by the server's receive time, `receivedDate`, never the device's; from their entry's `fromDate`, or their group
   snapshot's `reachedDate`, kept when the group is added again only for the same membership row), so no position
-  reported before a person was added, or while they were out of the group, reaches them; the owner sees everything. The
+  reported before a person was added, or while they were out of the group, reaches them (but for the snapshot member
+  whose own row is ended and reopened, or made again with the same `fromDate`, who keeps their first reach and sees
+  what was received while out, which plans/Location-Sharing.md §3.1 accepts); the owner sees everything. The
   snapshot (`LocationShareAudienceMember`) is the group's members when the owner adds the group, each with the
   membership row that makes them one, less every one the chat directory refuses the owner at that act (its hooks, the
   external-caller rule, the people who blocked the owner; a block made later applies at the next re-add, as for a direct

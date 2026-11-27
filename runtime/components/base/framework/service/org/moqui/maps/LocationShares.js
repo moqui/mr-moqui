@@ -584,8 +584,9 @@ function create(p) {
 
 /** update#Share: an active share of the caller's own, extended, shortened, relabeled or given more audience. */
 function update(p) {
-    const now = nowMillis()
     const share = ownShare(p.shareId, true)
+    // the time read once the share's lock is held, so a report committed before this change is never stamped after it
+    const now = nowMillis()
     if (!share) return notFound()
     if (!isActive(share, now)) return refuse("SHARE_ENDED", "This share has ended: start a new one")
     if (!blank(p.thruDate)) {
@@ -806,8 +807,9 @@ function lastCellOf(share, now) {
 
 /** report#Position: from the owner, for an active share, at most one a min-interval-seconds; rounded here when approximate. */
 function report(p) {
-    const now = nowMillis()
     const share = ownShare(p.shareId, true)
+    // received once the share's lock is held: an audience added before it commits is stamped before this report
+    const now = nowMillis()
     if (!share) return notFound(404)
     if (!isActive(share, now)) return {statusCode: 410, reasonCode: "SHARE_ENDED"}
     // a share sent from a device takes that device's reports only, and one sent from a browser page (no device) no
@@ -866,7 +868,12 @@ function report(p) {
     if (share.keepTrail === "Y")
         ec.entity
             .makeValue(TRAIL)
-            .setAll(Object.assign({shareId: share.shareId, observedDate: new Date(position.observed), receivedDate: new Date(now)}, values))
+            .setAll(
+                Object.assign(
+                    {shareId: share.shareId, observedDate: new Date(position.observed), receivedDate: new Date(now)},
+                    values
+                )
+            )
             .createOrUpdate()
     const reached = currentUserIds(share)
     push(share, reached, Object.assign({event: "position", observedDate: position.observed, approximate: approximated}, values))

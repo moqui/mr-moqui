@@ -170,7 +170,7 @@ object LocationRules {
     /** How long the confirmation's Send stays disabled after the dialog has the window's focus (tapjacking). */
     const val SEND_DELAY_MS = 1_000L
 
-    /** The longest audience the confirmation names, in characters; more is cut with an ellipsis. */
+    /** The longest audience the confirmation names, in code points; more is cut with an ellipsis. */
     const val WHOM_MAX = 400
 
     /**
@@ -191,7 +191,10 @@ object LocationRules {
         }
         val line = kept.toString().replace(Regex(" +"), " ").trim()
         if (line.isEmpty()) return null
-        return if (line.length <= WHOM_MAX) line else line.take(WHOM_MAX - 1).trimEnd() + "…"
+        // by code point, so a character outside the BMP is never cut in half
+        val points = line.codePointCount(0, line.length)
+        if (points <= WHOM_MAX) return line
+        return line.substring(0, line.offsetByCodePoints(0, WHOM_MAX - 1)).trimEnd() + "…"
     }
 
     /**

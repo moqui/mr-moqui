@@ -112,8 +112,8 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="memberFromDate" type="date-time"><description>The fromDate of the membership row that made the user
             a member at the snapshot: the user reaches the share only while that row is current</description></field>
         <field name="reachedDate" type="date-time"><description>When this entry's snapshot first held the user, kept when
-            the group is added again: the user sees the latest position and the trail observed from then on only
-            (plans/Location-Sharing.md §3.4)</description></field>
+            the group is added again only for the same membership row (memberFromDate): the user sees the latest position
+            and the trail the server received from then on only (plans/Location-Sharing.md §3.4)</description></field>
         <relationship type="one" related="moqui.maps.LocationShareAudience"/>
         <relationship type="one" related="moqui.security.UserAccount"/>
         <index name="LOC_SHARE_AUD_MEMBER_USER"><index-field name="userId"/></index>
@@ -157,7 +157,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="accuracy" type="number-float" ai-opt-out="true"/>
         <field name="heading" type="number-float" ai-opt-out="true"/>
         <field name="speed" type="number-float" ai-opt-out="true"/>
-        <field name="receivedDate" type="date-time"><description>When the server received it: a viewer reads the trail
+        <field name="receivedDate" type="date-time" ai-opt-out="true"><description>When the server received it: a viewer reads the trail
             from when the audience first reached them on, by this time, never the device's (plans/Location-Sharing.md
             §3.4)</description></field>
         <relationship type="one" related="moqui.maps.LocationShare"/>
