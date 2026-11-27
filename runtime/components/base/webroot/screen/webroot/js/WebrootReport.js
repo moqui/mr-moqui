@@ -635,19 +635,22 @@
     // A geomap's drill-down into Maps (plans/Maps.md §2, the Dashboard geomap row): Browse centered on a country's largest
     // land area (its extent, so an overseas territory does not widen it) or on a point, a plain extent or point and nothing
     // else of the panel's rows. Offered only where the dashboard's screen names the maps link (appLinks.maps: a viewer whose
-    // own grants open the Maps app); "" otherwise. A ring across the antimeridian (Russia, Fiji) is unwrapped first, so
-    // its extent is its own and not the world's: west greater than east, as Browse and m-map take an extent across it. A
-    // ring still wider than 180° unwrapped (one around a pole) keeps its plain bounds.
+    // own grants open the Maps app); "" otherwise. Each outer ring across the antimeridian (Russia, Fiji) is unwrapped
+    // first, before its area is taken and its largest picked, so its area and extent are its own and not the world's: west
+    // greater than east, as Browse and m-map take an extent across it. A ring still wider than 180° unwrapped (one around a
+    // pole) keeps its plain longitudes.
     report.countryExtent = (country) => {
+        const unwrap = (ring) => {
+            const lons = ring.map((point) => point[0]);
+            if (Math.max(...lons) - Math.min(...lons) <= 180) return ring;
+            const shifted = ring.map(([lon, lat]) => [lon < 0 ? lon + 360 : lon, lat]), across = shifted.map((point) => point[0]);
+            return Math.max(...across) - Math.min(...across) <= 180 ? shifted : ring;
+        };
         const area = (points) => Math.abs(points.reduce((sum, point, at) => { const next = points[(at + 1) % points.length]; return sum + point[0] * next[1] - next[0] * point[1]; }, 0));
-        const outer = (country && country.polygons || []).map((polygon) => polygon[0]).filter((ring) => ring && ring.length).sort((a, b) => area(b) - area(a))[0];
+        const outer = (country && country.polygons || []).map((polygon) => polygon[0]).filter((ring) => ring && ring.length).map(unwrap)
+            .sort((a, b) => area(b) - area(a))[0];
         if (!outer) return null;
-        const lats = outer.map((point) => point[1]);
-        let lons = outer.map((point) => point[0]);
-        if (Math.max(...lons) - Math.min(...lons) > 180) {
-            const shifted = lons.map((lon) => lon < 0 ? lon + 360 : lon);
-            if (Math.max(...shifted) - Math.min(...shifted) <= 180) lons = shifted;
-        }
+        const lons = outer.map((point) => point[0]), lats = outer.map((point) => point[1]);
         const wrap = (lon) => lon > 180 ? lon - 360 : lon;
         return [wrap(Math.min(...lons)), Math.min(...lats), wrap(Math.max(...lons)), Math.max(...lats)].map((value) => Math.round(value * 1e4) / 1e4);
     };

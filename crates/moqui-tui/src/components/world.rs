@@ -105,9 +105,9 @@ pub(crate) fn land(lon: f64, lat: f64) -> bool {
 /// Each country of `libs/naturalearth/countries-110m.json` (Natural Earth 110m, public domain) with an ISO id: its ISO
 /// 3166 alpha-3 (the Moqui geoId), alpha-2 and numeric codes and its extent `[west, south, east, north]` in degrees as the
 /// browser's geomap gives it to Maps (`report.countryExtent` in WebrootReport.js): the bounding box of the outer ring
-/// with the largest area, so an overseas territory does not widen it, each edge rounded to 1e-4. A ring across the
-/// antimeridian (Russia, Fiji) is unwrapped first, so its west is greater than its east; one around a pole
-/// (Antarctica) keeps -180 to 180. The alpha codes are the ones the table of
+/// with the largest area, so an overseas territory does not widen it, each edge rounded to 1e-4. Each ring across the
+/// antimeridian (Russia, Fiji) is unwrapped before its area is taken, so Russia's west is greater than its east and Fiji
+/// is Viti Levu; one around a pole (Antarctica) keeps -180 to 180. The alpha codes are the ones the table of
 /// `report.countryNumeric` gives that numeric code, "" where it gives none (South Sudan, and Sudan, which the table
 /// knows by its former code 736). Generated ahead of time by loading WebrootReport.js and running its `topoCountries`
 /// and `countryExtent` over the outline.
@@ -164,7 +164,7 @@ const COUNTRY_EXTENTS: [(&str, &str, &str, [f64; 4]); 174] = [
     ("ERI", "ER", "232", [36.3226, 12.4561, 43.0798, 17.9976]),
     ("EST", "EE", "233", [23.3408, 57.4748, 28.1325, 59.6108]),
     ("FLK", "FK", "238", [-61.1988, -52.2995, -57.75, -51.0995]),
-    ("FJI", "FJ", "242", [178.596, -17.0113, -179.7948, -16.0212]),
+    ("FJI", "FJ", "242", [177.2856, -18.2875, 178.7184, -17.3397]),
     ("FIN", "FI", "246", [20.6444, 59.8461, 31.5165, 70.1639]),
     ("FRA", "FR", "250", [-4.5918, 42.3433, 8.0983, 51.148]),
     ("ATF", "TF", "260", [68.7193, -49.7742, 70.5589, -48.6249]),
@@ -423,8 +423,9 @@ mod tests {
             "a numeric code without its leading zero"
         );
         assert_eq!(country_extent("040"), country_extent("at"));
-        // a country across the antimeridian has its own extent, west greater than east; one around a pole the world's
-        assert_eq!(country_extent("FJI"), Some([178.596, -17.0113, -179.7948, -16.0212]));
+        // a country across the antimeridian has its own extent, west greater than east; one around a pole the world's.
+        // Fiji's rings are unwrapped before their areas are compared: Viti Levu, not Vanua Levu across the antimeridian
+        assert_eq!(country_extent("FJI"), Some([177.2856, -18.2875, 178.7184, -17.3397]));
         let russia = country_extent("RU").unwrap();
         assert!(russia[0] > 0.0 && russia[2] < 0.0, "{russia:?}");
         assert_eq!(

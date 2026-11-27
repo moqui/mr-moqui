@@ -520,7 +520,7 @@ module.exports = {
                     this.view = { center: [lon, lat], zoom: 14 };
                 }
                 // an area to open on (a dashboard geomap's country): west,south,east,north, with no marker; west greater than
-                // east crosses the antimeridian (Russia, Fiji), as m-map fits it
+                // east crosses the antimeridian (Russia), as m-map fits it
                 const box = String(p.extent || '').split(',').map((value) => value.trim() === '' ? NaN : Number(value));
                 const lonOk = (lon) => lon >= -180 && lon <= 180;
                 if (!this.view && !this.marker && box.length === 4 && box.every(Number.isFinite) && lonOk(box[0]) && lonOk(box[2])

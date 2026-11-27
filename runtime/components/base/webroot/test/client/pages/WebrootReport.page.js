@@ -1013,8 +1013,9 @@ test('a geomap country or point opens Maps there only where the dashboard offers
     // mainland France, not French Guiana
     assert.equal(extent[0]>-6 && extent[2]<10 && extent[1]>41 && extent[3]<52,true);
     // a country across the antimeridian opens at its own extent, west greater than east, not the whole world; one around a
-    // pole keeps the world's longitudes
-    assert.deepEqual(report.countryExtent(outline.find(country=>country.id==='242')),[178.596,-17.0113,-179.7948,-16.0212]);
+    // pole keeps the world's longitudes. Rings are unwrapped before their areas are compared: Fiji is Viti Levu, not Vanua
+    // Levu, whose raw ring crosses the antimeridian
+    assert.deepEqual(report.countryExtent(outline.find(country=>country.id==='242')),[177.2856,-18.2875,178.7184,-17.3397]);
     const russia=report.countryExtent(outline.find(country=>country.id==='643'));
     assert.equal(russia[0]>0 && russia[2]<0 && russia[2]+360-russia[0]<180,true,String(russia));
     const antarctica=report.countryExtent(outline.find(country=>country.id==='010'));
