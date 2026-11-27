@@ -140,6 +140,8 @@ enum Next {
     /// Send this many bytes of the range, then fail.
     CutAfter(usize),
     Status(u16),
+    /// A whole answer (200, the range ignored) of this many bytes of the file.
+    WholeShort(usize),
 }
 
 /// A request the fake server was asked: its path and headers.
@@ -228,6 +230,10 @@ impl PackageServer for Fake {
         };
         if let Next::Status(status) = next {
             return Ok(answer(status, Vec::new(), Vec::new()));
+        }
+        if let Next::WholeShort(bytes) = next {
+            let etag = format!("\"{}\"", self.tag);
+            return Ok(answer(200, vec![("ETag", etag)], self.zip[..bytes].to_vec()));
         }
         if !path.ends_with(&format!("revision={revision}")) {
             return Ok(answer(409, Vec::new(), Vec::new()));
@@ -465,7 +471,7 @@ fn a_download_cut_off_resumes_from_its_part_file() {
         fn get(&self, path: &str, headers: &[(String, String)]) -> Result<ServerAnswer, String> {
             let answer = self.0.get(path, headers)?;
             if answer.status == 206 {
-                self.1.pause(ACCOUNT, PACKAGE);
+                self.1.pause(ACCOUNT, PACKAGE, None);
             }
             Ok(answer)
         }
@@ -665,7 +671,7 @@ fn a_shared_devices_wipe_takes_the_accounts_packages_and_its_downloads() {
         Status::Installed { revision: 1 }
     );
     // one more download asked and not run yet, and a part file of one cut off
-    packages.queue(ACCOUNT, "P2", 1).unwrap();
+    assert!(packages.queue(ACCOUNT, "P2", 1).unwrap().1);
     let part_dir = dir.join(format!("data/{ACCOUNT}.packages/P3"));
     std::fs::create_dir_all(&part_dir).unwrap();
     std::fs::write(part_dir.join("1.zip.part"), b"PK").unwrap();
@@ -764,8 +770,14 @@ fn a_cancel_stops_a_download_and_keeps_nothing_of_it() {
     let packages = packages(&dir);
     assert_eq!(
         packages.queue(ACCOUNT, PACKAGE, 1).unwrap(),
-        Status::Queued { revision: 1 }
+        (Status::Queued { revision: 1 }, true)
     );
+    // asked again: the same job, not queued a second time; a revision under 1 refused
+    assert_eq!(
+        packages.queue(ACCOUNT, PACKAGE, 1).unwrap(),
+        (Status::Queued { revision: 1 }, false)
+    );
+    assert!(packages.queue(ACCOUNT, PACKAGE, 0).is_err());
     assert!(packages.cancel(ACCOUNT, PACKAGE));
     assert_eq!(
         packages.job_status(ACCOUNT, PACKAGE),
@@ -802,5 +814,284 @@ fn a_cancel_stops_a_download_and_keeps_nothing_of_it() {
     packages.delete(ACCOUNT, PACKAGE).unwrap();
     assert_eq!(installed(&packages), None);
     assert!(packages.delete(ACCOUNT, "../x").is_err());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The review of OF2: a cancel with no run under way (a failed or paused download, or one from before the app started:
+/// no job) removes its part file at once, and the folders it leaves empty, named after the server, go too.
+#[test]
+fn a_cancel_with_no_run_removes_the_part_now() {
+    let dir = dir("cancel-part");
+    let packages = packages(&dir);
+    let account_dir = dir.join(format!("data/{ACCOUNT}.packages"));
+    let part = account_dir.join(format!("{PACKAGE}/1.zip.part"));
+    // a part kept from before the app started: no job
+    std::fs::create_dir_all(part.parent().unwrap()).unwrap();
+    std::fs::write(&part, b"PK").unwrap();
+    std::fs::write(part.with_extension("tag"), b"sha256-x").unwrap();
+    assert!(packages.cancel(ACCOUNT, PACKAGE));
+    assert!(!part.exists());
+    assert!(!account_dir.exists(), "an empty account folder is left");
+    // a paused download's part
+    let server = Fake::new(package(1), 1);
+    server.next.lock().unwrap().push(Next::CutAfter(1000));
+    let cut = download(&packages, &server, ACCOUNT, PACKAGE, 1, MAX);
+    assert!(matches!(&cut, Status::Failed { retry: true, .. }), "{cut:?}");
+    assert!(part.exists());
+    assert!(packages.cancel(ACCOUNT, PACKAGE));
+    assert!(!part.exists() && !account_dir.exists());
+    assert_eq!(
+        packages.job_status(ACCOUNT, PACKAGE),
+        Some(Status::Cancelled { revision: 1 })
+    );
+    // nothing to cancel
+    assert!(!packages.cancel(ACCOUNT, PACKAGE));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The review of OF2: a wipe while a download runs (a shared device's sign-out) leaves nothing of it, no empty folder
+/// named after the server either, and the run ends cancelled.
+#[test]
+fn a_wipe_during_a_download_leaves_no_folder() {
+    let dir = dir("wipe-run");
+    let packages = packages(&dir);
+    struct WipeOnLast<'a>(&'a Fake, &'a Packages);
+    impl PackageServer for WipeOnLast<'_> {
+        fn get(&self, path: &str, headers: &[(String, String)]) -> Result<ServerAnswer, String> {
+            let last = crate::proxy::header(headers, "range")
+                .is_some_and(|range| range.ends_with(&format!("-{}", self.0.zip.len() - 1)));
+            let answer = self.0.get(path, headers)?;
+            if last {
+                self.1.forget(ACCOUNT);
+            }
+            Ok(answer)
+        }
+    }
+    let server = Fake::new(package(1), 1);
+    let ended = download(&packages, &WipeOnLast(&server, &packages), ACCOUNT, PACKAGE, 1, MAX);
+    assert_eq!(ended, Status::Cancelled { revision: 1 });
+    assert!(!dir.join(format!("data/{ACCOUNT}.packages")).exists());
+    assert_eq!(installed(&packages), None);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The review of OF2: a run that holds a package (here cancelled and still stopping) is never joined by a second:
+/// another download of it is refused until the first has stopped, and a second run asked meanwhile does not start.
+#[test]
+fn a_package_being_cancelled_is_not_downloaded_twice_at_once() {
+    let dir = dir("twice");
+    let packages = packages(&dir);
+    struct Meanwhile<'a>(&'a Fake, &'a Packages, Mutex<Option<(String, Status)>>);
+    impl PackageServer for Meanwhile<'_> {
+        fn get(&self, path: &str, headers: &[(String, String)]) -> Result<ServerAnswer, String> {
+            let answer = self.0.get(path, headers)?;
+            if answer.status == 206 && self.2.lock().unwrap().is_none() {
+                self.1.cancel(ACCOUNT, PACKAGE);
+                let queued = self.1.queue(ACCOUNT, PACKAGE, 1).err().unwrap_or_default();
+                let second = download(self.1, self.0, ACCOUNT, PACKAGE, 1, MAX);
+                *self.2.lock().unwrap() = Some((queued, second));
+            }
+            Ok(answer)
+        }
+    }
+    let server = Fake::new(package(1), 1);
+    let meanwhile = Meanwhile(&server, &packages, Mutex::new(None));
+    assert_eq!(
+        download(&packages, &meanwhile, ACCOUNT, PACKAGE, 1, MAX),
+        Status::Cancelled { revision: 1 }
+    );
+    let (queued, second) = meanwhile.2.lock().unwrap().clone().unwrap();
+    assert!(queued.contains("being stopped"), "{queued}");
+    assert!(!second.ended(), "{second:?}");
+    assert_eq!(server.ranges().len(), 1, "one run asked for bytes");
+    // once stopped, it may be asked again
+    assert!(packages.queue(ACCOUNT, PACKAGE, 1).unwrap().1);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The review of OF2: two downloads of one account under way together cannot pass its cap: each counts what the
+/// others have reserved and not yet downloaded.
+#[test]
+fn two_downloads_of_an_account_together_keep_within_its_cap() {
+    let dir = dir("cap-together");
+    let packages = packages(&dir);
+    let first = packages.take(ACCOUNT, "P1", 1, None).unwrap();
+    let second = packages.take(ACCOUNT, "P2", 1, None).unwrap();
+    assert!(packages.reserve(ACCOUNT, "P1", &first, 600, 1000));
+    assert!(!packages.reserve(ACCOUNT, "P2", &second, 600, 1000));
+    assert!(packages.reserve(ACCOUNT, "P2", &second, 400, 1000));
+    // another account's do not count
+    let other = packages.take("other.example.com-1", "P1", 1, None).unwrap();
+    assert!(packages.reserve("other.example.com-1", "P1", &other, 1000, 1000));
+    // a run that ended holds nothing
+    packages.release(&first);
+    let third = packages.take(ACCOUNT, "P3", 1, None).unwrap();
+    assert!(packages.reserve(ACCOUNT, "P3", &third, 600, 1000));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The review of OF2: a pause by a runner whose run ended does not pause the next run.
+#[test]
+fn a_pause_is_the_runners_own() {
+    let dir = dir("runner");
+    let packages = packages(&dir);
+    let job = packages.take(ACCOUNT, PACKAGE, 1, Some("work-2")).unwrap();
+    packages.pause(ACCOUNT, PACKAGE, Some("work-1"));
+    assert!(!job.paused());
+    packages.pause(ACCOUNT, PACKAGE, Some("work-2"));
+    assert!(job.paused());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The review of OF2: a whole answer cut short is a server failure to try again, the part kept; the host's giving up
+/// makes the failure final.
+#[test]
+fn a_whole_answer_cut_short_is_tried_again_and_a_give_up_is_final() {
+    let dir = dir("whole-short");
+    let packages = packages(&dir);
+    let server = Fake::new(package(1), 1);
+    server.next.lock().unwrap().push(Next::WholeShort(5000));
+    let ended = download(&packages, &server, ACCOUNT, PACKAGE, 1, MAX);
+    assert!(
+        matches!(&ended, Status::Failed { code, retry: true, .. } if code == "SERVER"),
+        "{ended:?}"
+    );
+    let given = packages.give_up(ACCOUNT, PACKAGE).unwrap();
+    assert!(matches!(&given, Status::Failed { retry: false, .. }), "{given:?}");
+    // a revision under 1 is not downloaded
+    assert!(matches!(
+        download(&packages, &server, ACCOUNT, PACKAGE, 0, MAX),
+        Status::Failed { retry: false, .. }
+    ));
+    assert_eq!(
+        download(&packages, &server, ACCOUNT, PACKAGE, 1, MAX),
+        Status::Installed { revision: 1 }
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The review of OF2: a tag's temporary file a crash left goes with the part files.
+#[test]
+fn a_tags_temporary_file_goes_with_the_parts() {
+    let dir = dir("tmp");
+    std::fs::create_dir_all(&dir).unwrap();
+    for name in ["1.zip.part", "1.zip.tag", ".1.zip.tag.4242.tmp", "1"] {
+        std::fs::write(dir.join(name), b"x").unwrap();
+    }
+    assert_eq!(download::remove_parts(&dir, None), 3);
+    let left: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(left, ["1"]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The review of OF2: no member or account file may take a name Windows keeps for a device, whatever its extension.
+#[test]
+fn a_windows_device_name_is_no_member_path() {
+    for path in [
+        "CON",
+        "nul.txt",
+        "basemap/aux.pmtiles",
+        "Com1.tar.gz",
+        "fonts/LPT9.css",
+        "prn",
+    ] {
+        assert!(!unzip::plain_path(path), "{path}");
+    }
+    for path in [
+        "console.json",
+        "com10.json",
+        "basemap/LIGHT.pmtiles",
+        "fonts/noto-sans/files/a@2x.png",
+        "nullable.json",
+    ] {
+        assert!(unzip::plain_path(path), "{path}");
+    }
+    assert!(!crate::files::plain_name("con.example.com-0123456789ab"));
+    assert!(crate::files::plain_name("console.example.com-0123456789ab"));
+}
+
+/// A zip64 package: the end record's fields at their markers and the members' sizes and offset in their zip64 extra
+/// field, as a package past 4 GiB is written; read for its entries as a plain one is.
+#[test]
+fn a_zip64_package_is_read_by_its_zip64_records() {
+    let dir = dir("zip64");
+    std::fs::create_dir_all(&dir).unwrap();
+    let data = b"the tiles";
+    let name = b"basemap/LIGHT.pmtiles";
+    let mut out = Vec::new();
+    // the local header: zip64 sizes in its extra field
+    out.extend_from_slice(&0x0403_4b50u32.to_le_bytes());
+    out.extend_from_slice(&45u16.to_le_bytes());
+    out.extend_from_slice(&[0; 8]);
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.extend_from_slice(&u32::MAX.to_le_bytes());
+    out.extend_from_slice(&u32::MAX.to_le_bytes());
+    out.extend_from_slice(&(name.len() as u16).to_le_bytes());
+    out.extend_from_slice(&20u16.to_le_bytes());
+    out.extend_from_slice(name);
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&16u16.to_le_bytes());
+    out.extend_from_slice(&(data.len() as u64).to_le_bytes());
+    out.extend_from_slice(&(data.len() as u64).to_le_bytes());
+    out.extend_from_slice(data);
+    // the central header: sizes and offset at their markers, in its zip64 extra field
+    let central_at = out.len() as u64;
+    let mut central = Vec::new();
+    central.extend_from_slice(&0x0201_4b50u32.to_le_bytes());
+    central.extend_from_slice(&((3u16 << 8) | 45).to_le_bytes());
+    central.extend_from_slice(&45u16.to_le_bytes());
+    central.extend_from_slice(&[0; 8]);
+    central.extend_from_slice(&0u32.to_le_bytes());
+    central.extend_from_slice(&u32::MAX.to_le_bytes());
+    central.extend_from_slice(&u32::MAX.to_le_bytes());
+    central.extend_from_slice(&(name.len() as u16).to_le_bytes());
+    central.extend_from_slice(&28u16.to_le_bytes());
+    central.extend_from_slice(&[0; 6]);
+    central.extend_from_slice(&(0o100_644u32 << 16).to_le_bytes());
+    central.extend_from_slice(&u32::MAX.to_le_bytes());
+    central.extend_from_slice(name);
+    central.extend_from_slice(&1u16.to_le_bytes());
+    central.extend_from_slice(&24u16.to_le_bytes());
+    central.extend_from_slice(&(data.len() as u64).to_le_bytes());
+    central.extend_from_slice(&(data.len() as u64).to_le_bytes());
+    central.extend_from_slice(&0u64.to_le_bytes());
+    out.extend_from_slice(&central);
+    // the zip64 end record and its locator, then the end record with its fields at their markers
+    let zip64_at = out.len() as u64;
+    out.extend_from_slice(&0x0606_4b50u32.to_le_bytes());
+    out.extend_from_slice(&44u64.to_le_bytes());
+    out.extend_from_slice(&45u16.to_le_bytes());
+    out.extend_from_slice(&45u16.to_le_bytes());
+    out.extend_from_slice(&[0; 8]);
+    out.extend_from_slice(&1u64.to_le_bytes());
+    out.extend_from_slice(&1u64.to_le_bytes());
+    out.extend_from_slice(&(central.len() as u64).to_le_bytes());
+    out.extend_from_slice(&central_at.to_le_bytes());
+    out.extend_from_slice(&0x0706_4b50u32.to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.extend_from_slice(&zip64_at.to_le_bytes());
+    out.extend_from_slice(&1u32.to_le_bytes());
+    out.extend_from_slice(&0x0605_4b50u32.to_le_bytes());
+    out.extend_from_slice(&[0; 4]);
+    out.extend_from_slice(&0xFFFFu16.to_le_bytes());
+    out.extend_from_slice(&0xFFFFu16.to_le_bytes());
+    out.extend_from_slice(&u32::MAX.to_le_bytes());
+    out.extend_from_slice(&u32::MAX.to_le_bytes());
+    out.extend_from_slice(&0u16.to_le_bytes());
+    let path = dir.join("p.zip");
+    std::fs::write(&path, &out).unwrap();
+    let mut file = std::fs::File::open(&path).unwrap();
+    let entries = unzip::entries(&mut file, out.len() as u64).unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(
+        (entries[0].path.as_str(), entries[0].size),
+        ("basemap/LIGHT.pmtiles", data.len() as u64)
+    );
+    let mut copied = Vec::new();
+    unzip::copy_entry(&mut file, &entries[0], &mut copied, &|| false).unwrap();
+    assert_eq!(copied, data);
     let _ = std::fs::remove_dir_all(&dir);
 }

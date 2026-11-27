@@ -103,7 +103,8 @@ pub fn answer(
         ("Content-Type", content_type(member).to_string()),
         ("ETag", tag.clone()),
         ("Accept-Ranges", "bytes".to_string()),
-        ("Cache-Control", "no-cache".to_string()),
+        // never kept by the webview: the URL names no account, and the next account's shell asks the same URLs
+        ("Cache-Control", "no-store".to_string()),
         ("X-Content-Type-Options", "nosniff".to_string()),
     ];
     // an If-Range of another tag takes the whole file, as HTTP has it

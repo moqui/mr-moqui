@@ -146,20 +146,41 @@ pub(crate) fn entries(file: &mut File, len: u64) -> Result<Vec<Entry>, Refused> 
     Ok(entries)
 }
 
-/// Copy `entry`'s bytes from `file` to `out`, at most its size: the bytes copied.
+/// Copy `entry`'s bytes from `file` to `out`, at most its size, asking `stop` before each MiB: the bytes copied.
 ///
 /// # Errors
 ///
-/// Returns the read or write error as text.
-pub(crate) fn copy_entry(file: &mut File, entry: &Entry, out: &mut dyn std::io::Write) -> Result<u64, String> {
+/// Returns the read or write error as text, and "Cancelled" when `stop` says so.
+pub(crate) fn copy_entry(
+    file: &mut File,
+    entry: &Entry,
+    out: &mut dyn std::io::Write,
+    stop: &dyn Fn() -> bool,
+) -> Result<u64, String> {
     file.seek(SeekFrom::Start(entry.data_at))
         .map_err(|err| err.to_string())?;
-    std::io::copy(&mut Read::take(&mut *file, entry.size), out).map_err(|err| err.to_string())
+    let mut taken = Read::take(&mut *file, entry.size);
+    let mut buffer = vec![0u8; 1024 * 1024];
+    let mut copied = 0u64;
+    loop {
+        if stop() {
+            return Err("Cancelled".to_string());
+        }
+        let read = match taken.read(&mut buffer) {
+            Ok(0) => return Ok(copied),
+            Ok(read) => read,
+            Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(err) => return Err(err.to_string()),
+        };
+        out.write_all(&buffer[..read]).map_err(|err| err.to_string())?;
+        copied += read as u64;
+    }
 }
 
 /// Whether `path` is a member path that stays in its directory: relative, `/`-separated, each part a plain name of
-/// letters, digits, `.`, `-`, `_` and `@` that does not start with `.` (so no `.`, `..` or hidden file), no `\`, no
-/// drive, no control character, at most [`PATH_MAX`] bytes.
+/// letters, digits, `.`, `-`, `_` and `@` that does not start with `.` (so no `.`, `..` or hidden file) and is no
+/// device name of Windows (`crate::files::windows_reserved`), no `\`, no drive, no control character, at most
+/// [`PATH_MAX`] bytes.
 pub(crate) fn plain_path(path: &str) -> bool {
     !path.is_empty()
         && path.len() <= PATH_MAX
@@ -169,6 +190,7 @@ pub(crate) fn plain_path(path: &str) -> bool {
                 && part
                     .chars()
                     .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | '@'))
+                && !crate::files::windows_reserved(part)
         })
 }
 

@@ -210,21 +210,29 @@ A map region the user downloads to read with no network (plans/Maps-Offline.md Â
 
 - **Where:** `client/data/<account>.packages/<packageId>/<revision>/`, beside the store, owner-only as it is (folders
   0700, files 0600), outside `store-max-mb`, within `packages-max-mb` for the account's packages; a download starts
-  only when the disk has room for the rest of the file, its unpacked copy and 64 MB more (the check is skipped, logged,
-  where the free space cannot be read: Windows). A personal account keeps them across sign-outs; a shared one's go at
-  its sign-out or revocation, and removing an account deletes them (`Packages::forget`, with the store).
+  only when the disk has room for the rest of the file, its unpacked copy and 64 MB more (`statvfs`, or
+  `GetDiskFreeSpaceExW` on Windows; skipped, logged, where neither answers), and the cap counts what the account's other
+  downloads under way still have to fetch. A personal account keeps them across sign-outs; a shared one's go at its
+  sign-out or revocation, and removing an account deletes them (`Packages::forget`, with the store), no empty folder
+  named after the server left behind. No file or folder takes a name Windows keeps for a device (CON, NUL, COM1 and
+  the rest, with any extension).
 - **The download** is a task of the host (a thread of its own), with the account's key as the outbox's requests: the
   server's `packageList` for the revision's tag and size, the zip by ranges of 4 MiB with `If-Range` the tag into
   `<revision>.zip.part`, resumed from its length by the next try; the whole file's SHA-256 against the tag; each member
   the manifest lists unpacked with its size and SHA-256 checked (a stored zip read by its central directory: a member
   outside the manifest, a missing, compressed, encrypted or symlink one, a path outside the folder or one member past
   2 GiB refuses the package); then the revision's folder put in place by rename and the earlier one removed. A failed
-  check keeps the revision the device had; a 409 reads the list again and offers the new revision (`stale`).
-- **The page reads it** at `/__moqui-app/maps/<packageId>/<path>` on the shell's origin only, never forwarded and never
-  on the app windows' origin (every account's server pages share it and run the server's code): the current account's
+  check keeps the revision the device had; a 409 reads the list again and offers the new revision (`stale`). One run
+  at a time holds a package: a download asked while a cancelled or other revision's run is still stopping is refused
+  for a moment. A cancel with no run under way (a failed or paused download, or one of before the app started) removes
+  its part at once.
+- **The page reads it** at `/__moqui-app/maps/<packageId>/<path>` on the shell's origin, from the shell's own webview
+  only (every webview has the schemes, so a server page could otherwise embed it as an image or a font; a request whose
+  `Origin` or `Sec-Fetch-Site` names another origin is refused too), never forwarded and never on the app windows'
+  origin (every account's server pages share it and run the server's code): the current account's
   installed revision, HEAD, GET and one `Range` as a 206 slice read from the file (at most 16 MiB; the body is whole,
   as the runtimes take it, so a file past 16 MiB is not answered whole: 413, ask by range), the member's SHA-256 its
-  `ETag`, a path the manifest does not list 404, no 304.
+  `ETag`, `Cache-Control: no-store` (the URL names no account), a path the manifest does not list 404, no 304.
 - **Commands** (the shell's, with its nonce, `moquiDesktop.packages`): `list` (`packages_list`: the server's list, null
   offline, and the device's), `download(packageId, revision)` (`packages_download`), `cancel` (`packages_cancel`, its
   part goes), `remove` (`packages_delete`) and `status` (`packages_status`: each installed package's id, name, revision,

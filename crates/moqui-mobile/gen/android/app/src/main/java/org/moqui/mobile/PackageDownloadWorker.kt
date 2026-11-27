@@ -10,10 +10,14 @@ import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequest
 import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.ListenableWorker
 import androidx.work.WorkManager
-import androidx.work.Worker
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
+import com.google.common.util.concurrent.ListenableFuture
+import java.util.concurrent.Executor
+import java.util.concurrent.Executors
+import java.util.concurrent.FutureTask
 import java.util.concurrent.TimeUnit
 
 /**
@@ -24,9 +28,19 @@ import java.util.concurrent.TimeUnit
  * Resumable: a cut, a server error or WorkManager's stop (its network lost, Wi-Fi gone with "only on Wi-Fi", its ten
  * minutes up) pauses the run with its part kept (`Native.packagePause`), and the next run goes on from there, backing
  * off from 30 seconds. One work per account and package; a new revision asked replaces the run of another.
+ *
+ * A [ListenableWorker] on an executor of its own, one download at a time ([DOWNLOADS]): a download takes minutes, and
+ * WorkManager's own threads stay for [FlushWorker] and [RegisterWorker]. Its stop pauses its own run only (the work's
+ * id is the run's `runner`), and its last run (`PackageDownloadRules.isLast`) has Rust tell a failure as final.
  */
-class PackageDownloadWorker(context: Context, params: WorkerParameters) : Worker(context, params) {
-  override fun doWork(): Result {
+class PackageDownloadWorker(context: Context, params: WorkerParameters) : ListenableWorker(context, params) {
+  override fun startWork(): ListenableFuture<Result> {
+    val task = RunFuture { download() }
+    DOWNLOADS.execute(task)
+    return task
+  }
+
+  private fun download(): Result {
     val app = applicationContext
     val account = inputData.getString(ACCOUNT) ?: return Result.failure()
     val packageId = inputData.getString(PACKAGE) ?: return Result.failure()
@@ -34,7 +48,14 @@ class PackageDownloadWorker(context: Context, params: WorkerParameters) : Worker
     if (revision < 0) return Result.failure()
     if (!Native.ensure(app)) return Result.retry()
     val ended = try {
-      Native.packageDownload(Native.dataDir(app), account, packageId, revision)
+      Native.packageDownload(
+        Native.dataDir(app),
+        account,
+        packageId,
+        revision,
+        id.toString(),
+        PackageDownloadRules.isLast(runAttemptCount),
+      )
     } catch (err: Throwable) {
       Log.e(TAG, "The offline map $packageId was not downloaded", err)
       PackageDownloadRules.RETRY
@@ -54,14 +75,38 @@ class PackageDownloadWorker(context: Context, params: WorkerParameters) : Worker
     val account = inputData.getString(ACCOUNT) ?: return
     val packageId = inputData.getString(PACKAGE) ?: return
     try {
-      Native.packagePause(account, packageId)
+      Native.packagePause(account, packageId, id.toString())
     } catch (err: Throwable) {
       Log.w(TAG, "The offline map $packageId was not paused", err)
     }
   }
 
+  /** A task that tells its listeners when it ends (WorkManager's), as Guava's ListenableFutureTask does. */
+  private class RunFuture(work: () -> Result) : FutureTask<Result>(work), ListenableFuture<Result> {
+    private val listeners = mutableListOf<Pair<Runnable, Executor>>()
+    private var finished = false
+
+    override fun addListener(listener: Runnable, executor: Executor) {
+      val now = synchronized(listeners) {
+        if (!finished) listeners.add(Pair(listener, executor))
+        finished
+      }
+      if (now) executor.execute(listener)
+    }
+
+    override fun done() {
+      val waiting = synchronized(listeners) {
+        finished = true
+        listeners.toList().also { listeners.clear() }
+      }
+      for ((listener, executor) in waiting) executor.execute(listener)
+    }
+  }
+
   companion object {
     private const val TAG = "moqui-mobile"
+    /** The map downloads' own thread: one at a time, never one of WorkManager's. */
+    private val DOWNLOADS = Executors.newSingleThreadExecutor { task -> Thread(task, "moqui-map-package") }
     const val ACCOUNT = "account"
     const val PACKAGE = "packageId"
     const val REVISION = "revision"
@@ -131,12 +176,15 @@ object PackageDownloadRules {
   fun constraints(wifiOnly: Boolean): Constraints =
     Constraints.Builder().setRequiredNetworkType(networkType(wifiOnly)).setRequiresStorageNotLow(true).build()
 
+  /** Whether a run's [attempt] (0 the first) is the last one, after which a download is given up. */
+  fun isLast(attempt: Int): Boolean = attempt + 1 >= MAX_ATTEMPTS
+
   /** What WorkManager is told of a run that answered [result] on its [attempt] (0 the first), stopped or not. */
   fun outcome(result: Int, attempt: Int, stopped: Boolean): Outcome =
     when {
       // stopped by WorkManager: it runs the work again itself, from the kept part
       stopped -> Outcome.RETRY
-      result == RETRY && attempt + 1 < MAX_ATTEMPTS -> Outcome.RETRY
+      result == RETRY && !isLast(attempt) -> Outcome.RETRY
       result == RETRY -> Outcome.FAILURE
       else -> Outcome.SUCCESS
     }

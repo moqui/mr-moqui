@@ -827,10 +827,19 @@ pub(crate) const PACKAGE_DONE: i32 = 0;
 pub(crate) const PACKAGE_RETRY: i32 = 1;
 
 /// Download `revision` of an account's offline map package on the worker's thread (plans/Maps-Offline.md §2.4), with
-/// the app's client (the process's, made from the store when WorkManager started it): [`PACKAGE_DONE`] when it ended
-/// (installed, refused, cancelled, stale: the shell reads which), [`PACKAGE_RETRY`] for a cut, a server error, a pause,
-/// or a run of it already under way.
-pub(crate) fn package_download(dir: &Path, account: &str, package_id: &str, revision: i64) -> i32 {
+/// the app's client (the process's, made from the store when WorkManager started it), as `runner` (the work's id, so
+/// its stop pauses this run only): [`PACKAGE_DONE`] when it ended (installed, refused, cancelled, stale: the shell
+/// reads which), [`PACKAGE_RETRY`] for a cut, a server error, a pause, or a run of it already under way. On the
+/// worker's `last` run a failure to try again is made final ([`moqui_client::packages::Packages::give_up`]), so the
+/// shell does not show a download that nothing runs again.
+pub(crate) fn package_download(
+    dir: &Path,
+    account: &str,
+    package_id: &str,
+    revision: i64,
+    runner: &str,
+    last: bool,
+) -> i32 {
     if ENDING.load(std::sync::atomic::Ordering::SeqCst) || !network_ready() {
         return PACKAGE_RETRY;
     }
@@ -844,7 +853,14 @@ pub(crate) fn package_download(dir: &Path, account: &str, package_id: &str, revi
     let host = moqui_lib::sync::lock(&APP_HOST)
         .clone()
         .unwrap_or_else(|| Arc::new(NoPages));
-    package_outcome(&core.download_package(Some(host.as_ref()), account, package_id, revision))
+    let ended = core.download_package(Some(host.as_ref()), account, package_id, revision, Some(runner));
+    let outcome = package_outcome(&ended);
+    if last && outcome == PACKAGE_RETRY && matches!(ended, moqui_client::packages::Status::Failed { .. }) {
+        log::warn!("Map packages: the download of {package_id} is given up after its runs");
+        core.packages().give_up(account, package_id);
+        return PACKAGE_DONE;
+    }
+    outcome
 }
 
 /// The worker's word for a download's state.
@@ -857,10 +873,11 @@ pub(crate) fn package_outcome(status: &moqui_client::packages::Status) -> i32 {
     }
 }
 
-/// The worker was stopped by WorkManager: the download ends at its next range with its part kept.
-pub(crate) fn package_pause(account: &str, package_id: &str) {
+/// The worker `runner` was stopped by WorkManager: its download ends at its next range with its part kept; a run of
+/// another work (a replacement) goes on.
+pub(crate) fn package_pause(account: &str, package_id: &str, runner: &str) {
     if let Some(core) = moqui_lib::sync::lock(&CORE).as_ref() {
-        core.packages().pause(account, package_id);
+        core.packages().pause(account, package_id, Some(runner));
     }
 }
 
@@ -1071,8 +1088,8 @@ mod entries {
         .resolve::<LogErrorAndDefault>()
     }
 
-    /// `Native.packageDownload(dataDir, account, packageId, revision)`: an offline map's download on the worker's thread;
-    /// 0 done, 1 to try again (on an error or a panic too).
+    /// `Native.packageDownload(dataDir, account, packageId, revision, runner, last)`: an offline map's download on the
+    /// worker's thread; 0 done, 1 to try again (on an error or a panic too).
     #[no_mangle]
     pub extern "system" fn Java_org_moqui_mobile_Native_packageDownload<'caller>(
         mut env: EnvUnowned<'caller>,
@@ -1081,32 +1098,40 @@ mod entries {
         account: JString<'caller>,
         package_id: JString<'caller>,
         revision: jlong,
+        runner: JString<'caller>,
+        last: jboolean,
     ) -> jint {
         env.with_env(|env| -> Result<i32, jni::errors::Error> {
             let dir = client_dir(&data_dir.try_to_string(env)?);
             let account = account.try_to_string(env)?;
             let package_id = package_id.try_to_string(env)?;
-            Ok(
-                std::panic::catch_unwind(|| super::package_download(&dir, &account, &package_id, revision))
-                    .unwrap_or_else(|_| {
-                        log::error!("Map packages: the download panicked");
-                        super::PACKAGE_RETRY
-                    }),
-            )
+            let runner = runner.try_to_string(env)?;
+            Ok(std::panic::catch_unwind(|| {
+                super::package_download(&dir, &account, &package_id, revision, &runner, last)
+            })
+            .unwrap_or_else(|_| {
+                log::error!("Map packages: the download panicked");
+                super::PACKAGE_RETRY
+            }))
         })
         .resolve::<LogErrorAndDefault>()
     }
 
-    /// `Native.packagePause(account, packageId)`: WorkManager stopped the worker.
+    /// `Native.packagePause(account, packageId, runner)`: WorkManager stopped the worker `runner`.
     #[no_mangle]
     pub extern "system" fn Java_org_moqui_mobile_Native_packagePause<'caller>(
         mut env: EnvUnowned<'caller>,
         _class: JClass<'caller>,
         account: JString<'caller>,
         package_id: JString<'caller>,
+        runner: JString<'caller>,
     ) {
         env.with_env(|env| -> Result<(), jni::errors::Error> {
-            super::package_pause(&account.try_to_string(env)?, &package_id.try_to_string(env)?);
+            super::package_pause(
+                &account.try_to_string(env)?,
+                &package_id.try_to_string(env)?,
+                &runner.try_to_string(env)?,
+            );
             Ok(())
         })
         .resolve::<LogErrorAndDefault>();

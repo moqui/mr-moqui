@@ -45,14 +45,14 @@ mod unzip;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub use addresses::{search_rows as search_address_rows, ADDRESSES_MEMBER};
-pub use download::{download, list, PackageServer, ProxyServer, ServerAnswer};
+pub use download::{download, download_by, list, PackageServer, ProxyServer, ServerAnswer};
 pub use serve::{answer as serve, Served, PATH_PREFIX};
 
 /// The server's list of the user's packages: the Offline screen's `packageList` transition (`find#Packages`).
@@ -101,7 +101,8 @@ pub enum Status {
     /// Installed: served from `revision`'s directory.
     Installed { revision: i64 },
     /// Stopped: `code` says why (TOO_LARGE, NO_SPACE, CHECKSUM, BAD_PACKAGE, NOT_FOUND, NOT_READY, UNAUTHORIZED,
-    /// OFFLINE, SERVER, CHANGED, PAUSED); `retry` when a later try may do (a network cut, a server error).
+    /// OFFLINE, SERVER, CHANGED, PAUSED); `retry` when a later try may do (a network cut, a server error), false once
+    /// the host gave up on it ([`Packages::give_up`]).
     Failed {
         revision: i64,
         code: String,
@@ -141,6 +142,11 @@ pub(crate) struct Job {
     /// range with its part kept, to be resumed.
     pub(crate) pause: AtomicBool,
     pub(crate) running: AtomicBool,
+    /// Who runs it (Android's WorkManager work id), so a stop of a run that ended pauses no other.
+    pub(crate) runner: Mutex<Option<String>>,
+    /// The bytes the run counts against the account's cap while it downloads, beside what is on disk (its whole
+    /// file once it passed the check, [`Packages::reserve`]).
+    pub(crate) reserved: AtomicU64,
     pub(crate) status: Mutex<Status>,
 }
 
@@ -151,6 +157,8 @@ impl Job {
             cancel: AtomicBool::new(false),
             pause: AtomicBool::new(false),
             running: AtomicBool::new(false),
+            runner: Mutex::new(None),
+            reserved: AtomicU64::new(0),
             status: Mutex::new(Status::Queued { revision }),
         }
     }
@@ -298,63 +306,136 @@ impl Packages {
         Value::Array(list)
     }
 
-    /// A download of `revision` of a package asked for: its job, queued, unless one is under way (whose state is
-    /// answered instead). An ended job of the package is replaced.
-    pub fn queue(&self, account: &str, package_id: &str, revision: i64) -> Result<Status, String> {
+    /// A download of `revision` of a package asked for: its state, and whether it was queued now (the host starts a
+    /// run only then). A job of that revision not ended is answered as it is; an ended one is replaced. Refused for a
+    /// revision under 1 (the server's start at 1), and while a run of the package that is being stopped still holds
+    /// it (cancelled, or of another revision, which this stops): never two runs on one package's files.
+    ///
+    /// # Errors
+    ///
+    /// Returns why it was not queued.
+    pub fn queue(&self, account: &str, package_id: &str, revision: i64) -> Result<(Status, bool), String> {
         if self.package_dir(account, package_id).is_none() {
             return Err("Not a package".to_string());
+        }
+        if revision < 1 {
+            return Err("Not a revision of the package".to_string());
         }
         let mut jobs = moqui_lib::sync::lock(&self.jobs);
         let key = (account.to_string(), package_id.to_string());
         if let Some(job) = jobs.get(&key) {
             let status = moqui_lib::sync::lock(&job.status).clone();
-            if !status.ended() && job.revision == revision {
-                return Ok(status);
+            let running = job.running.load(Ordering::SeqCst);
+            if job.revision == revision && !job.cancelled() && (running || !status.ended()) {
+                return Ok((status, false));
             }
-            // another revision asked while one runs: that run stops at its next range
-            job.cancel.store(true, Ordering::SeqCst);
+            if running {
+                // another revision's run stops at its next range, a cancelled one is stopping: ask again then
+                job.cancel.store(true, Ordering::SeqCst);
+                return Err("The offline map's earlier download is being stopped: try again in a moment".to_string());
+            }
         }
         let job = Arc::new(Job::new(revision));
         let status = moqui_lib::sync::lock(&job.status).clone();
         jobs.insert(key, job);
-        Ok(status)
+        Ok((status, true))
     }
 
-    /// The job a run of a download takes: the one queued for `revision`, else a new one; none while another run holds
-    /// it (a second worker, a second task).
-    pub(crate) fn take(&self, account: &str, package_id: &str, revision: i64) -> Option<Arc<Job>> {
+    /// The job a run of a download takes: the one queued for `revision`, else a new one; none while any run holds the
+    /// package (a second worker, a second task, a cancelled or other revision's run still stopping, which this stops
+    /// when it is another revision's), so two runs never share its files. `runner` names who runs it.
+    pub(crate) fn take(
+        &self,
+        account: &str,
+        package_id: &str,
+        revision: i64,
+        runner: Option<&str>,
+    ) -> Option<Arc<Job>> {
         let mut jobs = moqui_lib::sync::lock(&self.jobs);
         let key = (account.to_string(), package_id.to_string());
         let job = match jobs.get(&key) {
-            Some(job) if job.revision == revision && !job.cancelled() => Arc::clone(job),
             Some(job) if job.running.load(Ordering::SeqCst) => {
-                job.cancel.store(true, Ordering::SeqCst);
-                let job = Arc::new(Job::new(revision));
-                jobs.insert(key, Arc::clone(&job));
-                job
+                if job.revision != revision {
+                    job.cancel.store(true, Ordering::SeqCst);
+                }
+                return None;
             }
+            Some(job) if job.revision == revision && !job.cancelled() => Arc::clone(job),
             _ => {
                 let job = Arc::new(Job::new(revision));
                 jobs.insert(key, Arc::clone(&job));
                 job
             }
         };
-        let taken = job
-            .running
-            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-            .is_ok();
-        if taken {
-            job.pause.store(false, Ordering::SeqCst);
+        job.running.store(true, Ordering::SeqCst);
+        job.pause.store(false, Ordering::SeqCst);
+        job.reserved.store(0, Ordering::SeqCst);
+        *moqui_lib::sync::lock(&job.runner) = runner.map(str::to_string);
+        Some(job)
+    }
+
+    /// The end of a run: its job no longer held, its reservation gone.
+    pub(crate) fn release(&self, job: &Job) {
+        let _jobs = moqui_lib::sync::lock(&self.jobs);
+        job.reserved.store(0, Ordering::SeqCst);
+        *moqui_lib::sync::lock(&job.runner) = None;
+        job.running.store(false, Ordering::SeqCst);
+    }
+
+    /// Whether `size` more bytes for a package keep the account's packages within `max_bytes`, counting what is on
+    /// disk of its other packages and what their runs under way still have to download; when they do, the run holds
+    /// them as reserved. Under the jobs' lock, so two runs of one account cannot together pass the cap.
+    pub(crate) fn reserve(&self, account: &str, package_id: &str, job: &Job, size: u64, max_bytes: u64) -> bool {
+        let jobs = moqui_lib::sync::lock(&self.jobs);
+        let mut used = self.used(account, package_id);
+        for ((owner, id), other) in jobs.iter() {
+            if owner != account || id == package_id || !other.running.load(Ordering::SeqCst) {
+                continue;
+            }
+            let part = self
+                .package_dir(account, id)
+                .map(|dir| download::part_len(&dir, other.revision))
+                .unwrap_or(0);
+            used = used.saturating_add(other.reserved.load(Ordering::SeqCst).saturating_sub(part));
         }
-        taken.then_some(job)
+        if size.saturating_add(used) > max_bytes {
+            return false;
+        }
+        job.reserved.store(size, Ordering::SeqCst);
+        true
     }
 
     /// Pause a package's download (the host stopped its run): it ends at its next range, failed to be tried again
-    /// (PAUSED), its part kept, so the next run resumes it.
-    pub fn pause(&self, account: &str, package_id: &str) {
-        if let Some(job) = moqui_lib::sync::lock(&self.jobs).get(&(account.to_string(), package_id.to_string())) {
+    /// (PAUSED), its part kept, so the next run resumes it. With `runner`, only that runner's run: a stop that comes
+    /// after its run ended never pauses the next one.
+    pub fn pause(&self, account: &str, package_id: &str, runner: Option<&str>) {
+        let jobs = moqui_lib::sync::lock(&self.jobs);
+        let Some(job) = jobs.get(&(account.to_string(), package_id.to_string())) else {
+            return;
+        };
+        let held = job.running.load(Ordering::SeqCst)
+            && runner.is_none_or(|runner| moqui_lib::sync::lock(&job.runner).as_deref() == Some(runner));
+        if held {
             job.pause.store(true, Ordering::SeqCst);
         }
+    }
+
+    /// The host gave up on a package's download (Android's worker after its runs): its last failure is told as final
+    /// (`retry` false), its part kept for a download asked again. The state it now has.
+    pub fn give_up(&self, account: &str, package_id: &str) -> Option<Status> {
+        let jobs = moqui_lib::sync::lock(&self.jobs);
+        let job = jobs.get(&(account.to_string(), package_id.to_string()))?;
+        if !job.running.load(Ordering::SeqCst) {
+            let mut status = moqui_lib::sync::lock(&job.status);
+            if let Status::Failed { retry, reason, .. } = &mut *status {
+                if *retry {
+                    *retry = false;
+                    reason.push_str(": the app stopped trying; download it again");
+                }
+            }
+        }
+        let status = moqui_lib::sync::lock(&job.status).clone();
+        Some(status)
     }
 
     /// The state of a package's download, if one was asked for since the app started.
@@ -365,19 +446,23 @@ impl Packages {
         Some(status)
     }
 
-    /// Cancel a package's download: it stops at its next range, and its part file goes. Whether one was under way.
+    /// Cancel a package's download: a run stops at its next range and removes its part; with no run under way (a
+    /// download that failed or paused, or one of before the app started) its part goes now. An installed revision
+    /// stays. Whether a download was under way or had a part here.
     pub fn cancel(&self, account: &str, package_id: &str) -> bool {
         let jobs = moqui_lib::sync::lock(&self.jobs);
-        let Some(job) = jobs.get(&(account.to_string(), package_id.to_string())) else {
-            return false;
-        };
-        let was = !moqui_lib::sync::lock(&job.status).ended();
-        job.cancel.store(true, Ordering::SeqCst);
-        if was && !job.running.load(Ordering::SeqCst) {
-            job.set(Status::Cancelled { revision: job.revision });
-            if let Some(dir) = self.package_dir(account, package_id) {
-                download::remove_parts(&dir, None);
+        let job = jobs.get(&(account.to_string(), package_id.to_string()));
+        let mut was = job.is_some_and(|job| !moqui_lib::sync::lock(&job.status).ended());
+        if let Some(job) = job {
+            job.cancel.store(true, Ordering::SeqCst);
+            if job.running.load(Ordering::SeqCst) {
+                return true;
             }
+            job.set(Status::Cancelled { revision: job.revision });
+        }
+        if let Some(dir) = self.package_dir(account, package_id) {
+            was |= download::remove_parts(&dir, None) > 0;
+            prune(&dir);
         }
         was
     }
@@ -447,7 +532,8 @@ impl Packages {
 }
 
 /// The free bytes of the filesystem `path` is on, for an unprivileged writer: `statvfs`'s available blocks on Unix
-/// (Android too); none elsewhere, where the check is passed by (logged).
+/// (Android too), `GetDiskFreeSpaceExW`'s bytes free to the caller on Windows; none elsewhere, where the check is passed
+/// by (logged).
 pub fn free_space(path: &Path) -> Option<u64> {
     #[cfg(unix)]
     {
@@ -455,7 +541,25 @@ pub fn free_space(path: &Path) -> Option<u64> {
         let block = if stat.f_frsize > 0 { stat.f_frsize } else { stat.f_bsize };
         Some(stat.f_bavail.saturating_mul(block))
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        let wide: Vec<u16> = path.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+        let mut free = 0u64;
+        // SAFETY: `wide` is a NUL-terminated UTF-16 path that outlives the call, `free` a valid u64 to write, and the
+        // other two outputs may be null (GetDiskFreeSpaceExW's contract).
+        #[allow(unsafe_code)]
+        let done = unsafe {
+            windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW(
+                wide.as_ptr(),
+                &mut free,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        };
+        (done != 0).then_some(free)
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = path;
         None
@@ -512,6 +616,16 @@ pub(crate) fn dir_size(path: &Path) -> u64 {
         .filter_map(Result::ok)
         .map(|entry| dir_size(&entry.path()))
         .sum()
+}
+
+/// Remove a package's directory when it is empty, and then its account's when that is (both are named after the
+/// account's server): what a cancel or a wipe leaves.
+pub(crate) fn prune(package_dir: &Path) {
+    if std::fs::remove_dir(package_dir).is_ok() {
+        if let Some(account_dir) = package_dir.parent() {
+            let _ = std::fs::remove_dir(account_dir);
+        }
+    }
 }
 
 /// Remove a directory and what is under it; none there is no error.
