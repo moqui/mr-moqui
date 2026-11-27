@@ -105,9 +105,19 @@ pub(crate) struct Nesting {
     /// The state the depths were last made complete for, encoded: a miss at this state is an item the document does
     /// not have.
     complete_at: Option<Vec<u8>>,
+    /// The room's document key, for the error a read of the whole state logs.
+    key: String,
 }
 
 impl Nesting {
+    /// The depths of the room of document `key`, none kept yet.
+    pub(crate) fn for_room(key: &str) -> Self {
+        Self {
+            key: key.to_string(),
+            ..Self::default()
+        }
+    }
+
     /// The parent depth of the item that holds `id`, when it is kept.
     fn parent_depth(&self, id: &ID) -> Option<u32> {
         let (start, (len, depth)) = self.parents.get(&id.client)?.range(..=id.clock).next_back()?;
@@ -349,10 +359,23 @@ impl Nesting {
         }) {
             Ok(()) => {
                 let resolved = self.resolve(&items);
+                let mut deepest = 0;
                 for (item, depth) in items.iter().zip(resolved) {
                     if let Some(depth) = depth {
+                        if item.is_type && depth != GONE {
+                            deepest = deepest.max(depth + 1);
+                        }
                         self.insert(&item.id, item.len, depth);
                     }
+                }
+                // a state merged in unchecked (another server's save of an older build): a delete of its top type could
+                // overflow the stack, so it is named for an administrator to repair (SEC-TLS-118)
+                if deepest > MAX_TYPE_DEPTH {
+                    tracing::error!(
+                        "co-edited {}: its document nests shared types {deepest} levels deep, past {MAX_TYPE_DEPTH}; \
+                         save the page from its text and drop the co-edited row",
+                        self.key
+                    );
                 }
             }
             Err((_, error)) => tracing::error!("co-edited document state does not read for its nesting: {error}"),

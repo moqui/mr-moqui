@@ -432,29 +432,56 @@ fn stamp_of(row: &moqui_core::entity::EntityValue) -> Option<i64> {
 /// Merge a stored state into `doc`. Out: the update of what `doc` lacked, for its clients; `None` when it had it all
 /// or the state is not one.
 fn merge_into(key: &str, doc: &Doc, state: &[u8]) -> Option<Vec<u8>> {
+    merge_checked(key, doc, state).ok().flatten()
+}
+
+/// [`merge_into`], with an error when the state was not merged (it does not read, or was not applied).
+fn merge_checked(key: &str, doc: &Doc, state: &[u8]) -> Result<Option<Vec<u8>>, ()> {
     if state.is_empty() {
-        return None;
+        return Ok(None);
     }
     let update = match Update::decode_v1(state) {
         Ok(update) => update,
         Err(err) => {
             tracing::warn!("co-edited {key}: its stored state is not a Yjs update and was not merged: {err}");
-            return None;
+            return Err(());
         }
     };
     let before = doc.transact().state_vector();
     if let Err(err) = doc.transact_mut().apply_update(update) {
         tracing::warn!("co-edited {key}: its stored state was not merged: {err}");
-        return None;
+        return Err(());
     }
     let txn = doc.transact();
-    (txn.state_vector() != before).then(|| txn.encode_state_as_update_v1(&before))
+    Ok((txn.state_vector() != before).then(|| txn.encode_state_as_update_v1(&before)))
 }
 
 /// What another server stored: merged into the room, and what the room lacked queued for its clients.
 fn merge_stored(key: &str, room: &mut Room, row: &moqui_core::entity::EntityValue) {
     room.board_candidate = None;
-    if let Some(update) = merge_into(key, &room.doc, &bytes_of(row, "stateData")) {
+    let state = bytes_of(row, "stateData");
+    if state.is_empty() {
+        room.stamp = stamp_of(row);
+        return;
+    }
+    // held to the same roots, kinds and depth as an update (SEC-TLS-118); a state refused is not merged
+    let shape = room.target.codec.shape();
+    let checked = {
+        let Room { doc, nesting, .. } = &mut *room;
+        match nesting.check(doc, shape, &state) {
+            Ok(checked) => checked,
+            Err((_, why)) => {
+                tracing::error!("co-edited {key}: the state another server stored is refused: {why}");
+                room.stamp = stamp_of(row);
+                return;
+            }
+        }
+    };
+    let merged = merge_checked(key, &room.doc, &state);
+    if merged.is_ok() {
+        room.nesting.keep(checked);
+    }
+    if let Ok(Some(update)) = merged {
         lock(events()).push(Event::Update {
             document_key: key.to_string(),
             update,
@@ -545,6 +572,7 @@ fn load(key: &str, page_id: &str, on_database: bool) -> Result<Arc<Mutex<Room>>,
     let hash = text_hash(&page_text);
     let row = stored(key)?;
     let doc = Doc::new();
+    let mut nesting = nesting::Nesting::for_room(key);
     let mut unsaved = BTreeSet::new();
     let mut meeting_names = BTreeSet::new();
     let mut seed = true;
@@ -565,12 +593,28 @@ fn load(key: &str, page_id: &str, on_database: bool) -> Result<Arc<Mutex<Room>>,
                 tracing::warn!("co-edited {key}: the page changed outside co-editing while changes were open; the co-edited text is kept and its next save writes over the change, which stays in the page's history");
             }
             let state = bytes_of(row, "stateData");
-            if !state.is_empty() {
+            // a state stored before its updates were checked (SEC-TLS-118) may nest types past the bound, which a
+            // delete would overflow the stack on: it is checked as an update, and one refused is not opened
+            let checked = if state.is_empty() {
+                None
+            } else {
+                match nesting.check(&doc, target.codec.shape(), &state) {
+                    Ok(checked) => Some(checked),
+                    Err((_, why)) => {
+                        tracing::error!(
+                            "co-edited {key}: its stored state is refused ({why}), the page's text is read again"
+                        );
+                        None
+                    }
+                }
+            };
+            if let Some(checked) = checked {
                 match Update::decode_v1(&state) {
                     Ok(update) => {
                         if let Err(err) = doc.transact_mut().apply_update(update) {
                             tracing::error!("co-edited {key}: its stored state was not applied, the page's text is read again: {err}");
                         } else {
+                            nesting.keep(checked);
                             seed = false;
                             unsaved = editors;
                             meeting_names = row
@@ -609,7 +653,7 @@ fn load(key: &str, page_id: &str, on_database: bool) -> Result<Arc<Mutex<Room>>,
         saving: Arc::default(),
         doc,
         board_candidate: None,
-        nesting: nesting::Nesting::default(),
+        nesting,
         target,
         dirty: false,
         changed_at: Instant::now(),
