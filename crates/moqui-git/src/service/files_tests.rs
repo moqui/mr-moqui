@@ -2742,11 +2742,16 @@ fn the_drive_temporary_files_older_than_a_day_are_removed() {
     std::fs::write(tmp.join("old.zip"), b"old").unwrap();
     std::fs::write(tmp.join("a1b2/named copy.pdf"), b"old").unwrap();
     std::fs::write(tmp.join("new.zip"), b"new").unwrap();
+    // a load's private file a job never read (SEC-DAT-96): runtime://tmp/private is swept too, the folder kept
+    let private = context.factory().runtime_dir().join("tmp").join("private");
+    std::fs::create_dir_all(&private).unwrap();
+    let orphan = private.join(format!("{:032x}.xml", std::process::id()));
+    std::fs::write(&orphan, b"old").unwrap();
     let two_days_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(2 * 86_400);
-    for old in ["old.zip", "a1b2/named copy.pdf"] {
+    for old in [tmp.join("old.zip"), tmp.join("a1b2/named copy.pdf"), orphan.clone()] {
         std::fs::File::options()
             .write(true)
-            .open(tmp.join(old))
+            .open(old)
             .unwrap()
             .set_modified(two_days_ago)
             .unwrap();
@@ -2759,6 +2764,10 @@ fn the_drive_temporary_files_older_than_a_day_are_removed() {
     assert!(!tmp.join("old.zip").exists());
     assert!(!tmp.join("a1b2").exists(), "the folder its last file left");
     assert!(tmp.join("new.zip").exists(), "a file of today stays");
+    assert!(
+        !orphan.exists() && private.is_dir(),
+        "the old private file goes, its folder stays"
+    );
     let _ = std::fs::remove_dir_all(&tmp);
 }
 /// An external user (the permission EXTERNAL_USER, an app's client contacts) reaches no records drive, whatever its
