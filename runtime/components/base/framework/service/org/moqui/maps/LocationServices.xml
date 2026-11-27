@@ -50,7 +50,10 @@ along with this software (see the LICENSE.md file). If not, see
             current membership rows is refused before its members are written. Refused with a reasonCode: BAD_UNTIL,
             TOO_LONG, BAD_PRECISION, BAD_TRAIL_DAYS, AUDIENCE_EMPTY, BAD_AUDIENCE, USER_NOT_FOUND, GROUP_NOT_ALLOWED,
             XMPP_OFF, XMPP_NOT_CONTACT, ONE_LINK, AUDIENCE_TOO_LARGE, TOO_MANY_SHARES, GROUP_CHECK_FAILED,
-            SHARE_LOCK_FAILED (the owner's lock row could not be made or locked).</description>
+            SHARE_LOCK_FAILED (the owner's lock row could not be made or locked). The share is sent from the device whose
+            key signed this request in (userLoginKeyId, ec.user.loginKeyId: the Android app's), or from no device (a
+            browser page, which sends while it is open); a share with a device takes that device's reports only, and one
+            with none takes no device's (plans/Location-Sharing.md §3.4).</description>
         <in-parameters>
             <parameter name="audienceList" type="List" required="true"/>
             <parameter name="thruDate" type="Timestamp" required="true"/>
@@ -75,7 +78,9 @@ along with this software (see the LICENSE.md file). If not, see
             (addAudienceList, entries as create#Share's; one already there is passed over, but a group already there is
             stamped again, in the audit log, with a new snapshot of its members, which lets in those who joined since),
             and change its label or
-            purpose. The owner's other devices and the audience are told on locationShare:shareId, each user the share
+            purpose; with sendFromHere true it is sent from this request's device from now on (the app's Send from this
+            device), or from no device (a browser's Send from here), and the device that sent it is refused as another's
+            (409 OTHER_DEVICE), which stops it. The owner's other devices and the audience are told on locationShare:shareId, each user the share
             newly reaches gets the LocationShared notification, and addedUserList (and the owner's push) names them; a
             link added returns its token once. Refused: SHARE_NOT_FOUND (not the caller's), SHARE_ENDED, and
             create#Share's reasons.</description>
@@ -85,6 +90,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="addAudienceList" type="List"/>
             <parameter name="label"/>
             <parameter name="purposeText"/>
+            <parameter name="sendFromHere" type="Boolean" default="false"/>
         </in-parameters>
         <out-parameters>
             <parameter name="thruDate" type="Timestamp"/>
@@ -131,7 +137,10 @@ along with this software (see the LICENSE.md file). If not, see
             stored and answered observedDate is rounded down to the minute, though the push goes out when the report
             comes. It replaces the share's LocationLatest, adds a trail point when the share keeps a trail, and is sent
             on locationShare:shareId to the audience's current users. statusCode 200; 410 (SHARE_ENDED) for a share
-            ended or stopped, which stops the device; 404 (SHARE_NOT_FOUND) for one that is not the caller's; 400 for a
+            ended or stopped, which stops the device; 404 (SHARE_NOT_FOUND) for one that is not the caller's; 409
+            OTHER_DEVICE when this request is not from the device the share is sent from (another device key, or none: a
+            browser), or is from a device while the share is sent from a browser page, which stops it (update#Share
+            sendFromHere moves it); 400 for a
             value out of range (BAD_POSITION, BAD_ACCURACY, BAD_HEADING, BAD_SPEED) or a time before the share began
             (BEFORE_SHARE); 409 for one not later than the latest (STALE) or more than a minute ahead of the server's
             clock (CLOCK_AHEAD, the device's clock is ahead). A refusal names no value.</description>
@@ -144,6 +153,9 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="heading"/>
             <parameter name="speed"/>
             <parameter name="observedDate" type="Timestamp"/>
+            <parameter name="audienceVersion"><description>The audience version the device's person confirmed: required for
+                a share sent from a device, which refuses another or none with 409 AUDIENCE_CHANGED before anything is
+                written or pushed</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="statusCode" type="Integer"/>
@@ -153,11 +165,47 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('report', context))</script></actions>
     </service>
 
+    <service verb="get" noun="AppShare">
+        <description>An active share of the current user's own as the Android app confirms it in its own dialog and names
+            it in its notification before it sends it from the phone (plans/Location-Sharing.md §3.4): share {shareId,
+            thruDate (epoch millis), untilText (the end in the caller's zone, with the weekday when not today),
+            approximate, intervalSeconds (the share's report interval), audienceText (whom with, in words the owner can
+            check: names with usernames, a group with its member count, anyone with the guest link), audienceVersion
+            (what the device sends with its reports once the person confirmed these words), fromThisDevice (this request's device key is the one it is sent
+            from)}. The words are the
+            server's, never a page's. Refused: SHARE_NOT_FOUND (not the caller's), SHARE_ENDED.</description>
+        <in-parameters><parameter name="shareId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="share" type="Map"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('appShare', context))</script></actions>
+    </service>
+
+    <service verb="stop" noun="DeviceShares" authenticate="anonymous-all" allow-remote="false" transaction="force-new">
+        <description>A device key revoked (its owner's sign-out, or the device signed out from the device list; called by
+            the framework with the key's stored hash, user/login.rs): every active share sent from it
+            (LocationShare.userLoginKeyId) is stopped as stop#Share does, its audience told, so none stays on with nothing
+            sending it, also when the device could not tell the server (plans/Location-Sharing.md §3.4). In a transaction
+            of its own (force-new), each share in one of its own too, so nothing here touches the revoke's: a share
+            not of the key's user is refused by name and left, and the rest go on. Called also when an administrator
+            ends a user's keys (Identity.js endCredential).</description>
+        <in-parameters>
+            <parameter name="userLoginKeyId" required="true"/>
+            <parameter name="ownerUserId" required="true"><description>The key's user, as the revoke knows it: the key's
+                row, which the revoke writes, is never read here</description></parameter>
+        </in-parameters>
+        <out-parameters><parameter name="stoppedCount" type="Integer"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('deviceShares', context))</script></actions>
+    </service>
+
     <service verb="find" noun="MyShares">
         <description>The current user's own shares: the active ones, and with includeEnded those ended too (for their
             kept trails), the newest first, at most 200. Each with its audience (every entry, revoked ones marked: a
             person's or group's name, a JID, and for the link only that there is one and when it was last viewed, never
-            its token or digest), its end, its latest position while it is active and its trail's size.</description>
+            its token or digest), its end, its latest position while it is active, its trail's size, and where it is sent
+            from (sentFromDevice, the device's deviceName, and fromThisDevice when this request's device key is
+            it; never the key's id).</description>
         <in-parameters><parameter name="includeEnded" type="Boolean" default="false"/></in-parameters>
         <out-parameters><parameter name="shareList" type="List"/></out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('findMine', context))</script></actions>

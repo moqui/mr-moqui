@@ -19,6 +19,8 @@
 //! - [`account`]: the servers and users signed in on this device, the current one, and each one's device mode.
 //! - [`keys`]: where the device keys are kept, behind a trait the host fills with the OS key store.
 //! - [`login`]: password sign-in with `createLoginKey`, the second factor, and sign-out that revokes the key.
+//! - [`location`]: a live location share sent from this device (the Android app's foreground service): the newest
+//!   point only, sent with the device key, and the server's answers handled as the browser's Maps page does.
 //! - [`proxy`]: a request of the page forwarded to the server with the key, its answer made safe for the page.
 //! - [`socket`]: `/notws` and `/callws` held by the host and bridged to the page.
 //! - [`cache`]: the shell's answers as MD3 kept them in files, moved once into the account's [`store`].
@@ -55,6 +57,7 @@ pub mod conf;
 mod files;
 mod http;
 pub mod keys;
+pub mod location;
 pub mod login;
 pub mod modes;
 pub mod offline;

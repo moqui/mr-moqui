@@ -26,8 +26,21 @@ their own.
   operating system. You can rename it.
 - **Calls.** A call's audio and video go to your server and the other people in the call, only while it lasts.
 - **Location.** Only when you share a place in a chat (the place you choose, sent to your server as a message), and while a
-  live share you started in Maps has its page open in the app or a browser: that page's position, at most every few
-  seconds (every minute for an approximate share), sent to your server for that share. Closing the page stops it.
+  live share you started in Maps is on: its position, at most every few seconds (every minute for an approximate one,
+  rounded on the server to about 1 km), sent to your server for that share, which shows it only to the people you chose
+  for it (people, a group's members, XMPP contacts, a guest link) until its end. A browser, or the desktop app, sends it
+  while the Maps page is open; closing the page stops it. The mobile app sends it from the phone while the share lasts,
+  also with the app in the background, and then only with its notification showing ("Sharing your location with ...
+  until ...", with Stop; dismissed, it comes back, and with the app's notifications turned off the share stops). It
+  stops at the share's end, when you stop it (the notification, Maps, another device taking it over: the notification's
+  Stop also tells your server, again until it hears or the share's end has passed), and when you sign out (the app
+  tells your server while it still can; with no network your server stops the share when it hears of the sign-out,
+  and otherwise at its end). Taking the
+  location permission away ends the app's process: nothing more is sent, and the share goes stale (its audience sees
+  how old the last position is) until its end or until you stop it. For an approximate share the app asks only for
+  approximate location; if you allowed precise location (an exact share, a chat place), the phone's fix is precise and
+  your server rounds it to about 1 km before it is kept or shown. A share is sent from one device at a time, and your
+  server knows which (the device's key, as in your device list).
 - **Live location on the server.** While a share you started lasts (at most a day unless you extend it), your server
   keeps only its latest position, read by no one once the share ends and deleted then (when you stop it) or up to an
   hour later (when its time runs out), and a trail only when you choose one for that share, for at most 30 days after it
@@ -44,7 +57,10 @@ their own.
 
 - **Permissions**, each with a reason: the microphone and notifications at the first start after you sign in (to ring
   and answer a call on a locked phone), the camera when you first take a photo or a video, your contacts when you first
-  search them in the dialer (read on the phone, never sent), and your location when you first share a place. Calls use Android's own calling support; the app may ask to run unrestricted
+  search them in the dialer (read on the phone, never sent), and your location when you first share a place or before
+  your first live location share (with the reason: it is sent to the people you choose until the time you choose, with
+  a notification while it is). The app does not ask for location in the background: only a share you start, from the
+  app in front, goes on in the background, under its notification. Calls use Android's own calling support; the app may ask to run unrestricted
   in the background so an incoming call rings.
 - **Push.** A build with Firebase gets a token from Google's Firebase Cloud Messaging once an account is signed in, and
   sends it to your server; with a UnifiedPush distributor app (such as ntfy), that app gets an endpoint for each

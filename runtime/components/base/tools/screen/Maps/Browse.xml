@@ -192,6 +192,18 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
+    <!-- Send from here (a browser page) or Send from this device (the Android app, whose requests carry its device key):
+        update#Share with sendFromHere, so the share is sent from this request's device, or from no device, from now on;
+        the device that sent it is refused as another's (409 OTHER_DEVICE) and stops (plans/Location-Sharing.md §3.4) -->
+    <transition name="sendFromHere" method="post">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.maps.LocationServices.update#Share').requireNewTransaction(true)
+                .parameters({shareId: String(shareId ?? ''), sendFromHere: true}).call() || {}
+            if (ec.message.hasError()) { const reason = ec.message.getErrorsString(); ec.message.clearErrors(); ec.web.sendJsonResponse({applied: false, reasonCode: out.reasonCode, reason}) }
+            else ec.web.sendJsonResponse({applied: true, thruDate: out.thruDate ? ec.user.timestampMillis(out.thruDate) : null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
     <transition name="stopShare" method="post">
         <actions><script><![CDATA[
             const out = ec.service.sync().name('org.moqui.maps.LocationServices.stop#Share').requireNewTransaction(true)
@@ -223,8 +235,11 @@ along with this software (see the LICENSE.md file). If not, see
         parameters): the latitude, longitude, accuracy, heading and speed as text, and observedDate (epoch millis, none for
         the server's own time). Its answer is always this transition's JSON, statusCode its outcome: 200 taken (with the
         share's latest as the audience reads it, rounded for an approximate share), 429 too soon (retryAfterSeconds), 410
-        ended or stopped (stop sending), 404 not the user's, 409 STALE (not later than the latest) or CLOCK_AHEAD (the
-        device's clock is ahead: send without observedDate), 400 a value out of range. No value is in an error or a log. -->
+        ended or stopped (stop sending), 404 not the user's, 409 STALE (not later than the latest), CLOCK_AHEAD (the
+        device's clock is ahead: send without observedDate), OTHER_DEVICE (another device of the user's sends it: stop,
+        and Send from here takes it over) or AUDIENCE_CHANGED (a share sent from this device, the desktop's or the
+        phone's page, whose audience changed since the version the page sent, audienceVersion: read again), 400 a value
+        out of range. No value is in an error or a log. -->
     <transition name="reportPosition" method="post">
         <actions><script><![CDATA[
             const value = (name) => (context[name] == null ? null : String(context[name]).trim() || null)
@@ -234,7 +249,7 @@ along with this software (see the LICENSE.md file). If not, see
             try {
                 const out = ec.service.sync().name('org.moqui.maps.LocationServices.report#Position').requireNewTransaction(true)
                     .parameters({shareId: String(shareId ?? ''), latitude: value('latitude'), longitude: value('longitude'), accuracy: value('accuracy'),
-                        heading: value('heading'), speed: value('speed'), observedDate: value('observedDate') && Number.isFinite(observed) ? new Date(observed) : null})
+                        heading: value('heading'), speed: value('speed'), audienceVersion: value('audienceVersion'), observedDate: value('observedDate') && Number.isFinite(observed) ? new Date(observed) : null})
                     .call() || {}
                 answer = {statusCode: Number(out.statusCode) || (ec.message.hasError() ? 400 : 200), reasonCode: out.reasonCode || null,
                     retryAfterSeconds: out.retryAfterSeconds == null ? null : Number(out.retryAfterSeconds)}

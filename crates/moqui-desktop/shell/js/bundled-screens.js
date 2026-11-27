@@ -1321,6 +1321,18 @@ module.exports = {
             // the phone's contacts name numbers and are found in a new chat (§9.2), read on the phone only
             if (state.contacts !== undefined) rows.push({ key: 'contacts', ok: state.contacts === true, label: t("Names from the phone's contacts"),
                 caption: state.contacts === true ? '' : t('Allow contacts to see names on texts and find people as you type'), fix: 'contacts' });
+            // live location from this phone (plans/Location-Sharing.md §3.4): the location permission, which Maps' Share asks
+            // for with the app's reason, and the shares the app sends now, each under its notification with Stop
+            if (moqui.isPlainObject(state.location)) {
+                const location = state.location;
+                const sharing = Number(location.sharing) || 0;
+                rows.push({ key: 'location', ok: location.permission !== 'none' || !location.asked, label: t('Location for live sharing'),
+                    caption: location.permission === 'fine' ? '' : location.permission === 'coarse' ? t('Approximate only: shares from this phone are about where you are')
+                        : location.asked ? t('Not allowed: a share from Maps is sent only while its page is open') : t('Asked when you first share your location in Maps'),
+                    fix: location.permission === 'fine' || !location.asked ? null : 'location', fixLabel: t('App settings') });
+                if (sharing) rows.push({ key: 'locationSharing', ok: true, label: t('Sharing your location from this phone'),
+                    caption: (sharing === 1 ? t('One share') : sharing + ' ' + t('shares')) + ', ' + t('also with the app in the background, while its notification shows') });
+            }
             // a force-stopped app gets no push until it is opened again
             if (state.forceStoppedDate) rows.push({ key: 'forceStopped', ok: Date.now() - Number(state.forceStoppedDate) > 86400000,
                 label: t('The app was stopped'), caption: this.when(state.forceStoppedDate) + ': ' + t('notifications may not have come until it was opened again') });

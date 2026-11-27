@@ -1,0 +1,417 @@
+/*
+ * This software is in the public domain under CC0 1.0 Universal plus a
+ * Grant of Patent License.
+ *
+ * To the extent possible under law, the author(s) have dedicated all
+ * copyright and related and neighboring rights to this software to the
+ * public domain worldwide. This software is distributed without any
+ * warranty.
+ *
+ * You should have received a copy of the CC0 Public Domain Dedication
+ * along with this software (see the LICENSE.md file). If not, see
+ * <http://creativecommons.org/publicdomain/zero/1.0/>.
+ */
+
+//! The phone's side of live location (plans/Location-Sharing.md §3.4): the page's ask checked, and `report_location`
+//! with the account's key through a stand-in poster. Each test has accounts of its own: the reporters are the process's.
+
+use std::cell::RefCell;
+
+use moqui_client::account::Account;
+use serde_json::{json, Value};
+
+use super::*;
+
+/// A post made: its path and its form.
+type Post = (String, Vec<(String, String)>);
+
+/// The posts made, and the answer each gets.
+struct Posts {
+    made: RefCell<Vec<Post>>,
+    answer: RefCell<Vec<(u16, Value)>>,
+}
+
+impl Posts {
+    fn answering(answers: Vec<(u16, Value)>) -> Self {
+        Self {
+            made: RefCell::new(Vec::new()),
+            answer: RefCell::new(answers),
+        }
+    }
+
+    fn field(&self, index: usize, name: &str) -> Option<String> {
+        self.made.borrow()[index]
+            .1
+            .iter()
+            .find(|(field, _)| field == name)
+            .map(|(_, value)| value.clone())
+    }
+}
+
+impl Poster for Posts {
+    fn post(&self, _account: &Account, key: &str, path: &str, form: &[(&str, &str)]) -> Result<(u16, Value), String> {
+        assert_eq!(key, "device-key", "the account's device key signs it");
+        self.made.borrow_mut().push((
+            path.to_string(),
+            form.iter()
+                .map(|(name, value)| (name.to_string(), value.to_string()))
+                .collect(),
+        ));
+        let mut answers = self.answer.borrow_mut();
+        Ok(if answers.is_empty() {
+            (200, json!({ "statusCode": 200 }))
+        } else {
+            answers.remove(0)
+        })
+    }
+}
+
+fn account(id: &str) -> Account {
+    Account {
+        id: id.to_string(),
+        server: "https://moqui.example.com".to_string(),
+        username: "ann".to_string(),
+        user_id: "ANN".to_string(),
+        display: "Ann".to_string(),
+        server_name: String::new(),
+        device_mode: None,
+    }
+}
+
+fn fix(latitude: f64, time: i64) -> String {
+    json!({ "latitude": latitude, "longitude": -111.9, "accuracy": 9.0, "time": time }).to_string()
+}
+
+/// The account's key, unchanged since the post.
+fn same_key() -> Option<String> {
+    Some("device-key".to_string())
+}
+
+fn state(outcome: &str) -> Value {
+    serde_json::from_str(outcome).unwrap()
+}
+
+#[test]
+fn the_pages_ask_is_checked() {
+    let now = 1_700_000_000_000;
+    let ask = ShareAsk {
+        share_id: " 100123 ".to_string(),
+        thru_date: now + 3_600_000,
+        approximate: false,
+        interval_seconds: 5,
+        audience: "Sam\nand 2 others".to_string(),
+        ..ShareAsk::default()
+    };
+    let checked = ask.clone().checked(now).unwrap();
+    assert_eq!(checked.share_id, "100123");
+    assert_eq!(checked.audience, "Sam and 2 others");
+    let json: Value = serde_json::from_str(&checked.to_json("acct")).unwrap();
+    assert_eq!(json["account"], "acct");
+    assert_eq!(json["intervalSeconds"], 5);
+    for bad in [
+        ShareAsk {
+            share_id: "1;drop".to_string(),
+            ..ask.clone()
+        },
+        ShareAsk {
+            share_id: String::new(),
+            ..ask.clone()
+        },
+        ShareAsk {
+            thru_date: now - 1,
+            ..ask.clone()
+        },
+        ShareAsk {
+            thru_date: now + 30 * 24 * 3_600_000,
+            ..ask.clone()
+        },
+        ShareAsk {
+            interval_seconds: 0,
+            ..ask.clone()
+        },
+    ] {
+        assert!(bad.checked(now).is_err());
+    }
+}
+
+#[test]
+fn a_report_sends_the_newest_point_with_the_device_key_and_a_410_stops_it() {
+    let ann = account("location-test-newest");
+    let posts = Posts::answering(vec![
+        (200, json!({ "statusCode": 200 })),
+        (200, json!({ "statusCode": 410, "reasonCode": "SHARE_ENDED" })),
+    ]);
+    begin(&ann.id, "200", 5_000, 1);
+    assert_eq!(sending(&ann.id), vec!["200".to_string()]);
+    let signed_in = Some((&ann, "device-key"));
+    let sent = report_location(
+        &ann.id,
+        "200",
+        Some(&fix(40.1, 1_000)),
+        signed_in,
+        &posts,
+        &same_key,
+        1_000,
+    );
+    assert_eq!(state(&sent)["state"], "sent");
+    assert_eq!(posts.made.borrow()[0].0, moqui_client::location::REPORT_PATH);
+    // two fixes inside the interval: only the newer goes, at the interval's end
+    let waiting = report_location(
+        &ann.id,
+        "200",
+        Some(&fix(40.2, 2_000)),
+        signed_in,
+        &posts,
+        &same_key,
+        2_000,
+    );
+    assert_eq!(state(&waiting)["state"], "waiting");
+    report_location(
+        &ann.id,
+        "200",
+        Some(&fix(40.3, 3_000)),
+        signed_in,
+        &posts,
+        &same_key,
+        3_000,
+    );
+    assert_eq!(posts.made.borrow().len(), 1);
+    let ended = report_location(&ann.id, "200", None, signed_in, &posts, &same_key, 6_000);
+    assert_eq!(posts.field(1, "latitude").as_deref(), Some("40.3"));
+    assert_eq!(state(&ended), json!({ "state": "stopped", "reason": "ended" }));
+    // gone: nothing more is sent
+    assert!(sending(&ann.id).is_empty());
+    let after = report_location(
+        &ann.id,
+        "200",
+        Some(&fix(40.4, 9_000)),
+        signed_in,
+        &posts,
+        &same_key,
+        9_000,
+    );
+    assert_eq!(state(&after)["state"], "stopped");
+    assert_eq!(posts.made.borrow().len(), 2);
+}
+
+#[test]
+fn an_account_not_signed_in_or_signed_out_stops_its_shares() {
+    let ann = account("location-test-signed-out");
+    let posts = Posts::answering(Vec::new());
+    begin(&ann.id, "300", 5_000, 1);
+    let stopped = report_location(&ann.id, "300", Some(&fix(40.1, 1_000)), None, &posts, &same_key, 1_000);
+    assert_eq!(state(&stopped), json!({ "state": "stopped", "reason": "signedOut" }));
+    assert!(posts.made.borrow().is_empty());
+    begin(&ann.id, "301", 5_000, 1);
+    begin(&ann.id, "302", 5_000, 1);
+    let mut gone = forget_account(&ann.id);
+    gone.sort();
+    assert_eq!(gone, vec!["301".to_string(), "302".to_string()]);
+    let after = report_location(
+        &ann.id,
+        "301",
+        Some(&fix(40.1, 2_000)),
+        Some((&ann, "device-key")),
+        &posts,
+        &same_key,
+        2_000,
+    );
+    assert_eq!(state(&after)["state"], "stopped");
+    assert!(posts.made.borrow().is_empty());
+}
+
+#[test]
+fn the_notifications_stop_stops_the_share_on_the_server_and_says_when_to_try_again() {
+    let ann = account("location-test-stop");
+    let posts = Posts::answering(vec![
+        (200, json!({ "stopped": true })),
+        (200, json!({ "stopped": false, "reasonCode": "SHARE_NOT_FOUND" })),
+        (502, Value::Null),
+        (401, Value::Null),
+    ]);
+    let signed_in = Some((&ann, "device-key"));
+    begin(&ann.id, "400", 5_000, 1);
+    assert_eq!(stop_share(&ann.id, "400", true, signed_in, &posts), StopState::Stopped);
+    assert_eq!(posts.made.borrow()[0].0, moqui_client::location::STOP_PATH);
+    assert_eq!(posts.field(0, "shareId").as_deref(), Some("400"));
+    assert!(sending(&ann.id).is_empty());
+    // a share the server no longer has, a server that does not answer (tried again), a key it no longer takes
+    assert_eq!(stop_share(&ann.id, "401", true, signed_in, &posts), StopState::Gone);
+    assert_eq!(stop_share(&ann.id, "402", true, signed_in, &posts), StopState::Retry);
+    assert_eq!(
+        stop_share(&ann.id, "403", true, signed_in, &posts),
+        StopState::SignedOut
+    );
+    // the page's own stop tells the server nothing; not signed in here, nothing can be told
+    begin(&ann.id, "404", 5_000, 1);
+    assert_eq!(stop_share(&ann.id, "404", false, signed_in, &posts), StopState::Stopped);
+    assert_eq!(stop_share(&ann.id, "405", true, None, &posts), StopState::SignedOut);
+    assert_eq!(posts.made.borrow().len(), 4);
+}
+
+#[test]
+fn a_sign_out_stops_the_accounts_shares_on_the_server_while_its_key_is_held() {
+    let ann = account("location-test-sign-out-stop");
+    let posts = Posts::answering(vec![
+        (200, json!({ "stopped": true })),
+        (200, json!({ "stopped": true })),
+        (200, json!({ "stopped": true })),
+    ]);
+    begin(&ann.id, "500", 5_000, 1);
+    begin(&ann.id, "501", 5_000, 1);
+    // with a stop still waiting from before (LocationStops), posted too
+    let waiting = ["502".to_string(), "500".to_string()];
+    let states = stop_account_on_server(&ann.id, &waiting, (&ann, "device-key"), &posts);
+    assert_eq!(states.len(), 3);
+    assert!(states.iter().all(|(_, state)| *state == StopState::Stopped));
+    let mut stopped: Vec<String> = (0..3).filter_map(|index| posts.field(index, "shareId")).collect();
+    stopped.sort();
+    assert_eq!(stopped, vec!["500".to_string(), "501".to_string(), "502".to_string()]);
+    assert!(sending(&ann.id).is_empty());
+}
+
+#[test]
+fn a_report_refused_across_a_key_renewal_goes_again_with_the_new_key() {
+    let ann = account("location-test-renewal");
+    let posts = Posts::answering(vec![
+        (200, json!({ "statusCode": 409, "reasonCode": "OTHER_DEVICE" })),
+        (200, json!({ "statusCode": 200 })),
+    ]);
+    begin(&ann.id, "600", 5_000, 1);
+    let renewed = || Some("device-key-2".to_string());
+    let first = report_location(
+        &ann.id,
+        "600",
+        Some(&fix(40.1, 1_000)),
+        Some((&ann, "device-key")),
+        &posts,
+        &renewed,
+        1_000,
+    );
+    assert_eq!(state(&first), json!({ "state": "waiting", "waitMs": 0 }));
+    let again = report_location(
+        &ann.id,
+        "600",
+        None,
+        Some((&ann, "device-key")),
+        &posts,
+        &same_key,
+        1_000,
+    );
+    assert_eq!(state(&again)["state"], "sent");
+    assert_eq!(posts.field(1, "latitude").as_deref(), Some("40.1"));
+}
+
+#[test]
+fn a_share_to_start_takes_its_words_from_the_server_not_the_page() {
+    let ann = account("location-test-read");
+    let now = 1_700_000_000_000_i64;
+    let server_share = json!({ "found": true, "share": { "shareId": "700", "thruDate": now + 3_600_000, "approximate": true,
+        "intervalSeconds": 60, "audienceText": "Sam and 2 others", "untilText": "Fri 09:00", "audienceVersion": 3,
+        "fromThisDevice": true } });
+    let posts = Posts::answering(vec![(200, server_share)]);
+    let read = read_share("700", (&ann, "device-key"), &posts, now).unwrap();
+    assert_eq!(posts.made.borrow()[0].0, SHARE_PATH);
+    assert_eq!(posts.field(0, "shareId").as_deref(), Some("700"));
+    assert_eq!(read.audience, "Sam and 2 others");
+    assert_eq!(read.thru_date, now + 3_600_000);
+    assert!(read.approximate);
+    assert_eq!(read.interval_seconds, 60);
+    // what the notification and the dialog are given is the server's
+    let json: Value = serde_json::from_str(&read.to_json(&ann.id)).unwrap();
+    assert_eq!(json["audience"], "Sam and 2 others");
+    assert_eq!(json["untilText"], "Fri 09:00");
+    assert_eq!(read.audience_version, 3);
+    let (of, again) = ShareAsk::from_json(&read.to_json(&ann.id)).unwrap();
+    assert_eq!(of, ann.id);
+    assert_eq!(again, read);
+    // refused: another device sends it, no such share, an answer for another share, an end passed, no audience version
+    // (fail closed), no answer, a sign-in page
+    let other = json!({ "found": true, "share": { "shareId": "701", "thruDate": now + 1000, "intervalSeconds": 5,
+        "audienceText": "Sam", "audienceVersion": 1, "fromThisDevice": false } });
+    let wrong = json!({ "found": true, "share": { "shareId": "999", "thruDate": now + 1000, "intervalSeconds": 5,
+        "audienceText": "Sam", "audienceVersion": 1, "fromThisDevice": true } });
+    let ended = json!({ "found": true, "share": { "shareId": "704", "thruDate": now - 1, "intervalSeconds": 5,
+        "audienceText": "Sam", "audienceVersion": 1, "fromThisDevice": true } });
+    let unversioned = json!({ "found": true, "share": { "shareId": "705", "thruDate": now + 1000, "intervalSeconds": 5,
+        "audienceText": "Sam", "fromThisDevice": true } });
+    let posts = Posts::answering(vec![
+        (200, other),
+        (
+            200,
+            json!({ "found": false, "reasonCode": "SHARE_NOT_FOUND", "reason": "Location share not found" }),
+        ),
+        (200, wrong),
+        (200, ended),
+        (200, unversioned),
+        (502, Value::Null),
+        (200, Value::Null),
+        (401, Value::Null),
+    ]);
+    let read = |id: &str| read_share(id, (&ann, "device-key"), &posts, now);
+    assert!(matches!(read("701"), Err(ReadRefused::Gone(reason)) if reason.contains("Another device")));
+    assert_eq!(
+        read("702"),
+        Err(ReadRefused::Gone("Location share not found".to_string()))
+    );
+    assert!(matches!(read("703"), Err(ReadRefused::Retry(_))));
+    assert!(matches!(read("704"), Err(ReadRefused::Gone(_))));
+    assert!(
+        matches!(read("705"), Err(ReadRefused::Retry(_))),
+        "no audience version: never sent"
+    );
+    assert!(
+        matches!(read("706"), Err(ReadRefused::Retry(_))),
+        "no answer: asked again"
+    );
+    assert!(
+        matches!(read("707"), Err(ReadRefused::Retry(_))),
+        "a portal's page: asked again"
+    );
+    assert_eq!(read("708"), Err(ReadRefused::Gone("signedOut".to_string())));
+}
+
+#[test]
+fn a_stop_answered_by_a_sign_in_page_is_signed_out() {
+    let ann = account("location-test-stop-page");
+    let posts = Posts::answering(vec![(200, Value::Null)]);
+    assert_eq!(
+        stop_share(&ann.id, "800", true, Some((&ann, "device-key")), &posts),
+        StopState::SignedOut
+    );
+}
+
+#[test]
+fn each_report_carries_the_confirmed_audience_version_and_a_changed_audience_pauses_the_share() {
+    let ann = account("location-test-audience");
+    let posts = Posts::answering(vec![
+        (200, json!({ "statusCode": 200 })),
+        // the audience changed since the person's Send (a group added again, an entry swapped): refused, nothing written
+        (200, json!({ "statusCode": 409, "reasonCode": "AUDIENCE_CHANGED" })),
+        (200, json!({ "statusCode": 200 })),
+    ]);
+    begin(&ann.id, "900", 5_000, 2);
+    let signed_in = Some((&ann, "device-key"));
+    let report = |latitude: f64, at: i64| {
+        report_location(
+            &ann.id,
+            "900",
+            Some(&fix(latitude, at)),
+            signed_in,
+            &posts,
+            &same_key,
+            at,
+        )
+    };
+    assert_eq!(state(&report(40.1, 1_000))["state"], "sent");
+    assert_eq!(posts.field(0, "audienceVersion").as_deref(), Some("2"));
+    assert_eq!(
+        state(&report(40.2, 7_000)),
+        json!({ "state": "stopped", "reason": "audienceChanged" })
+    );
+    assert!(sending(&ann.id).is_empty());
+    // confirmed again with the version it is at now: sent once more, with that version
+    begin(&ann.id, "900", 5_000, 3);
+    assert_eq!(state(&report(40.3, 13_000))["state"], "sent");
+    assert_eq!(posts.field(2, "audienceVersion").as_deref(), Some("3"));
+}
