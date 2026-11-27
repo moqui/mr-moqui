@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A user's overlay too large to draw whole cut into vector tiles (plans/Maps.md §7 "Geometry/import jobs"; docs/tools/
+//! A user's overlay too large to draw whole cut into vector tiles (plans/archive/Maps.md §7 "Geometry/import jobs"; docs/tools/
 //! Maps.md "Large overlays"): its features (sanitized GeoJSON from [`super::overlay`]) projected to Web Mercator, and for
 //! each zoom from 0 simplified to half a pixel of a 256-pixel tile ([`super::simplify`]), clipped to each tile they
 //! touch with a small buffer, points thinned to one a pixel, and written as one MVT layer `overlay` with each feature's

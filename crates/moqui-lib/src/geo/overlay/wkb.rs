@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! WKB as an overlay (plans/Maps.md §4.1): OGC and ISO well-known binary (Z, M and ZM types, by the ISO thousands or
+//! WKB as an overlay (plans/archive/Maps.md §4.1): OGC and ISO well-known binary (Z, M and ZM types, by the ISO thousands or
 //! EWKB's flags, the extra ordinates dropped), with EWKB's SRID read as WKT's is. A `.wkb` file is geometries one after
 //! another, binary, or hex text with one geometry a line (a file of only hex digits and white space is read so); each is
 //! a feature with no label. Every count a geometry claims is checked against the bytes left before anything is kept, so

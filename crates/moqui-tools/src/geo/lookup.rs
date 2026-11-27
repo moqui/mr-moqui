@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.maps.GeoDataServices.normalize#PostalCode` (plans/Maps.md §6.3): a typed postal code read by the same
+//! `org.moqui.maps.GeoDataServices.normalize#PostalCode` (plans/archive/Maps.md §6.3): a typed postal code read by the same
 //! country rules the importer applies to its rows (`moqui_lib::geo::postal`), for the postal lookup of
 //! `org.moqui.maps.MapServices.get#PostalLocation` (MapLookup.js), so a code is found by the normalized form it was
 //! stored under. A pure function of its input: it reads and writes nothing.

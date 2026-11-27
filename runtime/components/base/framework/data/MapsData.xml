@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The registry of Geo data sets (plans/Maps.md §6.4): the sources the importer supports first, their identity, parser,
+<!-- The registry of Geo data sets (plans/archive/Maps.md §6.4): the sources the importer supports first, their identity, parser,
     license and attribution; where each is downloaded from, its year and its priority are in MapsSetupData.xml
     (seed-initial), which an administrator may change. Nothing here is downloaded or loaded until an administrator
     imports a set from Maps › Configuration › Geo data, after acknowledging its license (licenseAckUserId, which these rows

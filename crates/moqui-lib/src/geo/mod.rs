@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Geo data files read for the importer (plans/Maps.md §6.3, §6.4, §7): one delimited-text reader over a bare file or a
+//! Geo data files read for the importer (plans/archive/Maps.md §6.3, §6.4, §7): one delimited-text reader over a bare file or a
 //! member of a zip, decompressed within limits ([`text`]); the parsers of the registered sources, each yielding typed
 //! records ([`census`], [`geonames`], [`operator`]); postal-code normalization by country ([`postal`]); the derived Geo
 //! and point IDs ([`ids`]); and the coordinate checks and precision rules here. A user's overlay is read by [`overlay`],
@@ -100,7 +100,7 @@ pub fn geonames_precision(accuracy: Option<i32>) -> Precision {
     }
 }
 
-/// The rank of a GeoNames accuracy for choosing a code's representative row (plans/Maps.md §6.3): 6, then 4, then 1,
+/// The rank of a GeoNames accuracy for choosing a code's representative row (plans/archive/Maps.md §6.3): 6, then 4, then 1,
 /// then none (or any other value).
 #[must_use]
 pub fn accuracy_rank(accuracy: Option<i32>) -> u8 {

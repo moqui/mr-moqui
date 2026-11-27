@@ -1,4 +1,4 @@
-// Users' overlays and saved places of org.moqui.maps.MapServices (plans/Maps.md §4.1, §4.2, §8; docs/tools/Maps.md
+// Users' overlays and saved places of org.moqui.maps.MapServices (plans/archive/Maps.md §4.1, §4.2, §8; docs/tools/Maps.md
 // "Overlays and places"): a geographic file (GeoJSON, TopoJSON, EsriJSON, GPX, KML, GML, WKT, WKB, delimited text, a
 // zipped shapefile) added as a personal overlay, the overlay transition's access check and content, the overlays a user
 // owns or reads through a share, the saved places file, and the editing of one's own overlay (editOverlay, saveEdit).

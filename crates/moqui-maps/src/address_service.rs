@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! O2's address index (plans/Maps-Overture.md §O2): a run's address points written as `moqui.maps.OvertureAddress`
+//! O2's address index (plans/archive/Maps-Overture.md §O2): a run's address points written as `moqui.maps.OvertureAddress`
 //! rows with their keys ([`write_addresses`]), what a refresh changed against the run active before it
 //! ([`Changes`], counted by address, never by row or GERS ID: Overture's address IDs are not stable), and
 //! `search#OvertureAddresses` ([`search_overture_addresses`]), the local geocoder's search: the rows of the active Addresses

@@ -46,6 +46,7 @@ Built; plan archived 2026-11-12 as [Monitoring](archive/Monitoring.md); guide [M
 | Area | Item | Source |
 |---|---|---|
 | Export | Received exponential histograms are not on `/metrics` | `telemetry/otlp.rs`, `telemetry/received.rs` |
+| Tail | A kept thread tail's failed span can still miss the export when the trace's export buffer is already full of other threads' spans (the buffer drops a newcomer that finds no room, important or not), so a trace kept for a child's error can be lost under load; mark the root kept, or give the buffer the thread tail's replacement rule. Also: the tail keeps the first spans to end, so a long run's parents are dropped and its exported frames are orphans | `telemetry/mod.rs` ~1863, `telemetry/sdk.rs` |
 | Dashboards | The flame graph is span self time (no stored profiles); the service map and span flame read the newest 10000 spans of a range, so with head sampling they show mostly the always-kept roots, errors and slow spans; the geomap has no zoom or pan, and the TUI geomap shows a country frame as a list, not a map; TUI and print text panels in a repeat show the dashboard's variable values, not the copy's | `report/graph.rs`, `WebrootReport.js`, `moqui-tui` `components/report/graph.rs` |
 | Git sync | A pull cannot save a definition another user owns; only the repository's default branch syncs | `report/git_sync.rs` |
 | Alerts | A process that dies between marking a notification sent and sending it loses that one notification | `report/alert.rs` |
@@ -75,19 +76,24 @@ Dashboards); the deliberate differences from Java are in [Parity-Diffs](Parity-D
 | Elements | The Resources meters and the System home's auto refresh are `render-mode` texts and a client component (`m-page-refresh`), not XML elements; Dashboards keeps its own refresh timer. A `number-card` sparkline is not drawn in `html` | [Tools-Fancy §11](archive/Tools-Fancy.md#11-as-built) |
 | Data | A remote (`http`) data load off production; the Speed Test rows Java had for the distributed cache and a REST client call; cache entries of the framework's native caches, which report a count only | [Parity-Diffs](Parity-Diffs.md#system-and-tools-apps-2026-11-10) |
 | System messages | `queueAckMessage` (System › Integrations › SystemMessageDetail) queues no acknowledgement: the framework ships no `produce#AckSystemMessage` producer a message type can name, so its test reaches the service's refusal only | [Admin-Screens-Down F139](archive/Admin-Screens-Down.md#leftovers-nov-12-2026) |
+| Tests | mr-boss `Accounting/AccountingAccess.spec.js` runs 15.7 s alone (15.4 s in a full run), over the 15-second limit: split it or move part to acceptance (found 2026-11-26 by `./moq test-apps`; every feature passed) | mr-boss `test/Accounting/` |
 | Tests | mr-boss `PeopleAccess` (and at times `PeoplePositions`) fail in a full run on rows other People specs leave; `PeopleFoundationWalk`'s expectations of Time and of Health predate People P10 and A6 | [Admin-Screens-Down, Finishing](archive/Admin-Screens-Down.md#finishing-nov-11-and-12-2026) |
 | Tests | The inline test module of `crates/moqui-core/src/service/jobs.rs` is over the size [Practices-Rust](../docs/dev/Practices-Rust.md) allows one: move it to `jobs_tests.rs` | [Admin-Screens-Down, Leftovers](archive/Admin-Screens-Down.md#leftovers-nov-12-2026) |
 
 ## Maps
 
-Design reviewed against the code on November 25, 2026, not built: [Maps](Maps.md) owns the OpenLayers Tools app,
-shared full-screen and local-map interface, global/personal configuration, OpenFreeMap (seeded disabled) and
-ResourceFacade PMTiles delivery. [Delivery stages](Maps.md#9-delivery-and-acceptance) include local postal-code
-coordinates from Geo data an administrator imports ([the Geo data importer](Maps.md#64-geo-data-importer); none
-ships), Mantle record adapters and BOSS/HOME integration. [Stage R](Maps.md#5-resourcefacade-and-tile-streaming),
-the byte access Maps shares with HOME Media, is the first prerequisite: a filesystem-git object that is not in LFS
-and any `location#version` are still read whole for a ranged request, and the LFS placement item below remains a
-dependency for a disk-backed archive in filesystem git.
+Built (P0–P4, O1, O2, and the leftovers on November 26, 2026); plan archived 2026-11-26 as [Maps](archive/Maps.md), with
+[Maps-Overture](archive/Maps-Overture.md); guide [Maps](../docs/tools/Maps.md). Active: [Maps-Offline](Maps-Offline.md) (region
+packages for the apps) and [Location-Sharing](Location-Sharing.md) (explicitly shared live location). HOME's mount,
+adapters and visibility walks are mr-home's H1c ([its §3.9](../runtime/components/addon/mr-home/plan/initial-design.md#39-maps-places-and-geographic-information)).
+A disk-backed archive in filesystem git waits on the [LFS placement item](#git-and-git-hosting).
+
+| Area | Item | Source |
+|---|---|---|
+| Geo data | An import's retire step reads the scope's in-date `GeoPointAssoc`, `GeoPostalCode` and `GeoPostalCodePlace` rows whole in one transaction (about 150 MB for 100,000 codes): the peak of every import; page it as the removal is paged | `moqui-tools` `geo/load.rs` `Loader::retire`, [Maps §6.3](archive/Maps.md#63-extend-the-basic-geo-model) |
+| Memory | Freed memory stays in the process until the allocator is busy again (jemalloc without background threads): after a large import the resident size stays high while idle; `background_thread:true` returned it in about 8 s in the measurement | `crates/moqui/src/main.rs` |
+| Readiness | Small follow-ups of the archive-space and COG checks: a spec of Backups.js's date rule (`scheduled`, "Outside its dates"); coverage showing a next run past the job's `thruDate`; `COG_URL_PATTERN` allowing a backslash in the host where `originOf` does not; `spaceCheck` and `archiveSpace` sharing one archive predicate; stale comments above `embeddedOf` and in BackupServices.xml | `MapSources.js`, `Backups.js` |
+| Privacy | `NotificationCapture` (configured in every deployment) has no gate on `enable()`: any server script can capture pushes in transit, live location ones included | `MoquiDefaultConf.xml`, [Location-Sharing](Location-Sharing.md) |
 
 ## Chat and presence
 

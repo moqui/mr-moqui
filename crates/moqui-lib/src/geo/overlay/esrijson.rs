@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! An EsriJSON file as an overlay (plans/Maps.md §4.1; the ArcGIS REST API's FeatureSet): its features' points,
+//! An EsriJSON file as an overlay (plans/archive/Maps.md §4.1; the ArcGIS REST API's FeatureSet): its features' points,
 //! multipoints, polylines and polygons (rings grouped as the format winds them: clockwise outer rings, counterclockwise
 //! holes), their `attributes` read as properties. The `spatialReference` (the set's, or a geometry's own) is WGS84 when
 //! it is absent; EPSG:4326 and Web Mercator (3857, 102100, ...) are read, any other refused. Curves (`curvePaths`,

@@ -1,4 +1,4 @@
-// OvertureRegionImport (plans/Maps-Overture.md §6): the latest real Overture release for a box of about 3 km² (central
+// OvertureRegionImport (plans/archive/Maps-Overture.md §6): the latest real Overture release for a box of about 3 km² (central
 // Florence: 1.6 by 1.7 km), Places and then Buildings, through org.moqui.maps.OvertureServices with outside requests, the
 // catalog and the files opened to their hosts alone (HttpFixtures.allowNetwork). It records each import's wall time, the
 // files, row groups and bytes read, the rows kept and rejected, the licenses found, the archive's size and tiles, and the

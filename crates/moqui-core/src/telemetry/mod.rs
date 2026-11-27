@@ -320,7 +320,9 @@ pub struct Capacity {
     pub queue_bytes: usize,
     /// Traces whose spans wait for their root (tail-traces).
     pub tail_traces: usize,
-    /// Spans one trace may hold there (tail-trace-spans).
+    /// Spans one trace holds while its root decides, on the thread under an open root and in the export's buffer; past
+    /// it a span is dropped and counted; on the thread a failed or slow frame takes the place of an ordinary one
+    /// (tail-trace-spans).
     pub tail_trace_spans: usize,
 }
 

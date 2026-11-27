@@ -11,7 +11,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Maps › Browse (Browse.xml; plans/Maps.md §3.1): m-map filling the space below the shell's header, over the effective
+<!-- Maps › Browse (Browse.xml; plans/archive/Maps.md §3.1): m-map filling the space below the shell's header, over the effective
     configuration this component asks getConfig for and hands to m-map as an object (so a layer shown or hidden, a basemap
     chosen, a saved view or a result gone to draws again where the map was). Beside it, one panel at a time: Search (saved
     views and places, permitted records and postal codes, a postal area shown by its broad extent, and the configured
@@ -418,6 +418,14 @@ module.exports = {
     },
     methods: {
         t,
+        // the extent parameter (a dashboard geomap's country): "west,south,east,north" in WGS84 degrees, each longitude
+        // within -180 to 180 and west greater than east across the antimeridian, south at most north; null otherwise
+        extentParameter(text) {
+            const box = String(text ?? '').split(',').map((value) => value.trim() === '' ? NaN : Number(value));
+            const lonOk = (lon) => lon >= -180 && lon <= 180;
+            return box.length === 4 && box.every(Number.isFinite) && lonOk(box[0]) && lonOk(box[2]) && box[1] >= -90 && box[3] <= 90
+                && box[1] <= box[3] ? box : null;
+        },
         siblingUrl(name) { return this.screenPath.replace(/\/[^/]*$/, '/' + name); },
         request(name, options) {
             return moqui.request(this.screenPath + '/' + name, options || {}).then((result) => {
@@ -519,10 +527,11 @@ module.exports = {
                     this.marker = { id: 'given', lon, lat, label: String(p.label || '') };
                     this.view = { center: [lon, lat], zoom: 14 };
                 }
-                // an area to open on (a dashboard geomap's country): west,south,east,north, with no marker
-                const box = String(p.extent || '').split(',').map((value) => value.trim() === '' ? NaN : Number(value));
-                if (!this.view && !this.marker && box.length === 4 && box.every(Number.isFinite) && box[0] >= -180 && box[2] <= 180
-                        && box[1] >= -90 && box[3] <= 90 && box[0] <= box[2] && box[1] <= box[3]) this.view = { extent: box };
+                // an area to open on (a dashboard geomap's country): west,south,east,north, with no marker; west greater than
+                // east crosses the antimeridian (Russia), as m-map fits it. Checked here, not by moqui.map: WebrootMap.js
+                // loads only as m-map mounts, after this first view is set
+                const box = this.extentParameter(p.extent);
+                if (!this.view && !this.marker && box) this.view = { extent: box };
             }, (err) => { this.error = t('The map settings did not load') + ': ' + (err && err.message || err); });
         },
         loadViews() {

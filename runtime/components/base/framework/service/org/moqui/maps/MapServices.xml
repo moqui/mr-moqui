@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Maps (plans/Maps.md §3.2): the contracts a record or layer adapter implements, and the registry that resolves an adapter
+<!-- Maps (plans/archive/Maps.md §3.2): the contracts a record or layer adapter implements, and the registry that resolves an adapter
     from its key. A component registers an adapter as a moqui.maps.MapAdapter seed row naming its services; a browser sends
     only the adapterKey, never a service or entity name, query, path or URL. The adapter is the owning domain's guarded
     service: it checks the caller's access to the record (and its organization scope) itself, on every call, and the
@@ -223,7 +223,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="get" noun="EffectiveConfig">
         <description>The configuration a map draws (m-map's, WebrootMap.js), for a map-view's config-url and the Maps
-            screens. Precedence (plans/Maps.md §4.2): the installation's policy (maps@external-requests: false leaves out
+            screens. Precedence (plans/archive/Maps.md §4.2): the installation's policy (maps@external-requests: false leaves out
             every profile, basemap and layer drawn from an outside host) constrains every choice; the profile is the one
             asked for (profileId, the consumer's), else the user's own maps.profile preference, else their groups' (the
             ALL_USERS one is the installation's default), else OUTLINE; the user's maps.preferences (basemap, layer
@@ -534,7 +534,10 @@ along with this software (see the LICENSE.md file). If not, see
             network is shown and changed only in Tools. The engine's rules hold: a change of the URL or the kind clears the
             key and disables the provider until a test passes, and a provider is enabled only after a passing test of its
             configuration as it is. The test is one GET with no credentials, following no redirect and reading at most
-            2 MB (a style document must parse and name only its own origin; a raster template must answer an image), to no
+            2 MB (a style document must parse and name only its own origin; a raster template must answer an image; a
+            raster provider whose URL is a Cloud Optimized GeoTIFF, a .tif or .tiff path with no tile placeholder, as a
+            bucket of COGs has, is read as registering one of its COGs reads it: one range of its first 64 KiB, a 206 this
+            site may read by CORS, its header one a map draws, never through the proxy or with a key), to no
             internal address unless the private network is allowed; an archive provider has no URL (ARCHIVE_ENDPOINT). While maps@external-requests is false a provider is neither tested nor enabled
             (EXTERNAL_REQUESTS_OFF). Needs ADMIN_CONNECTION_VIEW to read and ADMIN_CONNECTION_MANAGE to change or test; no
             group is authorized to call it directly.</description>
@@ -560,7 +563,7 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- ========== Postal lookup and Geo data readiness (P2; MapLookup.js, GeoData.js) ========== -->
 
     <service verb="get" noun="PostalLocation">
-        <description>A postal code's place from the local Geo data (plans/Maps.md §6.1, §6.3; GeoDataServices imports it), for a
+        <description>A postal code's place from the local Geo data (plans/archive/Maps.md §6.1, §6.3; GeoDataServices imports it), for a
             map, a search and an address with no point: country and code only, no street address, party or outside request.
             The country is a Geo ID or an ISO alpha-2 or alpha-3 code; the code is read by the importer's rules
             (normalize#PostalCode: leading zeros kept, a US ZIP+4 read as its ZIP code). Each match is the code's active
@@ -770,7 +773,7 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- ========== Address and place search (P3; MapGeocoders.js) ========== -->
 
     <service verb="find" noun="Places">
-        <description>Candidate places for a text from one configured geocoder (plans/Maps.md §6.1, §6.2, §8): the provider named,
+        <description>Candidate places for a text from one configured geocoder (plans/archive/Maps.md §6.1, §6.2, §8): the provider named,
             or the enabled geocoder (a MapProvider of a kind under MPK_GEOCODER: the US Census geocoder, a self-hosted
             Nominatim or Photon, or this server's own index of Overture address points, MPK_GEOCODER_OVERTURE) that passed its
             test as it is configured now and may be asked now (an outside one with outside requests on, the local one while a

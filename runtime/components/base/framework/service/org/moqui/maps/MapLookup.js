@@ -1,4 +1,4 @@
-// The local postal lookup of org.moqui.maps.MapServices.get#PostalLocation (plans/Maps.md §6.1, §6.3): a country and a
+// The local postal lookup of org.moqui.maps.MapServices.get#PostalLocation (plans/archive/Maps.md §6.1, §6.3): a country and a
 // postal code to the code's representative point in the imported Geo data (GeoDataServices, docs/tools/Maps.md "Geo data"),
 // with its source, edition and precision. It reads only public reference data and makes no outside request.
 //

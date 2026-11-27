@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A GML file as an overlay (plans/Maps.md §4.1): GML 3.2 simple features (and GML 3.1 and 2, which differ in names),
+//! A GML file as an overlay (plans/archive/Maps.md §4.1): GML 3.2 simple features (and GML 3.1 and 2, which differ in names),
 //! as a WFS answer or an OGR export has them. Each child of a `featureMember`, `featureMembers` or `member` is a feature
 //! (a file whose root is a geometry is one feature): its first geometry (Point, LineString, LinearRing, Polygon,
 //! MultiPoint, MultiLineString, MultiCurve, MultiPolygon, MultiSurface, MultiGeometry, a Curve of line segments, a

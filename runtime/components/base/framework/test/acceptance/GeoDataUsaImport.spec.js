@@ -1,10 +1,10 @@
-// GeoDataUsaImport (plans/Maps.md §6.3, §9 acceptance): the real US Geo data through the importer, with outside requests: the
+// GeoDataUsaImport (plans/archive/Maps.md §6.3, §9 acceptance): the real US Geo data through the importer, with outside requests: the
 // Census Gazetteer Counties and ZCTAs, the Census 2020 ZCTA-to-county relationship file and GeoNames' US postal codes,
 // downloaded from their registered hosts (moqui_core::outbound, opened to them alone with HttpFixtures.allowNetwork). It
 // records each import's wall time and counts, the rows in use after it, the postal lookup's time cold and cached, and the
 // process memory where the platform reports it (Process MemoryUsed and MemoryPeak of the status map, Linux), then a refresh:
 // the same imports again, conditional (an unchanged source ends as current) and forced (downloaded, read and compared
-// whole), neither changing a row. The numbers are logged as GeoDataUsaImport lines, for plans/Maps.md §6.3.
+// whole), neither changing a row. The numbers are logged as GeoDataUsaImport lines, for plans/archive/Maps.md §6.3.
 // Run when asked: ./moq accept framework --spec GeoDataUsaImport (minutes; about 15 MB downloaded)
 const S = "org.moqui.maps.GeoDataServices."
 const SETS = [

@@ -44,9 +44,28 @@ fn not_and_logical_use_groovy_truth_and_calls_keep_this() {
     let rewritten = conditions_of("feature('f', { expect: () => { !str.errorMessages && list.every(t => t) } })");
     assert_eq!(
         rewritten.source,
-        "feature('f', { expect$pa: () => { __pa(0, ($pa_v) => ($pa_v(0, (__truthy($pa_v(1, !__truthy($pa_v(2, $pa_v(3, str).errorMessages)))) && __truthy($pa_v(4, $pa_v(5, list).every(t => t))))))) } })"
+        "feature('f', { expect$pa: () => { __pa(0, ($pa_v) => ($pa_v(0, __and($pa_v(1, !__truthy($pa_v(2, $pa_v(3, str).errorMessages))), () => ($pa_v(4, $pa_v(5, list).every(t => t))))))) } })"
     );
     assert_eq!(rewritten.conditions[0].slots[0].0, 19);
+}
+
+#[test]
+fn logical_operands_keep_their_values_as_a_call_argument_and_a_comparison_side() {
+    // a call's argument: the list or [] reaches Array.from, not a boolean
+    let rewritten = conditions_of("feature('f', { then() { Array.from(x.checks || []).length > 0 } })");
+    assert_eq!(
+        rewritten.source,
+        "feature('f', { then$pa() { __pa(0, ($pa_v) => ($pa_v(0, __cmp(\">\", $pa_v(1, $pa_v(2, $pa_v(3, Array).from($pa_v(4, __or($pa_v(5, $pa_v(6, x).checks), () => ([]))))).length), 0)))) } })"
+    );
+    // a comparison's side, and && nested in ||: each operand once, the right side in a function called only when chosen
+    let rewritten = conditions_of("feature('f', { then() { (row.name || \"\") == \"\" && a || b } })");
+    assert_eq!(
+        rewritten.source,
+        "feature('f', { then$pa() { __pa(0, ($pa_v) => ($pa_v(0, __or($pa_v(1, __and($pa_v(2, __cmp(\"==\", ($pa_v(3, __or($pa_v(4, $pa_v(5, row).name), () => (\"\")))), \"\")), () => ($pa_v(6, a)))), () => ($pa_v(7, b)))))) } })"
+    );
+    // ?? is JavaScript's, left as it is
+    let rewritten = conditions_of("feature('f', { then() { (a ?? 1) == 1 } })");
+    assert!(rewritten.source.contains("($pa_v(") && !rewritten.source.contains("__or"));
 }
 
 #[test]

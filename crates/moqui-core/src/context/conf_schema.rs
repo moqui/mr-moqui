@@ -377,7 +377,7 @@ pub static CATALOG: &[Unit] = &[
         .secrets(&[("store-key-secret", Secret::Generated)])
         .children(&[single("stickers", Class::Live)]),
     single("load-runner", Class::Live),
-    // Maps (plans/Maps.md §4.2): read on each request, import and viewport query
+    // Maps (plans/archive/Maps.md §4.2): read on each request, import and viewport query
     single("maps", Class::Live),
     single("media-server", LISTENER)
         .children(&[single("turn-server", LISTENER).secrets(&[("auth-secret", Secret::Generated)])]),

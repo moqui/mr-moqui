@@ -320,9 +320,9 @@ feature("Recordings lists a recording for its owner, and its file is nothing for
         rangedOut.output == "gS-s"
         rangedOut.contentRange == "bytes 2-5/9"
         rangedOut.acceptRanges == "bytes"
-        Object.keys(stranger.json || {nothing: true}).length == 0
+        Object.keys(stranger.json ?? {}).length == 0
         !stranger.output.includes("OggS")
-        Object.keys(member.json || {nothing: true}).length == 0
+        Object.keys(member.json ?? {}).length == 0
         !member.output.includes("OggS")
         !strangerList.recordingList.some(r => r.callRecordingId == "BCC_SPEC_REC")
     },
@@ -379,7 +379,7 @@ feature("Voicemail lists a message for its owner, and its audio is nothing for a
         owner.output.includes("OggS-voicemail-spec")
         phone.box.voicemailBoxId == "BCC_SPEC_BOX"
         phone.box.attachAudio == false
-        Object.keys(stranger.json || {nothing: true}).length == 0
+        Object.keys(stranger.json ?? {}).length == 0
         !stranger.output.includes("OggS")
         strangerDetail.voicemail == null
         strangerDetail.reasonCode == "notFound"

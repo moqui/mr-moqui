@@ -1,4 +1,4 @@
-// MapsOverture (plans/Maps-Overture.md §6): optional Overture data through org.moqui.maps.OvertureServices, with
+// MapsOverture (plans/archive/Maps-Overture.md §6): optional Overture data through org.moqui.maps.OvertureServices, with
 // HttpFixtures answering for a small STAC catalog (maps@overture-catalog set to it) and serving the GeoParquet files by
 // range with an ETag (the fixtures in test/fixtures/overture, goldens of the moqui-maps crate's tests). Refusals: a
 // non-holder (also with authorization off, its run refused by the read's own MAPS_ADMIN check), outside requests off, a

@@ -1,10 +1,13 @@
 # Maps: Overture Places, Buildings and Addresses (O1, O2)
 
+> Archived 2026-11-26 with [Maps](Maps.md): O1 and O2 built. Open testing is in
+> [Testing-Needed](../Testing-Needed.md#maps); guide [Maps › Overture](../../docs/tools/Maps.md#overture-places-and-buildings).
+
 November 26, 2026 — the crate plan [Maps §7](Maps.md#7-useful-rust-server-work) asks for when Overture's Parquet
 dependency arrives, the design of stage O1 ([Maps §4.3](Maps.md#43-optional-overture-data),
 [§9](Maps.md#9-delivery-and-acceptance)), and stage O2, regional address lookup, with its evaluation ([§8](#8-o2-regional-addresses)).
-The guides are [Maps › Overture](../docs/tools/Maps.md#overture-places-and-buildings) and
-[Maps › Overture addresses](../docs/tools/Maps.md#overture-addresses).
+The guides are [Maps › Overture](../../docs/tools/Maps.md#overture-places-and-buildings) and
+[Maps › Overture addresses](../../docs/tools/Maps.md#overture-addresses).
 
 ## 1. Why a crate, and which Parquet reader
 
@@ -24,7 +27,7 @@ the stripped release binary against a 0.36 MB one that only reads a file):
 | Candidate | Clean build | Binary | Crates | Verdict |
 |---|---|---|---|---|
 | `parquet` 60.2.0, no default features | 23 s (the crate alone 9 s) | +0.78 MB | 30 (all but `parquet` already in the lock) | Reads no ZSTD: its codecs are closed (`Codec` is public only under `experimental`, `PageHeader` is `pub(crate)`), so no pure-Rust decoder can be plugged in |
-| `parquet` 60.2.0 with `zstd` | 29 s | +1.26 MB | 33 | `zstd-sys` compiles the C zstd library: refused by [Build-Test, Native code](../docs/Build-Test.md#native-code-and-c-libraries) ("No C libraries in new dependencies") |
+| `parquet` 60.2.0 with `zstd` | 29 s | +1.26 MB | 33 | `zstd-sys` compiles the C zstd library: refused by [Build-Test, Native code](../../docs/Build-Test.md#native-code-and-c-libraries) ("No C libraries in new dependencies") |
 | `ruzstd` 0.9.1 (MIT, pure Rust) | 1 s | +0.12 MB | 2 | Taken, with our own Parquet reader |
 
 **Decision.** Our own Parquet reader of the subset GeoParquet writers use, on `ruzstd` for ZSTD (Snappy our own, a page;
@@ -50,8 +53,8 @@ Maps §7 gave it, an extension crate above core as `moqui-calc` is: services thr
   crate's registry with the locations the service files name (as `moqui-calc`'s).
 - `scripts/moq/build.sh` `write_app_crate`'s opt-level list; `scripts/check-packages.sh` runs the crate alone
   (`-p moqui-maps --all-targets`), since the host feature sets above do not build its tests without the host.
-- Docs: the Features table of [Build-Test](../docs/Build-Test.md), the crate table of
-  [Practices-Rust §1](../docs/dev/Practices-Rust.md#1-crates-and-where-code-goes), [Maps](../docs/tools/Maps.md).
+- Docs: the Features table of [Build-Test](../../docs/Build-Test.md), the crate table of
+  [Practices-Rust §1](../../docs/dev/Practices-Rust.md#1-crates-and-where-code-goes), [Maps](../../docs/tools/Maps.md).
 - License: `ruzstd` MIT; `parquet` Apache-2.0 (dev only). No new C, no `unsafe` of ours.
 
 ## 3. Data flow

@@ -1,4 +1,4 @@
-// The local postal lookup (plans/Maps.md §6.1, §6.3): org.moqui.maps.MapServices.get#PostalLocation over a few postal codes
+// The local postal lookup (plans/archive/Maps.md §6.1, §6.3): org.moqui.maps.MapServices.get#PostalLocation over a few postal codes
 // written here as an import writes them (Geo, GeoPostalCode, GeoPoint, GeoPointAssoc, GeoPostalCodePlace). A US ZIP keeps its
 // leading zero and is found by the country's alpha-2, alpha-3 or Geo ID, and as a ZIP+4; the Census point is the active one
 // before GeoNames', approximate, with its source and an extent sized from the ZCTA's land area; a Canadian code is found by its spaced or unspaced form,

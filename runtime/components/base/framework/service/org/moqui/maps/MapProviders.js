@@ -1,4 +1,4 @@
-// The map providers of org.moqui.maps.MapServices (plans/Maps.md §4.2, MapProvider): the mapProvider connection kind and
+// The map providers of org.moqui.maps.MapServices (plans/archive/Maps.md §4.2, MapProvider): the mapProvider connection kind and
 // the Maps readiness checks.
 //
 // The kind is built on the engine of ConfigurationConnections.js (lib.engine), so org.moqui.admin.ConfigurationServices
@@ -14,14 +14,17 @@
 // the private network (allowPrivateNetwork, which is shown here and changed only in Tools, as for every kind): a hosted
 // style must parse as a MapLibre style (version 8, sources, layers) and name its sources, tiles, sprite and glyphs on its
 // own origin (scheme, host and port) only, so the map's allowed origins (the provider's) cover all it fetches; a raster
-// template must answer an image for tile 0/0/0, a TileJSON name its tiles on its own origin; a geocoder must answer its
+// template must answer an image for tile 0/0/0, a TileJSON name its tiles on its own origin, and a raster provider whose
+// endpoint is a Cloud Optimized GeoTIFF (cogEndpoint: a .tif or .tiff path with no tile placeholder; a bucket of COGs, P4c)
+// is read as registering one of its COGs reads it, by one range of its header (MapSources.js readCogHead: a 206 this site
+// may read by CORS, a header a map draws), never through the proxy and never with a key; a geocoder must answer its
 // service's fixed test search (MapGeocoders.js test: a public address or a city, never a user's text); an archive
 // provider has no URL (store#Connection refuses one, ARCHIVE_ENDPOINT) and is sent nothing. Its texts are a fixed
 // vocabulary (an origin only when it is a host name or an IP literal, a status, a kind of failure), never the
 // response's own text. A map draws an outside URL only of an enabled provider that passed its test as it is configured
 // now, on the provider's own origin (tested, for MapConfig.js).
 //
-// A proxied provider (proxyRequests Y; plans/Maps.md §4.2, "a proxy is an explicit provider option") is reached by browsers
+// A proxied provider (proxyRequests Y; plans/archive/Maps.md §4.2, "a proxy is an explicit provider option") is reached by browsers
 // through LocalMap.xml providerProxy (providerAsset below), so a provider with a key may be drawn: the key stays here. Its
 // test asks as the proxy does, the key added as apiKeyParameter says (a query parameter, key by default, or header:Name),
 // and records the path prefixes its style or TileJSON names (proxyPaths), the only paths the proxy forwards. The proxy
@@ -339,6 +342,40 @@ function rasterTest(url, context) {
         hostsRow(strangeOrigins(tiles, url), url, L("The TileJSON"))
     ]
 }
+const cogEndpoint = url => mapConfig.cogEndpoint(url)
+function cogTest(provider, url, context) {
+    const place = shownOrigin(mapConfig.originOf(url))
+    if (proxied(provider) || text(provider.apiKey))
+        return [
+            {
+                check: "GeoTIFF",
+                ok: false,
+                text: L("A COG is read by the browser itself, so its provider has no key and is not reached through this server")
+            }
+        ]
+    // an https URL with no credentials (LOCATION_INVALID otherwise), read as registering one of its COGs reads it
+    const sources = ec.resource.script("component://framework/service/org/moqui/maps/MapSources.js")
+    const read = sources.readCogHead(url, context.denyInternal)
+    if (!read.ok)
+        return [
+            {
+                check: "GeoTIFF",
+                ok: false,
+                text: say("${place}: ${reason} (${code})", {place, reason: read.reason, code: read.reasonCode})
+            }
+        ]
+    const cog = read.header?.cog || {}
+    return [
+        {
+            check: "GeoTIFF",
+            ok: true,
+            text: say(
+                "${place} answered a range of a Cloud Optimized GeoTIFF this site may read (${bands} bands, ${crs}); no credentials were sent",
+                {place, bands: cog.bands, crs: text(cog.epsg)}
+            )
+        }
+    ]
+}
 function providerTest(parts, context) {
     const provider = parts.main
     const kind = text(provider.providerKindEnumId)
@@ -356,6 +393,8 @@ function providerTest(parts, context) {
     try {
         // an OGC service: its capabilities, recorded with the proxy's rules when it passes
         if (ogc().isOgcKind(kind)) return ogcTest(provider, context)
+        // a raster provider of COGs: one range of its COG, as a map's browser reads it (never proxied)
+        if (kind === "MPK_RASTER_TILES" && cogEndpoint(url)) return cogTest(provider, url, context)
         // a proxied provider is tested as the proxy asks it, and the paths it and its layers name recorded for the proxy
         if (proxied(provider) && (kind === "MPK_VECTOR_STYLE" || kind === "MPK_RASTER_TILES"))
             return proxiedTest(provider, url, kind, context)
@@ -588,7 +627,7 @@ function runMapProviderAdapter(p) {
     return {result: kind.run(operation, p)}
 }
 
-// ===== the proxy (plans/Maps.md §4.2: a proxy is an explicit provider option) =====
+// ===== the proxy (plans/archive/Maps.md §4.2: a proxy is an explicit provider option) =====
 const PROXY_PATH = "/apps/maps/LocalMap/providerProxy"
 const PROXY_MAX_BYTES = 4 * 1024 * 1024
 // a rewritten document kept on this server is at most this long (a shared cache policy)
@@ -889,7 +928,7 @@ function rewriteDocument(json, provider, base) {
                 sprite.url = sprite && typeof sprite.url === "string" ? each(sprite.url) : null
                 if (!sprite.url) return false
             }
-        // ol-mapbox-style draws labels with web fonts (plans/Maps.md §4.1): glyph ranges are not fetched, nor proxied
+        // ol-mapbox-style draws labels with web fonts (plans/archive/Maps.md §4.1): glyph ranges are not fetched, nor proxied
         delete json.glyphs
     } else if (Array.isArray(json.tiles)) {
         json.tiles = json.tiles.map(each)
@@ -1376,7 +1415,7 @@ function providerChecks() {
             continue
         }
         if (geocoder) {
-            // a public demo server: its policy allows an application very little (plans/Maps.md §6.2)
+            // a public demo server: its policy allows an application very little (plans/archive/Maps.md §6.2)
             const host = geocoders().publicHost(provider)
             if (host)
                 out.push(
