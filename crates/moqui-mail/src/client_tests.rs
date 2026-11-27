@@ -3233,8 +3233,9 @@ fn a_client_message_is_signed_only_from_an_account_delivered_here() {
 }
 
 /// A thread's `fromVerdict` (SEC-MAIL-10): `own` for a message of the account, `pass` only for DMARC passing for the
-/// From domain in an `Authentication-Results` of this server's authserv-id, `fail` for a DMARC failure, else none, so
-/// a received message forged as from the reader does not load remote images.
+/// From domain in an `Authentication-Results` of this server's authserv-id on mail its listener delivered (never on a
+/// synced account's), `fail` for a DMARC failure, else none, so a received message forged as from the reader does not
+/// load remote images.
 #[test]
 fn a_thread_says_whether_its_from_passed_this_servers_check() {
     let (ctx, facade) = setup_with(r#"<moqui-conf><smtp-server authserv-id="mx.example.com"/></moqui-conf>"#);
@@ -3284,12 +3285,25 @@ fn a_thread_says_whether_its_from_passed_this_servers_check() {
             ],
         );
     }
-    let thread = ok("get#Thread", &[("emailMessageId", text("V1"))]);
-    let verdicts: Vec<String> = maps(&thread, "messageList")
-        .iter()
-        .map(|message| field(message, "fromVerdict"))
-        .collect();
-    assert_eq!(verdicts, ["pass", "", "", "fail", "own"]);
+    let verdicts = || -> Vec<String> {
+        let thread = ok("get#Thread", &[("emailMessageId", text("V1"))]);
+        maps(&thread, "messageList")
+            .iter()
+            .map(|message| field(message, "fromVerdict"))
+            .collect()
+    };
+    // a synced account keeps the provider's header as it came: a pass naming this server is not believed there
+    assert_eq!(verdicts(), ["", "", "", "fail", "own"]);
+    // delivered here (no incoming server): this server's listener wrote the field
+    {
+        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+        let row = find_one(&facade, "moqui.basic.email.EmailAccount", "emailAccountId", &account).unwrap();
+        let server_id = to_plain_string(row.get("emailServerId").unwrap());
+        let mut server = find_one(&facade, "moqui.basic.email.EmailServer", "emailServerId", &server_id).unwrap();
+        server.set("storeHost", Value::Null);
+        server.update(&facade).unwrap();
+    }
+    assert_eq!(verdicts(), ["pass", "", "", "fail", "own"]);
 }
 
 /// SEC-MAIL-68: the listener routes mail to an identity's address, so an account delivered here (shared, no incoming
