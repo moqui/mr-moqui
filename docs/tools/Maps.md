@@ -1015,7 +1015,7 @@ app's background sharing, chat's live location, XMPP and the guest page for a li
   started on another device shows too) and at the soonest end. It opens My location shares (`Maps/MyShares.xml`), which
   every signed-in user may open, Maps user or not (`MAPS_SHARES`, as `MAPS_DIALOG` opens LocalMap): the user's own
   active shares with who sees each, its end and its last position's age, Stop, An hour more (the end alone, within
-  `location@max-share-hours`) and, for a user who may open Browse, Open in Maps (Who sees my location). A Browse page that
+  `location@max-share-hours`) and, for a user who may open the Maps app, Open in Maps (Who sees my location). A Browse page that
   sends a share adds "· sending here" to the chip. With Browse's banner, and the Android notification (LL3), it is how
   the owner sees every active share wherever they are.
 - **The terminal.** Browse's twin lists, under its map, the user's own shares (with whom, until, the last position's age

@@ -1139,7 +1139,11 @@ module.exports = {
                 this.mineReadFailed = mineFailed;
                 this.effective = Object.assign({}, this.effective, { locationShares: shares });
                 if (!mineFailed) this.pruneSending(shares, readAt);
-            }, (err) => console.warn('Maps: the location shares were not read again', err));
+            }, (err) => {
+                console.warn('Maps: the location shares were not read again', err);
+                // a read that did not answer is said as a failed one: read once more, then the notice to reload
+                if (!this.closed) this.sharesReadFailed(true);
+            });
         },
         // a failed read of the user's own shares said above the map, and read again once after 5 s; a good read clears it
         sharesReadFailed(failed) {
@@ -1539,6 +1543,14 @@ module.exports = {
         // a sign-out forgets the shares this tab sends (forgetSending); the session they are kept with, as its hash
         if (moqui.beforeLogoutHooks) moqui.beforeLogoutHooks.add(forgetSending);
         this.hashing = sessionDigest().then((hash) => { this.sessionHash = hash; });
+        // a sign-in again in this page is a new session: its hash made again, and what this page sends kept under it
+        this.$watch(() => this.$root && this.$root.moquiSessionToken, () => {
+            this.hashing = sessionDigest().then((hash) => {
+                if (this.closed) return;
+                this.sessionHash = hash;
+                this.storeSending();
+            });
+        });
         // the ages of the live shares move on with the clock
         this.nowTimer = setInterval(() => { this.now = Date.now(); }, 30000);
     },

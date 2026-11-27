@@ -115,11 +115,23 @@ feature("Browse is the MapsBrowse component with its map, opened on an extent ac
                 Object.defineProperty(navigator, "geolocation", { configurable: true, value: {
                     watchPosition() { watches++; return 9 }, getCurrentPosition() { watches++ }, clearWatch() {} } })
                 vm.$.type.beforeUnmount.call(vm)
+                // a stored list under this session's hash naming a share the page lists as the user's own, and a share in
+                // sending: what an open page would resume and note
+                vm.effective = Object.assign({}, vm.effective, { locationShares: (vm.effective.locationShares || []).concat([
+                    { shareId: "SPEC_LISTED", role: "owner", label: "Listed", thruDate: Date.now() + 3600000, reportIntervalSeconds: 5, audience: [] }]) })
+                const key = moqui.scopedKey("moqui.maps.sendingShares." + moqui.webrootVue.userId)
+                const seeded = JSON.stringify({ session: vm.sessionHash, shareIds: ["SPEC_LISTED"] })
+                window.sessionStorage.setItem(key, seeded)
                 vm.startSending("SPEC_CLOSED", { fresh: true })
                 vm.restoreSending()
                 vm.watchFixes()
+                vm.sending = ["SPEC_LISTED"]
                 vm.noteSending()
+                const stored = window.sessionStorage.getItem(key)
+                window.sessionStorage.removeItem(key)
+                vm.sending = []
                 return { watches, sending: vm.sending.length, pump: vm.pumpTimer === null || vm.pumpTimer === undefined,
+                    hashed: !!vm.sessionHash, storedKept: stored === seeded,
                     note: (moqui.shellIndicators.state.notes || {}).locationSharing || "" }
             })()`)
         } finally {
@@ -161,5 +173,7 @@ feature("Browse is the MapsBrowse component with its map, opened on an extent ac
         closed.sending == 0
         closed.pump == true
         closed.note == ""
+        closed.hashed == true
+        closed.storedKept == true
     }
 })

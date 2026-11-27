@@ -10411,6 +10411,7 @@
                 return moqui.request(this.appRootPath + "/shellIndicators").then((result) => {
                     if (ask !== this.indicatorAsk) return;
                     clearTimeout(this.indicatorTimer);
+                    this.indicatorFailures = 0;
                     const json = result.json && moqui.isPlainObject(result.json) ? result.json : {};
                     const keys = [];
                     let next = null;
@@ -10426,10 +10427,13 @@
                     if (next !== null) this.indicatorTimer = setTimeout(() => this.loadShellIndicators(), Math.min(Math.max(next * 1000 + 1000, 5000), 86400000));
                 }, (err) => {
                     console.info("shell indicators not loaded", err && err.status);
-                    // the last ask failed: asked again in a minute, so a chip does not stay as it was
-                    if (ask === this.indicatorAsk) {
+                    // the last ask failed: asked again after a minute, doubling to half an hour, so a chip does not stay as
+                    // it was; not when the user is signed out or refused (401, 403), which the next sign-in reads again
+                    const status = err && err.status;
+                    if (ask === this.indicatorAsk && status !== 401 && status !== 403) {
+                        this.indicatorFailures = (this.indicatorFailures || 0) + 1;
                         clearTimeout(this.indicatorTimer);
-                        this.indicatorTimer = setTimeout(() => this.loadShellIndicators(), 60000);
+                        this.indicatorTimer = setTimeout(() => this.loadShellIndicators(), Math.min(60000 * Math.pow(2, this.indicatorFailures - 1), 1800000));
                     }
                 });
             },

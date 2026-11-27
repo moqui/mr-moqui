@@ -252,9 +252,20 @@ feature("My location shares opens for an owner with ALL_USERS alone, lists their
         const afterOther = Array.from(shareCall(PLAIN, "find#MyShares").shareList || []).some(row => row.shareId === shareId)
         as(PLAIN, "apps/maps/MyShares/stopShare", {shareId}, "post")
         const afterOwn = Array.from(shareCall(PLAIN, "find#MyShares").shareList || []).some(row => row.shareId === shareId)
-        return {shareId, page, afterOther, afterOwn}
+        // Open in Maps' check, the user's own grant of the Maps app (Maps.xml carries MAPS_APP), without another render
+        const mapsOpen = userId => {
+            ec.user.internalLoginUser(usernameOf(userId))
+            try {
+                return !!ec.artifactExecution.isPermittedOwn("component://tools/screen/Maps.xml", "AT_XML_SCREEN", "view")
+            } finally {
+                ec.user.logoutUser()
+            }
+        }
+        return {shareId, page, afterOther, afterOwn, writerMaps: mapsOpen(WRITER), plainMaps: mapsOpen(PLAIN)}
     },
-    then({shareId, page, afterOther, afterOwn}) {
+    then({shareId, page, afterOther, afterOwn, writerMaps, plainMaps}) {
+        writerMaps == true
+        plainMaps == false
         page.status == 200
         page.errors == ""
         !refused(page)
