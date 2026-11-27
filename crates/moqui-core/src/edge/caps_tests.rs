@@ -254,3 +254,41 @@ fn content_files_kept_for_a_pairing_count_against_their_own_cap() {
         "0 is no cap"
     );
 }
+
+/// SEC-CLU-92: the apply checks the pairing's cap in its own transaction, under the pairing's row lock: a batch of a
+/// second set that would take the pairing past its cap is refused with nothing applied and pauses the pairing, and a
+/// batch under it is applied.
+#[test]
+fn a_batch_is_checked_against_the_cap_in_the_transaction_that_applies_it() {
+    let (ctx, facade) = open();
+    let _entered = ctx.enter();
+    let settings = edge(3, 1024 * 1024);
+    let start = |set: &str, changes: Vec<Change>| Batch {
+        set_name: set.to_string(),
+        base_seq: 0,
+        seq: 1,
+        snapshot: true,
+        ..batch(changes)
+    };
+    let apply =
+        |batch: &Batch| crate::edge::replica::apply_batch_within_caps(&facade, &settings, "local-a", batch).unwrap();
+    assert_eq!(
+        apply(&start(SET, vec![write("a"), write("b")])),
+        Ok(crate::edge::replica::BatchAnswer::Applied)
+    );
+    let over = apply(&start("other", vec![write("c"), write("d")]));
+    assert!(over.is_err(), "{over:?}");
+    assert_eq!(
+        held_rows(&facade, "local-a").unwrap(),
+        2,
+        "nothing of the refused batch is kept"
+    );
+    assert!(paused(&facade, "local-a").unwrap().is_some());
+    assert_eq!(notices(&facade), 1);
+    resume(&facade, "local-a").unwrap();
+    assert_eq!(
+        apply(&start("other", vec![write("c")])),
+        Ok(crate::edge::replica::BatchAnswer::Applied)
+    );
+    assert_eq!(held_rows(&facade, "local-a").unwrap(), 3);
+}
