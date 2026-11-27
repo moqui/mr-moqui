@@ -720,12 +720,24 @@ fn the_suite_shell_tray_shows_the_theme_screens_in_chromium() {
         true,
         "Search is an icon"
     );
+    // a shell indicator (moqui.shellIndicators, as Maps' "Sharing location" chip) is its icon alone at this width
+    browser.eval(
+        "moqui.shellIndicators.set('gateSpec', {label: 'Sharing location (2) · sending here', icon: 'sym_o_share_location', \
+         tone: 'positive'}), true",
+    );
+    browser.wait_for(
+        "the indicator chip",
+        "!!document.getElementById('m-indicator-gateSpec') && document.getElementById('m-indicator-gateSpec').offsetParent !== null \
+         && document.querySelector('#m-indicator-gateSpec .m-shell-indicator-label').offsetParent === null",
+        WAIT,
+    );
     let overflow = browser.eval(
         "(() => { const bar = document.querySelector('#top .q-toolbar'); const right = bar.getBoundingClientRect().right; \
          return Array.from(bar.children).filter((el) => el.offsetParent !== null && el.getBoundingClientRect().right > right + 1).map((el) => el.id || el.className).join(' | ') \
          + (bar.scrollWidth > bar.clientWidth + 1 ? ' scroll ' + bar.scrollWidth + '>' + bar.clientWidth : ''); })()",
     );
-    assert_eq!(overflow, "", "nothing in the header overflows at 390 px");
+    assert_eq!(overflow, "", "nothing in the header overflows at 390 px, a shell indicator in it");
+    browser.eval("moqui.shellIndicators.remove('gateSpec'), true");
     browser.click("the tray button", "document.getElementById('m-counter-tray')");
     browser.wait_for(
         "the tray from its button",

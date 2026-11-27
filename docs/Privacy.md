@@ -18,7 +18,9 @@ their own.
   people who share a room or a call with you see: on the phone its model, on the desktop "MR Moqui desktop on" its
   operating system. You can rename it.
 - **Calls.** A call's audio and video go to your server and the other people in the call, only while it lasts.
-- **Location.** Only when you share a place in a chat: the place you choose, sent to your server as a message.
+- **Location.** Only when you share a place in a chat (the place you choose, sent to your server as a message), and while a
+  live share you started in Maps has its page open in the app or a browser: that page's position, at most every few
+  seconds (every minute for an approximate share), sent to your server for that share. Closing the page stops it.
 - **Live location on the server.** While a share you started lasts (at most a day unless you extend it), your server
   keeps only its latest position, read by no one once the share ends and deleted then (when you stop it) or up to an
   hour later (when its time runs out), and a trail only when you choose one for that share, for at most 30 days after it

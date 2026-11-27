@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- My location shares (plans/Location-Sharing.md §1 "Visible to everyone it concerns", §3.3; docs/tools/Maps.md, Live
+    location): where the app bar's "Sharing location" chip goes, for every signed-in user, Maps user or not (MAPS_SHARES,
+    data/MapsSecurityData.xml, as MAPS_DIALOG opens LocalMap): the user's own active shares, each with who sees it, its end
+    and the age of its last position, with Stop and Extend (an hour more, within location@max-share-hours, the end alone:
+    the audience is never sent again), and Open in Maps for a user who may open the Maps app. Through LL1's LocationServices
+    (find#MyShares, stop#Share, update#Share), which act on the caller's own shares only. A plain XML screen, so the
+    browser, html and the terminal show the same list. Starting a share is Browse's (in the browser or the app). -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
+        default-menu-title="My location shares" default-menu-include="false">
+
+    <transition name="stopShare">
+        <actions><script><![CDATA[
+            ec.service.sync().name('org.moqui.maps.LocationServices.stop#Share').parameter('shareId', String(shareId ?? '')).requireNewTransaction(true).call()
+            if (!ec.message.hasError()) ec.message.addMessage(ec.l10n.localize('Sharing stopped'), 'success')
+        ]]></script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <!-- an hour more from the later of now and the share's end, within location@max-share-hours from now -->
+    <transition name="extendShare">
+        <actions><script><![CDATA[
+            const share = Array.from(ec.service.sync().name('org.moqui.maps.LocationServices.find#MyShares').call()?.shareList || [])
+                .find((row) => row.shareId === String(shareId ?? ''))
+            if (!share) ec.message.addError(ec.l10n.localize('Location share not found'))
+            else {
+                const now = ec.user.timestampMillis(ec.user.nowTimestamp)
+                // location@max-share-hours as LocationShares.js setting() reads it: a whole number, else 24
+                const given = String(ec.factory.getConfValue('location@max-share-hours') ?? '').trim()
+                const hours = given !== '' && Number.isInteger(Number(given)) && Number(given) >= 0 ? Number(given) : 24
+                const current = Number(share.thruDate) || now
+                const thru = Math.min(Math.max(current, now) + 3600000, now + hours * 3600000)
+                // a share already at the longest it may be is said so, not extended by nothing
+                if (thru <= current + 60000) ec.message.addMessage(ec.l10n.localize('This share already lasts as long as it may') + ' ('
+                    + ec.l10n.format(new Date(current), 'EEE HH:mm') + ')', 'warning')
+                else {
+                    ec.service.sync().name('org.moqui.maps.LocationServices.update#Share').parameters({shareId: share.shareId, thruDate: new Date(thru)})
+                        .requireNewTransaction(true).call()
+                    if (!ec.message.hasError()) ec.message.addMessage(ec.l10n.localize('Shared until') + ' ' + ec.l10n.format(new Date(thru), 'EEE HH:mm'), 'success')
+                }
+            }
+        ]]></script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+
+    <actions><script><![CDATA[
+        const L = (text) => ec.l10n.localize(text)
+        let shares = []
+        // a read that failed (thrown, or an error it added) is said as such, never as "nobody"
+        readFailed = false
+        ec.message.pushErrors()
+        try {
+            shares = Array.from(ec.service.sync().name('org.moqui.maps.LocationServices.find#MyShares').call()?.shareList || [])
+            if (ec.message.hasError()) { ec.logger.warn('My location shares: not read: ' + ec.message.getErrorsString()); readFailed = true; shares = [] }
+        } catch (err) {
+            ec.logger.warn('My location shares: not read: ' + (err?.message ?? err))
+            readFailed = true
+        } finally { ec.message.clearErrors(); ec.message.popErrors() }
+        const now = ec.user.timestampMillis(ec.user.nowTimestamp)
+        const ageText = (seconds) => seconds == null ? L('No position yet') : seconds < 60 ? L('just now') : seconds < 3600
+            ? Math.floor(seconds / 60) + ' ' + L('min ago') : Math.floor(seconds / 3600) + ' ' + L('h ago')
+        shareList = shares.filter((share) => share.active).map((share) => ({shareId: share.shareId, label: share.label || '',
+            whoText: Array.from(share.audienceList || []).filter((row) => !row.revoked)
+                .map((row) => row.hasLink ? L('a guest link') : row.userName || row.groupName || row.jid || '').filter(Boolean).join(', '),
+            untilText: share.thruDate ? ec.l10n.format(new Date(Number(share.thruDate)), 'EEE HH:mm') : '',
+            ageText: ageText(share.latest ? share.latest.ageSeconds : null) + (share.approximate ? ' · ' + L('approximate, about 1 km') : '')}))
+        // Open in Maps: only for a user whose own grants open the Maps app (Maps.xml carries its grant, as LocalMap asks)
+        mapsOpen = !!ec.user.userId && !!ec.artifactExecution.isPermittedOwn('component://tools/screen/Maps.xml', 'AT_XML_SCREEN', 'view')
+    ]]></script></actions>
+
+    <widgets>
+        <label type="p" text="The location you share now, who sees it and until when. Only you and they see it; stop any share at once." style="m-muted"/>
+        <section name="ReadFailed" condition="readFailed"><widgets>
+            <label type="p" text="Your location shares could not be read: reload the page." style="text-warning"/></widgets></section>
+        <section name="NoShares" condition="!readFailed &amp;&amp; !shareList.length"><widgets>
+            <label type="p" text="You share your location with nobody now."/></widgets></section>
+        <form-list name="MyShareList" list="shareList" skip-form="true">
+            <field name="label"><default-field title="Shared as"><display/></default-field></field>
+            <field name="whoText"><default-field title="Seen by"><display/></default-field></field>
+            <field name="untilText"><default-field title="Until"><display/></default-field></field>
+            <field name="ageText"><default-field title="Last position"><display/></default-field></field>
+            <field name="actions"><default-field title="">
+                <link url="extendShare" text="An hour more" icon="sym_o_more_time"><parameter name="shareId"/></link>
+                <link url="stopShare" text="Stop" icon="sym_o_location_off" btn-type="danger" confirmation="Stop sharing your location now?">
+                    <parameter name="shareId"/></link>
+            </default-field></field>
+        </form-list>
+        <section name="OpenInMaps" condition="mapsOpen"><widgets>
+            <link url="../Browse" text="Open in Maps" icon="sym_o_map" url-type="screen"><parameter name="panel" value="live"/></link>
+        </widgets></section>
+    </widgets>
+</screen>

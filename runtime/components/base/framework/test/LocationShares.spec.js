@@ -9,7 +9,10 @@
 // time before the share told apart, an approximate share's cell (one fixed grid, the same for two shares, kept through
 // jitter at a line, its accuracy 1000 m or the device's rounded up, its time to the minute) made before it is stored or
 // sent, an ADMIN reads nothing of another's, the audit rows hold no position, and a link's token is returned once with
-// only its digest kept. It ends its memberships and stops its shares in cleanup, so it runs again on --db existing.
+// only its digest kept; the owner's lock row is made on first use, and a group of more than four times the audience cap
+// is refused before its snapshot is written (the LL1 review); and the effective configuration's locationShares (LL2, Maps
+// › Browse) hold the owner's own share and the audience's, nobody else's. It ends its memberships and stops its shares in
+// cleanup, so it runs again on --db existing.
 // Run: ./moq test framework --spec LocationShares
 const S = "org.moqui.maps.LocationServices."
 const A = "LOC_SHARE_A"
@@ -28,6 +31,8 @@ const J = "LOC_SHARE_J"
 const USERS = [A, B, C, D, F, G, H, I, J]
 const GROUP = "LOC_SHARE_GROUP"
 const OTHER_GROUP = "LOC_SHARE_OTHER"
+// a group of five current members, for the cap checked before a group's snapshot
+const BIG_GROUP = "LOC_SHARE_BIG"
 const MINUTE = 60000
 const HOUR = 3600000
 const DAY = 86400000
@@ -42,8 +47,9 @@ function sys(run) {
     }
 }
 const username = userId => (userId === "EX_JOHN_DOE" ? "john.doe" : userId.toLowerCase().replace(/_/g, "."))
-// a call as the user, with authorization on: its results, and its errors as text
-function as(userId, verbNoun, parameters) {
+// a call as the user, with authorization on: its results, and its errors as text; a service of LocationServices unless
+// another prefix is given
+function as(userId, verbNoun, parameters, prefix) {
     ec.user.internalLoginUser(username(userId))
     ec.artifactExecution.enableAuthz()
     let out = {}
@@ -52,7 +58,7 @@ function as(userId, verbNoun, parameters) {
         out =
             ec.service
                 .sync()
-                .name(S + verbNoun)
+                .name((prefix || S) + verbNoun)
                 .parameters(parameters || {})
                 .call() || {}
     } catch (err) {
@@ -137,7 +143,7 @@ spec({
         sys(() =>
             ec.entity
                 .find("moqui.security.UserGroupMember")
-                .condition("userGroupId", "in", [GROUP, OTHER_GROUP])
+                .condition("userGroupId", "in", [GROUP, OTHER_GROUP, BIG_GROUP])
                 .condition("userId", "in", USERS)
                 .condition("thruDate", null)
                 .updateAll({thruDate: new Date(Date.now() - 1000)})
@@ -756,3 +762,164 @@ feature("a guest link's token is returned once and only its digest is kept; a sh
         secondLink == "ONE_LINK"
     }
 })
+
+feature(
+    "the owner's lock row is made on first use; a group of more than four times max-audience members is refused before its snapshot",
+    {
+        when() {
+            sys(() => ec.entity.find("moqui.maps.LocationShareOwner").condition("ownerUserId", A).deleteAll())
+            const first = as(A, "create#Share", {audienceList: [toUser(B)], thruDate: new Date(shared.now + HOUR)})
+            const lockRows = rows("moqui.maps.LocationShareOwner", {ownerUserId: A}).length
+            make("moqui.security.UserGroup", {userGroupId: BIG_GROUP, description: "Location shares spec, five members"})
+            for (const userId of [A, B, C, I, J])
+                make("moqui.security.UserGroupMember", {userGroupId: BIG_GROUP, userId, fromDate: new Date(shared.now - DAY)})
+            // five membership rows, but a snapshot of B alone: C and J block A here, and I blocks A from the start, so
+            // the cap after the writes passes at a max-audience of 1 and only the check before the snapshot refuses it
+            const share = max =>
+                withConf("location@max-audience", max, () =>
+                    blockedBy(C, () =>
+                        blockedBy(J, () =>
+                            as(A, "create#Share", {audienceList: [toGroup(BIG_GROUP)], thruDate: new Date(shared.now + HOUR)})
+                        )
+                    )
+                )
+            const refused = share(1)
+            const allowed = share(2)
+            return {
+                first,
+                lockRows,
+                refused,
+                allowed,
+                snapshot: rows("moqui.maps.LocationShareAudienceMember", {shareId: allowed.shareId || "-"}).map(row => row.userId)
+            }
+        },
+        then({first, lockRows, refused, allowed, snapshot}) {
+            first.errors == ""
+            first.shareId != null
+            lockRows == 1
+            refused.reasonCode == "AUDIENCE_TOO_LARGE"
+            refused.shareId == null
+            allowed.errors == ""
+            snapshot.join() == B
+        }
+    }
+)
+
+feature(
+    "the effective configuration's locationShares: the owner's own with its audience, the audience's with the latest and the trail, nobody else's",
+    {
+        when() {
+            later(6000)
+            const shareId = as(A, "create#Share", {
+                audienceList: [toUser(B)],
+                thruDate: new Date(shared.now + HOUR),
+                label: "Alex live",
+                keepTrail: true
+            }).shareId
+            report(shareId, "47.6", "-122.3", {accuracy: "9"})
+            later(6000)
+            report(shareId, "47.61", "-122.31", {accuracy: "7"})
+            // MapConfig.js liveShares as each user, with authorization on (Browse's getConfig and locationShares)
+            const live = userId => {
+                ec.user.internalLoginUser(username(userId))
+                ec.artifactExecution.enableAuthz()
+                try {
+                    const all = Array.from(
+                        ec.resource.script("component://framework/service/org/moqui/maps/MapConfig.js").execute("liveShares", {})
+                            .locationShares || []
+                    )
+                    return all.find(row => row.shareId === shareId) || null
+                } finally {
+                    ec.message.clearErrors()
+                }
+            }
+            const config = asked =>
+                sys(() => {
+                    ec.user.internalLoginUser(username(B))
+                    return ec.service
+                        .sync()
+                        .name("org.moqui.maps.MapServices.get#EffectiveConfig")
+                        .parameters({locationShares: asked})
+                        .call().config
+                })
+            const out = {owner: live(A), viewer: live(B), other: live(C), admin: live("EX_JOHN_DOE")}
+            out.carried = (config(true).locationShares || []).some(row => row.shareId === shareId)
+            out.notAsked = config(false).locationShares === undefined
+            // the app bar's chip (get#ShellIndicator, the framework's live-location shell-indicator provider): the owner's, the count of their own
+            // shares; none for a viewer who shares nothing, who is still told which pushes to read it again on
+            out.indicator = as(A, "get#ShellIndicator")
+            out.noIndicator = as(J, "get#ShellIndicator")
+            as(A, "stop#Share", {shareId})
+            out.afterStop = live(B)
+            return out
+        },
+        then({owner, viewer, other, admin, carried, notAsked, afterStop, indicator, noIndicator}) {
+            indicator.indicators.length == 1
+            indicator.indicators[0].key == "locationSharing"
+            indicator.indicators[0].label.startsWith("Sharing location")
+            indicator.indicators[0].url == "/qapps/maps/MyShares"
+            indicator.indicators[0].refreshInSeconds > 0
+            indicator.refreshOn[0].topicPrefix == "locationShare:"
+            noIndicator.indicators.length == 0
+            noIndicator.refreshOn.length == 1
+            owner.role == "owner"
+            owner.label == "Alex live"
+            owner.audience.map(entry => entry.name).join() == "Loc B"
+            owner.reportIntervalSeconds == 5
+            owner.trailCount == 2
+            owner.latest.latitude == 47.61
+            viewer.role == "viewer"
+            viewer.ownerName == "Loc A"
+            viewer.latest.latitude == 47.61
+            viewer.latest.accuracy == 7
+            viewer.audience == null
+            JSON.stringify(viewer.trail) ==
+                JSON.stringify([
+                    [-122.3, 47.6],
+                    [-122.31, 47.61]
+                ])
+            other == null
+            admin == null
+            carried == true
+            notAsked == true
+            afterStop == null
+        }
+    }
+)
+
+feature(
+    "the app bar's chip reaches every share owner, whatever apps they may open, through call#Providers with authorization on; the grant reaches only get#ShellIndicators",
+    {
+        when() {
+            later(6000)
+            // A's earlier shares stopped, so the chip says this one alone and goes with its stop
+            for (const share of Array.from(as(A, "find#MyShares").shareList || [])) as(A, "stop#Share", {shareId: share.shareId})
+            const shareId = as(A, "create#Share", {audienceList: [toUser(B)], thruDate: new Date(shared.now + HOUR)}).shareId
+            // org.moqui.ui.ShellServices as the user (who has ALL_USERS alone, no Maps), authorization on
+            const shell = (userId, verbNoun, parameters) => as(userId, verbNoun, parameters, "org.moqui.ui.ShellServices.")
+            const out = {
+                owner: shell(A, "get#ShellIndicators"),
+                none: shell(J, "get#ShellIndicators"),
+                direct: shell(J, "call#Providers", {hook: "shell-indicator"})
+            }
+            as(A, "stop#Share", {shareId})
+            out.stopped = shell(A, "get#ShellIndicators")
+            return out
+        },
+        then({owner, none, direct, stopped}) {
+            owner.errors == ""
+            owner.indicators.some(
+                row =>
+                    row.key == "locationSharing" && row.sourceId == "framework.locationSharing" && row.label == "Sharing location"
+            )
+            owner.indicators[0].url == "/qapps/maps/MyShares"
+            none.errors == ""
+            none.indicators.length == 0
+            none.refreshOn.some(rule => rule.topicPrefix == "locationShare:")
+            direct.errors.includes("not authorized")
+            Array.from(direct.results || []).length == 0
+            stopped.errors == ""
+            stopped.indicators.length == 0
+        }
+    }
+)

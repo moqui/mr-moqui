@@ -45,10 +45,12 @@ along with this software (see the LICENSE.md file). If not, see
             XMPP roster (username@xmpp-server@domain, XmppServices.get#Roster; kept for the XMPP server to deliver),
             LsaLink a guest link (one a share), whose token is returned here once and kept only as its digest. Each
             audience user is told who shares with them and until when (the LocationShared notification). At most
-            location@max-active-shares active shares an owner and location@max-audience people (a group's members
-            counted each), contacts and links a share. Refused with a reasonCode: BAD_UNTIL, TOO_LONG, BAD_PRECISION,
-            BAD_TRAIL_DAYS, AUDIENCE_EMPTY, BAD_AUDIENCE, USER_NOT_FOUND, GROUP_NOT_ALLOWED, XMPP_OFF, XMPP_NOT_CONTACT,
-            ONE_LINK, AUDIENCE_TOO_LARGE, TOO_MANY_SHARES, GROUP_CHECK_FAILED.</description>
+            location@max-active-shares active shares an owner and location@max-audience people (the members its groups
+            reach, counted each), contacts and links a share; a group with more than four times location@max-audience
+            current membership rows is refused before its members are written. Refused with a reasonCode: BAD_UNTIL,
+            TOO_LONG, BAD_PRECISION, BAD_TRAIL_DAYS, AUDIENCE_EMPTY, BAD_AUDIENCE, USER_NOT_FOUND, GROUP_NOT_ALLOWED,
+            XMPP_OFF, XMPP_NOT_CONTACT, ONE_LINK, AUDIENCE_TOO_LARGE, TOO_MANY_SHARES, GROUP_CHECK_FAILED,
+            SHARE_LOCK_FAILED (the owner's lock row could not be made or locked).</description>
         <in-parameters>
             <parameter name="audienceList" type="List" required="true"/>
             <parameter name="thruDate" type="Timestamp" required="true"/>
@@ -205,6 +207,20 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="reasonCode"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('deleteTrail', context))</script></actions>
+    </service>
+
+    <service verb="get" noun="ShellIndicator">
+        <description>The framework's shell-indicator provider, for every signed-in user (MoquiDefaultConf.xml screen-facade
+            shell-providers; plans/Location-Sharing.md §3.3): while the
+            current user has any active share of their own, one indicator, "Sharing location" (with the count when more than
+            one), to Maps › My location shares (MyShares.xml, which every signed-in user opens), asked again at the soonest end (refreshInSeconds) and on the user's own
+            pushes of a share's start, change or end (refreshOn); none otherwise. It counts the user's own shares and reads
+            no audience or position.</description>
+        <out-parameters>
+            <parameter name="indicators" type="List"/>
+            <parameter name="refreshOn" type="List"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('indicator', context))</script></actions>
     </service>
 
     <service verb="clean" noun="LocationShares" authenticate="anonymous-all" allow-remote="false" transaction="ignore">

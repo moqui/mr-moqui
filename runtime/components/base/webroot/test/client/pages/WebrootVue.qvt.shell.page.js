@@ -509,12 +509,99 @@ test("a form in the quick-create dialog closes it when it submits without errors
     assert.equal(moqui.responseHasErrors("text"), false);
 });
 
+test("shell indicators: set, update, a note, remove, plain text only, and every one cleared by the sign-out hook", () => {
+    const indicators = moqui.shellIndicators;
+    indicators.clear();
+    assert.equal(indicators.set("bad key", { label: "x" }), false, "a key is letters, digits, _ and -");
+    assert.equal(indicators.set("empty", { label: "  " }), false, "an indicator has a label");
+    assert.equal(indicators.set("spec", { label: "<img src=x onerror=alert(1)>Spec‮\u0007 one", icon: "bad icon!", tone: "purple",
+        action: "javascript:alert(1)", title: "Spec\ntitle" }), true);
+    let item = indicators.get("spec");
+    assert.equal(item.label, "<img src=x onerror=alert(1)>Spec one", "controls and bidi overrides gone; markup is only text, shown as text");
+    assert.equal(item.icon, "sym_o_info");
+    assert.equal(item.tone, "primary");
+    assert.equal(item.url, null, "an action is a path of this site, or a function");
+    assert.equal(item.title, "Spec title");
+    indicators.set("spec", { label: "Spec two", tone: "positive", action: { url: "/qapps/maps/Browse?panel=live" }, sequence: 5 });
+    indicators.set("another", { label: "Another", action: { url: "//evil.example/x" } });
+    assert.equal(indicators.get("another").url, null);
+    indicators.note("spec", "sending here");
+    assert.deepEqual(indicators.list().map((one) => one.text), ["Another", "Spec two · sending here"], "in sequence order, with a note");
+    // a set of the same key keeps its note; remove takes the indicator off
+    indicators.set("spec", { label: "Spec three", sequence: 5 });
+    assert.equal(indicators.list()[1].text, "Spec three · sending here");
+    indicators.remove("another");
+    assert.deepEqual(indicators.list().map((one) => one.key), ["spec"]);
+    // a click: the path through the shell's setUrl, or the function
+    const vm = makeRoot({}, { userId: "U1" });
+    const went = [];
+    vm.setUrl = (url) => went.push(url);
+    indicators.set("spec", { label: "Spec", action: { url: "/qapps/maps/Browse?panel=live" } });
+    vm.indicatorClick({ key: "spec" });
+    let clicked = 0;
+    indicators.set("callback", { label: "Callback", action: { onClick: () => { clicked++; } } });
+    vm.indicatorClick({ key: "callback" });
+    assert.deepEqual(went, ["/qapps/maps/Browse?panel=live"]);
+    assert.equal(clicked, 1);
+    assert.deepEqual(vm.shellIndicatorList.map((one) => one.key), ["callback", "spec"]);
+    // a sign-out (logoutClick runs moqui.beforeLogoutHooks) clears every one, and their notes
+    Array.from(moqui.beforeLogoutHooks).forEach((hook) => hook());
+    assert.deepEqual(indicators.list(), []);
+    indicators.set("spec", { label: "Spec" });
+    assert.equal(indicators.list()[0].text, "Spec", "no note left");
+    indicators.clear();
+});
+
+test("the server's indicators: set from /shellIndicators, one no longer answered taken off, and read again on a push they name", async () => {
+    const indicators = moqui.shellIndicators;
+    indicators.clear();
+    indicators.set("local", { label: "A screen's own" });
+    const vm = makeRoot({}, { userId: "U1" });
+    const asked = [];
+    let answer = { indicators: [{ key: "locationSharing", label: "Sharing location (2)", icon: "sym_o_share_location", tone: "positive",
+        url: "/qapps/maps/Browse?panel=live", refreshInSeconds: 3600 }],
+        refreshOn: [{ topicPrefix: "locationShare:", events: ["started", "changed", "ended"] }] };
+    const request = moqui.request;
+    moqui.request = (url) => { asked.push(url); return Promise.resolve({ json: answer }); };
+    try {
+        await vm.loadShellIndicators();
+        assert.deepEqual(asked, ["/shellIndicators"]);
+        assert.deepEqual(indicators.list().map((one) => [one.key, one.text]), [["local", "A screen's own"], ["locationSharing", "Sharing location (2)"]]);
+        assert.equal(indicators.get("locationSharing").url, "/qapps/maps/Browse?panel=live");
+        assert.equal(vm.indicatorRefreshFor("locationShare:S1", { message: '{"event":"ended","shareId":"S1"}' }), true);
+        assert.equal(vm.indicatorRefreshFor("locationShare:S1", { message: { event: "position" } }), false, "a position push is not a reason to ask again");
+        assert.equal(vm.indicatorRefreshFor("chatRoom:R1", { message: { event: "ended" } }), false);
+        // the next answer has none: the server's is taken off, a screen's own stays
+        answer = { indicators: [], refreshOn: answer.refreshOn };
+        await vm.loadShellIndicators();
+        assert.deepEqual(indicators.list().map((one) => one.key), ["local"]);
+        assert.equal(vm.indicatorRefreshFor("locationShare:S2", { message: { event: "started" } }), true, "a share started elsewhere is still heard of");
+        // an older answer that comes after a newer one is not taken
+        let release = null;
+        const older = { indicators: [{ key: "locationSharing", label: "Sharing location" }], refreshOn: [] };
+        moqui.request = () => new Promise((resolve) => { release = () => resolve({ json: older }); });
+        const first = vm.loadShellIndicators();
+        moqui.request = () => Promise.resolve({ json: { indicators: [], refreshOn: answer.refreshOn } });
+        await vm.loadShellIndicators();
+        release();
+        await first;
+        assert.deepEqual(indicators.list().map((one) => one.key), ["local"]);
+    } finally {
+        moqui.request = request;
+        clearTimeout(vm.indicatorTimer);
+        indicators.clear();
+    }
+});
+
 test("the shell components compile and the header has each element of the design", () => {
     const shell = qvt.components["m-qapps-root"].template;
     ["m-launcher", "m-app-screens", "m-search", "m-quick-create-menu", "m-account"].forEach((id) => assert.match(shell, new RegExp('id="' + id + '"'), id));
     // the tray and then the call dock close the page container
     assert.match(shell, /<m-shell-tray v-if="trayTabs.length"><\/m-shell-tray>\n {8}<m-call-dock v-if="callsOn"><\/m-call-dock>\n {4}<\/q-page-container>/);
     assert.match(shell, /<m-shell-palette><\/m-shell-palette>/);
+    // the shell indicators, a chip each, at every density, the label (text) from 600 px
+    assert.match(shell, /<q-space><\/q-space>\n\n {8}<q-chip v-for="indicator in shellIndicatorList"/);
+    assert.match(shell, /<span class="m-shell-indicator-label gt-xs">\{\{indicator.text\}\}<\/span>/);
     // a handheld screen: no drawer, menu button, launcher or footer; of the header's buttons only the account; the title at every width
     assert.match(shell, /<q-drawer v-if="!handheld"/);
     assert.match(shell, /<q-footer v-if="!handheld"/);

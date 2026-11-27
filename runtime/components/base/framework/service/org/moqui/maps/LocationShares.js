@@ -263,7 +263,12 @@ function checkUsers(userIds, now) {
     return {}
 }
 
-/** Whether the owner may share with these groups: groups the owner is in now, never every user or a group of external users. */
+/**
+ * Whether the owner may share with these groups: groups the owner is in now, never every user or a group of external users,
+ * and none whose current membership rows number more than four times location@max-audience, refused before its snapshot
+ * so that a huge group costs no inserts the cap would roll back (plans/Location-Sharing.md §3.2; checkReach, after the
+ * writes, stays the cap that counts).
+ */
 function checkGroups(groupIds) {
     if (!groupIds.length) return {}
     const mine = new Set(currentGroupIds(ec.user.userId, groupIds))
@@ -277,6 +282,14 @@ function checkGroups(groupIds) {
     ).map(row => row.userGroupId)
     if (groupIds.some(id => id === "ALL_USERS" || !mine.has(id) || outside.includes(id)))
         return refuse("GROUP_NOT_ALLOWED", "Share with a group only when you are in it")
+    const max = setting("max-audience", 50)
+    for (const userGroupId of groupIds) {
+        const members = find(GROUP_MEMBER)
+            .condition("userGroupId", userGroupId)
+            .conditionDate("fromDate", "thruDate", null)
+            .count()
+        if (members > max * 4) return refuse("AUDIENCE_TOO_LARGE", `A share is seen by at most ${max} people and links`)
+    }
     return {}
 }
 
@@ -373,23 +386,32 @@ function checkReach(share) {
 
 /**
  * The owner's lock row (LocationShareOwner, which no foreign key names, so no audience insert's key check waits on it
- * on any database), made on first use in its own transaction, then locked for the rest of the caller's.
+ * on any database), made on first use in its own transaction, then locked for the rest of the caller's. It fails closed
+ * (plans/Location-Sharing.md §3.2, the LL1 review): the first look is a plain read, a missing row is made in its own
+ * transaction, where only another request's making it at the same moment (the row there after the failure: a duplicate
+ * key) is passed over and any other failure is logged; false when the row cannot then be locked, which the caller refuses.
  */
 function lockOwner(userId) {
-    if (find(OWNER_LOCK).condition("ownerUserId", userId).forUpdate(true).one()) return
-    ec.message.pushErrors()
-    try {
-        ec.transaction.runRequireNew(10, "Could not make a location share lock row", () => {
-            if (!find(OWNER_LOCK).condition("ownerUserId", userId).one())
-                ec.entity.makeValue(OWNER_LOCK).setAll({ownerUserId: userId, createdDate: ec.user.nowTimestamp}).create()
-        })
-    } catch (err) {
-        // another request made it at the same moment
-    } finally {
-        ec.message.clearErrors()
-        ec.message.popErrors()
+    const lockRow = () => find(OWNER_LOCK).condition("ownerUserId", userId)
+    if (!lockRow().one()) {
+        let failure = null
+        ec.message.pushErrors()
+        try {
+            ec.transaction.runRequireNew(10, "Could not make a location share lock row", () => {
+                if (!lockRow().one())
+                    ec.entity.makeValue(OWNER_LOCK).setAll({ownerUserId: userId, createdDate: ec.user.nowTimestamp}).create()
+            })
+            if (ec.message.hasError()) failure = ec.message.getErrorsString()
+        } catch (err) {
+            failure = String(err && err.message ? err.message : err)
+        } finally {
+            ec.message.clearErrors()
+            ec.message.popErrors()
+        }
+        if (failure != null && !lockRow().one())
+            ec.logger.error(`Could not make the location share lock row of user ${userId}: ${failure}`)
     }
-    find(OWNER_LOCK).condition("ownerUserId", userId).forUpdate(true).one()
+    return lockRow().forUpdate(true).one() != null
 }
 
 function checkTrail(p) {
@@ -417,7 +439,7 @@ function create(p) {
     if (!audience.entries.length) return refuse("AUDIENCE_EMPTY", "Choose who sees your location")
     const maxShares = setting("max-active-shares", 20)
     // counted under the owner's lock row, so two creates at once cannot both pass the cap
-    lockOwner(me)
+    if (!lockOwner(me)) return refuse("SHARE_LOCK_FAILED", "Your location could not be shared now: try again")
     const active = find(SHARE)
         .condition("ownerUserId", me)
         .condition("revokedDate", null)
@@ -581,8 +603,8 @@ function checkPosition(p, now, share) {
 }
 
 const wrapLongitude = longitude => ((((longitude + 180) % 360) + 360) % 360) - 180
-// the longitude width of a cell at a latitude: about the same width in km, wider in degrees toward a pole, one cell at
-// it
+// the longitude width of a cell at a latitude: about the same width in km, wider in degrees toward a pole, and one cell
+// around the whole circle at a pole
 function longitudeStep(latitude) {
     const cos = Math.cos((latitude * Math.PI) / 180)
     return cos > APPROXIMATE_DEGREES ? APPROXIMATE_DEGREES / cos : 360
@@ -1015,7 +1037,47 @@ function clean() {
     return counts
 }
 
-const operations = {create, update, stop, revoke, report, findMine, findShared, get, deleteTrail, clean}
+/**
+ * get#ShellIndicator, the shell-indicator provider the framework's conf registers for every signed-in user (plans/Location-Sharing.md §1 "Visible to everyone it
+ * concerns", §3.3): while the caller has any active share of their own, the app bar's "Sharing location" chip on every
+ * screen, to Maps › My location shares (every signed-in user opens it). A count of the caller's own shares, no audience or position read; asked
+ * again by the shell at the soonest end and on the owner's own pushes of a share's start, change or end.
+ */
+function indicator() {
+    const me = ec.user.userId
+    // read again on the owner's own pushes of a start, change or end, whether or not a share is on now
+    const refreshOn = [{topicPrefix: "locationShare:", events: ["started", "changed", "ended"]}]
+    if (!me) return {indicators: [], refreshOn}
+    const now = nowMillis()
+    const ends = Array.from(
+        find(SHARE)
+            .condition("ownerUserId", me)
+            .condition("revokedDate", null)
+            .condition("endedDate", null)
+            .condition("thruDate", "greater", new Date(now))
+            .selectField("thruDate")
+            .list()
+    ).map(row => millis(row.thruDate))
+    if (!ends.length) return {indicators: [], refreshOn}
+    const label = ec.l10n.localize("Sharing location") + (ends.length > 1 ? " (" + ends.length + ")" : "")
+    return {
+        indicators: [
+            {
+                key: "locationSharing",
+                label,
+                icon: "sym_o_share_location",
+                tone: "positive",
+                title: ec.l10n.localize("Who sees my location"),
+                // My location shares, which every signed-in user may open (Maps users get Open in Maps there)
+                url: "/qapps/maps/MyShares",
+                refreshInSeconds: Math.max(0, Math.ceil((Math.min(...ends) - now) / 1000))
+            }
+        ],
+        refreshOn
+    }
+}
+
+const operations = {create, update, stop, revoke, report, findMine, findShared, get, deleteTrail, clean, indicator}
 
 function execute(op, parameters) {
     if (!operations[op]) throw new Error("Unknown location share operation " + op)
