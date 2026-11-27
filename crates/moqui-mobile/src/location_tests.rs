@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The phone's side of live location (plans/Location-Sharing.md §3.4): the page's ask checked, and `report_location`
+//! The phone's side of live location (plans/archive/Location-Sharing.md §3.4): the page's ask checked, and `report_location`
 //! with the account's key through a stand-in poster. Each test has accounts of its own: the reporters are the process's.
 
 use std::cell::RefCell;

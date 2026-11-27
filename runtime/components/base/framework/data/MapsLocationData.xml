@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Shared live location (plans/Location-Sharing.md §3.1, §3.2; entity/MapLocationEntities.xml,
+<!-- Shared live location (plans/archive/Location-Sharing.md §3.1, §3.2; entity/MapLocationEntities.xml,
     service/org/moqui/maps/LocationServices.xml): the precision and audience kinds, the notice an audience member gets, the
     hourly clean job, and the grant of the owner's and the audience's services to every signed-in user. -->
 <entity-facade-xml type="seed">
@@ -34,7 +34,7 @@ along with this software (see the LICENSE.md file). If not, see
             typeString="info" showAlert="Y" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y"
             titleTemplate="${ownerName} shares their location with you until ${untilText}" linkTemplate=""/>
     <!-- A person told that someone shares their location with their XMPP app, as an XMPP contact of a share (LsaXmpp,
-        plans/Location-Sharing.md §3.6): the positions reach them only there, as user location (XEP-0080) -->
+        plans/archive/Location-Sharing.md §3.6): the positions reach them only there, as user location (XEP-0080) -->
     <moqui.security.user.NotificationTopic topic="LocationSharedXmpp" inboxEnumId="NinNotifications"
             description="Shares their location with your XMPP app" typeString="info" showAlert="Y" persistOnSend="Y"
             receiveNotifications="Y" isPrivate="Y"

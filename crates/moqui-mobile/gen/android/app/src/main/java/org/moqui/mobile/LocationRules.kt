@@ -9,7 +9,7 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
- * The live location service's rules (plans/Location-Sharing.md §3.4; [LocationShareService]), apart from Android so
+ * The live location service's rules (plans/archive/Location-Sharing.md §3.4; [LocationShareService]), apart from Android so
  * the JVM tests check them: how often the phone's location is asked for, when a share stops being sent from here, which
  * of Android's providers is read, and the notification's words.
  */

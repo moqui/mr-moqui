@@ -30,7 +30,7 @@ along with this software (see the LICENSE.md file). If not, see
     (rasterBands; a saved view keeps them too). Below 600 px the panel is a bottom sheet over the map. Full screen is the browser's, on request. The last view
     is posted (rememberView) only when the user turned Restore my last view on. Brand color names and Quasar classes
     only.
-    Live location (plans/Location-Sharing.md §3.3): the configuration's locationShares, drawn by m-map's live layer (which
+    Live location (plans/archive/Location-Sharing.md §3.3): the configuration's locationShares, drawn by m-map's live layer (which
     follows each share's topic and tells this screen what it holds by live-change); the Live location panel with Shared with
     me (each person, the age, Show on map, Directions: geo: in the Android app, OpenStreetMap elsewhere) and Who sees my
     location (each share of the user's own with its audience and end: Stop, Extend (the new end alone, never the audience
@@ -44,7 +44,7 @@ along with this software (see the LICENSE.md file). If not, see
     share stays active and its audience sees its position age. On every screen the app bar's "Sharing location" chip (a
     shell indicator of the framework's live-location provider) opens My location shares (MyShares.xml), whose Open in
     Maps opens this screen's Live location panel (panel=live); while this page sends, it notes "sending here" on that
-    chip. In the Android app (plans/Location-Sharing.md §3.4, LL3; moquiDesktop.location) Share asks for the location
+    chip. In the Android app (plans/archive/Location-Sharing.md §3.4, LL3; moquiDesktop.location) Share asks for the location
     permission first, with the app's reason, and the app's foreground service sends the share from the phone, also with
     the app in the background, under its notification (this page sends it only when the app could not start that); a
     share is sent from one device or page at a time, and Send from here (Send from this device in the app) takes it over
@@ -80,7 +80,7 @@ along with this software (see the LICENSE.md file). If not, see
         </q-btn>
     </div>
     <div v-if="error" class="text-negative q-px-sm" role="alert">{{error}}</div>
-    <!-- each active share of the user's own, always in sight here (plans/Location-Sharing.md §1, "Visible to everyone it
+    <!-- each active share of the user's own, always in sight here (plans/archive/Location-Sharing.md §1, "Visible to everyone it
         concerns"), with Stop; while this page sends it, it says so -->
     <div v-for="share in banners" :key="'banner' + share.shareId" class="m-maps-sharing row items-center no-wrap q-px-sm q-py-xs m-tonal" role="status"
             :data-maps-sharing="share.shareId">
@@ -445,7 +445,7 @@ along with this software (see the LICENSE.md file). If not, see
         </div>
     </m-dialog>
 
-    <!-- Share my location (plans/Location-Sharing.md §3.3): who sees it, until when, exact or approximate, a trail or not;
+    <!-- Share my location (plans/archive/Location-Sharing.md §3.3): who sees it, until when, exact or approximate, a trail or not;
         started only by this act, sent from this page while it is open; a guest link (its page's link, the secret in the fragment) shown once -->
     <m-dialog v-model="shareShown" :title="t('Share my location')" width="480">
         <div id="MapsShareDialog">
@@ -538,10 +538,10 @@ module.exports = {
             editSaving: false, editLoading: false, editStale: false,
             rasters: {}, bandLayerId: '', bandForm: { mode: 'rgb', rgb: [1, 2, 3], band: 1, colormap: 'grey', min: '', max: '', nodata: '' }, bandError: '', bandSaving: false,
             picker: { drives: [], driveId: null, crumbs: [], rows: [], loading: false, text: '', searching: false },
-            // live location (plans/Location-Sharing.md §3.3): m-map's shares as it holds them (live-change), the page's clock for
+            // live location (plans/archive/Location-Sharing.md §3.3): m-map's shares as it holds them (live-change), the page's clock for
             // ages, the shares this page sends and the newest position the browser gave
             live: null, liveGone: [], liveSelected: '', sharesNotice: '', sessionHash: null, now: Date.now(), sending: [], sendInfo: {}, sendNotes: {}, geoError: '', sendError: '',
-            // the shares the Android app's location service sends from this phone (plans/Location-Sharing.md §3.4)
+            // the shares the Android app's location service sends from this phone (plans/archive/Location-Sharing.md §3.4)
             nativeSending: [],
             shareShown: false, shareSaving: false, shareError: '', shareMade: null, shareUserOptions: [],
             shareForm: { users: [], groups: [], jids: [], link: false, hours: 1, precision: 'LspExact', keepTrail: false, takeXmpp: false, label: '' },
@@ -1144,7 +1144,7 @@ module.exports = {
             clipboard.writeText(text).then(() => moqui.notifyMessages([{ type: 'success', message: t('Copied') + ': ' + text }], null),
                 (err) => console.warn('Maps: the coordinates were not copied', err));
         },
-        // ---- live location (plans/Location-Sharing.md §3.3; the transitions are Browse.xml's, over LocationServices) ----
+        // ---- live location (plans/archive/Location-Sharing.md §3.3; the transitions are Browse.xml's, over LocationServices) ----
         // m-map's shares after a change: one an ended push (or a revoked one, to a viewer) took off is gone from the panels
         // too, for as long as the page is open; one a read no longer lists comes back with the next read that does
         onLiveChange(change) {
@@ -1330,7 +1330,7 @@ module.exports = {
                     }).then(() => json.shareId);
             }, (err) => { this.shareError = String(err && err.message || err); return null; });
         },
-        // ---- the Android app (plans/Location-Sharing.md §3.4, LL3): its location service sends a share from this phone, also
+        // ---- the Android app (plans/archive/Location-Sharing.md §3.4, LL3): its location service sends a share from this phone, also
         // with the app in the background, with its notification for as long as it does (moquiDesktop.location, a server
         // page's); with none (a browser, the desktop app) or when the app could not start it, this page sends while open ----
         nativeLocation() {
@@ -1513,7 +1513,7 @@ module.exports = {
         },
         // the app bar's "Sharing location" chip (the shell's indicator of the framework's live-location shell-indicator provider) says "sending here"
         // while this page sends a share, and "sending from this phone" while the Android app's location service does, which
-        // goes on after this page closes (plans/Location-Sharing.md §3.4), so that note stays when it does
+        // goes on after this page closes (plans/archive/Location-Sharing.md §3.4), so that note stays when it does
         noteSending(off) {
             if (!moqui.shellIndicators) return;
             const here = !off && !this.closed && this.sending.length > 0;

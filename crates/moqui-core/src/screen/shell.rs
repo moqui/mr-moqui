@@ -190,7 +190,7 @@ pub const PROVIDER_HOOKS: [&str; 16] = [
     // a chat event's calendar entry (ChatCal.js; plans/Comms-Messaging.md §18.3 phase 19)
     "chat-calendar",
     // the status chips of the shell's app bar for the current user (moqui.shellIndicators, the /shellIndicators
-    // transition; Maps' live location, plans/Location-Sharing.md §3.3)
+    // transition; Maps' live location, plans/archive/Location-Sharing.md §3.3)
     "shell-indicator",
 ];
 
@@ -200,7 +200,7 @@ pub const PROVIDER_HOOKS: [&str; 16] = [
 /// "Provider hooks"; mr-boss plan/impl-marketing.md P22, F72).
 ///
 /// `shell-indicator` too, so an indicator is the same for every signed-in user whatever apps they may open: the
-/// framework's conf answers live location's "Sharing location" (plans/Location-Sharing.md §3.3), a provider that reads
+/// framework's conf answers live location's "Sharing location" (plans/archive/Location-Sharing.md §3.3), a provider that reads
 /// only the caller's own rows, as a conf's provider must, since it runs with authorization disabled.
 pub const CONF_PROVIDER_HOOKS: [&str; 2] = ["sms-consent", "shell-indicator"];
 

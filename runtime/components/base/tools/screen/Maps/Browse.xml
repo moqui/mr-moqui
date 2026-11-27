@@ -20,7 +20,7 @@ along with this software (see the LICENSE.md file). If not, see
     overlays and places (overlayEdit, saveOverlayEdit).
     Browse.tui.json is the terminal's: the map component over terminalMap (the places of the saved views and the record
     layers, the notices and the attribution), then LocationSharesTui, the user's live location shares with Stop. Live location
-    (plans/Location-Sharing.md §3.3): getConfig carries the user's own active shares and those shared with them
+    (plans/archive/Location-Sharing.md §3.3): getConfig carries the user's own active shares and those shared with them
     (locationShares), and the transitions under "Live location" below start, extend, stop and report them through
     org.moqui.maps.LocationServices. A qvue screen only: asked for in html under /apps it opens at the same path
     under /qapps (screen/render.rs). Search reads saved views and places and the permitted records of the record layers
@@ -76,7 +76,7 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
-    <!-- ===== Live location (plans/Location-Sharing.md §3.3; docs/tools/Maps.md, Live location) =====
+    <!-- ===== Live location (plans/archive/Location-Sharing.md §3.3; docs/tools/Maps.md, Live location) =====
         Each a call of org.moqui.maps.LocationServices as the user, which checks that the user owns the share or is in its
         current audience: these transitions read no entity of a share. A position is posted (never in a URL), handed on as
         text, and named in no log, message or answer but the owner's own latest. -->
@@ -152,7 +152,7 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- Share my location: create#Share with the audience chosen (audience: a JSON list of {audienceTypeEnumId, userId,
         userGroupId, jid}), until thruDate (epoch millis), exact or approximate, a trail or not, and the XMPP app's location
         for the XMPP contacts or not (takeXmppLocation); a guest link's page link (linkUrl: this server's web root and
-        linkPath, its secret in the fragment; plans/Location-Sharing.md §3.7) is answered this once -->
+        linkPath, its secret in the fragment; plans/archive/Location-Sharing.md §3.7) is answered this once -->
     <transition name="createShare" method="post">
         <actions><script><![CDATA[
             let audienceList = null
@@ -189,7 +189,7 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/>
     </transition>
     <!-- The owner's XMPP app's location for a share's XMPP contacts, on or off (update#Share takeXmppLocation;
-        plans/Location-Sharing.md §3.6) -->
+        plans/archive/Location-Sharing.md §3.6) -->
     <transition name="takeXmppShare" method="post">
         <actions><script><![CDATA[
             ec.service.sync().name('org.moqui.maps.LocationServices.update#Share').requireNewTransaction(true)
@@ -213,7 +213,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <!-- Send from here (a browser page) or Send from this device (the Android app, whose requests carry its device key):
         update#Share with sendFromHere, so the share is sent from this request's device, or from no device, from now on;
-        the device that sent it is refused as another's (409 OTHER_DEVICE) and stops (plans/Location-Sharing.md §3.4) -->
+        the device that sent it is refused as another's (409 OTHER_DEVICE) and stops (plans/archive/Location-Sharing.md §3.4) -->
     <transition name="sendFromHere" method="post">
         <actions><script><![CDATA[
             const out = ec.service.sync().name('org.moqui.maps.LocationServices.update#Share').requireNewTransaction(true)
@@ -405,7 +405,7 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/>
     </transition>
     <!-- Save place: a named point to the user's places file (store#Place); remove one (delete#Place). A clientRef (a
-        place the apps' offline Maps screen saved, sent by the outbox: plans/Maps-Offline.md §2.5; clientConfig's
+        place the apps' offline Maps screen saved, sent by the outbox: plans/archive/Maps-Offline.md §2.5; clientConfig's
         features.placeRef) makes it once: a save is kept by its ref (ClientSyncServices claim#ClientRequest and
         store#ClientRequest, in one transaction), and sent again it answers the first save with duplicate true. A
         refusal (too many places, an unreadable places file) keeps no ref, so a retry of it may be saved, and is answered

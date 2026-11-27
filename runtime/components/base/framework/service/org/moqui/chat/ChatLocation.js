@@ -6,7 +6,7 @@
 // OpenStreetMap link (fallbackText), so every client, bridge and text shows it; Sinch RCS sends Sinch's location message
 // (crates/moqui-channels, providers/sinch/rcs.rs). An inbound RCS location (Sms.js) is made with the same words. In an
 // encrypted room the browser makes the same words (moqui.chat.locationFallback in WebrootChat.js; the specs keep the two
-// in step) and the place is only in the ciphertext. A live location (plans/Location-Sharing.md §3.5) is below: a
+// in step) and the place is only in the ciphertext. A live location (plans/archive/Location-Sharing.md §3.5) is below: a
 // LocationServices share with the room's members and a message carrying its id, never a position.
 
 const EVENT = 'moqui.chat.ChatEvent'
@@ -135,7 +135,7 @@ function mark(p) {
   return { marked: true }
 }
 
-// ---- live location in chat (plans/Location-Sharing.md §3.5, LL4) ----
+// ---- live location in chat (plans/archive/Location-Sharing.md §3.5, LL4) ----
 // A live share whose audience is the room's members as users when it starts (LocationServices.create#Share, which applies
 // the chat directory's rule and blocks again), and a message with content.location {liveShareId, label, thruDate,
 // approximate, source: 'live'} that carries the share's id and never a position: its words, which every bridge and text
@@ -264,7 +264,7 @@ function sendLive(p) {
 }
 
 /**
- * revokeLive (internal; plans/Location-Sharing.md §3.5, the LL4 decision): userId taken out of the live shares of a room
+ * revokeLive (internal; plans/archive/Location-Sharing.md §3.5, the LL4 decision): userId taken out of the live shares of a room
  * (chatRoomId: a member taken out of it by another, remove#Member) or of an owner's live shares in every room
  * (ownerUserId: the owner blocked them, ChatBlocks.js blockUser), through LocationServices.revoke#ChatAudience in a
  * transaction of its own. It only narrows who sees a share, so it never fails its caller: a failure is logged and cleared.

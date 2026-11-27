@@ -13,7 +13,7 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- Maps (plans/archive/Maps.md): the providers, layers and profiles a map is drawn from, saved views, users' overlays
-    and offline packages (plans/Maps-Offline.md), the
+    and offline packages (plans/archive/Maps-Offline.md), the
     registry of record and layer adapters, and the registry and runs of the Geo data importer. The Geo extensions (GeoPostalCode, GeoPointAssoc)
     are in BasicEntities.xml; the services in service/org/moqui/maps/. The settings are the conf's maps element. -->
 <entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-entity-definition.xsd">
@@ -179,7 +179,7 @@ along with this software (see the LICENSE.md file). If not, see
             user's preferences or saved view override</description></field>
         <field name="isBasemap" type="text-indicator"/>
         <field name="isPublic" type="text-indicator"><description>Y: a basemap the installation marks public, drawn on a
-            page a visitor opens with no sign-in (a guest location link, Maps/SharedLocation.xml; plans/Location-Sharing.md
+            page a visitor opens with no sign-in (a guest location link, Maps/SharedLocation.xml; plans/archive/Location-Sharing.md
             §3.7) when it has no viewPermission, no registered resource and no proxied provider; else that page draws the
             country outline</description></field>
         <field name="adapterKey" type="id"><description>A dynamic layer: the registered adapter whose
@@ -357,7 +357,7 @@ along with this software (see the LICENSE.md file). If not, see
         <index name="MAPS_OVERLAY_DRIVE"><index-field name="driveId"/></index>
     </entity>
 
-    <!-- An offline map package (plans/Maps-Offline.md §2.1; docs/tools/Maps.md "Offline packages"): one region at a zoom
+    <!-- An offline map package (plans/archive/Maps-Offline.md §2.1; docs/tools/Maps.md "Offline packages"): one region at a zoom
         range, built on the server (the MapPackageBuild ServiceJob, MapPackages.js) from what its owner may see when it is
         built, and downloaded as one zip file by the Offline screen's package transition. A package is its owner's alone:
         it is never shared, and every request for it checks the owner. Update builds it again as a new revision; the old
@@ -430,7 +430,7 @@ along with this software (see the LICENSE.md file). If not, see
         </seed-data>
     </entity>
 
-    <!-- A download of a map package (plans/Maps-Offline.md §4): the package, the revision and the device (its
+    <!-- A download of a map package (plans/archive/Maps-Offline.md §4): the package, the revision and the device (its
         UserLoginKey, the stored hash get#UserDeviceKeys names a device by) of a request that came signed in by a device's
         key, else none; one row a package, revision and device, its lastRequestDate written at most once an hour, so an
         owner sees which device holds which package. -->

@@ -1055,7 +1055,7 @@ that adds it. "New" means this plan adds it (§17).
 | Edit and unsend within minutes | Edit, redact | Built |
 | Send later | Scheduled send (§14.2); in an encrypted room by the sender's own device | Designed: phase 15 (§18.3) |
 | Message effects, stickers, GIFs | Sticker packs, local: the server's (an administrator's) and each user's own; PNG, WebP or GIF, animated too; a picker beside the emoji picker; a sticker shows large, and goes to bridges as its picture or as text. GIF search waits for a provider; effects: no | Stickers built: phase 20 (§18.3); GIFs later |
-| Share location, live location | A location message with no map: coordinates or an address, a label, "Open in maps" (`geo:` in the Android app, OpenStreetMap on the web) and Copy; the device's position or a typed place, no geocoding. Bridges get the text with the link; Sinch RCS its location message. Live location is [Location-Sharing](Location-Sharing.md) (LL4 for chat), on the Maps app | Location built: phase 20 (§18.3); live location after Maps |
+| Share location, live location | A location message with no map: coordinates or an address, a label, "Open in maps" (`geo:` in the Android app, OpenStreetMap on the web) and Copy; the device's position or a typed place, no geocoding. Bridges get the text with the link; Sinch RCS its location message. Live location is [Location-Sharing](archive/Location-Sharing.md) (LL4 for chat), on the Maps app | Location built: phase 20 (§18.3); live location after Maps |
 | Check In (tell a contact you arrived) | Later, on live location | Later |
 | FaceTime audio and video, group FaceTime | WebRTC calls | Built; §8 |
 | Handoff of a call between devices | "Move to this device" | §8 |

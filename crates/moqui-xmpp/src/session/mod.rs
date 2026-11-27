@@ -21,7 +21,7 @@
 //! - `chat.rs`: messages and presence in and out, direct rooms and MUC.
 //! - `mam.rs`: the archive (XEP-0313) over the room timelines.
 //! - `pep.rs`: PEP (XEP-0163) for avatars, bookmarks and both OMEMO namespaces.
-//! - `geoloc.rs`: user location (XEP-0080) mapped onto the user's location shares (plans/Location-Sharing.md §3.6).
+//! - `geoloc.rs`: user location (XEP-0080) mapped onto the user's location shares (plans/archive/Location-Sharing.md §3.6).
 
 mod auth;
 mod chat;
@@ -187,7 +187,7 @@ pub struct Session {
     pub(crate) last_push: Option<Instant>,
     pub(crate) pushed_count: u64,
     /// The location shares that sent this session a position: shareId → (owner, end in Unix milliseconds), so the empty
-    /// `geoloc` item goes out at the end (plans/Location-Sharing.md §3.6).
+    /// `geoloc` item goes out at the end (plans/archive/Location-Sharing.md §3.6).
     pub(crate) geoloc_ends: HashMap<String, (String, i64)>,
     out: Vec<Out>,
 }

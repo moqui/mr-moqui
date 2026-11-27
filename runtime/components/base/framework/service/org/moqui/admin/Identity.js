@@ -439,7 +439,7 @@ function accountCredentials(p) {
 }
 
 /**
- * The live location shares a device key sends stop with the key (plans/Location-Sharing.md §3.4), as the other revoke
+ * The live location shares a device key sends stop with the key (plans/archive/Location-Sharing.md §3.4), as the other revoke
  * paths do (user/login.rs): in a transaction of its own (the service is force-new), its errors logged and cleared so
  * they never reach the credential's end.
  */

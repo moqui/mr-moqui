@@ -1,7 +1,12 @@
 # Location sharing: explicitly shared live location
 
+> Archived 2026-11-27: built (LL0 to LL7); Monitor's counts, the XMPP last item for a contact who connects later and
+> the review minors are in [Remaining-Work](../Remaining-Work.md#maps), the checks on a real phone and with real XMPP
+> clients in [Testing-Needed](../Testing-Needed.md#maps), Check In, sealed live location in encrypted rooms, XMPP
+> federation and iOS in [Future-Plans](../Future-Plans.md#maps); guide [Maps, Live location](../../docs/tools/Maps.md).
+
 Status 2026-11-27: LL0 to LL7 built (§4). It carries the "explicitly shared person-location feeds" item of
-[Maps §9, Later research](archive/Maps.md#9-delivery-and-acceptance) forward as work for now, on the user's decisions of
+[Maps §9, Later research](Maps.md#9-delivery-and-acceptance) forward as work for now, on the user's decisions of
 November 26, 2026: a person shares where they are, for a time they choose, with people they choose (users, a group,
 their XMPP contacts, or a guest link for one record such as a delivery or a service visit); the Android app keeps
 sharing in the background through a visible foreground service; the server keeps the latest position only, unless the
@@ -9,11 +14,11 @@ sharer keeps a trail for that share. Offline maps are [Maps-Offline](Maps-Offlin
 
 ## 1. Rules
 
-From [Maps §8](archive/Maps.md#8-access-publication-and-reliability), mr-home
-([§1.1](../runtime/components/addon/mr-home/plan/initial-design.md#11-design-guideline-child-autonomy-enablement-and-safety),
-[§3.9](../runtime/components/addon/mr-home/plan/initial-design.md#39-maps-places-and-geographic-information) and its
+From [Maps §8](Maps.md#8-access-publication-and-reliability), mr-home
+([§1.1](../../runtime/components/addon/mr-home/plan/initial-design.md#11-design-guideline-child-autonomy-enablement-and-safety),
+[§3.9](../../runtime/components/addon/mr-home/plan/initial-design.md#39-maps-places-and-geographic-information) and its
 "Child records and location") and
-[Comms-Messaging](Comms-Messaging.md) (the location message):
+[Comms-Messaging](../Comms-Messaging.md) (the location message):
 
 - **Only by the person's act.** A share starts when its owner starts it, on a device they hold, and nothing else
   starts one: not an administrator, an organizer of a household, a manager, a record or a schedule. No position is
@@ -29,7 +34,7 @@ From [Maps §8](archive/Maps.md#8-access-publication-and-reliability), mr-home
   ends, and the owner can delete it at any time.
 - **No other reader.** No grant reads another person's shares: not ADMIN, not a household organizer, not a group's
   owner. Monitor shows counts only. Positions never go to telemetry, logs or shared caches
-  ([Maps §8](archive/Maps.md#8-access-publication-and-reliability)).
+  ([Maps §8](Maps.md#8-access-publication-and-reliability)).
 - **Approximate when chosen.** A share can be exact or approximate (rounded on the server to about 1 km, before it is
   stored or sent).
 
@@ -37,7 +42,7 @@ From [Maps §8](archive/Maps.md#8-access-publication-and-reliability), mr-home
 
 | Piece | Today |
 | --- | --- |
-| A one-shot location | The chat location message (`ChatLocationServices.xml` `send#Location`, `Chat.qvue:1086` `chat-location-card`), sealed in encrypted rooms; live location and Check In left "after Maps" ([Comms-Messaging](Comms-Messaging.md), the feature table and phase 20's "Left out") |
+| A one-shot location | The chat location message (`ChatLocationServices.xml` `send#Location`, `Chat.qvue:1086` `chat-location-card`), sealed in encrypted rooms; live location and Check In left "after Maps" ([Comms-Messaging](../Comms-Messaging.md), the feature table and phase 20's "Left out") |
 | Live push | `/notws` (`moqui-host` `notws.rs`): subscribe by topic, fan-out only to a message's recipient userIds (:827), rechecked sessions; `ec.makeNotificationMessage()` with `directOnly` and `persistOnSend(false)`, sent on commit |
 | Sharing with expiry | `ResourceShare` (users, groups, link tokens by hash, `expireDate`, `revokedDate`); Mantle `ExternalAccessCapability` (a token shown once, scopes, thru date, revocation, failed tries), PASS's guest-link model |
 | Devices | `UserLoginKey` (the apps' device keys, `deviceName`), `WebPushSubscription` (FCM, UnifiedPush, web), `ChatDeviceKey` (per-device curve25519 keys) |
@@ -122,8 +127,8 @@ group takes a new snapshot of it (LL1 review).
   (no Google Play services dependency), at an interval chosen from the share (a few seconds moving, longer still), and
   hands each fix to the host command `report_location`, which keeps only the newest unsent point and sends it; it stops
   at the share's end, on a 410, at sign-out or on Stop.
-- The manifest adds `FOREGROUND_SERVICE_LOCATION`; its comment, [Mobile-Client](../docs/ui/Mobile-Client.md),
-  [Privacy](../docs/Privacy.md) and the Play data-safety text say location is sent while a share the person started is
+- The manifest adds `FOREGROUND_SERVICE_LOCATION`; its comment, [Mobile-Client](../../docs/ui/Mobile-Client.md),
+  [Privacy](../../docs/Privacy.md) and the Play data-safety text say location is sent while a share the person started is
   on, and to whom.
 - The desktop shares while its page is open, as a browser does.
 
@@ -180,4 +185,4 @@ stopped.
 | LL4 — chat | §3.5 with the encrypted-room decision recorded here. Built November 27, 2026, after two review rounds: `send#LiveLocation` (the message first, then a share to the room's current members less agents, hidden-room members, disabled accounts and blocks either way; no coordinates in any message, feed, bridge or push text), the card following the share and its end, a page-wide browser sender that stops on a lost sign-in or another device, unencrypted rooms only (sealing is later), and someone removed by another or blocked by the owner losing the room's live shares (`revoke#ChatAudience`) |
 | LL5 — XMPP | §3.6. Tests in `moqui-xmpp` and the XMPP spec. Built November 27, 2026, after three review rounds: a geoloc publish from the person's own XMPP client feeds only shares whose owner opted in (`takeXmppLocation`, audited, raising the audience version, named in the phone's confirmation), kept apart in `LocationXmppLatest` and pushed only to the share's XMPP contacts; every report also goes to those contacts as a `geoloc` event, rounded for an approximate share, an empty item at the share's end by time; contacts told when added; the geoloc node otherwise refused; local users only (no federation) |
 | LL6 — guest links | §3.7: the framework screen and link audience (regression: a token read, refused after the end, rate-limited, a wrong token counted), Mantle's record shares and EECA (regression in mr-mantle), BOSS's work order action. Built November 27, 2026, after four review rounds, in mr-moqui, mr-mantle and mr-boss: a link audience whose secret is only in the URL fragment (taken by the public shell before anything loads, kept for the tab, cleared on an end) and digested on the server, the selector rate-limited and locked after failed tries; the guest page shows only that share's latest point, label and end, on the outline or a public basemap, under a CSP and `Referrer-Policy: strict-origin`; a record share stores the record's end and is never extended past it; Mantle's `create#RecordGuestShare` makes the share with its link and sends nothing, `send#RecordGuestLink` mails the customer only after the technician's app answers started (in a browser, after the first position the server takes), once, under the share's lock; the stored email is kept for retry and its secret blanked when the share ends or its link is revoked; the work order's completion or cancellation ends the share |
-| LL7 — finish | Acceptance `LocationShareWalk` (two browsers and the emulator: a share started, seen, extended, a member removed, stopped; the Android notification's Stop). Guides: Maps "Live location", Comms, XMPP, Privacy, Mobile-Client. Built November 27, 2026: the browser walk (`tools/test/acceptance/client/LocationShareWalk.spec.js`, three browsers: a group share started, seen by push, extended, a member removed by an administrator losing it, stopped; 5 features, 26 s) and the phone walk (`scripts/android-location-share.sh`: the native dialog, the notification, positions in the background, the shade's Stop; 39 s on the emulator), which found and fixed the app's start never answering (a blocking read on a runtime worker); the guide is Maps' Live location, the others linking to it. Not walked: Not now, a removed permission, sign-out, the phone's extend, a real phone ([Testing-Needed](Testing-Needed.md#maps)) |
+| LL7 — finish | Acceptance `LocationShareWalk` (two browsers and the emulator: a share started, seen, extended, a member removed, stopped; the Android notification's Stop). Guides: Maps "Live location", Comms, XMPP, Privacy, Mobile-Client. Built November 27, 2026: the browser walk (`tools/test/acceptance/client/LocationShareWalk.spec.js`, three browsers: a group share started, seen by push, extended, a member removed by an administrator losing it, stopped; 5 features, 26 s) and the phone walk (`scripts/android-location-share.sh`: the native dialog, the notification, positions in the background, the shade's Stop; 39 s on the emulator), which found and fixed the app's start never answering (a blocking read on a runtime worker); the guide is Maps' Live location, the others linking to it. Not walked: Not now, a removed permission, sign-out, the phone's extend, a real phone ([Testing-Needed](../Testing-Needed.md#maps)) |

@@ -1,4 +1,4 @@
-// MapsOfflinePackage (plans/Maps-Offline.md OF4): the server half of the offline map walk on the Android emulator, whose
+// MapsOfflinePackage (plans/archive/Maps-Offline.md OF4): the server half of the offline map walk on the Android emulator, whose
 // device half is scripts/android-maps-offline.sh (it starts this spec's server with `moqui test ... --serve`, then
 // drives the app). It makes maps.offline, a Maps user; a small PMTiles archive (zooms 0 to 4 everywhere and 5 to 12 over
 // the region, every tile one vector tile of an earth and a water polygon, framework test/MapsArchiveLib.js) registered

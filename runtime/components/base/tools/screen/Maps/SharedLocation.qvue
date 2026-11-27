@@ -11,7 +11,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- SharedLocation (SharedLocation.xml), in the public shell: a location share's guest link (plans/Location-Sharing.md
+<!-- SharedLocation (SharedLocation.xml), in the public shell: a location share's guest link (plans/archive/Location-Sharing.md
     §3.7). The secret is the URL's fragment, which the public shell takes as it loads, before this page, and clears from
     the address bar (WebrootPublic.qvt.js moqui.routeFragment, kept for the tab so a reload reads it); it is posted in the body of the read transition under the route's path
     ($root.basePath), every 20 seconds while the page is visible (within location@link-max-views-per-minute). It shows

@@ -393,7 +393,7 @@ pub(crate) fn forget_account(account: &str) -> Result<(), String> {
     })
 }
 
-/// The location permission before a share is sent from this phone (`LocationShare.allow`, plans/Location-Sharing.md
+/// The location permission before a share is sent from this phone (`LocationShare.allow`, plans/archive/Location-Sharing.md
 /// §3.4): asked after the app's dialog that says why when it is not given yet, waiting for the answer, so never on the
 /// main thread; whether the app may read the location (fine for `exact`, coarse at least otherwise).
 pub(crate) fn location_allow(exact: bool) -> Result<bool, String> {
@@ -534,7 +534,7 @@ pub(crate) fn register_worker_start() -> Result<(), String> {
     })
 }
 
-/// An offline map package's download handed to the worker (`PackageDownloadWorker.start`, plans/Maps-Offline.md §2.4):
+/// An offline map package's download handed to the worker (`PackageDownloadWorker.start`, plans/archive/Maps-Offline.md §2.4):
 /// the id of the work enqueued.
 pub(crate) fn package_worker_start(
     account: &str,

@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Shared live location (plans/Location-Sharing.md §1, §3.2): a person shares where they are, until a time they
+<!-- Shared live location (plans/archive/Location-Sharing.md §1, §3.2): a person shares where they are, until a time they
     choose, with people they choose. Only the owner starts, changes, stops and reports a share; only the owner and the
     share's current audience read it (a user whose entry is not revoked; a member of a group whose entry is not revoked
     who is in the snapshot of members the owner's adding of the group reached, LocationShareAudienceMember, while the
@@ -27,7 +27,7 @@ along with this software (see the LICENSE.md file). If not, see
     by LocationShares.js (so no conversion error repeats a value), report#Position remembers no parameters, and a
     refusal names its reason only. A position is pushed on the topic locationShare:<shareId> to the audience's current
     users only (directOnly), and to its XMPP contacts' users on locationShareXmpp:<shareId>, which the XMPP server sends
-    as geoloc events (plans/Location-Sharing.md §3.6), never saved as a notification or pushed to a phone
+    as geoloc events (plans/archive/Location-Sharing.md §3.6), never saved as a notification or pushed to a phone
     (persistOnSend false); an approximate
     share's is its cell of about 1 km on one fixed grid, kept until a fix is well inside another cell, before it is
     stored or sent. Start, extension, stop and an audience added or revoked are in the entity audit log (LocationShare
@@ -56,7 +56,7 @@ along with this software (see the LICENSE.md file). If not, see
             SHARE_LOCK_FAILED (the owner's lock row could not be made or locked). The share is sent from the device whose
             key signed this request in (userLoginKeyId, ec.user.loginKeyId: the Android app's), or from no device (a
             browser page, which sends while it is open); a share with a device takes that device's reports only, and one
-            with none takes no device's (plans/Location-Sharing.md §3.4). takeXmppLocation true lets the owner's XMPP
+            with none takes no device's (plans/archive/Location-Sharing.md §3.4). takeXmppLocation true lets the owner's XMPP
             app's location (report#XmppPosition) feed it too, to its XMPP contacts only (§3.6): refused XMPP_NO_CONTACT
             without an XMPP contact in the audience.</description>
         <in-parameters>
@@ -68,7 +68,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="label"/>
             <parameter name="purposeText"/>
             <parameter name="takeXmppLocation" type="Boolean" default="false"><description>Also use the owner's XMPP app's
-                location, sent to the share's XMPP contacts only (plans/Location-Sharing.md §3.6)</description></parameter>
+                location, sent to the share's XMPP contacts only (plans/archive/Location-Sharing.md §3.6)</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="shareId"/>
@@ -76,7 +76,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="linkToken"><description>The guest link's token, returned this once: its selector, a dot and
                 its secret</description></parameter>
             <parameter name="linkPath"><description>The guest page's link, returned this once: /location/selector#secret,
-                the secret in the fragment only (plans/Location-Sharing.md §3.7); the caller puts its site root before
+                the secret in the fragment only (plans/archive/Location-Sharing.md §3.7); the caller puts its site root before
                 it</description></parameter>
             <parameter name="reasonCode"/>
         </out-parameters>
@@ -188,7 +188,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="report" noun="XmppPosition" no-remember-parameters="true" allow-remote="false">
         <description>A user location publish (XEP-0080) from the current user's own XMPP client, which the XMPP server
-            (moqui-xmpp session/geoloc.rs) calls with the fields it read and checked (plans/Location-Sharing.md §3.6,
+            (moqui-xmpp session/geoloc.rs) calls with the fields it read and checked (plans/archive/Location-Sharing.md §3.6,
             LL5): taken by each of the user's active shares whose owner turned on takeXmppLocation (create#Share,
             update#Share) and that has an XMPP contact in its audience (an LsaXmpp entry not revoked), whatever it is
             sent from. Such a position goes to the share's XMPP contacts only: kept as its LocationXmppLatest, never as
@@ -219,7 +219,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="get" noun="AppShare">
         <description>An active share of the current user's own as the Android app confirms it in its own dialog and names
-            it in its notification before it sends it from the phone (plans/Location-Sharing.md §3.4): share {shareId,
+            it in its notification before it sends it from the phone (plans/archive/Location-Sharing.md §3.4): share {shareId,
             thruDate (epoch millis), untilText (the end in the caller's zone, with the weekday when not today),
             approximate, intervalSeconds (the share's report interval), audienceText (whom with, in words the owner can
             check: names with usernames, a group with its member count, a JID, anyone with the guest link, and while the
@@ -241,7 +241,7 @@ along with this software (see the LICENSE.md file). If not, see
         <description>A device key revoked (its owner's sign-out, or the device signed out from the device list; called by
             the framework with the key's stored hash, user/login.rs): every active share sent from it
             (LocationShare.userLoginKeyId) is stopped as stop#Share does, its audience told, so none stays on with nothing
-            sending it, also when the device could not tell the server (plans/Location-Sharing.md §3.4). In a transaction
+            sending it, also when the device could not tell the server (plans/archive/Location-Sharing.md §3.4). In a transaction
             of its own (force-new), each share in one of its own too, so nothing here touches the revoke's: a share
             not of the key's user is refused by name and left, and the rest go on. Called also when an administrator
             ends a user's keys (Identity.js endCredential).</description>
@@ -301,7 +301,7 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="get" noun="ShareStatus" allow-remote="false">
-        <description>Internal, for Chat's live location card (plans/Location-Sharing.md §3.5; ChatLocation.js): whether the
+        <description>Internal, for Chat's live location card (plans/archive/Location-Sharing.md §3.5; ChatLocation.js): whether the
             share shareId of ownerUserId (the author of the message that carries it) is active now, and that it exists;
             nothing else of it, no audience or position. A share of another owner answers found false. The caller (Chat)
             has checked that the current user reads the message; get#Share stays the only read of a share's position.</description>
@@ -317,7 +317,7 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="revoke" noun="ChatAudience" allow-remote="false" transaction="force-new">
-        <description>Internal, for Chat's live location (plans/Location-Sharing.md §3.5): userId's own entry (LsaUser) taken
+        <description>Internal, for Chat's live location (plans/archive/Location-Sharing.md §3.5): userId's own entry (LsaUser) taken
             out of each active share of shareList [{shareId, ownerUserId}] (the share of that owner only), as revoke#Audience
             takes one out (its users and the owner told on
             locationShare:shareId), whoever the caller is: Chat calls it when a member is taken out of a room by another
@@ -346,7 +346,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="get" noun="ShellIndicator">
         <description>The framework's shell-indicator provider, for every signed-in user (MoquiDefaultConf.xml screen-facade
-            shell-providers; plans/Location-Sharing.md §3.3): while the
+            shell-providers; plans/archive/Location-Sharing.md §3.3): while the
             current user has any active share of their own, one indicator, "Sharing location" (with the count when more than
             one), to Maps › My location shares (MyShares.xml, which every signed-in user opens), asked again at the soonest end (refreshInSeconds) and on the user's own
             pushes of a share's start, change or end (refreshOn); none otherwise. It counts the user's own shares and reads
@@ -376,7 +376,7 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('clean', context))</script></actions>
     </service>
 
-    <!-- Guest links (plans/Location-Sharing.md §3.7): the public page Maps/SharedLocation.xml, at /location/<selector> by
+    <!-- Guest links (plans/archive/Location-Sharing.md §3.7): the public page Maps/SharedLocation.xml, at /location/<selector> by
         the token-route location of tools MoquiConf.xml, the link's secret in its fragment (/location/selector#secret),
         posted by the page so that no request line, log or Referer holds it. -->
     <service verb="check" noun="LinkKey" authenticate="anonymous-all" allow-remote="false">
@@ -439,7 +439,7 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="stop" noun="RecordShares" authenticate="anonymous-all" allow-remote="false" transaction="ignore">
-        <description>A record completed or cancelled (Mantle's EECA, plans/Location-Sharing.md §3.7): every share still on
+        <description>A record completed or cancelled (Mantle's EECA, plans/archive/Location-Sharing.md §3.7): every share still on
             for it (recordAdapterKey, recordKey) is stopped as stop#Share does, its audience told, each in a transaction of
             its own (one that fails is logged by its id and the rest go on), whoever's it is. No group is granted it: only
             the framework and a component's own services call it. Out: stoppedCount.</description>

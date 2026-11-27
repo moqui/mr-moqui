@@ -1001,7 +1001,7 @@ function storePlace(p) {
     const row = placesRow(driveId)
     return {applied: true, reasonCode: null, reason: null, placeId, overlayId: String(row.overlayId)}
 }
-// Browse's savePlace after its transaction failed (plans/Maps-Offline.md §2.5): the answer to a place sent by its
+// Browse's savePlace after its transaction failed (plans/archive/Maps-Offline.md §2.5): the answer to a place sent by its
 // clientRef whose claim, save and kept result were rolled back together. Two sends of one ref can overlap (the apps'
 // outbox sends again after a lost answer): the second's claim misses the first's row while it is uncommitted, then its
 // insert meets the row's key and its transaction fails. So the ref is read again, now committed: a row there is the first

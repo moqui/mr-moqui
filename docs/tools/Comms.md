@@ -411,7 +411,7 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   in the room who still see it, says where it is sent from, and has Send from here (Send from this device in the app),
   Stop and Who sees my location. Deleting the message does not stop the share: its dialog says so and has "Also stop
   sharing my live location", chosen. **Not in an encrypted room** (the decision of
-  [plans/Location-Sharing.md](../../plans/Location-Sharing.md) §3.5): the picker says "Live location is not offered in
+  [plans/archive/Location-Sharing.md](../../plans/archive/Location-Sharing.md) §3.5): the picker says "Live location is not offered in
   an encrypted room: the server would see where you are", and `send#LiveLocation` refuses it (`encryptedRoom`). Sealing
   each report to the room's devices instead (Megolm, as a message is sealed) would keep the server out, but the Android
   app's location service sends from Rust with no page, and the room's keys live only in a page's crypto store

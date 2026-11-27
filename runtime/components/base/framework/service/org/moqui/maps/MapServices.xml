@@ -263,7 +263,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="recordLayers" type="Boolean" default="true"><description>false: the record layers are listed and
                 no adapter is asked for their features (the local-map dialog, which shows one record)</description></parameter>
             <parameter name="locationShares" type="Boolean" default="false"><description>true: the configuration carries
-                locationShares (plans/Location-Sharing.md §3.3), the caller's own active shares and those shared with them
+                locationShares (plans/archive/Location-Sharing.md §3.3), the caller's own active shares and those shared with them
                 now, read only through LocationServices find#MyShares, find#SharedWithMe and get#Share, which check the
                 caller against each share's current audience: Maps › Browse's getConfig asks for them (its terminal twin reads
                 the same through MapConfig.js liveShares), a map-view's config-url and the local-map dialog do not; with

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Live location sent from the phone (plans/Location-Sharing.md §3.4, LL3): the Maps page's Share asks the app to
+//! Live location sent from the phone (plans/archive/Location-Sharing.md §3.4, LL3): the Maps page's Share asks the app to
 //! send a share of its account (`location_share_start`, checked here: [`ShareAsk`]), and `LocationShareService.kt`, a
 //! foreground service of type `location` started only then, with the app in front, hands each fix to
 //! [`report_location`] (`Native.reportLocation`, the host command `report_location`). Each share's
@@ -309,7 +309,7 @@ pub(crate) fn stop_account_on_server(
 pub(crate) const SHARE_PATH: &str = "/qapps/clientLocationShare";
 
 /// The share `share_id` of the account as its server says it is, for the native confirmation and the notification
-/// (plans/Location-Sharing.md §3.4): whom with, until when, exact or approximate, its interval and its audience version,
+/// (plans/archive/Location-Sharing.md §3.4): whom with, until when, exact or approximate, its interval and its audience version,
 /// all from the server with the account's device key, never from the page that asked. Refused as [`ReadRefused::Gone`]
 /// when the server does not have it as an active share of the account's, or this device does not send it (Send from
 /// this device first), or the account is signed out; as [`ReadRefused::Retry`] with no answer. An answer with no

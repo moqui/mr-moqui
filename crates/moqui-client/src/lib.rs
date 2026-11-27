@@ -35,7 +35,7 @@
 //! - [`stores`]: each account's store, opened when first used; [`offline`]: the comms transitions' answers kept and
 //!   answered when the server cannot be reached; [`sync`]: the pushes, the outbox and its sender, and the mirror.
 //! - [`packages`]: the offline map packages downloaded here, checked, unpacked and served to the shell
-//!   (plans/Maps-Offline.md §2.4).
+//!   (plans/archive/Maps-Offline.md §2.4).
 //! - [`modes`]: what each device mode keeps; [`renewal`]: the keys renewed before they run out; [`assets`]: the
 //!   shell's own files.
 //! - [`vault`]: the vault module run natively for the pages (plans/archive/Vault-Instances.md V5), with rollback memory and

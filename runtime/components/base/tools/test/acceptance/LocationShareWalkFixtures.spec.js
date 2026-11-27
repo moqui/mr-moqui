@@ -1,4 +1,4 @@
-// The fixture of the live location walks (plans/Location-Sharing.md LL7; client/LocationShareWalk in a browser, and
+// The fixture of the live location walks (plans/archive/Location-Sharing.md LL7; client/LocationShareWalk in a browser, and
 // scripts/android-location-share.sh on the emulator, which serves this spec with `moqui test --serve`): three Maps users,
 // loc.walk.ann (who shares), loc.walk.ben and loc.walk.cy, all members of the group Walk family (LOC_WALK_FAMILY) by a
 // row of a fixed fromDate, so the walk's System › Access post can end Cy's. Cy's row is made again on each run (the walk

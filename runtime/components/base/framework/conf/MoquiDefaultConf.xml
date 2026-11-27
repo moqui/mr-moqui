@@ -162,13 +162,13 @@
         user may build (2 GiB; refused at its estimate), package-user-max-bytes the most a user's packages may hold in all
         (8 GiB), package-concurrent-builds how many packages the installation builds at once (the others wait, pending),
         and package-keep-days how long a package's file is kept with no download before the hourly clean removes it
-        (plans/Maps-Offline.md). -->
+        (plans/archive/Maps-Offline.md). -->
     <maps external-requests="true" import-max-bytes="536870912" max-features="5000" overlay-max-bytes="10485760"
             overture-catalog="https://stac.overturemaps.org/catalog.json" overture-max-area="2500"
             package-max-bytes="2147483648" package-user-max-bytes="8589934592" package-concurrent-builds="1"
             package-keep-days="30"/>
 
-    <!-- Shared live location (plans/Location-Sharing.md §3.1; org.moqui.maps.LocationServices). max-share-hours is the
+    <!-- Shared live location (plans/archive/Location-Sharing.md §3.1; org.moqui.maps.LocationServices). max-share-hours is the
         longest a share runs from its start or its owner's last extension (24); trail-max-days the longest a trail its owner
         chose to keep stays after its share ends (30); min-interval-seconds the shortest time between two positions a
         share takes (5: a sooner one is answered 429 and dropped), approximate-interval-seconds that of an approximate
@@ -926,7 +926,7 @@
                 always-standalone="true" macro-template-location="framework/template/screen/ScreenXlsx.js"/>
 
         <!-- live location's "Sharing location" chip in the shell's app bar for every share owner, whatever apps they may
-            open (plans/Location-Sharing.md §3.3; LocationServices get#ShellIndicator counts the caller's own shares) -->
+            open (plans/archive/Location-Sharing.md §3.3; LocationServices get#ShellIndicator counts the caller's own shares) -->
         <shell-providers>
             <shell-indicator name="framework.locationSharing" service="org.moqui.maps.LocationServices.get#ShellIndicator" sequence="10"/>
         </shell-providers>

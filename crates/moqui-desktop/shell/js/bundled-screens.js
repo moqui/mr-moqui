@@ -1205,7 +1205,7 @@ const SHELL_ROUTES = { 'Chat': 'chat', 'Inbox': 'mail', 'Inbox/Mail': 'mail', 'I
 const VIEW_PATHS = { chat: ['Chat'], mail: ['Inbox', 'Mail'], compose: ['Inbox', 'Compose'], call: ['Calls', 'Call'], dialer: ['Calls', 'Dialer'],
     devices: ['Settings', 'Devices'] };
 const VIEW_TITLES = { chat: 'Chat', mail: 'Mail', compose: 'New message', call: 'Call', dialer: 'Dialer', devices: 'My devices', maps: 'Offline maps' };
-// The offline Maps screen (plans/Maps-Offline.md §2.5): bundled as the shell's own, shown at Maps' Offline path; Maps'
+// The offline Maps screen (plans/archive/Maps-Offline.md §2.5): bundled as the shell's own, shown at Maps' Offline path; Maps'
 // other screens are the server's, in an app window
 const MAPS_OFFLINE = 'Shell/MapsOffline';
 const MAPS_OFFLINE_PATH = 'maps/Offline';
@@ -1321,7 +1321,7 @@ module.exports = {
             // the phone's contacts name numbers and are found in a new chat (§9.2), read on the phone only
             if (state.contacts !== undefined) rows.push({ key: 'contacts', ok: state.contacts === true, label: t("Names from the phone's contacts"),
                 caption: state.contacts === true ? '' : t('Allow contacts to see names on texts and find people as you type'), fix: 'contacts' });
-            // live location from this phone (plans/Location-Sharing.md §3.4): the location permission, which Maps' Share asks
+            // live location from this phone (plans/archive/Location-Sharing.md §3.4): the location permission, which Maps' Share asks
             // for with the app's reason, and the shares the app sends now, each under its notification with Stop
             if (moqui.isPlainObject(state.location)) {
                 const location = state.location;
@@ -1361,7 +1361,7 @@ module.exports = {
         viewTitle() { return this.view ? t(VIEW_TITLES[this.view]) : ''; },
         // the server holds calls (its clientConfig's calls) and the call store is here, as m-qapps-root has them
         callsOn() { return !!(moqui.call && this.userId && this.config && this.config.calls); },
-        // the offline map packages of this app (moquiDesktop.packages, plans/Maps-Offline.md §2.5), for an account with the
+        // the offline map packages of this app (moquiDesktop.packages, plans/archive/Maps-Offline.md §2.5), for an account with the
         // server's Maps app (its shellData's apps, which the store keeps for offline use): one without it sees no Maps
         // entry, and the offline screen saves no place for it
         mapsOn() { return !!(host() && host().packages && this.componentOf('maps') && this.mapsApp); },
@@ -1510,7 +1510,7 @@ module.exports = {
                 params: this.bodyParameters || {}, fullPath: this.currentLinkUrl, meta: {}, hash: '', matched: [{ path: this.currentPath }] });
         },
         openPalette() { this.paletteOpen = true; },
-        // Maps (plans/Maps-Offline.md §2.5): Browse, the server's page, when the server answers; the offline screen with the
+        // Maps (plans/archive/Maps-Offline.md §2.5): Browse, the server's page, when the server answers; the offline screen with the
         // device's packages when it does not (moqui.connection: the host's unreachable answer, or none)
         openMaps() {
             if (!this.mapsApp) return;
@@ -4918,7 +4918,7 @@ const chatSticker = {
 };
 
 // A location message: a pin, its label, address and coordinates, Open in maps (geo: in the Android app, OpenStreetMap
-// elsewhere) and Copy. No map. A live location (plans/Location-Sharing.md §3.5; its message carries its share's id, never
+// elsewhere) and Copy. No map. A live location (plans/archive/Location-Sharing.md §3.5; its message carries its share's id, never
 // a position): the position and its age while the share is on, read through liveLocation (get#Share checks the audience)
 // and moved by the share's pushes (locationShare:<shareId>, which only its audience gets); "Live location ended" after;
 // for one the share does not reach (who joined the room after it started, or was taken out), that it is not shared with
@@ -5094,7 +5094,7 @@ const locationBoxTemplate = `
             <div v-if="coordinates" class="text-caption m-muted">{{coordinates}}</div>
             <q-btn flat dense no-caps size="sm" color="primary" icon="sym_o_map" :label="t('Check it in maps')" @click="room.openPlace(place)"></q-btn>
         </div>
-        <!-- live location (plans/Location-Sharing.md §3.5): the room's members now see where you are as you move, until the
+        <!-- live location (plans/archive/Location-Sharing.md §3.5): the room's members now see where you are as you move, until the
             end chosen; not in an encrypted room, where the server would see each position -->
         <div class="q-pt-sm m-chat-live-box">
             <div class="text-subtitle2">{{t('Live location')}}</div>
@@ -5924,7 +5924,7 @@ const roomTemplate = `
         </template>
     </div>
     <q-separator></q-separator>
-    <!-- each live location this page sends, in any room (plans/Location-Sharing.md §1 "Visible to everyone it concerns",
+    <!-- each live location this page sends, in any room (plans/archive/Location-Sharing.md §1 "Visible to everyone it concerns",
         §3.5): until when, that this page sends it while it is open, and Stop -->
     <div v-for="send in liveSends" :key="'live' + send.shareId" class="row items-center no-wrap q-px-sm q-py-xs m-tonal m-chat-live-banner" role="status"
             :data-live-share="send.shareId">
@@ -8393,7 +8393,7 @@ const chatRoom = {
             const remove = () => this.change('chat-redact', 'redact', { chatRoomId: this.roomId, eventSeq: item.eventSeq }).then((json) => {
                 if (!(json && json.queued)) this.applyRedaction(item.eventSeq);
             }, () => {});
-            // the user's own live location (plans/Location-Sharing.md §3.5): deleting its message does not stop the share,
+            // the user's own live location (plans/archive/Location-Sharing.md §3.5): deleting its message does not stop the share,
             // which the dialog says, with Stop sharing too chosen
             const place = item.event && item.event.location;
             const liveShareId = place && place.liveShareId && item.event.senderUserId === this.me.userId ? String(place.liveShareId) : null;
@@ -9060,7 +9060,7 @@ const chatRoom = {
                 return json;
             });
         },
-        // ---- live location (plans/Location-Sharing.md §3.5, LL4): a share with the room's members, sent by the Android
+        // ---- live location (plans/archive/Location-Sharing.md §3.5, LL4): a share with the room's members, sent by the Android
         // app's location service once the person confirms it in the app's own dialog (moquiDesktop.location, LL3), else by
         // this page while it is open (moqui.chat.live.sender, with its banner); never in an encrypted room ----
         sendLivePlace(choice, threadRoot) {

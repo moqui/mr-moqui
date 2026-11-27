@@ -2417,7 +2417,7 @@ along with this software (see the LICENSE.md file). If not, see
                 so an import reads a few row groups of a few files.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="package-max-bytes" type="non-neg-int-expandable" default="2147483648"><xs:annotation><xs:documentation>
                 The largest offline map package a user may build, in bytes (2 GiB): a package whose estimate passes it is
-                refused before anything is cut (plans/Maps-Offline.md).</xs:documentation></xs:annotation></xs:attribute>
+                refused before anything is cut (plans/archive/Maps-Offline.md).</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="package-user-max-bytes" type="non-neg-int-expandable" default="8589934592"><xs:annotation><xs:documentation>
                 The most bytes one user's offline map packages may hold in all, in bytes (8 GiB): their ready packages and
                 the new one's estimate; a package past it is refused at its estimate.</xs:documentation></xs:annotation></xs:attribute>
@@ -2431,7 +2431,7 @@ along with this software (see the LICENSE.md file). If not, see
         </xs:complexType>
     </xs:element>
     <xs:element name="location">
-        <xs:annotation><xs:documentation>Shared live location (plans/Location-Sharing.md §3.1): the limits of the shares a
+        <xs:annotation><xs:documentation>Shared live location (plans/archive/Location-Sharing.md §3.1): the limits of the shares a
             person starts (org.moqui.maps.LocationServices). The shares, their audiences, the latest positions and the kept
             trails are entity rows, not settings.</xs:documentation></xs:annotation>
         <xs:complexType>
@@ -2455,7 +2455,7 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="link-max-views-per-minute" type="non-neg-int-expandable" default="30"><xs:annotation><xs:documentation>
                 The most reads a minute of a guest link's page, for one link.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="link-max-failed-tries" type="non-neg-int-expandable" default="10"><xs:annotation><xs:documentation>
-                The wrong secrets given with a guest link's selector after which the link is refused (plans/Location-Sharing.md
+                The wrong secrets given with a guest link's selector after which the link is refused (plans/archive/Location-Sharing.md
                 §3.7); its owner adds a new link.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
@@ -3123,7 +3123,7 @@ along with this software (see the LICENSE.md file). If not, see
                 (never unsent items or drafts). At least 1.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="packages-max-mb" type="xs:string" default="4096"><xs:annotation><xs:documentation>The
                 size cap of an account's offline map packages on the device, in MB, outside store-max-mb
-                (plans/Maps-Offline.md §2.4): a download that would pass it is refused. At least 1.</xs:documentation>
+                (plans/archive/Maps-Offline.md §2.4): a download that would pass it is refused. At least 1.</xs:documentation>
                 </xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>

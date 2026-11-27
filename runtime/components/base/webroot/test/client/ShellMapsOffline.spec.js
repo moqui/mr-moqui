@@ -1,5 +1,5 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
-// The apps' offline Maps screen (plans/Maps-Offline.md §2.5; crates/moqui-desktop/shell/screens/MapsOffline.qvue, bundled
+// The apps' offline Maps screen (plans/archive/Maps-Offline.md §2.5; crates/moqui-desktop/shell/screens/MapsOffline.qvue, bundled
 // and precompiled into the shell's bundled-screens.js) with a stand-in host (window.moquiDesktop: its packages and outbox):
 // the server's and the device's packages in one list, with Download (only on Wi-Fi on the phone), Update, Cancel and
 // Delete; offline, the device's packages, opened from their manifest at the package path, the screen saying it is offline

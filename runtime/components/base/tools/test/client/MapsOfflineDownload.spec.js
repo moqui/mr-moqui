@@ -1,4 +1,4 @@
-// The Offline maps package transition as the apps' download asks it (plans/Maps-Offline.md §2.3; moqui-client
+// The Offline maps package transition as the apps' download asks it (plans/archive/Maps-Offline.md §2.3; moqui-client
 // packages): a GET with packageId and revision in the URL. A transition that writes is refused with its parameters in the
 // URL (400), so it is read-only; found by the emulator walk (scripts/android-maps-offline.sh), since the server spec
 // MapsPackages renders it in process, where the URL rule does not apply. A package that is not there is 404.

@@ -664,7 +664,7 @@ async fn pep_keeps_omemo_device_lists_in_both_namespaces_and_notifies_who_asked(
     assert!(text_of(&out).contains("precondition-not-met"), "{}", text_of(&out));
 }
 
-/// User location (XEP-0080) is no PEP node (plans/Location-Sharing.md §3.6): a publish is a location share's report,
+/// User location (XEP-0080) is no PEP node (plans/archive/Location-Sharing.md §3.6): a publish is a location share's report,
 /// refused with no share, nothing is stored or pushed as a PEP item, a location kept earlier is not served, and the
 /// other PEP nodes work as before.
 #[tokio::test]
@@ -812,7 +812,7 @@ fn geoloc_publish(id: &str, payload: &str) -> String {
 }
 
 /// A user location publish (XEP-0080) is a report of the user's location share with XMPP contacts
-/// (plans/Location-Sharing.md §3.6): refused with no share, taken with one (its fields read and checked, the rest left
+/// (plans/archive/Location-Sharing.md §3.6): refused with no share, taken with one (its fields read and checked, the rest left
 /// out), sent out to that share's contacts' sessions that asked for it, not to the owner's or another session; a stop
 /// is no report; a value out of range, a payload that is not one and a report too soon are refused before or by the
 /// service.
@@ -929,7 +929,7 @@ async fn user_location_reports_the_share_with_xmpp_contacts_and_reaches_them_alo
     );
 }
 
-/// What goes out is what the share's audience may see (plans/Location-Sharing.md §3.6): an approximate share's cell,
+/// What goes out is what the share's audience may see (plans/archive/Location-Sharing.md §3.6): an approximate share's cell,
 /// never the fix; a share that ends sends an empty item; a contact who blocked the owner gets nothing; and every other
 /// request of the location node, generic PEP, stays refused without a service call.
 #[tokio::test]
@@ -1013,7 +1013,7 @@ async fn user_location_goes_out_rounded_a_stop_is_an_empty_item_and_generic_pep_
 
 /// A share's end by its time goes out from the session at its tick, not at the services' hourly clean; an extension
 /// moves it; a contact who blocked the owner gets nothing; and the owner's own sessions are told by a headline the first
-/// time their XMPP app's location feeds a share (plans/Location-Sharing.md §3.6).
+/// time their XMPP app's location feeds a share (plans/archive/Location-Sharing.md §3.6).
 #[tokio::test]
 async fn user_location_ends_at_its_time_a_blocked_owner_reaches_nothing_and_the_owner_is_told() {
     let (server, fake) = server();

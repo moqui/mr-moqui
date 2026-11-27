@@ -864,7 +864,7 @@ pub(crate) fn screen_status(app: AppHandle, webview: tauri::Webview, nonce: Opti
     ))
 }
 
-// ---- live location from the phone (plans/Location-Sharing.md §3.4, LL3) ----
+// ---- live location from the phone (plans/archive/Location-Sharing.md §3.4, LL3) ----
 
 /// The account of the page asking: the shell's (the current account), or a server page's while it is the current
 /// account's (`PageState::account`); none while a navigation is under way or for any other page.

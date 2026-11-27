@@ -29,7 +29,7 @@
         picker's search, read on the phone only; asked at the first search, with the reason. -->
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <!-- The location: a chat location's Use my current location (plans/Comms-Messaging.md §18.3 phase 20), asked at first
-         use by the WebView's geolocation prompt (RustWebChromeClient), and a live location share (plans/Location-Sharing.md
+         use by the WebView's geolocation prompt (RustWebChromeClient), and a live location share (plans/archive/Location-Sharing.md
          §3.4), asked with the app's reason before the first share. Read in the background only by LocationShareService, a
          foreground service of type location started from the app in front by the person's Share, with its notification
          and Stop for as long as it runs, until the share ends: never otherwise, and no ACCESS_BACKGROUND_LOCATION. -->

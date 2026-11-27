@@ -45,7 +45,7 @@
 -keep class org.moqui.mobile.ScreenSecurity { *; }
 -keep class org.moqui.mobile.CalendarIntent { *; }
 # ... and live location from the phone (src/android.rs location_allow, location_start, location_stop,
-# location_forget_account; plans/Location-Sharing.md §3.4)
+# location_forget_account; plans/archive/Location-Sharing.md §3.4)
 -keep class org.moqui.mobile.LocationShare { *; }
 -keep class org.moqui.mobile.LocationStops { *; }
 -keep class org.moqui.mobile.LocationStopWorker { public <init>(android.content.Context, androidx.work.WorkerParameters); }
@@ -55,7 +55,7 @@
     public static void startFcm(android.content.Context);
     public static void stopFcm(android.content.Context);
 }
-# ... and the offline map downloads' worker (src/android.rs package_worker_start, package_worker_cancel; plans/Maps-Offline.md
+# ... and the offline map downloads' worker (src/android.rs package_worker_start, package_worker_cancel; plans/archive/Maps-Offline.md
 # §2.4)
 -keep class org.moqui.mobile.PackageDownloadWorker {
     public <init>(android.content.Context, androidx.work.WorkerParameters);

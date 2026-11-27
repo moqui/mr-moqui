@@ -18,7 +18,7 @@
 //!   ([`Registry::deliver_notice`]): the same `chatRoom:`, `chatUser:` and `userStatus` messages the web client gets,
 //!   to every session of the users the push names. So web and XMPP see the same events, from one source.
 //!   A location share's positions for its XMPP contacts come the same way, on `locationShareXmpp:<shareId>` to those
-//!   contacts' users only (plans/Location-Sharing.md §3.6).
+//!   contacts' users only (plans/archive/Location-Sharing.md §3.6).
 //! - **Between sessions.** A stanza to another local user's full JID (Jingle, a PEP notification) goes to that session.
 //! - **Resumption.** A session whose connection dropped with stream management on waits, detached, for
 //!   [`crate::Config::resume_timeout`]; a new connection takes it over by its id ([`Registry::take_detached`]).
@@ -153,7 +153,7 @@ impl Registry {
             return;
         };
         // a location share's positions and its end for its XMPP contacts, and the owner's headline
-        // (plans/Location-Sharing.md §3.6): the same users' browsers that follow every topic (WebrootChat.js registers
+        // (plans/archive/Location-Sharing.md §3.6): the same users' browsers that follow every topic (WebrootChat.js registers
         // ALL) get them too, as theirs
         if !(topic.starts_with("chatRoom:")
             || topic.starts_with("chatUser:")

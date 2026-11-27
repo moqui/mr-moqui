@@ -826,7 +826,7 @@ pub(crate) fn flush_background(dir: &Path, budget_ms: i64) -> i64 {
 pub(crate) const PACKAGE_DONE: i32 = 0;
 pub(crate) const PACKAGE_RETRY: i32 = 1;
 
-/// Download `revision` of an account's offline map package on the worker's thread (plans/Maps-Offline.md §2.4), with
+/// Download `revision` of an account's offline map package on the worker's thread (plans/archive/Maps-Offline.md §2.4), with
 /// the app's client (the process's, made from the store when WorkManager started it), as `runner` (the work's id, so
 /// its stop pauses this run only): [`PACKAGE_DONE`] when it ended (installed, refused, cancelled, stale: the shell
 /// reads which), [`PACKAGE_RETRY`] for a cut, a server error, a pause, or a run of it already under way. On the
@@ -917,7 +917,7 @@ pub(crate) fn package_pause(account: &str, package_id: &str, runner: &str) {
     }
 }
 
-/// `Native.reportLocation(dataDir, account, shareId, fix)` (the host command `report_location`, plans/Location-Sharing.md
+/// `Native.reportLocation(dataDir, account, shareId, fix)` (the host command `report_location`, plans/archive/Location-Sharing.md
 /// §3.4): a fix of a share the location service sends (its JSON, empty for none: a point that waited), kept as the
 /// newest and sent with the account's device key ([`crate::location::report_location`]). What it came to, as JSON. With
 /// no TLS verifier yet the point waits.
@@ -1018,7 +1018,7 @@ pub(crate) fn begin_location(json: &str) -> bool {
 
 /// Posts a live location share's report or stop through the client's proxy with the account's device key, within
 /// [`moqui_client::location::POST_TIMEOUT`] (15 s): a half-open connection gives up then, not at the proxy's ten
-/// minutes (plans/Location-Sharing.md §3.4).
+/// minutes (plans/archive/Location-Sharing.md §3.4).
 pub(crate) struct LocationPoster<'a>(pub(crate) &'a Client);
 
 impl Poster for LocationPoster<'_> {
@@ -1562,7 +1562,7 @@ mod entries {
     }
 
     /// `Native.reportLocation(dataDir, account, shareId, fix)`: a live location share's fix (JSON; empty for none), what
-    /// it came to as JSON (plans/Location-Sharing.md §3.4). The position is never logged.
+    /// it came to as JSON (plans/archive/Location-Sharing.md §3.4). The position is never logged.
     #[no_mangle]
     pub extern "system" fn Java_org_moqui_mobile_Native_reportLocation<'caller>(
         mut env: EnvUnowned<'caller>,

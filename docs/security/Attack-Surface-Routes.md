@@ -138,7 +138,7 @@ Token routes are not framework-default paths. `runtime/components/addon/mr-boss/
 | `r` | `/r/<token>` | `mantle.request.RequestServices.check#IntakeToken` | `RequestIntake.xml` |
 | `call` | `/call/<token>` | `org.moqui.call.CallServices.check#CallLinkToken` | `basic-comms` `CallGuest.xml` |
 | `i` | `/i/<token>` | `mantle.party.IdentityServices.check#InvitationToken` | `mr-boss` `AcceptInvitation.xml` (staff invitation) |
-| `location` | `/location/<selector>#<secret>` | `org.moqui.maps.LocationServices.check#LinkKey` | `tools` `Maps/SharedLocation.xml` (a location share's guest link; plans/Location-Sharing.md §3.7) |
+| `location` | `/location/<selector>#<secret>` | `org.moqui.maps.LocationServices.check#LinkKey` | `tools` `Maps/SharedLocation.xml` (a location share's guest link; plans/archive/Location-Sharing.md §3.7) |
 
 The `location` route (`tools/MoquiConf.xml`) is the one whose path segment is not the credential: it is the guest link's
 selector, which names the link, and the secret is the URL's fragment, which no request line, log or `Referer` carries.

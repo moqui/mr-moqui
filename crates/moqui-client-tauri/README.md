@@ -16,7 +16,7 @@ as the apps are, so Tauri stays out of the server builds.
   page, which must be a vault screen's document (the schemes see each page's loads); the schemes refuse the server's
   copy of the module.
 - `packages`: the offline map packages' commands (`packages_list`, `packages_download`, `packages_cancel`,
-  `packages_delete`, `packages_status`, the shell's only; plans/Maps-Offline.md §2.4); a download runs as
+  `packages_delete`, `packages_status`, the shell's only; plans/archive/Maps-Offline.md §2.4); a download runs as
   `ShellHost::start_package_download` says (a thread by default, Android's WorkManager worker on the phone), and the
   schemes answer `/__moqui-app/maps/<packageId>/<path>` from the device to the shell's origin only.
 - `commands` (the shell's: accounts, sign-in and SSO, sign-out), `outbox` (the outbox and drafts), `sockets` (a page's

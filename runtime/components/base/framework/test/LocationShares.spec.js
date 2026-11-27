@@ -1,4 +1,4 @@
-// Shared live location (plans/Location-Sharing.md §3.2, LL1; org.moqui.maps.LocationServices, LocationShares.js), by
+// Shared live location (plans/archive/Location-Sharing.md §3.2, LL1; org.moqui.maps.LocationServices, LocationShares.js), by
 // the grants of data/MapsLocationData.xml with authorization on: a share is read and pushed to its current audience
 // only, a group member taken out loses it at the next read, and a membership added or reopened after the owner added
 // the group (with a caller's dates and stamp, backdated, an ended row reopened, an ended row and a new one, a member
@@ -759,7 +759,7 @@ feature("a guest link's token is returned once and only its digest is kept; a sh
     },
     then({made, link, mine, leaked, twoLinks, secondLink}) {
         made.errors == ""
-        // its selector, a dot and its secret (LL6, plans/Location-Sharing.md §3.7): 16 and 32 characters
+        // its selector, a dot and its secret (LL6, plans/archive/Location-Sharing.md §3.7): 16 and 32 characters
         made.linkToken.length == 49 && made.linkToken.split(".")[0] == link.tokenSelector
         link.tokenDigest == ec.user.singleUseCodeHash(made.linkToken)
         link.tokenDigest != made.linkToken
@@ -931,7 +931,7 @@ feature(
     }
 )
 
-// A share's device (LL3, plans/Location-Sharing.md §3.4): a device key of A's as the REST login's createLoginKey with
+// A share's device (LL3, plans/archive/Location-Sharing.md §3.4): a device key of A's as the REST login's createLoginKey with
 // deviceName makes it, the key and its stored hash
 function deviceKey(deviceName) {
     const ids = () =>

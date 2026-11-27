@@ -404,7 +404,7 @@ function expireRoom(p) {
   if (!room) {
     const deletedCount = find(EVENT).condition('chatRoomId', chatRoomId).condition('expireDate', 'less-equals', new Date(now)).deleteAll()
     // its live location links (ChatLiveShare) stay for the hourly clean of the shares, so an owner's later block still
-    // reaches a share sent to this room (plans/Location-Sharing.md §3.5)
+    // reaches a share sent to this room (plans/archive/Location-Sharing.md §3.5)
     return { deletedCount }
   }
   const rotationMillis = Math.min(WEEK_MILLIS, (Number(room.messageTimerSeconds) || 0) * 1000 || WEEK_MILLIS)

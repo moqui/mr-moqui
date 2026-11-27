@@ -469,7 +469,7 @@ fn login_key_kind(_: &mut Call<'_>) -> Result<Ret, HostError> {
 
 /// `loginKeyId`: the id of the `UserLoginKey` this request's user signed in with (its stored hash, as the device list
 /// names a device; never the key itself), with `loginKeyKind`; null for any other login. A location share records the
-/// device it is sent from by it (plans/Location-Sharing.md §3.1).
+/// device it is sent from by it (plans/archive/Location-Sharing.md §3.1).
 fn login_key_id(_: &mut Call<'_>) -> Result<Ret, HostError> {
     Ok(crate::user::login_key_id().into())
 }

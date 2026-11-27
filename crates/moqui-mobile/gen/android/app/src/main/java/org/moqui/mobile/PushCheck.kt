@@ -116,7 +116,7 @@ object PushCheck {
             // the phone's dialer through the app (off: no number to call from here), and the contacts' names
             .put("dialAccount", DialAccount.state(context))
             .put("contacts", PhoneBook.granted(context))
-            // live location from this phone (plans/Location-Sharing.md §3.4): the permission and the shares sent now
+            // live location from this phone (plans/archive/Location-Sharing.md §3.4): the permission and the shares sent now
             .put("location", LocationShare.state(context))
             .toString()
     }

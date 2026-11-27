@@ -1047,7 +1047,7 @@ fn a_key_login_names_its_kind_for_the_request_and_a_cookie_session_has_none() {
         assert!(login::apply_header_keys(Some(key), None, scope).unwrap());
         assert_eq!(login_key_kind().map(login::LoginKeyKind::as_str), Some(kind), "{key}");
         assert_eq!(script_kind(), Value::string(kind), "{key}");
-        // the row's id, its stored hash, never the key (plans/Location-Sharing.md §3.1, a share's device)
+        // the row's id, its stored hash, never the key (plans/archive/Location-Sharing.md §3.1, a share's device)
         let hashed = hash_login_key(key).unwrap();
         assert_eq!(login_key_id().as_deref(), Some(hashed.as_str()), "{key}");
         assert_eq!(

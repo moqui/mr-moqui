@@ -30,7 +30,7 @@ along with this software (see the LICENSE.md file). If not, see
         beside it: nativePush {providers: ['fcm', 'unifiedpush'], fcmConfigured, registered, encrypted (registerClientPush
         takes the app's push keys and pushes to it are encrypted to them), ack (ackClientPush)}, and what each
         inbox-source provider's operation features answers, merged in: internalSendRef, mailChangesUncovered; and placeRef
-        (Maps' savePlace keeps a place once by its clientRef, so the apps may queue one saved offline: plans/Maps-Offline.md
+        (Maps' savePlace keeps a place once by its clientRef, so the apps may queue one saved offline: plans/archive/Maps-Offline.md
         §2.5). A
         transition runs none of the pre-actions below. 401 without a user. -->
     <transition name="clientConfig" read-only="true" begin-transaction="false">
@@ -142,7 +142,7 @@ along with this software (see the LICENSE.md file). If not, see
             ]]></script></actions>
         <default-response type="none"/>
     </transition>
-    <!-- The Android app's live location (plans/Location-Sharing.md §3.4): a position of a share of the user's own, from
+    <!-- The Android app's live location (plans/archive/Location-Sharing.md §3.4): a position of a share of the user's own, from
         the app's foreground service (LocationShareService.kt, through the Rust host's report_location and its device key,
         so a share sent from that device takes it; moqui_client::location), and that share stopped from its notification.
         Maps' own transitions are under MAPS_APP, while every signed-in user may own a share: these call

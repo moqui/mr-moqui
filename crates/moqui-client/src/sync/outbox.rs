@@ -40,7 +40,7 @@
 //!   by its `clientRef` (`features.internalSendRef`); a `mail-send` of one becomes it. No files.
 //! - `mail-send` carries `baseStamp` (the server's draft the user edited) and `saveRef` (the save's own reference), so
 //!   a draft changed on the server meanwhile is a conflict, not overwritten.
-//! - `map-place`: a place saved on the offline Maps screen (plans/Maps-Offline.md §2.5), `{clientRef, label,
+//! - `map-place`: a place saved on the offline Maps screen (plans/archive/Maps-Offline.md §2.5), `{clientRef, label,
 //!   longitude, latitude}`, where the server says Maps' `savePlace` (`store#Place`) takes it once by its `clientRef`
 //!   (`features.placeRef`). A place is only ever added there, never changed, so it meets no server change to conflict
 //!   with; all of them in one order. A refusal keeps no ref on the server, so a retry may be saved.

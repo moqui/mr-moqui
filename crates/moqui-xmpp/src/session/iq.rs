@@ -580,7 +580,7 @@ impl Session {
             .filter_map(|feature| attr(feature, "var").strip_suffix("+notify").map(str::to_string))
             // no interest is kept in a node the service refuses (pep::REFUSED_NODES), but user location's, under its own
             // name: only its mapping notifies it, a location share's positions to its XMPP contacts
-            // (plans/Location-Sharing.md §3.6), never a generic publish, which is refused
+            // (plans/archive/Location-Sharing.md §3.6), never a generic publish, which is refused
             .filter_map(|node| {
                 if super::pep::geoloc_node(&node) {
                     Some(ns::GEOLOC.to_string())

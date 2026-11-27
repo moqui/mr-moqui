@@ -475,7 +475,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition-include name="stickerImage" location="component://basic-comms/template/ChatStickerTransitions.xml"/>
     <transition-include name="sendSticker" location="component://basic-comms/template/ChatStickerTransitions.xml"/>
     <transition-include name="sendLocation" location="component://basic-comms/template/ChatStickerTransitions.xml"/>
-    <!-- live location (plans/Location-Sharing.md §3.5, LL4) -->
+    <!-- live location (plans/archive/Location-Sharing.md §3.5, LL4) -->
     <transition-include name="sendLiveLocation" location="component://basic-comms/template/ChatStickerTransitions.xml"/>
     <transition-include name="liveLocation" location="component://basic-comms/template/ChatStickerTransitions.xml"/>
     <transition-include name="reportLiveLocation" location="component://basic-comms/template/ChatStickerTransitions.xml"/>

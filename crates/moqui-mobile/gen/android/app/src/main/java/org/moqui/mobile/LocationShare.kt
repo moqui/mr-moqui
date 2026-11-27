@@ -37,7 +37,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /**
- * Live location sent from this phone (plans/Location-Sharing.md §3.4): a share the person started, or took over with
+ * Live location sent from this phone (plans/archive/Location-Sharing.md §3.4): a share the person started, or took over with
  * Send from this device, on the Maps page, sent by [LocationShareService], a foreground service of type location, also
  * while the app is in the background, with its notification ("Sharing your location with Sam until 15:30", Stop) for as
  * long as it runs. It is started only from the page's Share while the app is in front ([start], the host command
@@ -521,7 +521,7 @@ object LocationShare {
 }
 
 /**
- * The foreground service of type location that sends the shares of [LocationShare] (plans/Location-Sharing.md §3.4):
+ * The foreground service of type location that sends the shares of [LocationShare] (plans/archive/Location-Sharing.md §3.4):
  * Android's LocationManager (no Google Play services), at the interval and accuracy [LocationRules] choose from the
  * shares (a few seconds moving, longer still, an approximate share's own interval at a low-power, approximate
  * accuracy), each fix handed to Rust on the location thread, at most one report a share queued or under way, and what

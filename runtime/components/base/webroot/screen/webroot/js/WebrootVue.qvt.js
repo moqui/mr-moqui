@@ -29,7 +29,7 @@
     moqui.beforeLogoutHooks = moqui.beforeLogoutHooks || new Set();
 
     // Shell indicators (docs/ui/Qvt-Client.md, Shell indicators): status chips in the app bar on every screen, kept by the
-    // shell, which outlives the screens (live location's "Sharing location", plans/Location-Sharing.md §3.3). set(key, {label, icon,
+    // shell, which outlives the screens (live location's "Sharing location", plans/archive/Location-Sharing.md §3.3). set(key, {label, icon,
     // tone, title, action, sequence}) adds or replaces one (key: letters, digits, _ and -; tone: primary, positive, warning,
     // negative or info; action: a path of this site the shell goes to, {url}, or a function, {onClick}); remove(key) takes
     // it off; note(key, text) puts a screen's few words after its label, kept until note(key, null) or clear(); clear()
@@ -64,7 +64,7 @@
             if (words) indicatorState.notes[key] = words; else delete indicatorState.notes[key];
         },
         // A note kept by source, for an indicator two screens speak to at once (live location's chip: Maps › Browse and
-        // Chat each send shares, plans/Location-Sharing.md §3.5): each source's words, or null to take its own off; the
+        // Chat each send shares, plans/archive/Location-Sharing.md §3.5): each source's words, or null to take its own off; the
         // note is their distinct words, the first given first, so one screen never clears another's.
         noteFrom(key, source, text) {
             const sources = (indicatorSources[key] = indicatorSources[key] || {});
@@ -8294,7 +8294,7 @@
     // has loaded, and when it cannot, the places are listed here, so a record's actions stay usable. config is the map's
     // configuration (an object or its JSON; the shape is in js/WebrootMap.js), config-url a transition answering the effective
     // one (or, in the apps' shell, an offline package's manifest: package mode, js/WebrootMap.js). Emits pick ({lon, lat}),
-    // select, view-change and edit-change; a live-change listener (the live layer's shares, plans/Location-Sharing.md §3.3)
+    // select, view-change and edit-change; a live-change listener (the live layer's shares, plans/archive/Location-Sharing.md §3.3)
     // is passed on to m-map-view with the other attributes it does not declare, and m-map-view emits it.
     // editCommand(name, value) is m-map-view's (the editing of an overlay, js/WebrootMap.js), answering null until the map
     // has loaded, and showPlace(place) marks a place found.
@@ -8312,7 +8312,7 @@
         data() { return { view: null, libraryError: "", failed: "" }; },
         methods: {
             editCommand(name, value) { return this.$refs.view && this.$refs.view.editCommand ? this.$refs.view.editCommand(name, value) : null; },
-            // a place a page found (the offline Maps screen's search, plans/Maps-Offline.md §2.5) marked and shown
+            // a place a page found (the offline Maps screen's search, plans/archive/Maps-Offline.md §2.5) marked and shown
             showPlace(place) { if (this.$refs.view && this.$refs.view.showPlace) this.$refs.view.showPlace(place); }
         },
         computed: {
@@ -10455,7 +10455,7 @@
                 });
             },
             // The Android app's location service sends live location shares from the phone after Maps closes
-            // (plans/Location-Sharing.md §3.4, moquiDesktop.location): Maps' "Sharing location" chip says "sending from this
+            // (plans/archive/Location-Sharing.md §3.4, moquiDesktop.location): Maps' "Sharing location" chip says "sending from this
             // phone" while it does, read from the app at each load of the indicators (a share's start, change and end are
             // among their pushes), so the note goes when the service stops with Maps closed.
             noteHostSending() {

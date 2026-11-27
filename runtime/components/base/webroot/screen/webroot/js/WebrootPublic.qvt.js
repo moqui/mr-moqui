@@ -55,7 +55,7 @@
         return found && found.tagName === "SCRIPT" && found.type === "application/json" ? found : null;
     };
 
-    // A location share's guest link (/location/<selector>#<secret>, the tools route location; plans/Location-Sharing.md
+    // A location share's guest link (/location/<selector>#<secret>, the tools route location; plans/archive/Location-Sharing.md
     // §3.7): its secret is the URL's fragment. It is taken here, as this script loads and before the route's screen does,
     // and the address bar is set to the URL without it, so a copy, a bookmark or a later Referer has none; it is kept for
     // the tab (session storage) so a reload still reads it, and the page asks for it by moqui.routeFragment(). The first

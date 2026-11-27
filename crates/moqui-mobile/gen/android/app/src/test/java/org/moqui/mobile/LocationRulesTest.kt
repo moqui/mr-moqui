@@ -8,7 +8,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** The live location service's rules (plans/Location-Sharing.md §3.4, LL3): the interval, the stop rules, the start. */
+/** The live location service's rules (plans/archive/Location-Sharing.md §3.4, LL3): the interval, the stop rules, the start. */
 class LocationRulesTest {
     @Test
     fun anExactShareIsAskedEveryFewSecondsMovingAndLessOftenStill() {

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License.
-"""LocationShareWalk's phone half (plans/Location-Sharing.md LL7; docs/ui/Mobile-Client.md, Live location), over the
+"""LocationShareWalk's phone half (plans/archive/Location-Sharing.md LL7; docs/ui/Mobile-Client.md, Live location), over the
 WebView's DevTools socket of a debug build and Android's own UI (uiautomator), as scripts/android-location-share.sh runs
 it once the server half (the tools acceptance spec LocationShareWalkFixtures) serves and the app is started with no
 account:

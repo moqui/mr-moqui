@@ -2364,7 +2364,7 @@
         }
     };
 
-    // ---- live location in a room (plans/Location-Sharing.md §3.5, LL4; ChatLocationServices send#LiveLocation and
+    // ---- live location in a room (plans/archive/Location-Sharing.md §3.5, LL4; ChatLocationServices send#LiveLocation and
     // get#LiveLocation over org.moqui.maps.LocationServices) ----
     // A live location message carries its share's id (content.location.liveShareId), never a position: its card reads the
     // share through the liveLocation transition (get#Share checks the audience) and follows the share's topic

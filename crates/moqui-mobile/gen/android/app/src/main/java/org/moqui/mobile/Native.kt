@@ -70,7 +70,7 @@ object Native {
     @JvmStatic external fun forgetLocation(account: String, shareId: String)
     @JvmStatic external fun vaultLock()
     /**
-     * Download `revision` of an account's offline map package ([PackageDownloadWorker], plans/Maps-Offline.md §2.4), on
+     * Download `revision` of an account's offline map package ([PackageDownloadWorker], plans/archive/Maps-Offline.md §2.4), on
      * the worker's thread: [PackageDownloadRules.DONE] when it ended (installed, refused, cancelled, stale), or
      * [PackageDownloadRules.RETRY] to be tried again from its kept part. `runner` is the work's id; on its `last` run a
      * failure is told as final.

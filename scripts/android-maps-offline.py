@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License.
-"""MapsOfflinePackage, the device half of the offline map walk (plans/Maps-Offline.md OF4), over the WebView's DevTools
+"""MapsOfflinePackage, the device half of the offline map walk (plans/archive/Maps-Offline.md OF4), over the WebView's DevTools
 socket of a debug build, as scripts/android-maps-offline.sh runs it once the server half (the tools acceptance spec
 MapsOfflinePackage) serves its package and the app is started with no account:
 

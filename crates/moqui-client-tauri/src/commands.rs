@@ -579,7 +579,7 @@ fn remove_account(state: &ClientState, id: &str) -> Result<(), String> {
     }
     state.core.vault().removed(id);
     state.core.stores().forget(id);
-    // its offline map packages go with its store (plans/Maps-Offline.md §2.4), their downloads cancelled
+    // its offline map packages go with its store (plans/archive/Maps-Offline.md §2.4), their downloads cancelled
     state.shell.cancel_package_downloads(id);
     state.core.packages().forget(id);
     if let Err(err) = state.core.keys().forget_chat_store_keys(id) {
@@ -658,7 +658,7 @@ pub(crate) fn switched(state: &ClientState) {
     *moqui_lib::sync::lock(&state.open_pending) = None;
     state.core.mirror().cancel();
     state.core.sockets().close_all();
-    // the offline search's address index is the other account's package (plans/Maps-Offline.md §2.5)
+    // the offline search's address index is the other account's package (plans/archive/Maps-Offline.md §2.5)
     state.core.packages().drop_address_index(None);
     state.shell.close_remotes(None);
     state.shell.clear_page_storage();

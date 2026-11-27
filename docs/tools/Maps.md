@@ -873,7 +873,7 @@ fallback), and a refresh is compared by address, not by ID.
 A user downloads a region of their map to the Android app or the desktop client and browses it with no network: its
 basemap, their own places and the overlays they read, and the region's postal codes, Overture places and addresses. A
 place they save meanwhile is sent when the server answers again. The web PWA has no offline maps. The design is
-[plans/Maps-Offline.md](../../plans/Maps-Offline.md); how the apps keep and serve packages is in
+[plans/archive/Maps-Offline.md](../../plans/archive/Maps-Offline.md); how the apps keep and serve packages is in
 [Desktop-Client](../ui/Desktop-Client.md#offline-map-packages) and [Mobile-Client](../ui/Mobile-Client.md#offline-map-packages).
 
 **Making one.** Maps › Offline maps (`Maps/Offline.xml`, `MAPS_APP`) lists the user's packages with their state, zooms,
@@ -992,7 +992,7 @@ answers.
 
 A person shares where they are, until a time they choose, with people they choose, and nothing else starts a share: not
 an administrator, a household's organizer, a manager, a record or a schedule
-([plans/Location-Sharing.md](../../plans/Location-Sharing.md) §1). Every share has an end, at most `location@max-share-hours` (24) from its start or its last extension; the server
+([plans/archive/Location-Sharing.md](../../plans/archive/Location-Sharing.md) §1). Every share has an end, at most `location@max-share-hours` (24) from its start or its last extension; the server
 keeps its latest position only, and a trail only when its owner keeps one for that share; and no grant reads another
 person's shares. This section is the guide to all of it; the parts that are another guide's are there: Chat's Share
 live location in [Comms, Live location](Comms.md#live-location), the XMPP mapping in
@@ -1041,7 +1041,7 @@ in `LocationShares.js`), every signed-in user's for their own shares (`LocationS
   anyone and with whatever dates (an administrator, an app or a household organizer; a backdated, reopened or new
   membership, a member removed and given a new row), sees nothing until the owner adds the group again (Add the group
   again in Who sees my location), which lets in and tells its new members, names them to the owner, and tells anyone
-  it leaves out. The one way back without the owner, which plans/Location-Sharing.md §3.1 accepts: a snapshot member's
+  it leaves out. The one way back without the owner, which plans/archive/Location-Sharing.md §3.1 accepts: a snapshot member's
   own row, ended and reopened, or deleted and made again with the same `fromDate` (an administrator can do either in
   System › Access), lets that same person back, keeping their first reach, so they see what was received while out.
 - **What nobody else sees.** No grant of these services reads another person's shares: another person's share answers

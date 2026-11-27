@@ -1,4 +1,4 @@
-// A location share's guest link (plans/Location-Sharing.md §3.7, LL6; org.moqui.maps.LocationServices check#LinkKey,
+// A location share's guest link (plans/archive/Location-Sharing.md §3.7, LL6; org.moqui.maps.LocationServices check#LinkKey,
 // get#LinkShare; tools Maps/SharedLocation.xml), read with no sign-in and authorization on: the link's token is its
 // selector and its secret, the page's link /location/<selector>#<secret> with the secret in the fragment only, so the
 // request line a log records holds none; a read answers the share's label, purpose and latest position (what was received

@@ -1979,7 +1979,7 @@ test("with no host, as on the web, a message's changes are asked of the server a
     }
 });
 
-test("a live location's card (plans/Location-Sharing.md §3.5): its position and age from liveLocation, moved by its share's pushes, and Live location ended at its end; the owner's says whom it was shared with", async () => {
+test("a live location's card (plans/archive/Location-Sharing.md §3.5): its position and age from liveLocation, moved by its share's pushes, and Live location ended at its end; the owner's says whom it was shared with", async () => {
     const vm = await openRoom();
     const thruDate = Date.now() + 3600000;
     answers["/apps/BasicComms/Chat/liveLocation"] = (params) => (Number(params.eventSeq) === 40

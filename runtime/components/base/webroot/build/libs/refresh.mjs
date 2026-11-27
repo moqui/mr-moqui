@@ -278,7 +278,7 @@ const GEOTIFF_WORKER_CREATE = 'patches/geotiff-3.1.0-beta.0-worker-create.js';
 // with a fixed name is this map of the entries, openlayers/ol-map.json ({main, raster, decoder}), which m-map fetches with
 // cache: "no-cache" (revalidated each time, a 304 when it is unchanged) before it imports the main entry by its name.
 const OPENLAYERS_FILES = 'openlayers/ol-map.json';
-// The files of each part a client bundles alone (plans/Maps-Offline.md §2.5): {main: [...]}, each path relative to
+// The files of each part a client bundles alone (plans/archive/Maps-Offline.md §2.5): {main: [...]}, each path relative to
 // openlayers/, the main entry with every chunk it imports (statically or dynamically) and ol.css and ol-map.json. The
 // desktop and mobile shell stages only these (crates/moqui-desktop/shell/libs.txt "openlayers main"): no COG layer is
 // packaged, so the raster part and its decoders stay out.

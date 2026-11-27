@@ -84,8 +84,8 @@ Dashboards); the deliberate differences from Java are in [Parity-Diffs](Parity-D
 ## Maps
 
 Built (P0–P4, O1, O2, and the leftovers on November 26, 2026); plan archived 2026-11-26 as [Maps](archive/Maps.md), with
-[Maps-Overture](archive/Maps-Overture.md); guide [Maps](../docs/tools/Maps.md). Active: [Maps-Offline](Maps-Offline.md) (region
-packages for the apps) and [Location-Sharing](Location-Sharing.md) (explicitly shared live location). HOME's mount,
+[Maps-Overture](archive/Maps-Overture.md); guide [Maps](../docs/tools/Maps.md). Offline packages and shared live location
+built November 27, 2026: plans archived as [Maps-Offline](archive/Maps-Offline.md) and [Location-Sharing](archive/Location-Sharing.md). HOME's mount,
 adapters and visibility walks are mr-home's H1c ([its §3.9](../runtime/components/addon/mr-home/plan/initial-design.md#39-maps-places-and-geographic-information)).
 A disk-backed archive in filesystem git waits on the [LFS placement item](#git-and-git-hosting).
 
@@ -97,8 +97,11 @@ A disk-backed archive in filesystem git waits on the [LFS placement item](#git-a
 | Offline packages | `savePlace`: a `save#Text` failure inside `storePlace` marks the shared transaction rollback-only, so the `NOT_SAVED` refusal's claim drop fails and the outbox retries a 500 rather than showing the refusal; a note at `service/call.rs` `sync_checked` that a nested call without `throwOnError` inside a checked call has its database text marked Unprocessable (OF3 fifth review) | `tools/screen/Maps/Browse.xml`, `MapOverlays.js`, `crates/moqui-core/src/service/call.rs` |
 | Offline packages | Two narrow races leave a package download "Failed PAUSED, retry" instead of given up: a replaced worker taking the new job before its runner is recorded, and two concurrent taps recording the older work id (keep the expected runner in its own field; `give_up` accepts it or the last taker); a 131-character doc line in `packages/mod.rs` (OF2 fifth review, 2026-11-27) | `crates/moqui-client/src/packages/mod.rs` |
 | Live location | Guest links: `send#RecordGuestLink` holds the share's lock through the SMTP session (up to 120 s against a 60 s transaction; documented in Maps.md), the per-client rate limit on `/location/*/read` is untested, and BOSS ShareLocation.qvue's unmount, pagehide and timer paths have no browser spec (LL6 reviews, 2026-11-27) | `runtime/components/addon/mr-mantle/service/mantle/other/LocationRecordShares.js`, mr-boss `screen/Maintenance/WorkOrders/ShareLocation.qvue` |
-| Live location | Chat links (`ChatLiveShare`): a stale comment in `ChatLocation.js` (~283); the room-gone branch in `ChatExpiry.js` (~404) deletes a room's links while their shares may be on, so an owner's later block no longer reaches a share sent there (rooms are not deleted outside a spec); a failed `dropChatLinks` leaves an orphaned link (harmless); a spec of a removal after the message has disappeared (LL4 review, 2026-11-27) | `runtime/components/base/framework/service/org/moqui/chat/` |
-| Privacy | `NotificationCapture` (configured in every deployment) has no gate on `enable()`: any server script can capture pushes in transit, live location ones included | `MoquiDefaultConf.xml`, [Location-Sharing](Location-Sharing.md) |
+| Live location | Chat links (`ChatLiveShare`): a failed `dropChatLinks` leaves an orphaned link (harmless, the revoke skips ended shares); no spec of a removal after the live location message has disappeared (LL4 review, 2026-11-27) | `runtime/components/base/framework/service/org/moqui/maps/LocationShares.js`, `chat/ChatLocation.js` |
+| Offline packages | The account's Devices list shows each device's packages (`MapPackageDownload` records each download's device and revision; nothing shows it yet) | [Maps-Offline §4](archive/Maps-Offline.md#4-licensing-and-privacy) |
+| Live location | Monitor shows counts of live shares (the plan's rule "Monitor shows counts only"; nothing in Monitor reads them yet) | [Location-Sharing §1](archive/Location-Sharing.md#1-rules) |
+| Live location | XMPP: a contact whose client connects after a share's last position gets no last `geoloc` item until the next report | `crates/moqui-xmpp/src/session/pep.rs`, `LocationShares.js` |
+| Privacy | `NotificationCapture` (configured in every deployment) has no gate on `enable()`: any server script can capture pushes in transit, live location ones included | `MoquiDefaultConf.xml`, [Location-Sharing](archive/Location-Sharing.md) |
 
 ## Chat and presence
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # LocationShareWalk's phone half, the acceptance walk of live location on the emulator or a phone over adb
-# (plans/Location-Sharing.md LL7; docs/tools/Maps.md, Live location; docs/ui/Mobile-Client.md, Live location):
+# (plans/archive/Location-Sharing.md LL7; docs/tools/Maps.md, Live location; docs/ui/Mobile-Client.md, Live location):
 #   - the server half: the tools acceptance spec LocationShareWalkFixtures (loc.walk.ann, loc.walk.ben and loc.walk.cy in
 #     Walk family) run by `moqui test --serve` on a scratch database, served on 127.0.0.1:$port, which the app reaches
 #     through `adb reverse` as http://localhost:$port;

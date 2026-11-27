@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- The transitions of stickers and locations (plans/Comms-Messaging.md §18.3 phase 20; org.moqui.chat.ChatStickerServices,
     ChatLocationServices), each included by name: in Chat.xml stickerPacks (the picker's packs), stickerImage (a sticker's
     picture or its thumbnail, sent inline with nosniff), sendSticker and sendLocation (a plain room's; an encrypted room's
-    are the browser's own encrypted sends), and live location's (below; plans/Location-Sharing.md §3.5); in Settings/Stickers.xml and System/ChatStickers.xml the pack management
+    are the browser's own encrypted sends), and live location's (below; plans/archive/Location-Sharing.md §3.5); in Settings/Stickers.xml and System/ChatStickers.xml the pack management
     (createStickerPack, updateStickerPack, deleteStickerPack, addSticker, removeSticker), which go back to
     the screen with its message. A JSON refusal is answered with its reasonCode and the errors, as send's is. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd">
@@ -60,7 +60,7 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/>
     </transition>
 
-    <!-- Live location in a room (plans/Location-Sharing.md §3.5, LL4; ChatLocationServices send#LiveLocation and
+    <!-- Live location in a room (plans/archive/Location-Sharing.md §3.5, LL4; ChatLocationServices send#LiveLocation and
         get#LiveLocation, over LocationServices): sendLiveLocation starts a share with the room's members and posts its
         message (thruDate epoch millis); liveLocation reads a live location message's share as the caller may see it (its
         audience checked by get#Share); reportLiveLocation is a browser page's position for a share of the user's own

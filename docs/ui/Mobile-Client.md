@@ -113,7 +113,7 @@ own `/qapps`), never both:
 The phone keeps downloaded map regions as the desktop does ([Desktop-Client](Desktop-Client.md#offline-map-packages):
 the store under `client/data/`, `packages-max-mb`, the checks, the shell's `/__moqui-app/maps/` path and the
 commands, and the bundled offline Maps screen: [Maps, Offline packages](../tools/Maps.md#offline-packages)); what differs is who
-runs the download (plans/Maps-Offline.md §2.4) and the screen's "Download only on Wi-Fi" choice, the phone's alone.
+runs the download (plans/archive/Maps-Offline.md §2.4) and the screen's "Download only on Wi-Fi" choice, the phone's alone.
 
 - **`PackageDownloadWorker`** (WorkManager, `PackageDownloadWorker.kt`, a `ListenableWorker` on a thread of its own, so
   one map download runs at a time and WorkManager's threads stay for `FlushWorker` and `RegisterWorker`; a second
@@ -559,7 +559,7 @@ location share the person started, under its notification (below).
 ### Live location
 
 A live location share started in Maps, a chat room or a record's page (Share my location with the customer) is sent from
-the phone by the app, also while it is in the background (plans/Location-Sharing.md §3.4). Who sees it, its reach,
+the phone by the app, also while it is in the background (plans/archive/Location-Sharing.md §3.4). Who sees it, its reach,
 retention and precision are the guide [Maps, Live location](../tools/Maps.md#live-location); this is the app's part. The
 Kotlin is `LocationShare.kt` (the object and `LocationShareService`), `LocationStops.kt` (the stops kept until the
 server confirms them) and `LocationRules.kt` (JVM-tested); the Rust is `src/location.rs` with `moqui_client::location`.
@@ -756,7 +756,7 @@ What fills each gap of MT1 and MT2 is MT3's record ([Mobile-Desktop](../../plans
   sending it and the server listing it. Needs the debug APK, a `./moq build --debug` binary (or
   `MOQUI_WALK_PACKAGE=release`) and python3's websocket-client; the server's log is `target/maps-offline/server.log`.
 - `scripts/android-location-share.sh`: the phone half of the acceptance walk `LocationShareWalk` of live location
-  (plans/Location-Sharing.md LL7), on the emulator when asked (not in `./moq test-all` or `accept-all`; about 40 s once
+  (plans/archive/Location-Sharing.md LL7), on the emulator when asked (not in `./moq test-all` or `accept-all`; about 40 s once
   the server's data is saved). It serves the tools acceptance spec `LocationShareWalkFixtures` (loc.walk.ann, ben and cy
   in Walk family) with `moqui test --serve` on `127.0.0.1:18087`, reached through `adb reverse`; installs the debug APK
   with its permissions granted and its data cleared; and drives the app over its WebView's DevTools socket and Android's

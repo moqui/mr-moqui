@@ -1748,7 +1748,7 @@ test("an event's times: a wall clock in its zone, the box's start and end, the v
     }
 });
 
-test("live location (plans/Location-Sharing.md §3.5): a push moves a card's view, ends it or takes a viewer out; the page's sender sends at most one fix an interval, waits on 429, stops on 410, another device, an audience it cannot read again and a lost sign-in (said), notes the chip, and stops once no chat view holds it", async () => {
+test("live location (plans/archive/Location-Sharing.md §3.5): a push moves a card's view, ends it or takes a viewer out; the page's sender sends at most one fix an interval, waits on 429, stops on 410, another device, an audience it cannot read again and a lost sign-in (said), notes the chip, and stops once no chat view holds it", async () => {
     const live = chat.live;
     const view = live.view({ state: "live", owner: false, share: { shareId: "S1", thruDate: 5000 }, latest: { latitude: 1, longitude: 2, ageSeconds: 30 } }, 100000);
     assert.equal(view.seenAt, 70000);

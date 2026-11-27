@@ -1,4 +1,4 @@
-// Shared live location (plans/Location-Sharing.md §1, §3.2; LocationServices.xml): the owner's shares, the reads of
+// Shared live location (plans/archive/Location-Sharing.md §1, §3.2; LocationServices.xml): the owner's shares, the reads of
 // their current audience, the reports and the hourly clean. Every function checks the caller itself: the owner for a
 // change or a report, the current audience (a user whose entry is not revoked, a member of a group whose entry is not
 // revoked whom the owner's adding of the group reached, while that membership row is current) for a read, and answers
@@ -30,7 +30,7 @@ const MINUTE = 60000
 const CLEAN_BATCH = 500
 const CLEAN_STAGE_MILLIS = 2 * 60000
 const PRECISIONS = ["LspExact", "LspApproximate"]
-// a guest link (plans/Location-Sharing.md §3.7): the public page's route (tools MoquiConf.xml token-route location), the
+// a guest link (plans/archive/Location-Sharing.md §3.7): the public page's route (tools MoquiConf.xml token-route location), the
 // selector's length, and what a selector or a secret may be (randomString's URL-safe letters)
 const LINK_ROUTE = "/location/"
 const LINK_SELECTOR_LENGTH = 16
@@ -77,7 +77,7 @@ const isActive = (share, now) =>
 /**
  * The device this request comes from: the id of the device key that signed it in (ec.user.loginKeyId, the key's stored
  * hash, never the key), or null for any other login (a browser page). A share records the device it is sent from, and
- * takes reports from that device's requests only (plans/Location-Sharing.md §3.1, §3.4).
+ * takes reports from that device's requests only (plans/archive/Location-Sharing.md §3.1, §3.4).
  */
 function deviceKeyId() {
     return text(ec.user.loginKeyKind) === "device" ? text(ec.user.loginKeyId) || null : null
@@ -179,7 +179,7 @@ function snapshotGroup(share, row) {
     }
     // when each member was first reached by this entry, kept for one already in its snapshot by the same membership row:
     // a person who left and came back by a new row is reached again from now, so a position reported before a person
-    // was reached (or while they were out) never reaches them (plans/Location-Sharing.md §3.4)
+    // was reached (or while they were out) never reaches them (plans/archive/Location-Sharing.md §3.4)
     const reached = {}
     for (const held of find(AUDIENCE_MEMBER).condition("shareId", share.shareId).condition("audienceSeqId", row.audienceSeqId)
         .selectField("userId,memberFromDate,reachedDate").list())
@@ -212,7 +212,7 @@ function currentUserIds(share) {
  * When the share's current audience first reached the user, epoch millis, or null when it does not: the earliest of
  * its entries that reach them (a person's entry when it was added; a group's snapshot when it first held them). A viewer
  * sees the latest position and the trail only from then on, so no position reported before a person was added reaches
- * them (plans/Location-Sharing.md §3.4).
+ * them (plans/archive/Location-Sharing.md §3.4).
  */
 function reachedAt(share, userId) {
     if (!userId || userId === share.ownerUserId) return null
@@ -263,7 +263,7 @@ function xmppUserIds(share, rows) {
 }
 
 /**
- * A share's position or end for its XMPP contacts (plans/Location-Sharing.md §3.6): on locationShareXmpp:<shareId> to
+ * A share's position or end for its XMPP contacts (plans/archive/Location-Sharing.md §3.6): on locationShareXmpp:<shareId> to
  * those contacts' users only, which the XMPP server (moqui-xmpp session/geoloc.rs) sends to each of their sessions that
  * asked for user location as a geoloc event from the owner, and an empty geoloc item for an end. The same values the
  * share's audience is sent (an approximate share's cell), at the time of the report, so a contact added later gets only
@@ -370,7 +370,7 @@ function checkUsers(userIds, now) {
 /**
  * Whether the owner may share with these groups: groups the owner is in now, never every user or a group of external users,
  * and none whose current membership rows number more than four times location@max-audience, refused before its snapshot
- * so that a huge group costs no inserts the cap would roll back (plans/Location-Sharing.md §3.2; checkReach, after the
+ * so that a huge group costs no inserts the cap would roll back (plans/archive/Location-Sharing.md §3.2; checkReach, after the
  * writes, stays the cap that counts).
  */
 function checkGroups(groupIds) {
@@ -466,7 +466,7 @@ function checkAudience(list, now) {
 /**
  * The entries written: a link's token made here, returned once, and only its digest and selector kept. The token is the
  * selector, a dot and the secret; the guest page's link is linkPath, /location/<selector>#<secret>, the secret in the
- * fragment only, which the page posts and no request line, log or Referer carries (plans/Location-Sharing.md §3.7).
+ * fragment only, which the page posts and no request line, log or Referer carries (plans/archive/Location-Sharing.md §3.7).
  */
 function addAudience(share, entries, now) {
     let linkToken = null
@@ -478,7 +478,7 @@ function addAudience(share, entries, now) {
         } else if (entry.type === "LsaUserGroup") {
             fields.userGroupId = entry.key
         } else if (entry.type === "LsaXmpp") {
-            // the contact's user, whose XMPP sessions get the share's positions (plans/Location-Sharing.md §3.6); never
+            // the contact's user, whose XMPP sessions get the share's positions (plans/archive/Location-Sharing.md §3.6); never
             // a reader of the share on the web, which reads LsaUser and group entries only
             fields.jid = entry.key
             fields.userId = entry.userId
@@ -512,7 +512,7 @@ function checkReach(share) {
 /**
  * The owner's lock row (LocationShareOwner, which no foreign key names, so no audience insert's key check waits on it
  * on any database), made on first use in its own transaction, then locked for the rest of the caller's. It fails closed
- * (plans/Location-Sharing.md §3.2, the LL1 review): the first look is a plain read, a missing row is made in its own
+ * (plans/archive/Location-Sharing.md §3.2, the LL1 review): the first look is a plain read, a missing row is made in its own
  * transaction, where only another request's making it at the same moment (the row there after the failure: a duplicate
  * key) is passed over and any other failure is logged; false when the row cannot then be locked, which the caller refuses.
  */
@@ -580,7 +580,7 @@ function create(p) {
         .makeValue(SHARE)
         .setAll({
             ownerUserId: me,
-            // the app's device that started it, or none for a browser page (plans/Location-Sharing.md §3.4)
+            // the app's device that started it, or none for a browser page (plans/archive/Location-Sharing.md §3.4)
             userLoginKeyId: deviceKeyId(),
             label: text(p.label) || ownerName,
             purposeText: text(p.purposeText) || null,
@@ -590,9 +590,9 @@ function create(p) {
             keepTrail: trail.keepTrail,
             trailKeepDays: trail.trailKeepDays,
             // the owner's XMPP app's location feeds it too, to its XMPP contacts only, only by the owner's choice here
-            // (plans/Location-Sharing.md §3.6)
+            // (plans/archive/Location-Sharing.md §3.6)
             takeXmppLocation: yes(p.takeXmppLocation) ? "Y" : "N",
-            // raised by every change of the audience that can reach someone new (plans/Location-Sharing.md §3.4)
+            // raised by every change of the audience that can reach someone new (plans/archive/Location-Sharing.md §3.4)
             audienceVersion: 1
         })
         .setSequencedIdPrimary()
@@ -622,7 +622,7 @@ function update(p) {
         const until = checkUntil(p.thruDate, now)
         if (until.reasonCode) return until
         // a share for a record ends no later than the record's end, as its component stored it (store#ShareRecord;
-        // plans/Location-Sharing.md §3.7)
+        // plans/archive/Location-Sharing.md §3.7)
         if (share.recordThruDate != null && until.until > millis(share.recordThruDate))
             return refuse("AFTER_RECORD_END", "A share for a record ends no later than the record's planned end")
         share.thruDate = new Date(until.until)
@@ -630,7 +630,7 @@ function update(p) {
     if (p.label != null) share.label = text(p.label) || share.label
     if (p.purposeText != null) share.purposeText = text(p.purposeText) || null
     // Send from here (a browser page: no device) or Send from this device (the app): the reports of the device that
-    // sent it until now are refused from here on as another device's, which stops it (plans/Location-Sharing.md §3.4)
+    // sent it until now are refused from here on as another device's, which stops it (plans/archive/Location-Sharing.md §3.4)
     const moved = yes(p.sendFromHere) && (share.userLoginKeyId || null) !== deviceKeyId()
     if (moved) {
         share.userLoginKeyId = deviceKeyId()
@@ -791,7 +791,7 @@ function revokeRows(share, rows, now) {
 }
 
 /**
- * revoke#ChatAudience (internal, plans/Location-Sharing.md §3.5): a person's own entry (LsaUser) taken out of the active
+ * revoke#ChatAudience (internal, plans/archive/Location-Sharing.md §3.5): a person's own entry (LsaUser) taken out of the active
  * shares named, as revoke#Audience takes one out, whoever the caller is: Chat calls it when a member is taken out of a
  * room by another, or blocked by a share's owner, for that room's live shares (moqui.chat.ChatLiveShare). It only narrows
  * who sees a share. Each share in a transaction of its own: one that fails is logged by its id and the rest go on.
@@ -869,7 +869,7 @@ function cellOf(latitude, longitude) {
 }
 
 /**
- * An approximate share's position (plans/Location-Sharing.md §1, "Approximate when chosen"): the centre of a cell of
+ * An approximate share's position (plans/archive/Location-Sharing.md §1, "Approximate when chosen"): the centre of a cell of
  * about 1 km on the fixed grid; the last cell reported is kept until a fix is more than a quarter of a cell inside
  * another one, so jitter at a line does not flip cells (a change of cell still shows that the person crossed a line
  * 0.75 cell from the old centre, within what they move in one approximate-interval-seconds); the stored and answered
@@ -929,7 +929,7 @@ function report(p) {
     if (!isActive(share, now)) return {statusCode: 410, reasonCode: "SHARE_ENDED"}
     // a share sent from a device takes that device's reports only, and one sent from a browser page (no device) no
     // device's: the owner on another device, or in a browser, is told another device sends it, and stops; update#Share's
-    // sendFromHere moves it (plans/Location-Sharing.md §3.4)
+    // sendFromHere moves it (plans/archive/Location-Sharing.md §3.4)
     // a renewed device key's predecessor is taken while it still signs in (its few minutes' grace): a report on its way as
     // the key was renewed is the same device's
     const device = deviceKeyId()
@@ -1038,7 +1038,7 @@ function xmppWords(share) {
  * A position from the owner's XMPP app for one share that takes it (takeXmppLocation Y): the share's own rules (the
  * rate, the values, staleness, an approximate share's cell) against its XMPP latest, kept in LocationXmppLatest and
  * pushed to the share's XMPP contacts only, never to its users, groups or link, never its LocationLatest or trail
- * (plans/Location-Sharing.md §3.6). The first one a share takes tells the owner's XMPP sessions that their XMPP app's
+ * (plans/archive/Location-Sharing.md §3.6). The first one a share takes tells the owner's XMPP sessions that their XMPP app's
  * location is shared, with whom and until when.
  */
 function takeXmpp(shareId, p) {
@@ -1096,7 +1096,7 @@ function takeXmppQuiet(shareId, parameters) {
 }
 
 /**
- * report#XmppPosition (plans/Location-Sharing.md §3.6, LL5): a user location publish (XEP-0080) from the caller's own
+ * report#XmppPosition (plans/archive/Location-Sharing.md §3.6, LL5): a user location publish (XEP-0080) from the caller's own
  * XMPP client, taken by each of the caller's active shares whose owner turned on takeXmppLocation and that has an XMPP
  * contact in its audience (takeXmpp: to those contacts only). None: NO_XMPP_SHARE, so a client's setting never starts a
  * share or feeds one the owner did not choose. A client clock more than a minute ahead is taken again with the server's
@@ -1453,7 +1453,7 @@ function eachShare(makeFind, orderField, counts, countName, work) {
 }
 
 /**
- * A removed share's chat links (moqui.chat.ChatLiveShare, plans/Location-Sharing.md §3.5: a live location message's room),
+ * A removed share's chat links (moqui.chat.ChatLiveShare, plans/archive/Location-Sharing.md §3.5: a live location message's room),
  * in a transaction of their own: chat housekeeping never fails the clean, a failure is logged and the clean goes on. An
  * ended share keeps its links until it is removed here; Chat's revoke skips a share that is not on.
  */
@@ -1524,7 +1524,7 @@ function clean() {
 }
 
 /**
- * get#ShellIndicator, the shell-indicator provider the framework's conf registers for every signed-in user (plans/Location-Sharing.md §1 "Visible to everyone it
+ * get#ShellIndicator, the shell-indicator provider the framework's conf registers for every signed-in user (plans/archive/Location-Sharing.md §1 "Visible to everyone it
  * concerns", §3.3): while the caller has any active share of their own, the app bar's "Sharing location" chip on every
  * screen, to Maps › My location shares (every signed-in user opens it). A count of the caller's own shares, no audience or position read; asked
  * again by the shell at the soonest end and on the owner's own pushes of a share's start, change or end.
@@ -1607,7 +1607,7 @@ function audienceWords(share) {
 
 /**
  * get#AppShare: an active share of the caller's own as the Android app confirms and shows it before it sends it
- * (plans/Location-Sharing.md §3.4): whom with, until when (untilText, in the caller's zone, with the weekday when not
+ * (plans/archive/Location-Sharing.md §3.4): whom with, until when (untilText, in the caller's zone, with the weekday when not
  * today), exact or approximate, its report interval, its audience's revision, and whether this request's device sends
  * it; from the server, never the page's words.
  */
@@ -1628,7 +1628,7 @@ function appShare(p) {
                 untilText: untilWords(thru, now, ec.user.timeZone),
                 approximate,
                 intervalSeconds: approximate ? Math.max(minimum, setting("approximate-interval-seconds", 60)) : minimum,
-                // the owner's XMPP app's location goes to the share's XMPP contacts too (plans/Location-Sharing.md §3.6):
+                // the owner's XMPP app's location goes to the share's XMPP contacts too (plans/archive/Location-Sharing.md §3.6):
                 // the app's dialog and notification say so, from these words, which they put mid-sentence ("to ... until
                 // 15:30"), so as a parenthetical; the version raised by turning it on asks for that confirmation
                 audienceText:
@@ -1646,7 +1646,7 @@ function appShare(p) {
 /**
  * stop#DeviceShares: a device key revoked (its owner's sign-out, the device list, an administrator ending it): every
  * active share it sends is stopped, as stop#Share does, so none stays on with nothing sending it, also when the device
- * could not tell the server itself (plans/Location-Sharing.md §3.4). Called by the framework (login.rs, Identity.js)
+ * could not tell the server itself (plans/archive/Location-Sharing.md §3.4). Called by the framework (login.rs, Identity.js)
  * with the key's stored hash, in a transaction of its own (force-new) so it never touches the revoke's. Each share in a
  * transaction of its own too; one not of the key's own user (data that does not hold together) is refused by name and
  * left as it is, and the rest go on.
@@ -1684,7 +1684,7 @@ function deviceShares(p) {
 
 /**
  * get#ShareStatus (internal): whether a share of this owner is active, and nothing else of it; for Chat's live location
- * card (plans/Location-Sharing.md §3.5), which says "Live location ended" rather than "not shared with you" to a member of
+ * card (plans/archive/Location-Sharing.md §3.5), which says "Live location ended" rather than "not shared with you" to a member of
  * the room the share's message is in, once get#Share has refused them. A share of another owner answers as none.
  */
 function status(p) {
@@ -1693,7 +1693,7 @@ function status(p) {
     return {found: !!share, active: isActive(share, nowMillis())}
 }
 
-// ----- guest links (plans/Location-Sharing.md §3.7): the public page Maps/SharedLocation.xml at /location/<selector>, its
+// ----- guest links (plans/archive/Location-Sharing.md §3.7): the public page Maps/SharedLocation.xml at /location/<selector>, its
 // secret in the link's fragment, posted by the page. The page answers the share's label, its purpose text and its latest
 // position with its age, on the outline or a basemap the installation marks public, and nothing else. -----
 
@@ -1785,7 +1785,7 @@ function linkRead(p) {
  * store#ShareRecord: the record a guest share is for (recordAdapterKey and recordKey, as MapAdapter names records) and
  * the record's end (recordThruDate, which the share's end, now and when extended, does not pass), on a share of the
  * caller's own; called only by a service that has checked the caller may act on the record (Mantle's
- * create#RecordGuestShare), never remotely (plans/Location-Sharing.md §3.1, §3.7).
+ * create#RecordGuestShare), never remotely (plans/archive/Location-Sharing.md §3.1, §3.7).
  */
 function shareRecord(p) {
     const share = ownShare(p.shareId, true)
@@ -1805,7 +1805,7 @@ function shareRecord(p) {
 
 /**
  * stop#RecordShares: every active share for a record (recordAdapterKey and recordKey) stopped as stop#Share does, when
- * the record completes or is cancelled (Mantle's EECA; plans/Location-Sharing.md §3.7). Each share in a transaction of
+ * the record completes or is cancelled (Mantle's EECA; plans/archive/Location-Sharing.md §3.7). Each share in a transaction of
  * its own: one that fails is logged by its id and the rest go on.
  */
 function recordShares(p) {

@@ -1987,7 +1987,7 @@ along with this software (see the LICENSE.md file). If not, see
             row.set('removedByUserId', self ? null : me)
             row.update()
             // taken out by another: out of the room's live locations too once this removal commits (a removal rolled back
-            // takes nobody out), never failing it (plans/Location-Sharing.md §3.5); one who leaves by themselves keeps them
+            // takes nobody out), never failing it (plans/archive/Location-Sharing.md §3.5); one who leaves by themselves keeps them
             // until the owner takes them out
             if (!self && userId) ec.service.special().name('org.moqui.chat.ChatLocationServices.revoke#LiveAudience')
                     .parameters({chatRoomId: chatRoomId, userId: userId}).registerOnCommit()

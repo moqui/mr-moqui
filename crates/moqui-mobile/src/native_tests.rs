@@ -135,7 +135,7 @@ fn a_push_is_the_account_whose_keys_open_it_with_its_outer_kind() {
     assert!(open_with(&unread, &to_b).is_none());
 }
 
-/// plans/Maps-Offline.md §2.4: the worker is told to run again for a cut, a server error, a pause or a run still under
+/// plans/archive/Maps-Offline.md §2.4: the worker is told to run again for a cut, a server error, a pause or a run still under
 /// way, and done for every end the shell reads (installed, refused, cancelled, stale).
 #[test]
 fn a_package_download_is_tried_again_only_when_it_may_go_on() {

@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- My location shares (plans/Location-Sharing.md §1 "Visible to everyone it concerns", §3.3; docs/tools/Maps.md, Live
+<!-- My location shares (plans/archive/Location-Sharing.md §1 "Visible to everyone it concerns", §3.3; docs/tools/Maps.md, Live
     location): where the app bar's "Sharing location" chip goes, for every signed-in user, Maps user or not (MAPS_SHARES,
     data/MapsSecurityData.xml, as MAPS_DIALOG opens LocalMap): the user's own active shares, each with who sees it, its end
     and the age of its last position, with Stop and Extend (an hour more, within location@max-share-hours, the end alone:
@@ -31,7 +31,7 @@ along with this software (see the LICENSE.md file). If not, see
         <error-response url="."/>
     </transition>
     <!-- the owner's XMPP app's location for the share's XMPP contacts, on or off (update#Share takeXmppLocation;
-        plans/Location-Sharing.md §3.6) -->
+        plans/archive/Location-Sharing.md §3.6) -->
     <transition name="takeXmppShare" method="post">
         <actions><script><![CDATA[
             const on = String(takeXmppLocation ?? '') === 'true'
@@ -87,13 +87,13 @@ along with this software (see the LICENSE.md file). If not, see
         const ageText = (seconds) => seconds == null ? L('No position yet') : seconds < 60 ? L('just now') : seconds < 3600
             ? Math.floor(seconds / 60) + ' ' + L('min ago') : Math.floor(seconds / 3600) + ' ' + L('h ago')
         shareList = shares.filter((share) => share.active).map((share) => ({shareId: share.shareId, label: share.label || '',
-            // the opt-in is offered for a share with an XMPP contact (plans/Location-Sharing.md §3.6)
+            // the opt-in is offered for a share with an XMPP contact (plans/archive/Location-Sharing.md §3.6)
             hasXmpp: Array.from(share.audienceList || []).some((row) => !row.revoked && row.audienceTypeEnumId === 'LsaXmpp'),
             takeXmpp: share.takeXmppLocation === true, takeXmppNext: share.takeXmppLocation === true ? 'false' : 'true',
             whoText: Array.from(share.audienceList || []).filter((row) => !row.revoked)
                 .map((row) => row.hasLink ? L('a guest link') : row.userName || row.groupName || row.jid || '').filter(Boolean).join(', '),
             untilText: share.thruDate ? ec.l10n.format(new Date(Number(share.thruDate)), 'EEE HH:mm') : '',
-            // the newest of the page's or phone's and the XMPP app's, with where it came from (plans/Location-Sharing.md §3.6)
+            // the newest of the page's or phone's and the XMPP app's, with where it came from (plans/archive/Location-Sharing.md §3.6)
             ageText: (share.lastSource === 'xmpp' ? ageText(share.xmppAgeSeconds) + ' · ' + L('from your XMPP app')
                 : ageText(share.latest ? share.latest.ageSeconds : null) + (share.lastSource ? ' · ' + L('from this page or phone') : ''))
                 + (share.approximate ? ' · ' + L('approximate, about 1 km') : '')}))

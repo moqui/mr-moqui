@@ -176,7 +176,7 @@ while the window is hidden.
 | `mail-state` | a thread's read, flag, archive, move or trash, as absolute values, in order; shown in the stored rows at once; with `seen` at `clientApi` 4 |
 | `chat-edit`, `chat-redact`, `chat-react`, `poll-vote` | a message's edit, redaction, reaction or poll vote, once by its `clientRef`, the four of one message in order (`clientApi` 4) |
 | `internal-send` | an internal message's send, once by its `clientRef`, where the server's `server.features.internalSendRef` says so (a `mail-send` of one becomes it); no files |
-| `map-place` | a place saved on the offline Maps screen (`{clientRef, label, longitude, latitude}`), sent to Maps' `savePlace` once by its `clientRef`, all in one order, where the server's `server.features.placeRef` says so; a refusal keeps no ref, so its retry may be saved, and a 403 with the server's reason fails rather than waiting for a sign-in (plans/Maps-Offline.md §2.5) |
+| `map-place` | a place saved on the offline Maps screen (`{clientRef, label, longitude, latitude}`), sent to Maps' `savePlace` once by its `clientRef`, all in one order, where the server's `server.features.placeRef` says so; a refusal keeps no ref, so its retry may be saved, and a 403 with the server's reason fails rather than waiting for a sign-in (plans/archive/Maps-Offline.md §2.5) |
 
 - **WebrootChat's rules:** no answer, 408, 429 and 5xx are tried again after 2, 5, 15 and 60 seconds; 401 and 403 hold
   until a sign-in or a renewed key, and an operation held three times in a row fails; another 4xx fails with the
@@ -204,7 +204,7 @@ The pages reach these through `moquiDesktop.outbox` and `moquiDesktop.drafts`, f
 
 ## Offline map packages
 
-A map region the user downloads to read with no network (plans/Maps-Offline.md §2.4; what a package holds, how the
+A map region the user downloads to read with no network (plans/archive/Maps-Offline.md §2.4; what a package holds, how the
 server builds it, the offline screen and the limits are [Maps, Offline packages](../tools/Maps.md#offline-packages)),
 kept by `moqui_client::packages`, the commands in `moqui_client_tauri::packages`, read by the shell's bundled offline
 Maps screen.
@@ -242,7 +242,7 @@ Maps screen.
   `installed`, `failed` with `code` and `retry`, `cancelled` or `stale` with the new `revision`), and
   `addresses(packageId, text, {country, near, limit})` (`packages_addresses`: the package's Overture addresses matched
   by the server's address matching, `moqui_lib::geo::address`, in the host). Never a path.
-- **The offline screen** (`Shell/MapsOffline`, plans/Maps-Offline.md §2.5): the drawer's Maps opens Maps' Browse in an
+- **The offline screen** (`Shell/MapsOffline`, plans/archive/Maps-Offline.md §2.5): the drawer's Maps opens Maps' Browse in an
   app window when the server answers and this screen when it does not (the shell's `isOffline`, from
   `moqui.connection`), Offline maps opens it always. It lists, downloads, updates, cancels and deletes the packages;
   opens one with `m-map` in package mode (its manifest's configuration, every request under the package's path), says
@@ -481,7 +481,7 @@ The live checks for each OS are in [Testing-Needed](../../plans/Testing-Needed.m
 
 ## Live location
 
-A live location share started in Maps (plans/Location-Sharing.md §3.4, [Maps, Live location](../tools/Maps.md#live-location))
+A live location share started in Maps (plans/archive/Location-Sharing.md §3.4, [Maps, Live location](../tools/Maps.md#live-location))
 is sent from the desktop as from a browser: Browse's own `watchPosition` while its window is open, and nothing once it
 closes (the share stays on and goes stale; the desktop has no background sender and no `moquiDesktop.location`). Its
 requests carry the account's device key, so a share started here is bound to this computer, and Send from here takes

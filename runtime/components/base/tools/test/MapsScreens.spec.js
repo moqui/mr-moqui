@@ -1,6 +1,6 @@
 // The Maps app's screens (plans/archive/Maps.md §3.1, §3.2; docs/tools/Maps.md): Browse's terminal template (Browse.tui.json over
 // terminalMap; Browse.qvue's one render is in a browser, test/client/MapsBrowseExtent) for a Maps user, with its live
-// location list (LocationSharesTui, plans/Location-Sharing.md §3.3: the user's own share and one shared with them, ages and
+// location list (LocationSharesTui, plans/archive/Location-Sharing.md §3.3: the user's own share and one shared with them, ages and
 // coordinates, Stop for their own only), and the app refused to a user with ALL_USERS alone; My location shares, rendered
 // once in qvt for an owner with ALL_USERS alone (MAPS_SHARES), and its Stop, the owner's only; the local-map dialog,
 // a plain XML screen rendered once in qvt and once in html: for a Maps user the adapter lets write, the record's place,
@@ -127,7 +127,7 @@ spec({
     }
 })
 
-/* A LocationServices call as the user (plans/Location-Sharing.md §3.2): its results. */
+/* A LocationServices call as the user (plans/archive/Location-Sharing.md §3.2): its results. */
 function shareCall(userId, verbNoun, parameters) {
     ec.user.internalLoginUser(usernameOf(userId))
     try {
@@ -146,7 +146,7 @@ function shareCall(userId, verbNoun, parameters) {
 
 feature("Browse renders its terminal twin for a Maps user, and the app is refused to a user with ALL_USERS alone", {
     when() {
-        // live location (plans/Location-Sharing.md §3.3): the writer's own share and one shared with them, each with a
+        // live location (plans/archive/Location-Sharing.md §3.3): the writer's own share and one shared with them, each with a
         // position, for the twin's list under the map (LocationSharesTui) and its Stop
         const thruDate = new Date(Date.now() + 3600000)
         const own = shareCall(WRITER, "create#Share", {audienceList: [{audienceTypeEnumId: "LsaUser", userId: PLAIN}], thruDate}).shareId
@@ -280,7 +280,7 @@ function myShares() {
         ec.message.clearErrors()
         ec.user.logoutUser()
     }
-    // where the app bar's "Sharing location" chip goes (plans/Location-Sharing.md §3.3; MAPS_SHARES), for a user with no
+    // where the app bar's "Sharing location" chip goes (plans/archive/Location-Sharing.md §3.3; MAPS_SHARES), for a user with no
     // Maps
     const shareId = shareCall(PLAIN, "create#Share", {
         audienceList: [
@@ -291,7 +291,7 @@ function myShares() {
         label: "Plain errand"
     }).shareId
     const page = as(PLAIN, "apps/maps/MyShares", {}, null, "qvt")
-    // the XMPP app's opt-in (plans/Location-Sharing.md §3.6): the owner's alone to turn on
+    // the XMPP app's opt-in (plans/archive/Location-Sharing.md §3.6): the owner's alone to turn on
     const optIn = () =>
         (Array.from(shareCall(PLAIN, "find#MyShares").shareList || []).find(row => row.shareId === shareId) || {})
             .takeXmppLocation

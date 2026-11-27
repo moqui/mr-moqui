@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A live location share sent from this device (plans/Location-Sharing.md §3.4): the Android app's foreground service
+//! A live location share sent from this device (plans/archive/Location-Sharing.md §3.4): the Android app's foreground service
 //! hands each fix of a share it sends to the host (`report_location`), and a [`Reporter`] of that share keeps only the
 //! newest point not yet sent and sends it to the account's server ([`REPORT_PATH`], `report#Position`) with the
 //! account's device key, as the app's other requests go, so the share's device binding takes it. What the server

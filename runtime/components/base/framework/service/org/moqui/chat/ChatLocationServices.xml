@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- Location messages (plans/Comms-Messaging.md §18.3 phase 20): a message with content.location (coordinates, an address
     or both, a label) whose body is its words and an OpenStreetMap link, so every client, bridge and text shows it. No map,
-    no geocoding, no outside request. A live location (plans/Location-Sharing.md §3.5) is a LocationServices share with
+    no geocoding, no outside request. A live location (plans/archive/Location-Sharing.md §3.5) is a LocationServices share with
     the room's members and a message that carries the share's id, never a position (send#LiveLocation, get#LiveLocation).
     The logic is ChatLocation.js beside this file. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
@@ -45,7 +45,7 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="send" noun="LiveLocation">
-        <description>Share the current user's live location with a plain room's members (plans/Location-Sharing.md §3.5,
+        <description>Share the current user's live location with a plain room's members (plans/archive/Location-Sharing.md §3.5,
             LL4): a share (LocationServices.create#Share) whose audience is the room's local users in it now, as users,
             but the caller, its agents, those who put the room out of sight, accounts that cannot sign in, those the
             caller blocked, and those the chat directory keeps from the caller or who blocked them; until thruDate (within
@@ -86,7 +86,7 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="get" noun="LiveLocation">
-        <description>A live location message's share as the current user may see it (plans/Location-Sharing.md §3.5): the
+        <description>A live location message's share as the current user may see it (plans/archive/Location-Sharing.md §3.5): the
             message read by get#Timeline (only one who reads the room gets anything), the share through
             LocationServices.get#Share (which checks its current audience and is the only read of a position). state live
             (latest: the position received since the caller was reached, or none yet), ended, or notShared (on, and the
@@ -110,7 +110,7 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="revoke" noun="LiveAudience" authenticate="anonymous-all" allow-remote="false" transaction="ignore">
-        <description>Internal (plans/Location-Sharing.md §3.5, the LL4 decisions): userId taken out of the live locations of
+        <description>Internal (plans/archive/Location-Sharing.md §3.5, the LL4 decisions): userId taken out of the live locations of
             chatRoomId (a member taken out of the room by another: remove#Member) or of ownerUserId's live locations in
             every room (the owner blocked them: ChatBlocks.js blockUser), those still on only. Registered to run once the
             removal or the block has committed, so one rolled back takes nobody out; LocationServices.revoke#ChatAudience

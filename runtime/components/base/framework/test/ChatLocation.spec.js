@@ -1,7 +1,7 @@
 // Location messages (plans/Comms-Messaging.md §18.3 phase 20; ChatLocation.js, ChatLocationServices): a place with its
 // coordinates or an address, its words and an OpenStreetMap link (what bridges and texts get), refused when it is not a
 // place or in an encrypted room. The inbound RCS location (Sms.js) is the providers' tests (moqui-channels). A live
-// location (plans/Location-Sharing.md §3.5) is a share with the room's members and a message carrying its id only.
+// location (plans/archive/Location-Sharing.md §3.5) is a share with the room's members and a message carrying its id only.
 // Run: ./moq test framework --spec ChatLocation
 const A = "CHAT_LOC_A"
 const B = "CHAT_LOC_B"
@@ -123,7 +123,7 @@ feature("a place with its coordinates or an address: its words and map link, its
     }
 })
 
-// Live location in a room (plans/Location-Sharing.md §3.5, LL4): a share with the room's members when it starts, as users,
+// Live location in a room (plans/archive/Location-Sharing.md §3.5, LL4): a share with the room's members when it starts, as users,
 // and a message that carries the share's id, never a position; its members see it through get#Share (which checks the
 // audience) and nobody else does; one who joins the room later is not added and sees nothing of it, one who leaves stays
 // in the share (the owner's act takes them out); an encrypted room is refused; a bridge gets the words only.
@@ -235,7 +235,7 @@ feature("live location in a room: its members see it and others do not, the mess
     }
 })
 
-// Who a live location starts with and who loses it (plans/Location-Sharing.md §3.5, the LL4 decisions): an agent, a member
+// Who a live location starts with and who loses it (plans/archive/Location-Sharing.md §3.5, the LL4 decisions): an agent, a member
 // who put the room out of sight, one who blocked the owner, one the owner blocked and a disabled account are left out; a
 // member taken out of the room by another, or blocked by the owner after it started, loses it; one who leaves by
 // themselves keeps it, and the owner's card names them as no longer in the room.

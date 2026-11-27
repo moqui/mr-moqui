@@ -68,7 +68,7 @@
  *                  accuracy, ageSeconds}, trail [[lon, lat]]}]  the live layer's shares (get#EffectiveConfig with
  *                  locationShares, as Maps › Browse asks for it; map.normalizeLiveShares)
  *   }
- * The live layer (plans/Location-Sharing.md §3.3): each share with a position is a marker labelled with its label and the
+ * The live layer (plans/archive/Location-Sharing.md §3.3): each share with a position is a marker labelled with its label and the
  * position's age (canvas text, never markup), its accuracy a ring and a kept trail a line; one with no report for
  * map.LIVE_STALE_SECONDS is drawn grey and dashed, and listed as stale under the map with the rest (label, age, latitude,
  * longitude, approximate). The map follows each share it shows on the topic locationShare:<shareId> of the shell's
@@ -96,7 +96,7 @@
  * editing. It emits edit-change ({count, dirty, selected: {id, label, description} or null, sketch, drawType}). The map drawn
  * again (another configuration) keeps the editing, its changes and all.
  *
- * Package mode (plans/Maps-Offline.md §2.5): an offline map package on the device, which the desktop and mobile apps serve
+ * Package mode (plans/archive/Maps-Offline.md §2.5): an offline map package on the device, which the desktop and mobile apps serve
  * to their shell at /__moqui-app/maps/<packageId>/<path> (moqui_client::packages::serve). The configuration is then
  *   {packageBase: "/__moqui-app/maps/<packageId>/", manifest: (the package's manifest.json), and the view or places of the
  *    page's own, which win}
@@ -451,7 +451,7 @@
     // of the page) for a provider whose test saw CORS, and none for one that did not, whose images then load as plain images
     map.ogcCrossOrigin = (url, ogc, pageOrigin) => (map.sameOrigin(url, pageOrigin) || !ogc || ogc.cors === false ? undefined : "anonymous");
 
-    // ---- offline packages (plans/Maps-Offline.md §2.5) ----
+    // ---- offline packages (plans/archive/Maps-Offline.md §2.5) ----
 
     // The path a package's files are read at on the shell's origin, and its check: one package id, a plain name
     const PACKAGE_BASE = /^\/__moqui-app\/maps\/[A-Za-z0-9_.:-]{1,64}\/$/;
@@ -609,7 +609,7 @@
             layerErrors: map.normalizeLayerErrors(given.layerErrors),
             featuresTruncated: given.featuresTruncated === true || given.featuresTruncated === "true",
             units: text(given.units).toLowerCase() === "imperial" ? "imperial" : text(given.units).toLowerCase() === "metric" ? "metric" : "",
-            // the live layer's shares (plans/Location-Sharing.md §3.3), held apart from the drawing: see map.normalizeLiveShares
+            // the live layer's shares (plans/archive/Location-Sharing.md §3.3), held apart from the drawing: see map.normalizeLiveShares
             locationShares: map.normalizeLiveShares(given.locationShares)
         };
     };
@@ -742,7 +742,7 @@
 
     // The attribution control's HTML for a text of lines and their links (attributionUrls, in order): each line escaped, a
     // link only for an http(s) URL, opening in a new tab. OpenLayers' attribution control sets what it is given as HTML, so
-    // everything handed to it is made escaped text here, a package's own source notice too (plans/Maps-Offline.md §2.5:
+    // everything handed to it is made escaped text here, a package's own source notice too (plans/archive/Maps-Offline.md §2.5:
     // an archive's attribution, often HTML, is shown as text, never as markup).
     map.attributionHtml = (attribution, urls) => text(attribution).split("\n").map((line) => line.trim()).filter((line) => line).map((line, index) => {
         const url = (urls || [])[index];
@@ -885,7 +885,7 @@
         return true;
     };
 
-    // ---- live location (plans/Location-Sharing.md §3.3) ----
+    // ---- live location (plans/archive/Location-Sharing.md §3.3) ----
 
     // The shares a map shows live: the effective configuration's locationShares (the viewer's own active shares and those
     // shared with them, which the server checked against each share's current audience), at most LIVE_MAX. Each, checked:
@@ -1038,7 +1038,7 @@
         },
         methods: {
             pageOrigin() { return root.location.origin; },
-            // a package's path in package mode (plans/Maps-Offline.md §2.5), else ""
+            // a package's path in package mode (plans/archive/Maps-Offline.md §2.5), else ""
             packageBase() { return this.shown.packageBase || ""; },
             webfonts() { return this.packageBase() ? map.packageFonts(this.pageOrigin(), this.packageBase()) : map.webfonts(this.pageOrigin()); },
             load() {
@@ -1134,7 +1134,7 @@
                 olMap.addLayer(this.overlayGroup);
                 this.markerSource = new O.VectorSource();
                 olMap.addLayer(new O.VectorLayer({ source: this.markerSource, style: (feature) => this.markerStyle(O, feature), zIndex: 10 }));
-                // the live layer, over the places (plans/Location-Sharing.md §3.3)
+                // the live layer, over the places (plans/archive/Location-Sharing.md §3.3)
                 this.liveSource = new O.VectorSource();
                 olMap.addLayer(new O.VectorLayer({ source: this.liveSource, style: (feature) => this.liveStyle(O, feature), zIndex: 11 }));
                 this.drawLive(O);
@@ -1695,7 +1695,7 @@
                 this.markerSource.getFeatures().filter((feature) => feature.get("kind") === kind).forEach((feature) => this.markerSource.removeFeature(feature));
                 this.markerSource.addFeature(new O.Feature({ geometry: new O.Point(this.toMap(point.lon, point.lat)), kind, label: label || "" }));
             },
-            // A place found by a page's own search (the offline screen's, plans/Maps-Offline.md §2.5): marked and shown,
+            // A place found by a page's own search (the offline screen's, plans/archive/Maps-Offline.md §2.5): marked and shown,
             // its label drawn on the canvas as text; nothing is kept or sent
             showPlace(place) {
                 const lon = num(place && place.lon), lat = num(place && place.lat);
@@ -1723,7 +1723,7 @@
                     this.located = L("Your location is not available") + (error && error.message ? ": " + error.message : "");
                 }, { enableHighAccuracy: false, timeout: 15000, maximumAge: 60000 });
             },
-            // ---- live location (plans/Location-Sharing.md §3.3) ----
+            // ---- live location (plans/archive/Location-Sharing.md §3.3) ----
             // The page's one notification socket (the shell root's notificationClient), or null without one.
             liveClient() {
                 const shell = this.$root && this.$root.notificationClient ? this.$root : moqui.webrootVue;

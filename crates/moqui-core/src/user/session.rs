@@ -1629,7 +1629,7 @@ pub(crate) fn device_key() -> Option<String> {
 }
 
 /// The stored key of the login key this context's user signed in with in this request, the id of its `UserLoginKey` row
-/// (`ec.user.loginKeyId`: a share's device, plans/Location-Sharing.md §3.1); `None` for any other login.
+/// (`ec.user.loginKeyId`: a share's device, plans/archive/Location-Sharing.md §3.1); `None` for any other login.
 pub fn login_key_id() -> Option<String> {
     with_session(|session| session.login_key_id.clone())
 }

@@ -1,4 +1,4 @@
-// Offline map packages of org.moqui.maps.MapSourceServices (plans/Maps-Offline.md §2.1-§2.3; docs/tools/Maps.md "Offline
+// Offline map packages of org.moqui.maps.MapSourceServices (plans/archive/Maps-Offline.md §2.1-§2.3; docs/tools/Maps.md "Offline
 // packages"): a region at a zoom range, built on the server from what its owner may see when it is built, and downloaded
 // as one zip file to the Android app or the desktop client.
 //

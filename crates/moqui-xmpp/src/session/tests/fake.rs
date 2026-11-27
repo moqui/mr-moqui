@@ -71,7 +71,7 @@ pub struct State {
     pub statuses: HashMap<String, String>,
     pub push: Vec<(String, Json)>,
     /// The user's location share that takes the XMPP app's location (`takeXmppLocation`) for its XMPP contacts, which
-    /// `report#XmppPosition` reports (plans/Location-Sharing.md §3.6), else none, which the service answers
+    /// `report#XmppPosition` reports (plans/archive/Location-Sharing.md §3.6), else none, which the service answers
     /// `NO_XMPP_SHARE`.
     pub location_share: Option<LocationShare>,
     /// What `report#XmppPosition` answers in place of taking the report (a 429, a 400), when set.

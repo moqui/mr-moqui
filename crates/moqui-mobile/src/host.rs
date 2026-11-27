@@ -782,7 +782,7 @@ impl ShellHost for MobileHost {
 
     fn account_signing_out(&self, account: &Account, key: &str) {
         // its live location shares are stopped on its server while the key is held, so none stays on with nothing
-        // sending it, and are no longer sent from this phone (a removal has only this; plans/Location-Sharing.md §3.4)
+        // sending it, and are no longer sent from this phone (a removal has only this; plans/archive/Location-Sharing.md §3.4)
         if let (Some(core), true) = (self.core(), self.network_ready()) {
             #[cfg(target_os = "android")]
             let waiting = crate::android::location_pending_stops(&account.id).unwrap_or_default();
@@ -851,7 +851,7 @@ impl ShellHost for MobileHost {
     }
 
     /// An offline map package's download goes to `PackageDownloadWorker` (WorkManager: resumable, with a network,
-    /// unmetered with `wifi_only`; plans/Maps-Offline.md §2.4), which calls Rust back (`native::package_download`);
+    /// unmetered with `wifi_only`; plans/archive/Maps-Offline.md §2.4), which calls Rust back (`native::package_download`);
     /// off Android, a thread as on the desktop.
     fn start_package_download(
         &self,
@@ -908,7 +908,7 @@ fn forget_chats(account: &str) {
 }
 
 /// The live location shares of `account`, signed out or removed, are no longer sent from this phone: its reporters go
-/// and the location service stops them, ending itself when it sends no other (plans/Location-Sharing.md §3.4).
+/// and the location service stops them, ending itself when it sends no other (plans/archive/Location-Sharing.md §3.4).
 fn forget_location(account: &str) {
     let shares = crate::location::forget_account(account);
     if !shares.is_empty() {

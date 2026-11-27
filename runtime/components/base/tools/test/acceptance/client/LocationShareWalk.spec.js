@@ -1,5 +1,5 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
-// LocationShareWalk (plans/Location-Sharing.md LL7; docs/tools/Maps.md, Live location): live location in three browsers
+// LocationShareWalk (plans/archive/Location-Sharing.md LL7; docs/tools/Maps.md, Live location): live location in three browsers
 // of three people (LocationShareWalkFixtures: loc.walk.ann, loc.walk.ben and loc.walk.cy, all in Walk family). Ann starts
 // a share with Walk family from Browse's Share my location, sent from her page (the browser's position stood in for, as
 // watchPosition gives it), and the app bar's chip says so; Ben sees it in Shared with me, and its marker moves on his map

@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Shared live location (plans/Location-Sharing.md §3.1): a share a person starts, with its audience, its latest
+<!-- Shared live location (plans/archive/Location-Sharing.md §3.1): a share a person starts, with its audience, its latest
     position and, only when its owner chose it, a trail. Read and written only by org.moqui.maps.LocationServices
     (service/org/moqui/maps/LocationServices.xml, LocationShares.js), for the owner and the share's current audience:
     the generic tools, REST and agents do not read these entities, an ADMIN's included (moqui-entity sensitive.rs). No
@@ -37,10 +37,10 @@ along with this software (see the LICENSE.md file). If not, see
             UserLoginKey (its stored hash, ec.user.loginKeyId) of the owner's device whose request started it or last took
             it over (update#Share sendFromHere); none for a browser page, whose requests carry no device key. A share with a
             device takes reports from that device's requests only, and one with none from no device's; the key's renewal
-            moves it (plans/Location-Sharing.md §3.1, §3.4)</description></field>
+            moves it (plans/archive/Location-Sharing.md §3.1, §3.4)</description></field>
         <field name="audienceVersion" type="number-integer"><description>Raised by every change of the audience that can
             reach someone new (an entry added, a group added again with a new snapshot): a share sent from a device takes
-            reports only with the version its person confirmed there (plans/Location-Sharing.md §3.4)</description></field>
+            reports only with the version its person confirmed there (plans/archive/Location-Sharing.md §3.4)</description></field>
         <field name="renewedFromKeyId" type="text-medium"><description>The device key the last renewal replaced (its
             stored hash): a report on its way as the key was renewed is taken from it while it still signs in (its few
             minutes' grace); cleared when another device or page takes the share over</description></field>
@@ -60,12 +60,12 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="takeXmppLocation" type="text-indicator" enable-audit-log="true"><description>Y: the owner's XMPP
             app's location (a geoloc publish, XEP-0080) feeds this share too, set only by the owner (create#Share,
             update#Share; turning it on raises audienceVersion). Those positions go to the share's XMPP contacts only and
-            are kept apart, in LocationXmppLatest, never as its LocationLatest or trail (plans/Location-Sharing.md §3.6).
+            are kept apart, in LocationXmppLatest, never as its LocationLatest or trail (plans/archive/Location-Sharing.md §3.6).
             N or empty: an XMPP publish never reaches it</description></field>
         <field name="recordAdapterKey" type="id"/>
         <field name="recordKey" type="text-medium"/>
         <field name="recordThruDate" type="date-time"><description>A guest share for a record: the record's end (its
-            planned end), which the share's end does not pass, also when extended (plans/Location-Sharing.md §3.7)</description></field>
+            planned end), which the share's end does not pass, also when extended (plans/archive/Location-Sharing.md §3.7)</description></field>
         <relationship type="one" title="Owner" related="moqui.security.UserAccount" short-alias="owner">
             <key-map field-name="ownerUserId" related="userId"/></relationship>
         <relationship type="one" title="LocationSharePrecision" related="moqui.basic.Enumeration" short-alias="precision">
@@ -98,7 +98,7 @@ along with this software (see the LICENSE.md file). If not, see
             its selector, a dot and its secret); the token itself is never kept</description></field>
         <field name="tokenSelector" type="id"><description>The link's selector, the first part of its token: the guest
             page's path (/location/selector), which names the link without being its credential, so a wrong secret is
-            counted on it (failedTries); the secret is in the link's fragment only (plans/Location-Sharing.md
+            counted on it (failedTries); the secret is in the link's fragment only (plans/archive/Location-Sharing.md
             §3.7)</description></field>
         <field name="failedTries" type="number-integer"><description>Wrong secrets given with the link's selector: the link
             is refused from location@link-max-failed-tries on</description></field>
@@ -135,7 +135,7 @@ along with this software (see the LICENSE.md file). If not, see
             a member at the snapshot: the user reaches the share only while that row is current</description></field>
         <field name="reachedDate" type="date-time"><description>When this entry's snapshot first held the user, kept when
             the group is added again only for the same membership row (memberFromDate): the user sees the latest position
-            and the trail the server received from then on only (plans/Location-Sharing.md §3.4)</description></field>
+            and the trail the server received from then on only (plans/archive/Location-Sharing.md §3.4)</description></field>
         <relationship type="one" related="moqui.maps.LocationShareAudience"/>
         <relationship type="one" related="moqui.security.UserAccount"/>
         <index name="LOC_SHARE_AUD_MEMBER_USER"><index-field name="userId"/></index>
@@ -169,7 +169,7 @@ along with this software (see the LICENSE.md file). If not, see
     </entity>
 
     <!-- A share's latest position from its owner's XMPP app (a geoloc publish, when the share's takeXmppLocation is Y;
-        plans/Location-Sharing.md §3.6): kept apart from LocationLatest, so it reaches the share's XMPP contacts only and
+        plans/archive/Location-Sharing.md §3.6): kept apart from LocationLatest, so it reaches the share's XMPP contacts only and
         never its users, groups or link; read for the rate, the staleness check and an approximate share's cell, and its
         age (never the position) shown to the owner. An exact share's row holds no coordinates (its times only), an
         approximate one's only the cell it holds. Deleted when the share ends or its owner turns takeXmppLocation off.
@@ -196,7 +196,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="heading" type="number-float" ai-opt-out="true"/>
         <field name="speed" type="number-float" ai-opt-out="true"/>
         <field name="receivedDate" type="date-time" ai-opt-out="true"><description>When the server received it: a viewer reads the trail
-            from when the audience first reached them on, by this time, never the device's (plans/Location-Sharing.md
+            from when the audience first reached them on, by this time, never the device's (plans/archive/Location-Sharing.md
             §3.4)</description></field>
         <relationship type="one" related="moqui.maps.LocationShare"/>
         <index name="LOC_TRAIL_RECEIVED"><index-field name="shareId"/><index-field name="receivedDate"/></index>

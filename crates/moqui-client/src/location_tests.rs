@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The reports of a share sent from this device (plans/Location-Sharing.md §3.4, LL3): the newest point only, 429
+//! The reports of a share sent from this device (plans/archive/Location-Sharing.md §3.4, LL3): the newest point only, 429
 //! waiting, a stale point dropped, a device clock off sent with the server's time, and a 410, 404, another device or a
 //! sign-out stopping it.
 

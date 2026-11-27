@@ -37,7 +37,7 @@ along with this software (see the LICENSE.md file). If not, see
         // a call link's guest page (/call/<token>, basic-comms): the call client and m-call-guest, registered before the components
         if (tokenRoute.name === 'call') footer_scripts.add('/js/WebrootCall.js')
         if (tokenRoute.name === 'call') footer_scripts.add('/js/WebrootCall.render.js')
-        // a location share's guest link (/location/<selector>#<secret>, tools; plans/Location-Sharing.md §3.7): a basemap's
+        // a location share's guest link (/location/<selector>#<secret>, tools; plans/archive/Location-Sharing.md §3.7): a basemap's
         // host gets this site's origin as its Referer, never the path that holds the selector; the page is kept from every
         // cache; and its policy lets it reach this server and the public basemap's origins only (MapConfig.js
         // publicBasemap's allowedOrigins), beside the theme's own outside files

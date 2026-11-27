@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # MapsOfflinePackage, the acceptance walk of offline map packages on the emulator or a phone over adb
-# (plans/Maps-Offline.md OF4; docs/tools/Maps.md, Offline packages):
+# (plans/archive/Maps-Offline.md OF4; docs/tools/Maps.md, Offline packages):
 #   - the server half: the tools acceptance spec MapsOfflinePackage run by `moqui test --serve` on a scratch database
 #     (a small PMTiles archive registered as a basemap, a saved place, a postal code, Overture rows, and the user's
 #     package of the region built), served on 127.0.0.1:$port, which the app reaches through `adb reverse` as

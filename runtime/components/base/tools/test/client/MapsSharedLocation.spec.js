@@ -1,4 +1,4 @@
-// The guest page of a location share's link (plans/Location-Sharing.md §3.7; tools Maps/SharedLocation.xml and .qvue,
+// The guest page of a location share's link (plans/archive/Location-Sharing.md §3.7; tools Maps/SharedLocation.xml and .qvue,
 // webroot WebrootPublic.qvt.js), its one render in the regression suite: the link made from Maps › Browse is this
 // server's link with the secret in its fragment; the shell page, rendered once (the browser's navigation, whose response
 // headers goto answers), is sent with Referrer-Policy strict-origin, no-store and its Content-Security-Policy, which it

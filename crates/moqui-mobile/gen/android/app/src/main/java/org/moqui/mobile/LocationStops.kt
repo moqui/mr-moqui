@@ -21,7 +21,7 @@ import java.util.concurrent.TimeUnit
 /**
  * A live location share stopped from this phone (the notification's Stop, notifications turned off, the permission
  * gone while the process lives on) is stopped on its server too, and that stop is kept until the server confirms it
- * (plans/Location-Sharing.md §3.4): each is kept in the app's preferences with the share's end, tried at once on the
+ * (plans/archive/Location-Sharing.md §3.4): each is kept in the app's preferences with the share's end, tried at once on the
  * location thread, and then by [LocationStopWorker] (WorkManager, with a network, backing off from 30 seconds, also
  * after the process ended), posting `/qapps/stopClientLocation` (`Native.stopLocation`) until the server says it stopped
  * it or has no such share, the account is signed out here, or the share's end has passed ([LocationRules.stopOutcome]).

@@ -274,7 +274,7 @@ feature("user location (XEP-0080) is refused at the services too, in any spellin
         const own = as(A, "get#PepItems", {ownerUserId: A, node: GEOLOC})
         const coMember = as(B, "get#PepItems", {ownerUserId: A, node: " Http://jabber.org/protocol/geoloc"})
         // the generic PEP services take no part of it: its one way in is LocationServices.report#XmppPosition
-        // (plans/Location-Sharing.md §3.6)
+        // (plans/archive/Location-Sharing.md §3.6)
         const retracted = as(A, "retract#PepItem", {node: GEOLOC, itemId: "old"})
         const configured = as(A, "configure#PepNode", {node: GEOLOC, options: {access_model: "whitelist"}})
         const deleted = as(A, "delete#PepNode", {node: " " + GEOLOC})

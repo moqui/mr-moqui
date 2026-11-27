@@ -199,7 +199,7 @@ function blockUser(p) {
   }
   setFilters({ userId: me, chatRoomIdList: directRoomsOf(me, other), filterEnumId: 'CmfBlocked', replace: true })
   // out of the live locations the user shares in chat rooms once the block commits, never failing it
-  // (plans/Location-Sharing.md §3.5)
+  // (plans/archive/Location-Sharing.md §3.5)
   ec.service.special().name('org.moqui.chat.ChatLocationServices.revoke#LiveAudience').parameters({ ownerUserId: me, userId: other }).registerOnCommit()
   return { blockedUserId: other }
 }

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! User location (XEP-0080) mapped onto Moqui's location shares (plans/Location-Sharing.md §3.6, LL5). The `geoloc`
+//! User location (XEP-0080) mapped onto Moqui's location shares (plans/archive/Location-Sharing.md §3.6, LL5). The `geoloc`
 //! PEP node is never a PEP node here (`pep::REFUSED_NODES`): no item is kept, fetched or subscribed to.
 //!
 //! - **In.** A publish from the user's own client is taken by each of the user's active location shares made in Moqui
@@ -191,7 +191,7 @@ impl Session {
         self.send(result);
     }
 
-    /// A location share's push for this session's user (plans/Location-Sharing.md §3.6). To an XMPP contact of the
+    /// A location share's push for this session's user (plans/archive/Location-Sharing.md §3.6). To an XMPP contact of the
     /// share: a position or the end as a `geoloc` event from the owner, to a session that asked for user location
     /// notifications and has not blocked the owner, and the share's end kept, so the empty item goes out when it comes
     /// ([`Session::geoloc_expire`]) though the services end it only at their hourly clean. To the owner: the headline that

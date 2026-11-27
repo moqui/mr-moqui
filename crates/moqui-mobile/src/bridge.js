@@ -314,7 +314,7 @@
             memory: (action, minutes) => ask("vault_memory", { action: String(action || ""), minutes: minutes == null ? null : Math.max(0, Math.floor(Number(minutes)) || 0),
             gesture: userGesture() })
         });
-        // live location from the phone (plans/Location-Sharing.md §3.4): the permission, asked with the app's reason (allow:
+        // live location from the phone (plans/archive/Location-Sharing.md §3.4): the permission, asked with the app's reason (allow:
         // exact for an exact share); a share sent by the app's foreground service, also in the background, with its
         // notification (start: whether it started; Maps' Share and Send from this device), no longer sent from here (stop),
         // and the shares sent now (status). The host takes them for this page's account only. The page names the share
@@ -383,7 +383,7 @@
         ssoStart: (server, authFlowId, deviceMode) => shellAsk("client_sso_start", { server: String(server || ""), authFlowId: String(authFlowId || ""),
             deviceMode: deviceMode ? String(deviceMode) : null }),
         ssoCancel: () => shellAsk("client_sso_cancel"),
-        // the offline map packages on this phone (plans/Maps-Offline.md §2.4): the server's list and the phone's, a
+        // the offline map packages on this phone (plans/archive/Maps-Offline.md §2.4): the server's list and the phone's, a
         // download (WorkManager; wifiOnly waits for Wi-Fi), its cancel, a delete and the states; never a path. A
         // package's files are read at /__moqui-app/maps/<packageId>/<path> on this origin.
         packages: Object.freeze({
@@ -393,7 +393,7 @@
             cancel: (packageId) => shellAsk("packages_cancel", { packageId: String(packageId || "") }),
             remove: (packageId) => shellAsk("packages_delete", { packageId: String(packageId || "") }),
             status: () => shellAsk("packages_status"),
-            // a package's Overture addresses searched by the server's matching (plans/Maps-Offline.md §2.5)
+            // a package's Overture addresses searched by the server's matching (plans/archive/Maps-Offline.md §2.5)
             addresses: (packageId, text, options) => shellAsk("packages_addresses", { packageId: String(packageId || ""), text: String(text || ""),
                 country: options && options.country ? String(options.country) : null, near: options && Array.isArray(options.near) ? options.near.map(Number) : null,
                 limit: options && options.limit ? Number(options.limit) : null })

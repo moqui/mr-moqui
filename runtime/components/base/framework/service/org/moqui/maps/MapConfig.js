@@ -440,7 +440,7 @@ function resolveLayer(layer, layerId, asBasemap) {
     return {ok: true, entry, origins}
 }
 // The basemap of a page a visitor opens with no sign-in, a guest location link's (Maps/SharedLocation.xml;
-// plans/Location-Sharing.md §3.7): the first enabled basemap the installation marks public (MapLayer isPublic Y) that has
+// plans/archive/Location-Sharing.md §3.7): the first enabled basemap the installation marks public (MapLayer isPublic Y) that has
 // no viewPermission, no registered resource (its map-source transition is a signed-in user's), no proxied provider
 // (the proxy is for signed-in users) and no provider on a private network (allowPrivateNetwork Y: an address inside this
 // installation's network is not a guest's to reach), resolved as for anyone (resolveLayer: outside requests and the provider's test
@@ -1193,7 +1193,7 @@ function effectiveConfig(p) {
     return {config}
 }
 
-// ===== live location (plans/Location-Sharing.md §3.3) =====
+// ===== live location (plans/archive/Location-Sharing.md §3.3) =====
 // The viewer's own active shares and those shared with them, for m-map's live layer, Browse's panels and the terminal. Read
 // only through org.moqui.maps.LocationServices, whose reads check the caller against each share's current audience
 // (find#MyShares, find#SharedWithMe, get#Share for a kept trail): no entity of a share is read here. Nothing of it is
@@ -1277,14 +1277,14 @@ function liveShares() {
             trailCount: Number(share.trailCount) || 0,
             audience: audienceNames(share.audienceList),
             reportIntervalSeconds: share.approximate === true ? approximate : minimum,
-            // where it is sent from (plans/Location-Sharing.md §3.4): a device of the owner's by its name, and whether
+            // where it is sent from (plans/archive/Location-Sharing.md §3.4): a device of the owner's by its name, and whether
             // that is this request's (the app's Send from this device), or a browser page
             sentFromDevice: share.sentFromDevice === true,
             deviceName: share.deviceName || null,
             fromThisDevice: share.fromThisDevice === true,
             audienceVersion: Number(share.audienceVersion) || 0,
             // the owner's XMPP app feeds it too (to its XMPP contacts only), the age of its last position from there, and
-            // where the last position came from (plans/Location-Sharing.md §3.6)
+            // where the last position came from (plans/archive/Location-Sharing.md §3.6)
             takeXmppLocation: share.takeXmppLocation === true,
             xmppAgeSeconds: share.xmppAgeSeconds ?? null,
             lastSource: share.lastSource || null,

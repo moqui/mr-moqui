@@ -22,7 +22,7 @@
 //! shares a room with, `whitelist` the owner alone. A publish notifies the sessions of the users who may read the node
 //! and asked for it (`<node>+notify` in their capabilities, XEP-0115), the owner's own included. A node of
 //! `REFUSED_NODES` is refused whatever is asked of it. User location is the one such node with a way in: its publish is
-//! mapped onto the user's location share (`geoloc.rs`, plans/Location-Sharing.md §3.6), and an interest in it is kept
+//! mapped onto the user's location share (`geoloc.rs`, plans/archive/Location-Sharing.md §3.6), and an interest in it is kept
 //! for that mapping's notifications alone.
 
 use minidom::Element;
@@ -38,7 +38,7 @@ use crate::registry::Inbound;
 /// (XEP-0080) would otherwise be stored and pushed to everyone the user shares a room with (a new node's access is
 /// `presence`): a location share the user can neither see nor revoke in Moqui. So no generic publish, items fetch,
 /// retract, configure, delete or subscription reaches it, and its one way in is the mapping onto the user's location
-/// share made in Moqui (`geoloc.rs`, plans/Location-Sharing.md §3.6, LL5): a publish there is a report of that share,
+/// share made in Moqui (`geoloc.rs`, plans/archive/Location-Sharing.md §3.6, LL5): a publish there is a report of that share,
 /// and its positions go out to the share's XMPP contacts only. The services refuse the same list
 /// (`get#PepNodeRefused` in XmppServices.xml), whose generic PEP services never take it.
 const REFUSED_NODES: &[&str] = &[ns::GEOLOC];
@@ -74,7 +74,7 @@ impl Session {
         // `forbidden` (type auth), as XEP-0060 answers a publish without sufficient privileges (§7.1.3.1) and an items
         // fetch the owner's node does not allow (§6.5.9.10); checked before any service, so an item kept there earlier
         // is not served either. A user location publish alone goes on, to the user's location share
-        // (plans/Location-Sharing.md §3.6): it is never a PEP item
+        // (plans/archive/Location-Sharing.md §3.6): it is never a PEP item
         if refused_node(&node) {
             if geoloc_node(&node) && kind == "set" && operation.name() == "publish" && !owner_ns {
                 return self.geoloc_publish(iq, &operation).await;

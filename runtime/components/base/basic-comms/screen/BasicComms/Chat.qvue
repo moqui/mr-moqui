@@ -1084,7 +1084,7 @@ const chatSticker = {
 };
 
 // A location message: a pin, its label, address and coordinates, Open in maps (geo: in the Android app, OpenStreetMap
-// elsewhere) and Copy. No map. A live location (plans/Location-Sharing.md §3.5; its message carries its share's id, never
+// elsewhere) and Copy. No map. A live location (plans/archive/Location-Sharing.md §3.5; its message carries its share's id, never
 // a position): the position and its age while the share is on, read through liveLocation (get#Share checks the audience)
 // and moved by the share's pushes (locationShare:<shareId>, which only its audience gets); "Live location ended" after;
 // for one the share does not reach (who joined the room after it started, or was taken out), that it is not shared with
@@ -1260,7 +1260,7 @@ const locationBoxTemplate = `
             <div v-if="coordinates" class="text-caption m-muted">{{coordinates}}</div>
             <q-btn flat dense no-caps size="sm" color="primary" icon="sym_o_map" :label="t('Check it in maps')" @click="room.openPlace(place)"></q-btn>
         </div>
-        <!-- live location (plans/Location-Sharing.md §3.5): the room's members now see where you are as you move, until the
+        <!-- live location (plans/archive/Location-Sharing.md §3.5): the room's members now see where you are as you move, until the
             end chosen; not in an encrypted room, where the server would see each position -->
         <div class="q-pt-sm m-chat-live-box">
             <div class="text-subtitle2">{{t('Live location')}}</div>
@@ -2090,7 +2090,7 @@ const roomTemplate = `
         </template>
     </div>
     <q-separator></q-separator>
-    <!-- each live location this page sends, in any room (plans/Location-Sharing.md §1 "Visible to everyone it concerns",
+    <!-- each live location this page sends, in any room (plans/archive/Location-Sharing.md §1 "Visible to everyone it concerns",
         §3.5): until when, that this page sends it while it is open, and Stop -->
     <div v-for="send in liveSends" :key="'live' + send.shareId" class="row items-center no-wrap q-px-sm q-py-xs m-tonal m-chat-live-banner" role="status"
             :data-live-share="send.shareId">
@@ -4559,7 +4559,7 @@ const chatRoom = {
             const remove = () => this.change('chat-redact', 'redact', { chatRoomId: this.roomId, eventSeq: item.eventSeq }).then((json) => {
                 if (!(json && json.queued)) this.applyRedaction(item.eventSeq);
             }, () => {});
-            // the user's own live location (plans/Location-Sharing.md §3.5): deleting its message does not stop the share,
+            // the user's own live location (plans/archive/Location-Sharing.md §3.5): deleting its message does not stop the share,
             // which the dialog says, with Stop sharing too chosen
             const place = item.event && item.event.location;
             const liveShareId = place && place.liveShareId && item.event.senderUserId === this.me.userId ? String(place.liveShareId) : null;
@@ -5226,7 +5226,7 @@ const chatRoom = {
                 return json;
             });
         },
-        // ---- live location (plans/Location-Sharing.md §3.5, LL4): a share with the room's members, sent by the Android
+        // ---- live location (plans/archive/Location-Sharing.md §3.5, LL4): a share with the room's members, sent by the Android
         // app's location service once the person confirms it in the app's own dialog (moquiDesktop.location, LL3), else by
         // this page while it is open (moqui.chat.live.sender, with its banner); never in an encrypted room ----
         sendLivePlace(choice, threadRoot) {

@@ -259,7 +259,7 @@ function savePlace(userId, params) {
 }
 
 feature(
-    "a place saved offline is kept once by its clientRef, and a refusal keeps no ref: its retry is saved (plans/Maps-Offline.md §2.5)",
+    "a place saved offline is kept once by its clientRef, and a refusal keeps no ref: its retry is saved (plans/archive/Maps-Offline.md §2.5)",
     {
         when() {
             const params = {label: "Ferry dock", longitude: "-71.05", latitude: "42.36", clientRef: "maps-ovl-place-1"}
@@ -308,7 +308,7 @@ const afterFailure = (userId, params) =>
     )
 
 feature(
-    "a place's send that failed is the duplicate of the one that holds its ref, else its error or a retry (plans/Maps-Offline.md §2.5)",
+    "a place's send that failed is the duplicate of the one that holds its ref, else its error or a retry (plans/archive/Maps-Offline.md §2.5)",
     {
         when() {
             // the overlapping send of the same ref committed its claim and result first, as the race leaves it

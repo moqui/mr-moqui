@@ -3,7 +3,7 @@
 // docs/tools/Maps.md, From a dashboard) it opens on it at the first load. Its check is Browse.qvue's own: moqui.map
 // (WebrootMap.js) loads only as m-map mounts, after the first view is set, so a check there left the extent unread on a
 // fresh page. The view is read once the page settles and Browse has its configuration. On the same render, live location
-// (plans/Location-Sharing.md §3.3): a share started from Browse, sent from the page, drawn on the live layer, shown by the
+// (plans/archive/Location-Sharing.md §3.3): a share started from Browse, sent from the page, drawn on the live layer, shown by the
 // app bar's "Sharing location" chip (a shell indicator, its label text) and stopped; a failed read hides nothing, and the
 // page once closed starts no watch again.
 const RUSSIA = "27.2865,41.1518,-169.8983,77.6975"
@@ -44,7 +44,7 @@ feature("Browse is the MapsBrowse component with its map, opened on an extent ac
         checked.spaced == JSON.stringify([27.2865, 41.1518, -169.8983, 77.6975])
         checked.refused.length == 0
 
-        // Live location on the same render (plans/Location-Sharing.md §3.3): the configuration carries the user's shares;
+        // Live location on the same render (plans/archive/Location-Sharing.md §3.3): the configuration carries the user's shares;
         // Share my location with a guest link starts one, sent from this page (the browser's position stood in for, as
         // watchPosition gives it) through reportPosition, its banner shown and its latest drawn on m-map's live layer as the
         // audience reads it; Stop ends it and the page stops sending
@@ -74,7 +74,7 @@ feature("Browse is the MapsBrowse component with its map, opened on an extent ac
                 const banner = document.querySelector('[data-maps-sharing="' + ${JSON.stringify(started.shareId)} + '"]')
                 return share && share.latest && banner ? { lat: share.latest.lat, role: share.role, label: share.label, banner: banner.textContent,
                     feature: !!(view.liveSource && view.liveSource.getFeatureById("live:" + share.shareId)) } : null })()`, {timeout: 10})
-            // the dialog shows the guest link (its page, the secret in the fragment; plans/Location-Sharing.md §3.7) this once, until Done
+            // the dialog shows the guest link (its page, the secret in the fragment; plans/archive/Location-Sharing.md §3.7) this once, until Done
             shown = page.locator("#MapsShareLinkToken").text()
             // the app bar's chip (the shell's indicator of the framework's live-location shell-indicator provider): Sharing location, sending here;
             // and an indicator's label is text, whatever it holds
