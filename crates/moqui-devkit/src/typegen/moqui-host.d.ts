@@ -1875,6 +1875,10 @@ interface MoquiStringUtilities {
     cleanChatHtml(text: string | null): string;
     /** Markdown with its raw HTML cleaned to the safe set and the markdown around it kept. */
     cleanMarkdown(text: string | null): string;
+    /** Whether text has a match of pattern, matched in linear time (the Rust `regex` syntax: no back-references or look-around); throws for a pattern over 1000 characters or one that does not compile. */
+    regexTest(pattern: string, text: string | null, ignoreCase?: boolean | null): boolean;
+    /** Text with each character of each match of pattern replaced by mask's first character (`*` by default), matched as regexTest matches. */
+    regexMask(pattern: string, text: string | null, mask?: string | null, ignoreCase?: boolean | null): string;
     urlEncodeIfNeeded(text: string | null): string;
     encodeAsciiFilename(filename: string | null): string;
     /** A formatter of a mask (`#` digit, `U`/`L` letter, `A` letter or digit, `?` letter, `H` hex, `*` any), or null for no mask. */

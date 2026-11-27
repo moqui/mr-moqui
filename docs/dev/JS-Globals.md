@@ -279,6 +279,8 @@ helper functions above are also on the class Java has them on. Sources: `script/
 | `cleanHtml(text)` | The HTML cleaned as an `allow-html="safe"` parameter is |
 | `cleanChatHtml(text)` | The HTML cleaned for a chat message: the safe set, with an image only when its `src` is this server's `/richTextImage/<id>` |
 | `cleanMarkdown(text)` | Markdown whose rendered HTML holds nothing the safe set removes comes back as written; otherwise each piece of raw HTML that holds something it removes is cleaned to it (a block whole, an inline tag in its context), the markdown around it as it was. What `update#WikiPage` saves for an `md` page of a space without `allowAnyHtml`; `render#WikiPage` cleans again when it shows the page |
+| `regexTest(pattern, text, ignoreCase)` | Whether the text has a match of the pattern, matched in time linear in the text by the Rust `regex` syntax (no back-references or look-around), so a pattern a user writes cannot backtrack for as long as the request lasts (a forum's content rule). A pattern over 1000 characters or one that does not compile throws |
+| `regexMask(pattern, text, mask, ignoreCase)` | The text with each character of each match replaced by the first character of `mask` (`*` by default), matched as `regexTest` matches |
 | `encodeForXmlAttribute(text, addZeroWidthSpaces)` | Text escaped for an XML attribute, characters above ASCII as character references |
 | `decodeFromXml(text)` | `&lt;`, `&gt;`, `&quot;`, `&apos;` and `&amp;` put back. Null for null |
 | `urlEncodeIfNeeded(text)` | URL-encoded unless it is already safe. A space is `+` |

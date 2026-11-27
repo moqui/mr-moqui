@@ -84,7 +84,7 @@ const GLOBALS_JS: &str = concat!(
     for (const name of ["encodeHtml", "encodeHtmlJsSafe", "fieldValuesEncodeHtmlJsSafe", "ipMatches",
         "isSafeSinglePathSegment", "isSameOriginRedirect", "lastPathSegment", "reportSaveLocationProblem"]) web[name] = hidden[name];
     for (const name of ["encodeForXmlAttribute", "base64UrlEncode", "base64UrlDecode", "base64Encode", "base64Decode",
-        "cleanHtml", "cleanChatHtml", "cleanMarkdown",
+        "cleanHtml", "cleanChatHtml", "cleanMarkdown", "regexTest", "regexMask",
         "urlEncodeIfNeeded"]) string[name] = hidden[name];
     // the checks Security.eecas.xml runs, a global of a whole runtime (`oxide::engine`) as the helpers are
     helpers.UserSecurityChecks = {
@@ -308,6 +308,8 @@ pub(crate) static SHIM: Shim = Shim {
         method!("StringUtilities", "cleanHtml", [OptText], None, leaf, clean_html),
         method!("StringUtilities", "cleanChatHtml", [OptText], None, leaf, clean_chat_html),
         method!("StringUtilities", "cleanMarkdown", [OptText], None, leaf, clean_markdown),
+        method!("StringUtilities", "regexTest", [Text, OptText, OptBool], None, leaf, regex_test),
+        method!("StringUtilities", "regexMask", [Text, OptText, OptText, OptBool], None, leaf, regex_mask),
         method!(
             "StringUtilities",
             "urlEncodeIfNeeded",
@@ -837,6 +839,49 @@ fn clean_chat_html(call: &mut Call<'_>) -> Result<Ret, HostError> {
 /// A wiki page's markdown with its raw HTML cleaned to the safe set, the markdown around it kept (SEC-SCR-81).
 fn clean_markdown(call: &mut Call<'_>) -> Result<Ret, HostError> {
     Ok(moqui_lib::safe_html::clean_markdown(&call.opt_text(0).unwrap_or_default()).into())
+}
+
+/// The longest pattern [`linear_regex`] takes.
+const LINEAR_PATTERN_MAX: usize = 1000;
+
+/// `pattern` compiled by the Rust `regex` crate, whose matching takes time linear in the text: no back-references or
+/// look-around, so a pattern a user writes (a forum's content rule, SEC-PFS-90) cannot backtrack for as long as the
+/// request lasts. An error for a pattern over [`LINEAR_PATTERN_MAX`] characters or one that does not compile.
+fn linear_regex(pattern: &str, ignore_case: bool) -> Result<regex::Regex, HostError> {
+    if pattern.chars().count() > LINEAR_PATTERN_MAX {
+        return Err(HostError::message(format!(
+            "a pattern has at most {LINEAR_PATTERN_MAX} characters"
+        )));
+    }
+    regex::RegexBuilder::new(pattern)
+        .case_insensitive(ignore_case)
+        .size_limit(1 << 20)
+        .build()
+        .map_err(|err| HostError::message(format!("not a pattern this matcher takes: {err}")))
+}
+
+/// `StringUtilities.regexTest(pattern, text, ignoreCase)`: whether `text` has a match of `pattern`, in linear time
+/// ([`linear_regex`]).
+fn regex_test(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let re = linear_regex(call.text(0).unwrap_or_default(), call.bool(2).unwrap_or(false))?;
+    Ok(re.is_match(&call.opt_text(1).unwrap_or_default()).into())
+}
+
+/// `StringUtilities.regexMask(pattern, text, mask, ignoreCase)`: `text` with each character of each match of `pattern`
+/// replaced by the first character of `mask` (`*` by default), in linear time ([`linear_regex`]).
+fn regex_mask(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let re = linear_regex(call.text(0).unwrap_or_default(), call.bool(3).unwrap_or(false))?;
+    let text = call.opt_text(1).unwrap_or_default();
+    let mask = call.opt_text(2).and_then(|mask| mask.chars().next()).unwrap_or('*');
+    let mut out = String::with_capacity(text.len());
+    let mut last = 0;
+    for found in re.find_iter(&text) {
+        out.push_str(&text[last..found.start()]);
+        out.extend(std::iter::repeat_n(mask, found.as_str().chars().count()));
+        last = found.end();
+    }
+    out.push_str(&text[last..]);
+    Ok(out.into())
 }
 
 fn url_encode_if_needed(call: &mut Call<'_>) -> Result<Ret, HostError> {
