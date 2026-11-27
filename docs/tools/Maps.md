@@ -877,29 +877,47 @@ and read through the services only.
   `ALL_USERS` or a group of external users), a contact of the owner's XMPP roster (`username@xmpp-server@domain`, a person
   of one of the owner's direct rooms; kept for the XMPP server to deliver to), or one guest link a share, whose token is
   answered once by the call that makes it and kept only as its digest (as `ResourceShare`'s link). Each person added is
-  told who shares with them and until when (the `LocationShared` notification, in their own time zone).
+  told who shares with them and until when (the `LocationShared` notification, in their own time zone). A person has at
+  most `location@max-active-shares` shares on at once, and a share at most `location@max-audience` people (a group's
+  members counted each), contacts and links.
 - **Who reads it.** `find#MyShares` (the owner's shares with their audiences), `find#SharedWithMe` and `get#Share` (the
   latest position, and a kept trail in pages of up to 1000 points) answer the owner and the share's current audience
-  only: a user whose entry is not revoked, or a current member of a group whose entry is not revoked, checked again at
-  every read, so a person taken out of a group sees nothing of it from then on. No grant reads another person's
-  shares, and the generic entity tools, REST and agents do not read these entities, an administrator's included.
+  only: a user whose entry is not revoked, or a member of a group whose entry is not revoked who was a member when the
+  owner added the group and still is, checked again at every read. A person taken out of a group sees nothing of it from
+  then on, and one put into it later (by an administrator, an app or a household organizer) sees nothing and gets no push
+  until the owner adds the group again, which lets in and tells its new members. No grant of these services reads
+  another person's shares, and the generic entity tools, entity REST, entity-auto services and the agents' `data` tool
+  refuse these four entities, an administrator's included (`moqui-entity` `sensitive.rs`).
+- **What the server's operator can still reach.** These services keep a share from other users, not from whoever runs
+  the server: an administrator who signs in as the person (`ADMIN_LOGIN_AS`) sees what that person sees; a holder of the
+  Tools SQL runner reads the tables; any server script can turn on the `NotificationCapture` tool (meant for specs,
+  not gated) and see pushes in transit; and the database, its backups and its own logs hold what the tables hold. Who
+  shared with whom and until when (never a position) stays in the entity audit log and in the `LocationShared`
+  notification rows of the people told, under their own retention.
 - **Reports.** From the owner only, for an active share: the values checked (latitude and longitude in range, accuracy,
-  heading and speed, a time not in the future and later than the latest), at most one a `location@min-interval-seconds`
-  (a sooner one is dropped with 429), 410 for a share that has ended or was stopped, which stops a device. An
-  approximate share's position is rounded here to about 1 km (no heading or speed) before it is stored or sent. Each
-  report replaces the share's latest position, adds a trail point when the share keeps a trail, and goes out on the
-  topic `locationShare:<shareId>` to the audience's current users only, never saved as a notification or pushed to a
-  phone. The owner's other devices and the audience are told on the same topic when a share starts, changes, loses
-  someone or ends.
+  heading and speed, a time not before the share began and later than the latest), at most one a
+  `location@min-interval-seconds`, or `location@approximate-interval-seconds` for an approximate share (a sooner one is
+  dropped with 429), 410 for a share that has ended or was stopped, which stops a device, and 409 `CLOCK_AHEAD` for a time
+  more than a minute ahead of the server's clock. An approximate share's position is made here, before it is stored or
+  sent: the centre of a cell of about 1 km on a grid offset by a secret random amount for that share (never answered),
+  the last cell kept until a fix is more than a quarter of a cell inside another one (so jitter at a line, or crossing
+  it, gives no exact position away), the time rounded down to the minute, no heading or speed. Each report replaces the
+  share's latest position, adds a trail point when the share keeps a trail, and goes out on the topic
+  `locationShare:<shareId>` to the audience's current users only, never saved as a notification or pushed to a phone.
+  On the same topic the owner's other devices are told when a share starts, and the owner and the audience when it
+  changes or ends; a revoked entry's people (and the owner) are told it was revoked. The audience learns of a start by
+  the `LocationShared` notification.
 - **Retention.** A share ends at its end (at most `location@max-share-hours` from its start or last extension) or when
-  stopped, and its latest position is deleted then. A trail is kept only when the owner chose it for that share, for its
+  stopped: reads stop then, and its latest position is deleted at once by a stop, and up to an hour after an end by
+  time (the hourly job). A trail is kept only when the owner chose it for that share, for its
   days after the share ends (at most `location@trail-max-days`), and the owner deletes it at any time. The hourly job
-  `clean_LocationShares_hourly` (`clean#LocationShares`) ends the shares past their end, deletes the trails past their
-  days and removes the shares ended more than `location@trail-max-days` ago. Start, extension, stop and an audience
+  `clean_LocationShares_hourly` (`clean#LocationShares`) ends the shares past their end, deletes the trails whose purge
+  date has come (`trailPurgeDate`, set when the share ends) and removes the shares ended more than `location@trail-max-days` ago. Start, extension, stop and an audience
   added or revoked are in the entity audit log (who, when, the audience), never a position. Positions never go to a log,
   a telemetry attribute, an error message or a cache.
 - **Settings**, on the conf's `location` element (`moqui_conf__location__max_share_hours` and the rest):
-  `location@max-share-hours` (24), `location@trail-max-days` (30), `location@min-interval-seconds` (5) and
+  `location@max-share-hours` (24), `location@trail-max-days` (30), `location@min-interval-seconds` (5),
+  `location@approximate-interval-seconds` (60), `location@max-active-shares` (20), `location@max-audience` (50) and
   `location@link-max-views-per-minute` (30, the reads a minute of a guest link's page).
 
 ## Tests
@@ -984,9 +1002,13 @@ area, nothing saved; a refresh that moves one address and removes one, counted b
 untouched), with the parsing, keys and ranking in Rust (`moqui-maps` `address_tests.rs`, `address_service_tests.rs`), and
 the real release for central Florence and part of Boston's Back Bay with sample lookups, the acceptance test
 `OvertureAddressLookup`.
+
 Live location: `framework/test/LocationShares.spec.js` (by the real grants, with authorization on: a share read and pushed to
-its audience alone, another user and an administrator refused; a group member taken out losing it at the next read and
-the pushes; the rate and its 429; an approximate share rounded before it is stored or sent; an ended share hidden, 410 to
+its audience alone, another user and an administrator refused; a blocked user, an audience past `max-audience` and a
+share past `max-active-shares` refused; a group member taken out losing it at the next read and the pushes, and one put
+in later getting nothing until the owner adds the group again; the rate and its 429, a clock ahead and a time before the
+share; an approximate share's cell made before it is stored or sent, kept through jitter at a cell line, its offset in
+no answer and its time to the minute; an ended share hidden, 410 to
 a report and its latest position cleaned; a trail kept only when chosen, deleted by its owner and purged past its days;
 the audit rows with no position; a link's token answered once and only its digest kept), with the generic tools' refusal
-of the four entities in Rust (`moqui-entity` `sensitive.rs`).
+of the four entities in Rust (`moqui-entity` `sensitive.rs`) and the agents' `data` tool's (`moqui-llm` `core_tests.rs`).
