@@ -1284,13 +1284,14 @@ ec.makeNotificationMessage().topic("OrderApproved").userIds([salesRepUserId])
 
 Model calls of app code. `ec.llm` is there only in a build with the `llm` feature (`ec.factory.hasFeature("llm")`).
 A model call is refused while a transaction is open, unless its options give `allowInTransaction: true` (`complete`,
-`summarize`, `classify` and `extract` take it), which suspends the transaction for the call and cuts the call to the
-time the transaction has left.
+`summarize`, `classify`, `extract` and `embed` take it), which suspends the transaction for the call and cuts the
+call to the time the transaction has left.
 
 | Member | |
 |---|---|
 | `isEnabled()` | Whether model calls are enabled |
 | `complete(options)` | One completion: `{prompt, system, messages, model, feature, tier, schema, schemaName, reasoning, maxOutput, timeoutSeconds, allowInTransaction}` gives `{text, json, modelId, finish, inputTokens, cachedInputTokens, outputTokens, cost, callIds}`. The model is `model`, else the binding of `feature`, else a model of `tier`. With `schema` (a JSON schema) the reply is parsed and checked into `json`. A call that ends without an answer throws |
+| `embed(texts, options)` | One vector per text, in the order of `texts` (a list, or one string), from the model's `/v1/embeddings`: `{model, feature, allowInTransaction}` gives `{vectors, dimension, modelId, modelName}`. The model is `model`, else the binding of `feature`. A text that is blank, or not a string or a number, throws, naming its index. An empty list returns no vectors and does not call the model. A call that cannot embed throws |
 | `summarize(text, options)` | A summary; `options` `{maxWords, allowInTransaction}` |
 | `classify(text, labels, options)` | One of the labels; `options` `{allowInTransaction}` |
 | `extract(text, fields, options)` | A value for each field of `{name: description}`; `options` `{allowInTransaction}` |

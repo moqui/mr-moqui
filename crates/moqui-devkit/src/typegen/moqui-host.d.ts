@@ -1633,6 +1633,13 @@ interface MoquiLlmFacade {
         text: string; json: unknown; modelId: string; finish: string; inputTokens: number;
         cachedInputTokens: number; outputTokens: number; cost: number | null; callIds: string[];
     };
+    /**
+     * One vector per text, in order, from the model's `/v1/embeddings`; a blank text throws. The model is `model`,
+     * else the binding of `feature`.
+     */
+    embed(texts: string[] | string, options: { model?: string; feature?: string; allowInTransaction?: boolean | "Y" }): {
+        vectors: number[][]; dimension: number; modelId: string; modelName: string;
+    };
     isEnabled(): boolean;
     /** The summary of `text` (the `summarize` AI task). */
     summarize(text: string, options?: { maxWords?: number; allowInTransaction?: boolean | "Y" }): string;
