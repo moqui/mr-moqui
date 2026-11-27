@@ -614,3 +614,25 @@ fn keyed_tiles_share_one_stored_content() {
         .finish(b"{}", &options(), &|b| b.to_vec())
         .is_err());
 }
+
+#[test]
+fn the_keys_kept_are_bounded_and_a_forgotten_one_is_written_again() {
+    let mut writer = ArchiveWriter::with_keys_max(Vec::new(), 4);
+    // the sea, repeated, outlives the keys never repeated when the bound is reached
+    writer.add_keyed(0, 100, b"sea").unwrap();
+    writer.repeat_keyed(1, 100).unwrap();
+    for (id, key) in [(2, 200), (3, 300), (4, 400), (5, 500)] {
+        writer.add_keyed(id, key, format!("land {key}").as_bytes()).unwrap();
+    }
+    assert!(writer.has_key(100) && writer.has_key(500));
+    assert!(!writer.has_key(200), "a key never repeated is let go past the bound");
+    // a key let go is a new content again: written twice, read right
+    writer.add_keyed(6, 200, b"land 200").unwrap();
+    let finished = writer.finish(b"{}", &options(), &|b| b.to_vec()).unwrap();
+    let mut archive = finished.prefix;
+    archive.extend_from_slice(&finished.data);
+    assert_eq!(read(&archive, 1).unwrap(), b"sea");
+    assert_eq!(read(&archive, 6).unwrap(), b"land 200");
+    assert_eq!(read(&archive, 2).unwrap(), b"land 200");
+    assert_eq!(Header::parse(&archive).unwrap().tile_contents, 6);
+}

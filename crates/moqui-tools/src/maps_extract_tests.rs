@@ -345,3 +345,38 @@ fn a_cancel_stops_the_cut_and_limits_refuse_it_before_it_starts() {
         "NO_ZOOMS"
     );
 }
+
+#[test]
+fn an_edge_on_the_antimeridian_takes_no_column_beyond_it() {
+    // east at -180 is the antimeridian at the end of the west side: the box does not cross it
+    let to_edge = Bbox::new(170.0, -10.0, -180.0, 10.0).unwrap();
+    assert!(!to_edge.crosses_antimeridian() && to_edge.east == 180.0);
+    assert_eq!(bbox_tiles(&to_edge, 3).0, vec![(7, 7)]);
+    let from_edge = Bbox::new(180.0, -10.0, -170.0, 10.0).unwrap();
+    assert!(!from_edge.crosses_antimeridian() && from_edge.west == -180.0);
+    assert_eq!(bbox_tiles(&from_edge, 3).0, vec![(0, 0)]);
+}
+
+#[test]
+fn a_cut_past_the_bytes_left_stops_with_nothing_kept() {
+    let (source, size) = archive("sha256-extract-budget");
+    let bbox = Bbox::new(-170.0, 1.0, 170.0, 80.0).unwrap();
+    let path = target("budget");
+    let small = Cut {
+        max_bytes: 400,
+        ..cut(bbox, 0, 4)
+    };
+    let refused = extract(
+        &source,
+        "sha256-extract-budget",
+        size,
+        &small,
+        &path,
+        &mut || true,
+        &mut |_, _| true,
+    )
+    .unwrap()
+    .unwrap_err();
+    assert_eq!(refused.code, "TOO_LARGE");
+    assert!(leftovers(&path).is_empty(), "{:?}", leftovers(&path));
+}

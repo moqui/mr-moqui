@@ -792,32 +792,55 @@ pub struct FinishedArchive<W> {
 /// same content as the one right before it extends that one's run (clustered, as [`write_archive`] writes). A tile added
 /// with a key ([`ArchiveWriter::add_keyed`], the offset of its content in the archive it was cut from) and a later tile
 /// of the same key ([`ArchiveWriter::repeat_keyed`]) share one stored content, so a source's shared tiles (the sea, the
-/// empty land) stay shared. [`ArchiveWriter::finish`] lays out the directories and the header, the tile data's offsets
-/// then known: the caller writes the prefix and then the data after it.
+/// empty land) stay shared. The keys are bounded ([`KEYS_MAX`] by default): past the bound the keys never repeated are
+/// let go, so a key may be forgotten and its content written again, never one shared wrongly. [`ArchiveWriter::finish`]
+/// lays out the directories and the header, the tile data's offsets then known: the caller writes the prefix and then
+/// the data after it.
 pub struct ArchiveWriter<W: std::io::Write> {
     data: W,
     data_len: u64,
     entries: Vec<Entry>,
     /// The content of the last entry when its bytes were handed in, for a run of identical neighbours
     last: Option<Vec<u8>>,
-    /// Where each keyed content is in the tile data: its offset and length
-    keyed: std::collections::HashMap<u64, (u64, u32)>,
+    /// Where each keyed content is in the tile data: its offset and length, and whether a tile repeated it
+    keyed: std::collections::HashMap<u64, (u64, u32, bool)>,
+    keys_max: usize,
     addressed: u64,
     contents: u64,
 }
 
+/// The keys an [`ArchiveWriter`] keeps by default (some 24 bytes each, and the map's own).
+pub const KEYS_MAX: usize = 1 << 18;
+
 impl<W: std::io::Write> ArchiveWriter<W> {
     /// A writer whose tile data goes to `data`.
     pub fn new(data: W) -> Self {
+        Self::with_keys_max(data, KEYS_MAX)
+    }
+
+    /// A writer that keeps at most `keys_max` keys (at least 1).
+    pub fn with_keys_max(data: W, keys_max: usize) -> Self {
         Self {
             data,
             data_len: 0,
             entries: Vec::new(),
             last: None,
             keyed: std::collections::HashMap::new(),
+            keys_max: keys_max.max(1),
             addressed: 0,
             contents: 0,
         }
+    }
+
+    /// Keep `key` at `place`: past the bound, the keys no tile repeated are let go first, then all of them.
+    fn keep(&mut self, key: u64, place: (u64, u32)) {
+        if self.keyed.len() >= self.keys_max {
+            self.keyed.retain(|_, (_, _, repeated)| *repeated);
+            if self.keyed.len() >= self.keys_max / 2 {
+                self.keyed.clear();
+            }
+        }
+        self.keyed.insert(key, (place.0, place.1, false));
     }
 
     /// The tiles added, each tile of a run counted.
@@ -878,9 +901,11 @@ impl<W: std::io::Write> ArchiveWriter<W> {
     ///
     /// A key with no content written, or a tile ID not after the last one.
     pub fn repeat_keyed(&mut self, tile_id: u64, key: u64) -> Result<(), Error> {
-        let Some(&(offset, length)) = self.keyed.get(&key) else {
+        let Some(known) = self.keyed.get_mut(&key) else {
             return Err(Error::new("a tile repeats a content that was not written"));
         };
+        known.2 = true;
+        let (offset, length) = (known.0, known.1);
         let continues = self.order(tile_id)?;
         self.addressed += 1;
         if let Some(last) = self.entries.last_mut() {
@@ -908,8 +933,9 @@ impl<W: std::io::Write> ArchiveWriter<W> {
             if let Some(last) = self.entries.last_mut() {
                 last.run_length += 1;
                 self.addressed += 1;
+                let place = (last.offset, last.length);
                 if let Some(key) = key {
-                    self.keyed.insert(key, (last.offset, last.length));
+                    self.keep(key, place);
                 }
                 return Ok(());
             }
@@ -928,7 +954,7 @@ impl<W: std::io::Write> ArchiveWriter<W> {
             run_length: 1,
         });
         if let Some(key) = key {
-            self.keyed.insert(key, (offset, length));
+            self.keep(key, (offset, length));
         }
         self.last = Some(content.to_vec());
         Ok(())

@@ -50,8 +50,10 @@ use crate::group_db::{number, text, Out};
 use crate::maps_tiles::{archive_directory, archive_header, content_key, decompress, read_exact, TILE_MAX};
 
 const PACKAGE: &str = "moqui.maps.MapPackage";
-/// The most tiles one extract may cover (the box's tiles over its zooms, counted before anything is read): their IDs
-/// are held while they are found, 8 bytes each.
+/// The most tiles one extract may cover (the box's tiles over its zooms, counted before anything is read). One zoom is
+/// found and written at a time: its tile IDs (8 bytes each) are held while it is, each tile found (a [`Located`], 24
+/// bytes) is handed on as it is found, and the writer keeps a directory entry (24 bytes) for each tile that is not part
+/// of a run and a bounded map of the contents it may share.
 pub(crate) const MAX_TILES: u64 = 4_000_000;
 /// The most bytes the source's metadata may take, as stored and decompressed.
 const METADATA_MAX: u64 = 16 * 1024 * 1024;
@@ -85,7 +87,8 @@ pub(crate) struct Bbox {
 
 impl Bbox {
     /// The box, or what is wrong with it: longitudes within ±180, latitudes within ±90, its south below its north and
-    /// its west not its east.
+    /// its west not its east. A west of 180 is -180 and an east of -180 is 180 (the same meridian, on the side the box
+    /// is), so neither takes a column beyond the antimeridian.
     pub(crate) fn new(west: f64, south: f64, east: f64, north: f64) -> Result<Self, String> {
         let lon = |value: f64| value.is_finite() && (-180.0..=180.0).contains(&value);
         let lat = |value: f64| value.is_finite() && (-90.0..=90.0).contains(&value);
@@ -99,6 +102,8 @@ impl Bbox {
         if (west - east).abs() < f64::EPSILON || (west == 180.0 && east == -180.0) {
             return Err("the box has no width".to_string());
         }
+        let west = if west == 180.0 { -180.0 } else { west };
+        let east = if east == -180.0 { 180.0 } else { east };
         Ok(Self {
             west,
             south,
@@ -247,33 +252,52 @@ fn zooms_of(header: &Header, cut: &Cut) -> Result<(u8, u8), Refusal> {
     Ok((low, high))
 }
 
-/// The source's tiles of the box at the zooms, in ascending tile ID order, found through the directories; refused when
-/// the box covers more than `cut.max_tiles` tiles (counted before anything is read).
-fn locate_all(
-    source: &dyn ByteSource,
-    header: &Header,
-    content: &str,
-    cut: &Cut,
-    (low, high): (u8, u8),
-) -> Result<Result<Vec<Located>, Refusal>, LibError> {
+/// The tiles the box covers at the zooms, or a refusal past `cut.max_tiles` (counted before anything is read).
+fn covered(cut: &Cut, (low, high): (u8, u8)) -> Result<u64, Refusal> {
     let covered: u64 = (low..=high).map(|z| bbox_tile_count(&cut.bbox, z)).sum();
     if covered > cut.max_tiles {
-        return Ok(Err(refused(
+        return Err(refused(
             "TOO_MANY_TILES",
             format!(
                 "the region covers {covered} tiles at zooms {low} to {high}, more than the {} a package may: choose a smaller region or fewer zooms",
                 cut.max_tiles
             ),
-        )));
+        ));
     }
-    // the directories met while walking the sorted IDs: a leaf serves a run of neighbours, so a few are kept here in
-    // front of the shared cache
-    let mut near: HashMap<u64, Arc<Vec<Entry>>> = HashMap::new();
-    let internal = header.internal_compression;
-    let mut found = Vec::new();
-    for z in low..=high {
-        for id in bbox_tile_ids(&cut.bbox, z)? {
-            let at = locate_tile(header, id, |offset, length| {
+    Ok(covered)
+}
+
+/// Finds the source's tiles of a zoom of the box through its directories, in ascending tile ID order; the directories
+/// met while walking the sorted IDs (a leaf serves a run of neighbours) kept here in front of the shared cache.
+struct Finder<'a> {
+    source: &'a dyn ByteSource,
+    header: &'a Header,
+    content: &'a str,
+    near: HashMap<u64, Arc<Vec<Entry>>>,
+}
+
+impl<'a> Finder<'a> {
+    fn new(source: &'a dyn ByteSource, header: &'a Header, content: &'a str) -> Self {
+        Self {
+            source,
+            header,
+            content,
+            near: HashMap::new(),
+        }
+    }
+
+    /// Each tile of the box at zoom `z` the source has, handed to `each`, which answers whether to go on: whether the
+    /// zoom was walked whole.
+    fn zoom(
+        &mut self,
+        bbox: &Bbox,
+        z: u8,
+        each: &mut dyn FnMut(u64, Option<Located>) -> Result<bool, LibError>,
+    ) -> Result<bool, LibError> {
+        let internal = self.header.internal_compression;
+        for id in bbox_tile_ids(bbox, z)? {
+            let (source, content, near) = (self.source, self.content, &mut self.near);
+            let at = locate_tile(self.header, id, |offset, length| {
                 if let Some(entries) = near.get(&offset) {
                     return Ok(Arc::clone(entries));
                 }
@@ -284,53 +308,40 @@ fn locate_all(
                 near.insert(offset, Arc::clone(&entries));
                 Ok(entries)
             })?;
-            if let Some((offset, length)) = at {
-                found.push(Located {
-                    tile_id: id,
-                    offset,
-                    length,
-                });
+            let found = at.map(|(offset, length)| Located {
+                tile_id: id,
+                offset,
+                length,
+            });
+            if !each(id, found)? {
+                return Ok(false);
             }
         }
-    }
-    Ok(Ok(found))
-}
-
-fn estimate_of(header: &Header, located: &[Located], (low, high): (u8, u8)) -> Estimate {
-    let mut seen = HashSet::new();
-    let mut tile_bytes = 0u64;
-    for tile in located {
-        if seen.insert(tile.offset) {
-            tile_bytes += u64::from(tile.length);
-        }
-    }
-    let contents = seen.len() as u64;
-    // the header, the source's metadata as stored, and some 4 bytes an entry once gzipped
-    let overhead = 127 + header.metadata_length + 4 * located.len() as u64;
-    Estimate {
-        tiles: located.len() as u64,
-        contents,
-        tile_bytes,
-        bytes: tile_bytes + overhead,
-        min_zoom: low,
-        max_zoom: high,
+        Ok(true)
     }
 }
 
-fn too_large(estimate: &Estimate, max_bytes: u64) -> Option<Refusal> {
-    (max_bytes > 0 && estimate.bytes > max_bytes).then(|| {
+/// The bytes near enough of an archive of `tiles` tiles with `tile_bytes` of contents: the header, the source's
+/// metadata as stored, and some 4 bytes an entry once gzipped.
+fn archive_bytes(header: &Header, tiles: u64, tile_bytes: u64) -> u64 {
+    tile_bytes + 127 + header.metadata_length + 4 * tiles
+}
+
+fn too_large(bytes: u64, max_bytes: u64) -> Option<Refusal> {
+    (max_bytes > 0 && bytes > max_bytes).then(|| {
         refused(
             "TOO_LARGE",
             format!(
-                "the region's map is about {} bytes, more than the {max_bytes} a package may be (maps@package-max-bytes): choose a smaller region or fewer zooms",
-                estimate.bytes
+                "the region's map is about {bytes} bytes, more than the {max_bytes} left to the package (maps@package-max-bytes): choose a smaller region or fewer zooms"
             ),
         )
     })
 }
 
 /// What the estimate of `cut` from the archive `source`, pinned as `tag` of `size` bytes, finds; reads only the header
-/// and directories.
+/// and directories, and holds no more than one zoom's tile IDs. A content is counted once where the archive stores
+/// it after every content before it (an archive written in tile ID order, as a clustered one is) and as shared where it
+/// is at or before the place of one already counted (the sea, empty land): near enough for an archive in another order.
 pub(crate) fn estimate(
     source: &dyn ByteSource,
     tag: &str,
@@ -342,16 +353,34 @@ pub(crate) fn estimate(
     }
     let content = content_key(tag, size);
     let header = archive_header(source, &content, size)?;
-    let zooms = match zooms_of(&header, cut) {
+    let zooms = match zooms_of(&header, cut).and_then(|zooms| covered(cut, zooms).map(|_| zooms)) {
         Ok(zooms) => zooms,
         Err(refusal) => return Ok(Err(refusal)),
     };
-    let located = match locate_all(source, &header, &content, cut, zooms)? {
-        Ok(located) => located,
-        Err(refusal) => return Ok(Err(refusal)),
+    let (mut tiles, mut contents, mut tile_bytes, mut next_new) = (0u64, 0u64, 0u64, 0u64);
+    let mut finder = Finder::new(source, &header, &content);
+    for z in zooms.0..=zooms.1 {
+        finder.zoom(&cut.bbox, z, &mut |_, found| {
+            if let Some(tile) = found {
+                tiles += 1;
+                if tile.offset >= next_new {
+                    contents += 1;
+                    tile_bytes += u64::from(tile.length);
+                    next_new = tile.offset + u64::from(tile.length);
+                }
+            }
+            Ok(true)
+        })?;
+    }
+    let found = Estimate {
+        tiles,
+        contents,
+        tile_bytes,
+        bytes: archive_bytes(&header, tiles, tile_bytes),
+        min_zoom: zooms.0,
+        max_zoom: zooms.1,
     };
-    let found = estimate_of(&header, &located, zooms);
-    if let Some(refusal) = too_large(&found, cut.max_bytes) {
+    if let Some(refusal) = too_large(found.bytes, cut.max_bytes) {
         return Ok(Err(refusal));
     }
     Ok(Ok(found))
@@ -373,7 +402,7 @@ pub(crate) struct Extracted {
     pub sha256: String,
     pub min_zoom: u8,
     pub max_zoom: u8,
-    /// The ranges read for the tiles (each batch one)
+    /// The ranges read for the tiles (each batch one, and a shared content read again alone)
     pub reads: u64,
     /// What the source's metadata says of its data: its attribution and license (empty when it says none)
     pub attribution: String,
@@ -406,55 +435,100 @@ fn gzip(bytes: &[u8]) -> Vec<u8> {
     encoder.finish().unwrap_or_default()
 }
 
+/// The most tiles handed the writer at once when none of them needs a read (a run of shared contents).
+const PENDING_MAX: usize = 4096;
+
+/// The tiles found, in tile ID order, handed to the writer a batch at a time: a batch is one range of the source's tile
+/// data, its tiles at most [`BATCH_GAP`] apart and [`BATCH_MAX`] in all; a tile whose content the writer has already is
+/// not read again (nor one already in the batch).
+struct Cutter<W: Write> {
+    writer: ArchiveWriter<W>,
+    pending: Vec<Located>,
+    batch: Option<Batch>,
+    /// The contents of the batch, by their offset
+    in_batch: HashSet<u64>,
+    reads: u64,
+}
+
 /// A batch of tiles read with one range: its bytes from `start` to `end`.
 struct Batch {
     start: u64,
     end: u64,
 }
 
-/// One tile to hand the writer, in tile ID order: read from the batch, or a content already handed in.
-enum Pending {
-    Read(Located),
-    Repeat(Located),
-}
-
-/// Read the batch (one range) and hand the writer each pending tile in order: the number handed.
-fn flush<W: Write>(
-    source: &dyn ByteSource,
-    pending: &mut Vec<Pending>,
-    batch: &mut Option<Batch>,
-    writer: &mut ArchiveWriter<W>,
-    reads: &mut u64,
-) -> Result<u64, LibError> {
-    let (bytes, start) = match batch.take() {
-        Some(range) => {
-            *reads += 1;
-            (
-                read_exact(source, range.start, range.end - range.start, "tiles")?,
-                range.start,
-            )
+impl<W: Write> Cutter<W> {
+    /// Tile `tile`: queued, the batch read and handed first when the tile is not in it and cannot join it.
+    fn add(&mut self, source: &dyn ByteSource, tile: Located) -> Result<(), LibError> {
+        if u64::from(tile.length) > TILE_MAX {
+            return Err(LibError::new(format!(
+                "a tile of the map archive is {} bytes, more than the {TILE_MAX} read here",
+                tile.length
+            )));
         }
-        None => (Vec::new(), 0),
-    };
-    let handed = pending.len() as u64;
-    for item in pending.drain(..) {
-        match item {
-            Pending::Read(tile) => {
+        let shared = self.in_batch.contains(&tile.offset) || self.writer.has_key(tile.offset);
+        if !shared {
+            let end = tile.offset + u64::from(tile.length);
+            let fits = self.batch.as_ref().is_some_and(|range| {
+                tile.offset >= range.end && tile.offset - range.end <= BATCH_GAP && end - range.start <= BATCH_MAX
+            });
+            if !fits && self.batch.is_some() {
+                self.flush(source)?;
+            }
+            match self.batch.as_mut() {
+                Some(range) => range.end = end,
+                None => {
+                    self.batch = Some(Batch {
+                        start: tile.offset,
+                        end,
+                    })
+                }
+            }
+            self.in_batch.insert(tile.offset);
+        }
+        self.pending.push(tile);
+        if self.batch.is_none() && self.pending.len() >= PENDING_MAX {
+            self.flush(source)?;
+        }
+        Ok(())
+    }
+
+    /// Read the batch (one range) and hand the writer each pending tile in order. A shared content the writer no longer
+    /// knows (its keys are bounded) is read again by itself.
+    fn flush(&mut self, source: &dyn ByteSource) -> Result<(), LibError> {
+        let (bytes, start) = match self.batch.take() {
+            Some(range) => {
+                self.reads += 1;
+                (
+                    read_exact(source, range.start, range.end - range.start, "tiles")?,
+                    range.start,
+                )
+            }
+            None => (Vec::new(), 0),
+        };
+        for tile in std::mem::take(&mut self.pending) {
+            if self.in_batch.contains(&tile.offset) {
                 let from = usize::try_from(tile.offset - start).map_err(|_| LibError::new("a tile's offset"))?;
                 let to = from + tile.length as usize;
-                writer.add_keyed(tile.tile_id, tile.offset, &bytes[from..to])?;
+                self.writer.add_keyed(tile.tile_id, tile.offset, &bytes[from..to])?;
+            } else if self.writer.has_key(tile.offset) {
+                self.writer.repeat_keyed(tile.tile_id, tile.offset)?;
+            } else {
+                self.reads += 1;
+                let alone = read_exact(source, tile.offset, u64::from(tile.length), "tile")?;
+                self.writer.add_keyed(tile.tile_id, tile.offset, &alone)?;
             }
-            Pending::Repeat(tile) => writer.repeat_keyed(tile.tile_id, tile.offset)?,
         }
+        self.in_batch.clear();
+        Ok(())
     }
-    Ok(handed)
 }
 
 /// Cut `cut` of the archive `source` (pinned as `tag` of `size` bytes) into a new archive at `target` (a file path):
-/// its tiles as stored, the source's metadata JSON whole, directories gzipped. `still_pinned` is asked when the cut
-/// ends whether the location is still that content (reopened, its size, tag and time); `progress(done, total)` is
-/// called before the first read and after each batch, and stops the cut when it answers false. A cut that does not end
-/// leaves no file.
+/// its tiles as stored, the source's metadata JSON whole, directories gzipped; one zoom found and written at a time.
+/// `still_pinned` is asked when the cut ends whether the location is still that content (reopened, its size, tag and
+/// time); `progress(done, total)` (the tiles of the box walked, of all it covers) is called before the first read and
+/// after each batch, and stops the cut when it answers false. A cut past `cut.max_bytes` stops as TOO_LARGE. A cut that
+/// does not end leaves no file.
 pub(crate) fn extract(
     source: &dyn ByteSource,
     tag: &str,
@@ -469,20 +543,11 @@ pub(crate) fn extract(
     }
     let content = content_key(tag, size);
     let header = archive_header(source, &content, size)?;
-    let zooms = match zooms_of(&header, cut) {
-        Ok(zooms) => zooms,
+    let (zooms, total) = match zooms_of(&header, cut).and_then(|zooms| covered(cut, zooms).map(|total| (zooms, total)))
+    {
+        Ok(found) => found,
         Err(refusal) => return Ok(Err(refusal)),
     };
-    let located = match locate_all(source, &header, &content, cut, zooms)? {
-        Ok(located) => located,
-        Err(refusal) => return Ok(Err(refusal)),
-    };
-    if located.is_empty() {
-        return Ok(Err(refused("NO_TILES", "the map archive has no tiles in the region")));
-    }
-    if let Some(refusal) = too_large(&estimate_of(&header, &located, zooms), cut.max_bytes) {
-        return Ok(Err(refusal));
-    }
     // the source's metadata, its JSON copied whole
     if header.metadata_length > METADATA_MAX {
         return Err(LibError::new(format!(
@@ -517,51 +582,68 @@ pub(crate) fn extract(
     let final_part = target.with_file_name(format!("{name}.part"));
     let parts = Parts(vec![data_path.clone(), final_part.clone()]);
     let data = std::fs::File::create(&data_path).map_err(|err| io(&err))?;
-    let mut writer = ArchiveWriter::new(std::io::BufWriter::new(data));
+    let mut cutter = Cutter {
+        writer: ArchiveWriter::new(std::io::BufWriter::new(data)),
+        pending: Vec::new(),
+        batch: None,
+        in_batch: HashSet::new(),
+        reads: 0,
+    };
 
-    let total = located.len() as u64;
     if !progress(0, total) {
         return Ok(Err(cancelled()));
     }
-    let mut seen: HashSet<u64> = HashSet::new();
-    let mut pending: Vec<Pending> = Vec::new();
-    let mut batch: Option<Batch> = None;
     let mut done = 0u64;
-    let mut reads = 0u64;
-    for tile in located {
-        if !seen.insert(tile.offset) {
-            pending.push(Pending::Repeat(tile));
-            continue;
-        }
-        if u64::from(tile.length) > TILE_MAX {
-            return Err(LibError::new(format!(
-                "a tile of the map archive is {} bytes, more than the {TILE_MAX} read here",
-                tile.length
-            )));
-        }
-        let end = tile.offset + u64::from(tile.length);
-        let fits = batch.as_ref().is_some_and(|range| {
-            tile.offset >= range.end && tile.offset - range.end <= BATCH_GAP && end - range.start <= BATCH_MAX
-        });
-        if !fits && batch.is_some() {
-            done += flush(source, &mut pending, &mut batch, &mut writer, &mut reads)?;
-            if !progress(done, total) {
-                return Ok(Err(cancelled()));
+    let mut stop: Option<Refusal> = None;
+    let mut finder = Finder::new(source, &header, &content);
+    for z in zooms.0..=zooms.1 {
+        let walked = finder.zoom(&cut.bbox, z, &mut |_, found| {
+            done += 1;
+            let Some(tile) = found else {
+                return Ok(true);
+            };
+            let reads = cutter.reads;
+            cutter.add(source, tile)?;
+            // a batch was handed to the writer: its size so far, and the progress
+            if cutter.reads != reads {
+                let writer = &cutter.writer;
+                if let Some(refusal) = too_large(
+                    archive_bytes(&header, writer.tile_count(), writer.data_len()),
+                    cut.max_bytes,
+                ) {
+                    stop = Some(refusal);
+                    return Ok(false);
+                }
+                if !progress(done, total) {
+                    stop = Some(cancelled());
+                    return Ok(false);
+                }
             }
+            Ok(true)
+        })?;
+        if !walked {
+            break;
         }
-        match batch.as_mut() {
-            Some(range) => range.end = end,
-            None => {
-                batch = Some(Batch {
-                    start: tile.offset,
-                    end,
-                })
-            }
+        if !progress(done, total) {
+            stop = Some(cancelled());
+            break;
         }
-        pending.push(Pending::Read(tile));
     }
-    done += flush(source, &mut pending, &mut batch, &mut writer, &mut reads)?;
-    if !progress(done, total) {
+    if let Some(refusal) = stop {
+        return Ok(Err(refusal));
+    }
+    cutter.flush(source)?;
+    let Cutter { writer, reads, .. } = cutter;
+    if writer.tile_count() == 0 {
+        return Ok(Err(refused("NO_TILES", "the map archive has no tiles in the region")));
+    }
+    if let Some(refusal) = too_large(
+        archive_bytes(&header, writer.tile_count(), writer.data_len()),
+        cut.max_bytes,
+    ) {
+        return Ok(Err(refusal));
+    }
+    if !progress(total, total) {
         return Ok(Err(cancelled()));
     }
     let tiles = writer.tile_count();
@@ -757,7 +839,7 @@ pub(crate) fn estimate_package_extract(
         Ok(Err(refusal)) => return Ok(refusal_out(out, &refusal)),
         Err(err) => {
             tracing::warn!(location = %location, error = %err, "A map archive could not be estimated for a package");
-            return Ok(refusal_out(out, &refused("NOT_READ", err.message().to_string())));
+            return Ok(refusal_out(out, &not_read()));
         }
     };
     let mut out = out;
@@ -798,16 +880,29 @@ fn target_path(location: &str) -> Result<PathBuf, Refusal> {
         .ok_or_else(invalid)
 }
 
+/// A cut that could not be read: the detail is logged where it failed, and the user is told no path of the server.
+fn not_read() -> Refusal {
+    refused("NOT_READ", "the map archive could not be read")
+}
+
 /// Write `percent` onto package `package_id` in a transaction of its own, and answer whether to go on: its
-/// `cancelRequested` is not Y. A row that cannot be read or written is logged and the run goes on.
-fn report(facade: &EntityFacade, package_id: &str, percent: i64) -> bool {
+/// `cancelRequested` is not Y, and with `build_key` the row is still that build's (a run the package no longer holds,
+/// one ended as stale and built again, stops and writes nothing). A row that cannot be read or written is logged and
+/// the run goes on.
+fn report(facade: &EntityFacade, package_id: &str, build_key: &str, percent: i64) -> bool {
     let mut cancelled = false;
     let written = facade.transactions_for(PACKAGE).and_then(|tx| {
         tx.run(TransactionAttribute::ForceNew, None, || {
             let Some(mut row) = facade.find(PACKAGE)?.eq("packageId", Value::string(package_id)).one()? else {
+                cancelled = true;
                 return Ok(());
             };
-            cancelled = row.get("cancelRequested").map(to_plain_string).unwrap_or_default() == "Y";
+            let field = |name: &str| row.get(name).map(to_plain_string).unwrap_or_default();
+            if !build_key.is_empty() && field("buildKey") != build_key {
+                cancelled = true;
+                return Ok(());
+            }
+            cancelled = field("cancelRequested") == "Y";
             row.set("progress", Value::I64(percent));
             row.update(facade)
         })
@@ -822,7 +917,7 @@ fn report(facade: &EntityFacade, package_id: &str, percent: i64) -> bool {
 /// `estimate#PackageExtract` has it) into a new archive at `target` (a `.pmtiles` location under
 /// runtime://tmp/map-packages/), its tiles as stored and the source's metadata whole; with `packageId` the run's
 /// progress from `progressFrom` to `progressTo` (percent) is written to that package's row and its cancel read, between
-/// batches. Out: `valid`, `size`, `sha256` (hex), `tileCount`, `contentCount`, `minZoom`, `maxZoom`, `reads` (the ranges
+/// batches (with `buildKey`, only while the row is still that build's: a run it no longer holds stops as CANCELLED). Out: `valid`, `size`, `sha256` (hex), `tileCount`, `contentCount`, `minZoom`, `maxZoom`, `reads` (the ranges
 /// read for the tiles); refused as the estimate is, and TARGET_INVALID, NO_TILES, CANCELLED (`cancelled` true) and
 /// SOURCE_CHANGED for an archive replaced while it was cut (checked again when the cut ends). A refused or failed cut
 /// leaves no file.
@@ -845,10 +940,11 @@ pub(crate) fn build_package_extract(
         Ok(Err(refusal)) => return Ok(refusal_out(out, &refusal)),
         Err(err) => {
             tracing::warn!(location = %location, error = %err, "A map archive could not be opened for a package");
-            return Ok(refusal_out(out, &refused("NOT_READ", err.message().to_string())));
+            return Ok(refusal_out(out, &not_read()));
         }
     };
     let package_id = text(parameters, "packageId");
+    let build_key = text(parameters, "buildKey");
     let from = number(parameters, "progressFrom").unwrap_or(0).clamp(0, 100);
     let to = number(parameters, "progressTo").unwrap_or(100).clamp(from, 100);
     let mut last_report: Option<std::time::Instant> = None;
@@ -864,7 +960,7 @@ pub(crate) fn build_package_extract(
         // a percent from 0 to 100
         #[allow(clippy::cast_possible_truncation)]
         let percent = from + ((to - from) as f64 * share).round() as i64;
-        report(facade, &package_id, percent.clamp(from, to))
+        report(facade, &package_id, &build_key, percent.clamp(from, to))
     };
     let mut still_pinned = || matches!(open_pinned(&location, &tag, size, modified), Ok(Ok(_)));
     let made = extract(
@@ -886,7 +982,7 @@ pub(crate) fn build_package_extract(
         }
         Err(err) => {
             tracing::error!(location = %location, error = %err, "A map package's extract could not be cut");
-            return Ok(refusal_out(out, &refused("NOT_READ", err.message().to_string())));
+            return Ok(refusal_out(out, &not_read()));
         }
     };
     let mut out = out;
