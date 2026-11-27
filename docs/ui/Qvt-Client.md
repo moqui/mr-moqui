@@ -1093,9 +1093,10 @@ time). Input after an idle beat past the auto-away minutes beats at once, so the
 `{total, unread, mentions, roomCounts, levelMap, roomNameMap}` (`levelMap`: each room's notification level, all,
 mentions or none; `roomNameMap`: each group room's name; the desktop app's notifications follow them).
 
-**The account menu's status**: `m-user-status-menu` (the current status and its message, the four statuses, "Set a status message", "Clear status
-message") and `m-user-status-dialog` (emoji, text up to 100 characters, clear after: don't clear, 30 minutes, 1 hour, 4 hours, today, this
-week), outside the menu so it outlives it. The dialog lists the user's status presets above the fields (`moqui.chat.statusPresets`): the
+**The account menu's status**: `m-user-status-menu` (a row that opens the dialog: the current status and its message with a clear
+button, or "Set a status message" while there is none; then the four statuses, a check on the current one) and `m-user-status-dialog` (emoji, text up to
+100 characters, clear after: don't clear, 30 minutes, 1 hour, 4 hours, today, this week), outside the menu so it outlives
+it. The dialog lists the user's status presets above the fields (`moqui.chat.statusPresets`): the
 preference `CHAT_STATUS_PRESETS` (a JSON list of `{emoji, text, clearAfter}`, `clearAfter` minutes, `today`, `week` or `0` for never; a chat
 settings screen keeps it, BOSS's ChatSettings does) from `config.preferences`, else five defaults (`moqui.chat.defaultPresets`, localized); a
 preset fills the fields and Save sets it.

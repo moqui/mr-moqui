@@ -2764,7 +2764,8 @@
     const labelsOf = (vm) => Object.assign({}, localizeTree(chat.labels), vm.$root && vm.$root.labels);
     const components = moqui.qvtComponents = moqui.qvtComponents || {};
 
-    // The status part of the account menu: the current status with its text, the four statuses, and the status message.
+    // The status part of the account menu: a row that opens the status dialog (the current status and its message with a clear
+    // button, or "Set a status message" while there is none), then the four statuses with a check on the current one.
     components["m-user-status-menu"] = {
         name: "mUserStatusMenu",
         computed: {
@@ -2784,7 +2785,7 @@
         },
         template:
             '<div class="m-user-status">' +
-                '<q-item id="m-status-current" class="q-ma-md" data-status="message" @click="openDialog">' +
+                '<q-item id="m-status-current" class="q-ma-md" clickable v-close-popup data-status="message" :title="labels.setStatus" @click="openDialog">' +
                     '<q-item-section side avatar class="m-status-avatar"><span class="m-status-dot" :class="\'m-presence-\' + currentDot"></span></q-item-section>' +
                     '<q-item-section v-if="me.statusText || me.emoji">' +
                         '<q-item-label>{{currentLabel}}</q-item-label>' +
@@ -2792,13 +2793,13 @@
                     '</q-item-section>' +
                     '<q-item-section v-else>{{labels.setStatus}}</q-item-section>' +
                     '<q-item-section v-if="me.statusText || me.emoji" side>' +
-                        '<q-btn flat round dense icon="sym_o_close" data-status="clear" @click.stop.prevent="clearText" @keyup.enter.stop/>' +
+                        '<q-btn flat round dense icon="sym_o_close" data-status="clear" :aria-label="labels.clearStatus" :title="labels.clearStatus" @click.stop.prevent="clearText" @keyup.enter.stop/>' +
                     '</q-item-section>' +
                 '</q-item>' +
                 '<q-item v-for="option in options" :key="option.value" dense clickable v-close-popup :active="current === option.value" :data-status="option.value" @click="choose(option.value)">' +
                     '<q-item-section avatar class="m-status-avatar"><span class="m-status-dot" :class="\'m-presence-\' + option.dot"></span></q-item-section>' +
                     '<q-item-section>{{option.label}}</q-item-section>' +
-                    '<q-item-section side v-if="current === option.value"><q-icon flat round dense name="sym_o_check"/></q-item-section>' +
+                    '<q-item-section side v-if="current === option.value"><q-icon name="sym_o_check"/></q-item-section>' +
                 '</q-item>' +
             '</div>'
     };

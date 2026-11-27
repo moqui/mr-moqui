@@ -13453,23 +13453,29 @@
               }, 8, ["modelValue", "onUpdate:modelValue"]))
             }
         } },
-        "m-user-status-menu": { hash: "8683de21", make: function (Vue) {
-            const { normalizeClass: _normalizeClass, createElementVNode: _createElementVNode, resolveComponent: _resolveComponent, withCtx: _withCtx, createVNode: _createVNode, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, renderList: _renderList, Fragment: _Fragment, createElementBlock: _createElementBlock, resolveDirective: _resolveDirective, withDirectives: _withDirectives } = Vue
+        "m-user-status-menu": { hash: "85617a9f", make: function (Vue) {
+            const { normalizeClass: _normalizeClass, createElementVNode: _createElementVNode, resolveComponent: _resolveComponent, withCtx: _withCtx, createVNode: _createVNode, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, withModifiers: _withModifiers, withKeys: _withKeys, resolveDirective: _resolveDirective, withDirectives: _withDirectives, renderList: _renderList, Fragment: _Fragment, createElementBlock: _createElementBlock } = Vue
 
             return function render(_ctx, _cache) {
               const _component_q_item_section = _resolveComponent("q-item-section")
               const _component_q_item_label = _resolveComponent("q-item-label")
+              const _component_q_btn = _resolveComponent("q-btn")
               const _component_q_item = _resolveComponent("q-item")
               const _component_q_icon = _resolveComponent("q-icon")
               const _directive_close_popup = _resolveDirective("close-popup")
 
               return (_openBlock(), _createElementBlock("div", { class: "m-user-status" }, [
-                _createVNode(_component_q_item, {
+                _withDirectives((_openBlock(), _createBlock(_component_q_item, {
                   id: "m-status-current",
-                  dense: ""
+                  class: "q-ma-md",
+                  clickable: "",
+                  "data-status": "message",
+                  title: _ctx.labels.setStatus,
+                  onClick: _ctx.openDialog
                 }, {
                   default: _withCtx(() => [
                     _createVNode(_component_q_item_section, {
+                      side: "",
                       avatar: "",
                       class: "m-status-avatar"
                     }, {
@@ -13480,17 +13486,16 @@
                       ]),
                       _: 1
                     }),
-                    _createVNode(_component_q_item_section, null, {
-                      default: _withCtx(() => [
-                        _createVNode(_component_q_item_label, null, {
+                    (_ctx.me.statusText || _ctx.me.emoji)
+                      ? (_openBlock(), _createBlock(_component_q_item_section, { key: 0 }, {
                           default: _withCtx(() => [
-                            _createTextVNode(_toDisplayString(_ctx.currentLabel), 1)
-                          ]),
-                          _: 1
-                        }),
-                        (_ctx.me.statusText || _ctx.me.emoji)
-                          ? (_openBlock(), _createBlock(_component_q_item_label, {
-                              key: 0,
+                            _createVNode(_component_q_item_label, null, {
+                              default: _withCtx(() => [
+                                _createTextVNode(_toDisplayString(_ctx.currentLabel), 1)
+                              ]),
+                              _: 1
+                            }),
+                            _createVNode(_component_q_item_label, {
                               caption: "",
                               class: "m-status-text"
                             }, {
@@ -13498,14 +13503,42 @@
                                 _createTextVNode(_toDisplayString(_ctx.me.emoji ? _ctx.me.emoji + ' ' : '') + _toDisplayString(_ctx.me.statusText), 1)
                               ]),
                               _: 1
-                            }))
-                          : _createCommentVNode("", true)
-                      ]),
-                      _: 1
-                    })
+                            })
+                          ]),
+                          _: 1
+                        }))
+                      : (_openBlock(), _createBlock(_component_q_item_section, { key: 1 }, {
+                          default: _withCtx(() => [
+                            _createTextVNode(_toDisplayString(_ctx.labels.setStatus), 1)
+                          ]),
+                          _: 1
+                        })),
+                    (_ctx.me.statusText || _ctx.me.emoji)
+                      ? (_openBlock(), _createBlock(_component_q_item_section, {
+                          key: 2,
+                          side: ""
+                        }, {
+                          default: _withCtx(() => [
+                            _createVNode(_component_q_btn, {
+                              flat: "",
+                              round: "",
+                              dense: "",
+                              icon: "sym_o_close",
+                              "data-status": "clear",
+                              "aria-label": _ctx.labels.clearStatus,
+                              title: _ctx.labels.clearStatus,
+                              onClick: _withModifiers(_ctx.clearText, ["stop","prevent"]),
+                              onKeyup: _withKeys(_withModifiers(() => {}, ["stop"]), ["enter"])
+                            }, null, 8, ["aria-label", "title", "onClick", "onKeyup"])
+                          ]),
+                          _: 1
+                        }))
+                      : _createCommentVNode("", true)
                   ]),
                   _: 1
-                }),
+                }, 8, ["title", "onClick"])), [
+                  [_directive_close_popup]
+                ]),
                 (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.options, (option) => {
                   return _withDirectives((_openBlock(), _createBlock(_component_q_item, {
                     key: option.value,
@@ -13532,76 +13565,24 @@
                           _createTextVNode(_toDisplayString(option.label), 1)
                         ]),
                         _: 2
-                      }, 1024)
+                      }, 1024),
+                      (_ctx.current === option.value)
+                        ? (_openBlock(), _createBlock(_component_q_item_section, {
+                            key: 0,
+                            side: ""
+                          }, {
+                            default: _withCtx(() => [
+                              _createVNode(_component_q_icon, { name: "sym_o_check" })
+                            ]),
+                            _: 1
+                          }))
+                        : _createCommentVNode("", true)
                     ]),
                     _: 2
                   }, 1032, ["active", "data-status", "onClick"])), [
                     [_directive_close_popup]
                   ])
-                }), 128)),
-                _withDirectives((_openBlock(), _createBlock(_component_q_item, {
-                  dense: "",
-                  clickable: "",
-                  "data-status": "message",
-                  onClick: _ctx.openDialog
-                }, {
-                  default: _withCtx(() => [
-                    _createVNode(_component_q_item_section, {
-                      avatar: "",
-                      class: "m-status-avatar"
-                    }, {
-                      default: _withCtx(() => [
-                        _createVNode(_component_q_icon, {
-                          name: "sym_o_edit",
-                          size: "xs"
-                        })
-                      ]),
-                      _: 1
-                    }),
-                    _createVNode(_component_q_item_section, null, {
-                      default: _withCtx(() => [
-                        _createTextVNode(_toDisplayString(_ctx.labels.setStatus), 1)
-                      ]),
-                      _: 1
-                    })
-                  ]),
-                  _: 1
-                }, 8, ["onClick"])), [
-                  [_directive_close_popup]
-                ]),
-                (_ctx.me.statusText || _ctx.me.emoji)
-                  ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
-                      key: 0,
-                      dense: "",
-                      clickable: "",
-                      "data-status": "clear",
-                      onClick: _ctx.clearText
-                    }, {
-                      default: _withCtx(() => [
-                        _createVNode(_component_q_item_section, {
-                          avatar: "",
-                          class: "m-status-avatar"
-                        }, {
-                          default: _withCtx(() => [
-                            _createVNode(_component_q_icon, {
-                              name: "sym_o_close",
-                              size: "xs"
-                            })
-                          ]),
-                          _: 1
-                        }),
-                        _createVNode(_component_q_item_section, null, {
-                          default: _withCtx(() => [
-                            _createTextVNode(_toDisplayString(_ctx.labels.clearStatus), 1)
-                          ]),
-                          _: 1
-                        })
-                      ]),
-                      _: 1
-                    }, 8, ["onClick"])), [
-                      [_directive_close_popup]
-                    ])
-                  : _createCommentVNode("", true)
+                }), 128))
               ]))
             }
         } }
