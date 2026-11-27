@@ -41,6 +41,8 @@
         .replace(/[\u0000-\u001f\u007f-\u009f‪-‮⁦-⁩]/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
     const indicatorPath = (url) => (typeof url === "string" && /^\/(?![\/\\])/.test(url) && !/[\u0000-\u001f\s]/.test(url) ? url : null);
     const indicatorState = root.Vue && root.Vue.reactive ? root.Vue.reactive({ items: {}, notes: {} }) : { items: {}, notes: {} };
+    // noteFrom's words by indicator key and source
+    const indicatorSources = {};
     moqui.shellIndicators = {
         state: indicatorState,
         set(key, given) {
@@ -61,6 +63,16 @@
             const words = indicatorText(text, 40);
             if (words) indicatorState.notes[key] = words; else delete indicatorState.notes[key];
         },
+        // A note kept by source, for an indicator two screens speak to at once (live location's chip: Maps › Browse and
+        // Chat each send shares, plans/Location-Sharing.md §3.5): each source's words, or null to take its own off; the
+        // note is their distinct words, the first given first, so one screen never clears another's.
+        noteFrom(key, source, text) {
+            const sources = (indicatorSources[key] = indicatorSources[key] || {});
+            const words = indicatorText(text, 40);
+            if (words) sources[String(source)] = words; else delete sources[String(source)];
+            const all = Array.from(new Set(Object.keys(sources).map((name) => sources[name])));
+            this.note(key, all.join(", "));
+        },
         get(key) { return indicatorState.items[key] || null; },
         // in sequence then key order, each with its text: its label and its note
         list() {
@@ -71,6 +83,7 @@
         clear() {
             Object.keys(indicatorState.items).forEach((key) => { delete indicatorState.items[key]; });
             Object.keys(indicatorState.notes).forEach((key) => { delete indicatorState.notes[key]; });
+            Object.keys(indicatorSources).forEach((key) => { delete indicatorSources[key]; });
         }
     };
     moqui.beforeLogoutHooks.add(() => moqui.shellIndicators.clear());

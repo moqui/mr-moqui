@@ -2364,6 +2364,301 @@
         }
     };
 
+    // ---- live location in a room (plans/Location-Sharing.md §3.5, LL4; ChatLocationServices send#LiveLocation and
+    // get#LiveLocation over org.moqui.maps.LocationServices) ----
+    // A live location message carries its share's id (content.location.liveShareId), never a position: its card reads the
+    // share through the liveLocation transition (get#Share checks the audience) and follows the share's topic
+    // locationShare:<shareId>, which the server pushes to the share's current audience only. A share started in a browser
+    // is sent by this page while it is open (chat.live.sender), one started in the Android app by the app's location
+    // service once the person confirms it in the app's own dialog (moquiDesktop.location, as Maps › Browse does).
+    const LIVE_STALE_SECONDS = 300;
+    const liveNumber = (value) => (value === null || value === undefined || value === "" || !Number.isFinite(Number(value)) ? null : Number(value));
+    chat.live = {
+        STALE_SECONDS: LIVE_STALE_SECONDS,
+        // the age of a position in words, as Maps' live layer says it (WebrootMap.js liveAgeText)
+        ageText(seconds) {
+            if (seconds === null || seconds === undefined) return tr("No position yet");
+            if (seconds < 60) return tr("just now");
+            if (seconds < 3600) return Math.floor(seconds / 60) + " " + tr("min ago");
+            if (seconds < 86400) return Math.floor(seconds / 3600) + " " + tr("h ago");
+            return Math.floor(seconds / 86400) + " " + tr("d ago");
+        },
+        // "15:30", or "Fri 09:00" when the end is not today
+        untilText(millis, now) {
+            const at = liveNumber(millis);
+            if (at === null) return "";
+            const date = new Date(at);
+            const today = new Date(now === undefined ? Date.now() : now);
+            const time = String(date.getHours()).padStart(2, "0") + ":" + String(date.getMinutes()).padStart(2, "0");
+            if (date.toDateString() === today.toDateString()) return time;
+            let day = "";
+            try { day = date.toLocaleDateString(undefined, { weekday: "short" }); } catch (err) { day = ""; }
+            return (day ? day + " " : "") + time;
+        },
+        // a position as the server answers it (get#Share's latest, a push), checked, or null
+        point(value) {
+            if (!value || typeof value !== "object") return null;
+            const latitude = liveNumber(value.latitude), longitude = liveNumber(value.longitude);
+            if (latitude === null || longitude === null || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) return null;
+            const accuracy = liveNumber(value.accuracy);
+            return { latitude, longitude, accuracy: accuracy !== null && accuracy >= 0 ? Math.round(accuracy) : null, observedDate: liveNumber(value.observedDate) };
+        },
+        // the card's view from the liveLocation transition's answer, read at `now`: {state (live, ended, notShared, failed),
+        // owner, share, latest, seenAt (this page's clock when the position was taken)}
+        view(json, now) {
+            const at = now === undefined ? Date.now() : now;
+            const answer = json && typeof json === "object" ? json : {};
+            const state = ["live", "ended", "notShared"].includes(answer.state) ? answer.state : "failed";
+            const latest = state === "live" ? chat.live.point(answer.latest) : null;
+            const age = latest ? liveNumber(answer.latest.ageSeconds) : null;
+            return { state, owner: answer.owner === true, share: answer.share && typeof answer.share === "object" ? answer.share : null, latest,
+                seenAt: latest ? at - Math.max(0, age === null ? 0 : age) * 1000 : null };
+        },
+        // the message of a push on locationShare:<shareId> (LocationShares.js push), or null
+        message(jsonObj) {
+            let message = jsonObj && typeof jsonObj === "object" ? jsonObj.message : null;
+            if (typeof message === "string") { try { message = JSON.parse(message); } catch (err) { message = null; } }
+            return message && typeof message === "object" && message.shareId ? message : null;
+        },
+        // a push applied to a card's view, or null when it changes nothing: position moves it (and makes it fresh), changed
+        // takes a new end, ended ends it, and revoked to a viewer means they are out of its audience
+        apply(view, message, now) {
+            if (!view || !message || !view.share || String(message.shareId) !== String(view.share.shareId) || view.state !== "live") return null;
+            const event = String(message.event || "");
+            if (event === "ended") return Object.assign({}, view, { state: "ended", latest: null, seenAt: null });
+            if (event === "revoked") return view.owner ? null : Object.assign({}, view, { state: "notShared", latest: null, seenAt: null });
+            if (event === "position") {
+                const latest = chat.live.point(message);
+                return latest ? Object.assign({}, view, { latest, seenAt: now === undefined ? Date.now() : now }) : null;
+            }
+            if (event === "changed" && liveNumber(message.thruDate) !== null)
+                return Object.assign({}, view, { share: Object.assign({}, view.share, { thruDate: liveNumber(message.thruDate) }) });
+            return null;
+        },
+        // the seconds since the view's position was taken, null with none; stale past STALE_SECONDS
+        ageSeconds(view, now) { return view && view.seenAt !== null && view.seenAt !== undefined ? Math.max(0, Math.round(((now === undefined ? Date.now() : now) - view.seenAt) / 1000)) : null; },
+        stale(view, now) { const age = chat.live.ageSeconds(view, now); return age !== null && age > LIVE_STALE_SECONDS; },
+        // the Android app's location service (moquiDesktop.location, LL3), or null
+        native() {
+            const desktop = root.moquiDesktop;
+            const native = desktop && desktop.location;
+            return native && typeof native.start === "function" ? native : null;
+        }
+    };
+
+    /**
+     * The sender of a page (one for the page, whichever chat views show): while a chat view holds it (hold(), from its
+     * mount to its unmount) and a share of the user's own that this page started (or was asked to send) is on, the
+     * browser's watchPosition, and at most one report a share's interval to the share's report transition. Its statuses
+     * as Maps › Browse handles them (report#Position): 200 taken (its latest told to the listeners), 429 sent again after
+     * retryAfterSeconds, 410 and 404 stop it (ended), 409 STALE and another 400 pass that fix over, CLOCK_AHEAD and
+     * BEFORE_SHARE send from then on with the server's time, OTHER_DEVICE stops it (another device sends it now, said),
+     * AUDIENCE_CHANGED reads the share's audience version again (info.reread) and goes on, or stops it, said, a lost
+     * sign-in (401 or 403, or an answer that is not the transition's JSON) stops every one, said; a network failure tries
+     * again at the next interval. When the last chat view lets go, or at a sign-out (moqui.beforeLogoutHooks), nothing is
+     * sent: the share stays on and its audience sees its age. While it sends, the app bar's live location chip says
+     * "sending here" (moqui.shellIndicators.noteFrom, beside Maps › Browse's own words). No position is kept beyond the
+     * newest fix, logged or stored. env: {geolocation, post(url, params), now, setInterval, clearInterval, setTimeout,
+     * clearTimeout, notify(text)}, for the tests.
+     */
+    chat.live.makeSender = (env) => {
+        const given = env || {};
+        const now = () => (given.now ? given.now() : Date.now());
+        const geo = () => given.geolocation || (typeof navigator !== "undefined" ? navigator.geolocation : null);
+        const post = given.post || ((url, params) => moqui.request(url, { method: "POST", params }).then((result) => result.json));
+        const every = given.setInterval || ((fn, ms) => setInterval(fn, ms));
+        const stopEvery = given.clearInterval || ((id) => clearInterval(id));
+        const notify = given.notify || ((words) => { if (moqui.notifyMessages) moqui.notifyMessages(null, [words]); });
+        const sender = { shares: {}, holders: 0, releaseTimer: null, watchId: null, watchExact: null, fix: null, fixAt: 0, lastAsk: 0, asking: false, generation: 0, timer: null,
+            listeners: [], error: "" };
+        const tell = (change) => sender.listeners.slice().forEach((fn) => { try { fn(change || { kind: "changed" }); } catch (err) { console.error(err); } });
+        sender.on = (fn) => { sender.listeners.push(fn); return () => { sender.listeners = sender.listeners.filter((one) => one !== fn); }; };
+        sender.sending = (shareId) => !!sender.shares[String(shareId)];
+        // the app bar's live location chip (the framework's shell indicator, LocationShares.js indicator) while this page sends
+        const noteChip = () => {
+            const indicators = moqui.shellIndicators;
+            if (indicators && typeof indicators.noteFrom === "function") indicators.noteFrom("locationSharing", "chat", Object.keys(sender.shares).length ? tr("sending here") : null);
+        };
+        sender.list = () => Object.keys(sender.shares).map((id) => { const one = sender.shares[id]; return { shareId: id, thruDate: one.thruDate, label: one.label, note: one.note }; });
+        const exactNeeded = () => Object.keys(sender.shares).some((id) => !sender.shares[id].approximate);
+        const note = (shareId, text) => { const one = sender.shares[shareId]; if (one && one.note !== text) { one.note = text; tell(); } };
+        const onFix = (position) => {
+            const c = (position && position.coords) || {};
+            sender.error = "";
+            sender.fix = { latitude: c.latitude, longitude: c.longitude, accuracy: c.accuracy, heading: c.heading, speed: c.speed, timestamp: position.timestamp || now() };
+            sender.fixAt = now();
+            sender.pump();
+        };
+        const onFixError = (error) => {
+            sender.error = tr("The browser did not give its location, so the room sees your last one") + (error && error.message ? ": " + error.message : "");
+            tell();
+        };
+        // a fix taken now: a share just started, and a keep-alive (a watch gives nothing while the device is still)
+        const freshFix = () => {
+            const g = geo();
+            if (!g || sender.asking || !Object.keys(sender.shares).length) return;
+            const generation = sender.generation;
+            sender.asking = true;
+            sender.lastAsk = now();
+            const current = () => generation === sender.generation;
+            g.getCurrentPosition((position) => { if (current()) { sender.asking = false; onFix(position); } },
+                (error) => { if (current()) { sender.asking = false; onFixError(error); } }, { enableHighAccuracy: exactNeeded(), maximumAge: 0, timeout: 30000 });
+        };
+        const watch = () => {
+            const g = geo();
+            if (!g) { sender.error = tr("This browser cannot give its location, so nothing is sent from here"); tell(); return; }
+            const exact = exactNeeded();
+            if (sender.watchId !== null && sender.watchExact !== exact) { g.clearWatch(sender.watchId); sender.watchId = null; }
+            if (sender.watchId === null) {
+                sender.watchExact = exact;
+                sender.watchId = g.watchPosition(onFix, onFixError, { enableHighAccuracy: exact, maximumAge: 5000, timeout: 60000 });
+            }
+            if (!sender.timer) sender.timer = every(() => sender.pump(), 1000);
+        };
+        const unwatch = () => {
+            const g = geo();
+            if (sender.watchId !== null && g) g.clearWatch(sender.watchId);
+            sender.watchId = null;
+            if (sender.timer) stopEvery(sender.timer);
+            sender.timer = null;
+            sender.fix = null;
+            sender.asking = false;
+            sender.generation += 1;
+        };
+        // info: url (the report transition), intervalSeconds, approximate, thruDate, label, audienceVersion, fresh (a share
+        // just started: no fix taken before it is sent)
+        sender.start = (shareId, info) => {
+            const id = String(shareId);
+            const it = info || {};
+            if (!sender.holders || !it.url) return false;
+            sender.shares[id] = { url: it.url, intervalMillis: Math.max(1, liveNumber(it.intervalSeconds) || (it.approximate ? 60 : 5)) * 1000, approximate: !!it.approximate,
+                thruDate: liveNumber(it.thruDate), label: it.label || "", audienceVersion: liveNumber(it.audienceVersion), nextAt: 0, sentAt: 0, inFlight: false,
+                serverTime: false, notBefore: it.fresh ? now() - 1000 : 0, note: "" };
+            sender.shares[id].reread = typeof it.reread === "function" ? it.reread : null;
+            watch();
+            if (it.fresh) freshFix();
+            // a sign-out stops it (once added, for the page)
+            if (!sender.logoutHooked && moqui.beforeLogoutHooks) { sender.logoutHooked = true; moqui.beforeLogoutHooks.add(() => sender.stopAll("signedOut")); }
+            noteChip();
+            tell({ kind: "started", shareId: id });
+            return true;
+        };
+        sender.stop = (shareId, reason) => {
+            const id = String(shareId);
+            if (!sender.shares[id]) return;
+            delete sender.shares[id];
+            if (!Object.keys(sender.shares).length) unwatch();
+            else watch();
+            noteChip();
+            tell({ kind: "stopped", shareId: id, reason: reason || null });
+        };
+        sender.stopAll = (reason) => Object.keys(sender.shares).forEach((id) => sender.stop(id, reason));
+        // a sign-in lost: every share stops, and the page says so
+        const signedOut = () => {
+            const had = Object.keys(sender.shares).length;
+            sender.stopAll("signedOut");
+            sender.error = tr("Your location is no longer sent from this page: sign in again, then choose Send from here");
+            if (had) notify(sender.error);
+            tell();
+        };
+        // the audience changed since the version this page sends: read again and go on, else stopped and said
+        const audienceChanged = (id, one) => {
+            const stopped = () => {
+                if (sender.shares[id] !== one) return;
+                sender.stop(id, "audienceChanged");
+                notify(tr("Who sees your live location changed: choose Send from here to send it again"));
+            };
+            if (!one.reread) { stopped(); return; }
+            one.inFlight = true;
+            Promise.resolve(one.reread()).then((version) => {
+                one.inFlight = false;
+                if (sender.shares[id] !== one) return;
+                const next = liveNumber(version);
+                if (next === null || next === one.audienceVersion) { stopped(); return; }
+                one.audienceVersion = next;
+                one.nextAt = now();
+            }, () => { one.inFlight = false; stopped(); });
+        };
+        // a chat view holds the sender from its mount to its unmount; with none left for a few seconds (not a room changed
+        // for another, which mounts the next view at once) the page sends nothing more
+        const later = given.setTimeout || ((fn, ms) => setTimeout(fn, ms));
+        const cancelLater = given.clearTimeout || ((id) => clearTimeout(id));
+        sender.hold = () => {
+            sender.holders += 1;
+            if (sender.releaseTimer) { cancelLater(sender.releaseTimer); sender.releaseTimer = null; }
+            let held = true;
+            return () => {
+                if (!held) return;
+                held = false;
+                sender.holders = Math.max(0, sender.holders - 1);
+                if (sender.holders || sender.releaseTimer) return;
+                sender.releaseTimer = later(() => {
+                    sender.releaseTimer = null;
+                    if (!sender.holders) sender.stopAll("closed");
+                }, 3000);
+            };
+        };
+        sender.pump = () => {
+            const ids = Object.keys(sender.shares);
+            if (!ids.length) return;
+            const at = now();
+            ids.filter((id) => sender.shares[id].thruDate !== null && sender.shares[id].thruDate <= at).forEach((id) => sender.stop(id, "ended"));
+            const left = Object.keys(sender.shares);
+            if (!left.length) return;
+            const shortest = Math.min(...left.map((id) => sender.shares[id].intervalMillis));
+            if (at - (sender.fixAt || 0) > Math.max(15000, 3 * shortest) && at - (sender.lastAsk || 0) > 30000) freshFix();
+            const fix = sender.fix;
+            if (!fix) return;
+            left.forEach((id) => {
+                const one = sender.shares[id];
+                if (one.inFlight || at < one.nextAt || fix.timestamp <= one.sentAt || fix.timestamp < one.notBefore) return;
+                report(id, one, fix);
+            });
+        };
+        const text = (value) => (value === null || value === undefined || !Number.isFinite(Number(value)) ? "" : String(value));
+        const report = (id, one, fix) => {
+            one.inFlight = true;
+            const params = { shareId: id, latitude: text(fix.latitude), longitude: text(fix.longitude), accuracy: text(fix.accuracy), heading: text(fix.heading),
+                speed: text(fix.speed), audienceVersion: one.audienceVersion === null ? "" : String(one.audienceVersion), observedDate: one.serverTime ? "" : String(fix.timestamp) };
+            Promise.resolve(post(one.url, params)).then((json) => {
+                one.inFlight = false;
+                if (sender.shares[id] !== one) return;
+                const status = Number(json && json.statusCode);
+                const at = now();
+                const reason = json && json.reasonCode;
+                if (!Number.isFinite(status)) signedOut();
+                else if (status === 200) {
+                    one.sentAt = fix.timestamp;
+                    one.nextAt = at + one.intervalMillis;
+                    if (!one.serverTime) note(id, "");
+                    tell({ kind: "reported", shareId: id, latest: json.latest || null });
+                } else if (status === 429) one.nextAt = at + Math.max(1, Number(json.retryAfterSeconds) || 1) * 1000;
+                else if (status === 410 || status === 404) sender.stop(id, "ended");
+                else if (status === 409 && reason === "OTHER_DEVICE") {
+                    sender.stop(id, "otherDevice");
+                    notify(tr("Another device sends this live location now: choose Send from here to send it from this page"));
+                } else if (status === 409 && reason === "AUDIENCE_CHANGED") audienceChanged(id, one);
+                else if ((status === 409 && reason === "CLOCK_AHEAD") || (status === 400 && reason === "BEFORE_SHARE")) {
+                    one.serverTime = true;
+                    one.nextAt = at + 1000;
+                    note(id, tr("this device's clock is off, so the server's time is used"));
+                } else {
+                    // STALE or a value refused: this fix is passed over
+                    one.sentAt = fix.timestamp;
+                    one.nextAt = at + one.intervalMillis;
+                }
+            }, (err) => {
+                one.inFlight = false;
+                // a sign-in lost or refused: nothing more is sent from here
+                if (err && (err.status === 401 || err.status === 403)) { signedOut(); return; }
+                // the network: tried again at the next interval
+                one.nextAt = now() + one.intervalMillis;
+            });
+        };
+        return sender;
+    };
+    chat.live.sender = chat.live.makeSender();
+
     // ---- screen security, one-time codes and photos (plans/Comms-Messaging.md phase 21; org.moqui.chat.ChatPrivacyServices) ----
     chat.screen = {
         // whether a room asks for Android's FLAG_SECURE: the whole app's setting, an encrypted room with "in encrypted

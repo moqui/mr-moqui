@@ -997,9 +997,9 @@ entities `LocationShare`, `LocationShareAudience`, `LocationShareAudienceMember`
 owner's share count), `LocationLatest`, `LocationTrailPoint` and `LocationXmppLatest` (the owner's XMPP app's latest,
 for its XMPP contacts only) (`moqui.maps`,
 `framework/entity/MapLocationEntities.xml`) and the hourly clean, Maps shows them (below, "In Maps"), and the Android
-app sends a share from the phone, also in the background (below, "From the Android app"), and a share's XMPP contacts
-follow it in their XMPP apps (below, "Over XMPP"). Chat's live location and the guest page for a link are still to
-come.
+app sends a share from the phone, also in the background (below, "From the Android app"), a chat room's members get
+one from Chat's Share live location (below, "In chat"), and a share's XMPP contacts follow it in their XMPP apps (below,
+"Over XMPP"). The guest page for a link is still to come.
 
 **In Maps** (Browse; LL2):
 
@@ -1115,6 +1115,21 @@ come.
   ("from your XMPP app" or "from this page or phone") and the XMPP app's last position's age. With no such share a
   publish is refused, so a client's setting never starts or feeds a share, and its "stopped" (an empty item) ends
   none: the share is the owner's to stop here. XMPP contacts are users of this server only: there is no federation.
+- **In chat** (LL4; [Comms, Live location](Comms.md#live-location)). Chat's Share a location has Share live location:
+  `ChatLocationServices.send#LiveLocation` makes an ordinary share through `create#Share` (no trail, purpose "In chat:
+  the room's name") whose audience is the room's members of that moment as `LsaUser` entries, after the same directory
+  and block rules, and posts a message carrying only the share's id (`content.location.liveShareId`). Its card reads the
+  share through `get#Share` (`get#LiveLocation`, which first reads the message through `get#Timeline`, so only a reader
+  of the room asks) and follows its topic; `get#ShareStatus` (internal) tells a reader of the room whom the share does
+  not reach whether it has ended, and nothing else. Who joins the room later is not added, who leaves by themselves
+  stays in until the owner takes them out here, and who is taken out of the room by another, or blocked by the owner, is
+  taken out of the room's live shares (`revoke#ChatAudience`, internal, the `revoke#Audience` path whoever the caller,
+  over the room's `moqui.chat.ChatLiveShare` rows); the share is in Shared with me, Who sees my location and the app
+  bar's chip like any other. The
+  Android app's dialog and service, and a browser's sending while its page is open (`moqui.chat.live.sender`, Chat's
+  `reportLiveLocation`), are as for a share started in Maps. Not in an encrypted room, where the server would see each
+  position (the decision and its later step are in Comms).
+
 - **The owner's acts.** `create#Share` (the audience, the end, exact or approximate, a trail or not), `update#Share`
   (extend or shorten, add to the audience, change the label or purpose), `stop#Share`, `revoke#Audience` (one person,
   group, XMPP contact or the link), `report#Position` and `delete#Trail` are the owner's alone; another person's share,
