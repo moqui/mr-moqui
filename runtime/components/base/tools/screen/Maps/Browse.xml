@@ -374,7 +374,12 @@ along with this software (see the LICENSE.md file). If not, see
         place the apps' offline Maps screen saved, sent by the outbox: plans/Maps-Offline.md §2.5; clientConfig's
         features.placeRef) makes it once: a save is kept by its ref (ClientSyncServices claim#ClientRequest and
         store#ClientRequest, in one transaction), and sent again it answers the first save with duplicate true. A
-        refusal (too many places, an unreadable places file) keeps no ref, so a retry of it may be saved. -->
+        refusal (too many places, an unreadable places file) and an error of store#Place (a parameter not valid) keep no
+        ref, so a retry of it may be saved: a refusal is answered as one ({applied: false, reasonCode, reason}), an error
+        as {errors}, and so is a ref that is not one. A transaction that failed (MapOverlays.js placeAfterFailure) is
+        answered as the duplicate of the send that holds the ref when its row is there (two sends of one ref overlapping),
+        as store#Place's error when it was one, and else is a 500 the outbox tries again; the failure's own text is only
+        logged. -->
     <transition name="savePlace">
         <actions><script><![CDATA[
             const parameters = {label: label || '', longitude: longitude ?? '', latitude: latitude ?? ''}
@@ -382,6 +387,8 @@ along with this software (see the LICENSE.md file). If not, see
             const ref = String(clientRef ?? '')
             let out = {}
             let duplicate = false
+            // store#Place answered an error (its own refusal of the parameters): a failure after it will not pass
+            let serviceErrored = false
             // the claim of a ref that saved no place goes in the transaction that made it
             const dropClaim = () => ec.entity.find('moqui.basic.client.ClientRequestRef').condition({userId: ec.user.userId,
                 serviceName: SERVICE, clientRef: ref}).disableAuthz().deleteAll()
@@ -394,19 +401,27 @@ along with this software (see the LICENSE.md file). If not, see
                     if (claim.duplicate) { duplicate = true; out = claim.result || {}; return }
                     out = ec.service.sync().name(SERVICE).parameters(parameters).call() || {}
                     // an error (a parameter not valid) keeps no ref, so the same ref may be sent again
-                    if (ec.message.hasError()) { dropClaim(); return }
+                    if (ec.message.hasError()) { serviceErrored = true; dropClaim(); return }
                     // only a place saved keeps its ref: a refusal's claim goes too
                     if (out.applied) ec.service.sync().name('org.moqui.edge.ClientSyncServices.store#ClientRequest')
                         .parameters({clientRef: ref, serviceName: SERVICE, result: out}).call()
                     else dropClaim()
                 })
             } catch (err) {
-                // a failure that rolled the transaction back, its claim with it: answered with its reason, never a 500
-                const why = err && err.message ? err.message : String(err)
-                ec.logger.warn('Map place by clientRef ' + ref + ' not saved: ' + why)
-                if (!ec.message.hasError()) ec.message.addError(ec.l10n.localize('The place was not saved') + ': ' + why)
-                duplicate = false
-                out = {}
+                // The transaction failed and rolled back, its claim with it. Two sends of one ref can overlap (the outbox
+                // sends again after a lost answer): this one's claim missed the other's uncommitted row, then its insert met
+                // the row's key. So the ref is read again, committed now (placeAfterFailure): there, this is the other's
+                // duplicate; else store#Place's own error is answered as it is, and any other failure (the other send not
+                // committed yet, a lock wait, a deadlock, a timeout) is thrown again, a 500 the outbox tries again. The
+                // failure's text (database or constraint detail) is only logged.
+                ec.logger.warn('Map place by clientRef ' + ref + ' not saved: ' + (err && err.message ? err.message : err))
+                const serviceErrors = serviceErrored && ec.message.hasError() ? ec.message.getErrorsString() : ''
+                ec.message.clearErrors()
+                const after = ec.resource.script('component://framework/service/org/moqui/maps/MapOverlays.js')
+                    .execute('placeAfterFailure', {clientRef: ref, serviceErrored})
+                if (after.outcome === 'duplicate') { duplicate = true; out = after.result || {} }
+                else if (after.outcome === 'errors') { ec.message.addError(serviceErrors || ec.l10n.localize('The place was not saved')); out = {} }
+                else throw err
             }
             if (ec.message.hasError()) { const errors = ec.message.getErrorsString(); ec.message.clearErrors(); ec.web.sendJsonResponse({errors}) }
             else ec.web.sendJsonResponse({applied: out.applied, reasonCode: out.reasonCode, reason: out.reason, placeId: out.placeId,

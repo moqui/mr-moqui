@@ -288,9 +288,47 @@ feature(
             out.retried.duplicate == false
             out.file.features.filter(feature => feature.properties.name === "Pier").length == 1
             out.invalid.applied != true
+            !!out.invalid.errors
             out.valid.applied == true
             out.valid.duplicate == false
             out.file.features.filter(feature => feature.properties.name === "Wharf").length == 1
+        }
+    }
+)
+
+// MapOverlays.js placeAfterFailure as the user: savePlace's answer after its transaction failed
+const afterFailure = (userId, params) =>
+    as(userId, () =>
+        ec.resource.script("component://framework/service/org/moqui/maps/MapOverlays.js").execute("placeAfterFailure", params)
+    )
+
+feature(
+    "a place's send that failed is the duplicate of the one that holds its ref, else its error or a retry (plans/Maps-Offline.md §2.5)",
+    {
+        when() {
+            // the overlapping send of the same ref committed its claim and result first, as the race leaves it
+            make("moqui.basic.client.ClientRequestRef", {
+                userId: OWNER,
+                serviceName: "org.moqui.maps.MapServices.store#Place",
+                clientRef: "maps-ovl-place-held",
+                resultJson: JSON.stringify({applied: true, placeId: "p-held"}),
+                createdDate: ec.user.nowTimestamp
+            })
+            return {
+                held: afterFailure(OWNER, {clientRef: "maps-ovl-place-held"}),
+                heldErrored: afterFailure(OWNER, {clientRef: "maps-ovl-place-held", serviceErrored: true}),
+                otherUser: afterFailure(READER, {clientRef: "maps-ovl-place-held"}),
+                none: afterFailure(OWNER, {clientRef: "maps-ovl-place-none"}),
+                refused: afterFailure(OWNER, {clientRef: "maps-ovl-place-none", serviceErrored: true})
+            }
+        },
+        then(out) {
+            out.held.outcome == "duplicate"
+            out.held.result.placeId == "p-held"
+            out.heldErrored.outcome == "duplicate"
+            out.otherUser.outcome == "rethrow"
+            out.none.outcome == "rethrow"
+            out.refused.outcome == "errors"
         }
     }
 )

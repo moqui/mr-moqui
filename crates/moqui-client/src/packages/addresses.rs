@@ -69,15 +69,23 @@ fn rows<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<Row>, D::Error
         fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Vec<Row>, A::Error> {
             let mut out = Vec::new();
             let (mut skipped, mut past) = (0usize, 0usize);
-            while let Some(value) = seq.next_element::<Value>()? {
-                if out.len() >= MAX_ROWS {
-                    past += 1;
+            while out.len() < MAX_ROWS {
+                let Some(value) = seq.next_element::<Value>()? else {
+                    break;
+                };
+                // a row is an object: anything else (an array, a text) is not one
+                if !value.is_object() {
+                    skipped += 1;
                     continue;
                 }
                 match Row::deserialize(value) {
                     Ok(row) => out.push(row),
                     Err(_) => skipped += 1,
                 }
+            }
+            // past the cap the rows are passed over, not read
+            while seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                past += 1;
             }
             if skipped > 0 {
                 tracing::warn!("{skipped} rows of an offline map's addresses are not rows, and were left out");
