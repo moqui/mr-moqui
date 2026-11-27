@@ -25,6 +25,8 @@ fn the_builds_client_conf_is_its_element_and_parses() {
     );
     let conf = ClientConf::parse(element);
     assert_eq!(conf.device_mode, DeviceMode::Choose);
+    // the main app's: no start screen (a build of one app sets MOQUI_CLIENT_CONF)
+    assert_eq!(conf.start_path, None);
     // the element as parsed, not the defaults of text that does not parse: a changed value comes through
     let shared = ClientConf::parse(&element.replace("device-mode=\"choose\"", "device-mode=\"shared\""));
     assert_eq!(shared.device_mode, DeviceMode::Shared);

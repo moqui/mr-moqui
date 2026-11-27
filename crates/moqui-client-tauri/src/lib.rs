@@ -120,6 +120,13 @@ pub trait ShellHost: Send + Sync {
         None
     }
 
+    /// Whether the shell opens the build's start screen (`<client-conf start-path>`) as its home: the mobile app, whose
+    /// one webview shows the server's page in place of the shell and whose Back leaves the app at it. The desktop, which
+    /// opens a server's page in a window of its own, ignores the setting: its shell stays the home.
+    fn opens_start_path(&self) -> bool {
+        false
+    }
+
     /// An account signed in (a new key) and is the current one: the mobile app registers its push token with it.
     fn account_signed_in(&self, account: &str) {
         let _ = account;

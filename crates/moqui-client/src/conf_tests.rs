@@ -47,6 +47,7 @@ fn the_attributes_are_read() {
             prefetch_rooms: 0,
             prefetch_mail: 25,
             store_max_mb: 64,
+            start_path: None,
             packages_max_mb: 1024
         }
     );
@@ -68,4 +69,29 @@ fn a_bad_value_or_text_takes_the_default() {
         ClientConf::parse(r#"<other device-mode="shared"/>"#),
         ClientConf::default()
     );
+}
+
+#[test]
+fn the_start_path_is_a_server_path_or_none() {
+    assert_eq!(ClientConf::default().start_path, None);
+    assert_eq!(
+        ClientConf::parse(r#"<client-conf start-path=" /apps/feed?tab=new "/>"#)
+            .start_path
+            .as_deref(),
+        Some("/apps/feed?tab=new")
+    );
+    for bad in [
+        "",
+        "apps/feed",
+        "//other.example/apps",
+        "/apps\\feed",
+        "/apps/&#9;feed",
+        "https://other.example/",
+    ] {
+        assert_eq!(
+            ClientConf::parse(&format!(r#"<client-conf start-path="{bad}"/>"#)).start_path,
+            None,
+            "{bad:?}"
+        );
+    }
 }

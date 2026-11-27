@@ -39,6 +39,57 @@ use tauri::{AppHandle, Manager, Url, Webview};
 /// The label of the one webview.
 pub(crate) const MAIN: &str = "main";
 
+/// A host's navigation whose page starts the webview's history again: the shell an account change shows (no page of
+/// the account before it stays behind Back), and the build's start screen (Back there leaves the app).
+///
+/// The history is cleared at the start of the page it navigates to (`onPageStarted`, which comes once its document
+/// commits: [`PageState`]), recognised by its origin and path, and the navigation is done: what comes after, a link the
+/// user taps or the page's own change of its address (`replaceState`), is a plain navigation. A start that is not that
+/// page's (a late one of the page before it, another page) is ignored. A redirect's page (`scheme::redirect_page`, a
+/// meta refresh at 0 seconds) clears it at its own start, and the page it goes to replaces its entry (the WebView,
+/// like Chrome, makes a refresh of at most a second a replacement of the current entry), so the history holds that
+/// page alone. A navigation that fails, or that a later one of the host's replaces, takes it back; one whose page never
+/// starts stays until then, and only a start of that same page (the start screen or the shell, where Back leaves the
+/// app anyway) would clear the history.
+#[derive(Debug, Default)]
+pub(crate) struct FreshLoad(Mutex<Option<(String, String)>>);
+
+impl FreshLoad {
+    /// A host's navigation to `url`: fresh, or (none) one that adds to the history.
+    pub(crate) fn navigating(&self, url: Option<&Url>) {
+        *moqui_lib::sync::lock(&self.0) = url.map(|url| (url.origin().ascii_serialization(), url.path().to_string()));
+    }
+
+    /// A new document of `url` started: whether the webview's history is to be cleared now (it is the fresh
+    /// navigation's page).
+    pub(crate) fn started(&self, url: &Url) -> bool {
+        let mut fresh = moqui_lib::sync::lock(&self.0);
+        let clears = fresh
+            .as_ref()
+            .is_some_and(|(origin, path)| *origin == url.origin().ascii_serialization() && path == url.path());
+        if clears {
+            *fresh = None;
+        }
+        clears
+    }
+}
+
+/// Whether `path`, a server path the shell opens (`/qapps/...`), is the build's start screen `start` (`/apps/...` or
+/// `/qapps/...`), its query aside.
+pub(crate) fn is_start(path: &str, start: Option<&str>) -> bool {
+    let bare = |path: &str| {
+        let path = path
+            .split_once('?')
+            .map_or(path, |(bare, _)| bare)
+            .trim_end_matches('/');
+        match path.strip_prefix("/apps") {
+            Some(rest) if rest.is_empty() || rest.starts_with('/') => format!("/qapps{rest}"),
+            _ => path.to_string(),
+        }
+    };
+    start.is_some_and(|start| bare(start) == bare(path))
+}
+
 /// What the one webview shows, as its loads say.
 #[derive(Debug, Default)]
 pub(crate) struct PageState {
@@ -254,6 +305,8 @@ pub(crate) struct MobileHost {
     /// The client, once made (the host is made first, as the client's state holds it).
     pub(crate) client: Mutex<Option<Arc<Client>>>,
     pub(crate) page: PageState,
+    /// The host's navigation whose page clears the webview's history ([`Self::navigate_fresh`]).
+    pub(crate) fresh: FreshLoad,
     /// The TLS verifier is set up: requests may be made.
     pub(crate) network: AtomicBool,
     /// The client's directory (`push.json` beside the accounts).
@@ -274,6 +327,7 @@ impl MobileHost {
             app,
             client: Mutex::new(None),
             page: PageState::default(),
+            fresh: FreshLoad::default(),
             network: AtomicBool::new(network),
             dir,
             answer: Mutex::new(None),
@@ -594,6 +648,17 @@ impl MobileHost {
 
     /// Show `url` in the one webview; its sockets go with the page that leaves.
     pub(crate) fn navigate(&self, url: &Url) {
+        self.go(url, false);
+    }
+
+    /// [`Self::navigate`], to a page that starts the webview's history again ([`FreshLoad`]): Back at it leaves the
+    /// app, never goes to a page from before.
+    pub(crate) fn navigate_fresh(&self, url: &Url) {
+        self.go(url, true);
+    }
+
+    fn go(&self, url: &Url, fresh: bool) {
+        self.fresh.navigating(fresh.then_some(url));
         self.page_gone(Some(url));
         if url.origin().ascii_serialization() == SHELL_ORIGIN {
             self.page.host_shows_shell();
@@ -604,10 +669,14 @@ impl MobileHost {
         match self.app.get_webview_window(MAIN) {
             Some(window) => {
                 if let Err(err) = window.navigate(url.clone()) {
+                    self.fresh.navigating(None);
                     log::error!("The page did not load: {err}");
                 }
             }
-            None => log::warn!("No webview to show {url}"),
+            None => {
+                self.fresh.navigating(None);
+                log::warn!("No webview to show {url}");
+            }
         }
     }
 
@@ -692,8 +761,13 @@ impl ClientHost for MobileHost {
 }
 
 impl ShellHost for MobileHost {
+    fn opens_start_path(&self) -> bool {
+        true
+    }
+
     fn show_shell(&self, url: &Url) {
-        self.navigate(url);
+        // an account signed in, switched, signed out, added or removed
+        self.navigate_fresh(url);
     }
 
     fn close_remotes(&self, account: Option<&str>) {
@@ -710,7 +784,7 @@ impl ShellHost for MobileHost {
             tell_page_server(None);
         }
         if theirs && self.page.origin().as_deref() != Some(SHELL_ORIGIN) {
-            self.navigate(&moqui_client_tauri::shell_url(None, None));
+            self.navigate_fresh(&moqui_client_tauri::shell_url(None, None));
         }
     }
 
@@ -730,7 +804,12 @@ impl ShellHost for MobileHost {
             .and_then(|(account, _)| crate::join::server_host(&account));
         self.page.bind_app(&account, server.as_deref());
         tell_page_server(server.as_deref());
-        self.navigate(&url);
+        let start = self.core().and_then(|core| core.conf().start_path.clone());
+        if is_start(path, start.as_deref()) {
+            self.navigate_fresh(&url);
+        } else {
+            self.navigate(&url);
+        }
         Ok(())
     }
 

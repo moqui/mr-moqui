@@ -3128,6 +3128,10 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="store-max-mb" type="xs:string" default="512"><xs:annotation><xs:documentation>The
                 size cap of an account's store on the device, in MB; past it the least recently read cached data goes
                 (never unsent items or drafts). At least 1.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="start-path" type="xs:string" default=""><xs:annotation><xs:documentation>The
+                mobile app's start screen: the screen its shell opens after the sign-in, as the app's home, a server
+                path such as /apps/feed. The shell then shows no chat panel and no list of apps. Empty for none. The
+                desktop app ignores it.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="packages-max-mb" type="xs:string" default="4096"><xs:annotation><xs:documentation>The
                 size cap of an account's offline map packages on the device, in MB, outside store-max-mb
                 (plans/archive/Maps-Offline.md §2.4): a download that would pass it is refused. At least 1.</xs:documentation>
