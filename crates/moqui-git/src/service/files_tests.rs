@@ -1448,6 +1448,9 @@ fn the_trash_is_not_reached_through_a_link_to_the_whole_drive_or_by_its_path() {
         &[("driveId", text(&bin)), ("path", text(".trash")), ("name", text("x"))],
         "Folder not found",
     );
+    // its name in any case, as a store may read it
+    assert_eq!(level(&bin, Some(".Trash/x")), 0);
+    assert_eq!(level(&bin, Some("pub.txt")), 2, "the drive itself still");
     login("alice");
 
     logout();
@@ -3231,6 +3234,20 @@ fn a_link_ends_when_its_maker_loses_the_drive() {
     );
     assert!(!valid(&bobs), "the removed member's link");
     assert!(valid(&carols) && valid(&alices), "the others' links");
+    // a maker who no longer manages the drive (a lower permission) ends their link at its next use
+    login("alice");
+    ok(
+        "add#DriveMember",
+        &[("driveId", text(&team)), ("userId", text("dave")), ("permissionEnumId", text("RdpManage"))],
+    );
+    let daves = link_of("dave");
+    assert!(valid(&daves));
+    login("alice");
+    ok(
+        "add#DriveMember",
+        &[("driveId", text(&team)), ("userId", text("dave")), ("permissionEnumId", text("RdpView"))],
+    );
+    assert!(!valid(&daves), "a maker who only views now");
     login("alice");
     let _authz = context.disable_authz();
     ok(

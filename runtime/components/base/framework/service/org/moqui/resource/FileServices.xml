@@ -160,8 +160,9 @@ along with this software (see the LICENSE.md file). If not, see
                 level = 0; canUpload = false; viaShareId = null; isOwner = false; recordList = []
             }
             // the hidden trash folder is the owner's only, at every service that takes a path (SEC-FIL-98): copy, move,
-            // rename, a text save, a new folder in it; a job (no user) and an internal call keep their level
-            if (path != null && clean(path).split('/')[0] === '.trash' && userId && !isOwner && !(internal && authzOff)) {
+            // rename, a text save, a new folder in it, its name in any case (a store may read it so); a job (no user)
+            // and an internal call keep their level
+            if (path != null && String(clean(path).split('/')[0]).toLowerCase() === '.trash' && userId && !isOwner && !(internal && authzOff)) {
                 level = 0; canUpload = false; viaShareId = null
             }
             permissionEnumId = [null, 'RdpView', 'RdpEdit', 'RdpManage'][level]
@@ -784,7 +785,7 @@ along with this software (see the LICENSE.md file). If not, see
                 if (depth > 32 || entries.length >= 100000) return
                 for (const child of ec.resource.getChildChanges(folder ? `${root}/${folder}` : root)) {
                     const path = folder ? `${folder}/${child.name}` : child.name
-                    if (!folder && child.name === '.trash') continue
+                    if (!folder && String(child.name).toLowerCase() === '.trash') continue
                     if (child.isFile) entries.push({path: path, location: `${root}/${path}`})
                     else walk(path, depth + 1)
                 }
@@ -841,7 +842,7 @@ along with this software (see the LICENSE.md file). If not, see
             const access = ec.service.sync().name('org.moqui.resource.FileServices.get#DriveAccess').parameters({driveId: driveId, path: path}).call()
             if (!access.drive || access.level < 1) { ec.message.addError(ec.l10n.localize('Folder not found')); return }
             // the hidden trash folder by its path is the owner's only: a member or a share sees what is there through list#Trash
-            if (path.split('/')[0] === '.trash' && !access.isOwner) { ec.message.addError(ec.l10n.localize('Folder not found')); return }
+            if (String(path.split('/')[0]).toLowerCase() === '.trash' && !access.isOwner) { ec.message.addError(ec.l10n.localize('Folder not found')); return }
             drive = access.drive
             const root = drive.rootLocation.replace(/\/+$/, '')
             const location = path ? `${root}/${path}` : root
@@ -948,7 +949,7 @@ along with this software (see the LICENSE.md file). If not, see
                 return 'other'
             }
             changes.forEach((change, index) => {
-                if (!path && change.name === '.trash' && !change.isFile) return
+                if (!path && String(change.name).toLowerCase() === '.trash' && !change.isFile) return
                 if (change.isFile && change.name === '.gitkeep') return
                 const childPath = paths[index]
                 const row = {name: change.name, path: childPath, isDirectory: !change.isFile, size: change.size ?? null,
@@ -985,7 +986,7 @@ along with this software (see the LICENSE.md file). If not, see
             path = clean(path)
             const access = ec.service.sync().name('org.moqui.resource.FileServices.get#DriveAccess').parameters({driveId: driveId, path: path}).call()
             if (!access.drive || access.level < 1 || !path) { ec.message.addError(ec.l10n.localize('File not found')); return }
-            if (path.split('/')[0] === '.trash' && !access.isOwner) { ec.message.addError(ec.l10n.localize('File not found')); return }
+            if (String(path.split('/')[0]).toLowerCase() === '.trash' && !access.isOwner) { ec.message.addError(ec.l10n.localize('File not found')); return }
             const location = `${access.drive.rootLocation.replace(/\/+$/, '')}/${path}`
             const change = ec.resource.getLastChange(location)
             if (change == null) { ec.message.addError(ec.l10n.localize('File not found')); return }
@@ -1045,12 +1046,12 @@ along with this software (see the LICENSE.md file). If not, see
             const excludedPrefixes = [...new Set(Array.from(excludeLocationPrefixList || []).map(normalizedLocation).filter(Boolean))]
             if (excludedPrefixes.length > 200) throw new Error(ec.l10n.localize('Choose at most 200 excluded resource locations'))
             // a path in the trash is only searched in one drive, by its owner (below)
-            if (path.split('/')[0] === '.trash' && !driveId) return
+            if (String(path.split('/')[0]).toLowerCase() === '.trash' && !driveId) return
             const drives = {}
             if (driveId) {
                 const access = ec.service.sync().name('org.moqui.resource.FileServices.get#DriveAccess').parameters({driveId: driveId, path: path}).call()
                 if (!access.drive || access.level < 1) { ec.message.addError(ec.l10n.localize('Drive not found')); return }
-                if (path.split('/')[0] === '.trash' && !access.isOwner) return
+                if (String(path.split('/')[0]).toLowerCase() === '.trash' && !access.isOwner) return
                 drives[driveId] = Object.assign({}, access.drive, {level: access.level})
             } else {
                 for (const drive of ec.service.sync().name('org.moqui.resource.FileServices.get#UserDrives').parameter('includeUsage', false).call().driveList)
@@ -1173,7 +1174,7 @@ along with this software (see the LICENSE.md file). If not, see
                         const candidatePath = folder ? `${folder}/${change.name}` : change.name
                         if (excluded(id, candidatePath)) continue
                         if (visited++ >= 5000) return
-                        if (!folder && change.name === '.trash') continue
+                        if (!folder && String(change.name).toLowerCase() === '.trash') continue
                         if (change.name === '.gitkeep') continue
                         const childPath = folder ? `${folder}/${change.name}` : change.name
                         const row = {driveId: id, driveName: drive.driveName, path: childPath, name: change.name, isDirectory: !change.isFile,
@@ -1257,7 +1258,7 @@ along with this software (see the LICENSE.md file). If not, see
             versionName = null
             if (String(path || '').split('/').includes('..')) { ec.message.addError(ec.l10n.localize('Folder not found')); return }
             path = clean(path)
-            if (path.split('/')[0] === '.trash') { ec.message.addError(ec.l10n.localize('Folder not found')); return }
+            if (String(path.split('/')[0]).toLowerCase() === '.trash') { ec.message.addError(ec.l10n.localize('Folder not found')); return }
             const files = fileList ? Array.from(fileList) : (file ? [file] : [])
             if (!files.length) { ec.message.addError(ec.l10n.localize('No files to upload')); return }
             if (!['replace', 'keepBoth', 'skip'].includes(conflictPolicy)) { ec.message.addError(`Unknown conflict policy ${conflictPolicy}`); return }
@@ -1429,7 +1430,7 @@ along with this software (see the LICENSE.md file). If not, see
             if (String(path || '').split('/').includes('..')) { ec.message.addError(ec.l10n.localize('Folder not found')); return }
             path = clean(path)
             const folderName = String(name).trim()
-            if (!folderName || folderName.includes('/') || folderName === '.' || folderName === '..' || folderName === '.trash') {
+            if (!folderName || folderName.includes('/') || folderName === '.' || folderName === '..' || String(folderName).toLowerCase() === '.trash') {
                 ec.message.addError(ec.l10n.localize('That is not a folder name')); return
             }
             if (folderName.includes('#')) { ec.message.addError(ec.l10n.localize('A folder name may not have # in it')); return }
@@ -1494,7 +1495,7 @@ along with this software (see the LICENSE.md file). If not, see
             if (String(path).split('/').includes('..') || !clean(path)) { ec.message.addError(ec.l10n.localize('File not found')); return }
             path = clean(path)
             const name = String(newName).trim()
-            if (!name || name.includes('/') || name === '.' || name === '..' || name === '.trash') { ec.message.addError(ec.l10n.localize('That is not a file name')); return }
+            if (!name || name.includes('/') || name === '.' || name === '..' || String(name).toLowerCase() === '.trash') { ec.message.addError(ec.l10n.localize('That is not a file name')); return }
             if (name.includes('#')) { ec.message.addError(ec.l10n.localize('A file name may not have # in it')); return }
             const access = ec.service.sync().name('org.moqui.resource.FileServices.get#DriveAccess').parameters({driveId: driveId, path: path}).call()
             if (!access.drive || access.level < 1) { ec.message.addError(ec.l10n.localize('File not found')); return }
@@ -1716,7 +1717,7 @@ along with this software (see the LICENSE.md file). If not, see
             const planned = []
             for (const raw of items) {
                 const item = clean(raw)
-                if (!item || raw.split('/').includes('..') || item === '.trash' || item.startsWith('.trash/')) { trashList.push({path: raw, outcome: 'failed', error: 'not found'}); continue }
+                if (!item || raw.split('/').includes('..') || String(item).toLowerCase() === '.trash' || String(item).toLowerCase().startsWith('.trash/')) { trashList.push({path: raw, outcome: 'failed', error: 'not found'}); continue }
                 const access = ec.service.sync().name('org.moqui.resource.FileServices.get#DriveAccess').parameters({driveId: driveId, path: item}).call()
                 const change = access.level >= 1 ? ec.resource.getLastChange(`${root}/${item}`) : null
                 if (change == null) { trashList.push({path: item, outcome: 'failed', error: 'not found'}); continue }
@@ -1991,7 +1992,7 @@ along with this software (see the LICENSE.md file). If not, see
             if (String(path || '').split('/').includes('..')) { ec.message.addError(ec.l10n.localize('File not found')); return }
             path = clean(path)
             // what is in the trash is not shared
-            if (path.split('/')[0] === '.trash') { ec.message.addError(ec.l10n.localize('File not found')); return }
+            if (String(path.split('/')[0]).toLowerCase() === '.trash') { ec.message.addError(ec.l10n.localize('File not found')); return }
             const link = isLink === 'Y' || isLink === true
             if (!link && !sharedWithUserId && !sharedWithUserGroupId && !sharedWithPartyId && !sharedWithEmail) {
                 ec.message.addError(ec.l10n.localize('Share with someone, or make a link')); return
@@ -2323,7 +2324,7 @@ along with this software (see the LICENSE.md file). If not, see
                         children = children.filter((child, index) => infos[index] != null && infos[index].visible === true)
                     }
                     for (const child of children) {
-                        if (!sourcePath && child.name === '.trash') continue
+                        if (!sourcePath && String(child.name).toLowerCase() === '.trash') continue
                         if (child.name === '.gitkeep') continue
                         walk(sourcePath ? `${sourcePath}/${child.name}` : child.name, zipPath ? `${zipPath}/${child.name}` : child.name, child.isFile, depth + 1)
                     }
@@ -2651,7 +2652,7 @@ along with this software (see the LICENSE.md file). If not, see
                 }
                 for (const raw of Array.from(pathList || [])) {
                     const path = String(raw).split('/').filter((part) => part && part !== '.').join('/')
-                    if (!path || path === '.trash' || path.startsWith('.trash/')) continue
+                    if (!path || String(path).toLowerCase() === '.trash' || String(path).toLowerCase().startsWith('.trash/')) continue
                     const change = ec.resource.getLastChange(`${root}/${path}`)
                     if (change == null) continue
                     document(path, change)
@@ -2697,7 +2698,7 @@ along with this software (see the LICENSE.md file). If not, see
             const done = []
             for (const raw of Array.from(pathList || []).slice(0, 200)) {
                 const path = String(raw).split('/').filter((part) => part && part !== '.').join('/')
-                if (!path || path.split('/').includes('..') || path === '.trash' || path.startsWith('.trash/')) continue
+                if (!path || path.split('/').includes('..') || String(path).toLowerCase() === '.trash' || String(path).toLowerCase().startsWith('.trash/')) continue
                 try {
                     const change = ec.resource.getLastChange(`${root}/${path}`)
                     if (change == null || !change.isFile) continue
@@ -2754,7 +2755,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="check" noun="PublicShareToken" authenticate="anonymous-all">
         <description>The token check of the /s/token route (the token-route in MoquiConf): valid when the token names a
-            link that is not revoked or expired. routeContext is what the public page may show: the item's name, whether
+            link that is not revoked or expired and whose maker still manages its drive. routeContext is what the public page may show: the item's name, whether
             it is a folder, the permission, whether a password is needed, the sharer's name, the note and the expiry.
             Nothing else is read for a bad token.</description>
         <in-parameters><parameter name="token" required="true"/></in-parameters>
@@ -2778,6 +2779,13 @@ along with this software (see the LICENSE.md file). If not, see
             const share = shares.length === 1 ? shares[0] : null
             if (share == null || share.revokedDate != null) return
             if (share.expireDate != null && toMillis(share.expireDate) <= Number(ec.user.nowTimestamp)) return
+            // its maker still manages the drive, as making a link asks (SEC-FIL-10): a removal by a group, a membership
+            // ended by its date or a lower permission ends the link too, at its next use
+            if (share.createdByUserId) {
+                const makerAccess = ec.service.sync().name('org.moqui.resource.FileServices.get#DriveAccess')
+                        .parameters({driveId: share.driveId, userId: share.createdByUserId}).disableAuthz().call()
+                if (!makerAccess || !(makerAccess.level >= 3)) return
+            }
             valid = true
             const path = String(share.path || '')
             let sharerName = null
@@ -2871,7 +2879,7 @@ along with this software (see the LICENSE.md file). If not, see
             const root = String(drive.rootLocation).replace(/\/+$/, '')
             const sharePath = String(row.path || '')
             // a link to the whole drive does not reach its hidden trash folder
-            if (!sharePath && relative.split('/')[0] === '.trash') { ec.message.addError(ec.l10n.localize('Not found')); return }
+            if (!sharePath && String(relative.split('/')[0]).toLowerCase() === '.trash') { ec.message.addError(ec.l10n.localize('Not found')); return }
             const base = sharePath ? `${root}/${sharePath}` : root
             if (row.isDirectory !== 'Y') {
                 if (relative) { ec.message.addError(ec.l10n.localize('Not found')); return }
@@ -2886,7 +2894,7 @@ along with this software (see the LICENSE.md file). If not, see
             try { changes = ec.resource.getChildChanges(relative ? `${base}/${relative}` : base) }
             catch (e) { ec.message.addError(ec.l10n.localize('Not found')); return }
             for (const change of changes) {
-                if (change.name === '.gitkeep' || (!sharePath && !relative && change.name === '.trash')) continue
+                if (change.name === '.gitkeep' || (!sharePath && !relative && String(change.name).toLowerCase() === '.trash')) continue
                 fileList.push({name: change.name, path: relative ? `${relative}/${change.name}` : change.name, isDirectory: !change.isFile,
                     size: change.size ?? null, modified: change.date ?? null, contentType: change.isFile ? (ec.resource.contentTypeOf(change.name) ?? null) : null})
             }
@@ -2940,7 +2948,7 @@ along with this software (see the LICENSE.md file). If not, see
             const root = String(drive.rootLocation).replace(/\/+$/, '')
             const sharePath = String(row.path || '')
             // a link to the whole drive does not reach its hidden trash folder
-            if (!sharePath && relative.split('/')[0] === '.trash') { ec.message.addError(ec.l10n.localize('Not found')); return }
+            if (!sharePath && String(relative.split('/')[0]).toLowerCase() === '.trash') { ec.message.addError(ec.l10n.localize('Not found')); return }
             const base = sharePath ? `${root}/${sharePath}` : root
             const target = relative ? `${base}/${relative}` : base
             const change = ec.resource.getLastChange(target)
@@ -2979,7 +2987,7 @@ along with this software (see the LICENSE.md file). If not, see
                 const walk = (folder, zipPath, depth) => {
                     if (tooLarge || depth > 32) return
                     for (const child of ec.resource.getChildChanges(folder)) {
-                        if (child.name === '.gitkeep' || (folder === root && child.name === '.trash')) continue
+                        if (child.name === '.gitkeep' || (folder === root && String(child.name).toLowerCase() === '.trash')) continue
                         const childZip = zipPath ? `${zipPath}/${child.name}` : child.name
                         if (child.isFile) {
                             bytes += Number(child.size || 0)
@@ -3087,7 +3095,7 @@ along with this software (see the LICENSE.md file). If not, see
             const relative = inner.split('/').filter((part) => part && part !== '.').join('/')
             if (relative && row.permissionEnumId === 'RspUpload') { ec.message.addError(ec.l10n.localize('Not found')); return }
             const sharePath = String(row.path || '')
-            if (!sharePath && relative.split('/')[0] === '.trash') { ec.message.addError(ec.l10n.localize('Not found')); return }
+            if (!sharePath && String(relative.split('/')[0]).toLowerCase() === '.trash') { ec.message.addError(ec.l10n.localize('Not found')); return }
             const folder = [sharePath, relative].filter((part) => part).join('/')
             // a link's own limits: files and bytes in one call, then calls an hour by link and by requester, then what the
             // link has taken in all
@@ -3119,7 +3127,7 @@ along with this software (see the LICENSE.md file). If not, see
             const names = files.map((item) => {
                 const given = item == null ? '' : String(item.fileName || item.name || '')
                 const last = given.split(/[\\/]/).filter((part) => part && part !== '.' && part !== '..').pop() || ''
-                return last && last !== '.trash' ? last : 'upload'
+                return last && String(last).toLowerCase() !== '.trash' ? last : 'upload'
             })
             const who = String(uploaderName || '').trim().slice(0, 100)
             const out = ec.service.sync().name('org.moqui.resource.FileServices.upload#Resource').parameters({driveId: row.driveId, path: folder,
