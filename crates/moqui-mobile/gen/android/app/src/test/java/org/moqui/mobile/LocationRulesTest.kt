@@ -151,6 +151,9 @@ class LocationRulesTest {
         assertEquals("Sam Smith (sam) and Family (4 members)", LocationRules.confirmWhom(" Sam Smith (sam)\n\tand  Family (4 members) "))
         assertEquals("Sam (sam) and Pat (pat)", LocationRules.confirmWhom("Sam (sam)\u0000and\u202FPat (pat)"))
         assertNull(LocationRules.confirmWhom(" \n "))
+        // format characters go: a right-to-left override, an isolate, a zero-width space and joiner
+        assertEquals("Sam (sam) and evil (eve)", LocationRules.confirmWhom("Sam (sam) and \u202Eevil\u202C (\u2066eve\u2069\u200B\u200D)"))
+        assertNull(LocationRules.confirmWhom("\u200B\u202E"))
         val long = LocationRules.confirmWhom("Sam ".repeat(200))!!
         assertEquals(LocationRules.WHOM_MAX, long.length)
         assertTrue(long.endsWith("…"))

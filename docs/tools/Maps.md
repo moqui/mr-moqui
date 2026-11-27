@@ -1166,7 +1166,10 @@ and the guest page for a link are still to come.
 - **Who reads it.** `find#MyShares` (the owner's shares with their audiences), `find#SharedWithMe` and `get#Share` (the
   latest position, and a kept trail in pages of up to 1000 points) answer the owner and the share's current audience
   only: a user whose entry is not revoked, or a member of a group whose entry is not revoked who is in the entry's
-  snapshot and whose membership row of the snapshot is still current, checked again at every read and every push. The
+  snapshot and whose membership row of the snapshot is still current, checked again at every read and every push. A
+  viewer sees the latest position and a kept trail observed from when the audience first reached them only (their
+  entry's `fromDate`, or their group snapshot's `reachedDate`, kept when the group is added again), so no position
+  reported before a person was added reaches them; the owner sees everything. The
   snapshot (`LocationShareAudienceMember`) is the group's members when the owner adds the group, each with the
   membership row that makes them one, less every one the chat directory refuses the owner at that act (its hooks, the
   external-caller rule, the people who blocked the owner; a block made later applies at the next re-add, as for a direct

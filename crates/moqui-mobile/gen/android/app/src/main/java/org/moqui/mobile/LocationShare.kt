@@ -241,7 +241,11 @@ object LocationShare {
             Log.i(TAG, "Share ${share.shareId} is not sent from this phone: the person said Not now")
             return "declined"
         }
-        synchronized(this) { shares[share.key] = share }
+        // sent from now on, no longer paused (a share whose audience changed, confirmed again from the page)
+        synchronized(this) {
+            shares[share.key] = share
+            paused.remove(share.key)
+        }
         return try {
             ContextCompat.startForegroundService(app, Intent(app, LocationShareService::class.java))
             "started"
@@ -294,13 +298,10 @@ object LocationShare {
     }
 
     /**
-     * The confirmation's Send against tapjacking: hidden overlays over the dialog (Android 12+, HIDE_OVERLAY_WINDOWS),
-     * a touch through another window refused below that (the decor view's filter, and the button's own check of
-     * FLAG_WINDOW_IS_PARTIALLY_OBSCURED), the button only enabled [LocationRules.SEND_DELAY_MS] after the dialog has the
-     * window's focus, and the dialog's text kept from accessibility services that are not tools for the person (Android
-     * 14+).
+     * The confirmation's window before it shows, against tapjacking: other apps' overlays hidden (Android 12+,
+     * HIDE_OVERLAY_WINDOWS) and its text kept from accessibility services that are not tools for the person (14+); a
+     * touch through another window is refused by the decor view's filter and by [guardSend].
      */
-    /** The dialog's window before it shows: other apps' overlays hidden (12+), its text accessibility-sensitive (14+). */
     private fun guardWindow(dialog: android.app.AlertDialog) {
         val window = dialog.window ?: return
         if (Build.VERSION.SDK_INT >= 31) window.setHideOverlayWindows(true)

@@ -171,11 +171,19 @@ function snapshotGroup(share, row) {
         if (ec.message.hasError()) return false
         refused = new Set(Array.from((out && out.refusedUserIdList) || []).map(String))
     }
+    // when each member was first reached by this entry, kept for one already in its snapshot: a position reported before
+    // a person was reached never reaches them (plans/Location-Sharing.md §3.4)
+    const reached = {}
+    for (const held of find(AUDIENCE_MEMBER).condition("shareId", share.shareId).condition("audienceSeqId", row.audienceSeqId)
+        .selectField("userId,reachedDate").list())
+        if (held.reachedDate != null) reached[held.userId] = held.reachedDate
+    const now = new Date(nowMillis())
     find(AUDIENCE_MEMBER).condition("shareId", share.shareId).condition("audienceSeqId", row.audienceSeqId).deleteAll()
     for (const userId of members.filter(id => !refused.has(id)))
         ec.entity
             .makeValue(AUDIENCE_MEMBER)
-            .setAll({shareId: share.shareId, audienceSeqId: row.audienceSeqId, userId, memberFromDate: since[userId]})
+            .setAll({shareId: share.shareId, audienceSeqId: row.audienceSeqId, userId, memberFromDate: since[userId],
+                reachedDate: reached[userId] || now})
             .create()
     return true
 }
@@ -191,6 +199,32 @@ function currentUserIds(share) {
     ids.delete(share.ownerUserId)
     return Array.from(ids)
 }
+
+/**
+ * When the share's current audience first reached the user, epoch millis, or null when it does not: the earliest of
+ * its entries that reach them (a person's entry when it was added; a group's snapshot when it first held them). A viewer
+ * sees the latest position and the trail only from then on, so no position reported before a person was added reaches
+ * them (plans/Location-Sharing.md §3.4).
+ */
+function reachedAt(share, userId) {
+    if (!userId || userId === share.ownerUserId) return null
+    let earliest = null
+    const sooner = at => {
+        if (at != null && (earliest == null || at < earliest)) earliest = at
+    }
+    for (const row of activeAudience(share.shareId)) {
+        if (row.audienceTypeEnumId === "LsaUser" && row.userId === userId) sooner(millis(row.fromDate))
+        if (row.audienceTypeEnumId === "LsaUserGroup" && row.userGroupId && groupEntryUserIds(row, userId).length) {
+            const held = find(AUDIENCE_MEMBER).condition({shareId: share.shareId, audienceSeqId: row.audienceSeqId, userId}).one()
+            sooner(held && held.reachedDate != null ? millis(held.reachedDate) : millis(row.fromDate))
+        }
+    }
+    return earliest
+}
+
+/** A latest position as a viewer reached at `reached` may see it: only one observed from then on. */
+const latestSince = (latest, reached) =>
+    latest && reached != null && latest.observedDate != null && latest.observedDate >= reached ? latest : null
 
 /** Whether the share's current audience holds the user, checked at each read. */
 function inAudience(share, userId) {
@@ -535,6 +569,7 @@ function update(p) {
         if (audience.entries.some(entry => entry.type === "LsaLink") && rows.some(row => row.audienceTypeEnumId === "LsaLink"))
             return refuse("ONE_LINK", "A share has one guest link")
         // a group added again is stamped now: its members who joined since the owner last added it are let in, and told
+        let restamped = 0
         for (const row of rows)
             if (
                 row.audienceTypeEnumId === "LsaUserGroup" &&
@@ -543,14 +578,16 @@ function update(p) {
                 row.fromDate = new Date(now)
                 row.update()
                 if (!snapshotGroup(share, row)) return groupCheckFailed()
+                restamped++
             }
         added = addAudience(share, fresh, now)
         if (added.reasonCode) return added
         const reach = checkReach(share)
         if (reach.reasonCode) return reach
-        // any add, a group added again (its row stamped again, its snapshot written again): the audience the person's
-        // device confirmed is not this one, so its reports are refused until it confirms this version
-        share.audienceVersion = (Number(share.audienceVersion) || 0) + 1
+        // an entry added, or a group added again (its row stamped again, its snapshot written again): the audience the
+        // person's device confirmed is not this one, so its reports are refused until it confirms this version; a person
+        // or contact already there, given again, changes nothing
+        if (fresh.length || restamped) share.audienceVersion = (Number(share.audienceVersion) || 0) + 1
     }
     share.update()
     const reached = currentUserIds(share)
@@ -933,7 +970,7 @@ function findShared() {
     const shareList = shares.map(share =>
         Object.assign(viewerView(share, now), {
             ownerName: (owners[share.ownerUserId] || {}).name || share.ownerUserId,
-            latest: latest[share.shareId] || null
+            latest: latestSince(latest[share.shareId] || null, reachedAt(share, me))
         })
     )
     return {shareList}
@@ -947,13 +984,17 @@ function get(p) {
     if (!share || (!owner && !(isActive(share, now) && inAudience(share, ec.user.userId)))) return notFound()
     const view = owner ? ownerView(share, now) : viewerView(share, now)
     if (!owner) view.ownerName = (namesOf([share.ownerUserId])[share.ownerUserId] || {}).name || share.ownerUserId
-    const latest = isActive(share, now) ? latestByShare([share.shareId], now)[share.shareId] || null : null
+    // a viewer sees what was observed from when the audience reached them on; the owner sees everything
+    const reached = owner ? null : reachedAt(share, ec.user.userId)
+    const anyLatest = isActive(share, now) ? latestByShare([share.shareId], now)[share.shareId] || null : null
+    const latest = owner ? anyLatest : latestSince(anyLatest, reached)
     const pageSize = Math.max(1, Math.min(TRAIL_PAGE_MAX, Number(p.trailPageSize) || 500))
     const pageIndex = Math.max(0, Number(p.trailPageIndex) || 0)
     let trailList = []
     let trailCount = 0
     if (share.keepTrail === "Y") {
-        const trail = find(TRAIL).condition("shareId", share.shareId)
+        let trail = find(TRAIL).condition("shareId", share.shareId)
+        if (!owner) trail = trail.condition("observedDate", "greater-equals", new Date(reached == null ? now : reached))
         trailCount = trail.count()
         trailList = Array.from(
             trail
@@ -1223,14 +1264,17 @@ function deviceShares(p) {
         }
         // each on its own: one that fails is logged by its id and the rest go on
         try {
+            let ended = false
             ec.transaction.runRequireNew(30, "Error stopping location share " + listed.shareId, () => {
                 const now = nowMillis()
                 const share = find(SHARE).condition("shareId", listed.shareId).forUpdate(true).one()
                 if (!share || share.endedDate != null) return
                 if (share.revokedDate == null && millis(share.thruDate) > now) share.revokedDate = new Date(now)
                 endShare(share, now)
-                stoppedCount++
+                ended = true
             })
+            // counted once its transaction committed
+            if (ended) stoppedCount++
         } catch (err) {
             ec.logger.error(`Location share ${listed.shareId} of a revoked device key was not stopped: ${err && err.message ? err.message : err}`)
         }

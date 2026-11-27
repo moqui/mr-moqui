@@ -346,6 +346,7 @@ fn a_share_to_start_takes_its_words_from_the_server_not_the_page() {
         (200, unversioned),
         (502, Value::Null),
         (200, Value::Null),
+        (401, Value::Null),
     ]);
     let read = |id: &str| read_share(id, (&ann, "device-key"), &posts, now);
     assert!(matches!(read("701"), Err(ReadRefused::Gone(reason)) if reason.contains("Another device")));
@@ -363,7 +364,11 @@ fn a_share_to_start_takes_its_words_from_the_server_not_the_page() {
         matches!(read("706"), Err(ReadRefused::Retry(_))),
         "no answer: asked again"
     );
-    assert_eq!(read("707"), Err(ReadRefused::Gone("signedOut".to_string())));
+    assert!(
+        matches!(read("707"), Err(ReadRefused::Retry(_))),
+        "a portal's page: asked again"
+    );
+    assert_eq!(read("708"), Err(ReadRefused::Gone("signedOut".to_string())));
 }
 
 #[test]

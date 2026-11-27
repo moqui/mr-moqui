@@ -1578,8 +1578,8 @@ module.exports = {
             // the audience version this page read (a share sent from a device, the app's page, takes reports of the version
             // its audience is at; one the page has not read since is refused and read again)
             const share = this.myShares.find((one) => one.shareId === shareId);
-            const version = share && share.audienceVersion ? share.audienceVersion : (this.sendInfo[shareId] || {}).audienceVersion;
-            const params = { shareId, audienceVersion: version ? String(version) : '', latitude: num(fix.latitude), longitude: num(fix.longitude), accuracy: num(fix.accuracy), heading: num(fix.heading), speed: num(fix.speed),
+            const version = share && share.audienceVersion != null ? share.audienceVersion : (this.sendInfo[shareId] || {}).audienceVersion;
+            const params = { shareId, audienceVersion: version != null ? String(version) : '', latitude: num(fix.latitude), longitude: num(fix.longitude), accuracy: num(fix.accuracy), heading: num(fix.heading), speed: num(fix.speed),
                 observedDate: state.serverTime ? '' : String(fix.timestamp) };
             state.inFlight = true;
             const signedOut = () => {

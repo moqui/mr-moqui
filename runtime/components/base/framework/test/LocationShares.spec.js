@@ -1249,3 +1249,48 @@ feature("a share sent from a device takes reports of the audience version its pe
         out.browser.statusCode == 200
     }
 })
+
+feature("a person added sees no position reported before they were added: no latest and no trail until the next report", {
+    when() {
+        later(6000)
+        const shareId = as(A, "create#Share", {audienceList: [toUser(B)], thruDate: new Date(shared.now + HOUR), keepTrail: true}).shareId
+        report(shareId, "42.1", "-111.9")
+        later(6000)
+        report(shareId, "42.2", "-111.9")
+        later(6000)
+        // C added after those reports, and a person already there given again (nothing new: the version stays)
+        const versionBefore = sys(() => ec.entity.find("moqui.maps.LocationShare").condition("shareId", shareId).one().audienceVersion)
+        const sameAgain = as(A, "update#Share", {shareId, addAudienceList: [toUser(B)]})
+        const versionSame = sys(() => ec.entity.find("moqui.maps.LocationShare").condition("shareId", shareId).one().audienceVersion)
+        const added = as(A, "update#Share", {shareId, addAudienceList: [toUser(C)]})
+        const versionAdded = sys(() => ec.entity.find("moqui.maps.LocationShare").condition("shareId", shareId).one().audienceVersion)
+        const seen = userId => sharedWith(userId).find(row => row.shareId === shareId) || null
+        const out = {sameAgain, added, versionBefore, versionSame, versionAdded}
+        out.cListed = seen(C)
+        out.cGot = as(C, "get#Share", {shareId})
+        out.bGot = as(B, "get#Share", {shareId})
+        out.ownerGot = as(A, "get#Share", {shareId})
+        // the next report reaches C, and C's trail starts there
+        later(6000)
+        report(shareId, "42.3", "-111.9")
+        out.cAfter = as(C, "get#Share", {shareId})
+        as(A, "stop#Share", {shareId})
+        return out
+    },
+    then(out) {
+        out.sameAgain.errors == ""
+        out.versionSame == out.versionBefore
+        out.added.errors == ""
+        out.versionAdded == out.versionBefore + 1
+        out.cListed != null
+        out.cListed.latest == null
+        out.cGot.latest == null
+        out.cGot.trailList.length == 0
+        out.cGot.trailCount == 0
+        out.bGot.latest.latitude == 42.2
+        out.bGot.trailList.length == 2
+        out.ownerGot.trailList.length == 2
+        out.cAfter.latest.latitude == 42.3
+        out.cAfter.trailList.map(point => point.latitude).join() == "42.3"
+    }
+})

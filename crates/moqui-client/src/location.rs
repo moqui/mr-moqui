@@ -199,7 +199,6 @@ impl Reporter {
         self.stopped
     }
 
-    /// The interval changed (the share became approximate, the server's setting): from the next send on.
     /// The audience version the person confirmed for this share, sent from now on.
     pub fn set_audience_version(&mut self, version: i64) {
         self.audience_version = Some(version);

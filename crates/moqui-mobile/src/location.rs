@@ -324,8 +324,13 @@ pub(crate) fn read_share(
     let (status, json) = poster
         .post(server, key, SHARE_PATH, &[("shareId", share_id)])
         .map_err(ReadRefused::Retry)?;
-    if status == 401 || status == 403 || (status < 400 && json.is_null()) {
+    if status == 401 || status == 403 {
         return Err(ReadRefused::Gone("signedOut".to_string()));
+    }
+    // an answer that is not the transition's JSON (a captive portal, a proxy's page) says nothing of the share: asked
+    // again; a signed-out key is answered 401
+    if status < 400 && json.is_null() {
+        return Err(ReadRefused::Retry("not the server's answer".to_string()));
     }
     if status >= 400 {
         return Err(ReadRefused::Retry(format!("HTTP {status}")));

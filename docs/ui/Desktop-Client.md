@@ -484,7 +484,9 @@ A live location share started in Maps (plans/Location-Sharing.md §3.4, [Maps, L
 is sent from the desktop as from a browser: Browse's own `watchPosition` while its window is open, and nothing once it
 closes (the share stays on and goes stale; the desktop has no background sender and no `moquiDesktop.location`). Its
 requests carry the account's device key, so a share started here is bound to this computer, and Send from here takes
-one over from another device. A server's page gets `Permissions-Policy` `geolocation=(self)`
+one over from another device. Its reports carry the share's audience version the page read; on a change (409
+`AUDIENCE_CHANGED`) the page reads the shares again and goes on with the new version, shown in its banner: it is
+read again, not confirmed as the phone's own dialog confirms it. A server's page gets `Permissions-Policy` `geolocation=(self)`
 (`moqui_client_tauri::scheme::PAGE_PERMISSIONS_POLICY`), which lets Browse, the window's own document, ask and keeps a
 frame of another origin from it. The permission is left to CEF (`bridge::on_permission` answers the camera, the
 microphone and screen capture only): Chrome style (Linux, Windows) asks the person with Chromium's prompt; macOS's Alloy

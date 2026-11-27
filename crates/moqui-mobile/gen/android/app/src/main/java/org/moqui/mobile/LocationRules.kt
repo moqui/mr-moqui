@@ -175,10 +175,13 @@ object LocationRules {
 
     /**
      * Whom the confirmation names: the server's words on one line (control characters and line breaks as spaces, runs
-     * of spaces as one), at most [WHOM_MAX] characters, or null for none (the dialog then says "the people you chose").
+     * of spaces as one, and format characters dropped: bidi overrides and isolates, zero-width spaces and joiners, which
+     * a name others chose could use to reorder or hide what the dialog shows), at most [WHOM_MAX] characters, or null for
+     * none (the dialog then says "the people you chose").
      */
     fun confirmWhom(audience: String): String? {
-        val line = audience.map { if (it.isISOControl() || it.isWhitespace()) ' ' else it }.joinToString("")
+        val line = audience.filter { Character.getType(it) != Character.FORMAT.toInt() }
+            .map { if (it.isISOControl() || it.isWhitespace()) ' ' else it }.joinToString("")
             .replace(Regex(" +"), " ").trim()
         if (line.isEmpty()) return null
         return if (line.length <= WHOM_MAX) line else line.take(WHOM_MAX - 1).trimEnd() + "…"
