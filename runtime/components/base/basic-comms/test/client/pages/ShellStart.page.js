@@ -145,7 +145,34 @@ test("a start screen the shell does not bundle opens as the server's page, as /q
         moqui.connection.offline = false;
         await until(() => host.remotes.length, "the start page once the server answers");
         assert.deepEqual(host.remotes, ["/qapps/feed"]);
+        // an offline start (the shell's start answered from the store) with no socket yet: the shell's own request
+        // answered by the server opens it, and the socket opening after that opens nothing more (and reloads nothing)
+        host.remotes.length = 0;
+        root.$.props.offline = true;
+        moqui.connection.offline = true;
+        await Vue.nextTick();
+        root.goHome();
+        await until(() => document.querySelector(".m-shell-start-waiting"), "the notice of an offline start");
+        moqui.connection.offline = false;
+        await until(() => host.remotes.length, "the start page once a request is answered");
+        root.socketState = "open";
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        assert.deepEqual(host.remotes, ["/qapps/feed"], "opened exactly once");
+        // and the socket first: once too
+        host.remotes.length = 0;
+        root.socketState = "closed";
+        moqui.connection.offline = true;
+        await Vue.nextTick();
+        root.goHome();
+        await until(() => document.querySelector(".m-shell-start-waiting"), "the notice again");
+        root.socketState = "open";
+        await until(() => host.remotes.length, "the start page once the socket opens");
+        moqui.connection.offline = false;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        assert.deepEqual(host.remotes, ["/qapps/feed"], "opened exactly once");
     } finally {
+        root.$.props.offline = false;
+        root.socketState = null;
         moqui.connection.offline = false;
         shellState.startPath = "/qapps/BasicComms/Chat";
         host.remotes.length = 0;

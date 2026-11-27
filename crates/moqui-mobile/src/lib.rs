@@ -301,15 +301,14 @@ fn shell_webview(app: &AppHandle, host: &Arc<MobileHost>) -> tauri::Result<()> {
             // a hash): the calls the page joined end with it
             load_host.page_gone(None);
             load_host.page.started(payload.url());
-            load_host.fresh.started(payload.url());
+            if load_host.fresh.started(payload.url()) {
+                clear_history(&window);
+            }
             if let Some(core) = moqui_lib::sync::lock(&load_host.client).clone() {
                 core.sockets().close_for(MAIN);
             }
         }
         PageLoadEvent::Finished => {
-            if load_host.fresh.loaded(payload.url()) {
-                clear_history(&window);
-            }
             if payload.url().origin().ascii_serialization() == SHELL_ORIGIN {
                 load_host.shell_loaded(payload.url());
                 log::info!("moqui-mobile: the shell loaded");

@@ -39,63 +39,34 @@ use tauri::{AppHandle, Manager, Url, Webview};
 /// The label of the one webview.
 pub(crate) const MAIN: &str = "main";
 
-/// A host's navigation whose page starts the webview's history again once it loads: the shell an account change shows
-/// (no page of the account before it stays behind Back), and the build's start screen (Back there leaves the app).
+/// A host's navigation whose page starts the webview's history again: the shell an account change shows (no page of
+/// the account before it stays behind Back), and the build's start screen (Back there leaves the app).
 ///
-/// It is tied to the page it navigates to, by origin and path. A load that starts before that page's own start (a late
-/// event of the page before it) is ignored. Once the page started, a new document of its origin is a redirect's page
-/// (`scheme::redirect_page`, which the WebView replaces) going on, and the navigation follows it; one of another origin
-/// means the page was left before it loaded, and takes it back. The first of these pages to finish loading clears the
-/// history; then the next page adds to it. A navigation that fails, or that a later one of the host's replaces, takes
-/// it back too.
+/// The history is cleared at the start of the page it navigates to (`onPageStarted`, which comes once its document
+/// commits: [`PageState`]), recognised by its origin and path, and the navigation is done: what comes after, a link the
+/// user taps or the page's own change of its address (`replaceState`), is a plain navigation. A start that is not that
+/// page's (a late one of the page before it, another page) is ignored. A redirect's page (`scheme::redirect_page`, a
+/// meta refresh at 0 seconds) clears it at its own start, and the page it goes to replaces its entry (the WebView,
+/// like Chrome, makes a refresh of at most a second a replacement of the current entry), so the history holds that
+/// page alone. A navigation that fails, or that a later one of the host's replaces, takes it back; one whose page never
+/// starts stays until then, and only a start of that same page (the start screen or the shell, where Back leaves the
+/// app anyway) would clear the history.
 #[derive(Debug, Default)]
-pub(crate) struct FreshLoad(Mutex<Option<Fresh>>);
-
-/// The page a [`FreshLoad`] waits for, and whether its load started.
-#[derive(Debug)]
-pub(crate) struct Fresh {
-    origin: String,
-    path: String,
-    started: bool,
-}
-
-impl Fresh {
-    fn is(&self, url: &Url) -> bool {
-        self.origin == url.origin().ascii_serialization() && self.path == url.path()
-    }
-}
+pub(crate) struct FreshLoad(Mutex<Option<(String, String)>>);
 
 impl FreshLoad {
     /// A host's navigation to `url`: fresh, or (none) one that adds to the history.
     pub(crate) fn navigating(&self, url: Option<&Url>) {
-        *moqui_lib::sync::lock(&self.0) = url.map(|url| Fresh {
-            origin: url.origin().ascii_serialization(),
-            path: url.path().to_string(),
-            started: false,
-        });
+        *moqui_lib::sync::lock(&self.0) = url.map(|url| (url.origin().ascii_serialization(), url.path().to_string()));
     }
 
-    /// A new document of `url` started.
-    pub(crate) fn started(&self, url: &Url) {
+    /// A new document of `url` started: whether the webview's history is to be cleared now (it is the fresh
+    /// navigation's page).
+    pub(crate) fn started(&self, url: &Url) -> bool {
         let mut fresh = moqui_lib::sync::lock(&self.0);
-        let Some(waiting) = fresh.as_mut() else {
-            return;
-        };
-        if !waiting.started {
-            // the page's own start; any other before it is the page before's
-            waiting.started = waiting.is(url);
-        } else if waiting.origin == url.origin().ascii_serialization() {
-            // a redirect's page going on to where it points
-            waiting.path = url.path().to_string();
-        } else if url.origin().is_tuple() {
-            *fresh = None;
-        }
-    }
-
-    /// A page of `url` loaded: whether the webview's history is to be cleared now.
-    pub(crate) fn loaded(&self, url: &Url) -> bool {
-        let mut fresh = moqui_lib::sync::lock(&self.0);
-        let clears = fresh.as_ref().is_some_and(|waiting| waiting.started && waiting.is(url));
+        let clears = fresh
+            .as_ref()
+            .is_some_and(|(origin, path)| *origin == url.origin().ascii_serialization() && path == url.path());
         if clears {
             *fresh = None;
         }

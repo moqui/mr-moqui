@@ -1353,6 +1353,8 @@ module.exports = {
         },
         // the server out of reach: the start's answers came from the store, or one since (moqui.connection)
         isOffline() { return !!(moqui.connection && moqui.connection.offline) || (this.offline && this.socketState !== 'open'); },
+        // the host's last answer of the shell's requests came from the server (moqui.connection), not from the store
+        serverAnswers() { return !(moqui.connection && moqui.connection.offline); },
         // the comms app's path under basePath (BasicComms, or an app's own Comms)
         // the build's start screen (<client-conf start-path>): the home in place of the chat panel and the apps
         startPath() { return String((this.state && this.state.startPath) || ''); },
@@ -1469,10 +1471,15 @@ module.exports = {
             immediate: true
         },
         // the socket back after an offline start: the shell opens again, with what the server has now (the panel; a comms
-        // screen shown reads again itself)
-        socketState(state) { if (state === 'open' && this.offline && !this.view) location.reload(); },
-        // the server answers again after a start of the shell that was not offline: the server's start page held back opens
-        isOffline(now) { if (!now && this.startWaiting && !this.offline && !this.view) this.goHome(); },
+        // screen shown reads again itself). With a start screen there is no panel to read again: the server's start page
+        // held back opens instead (startOnline), the one way it opens once the server answers.
+        socketState(state) {
+            if (state !== 'open') return;
+            if (this.startPath) this.startOnline();
+            else if (this.offline && !this.view) location.reload();
+        },
+        // the server answers the shell's own requests again (moqui.connection: the counts' poll, any request)
+        serverAnswers(now) { if (now) this.startOnline(); },
         // a screen's quick create (a task from a chat message, a contact from mail): its screen in an app window
         quickCreateShow(shown) {
             if (!shown) return;
@@ -1580,12 +1587,19 @@ module.exports = {
         },
         // the home: the chat panel, or the build's start screen, in place or as the server's page. The server's page waits
         // while the server is out of reach (its load would fail, with no way back to the shell): the shell says so, and
-        // opens it when the server answers again (the isOffline watch, or the reload of an offline start).
+        // opens it when the server answers again (startOnline).
         goHome() {
             this.view = null; this.currentPathList = []; this.currentParameters = {}; this.backStack = []; this.activeContainers = {};
             this.startReplaced = null;
             this.startWaiting = !!this.startPath && !this.route(this.startPath) && this.isOffline;
             if (this.startPath && !this.startWaiting) this.setUrl(this.startPath, null, null, false);
+        },
+        // the server answers again (the socket open, or a request of the shell's answered by it): the server's start page
+        // that waited opens, once; startWaiting is the one guard of every way here, and the offline start's reload waits
+        startOnline() {
+            if (!this.startWaiting || this.view) return;
+            this.startWaiting = false;
+            this.setUrl(this.startPath, null, null, false);
         },
         goPreviousScreen() { this.historyBack(); },
         // a path of the screens (/apps/...) as the server's page (/qapps/...)

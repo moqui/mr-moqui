@@ -202,43 +202,39 @@ fn the_document_of_a_server_page_opened_is_asked_for_with_its_account() {
     assert_eq!(page.account(Some("a1")), None);
 }
 
-/// A fresh navigation clears the history once, at the load of the page it went to (or of the page a redirect there goes
-/// on to); a load of the page before it, or of another page, does not; a later navigation, or a page of another origin
-/// started in its place, takes it back.
+/// A fresh navigation clears the history once, at the start of the page it went to, and is done: a page that never
+/// finishes loading has its history cleared already, so Back there leaves the app; the page's own change of its address
+/// before it finished (a Finished of another path) changes nothing; and the next page, a link the user taps or a
+/// redirect's target, adds to the history. A start of the page before it, or of another page, does not clear it; a
+/// later navigation of the host's takes it back.
 #[test]
-fn a_fresh_navigation_clears_the_history_once_at_its_own_page() {
+fn a_fresh_navigation_clears_the_history_once_at_its_own_pages_start() {
     let fresh = FreshLoad::default();
     let start = url(&format!("{APP}/qapps/feed"));
     let home = url(&format!("{APP}/qapps/feed/Home"));
     let shell = url(&format!("{SHELL}/"));
-    assert!(!fresh.loaded(&start));
+    assert!(!fresh.started(&start), "no navigation");
     fresh.navigating(Some(&start));
-    // the shell going: its late events are not the start page coming, and do not take the navigation back
-    fresh.started(&shell);
-    assert!(!fresh.loaded(&shell));
-    // nor is another page of the app origin before the start page's own start
-    fresh.started(&home);
-    assert!(!fresh.loaded(&home));
-    fresh.started(&start);
-    assert!(fresh.loaded(&start));
-    assert!(!fresh.loaded(&start), "once");
-    // a redirect's page that goes on before it finished: the page it goes to
-    fresh.navigating(Some(&start));
-    fresh.started(&start);
-    fresh.started(&url("about:blank"));
-    fresh.started(&home);
-    assert!(!fresh.loaded(&start));
-    assert!(fresh.loaded(&home));
-    // a page of another origin started in its place: the start page never came, and a later one adds to the history
-    fresh.navigating(Some(&start));
-    fresh.started(&start);
-    fresh.started(&shell);
-    assert!(!fresh.loaded(&start));
+    // the shell going: its late start is not the start page's
+    assert!(!fresh.started(&shell));
+    // nor is another page of the app origin
+    assert!(!fresh.started(&home));
+    // the start page's own start clears it, whether or not its load ever finishes (no Finished is asked)
+    assert!(fresh.started(&start));
+    // its address changed before it finished (replaceState, a Finished of /qapps/feed/Home): nothing is waited for, and
+    // the next page (a link, a redirect's target, the same page again) adds to the history
+    assert!(!fresh.started(&home));
+    assert!(!fresh.started(&start), "once");
     // a navigation of the host's that adds to the history replaces it
     fresh.navigating(Some(&start));
     fresh.navigating(None);
-    fresh.started(&start);
-    assert!(!fresh.loaded(&start));
+    assert!(!fresh.started(&start));
+    // A page that never starts keeps it, on purpose, until the host's next navigation: only a start of that same page
+    // (the start screen, or the shell, where Back leaves the app anyway) clears the history then; a start of the page
+    // before it or of another origin must not take it back, since a late one of the page before comes the same way.
+    fresh.navigating(Some(&start));
+    assert!(!fresh.started(&shell));
+    assert!(fresh.started(&start));
 }
 
 #[test]
