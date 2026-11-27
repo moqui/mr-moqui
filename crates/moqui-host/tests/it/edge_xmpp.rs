@@ -125,13 +125,15 @@ fn outside_xmpp_clients_chat_through_the_edge_nodes_tunnel_ports() {
     let local = crate::common::start_with_conf_files(
         "edge-xmpp-local",
         Some(DATA),
-        "",
+        // only the direct TLS client port, as before the written 5222 (plans/Runtime-Config.md §3.2)
+        r#"<xmpp-server port=""/>"#,
         &[
             (
                 "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
                 &local_port,
             ),
             ("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_enabled", "true"),
+            ("moqui_conf__xmpp_server__enabled", "true"),
             ("moqui_conf__xmpp_server__domain", "moqui.local"),
             ("moqui_conf__xmpp_server__tls_port", "0"),
             ("moqui_conf__xmpp_server__tls_host", "127.0.0.1"),

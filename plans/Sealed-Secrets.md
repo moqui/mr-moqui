@@ -437,7 +437,8 @@ What is not built, not bound or not reachable cannot be attacked. Apply these in
 1. **Build less.** A node gets only the cargo features its role needs ([Packages](../docs/Build-Test.md#packages)). A
    BOSS node without phones, chat or mail hosting leaves out `ssh`, `sip`, `xmpp`, `rtc`, `inbound-smtp`, `channels`
    and `devtools`.
-2. **Bind less.** Every optional listener stays off until its port is set. This is the default now; a test keeps it so.
+2. **Bind less.** Every optional listener stays off until it is enabled (its `enabled` switch, plans/Runtime-Config.md
+   §3.2). This is the default now; a test keeps it so.
 3. **Split by role.** Only PASS or the edge node faces the internet. BOSS dials out to it and opens no inbound port
    ([Edge-Node](archive/Edge-Node.md)).
 4. **One public port.** A reverse proxy on 443, with `webapp-list/webapp[webroot]@trusted-proxies` set. The cluster port stays on a private

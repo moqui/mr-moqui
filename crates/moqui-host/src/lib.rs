@@ -376,7 +376,7 @@ impl Server {
         self.address
     }
 
-    /// The SSH server's address, when `ssh-server@port` is set and this build has the `ssh` feature.
+    /// The SSH server's address, when `ssh-server@enabled` is true and this build has the `ssh` feature.
     #[must_use]
     pub fn ssh_address(&self) -> Option<std::net::SocketAddr> {
         #[cfg(feature = "ssh")]
@@ -388,7 +388,8 @@ impl Server {
         None
     }
 
-    /// The inbound SMTP listener's address, when this build has the `inbound-smtp` feature and `smtp-server@listen-port` is set.
+    /// The inbound SMTP listener's address, when this build has the `inbound-smtp` feature and `smtp-server@enabled` is
+    /// true.
     #[must_use]
     pub fn smtp_address(&self) -> Option<std::net::SocketAddr> {
         #[cfg(feature = "inbound-smtp")]
@@ -402,7 +403,7 @@ impl Server {
         }
     }
 
-    /// The call media socket's address, when this build has the `rtc` feature and `media-server@port` is set.
+    /// The call media socket's address, when this build has the `rtc` feature and `media-server@enabled` is true.
     #[must_use]
     pub fn rtc_address(&self) -> Option<std::net::SocketAddr> {
         #[cfg(feature = "rtc")]
@@ -416,8 +417,8 @@ impl Server {
         }
     }
 
-    /// The SIP listener's address (UDP and TCP, else TLS), when this build has the `sip` feature and `sip-server@port` or
-    /// `sip-server@tls-port` is set.
+    /// The SIP listener's address (UDP and TCP, else TLS), when this build has the `sip` feature and `sip-server@enabled` is
+    /// true, with `sip-server@port` or `sip-server@tls-port`.
     #[must_use]
     pub fn sip_address(&self) -> Option<std::net::SocketAddr> {
         #[cfg(feature = "sip")]
@@ -431,8 +432,8 @@ impl Server {
         }
     }
 
-    /// The XMPP listeners' addresses (STARTTLS, direct TLS), when this build has the `xmpp` feature and `xmpp-server@domain`
-    /// with `xmpp-server@port` or `xmpp-server@tls-port` is set.
+    /// The XMPP listeners' addresses (STARTTLS, direct TLS), when this build has the `xmpp` feature and `xmpp-server@enabled`
+    /// is true for its domain, with `xmpp-server@port` or `xmpp-server@tls-port`.
     #[must_use]
     pub fn xmpp_addresses(&self) -> (Option<std::net::SocketAddr>, Option<std::net::SocketAddr>) {
         #[cfg(feature = "xmpp")]
@@ -2246,8 +2247,8 @@ fn boot_server_factory(
     llm::screens::install(&factory);
     #[cfg(feature = "print")]
     ipp::install();
-    // call media (media-server@port), after the cluster so the node registers under its instance id; phone calls
-    // (sip-server@port, sip-server@tls-port), beside the call media they join; XMPP for local users (xmpp-server@domain);
+    // call media (media-server@enabled), after the cluster so the node registers under its instance id; phone calls
+    // (sip-server@enabled), beside the call media they join; XMPP for local users (xmpp-server@enabled);
     // SMTP last, so mail is taken only once everything it runs is up. None of them stops the boot.
     if let Err(err) = registry.run(
         listeners::Scope::Stage(listeners::Stage::Comms),

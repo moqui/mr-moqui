@@ -159,7 +159,8 @@ with an `artifact` override and the receiver limits written out:
 In dev, set `OTEL_EXPORTER_OTLP_ENDPOINT=https://localhost:8443`,
 `OTEL_EXPORTER_OTLP_PROTOCOL=grpc` and `OTEL_EXPORTER_OTLP_CERTIFICATE` to the absolute
 path of `runtime/cert/dev-ca/ca.crt`. Other configurations can use the dedicated webroot
-`grpc-listen-port` (4317 by default) on `grpc-listen-bind`, shared with PASS when enabled.
+`grpc-listen-port` (4317 by default, while `grpc-listen-enabled` is true) on `grpc-listen-bind`, shared with PASS when
+enabled.
 The dedicated port uses TLS when the HTTPS listener has certificates, otherwise h2c.
 
 - Each sender needs an ingest key: Monitor › Sources › Create key, which shows the token once. Send it as

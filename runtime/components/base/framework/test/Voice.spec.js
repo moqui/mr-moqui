@@ -551,6 +551,6 @@ feature("the capabilities say supported, configured and active apart", {
         caps.active == true
         caps.reasonCode == null
         noNode.active == false
-        noNode.reasonCode == (built ? (String(ec.factory.getConfValue("sip-server@port") || ec.factory.getConfValue("sip-server@tls-port") || "").trim() ? "noSipServer" : "notConfigured") : "notBuilt")
+        noNode.reasonCode == (built ? (String(ec.factory.getConfValue("sip-server@enabled") || "").trim().toLowerCase() === "true" ? "noSipServer" : "notConfigured") : "notBuilt")
     }
 })

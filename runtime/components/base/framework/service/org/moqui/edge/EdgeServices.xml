@@ -710,9 +710,10 @@ along with this software (see the LICENSE.md file). If not, see
             xmpp-server@domain goes to the edge node (kept in its setupJson), and with web access on it is added to hostList as
             passthrough when not listed, as uploads (https://domain) and /xmpp-websocket ride on web access; with web
             access off and the name not on the edge node, a failed xmpp line says so and the rest is applied. Refused
-            before any change when this node has no xmpp-server@domain or the edge node no tunnel port. Nothing is written
-            locally for XMPP; lines say when this node's xmpp-server@port or xmpp-server@tls-port (which Chat apps shows) differ
-            from the edge node's ports, and when the edge node's ports cannot find this node's clients. Calls (callsOn given, and the edge node's media node offered; left out, nothing
+            before any change when this node runs no XMPP server (xmpp-server@enabled true with xmpp-server@domain) or the edge
+            node has no tunnel port. Nothing is written
+            locally for XMPP; lines say when this node's xmpp-server@port or xmpp-server@tls-port (which Chat apps shows; 5222
+            and 5223 unless written empty) differ from the edge node's ports, and when the edge node's ports cannot find this node's clients. Calls (callsOn given, and the edge node's media node offered; left out, nothing
             changes; nothing is sent to the edge node): edge/node@calls-enabled true or false in runtime/.env, and the edge
             node's CallMediaNode row written again at once, draining while it is false (the link keeps it so after
             that, and never after unpairing), so new calls have their media on the edge node, or on this node's own

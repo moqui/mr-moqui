@@ -112,7 +112,8 @@ along with this software (see the LICENSE.md file). If not, see
                 .selectField('userGroupId,description').orderBy('description').list()).map((row) => ({userGroupId: row.userGroupId,
                 label: row.description || row.userGroupId})) : []
             const setting = (name, fallback) => { const n = Number(String(ec.factory.getConfValue('location@' + name) || '').trim()); return Number.isInteger(n) && n > 0 ? n : fallback }
-            const domain = String(ec.factory.getConfValue('xmpp-server@domain') || '').trim().toLowerCase()
+            // this node's XMPP domain while its XMPP server is on (plans/Runtime-Config.md 3.2)
+            const domain = String(ec.factory.getConfValue('xmpp-server@enabled') || '').trim().toLowerCase() === 'true' ? String(ec.factory.getConfValue('xmpp-server@domain') || '').trim().toLowerCase() : ''
             const contacts = []
             if (domain) {
                 ec.message.pushErrors()

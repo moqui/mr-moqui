@@ -2232,7 +2232,8 @@ function registerNode(p) {
 function capabilities() {
   const supported = !!ec.factory.hasFeature('rtc')
   const live = liveMediaNodes().filter((n) => n.draining !== 'Y')
-  const configured = supported && String(ec.factory.getConfValue('media-server@port') || '').trim() !== ''
+  // call media is configured by its switch (plans/Runtime-Config.md 3.2)
+  const configured = supported && String(ec.factory.getConfValue('media-server@enabled') || '').trim().toLowerCase() === 'true'
   const reasonCode = live.length ? null : !supported && !live.length ? 'notBuilt' : 'noMediaServer'
   return { supported, configured, active: live.length > 0, reasonCode, e2ee: supported }
 }

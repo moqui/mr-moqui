@@ -12,8 +12,8 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The built-in SSH server (`plans/archive/Ssh.md`): off unless `ssh-server@port` is set. It listens on `ssh-server@host` (default
-//! `127.0.0.1`) with the host key `ssh-server@host-key`, a secret property that is the base64 seed of an Ed25519 key
+//! The built-in SSH server (`plans/archive/Ssh.md`): on while `ssh-server@enabled` is true (plans/Runtime-Config.md §3.2). It
+//! listens on `ssh-server@port` (2222) at `ssh-server@host` (default `127.0.0.1`) with the host key `ssh-server@host-key`, a secret property that is the base64 seed of an Ed25519 key
 //! (generated into `runtime/.env` like the other `CHANGEME` secrets) or an OpenSSH private key.
 //!
 //! Any user may connect, as any user may log in over HTTP; every screen and service is still checked as the user.
@@ -179,7 +179,7 @@ pub fn host_key(text: &str) -> Result<PrivateKey, Error> {
 }
 
 /// The host and port the SSH server will bind by the merged conf, for the port check before the framework is built:
-/// read as [`start`] reads them, so None while `ssh-server` `enabled` is false or the port is empty.
+/// read as [`start`] reads them, so None while `ssh-server` `enabled` is not true.
 pub(crate) fn listen_target(conf: &MNode) -> Result<Option<(String, u16)>, Error> {
     let node = conf.first_named("ssh-server");
     configured_target(&|name: &str| {
@@ -190,38 +190,45 @@ pub(crate) fn listen_target(conf: &MNode) -> Result<Option<(String, u16)>, Error
     })
 }
 
-/// The host and port of `port_text` and `host_text` (default `127.0.0.1`); None when `port_text` is empty.
-fn listen_target_of(port_text: &str, host_text: &str) -> Result<Option<(String, u16)>, Error> {
+/// The host and port of `port_text` and `host_text` (default `127.0.0.1`).
+///
+/// # Errors
+///
+/// When `port_text` is not a port: digits, 0 for one of the kernel's choosing; an empty one is a retired value the boot
+/// refuses by name (plans/Runtime-Config.md §8.2).
+fn listen_target_of(port_text: &str, host_text: &str) -> Result<(String, u16), Error> {
     let port_text = port_text.trim();
-    if port_text.is_empty() {
-        return Ok(None);
-    }
-    let port: u16 = port_text
-        .parse()
-        .map_err(|_| Error::new(format!("ssh-server port {port_text} is not a port number")))?;
+    let port: u16 = port_text.parse().map_err(|_| {
+        Error::new(format!(
+            "ssh-server@port \"{port_text}\" is not a port (set ssh-server@enabled=\"false\" to keep it closed)"
+        ))
+    })?;
     let host = match host_text.trim() {
         "" => "127.0.0.1".to_string(),
         other => other.to_string(),
     };
-    Ok(Some((host, port)))
+    Ok((host, port))
 }
 
-/// [`listen_target_of`], or None when the conf's `ssh-server` `enabled` is false, whatever the port.
+/// [`listen_target_of`] while the conf's `ssh-server` switch is on, else None, whatever the port.
 fn conf_listen_target(enabled: bool, port_text: &str, host_text: &str) -> Result<Option<(String, u16)>, Error> {
     if !enabled {
         return Ok(None);
     }
-    listen_target_of(port_text, host_text)
+    listen_target_of(port_text, host_text).map(Some)
 }
 
-/// [`conf_listen_target`] by the conf's `ssh-server` attributes (`attr`, expanded) `enabled`, `port` and `host`;
-/// `enabled` is on unless it is `false`, as `conf_flag` reads it.
+/// [`conf_listen_target`] by the conf's `ssh-server` attributes (`attr`, expanded) `enabled`, `port` and `host`; the
+/// switch is on when `enabled` is true ([`moqui_core::context::conf_env::switch_on`]).
 fn configured_target(attr: &dyn Fn(&str) -> String) -> Result<Option<(String, u16)>, Error> {
-    conf_listen_target(attr("enabled") != "false", &attr("port"), &attr("host"))
+    conf_listen_target(
+        moqui_core::context::conf_env::switch_on(&attr("enabled")),
+        &attr("port"),
+        &attr("host"),
+    )
 }
 
-/// Start the server when the conf's `ssh-server` `port` is set (`0` binds an ephemeral port) and its
-/// `enabled` is not false.
+/// Start the server when the conf's `ssh-server` `enabled` is true, on its `port` (`0` binds an ephemeral port).
 ///
 /// # Errors
 ///

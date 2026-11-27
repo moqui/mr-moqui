@@ -83,6 +83,7 @@ fn client_specs_run_against_a_server_and_a_failure_fails_the_run() {
     #[cfg(all(feature = "ssh", feature = "tui"))]
     properties.extend([
         ("moqui_conf__ssh_server__port", "0"),
+        ("moqui_conf__ssh_server__enabled", "true"),
         ("moqui_conf__ssh_server__host_key", seed.as_str()),
     ]);
     let gate = crate::common::start_with_properties("test-client", None, &properties);

@@ -398,6 +398,7 @@ fn mail_crosses_the_edge_node_both_ways_and_waits_while_the_link_is_down() {
             ),
             ("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_enabled", "true"),
             ("moqui_conf__smtp_server__listen_port", "0"),
+            ("moqui_conf__smtp_server__enabled", "true"),
             ("moqui_conf__smtp_server__allowed_addresses", "127.0.0.1"),
             ("moqui_conf__smtp_server__hostname", "edge.example.com"),
             // not reached at first: a port nothing listens on
@@ -736,6 +737,7 @@ fn the_moqui_mta_takes_port_25_and_delivers_to_the_mx() {
             ),
             ("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_enabled", "true"),
             ("moqui_conf__smtp_server__listen_port", "0"),
+            ("moqui_conf__smtp_server__enabled", "true"),
             ("moqui_conf__smtp_server__hostname", "edge.example.com"),
             ("moqui_conf__mail_delivery__mta", "moqui"),
             ("mail-delivery@bounce-domain", "bounce.test"),

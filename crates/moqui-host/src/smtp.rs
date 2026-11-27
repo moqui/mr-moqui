@@ -13,7 +13,8 @@
  */
 
 //! The inbound SMTP listener for hosted and shared mail accounts, behind the edge gateway (the `inbound-smtp` feature;
-//! docs/interfaces/Mail-Inbound.md). Off unless `smtp-server@listen-port` is set; it listens on `smtp-server@listen-host` (default `127.0.0.1`).
+//! docs/interfaces/Mail-Inbound.md). On while `smtp-server@enabled` is true (plans/Runtime-Config.md §3.2); it listens on
+//! `smtp-server@listen-port` (2525) at `smtp-server@listen-host` (default `127.0.0.1`).
 //!
 //! It is the last hop of a gateway (Postfix with Rspamd, or another MTA) that does the internet side: SPF, DKIM, DMARC,
 //! spam and virus filtering, queueing and retries. So it is a small RFC 5321 server for that one client: EHLO or HELO,
@@ -241,21 +242,24 @@ impl std::fmt::Debug for Internet {
 /// The startup report's name for the listener.
 pub(crate) const LISTENER: &str = "SMTP";
 
-/// The host and port the listener binds, from the conf's `smtp-server` `listen-host` and `listen-port`, by `setting`
-/// (an attribute of `smtp-server`, expanded): read the same way by [`SmtpConfig::from_conf`] and by the port check
-/// before the framework is built. None when the port is empty.
+/// The host and port the listener binds, from the conf's `smtp-server` `enabled`, `listen-host` and `listen-port`, by
+/// `setting` (an attribute of `smtp-server`, expanded): read the same way by [`SmtpConfig::from_conf`] and by the port
+/// check before the framework is built. None while the switch is not on.
 ///
 /// # Errors
 ///
-/// Returns an error when the port does not parse.
+/// Returns an error when the switch is on and the port is not one (an empty one is a retired value the boot refuses).
 pub(crate) fn listen_target_by(setting: &dyn Fn(&str) -> String) -> Result<Option<(String, u16)>, Error> {
-    let port_text = setting("listen-port");
-    if port_text.is_empty() {
+    if !moqui_core::context::conf_env::switch_on(&setting("enabled")) {
         return Ok(None);
     }
-    let port: u16 = port_text
-        .parse()
-        .map_err(|_| Error::new(format!("smtp-server@listen-port {port_text} is not a port number")))?;
+    let port_text = setting("listen-port");
+    let port: u16 = port_text.trim().parse().map_err(|_| {
+        Error::new(format!(
+            "smtp-server@listen-port \"{}\" is not a port (set smtp-server@enabled=\"false\" to keep it closed)",
+            port_text.trim()
+        ))
+    })?;
     let host = match setting("listen-host") {
         host if !host.is_empty() => host,
         _ => "127.0.0.1".to_string(),
@@ -264,7 +268,7 @@ pub(crate) fn listen_target_by(setting: &dyn Fn(&str) -> String) -> Result<Optio
 }
 
 impl SmtpConfig {
-    /// The settings of the conf's `smtp-server` when its `listen-port` is set, else none.
+    /// The settings of the conf's `smtp-server` while its `enabled` is true, else none.
     ///
     /// # Errors
     ///
@@ -403,7 +407,7 @@ impl Drop for SmtpServer {
     }
 }
 
-/// Start the listener when `smtp-server` `listen-port` is set (`0` binds an ephemeral port).
+/// Start the listener when `smtp-server` `enabled` is true, on its `listen-port` (`0` binds an ephemeral port).
 ///
 /// # Errors
 ///

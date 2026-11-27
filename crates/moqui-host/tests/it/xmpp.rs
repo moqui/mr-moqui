@@ -293,10 +293,13 @@ fn xmpp_clients_sign_in_chat_with_the_web_page_the_archive_upload_publish_and_re
     };
     let cert = pem("CERTIFICATE", issued.cert.der());
     let key = pem("PRIVATE KEY", &issued.signing_key.serialize_der());
-    let gate = crate::common::start_with_files(
+    let gate = crate::common::start_with_conf_files(
         "xmpp",
         Some(DATA),
+        // only the direct TLS client port, as before the written 5222 (plans/Runtime-Config.md §3.2)
+        r#"<xmpp-server port=""/>"#,
         &[
+            ("moqui_conf__xmpp_server__enabled", "true"),
             ("moqui_conf__xmpp_server__domain", "moqui.local"),
             ("moqui_conf__xmpp_server__tls_port", "0"),
             ("moqui_conf__xmpp_server__tls_host", "127.0.0.1"),
@@ -555,10 +558,13 @@ fn an_upload_put_is_checked_before_its_body_kept_to_its_size_and_deadline_and_pu
         return;
     }
     let started = Instant::now();
-    let gate = crate::common::start_with_files(
+    let gate = crate::common::start_with_conf_files(
         "xmpp-upload",
         Some(DATA),
+        // the uploads alone, no client port, as before the written ports (plans/Runtime-Config.md §3.2)
+        r#"<xmpp-server port="" tls-port=""/>"#,
         &[
+            ("moqui_conf__xmpp_server__enabled", "true"),
             ("moqui_conf__xmpp_server__domain", "moqui.local"),
             ("moqui_conf__xmpp_server__upload__seconds", "2"),
         ],

@@ -358,14 +358,15 @@ component is the exception: `example_disabled=true` leaves it out. The demo dev 
 
 Every setting is an attribute of an element of the merged conf, with its default written in `MoquiDefaultConf.xml`
 (or, for a component's own settings, the component's `MoquiConf.xml`: basic-comms' `comms`, mr-pass's `pass`). A conf
-file sets one by its element: `<ssh-server port="2222"/>` in the runtime conf. Docs, scripts and System › Conf name a
+file sets one by its element: `<ssh-server enabled="true"/>` in the runtime conf. Docs, scripts and System › Conf name a
 setting by its path, a selector: `ssh-server@port`, `webapp-list/webapp[webroot]@http-port` (a keyed element's key in
 brackets).
 
 Any attribute can also be set from the environment, over every conf file, by a name built from the same path:
 
 ```sh
-moqui_conf__ssh_server__port=2222                              # ssh-server@port
+moqui_conf__ssh_server__enabled=true                           # ssh-server@enabled
+moqui_conf__ssh_server__port=2200                              # ssh-server@port
 moqui_conf__webapp_list__webapp__WEBROOT__http_port=8091       # webapp-list/webapp[webroot]@http-port
 moqui_conf__entity_facade__datasource__TRANSACTIONAL__database_conf_name=postgres
 ```
@@ -424,6 +425,24 @@ boot refuses a conf file or an environment name that still sets an old one, nami
 ports are separate from the ports of generated URLs: `http-listen-port` and `https-listen-port` are what the server
 binds, `http-port` and `https-port` what its URLs say.
 
+**Upgrading to the listener switches** ([plan](../plans/Runtime-Config.md), §3.2). Each listener has a switch,
+`enabled` beside its ports, and its ports are written in `MoquiDefaultConf.xml`: on the webroot webapp
+`http-listen-enabled` (8080), `https-listen-enabled` (8443) and `grpc-listen-enabled` (4317), all on; and, all off,
+`ssh-server@enabled` (2222), `smtp-server@enabled` (2525), `xmpp-server@enabled` (5222 and 5223), `sip-server@enabled`
+(5060), `media-server@enabled` (10000) and `media-server/turn-server@enabled` (3478). What changed:
+
+- A port alone, or XMPP's domain alone, no longer turns a listener on: set its switch (`moqui_conf__ssh_server__enabled=true`).
+- The old ways to turn one off are refused at the boot, naming the switch to set instead: `off` or an empty port for
+  HTTP, HTTPS and gRPC, and an empty port for SSH, SMTP and call media. An empty plain port of XMPP, SIP or TURN is
+  still that one transport off beside the other.
+- `http-listen-port` no longer follows `http-port`: it is 8080 unless set.
+- XMPP switched on listens on 5222 and 5223 unless they are written empty (`<xmpp-server port="" tls-port=""/>`, as a
+  local node behind an edge node does, whose clients come through the edge node's ports).
+- For one release, when the deployment set a port (or XMPP's domain) of a listener whose switch is off, in `.env`, the
+  environment, a `-D` or a conf file of its own, and did not set the switch, the boot logs a warning naming the
+  setting, where it was set and the switch to set, and that listener's row on System Home says it. Setting the switch
+  either way ends it.
+
 The settings most deployments set or should know. Their defaults are in `MoquiDefaultConf.xml`.
 
 | Setting | Default | What it does |
@@ -433,11 +452,11 @@ The settings most deployments set or should know. Their defaults are in `MoquiDe
 | `webapp-list/webapp[webroot]@http-host` | empty: the request's host | The host in generated URLs |
 | `webapp-list/webapp[webroot]@http-bind` | empty: every address | The address the HTTP and HTTPS listeners bind; `127.0.0.1` keeps them on the machine |
 | `webapp-list/webapp[webroot]@http-port` | empty: 8080 | The HTTP port in generated URLs |
-| `webapp-list/webapp[webroot]@http-listen-port` | empty: use http-port | HTTP listener, or `off`. A numeric `-p` sets both ports |
-| `webapp-list/webapp[webroot]@https-listen-port` | empty: 8443 | The HTTPS listen port (`--https-port`), or `off` |
+| `webapp-list/webapp[webroot]@http-listen-enabled`, `webapp-list/webapp[webroot]@http-listen-port` | `true` (`false` in the dev conf), `8080` | The HTTP listener: on while the switch is true, on its port, which no longer follows `http-port`. A numeric `-p` sets the port and `http-port` and turns it on; `-p off` turns it off |
+| `webapp-list/webapp[webroot]@https-listen-enabled`, `webapp-list/webapp[webroot]@https-listen-port` | `true`, `8443` | The HTTPS listener (`--https-port N` sets the port and turns it on, `--https-port off` turns it off) |
 | `webapp-list/webapp[webroot]@https-port` | empty: 443 | The HTTPS port in generated URLs and redirects |
 | `webapp-list/webapp[webroot]@https-enabled` | `false` | `true` makes generated URLs https |
-| `webapp-list/webapp[webroot]@grpc-listen-port` | `4317` (`off` in the dev conf) | The dedicated gRPC listener for the OTLP receiver and the PASS authority, opened only when one is on, or `off`; gRPC over HTTP/2 on the HTTPS listener works either way. Was `pass-authority@grpc-port` and `telemetry/receiver@grpc-port` |
+| `webapp-list/webapp[webroot]@grpc-listen-enabled`, `webapp-list/webapp[webroot]@grpc-listen-port` | `true` (`false` in the dev conf), `4317` | The dedicated gRPC listener for the OTLP receiver and the PASS authority, opened while the switch is true and one of them is on; gRPC over HTTP/2 on the HTTPS listener works either way. The port was `pass-authority@grpc-port` and `telemetry/receiver@grpc-port` |
 | `webapp-list/webapp[webroot]@grpc-listen-bind` | empty: `http-bind`'s | The address the gRPC listener binds. Was `pass-authority@grpc-host` and `telemetry/receiver@grpc-bind` |
 | `webapp-list/webapp[webroot]@allow-origins` | empty (`localhost,127.0.0.1` in the dev conf) | Other origins allowed for CORS; `*` allows any origin without credentials |
 | `webapp-list/webapp[webroot]@trusted-proxies` | empty | Address ranges of the proxies in front ([proxies](#behind-a-proxy-or-load-balancer)) |
@@ -450,8 +469,9 @@ The settings most deployments set or should know. Their defaults are in `MoquiDe
 | `load-runner@targets`, `load-runner@max-runs`, `load-runner@max-users` | empty, `1`, `1000` | Load runs from Tools: the URL prefixes a run may reach besides this server and loopback (any URL on a dev instance; plain http to another machine only when listed), the loads at once, and the users a run |
 | `maps@external-requests`, `maps@import-max-bytes`, `maps@max-features` | `true`, `536870912` (512 MiB), `5000` | Maps ([plan](../plans/archive/Maps.md#42-metadata-and-effective-settings)): `false` stops the server's outside map requests (a geocoder, a Geo data download) and its handing a browser a profile with outside URLs; the largest Geo data download or file and what it may unzip to; the most features one overlay or viewport query returns (`0`: record layers off) |
 | `location@max-share-hours`, `location@trail-max-days`, `location@min-interval-seconds`, `location@approximate-interval-seconds`, `location@max-active-shares`, `location@max-audience`, `location@link-max-views-per-minute`, `location@link-max-failed-tries` | `24`, `30`, `5`, `60`, `20`, `50`, `30`, `10` | Shared live location ([Maps, Live location](tools/Maps.md#live-location)): the longest a share runs from its start or last extension; the longest a kept trail stays after its share ends; the shortest time between two positions a share takes (a sooner one is answered 429), and an approximate share's; the most shares a person has on at once; the most people, contacts and links a share has; the most reads a minute of a guest link's page; the wrong secrets after which a guest link is refused |
-| `ssh-server@port`, `ssh-server@host` | empty, `127.0.0.1` | The SSH server (SFTP, git, the apps in a terminal); off while `ssh-server@port` is empty (`2222` in the dev conf) |
-| `media-server@port`, `media-server@host`, `media-server@public-address` | empty, `127.0.0.1`, empty | Call media ([WebRTC](interfaces/WebRTC.md)); off while `media-server@port` is empty; the public address is what browsers are told, for a server behind 1:1 NAT |
+| `ssh-server@enabled`, `ssh-server@port`, `ssh-server@host` | `false` (`true` in the dev conf), `2222`, `127.0.0.1` | The SSH server (SFTP, git, the apps in a terminal), on while its switch is true |
+| `smtp-server@enabled`, `smtp-server@listen-port`, `smtp-server@listen-host` | `false`, `2525`, `127.0.0.1` | The SMTP listener for hosted and shared mail accounts ([Mail-Inbound](interfaces/Mail-Inbound.md)), on while its switch is true |
+| `media-server@enabled`, `media-server@port`, `media-server@host`, `media-server@public-address` | `false`, `10000`, `127.0.0.1`, empty | Call media ([WebRTC](interfaces/WebRTC.md)), on while its switch is true; the public address is what browsers are told, for a server behind 1:1 NAT |
 | `calls@ring-seconds` | `45` | How long a call rings before it is missed |
 | `board@max-document-bytes`, `board@max-update-bytes` | 20 MB, 1 MB | Boards (wiki and meeting whiteboards): the largest scene a board holds, and the largest single co-editing update a client sends |
 | `board@max-total-image-bytes` | `209715200` | Maximum total board image bytes (200 MiB). Saving a board prunes unused images after a grace period |
@@ -464,12 +484,12 @@ The settings most deployments set or should know. Their defaults are in `MoquiDe
 | `media-server@cascade-enabled` | `false` | Cascading media nodes ([WebRTC](interfaces/WebRTC.md#cascading-media-nodes)): a leg's media goes to the media node of its own socket, which relays to the call's node over both nodes' `media-server@port`; set it on every node |
 | `calls/captions@enabled`, `calls/captions@provider`, `calls/captions@store` | `false`, `llm`, `false` | Live captions in calls ([WebRTC, Captions](interfaces/WebRTC.md#captions)): off unless `true`; the provider is the model bound to the `transcribe` feature (`local`, speech-local, is not built yet); `true` keeps each caption as a `CallTranscript` |
 | `calls/captions@chunk-seconds`, `calls/captions@queue`, `calls/captions@workers`, `calls/captions@timeout-seconds`, `calls/captions@language` | `5`, `6`, `2`, `20`, empty | The longest chunk of speech sent, the chunks that wait (past this the oldest is dropped), how many of a call's go at once (all calls on a node together use at most half the service pool), how long one may take, and the language (empty lets the model tell) |
-| `media-server/turn-server@port`, `media-server/turn-server@tls-port`, `media-server/turn-server@tls443-host`, `media-server/turn-server@public-host`, `media-server/turn-server@auth-secret`, `media-server/turn-server@external-urls`, ... | empty; the secret generated | The embedded TURN server, or coturn instead ([TURN](interfaces/TURN.md)) |
+| `media-server/turn-server@enabled`, `media-server/turn-server@port`, `media-server/turn-server@tls-port`, `media-server/turn-server@tls443-host`, `media-server/turn-server@public-host`, `media-server/turn-server@auth-secret`, `media-server/turn-server@external-urls`, ... | `false`, `3478`, empty (5349 by convention), empty; the secret generated | The embedded TURN server beside call media, on while its switch is true (an empty port leaves that transport closed), or coturn instead ([TURN](interfaces/TURN.md)) |
 | `calls/recording@enabled`, `calls/recording@ack-required`, `calls/recording@policy-revision` | `false`, `false`, `1` | Call recording by a call's host, with a notice to every leg, and whether each leg must acknowledge it ([Call recording](interfaces/Call-Recording.md)) |
 | `calls/recording@retention-days` | `90` | Recordings are deleted this long after they start; `0` keeps them |
 | `calls/recording@queue-frames`, `calls/recording@segment-mb`, `calls/recording@segment-minutes`, `calls/recording@max-mb` | `4096`, `64`, `30`, `2048` | The recorder's queue, when a file is cut into the next segment, and where a recording stops |
 | `calls/recording@prompt-audio`, `calls/captions@prompt-audio` | empty | WAV files a phone leg hears after the recording and captions tones ([SIP, Notices](interfaces/SIP.md#notices)) |
-| `sip-server@port`, `sip-server@host`, `sip-server@tls-port`, `sip-server@tls-host`, `sip-server@rtp-ports`, `sip-server@rtp-host`, `sip-server@public-address`, `sip-server@tls-ca-file` | empty, `127.0.0.1`, empty, `sip-server@host`, `20000-20999`, `sip-server@host`, empty, the system bundle | Phone calls over SIP trunks ([SIP](interfaces/SIP.md)); off while both ports are empty, and only beside call media; the public address is what trunks are told in Contact and SDP |
+| `sip-server@enabled`, `sip-server@port`, `sip-server@host`, `sip-server@tls-port`, `sip-server@tls-host`, `sip-server@rtp-ports`, `sip-server@rtp-host`, `sip-server@public-address`, `sip-server@tls-ca-file` | `false`, `5060`, `127.0.0.1`, empty (5061 by convention), `sip-server@host`, `20000-20999`, `sip-server@host`, empty, the system bundle | Phone calls over SIP trunks ([SIP](interfaces/SIP.md)), on while its switch is true and only beside call media; an empty port leaves that transport closed; the public address is what trunks are told in Contact and SDP |
 | `channels@webhooks-enabled`, `channels@webhook-max-bytes` | `false`, `262144` | The chat bridges' routes a provider calls: `POST /channels/{chatBridgeId}/webhook` (its body at most this many bytes) and `GET /channels/{chatBridgeId}/media/{token}` ([SMS](interfaces/SMS.md)) |
 | `chat@groupme-self-service` | `true` | Whether users connect their own GroupMe account in Settings, Chat ([GroupMe](interfaces/GroupMe.md#connect)); `false` leaves it to an administrator (System, Chat Bridges) |
 | `chat@groupme-node-max` | `50` | The most GroupMe bridges one node holds the push connections of; the others go to other nodes ([GroupMe](interfaces/GroupMe.md#how-it-works)) |
@@ -477,8 +497,8 @@ The settings most deployments set or should know. Their defaults are in `MoquiDe
 | `channels/edge-limits@webhooks-per-minute`, `channels/edge-limits@webhooks-per-client-minute`, `channels/edge-limits@unverified-max-bytes`, `channels/edge-limits@unverified-waiting` | `600`, `120`, `32768`, `500` | On an edge node, for a bridge whose provider signs with a secret it does not hold (the local node checks them): the webhooks a minute it queues for the bridge and from one client address, the largest body, and how many of the bridge's may wait; past them 413 or 429 |
 | `sip-server/limits@request-rate`, `sip-server/limits@request-burst`, `sip-server/limits@max-transactions`, `sip-server/limits@max-connections`, `sip-server/limits@max-connections-per-source`, `sip-server/limits@max-connections-per-unknown-source`, `sip-server/limits@max-unknown-connections`, `sip-server/limits@unauthenticated-seconds` | `20`, `100`, `2000`, `500`, `100`, `10`, `250`, `30` | The SIP listener's flood caps: new requests a second per source and at once, the transactions past which new requests are dropped, TCP and TLS connections at once, from one source, and from one with no trunk's address, phone's binding or authenticated connection; an accepted connection on which nothing authenticated is closed after the seconds unless it is a trunk's ([SIP, Settings](interfaces/SIP.md#settings)) |
 | `sip-server/registrar@enabled`, `sip-server@domain` | `false`, empty | The registrar for desk and soft phones, off even with the SIP listeners on; the realm and domain phones register to (`sip-server@public-address`, else `moqui`, when empty) ([SIP, Registrar](interfaces/SIP.md#registrar)) |
-| `xmpp-server@domain`, `xmpp-server@rooms-domain`, `xmpp-server@upload-domain` | empty, `rooms.<domain>`, `upload.<domain>` | XMPP for local users ([XMPP](interfaces/XMPP.md)): off while `xmpp-server@domain` is empty; users are `user@<domain>`, rooms `room@rooms.<domain>` |
-| `xmpp-server@port`, `xmpp-server@host`, `xmpp-server@tls-port`, `xmpp-server@tls-host`, `xmpp-server@websocket-enabled` | empty, `0.0.0.0`, empty, `xmpp-server@host`, `false` | The XMPP client listeners: STARTTLS (5222 by convention) and direct TLS (5223), each off while empty; `/xmpp-websocket` on the HTTP listener when `true` |
+| `xmpp-server@enabled`, `xmpp-server@domain`, `xmpp-server@rooms-domain`, `xmpp-server@upload-domain` | `false`, empty, `rooms.<domain>`, `upload.<domain>` | XMPP for local users ([XMPP](interfaces/XMPP.md)): on while its switch is true, for its domain (switched on with no domain it fails); users are `user@<domain>`, rooms `room@rooms.<domain>` |
+| `xmpp-server@port`, `xmpp-server@host`, `xmpp-server@tls-port`, `xmpp-server@tls-host`, `xmpp-server@websocket-enabled` | `5222`, `0.0.0.0`, `5223`, `xmpp-server@host`, `false` | The XMPP client listeners while XMPP is on: STARTTLS and direct TLS, each closed while written empty; `/xmpp-websocket` on the HTTP listener when `true` |
 | `xmpp-server/upload@url`, `xmpp-server/upload@max-bytes`, `xmpp-server/upload@secret` | `https://<domain>` (with `webapp-list/webapp[webroot]@https-port`), `20971520`, generated | The HTTPS base of upload URLs (`/xmpp-upload/`), the largest upload, and the secret the URLs of chat files sent to XMPP clients are derived with |
 | `xmpp-server@resume-seconds`, `xmpp-server@fast-token-days` | `300`, `14` | How long a dropped session waits for stream resumption, and how long a FAST token lasts |
 | `xmpp-server/upload@seconds` | `300` | The longest a PUT to an upload slot may take |
@@ -581,8 +601,8 @@ Server options:
 
 | Option | What it does |
 |---|---|
-| `-p N`, `--port N`, `--http-port N` | Open the HTTP listener and use N in generated HTTP URLs. Pass `off` to close only the listener. |
-| `--https-port N` | The HTTPS listen port (`webapp-list/webapp[webroot]@https-listen-port`), or `off` |
+| `-p N`, `--port N`, `--http-port N` | Open the HTTP listener on N (`http-listen-port`, with `http-listen-enabled` true) and use N in generated HTTP URLs. Pass `off` to close only the listener (`http-listen-enabled` false). |
+| `--https-port N` | Open the HTTPS listener on N (`webapp-list/webapp[webroot]@https-listen-port`, with `https-listen-enabled` true), or `off` to close it |
 | `-c FILE`, `--conf FILE` | The runtime conf, as `MOQUI_CONF` does |
 | `--no-run-es` | Do not start the OpenSearch in `runtime/opensearch` (`moqui_conf__search_facade__cluster__run=false`) |
 | `-D name=value` | Set a property for this run; repeatable |
@@ -910,17 +930,17 @@ local or the shared runtime. Windows supports checkout-local operation.
 
 | Port | Listener | Default | Properties |
 |---|---|---|---|
-| 8080 | HTTP | Off in dev, otherwise on every address | `webapp-list/webapp[webroot]@http-listen-port`, `webapp-list/webapp[webroot]@http-bind` |
-| 8443 | HTTPS, certificates from `runtime/cert`; HTTP/2 or HTTP/1.1 by ALPN, and gRPC over HTTP/2 when a gRPC service is on | On when there is a certificate (dev makes one) or a name set up with ACME | `webapp-list/webapp[webroot]@https-listen-port` (`off`), `webapp-list/webapp[webroot]@http2` |
-| 4317 | Dedicated gRPC | Off in dev, otherwise opened when a gRPC service is enabled | Webroot `grpc-listen-port`, `grpc-listen-bind` |
+| 8080 | HTTP | Off in dev (`http-listen-enabled` false), otherwise on every address | `webapp-list/webapp[webroot]@http-listen-enabled`, `webapp-list/webapp[webroot]@http-listen-port`, `webapp-list/webapp[webroot]@http-bind` |
+| 8443 | HTTPS, certificates from `runtime/cert`; HTTP/2 or HTTP/1.1 by ALPN, and gRPC over HTTP/2 when a gRPC service is on | On when there is a certificate (dev makes one) or a name set up with ACME | `webapp-list/webapp[webroot]@https-listen-enabled`, `webapp-list/webapp[webroot]@https-listen-port`, `webapp-list/webapp[webroot]@http2` |
+| 4317 | Dedicated gRPC | Off in dev, otherwise opened when a gRPC service is enabled | Webroot `grpc-listen-enabled`, `grpc-listen-port`, `grpc-listen-bind` |
 | 8444 | Cluster: TLS with the cluster certificate, client certificate required; gRPC on HTTP/2, or HTTP/1.1 | On in every serving process, every address | `cluster-member@https-port`, `cluster-member@bind-address`, `cluster-member@protocol` |
-| `ssh-server@port` | SSH: SFTP, git, admin shell, the apps (`ssh -p 2222 john.doe@localhost` in dev) | Off; 2222 on 127.0.0.1 in the dev conf | `ssh-server@port`, `ssh-server@host` |
-| `smtp-server@listen-port` | Inbound SMTP behind a mail gateway ([Mail-Inbound](interfaces/Mail-Inbound.md)) | Off; Maximal and Enterprise only | `smtp-server@listen-port`, `smtp-server@listen-host` |
-| `media-server@port` (UDP) | Call media: every browser leg of a call through the SFU ([WebRTC](interfaces/WebRTC.md)); with `media-server@cascade-enabled`, the relay links between the media nodes of a call too, so the nodes must reach each other's | Off; Maximal, Enterprise and Debug only | `media-server@port`, `media-server@host`, `media-server@public-address`, `media-server@cascade-enabled` |
-| `media-server@tcp-port` (TCP) | ICE-TCP, for browsers that cannot reach the UDP media port ([TURN](interfaces/TURN.md)) | Off | `media-server@tcp-port` |
-| `media-server/turn-server@port` (UDP and TCP), `media-server/turn-server@tls-port`, 443 on `media-server/turn-server@tls443-host`; `media-server/turn-server@relay-ports` (UDP) | The embedded TURN server and its relays ([TURN](interfaces/TURN.md)) | Off | `media-server/turn-server@port`, `media-server/turn-server@tls-port`, `media-server/turn-server@tls443-host`, `media-server/turn-server@host`, `media-server/turn-server@relay-ports` |
-| `sip-server@port` (UDP and TCP), `sip-server@tls-port`; `sip-server@rtp-ports` (UDP) | SIP trunks, desk and soft phones (the registrar, with `sip-server/registrar@enabled`; `sip-server@tls-port` 5061 and `_sips._tcp` for remote phones), and the RTP of phone legs ([SIP](interfaces/SIP.md)) | Off; Maximal, Enterprise and Debug only | `sip-server@port`, `sip-server@host`, `sip-server@tls-port`, `sip-server@tls-host`, `sip-server@rtp-ports`, `sip-server@rtp-host`, `sip-server@public-address` |
-| `xmpp-server@port` (5222), `xmpp-server@tls-port` (5223) | XMPP clients, STARTTLS and direct TLS with ALPN `xmpp-client` ([XMPP](interfaces/XMPP.md)); the WebSocket is on the HTTP listener (`/xmpp-websocket`) | Off; Maximal, Enterprise and Debug only | `xmpp-server@domain`, `xmpp-server@port`, `xmpp-server@host`, `xmpp-server@tls-port`, `xmpp-server@tls-host` |
+| 2222 (`ssh-server@port`) | SSH: SFTP, git, admin shell, the apps (`ssh -p 2222 john.doe@localhost` in dev) | Off (`ssh-server@enabled`); on 127.0.0.1 in the dev conf | `ssh-server@enabled`, `ssh-server@port`, `ssh-server@host` |
+| 2525 (`smtp-server@listen-port`) | Inbound SMTP behind a mail gateway ([Mail-Inbound](interfaces/Mail-Inbound.md)) | Off (`smtp-server@enabled`); Maximal and Enterprise only | `smtp-server@enabled`, `smtp-server@listen-port`, `smtp-server@listen-host` |
+| 10000 (`media-server@port`, UDP) | Call media: every browser leg of a call through the SFU ([WebRTC](interfaces/WebRTC.md)); with `media-server@cascade-enabled`, the relay links between the media nodes of a call too, so the nodes must reach each other's | Off (`media-server@enabled`); Maximal, Enterprise and Debug only | `media-server@enabled`, `media-server@port`, `media-server@host`, `media-server@public-address`, `media-server@cascade-enabled` |
+| `media-server@tcp-port` (TCP) | ICE-TCP, for browsers that cannot reach the UDP media port ([TURN](interfaces/TURN.md)) | Off (empty) | `media-server@tcp-port` |
+| 3478 (`media-server/turn-server@port`, UDP and TCP), `media-server/turn-server@tls-port` (5349 by convention), 443 on `media-server/turn-server@tls443-host`; `media-server/turn-server@relay-ports` (UDP) | The embedded TURN server and its relays ([TURN](interfaces/TURN.md)) | Off (`media-server/turn-server@enabled`) | `media-server/turn-server@enabled`, `media-server/turn-server@port`, `media-server/turn-server@tls-port`, `media-server/turn-server@tls443-host`, `media-server/turn-server@host`, `media-server/turn-server@relay-ports` |
+| 5060 (`sip-server@port`, UDP and TCP), `sip-server@tls-port`; `sip-server@rtp-ports` (UDP) | SIP trunks, desk and soft phones (the registrar, with `sip-server/registrar@enabled`; `sip-server@tls-port` 5061 and `_sips._tcp` for remote phones), and the RTP of phone legs ([SIP](interfaces/SIP.md)) | Off (`sip-server@enabled`); Maximal, Enterprise and Debug only | `sip-server@enabled`, `sip-server@port`, `sip-server@host`, `sip-server@tls-port`, `sip-server@tls-host`, `sip-server@rtp-ports`, `sip-server@rtp-host`, `sip-server@public-address` |
+| `xmpp-server@port` (5222), `xmpp-server@tls-port` (5223) | XMPP clients, STARTTLS and direct TLS with ALPN `xmpp-client` ([XMPP](interfaces/XMPP.md)); the WebSocket is on the HTTP listener (`/xmpp-websocket`) | Off (`xmpp-server@enabled`); Maximal, Enterprise and Debug only | `xmpp-server@enabled`, `xmpp-server@domain`, `xmpp-server@port`, `xmpp-server@host`, `xmpp-server@tls-port`, `xmpp-server@tls-host` |
 
 XMPP clients find the server by DNS: `_xmpp-client._tcp.<domain>` (5222, STARTTLS) and `_xmpps-client._tcp.<domain>`
 (5223, direct TLS, XEP-0368), both at the host's name; the certificates in `runtime/cert` must cover the domain,
@@ -996,8 +1016,8 @@ naming the fix: `moqui dev-cert --replace` (`./moq moqui dev-cert --replace` in 
 `cert/replaced-<time>` and issues a managed leaf; a key the seal held for that pair is replaced at the server's next
 renewal. Outside dev with no
 certificate, the HTTPS listener does not start until a name is set up with ACME (below) or a certificate is added to
-`runtime/cert` (seen within a minute). A `webapp-list/webapp[webroot]@https-listen-port` set explicitly with no certificate no longer fails
-the start: the listener waits the same way.
+`runtime/cert` (seen within a minute). HTTPS switched on (`webapp-list/webapp[webroot]@https-listen-enabled`, the default)
+with no certificate does not fail the start: the listener waits the same way.
 
 **System › Certificates** lists the names this node answers (its own host, its sites' hosts, the SMTP host, the XMPP
 domain, an edge node's terminate hosts, the files in `runtime/cert`) and the certificate each is served: its issuer,
@@ -1323,7 +1343,7 @@ A deploy marker for the dashboards can be posted from the upgrade script ([Monit
 | OpenSearch | [Search](#search) |
 | Outbound mail | SMTP through a `moqui.basic.email.EmailServer` record; every package has it |
 | Inbound mail | IMAP polling, or the SMTP listener behind a gateway ([Mail-Inbound](interfaces/Mail-Inbound.md)); Maximal and Enterprise |
-| SSH | `ssh-server@port`, with `moqui_conf__ssh_server__host=0.0.0.0` to reach it from other machines ([TUI](ui/TUI.md), [Sync](interfaces/Sync.md), [Git-Hosting](interfaces/Git-Hosting.md)) |
+| SSH | `moqui_conf__ssh_server__enabled=true` (on `ssh-server@port`, 2222), with `moqui_conf__ssh_server__host=0.0.0.0` to reach it from other machines ([TUI](ui/TUI.md), [Sync](interfaces/Sync.md), [Git-Hosting](interfaces/Git-Hosting.md)) |
 
 ## Several sites by host name
 

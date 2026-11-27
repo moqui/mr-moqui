@@ -22,14 +22,15 @@
     <instance purpose="production" node-role="all-in-one"/>
     <webapp-list><webapp name="webroot"><web-protection enabled="true"/></webapp></webapp-list>
 
-    <!-- XMPP (plans/archive/Edge-Node.md §5.4, §10; plans/Edge-Node2.md §4.1): the server's own XMPP server runs here, for
-        its xmpp-server@domain, on xmpp-server@port and xmpp-server@tls-port as on a normal node, and the same ports take the paired nodes'
+    <!-- XMPP (plans/archive/Edge-Node.md §5.4, §10; plans/Edge-Node2.md §4.1): the server's own XMPP server runs here
+        (moqui_conf__xmpp_server__enabled=true in .env), for its xmpp-server@domain, on xmpp-server@port and xmpp-server@tls-port as on a normal node, and the same ports take the paired nodes'
         XMPP domains: a connection that names one (the TLS server name, or the stream's to) goes down that node's link,
         and the node ends its TLS with its own certificates. Tunnel ports of their own (edge@xmpp-port and
         edge@xmpp-tls-port, other than the server's) are an option, as is a pair of ports per node (EdgePort rows). -->
 
     <!-- Mail (plans/archive/Edge-Node.md §5.4, §10): the MTA in moqui (E5b). The SMTP listener takes port 25 from the internet
-        itself (internet mode; smtp-server@listen-port 25 and smtp-server@listen-host 0.0.0.0, or :: for IPv6 too, in .env), with
+        itself (internet mode, on smtp-server@listen-port 25, written below; moqui_conf__smtp_server__enabled=true and
+        smtp-server@listen-host 0.0.0.0, or :: for IPv6 too, in .env), with
         STARTTLS, per-address limits, SPF, DKIM, DMARC and ARC checked (authserv-id smtp-server@hostname). Mail to the server's
         own accounts is delivered here; mail to the paired node's replicated recipients is queued for it, and a message
         with recipients on both sides is delivered once to each. The paired node's mail out (an EmailServer with smtpHost
@@ -38,7 +39,8 @@
         host. The settings and DNS to publish: docs/interfaces/Mail-Inbound.md, The edge node as the gateway. -->
     <!-- The authserv-id of this listener's Authentication-Results, and the only one a local node it queues mail for
         trusts on that mail: its authserv-id, else its hostname (with Postfix and Rspamd, Rspamd's authserv_id). -->
-    <smtp-server max-connections="100" max-connections-per-ip="5" connections-per-minute="30" internet="true"/>
+    <!-- off here until .env turns it on (moqui_conf__smtp_server__enabled=true), as the mail comment above says -->
+    <smtp-server enabled="false" listen-port="25" max-connections="100" max-connections-per-ip="5" connections-per-minute="30" internet="true"/>
     <mail-delivery mta="moqui"/>
 
     <!-- Chat bridges and SMS (plans/archive/Edge-Node.md §5.4, §10): a network's webhook URL is this node's,
@@ -53,12 +55,15 @@
         media socket binds every address, and does not start without it. The paired node's recordings are queued to it,
         in segments of at most calls/recording@segment-mb. Open UDP 10000 (media), UDP and TCP 3478 (TURN) and the relay
         range media-server/turn-server@relay-ports (49152-65535). -->
-    <media-server port="10000" host="0.0.0.0"><turn-server port="3478"/></media-server>
+    <!-- on, on 10000 and TURN on 3478 (the default conf writes the ports; plans/Runtime-Config.md 3.2) -->
+    <media-server enabled="true" host="0.0.0.0"><turn-server enabled="true"/></media-server>
     <calls><recording segment-mb="16"/></calls>
 
     <!-- SIP (plans/archive/Edge-Node.md §5.4 "Voice (SIP)", §10): one SIP engine for both sides, routed by the dialled number
         and by the device domain: the server's own PhoneNumbers and sip-server@domain here, the paired node's numbers and
-        domain delegated to it. Set in .env to take them (each listener is off until its port is set):
+        domain delegated to it. Set in .env to take them (the engine is off until its switch is on; an empty port leaves that
+        transport off):
+            moqui_conf__sip_server__enabled=true
             moqui_conf__sip_server__port=5060
             moqui_conf__sip_server__tls_port=5061
             moqui_conf__sip_server__host=0.0.0.0

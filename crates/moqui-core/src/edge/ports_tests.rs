@@ -114,6 +114,20 @@ fn a_port_of_this_nodes_own_listeners_is_no_rows() {
     // a usual port set elsewhere is free: SSH on 2200 leaves 22 to a paired Git host's row
     assert_eq!(reserved(2200).as_deref(), Some("ssh-server@port"));
     assert_eq!(reserved(22), None);
+    // as the default conf writes them now (plans/Runtime-Config.md §3.2): SSH's 2222 and SMTP's 2525 are taken; 22 is
+    // free for a paired Git host, and 25, the mail port, stays this node's except on a front node
+    let written = |name: &str| match name {
+        "ssh-server@port" => "2222".to_string(),
+        "smtp-server@listen-port" => "2525".to_string(),
+        _ => String::new(),
+    };
+    assert_eq!(
+        reserved_in(2525, false, written).as_deref(),
+        Some("smtp-server@listen-port")
+    );
+    assert_eq!(reserved_in(25, false, written).as_deref(), Some("SMTP, the mail port"));
+    assert_eq!(reserved_in(25, true, written), None);
+    assert_eq!(reserved_in(22, false, written), None);
     // the usual ports of services whose properties are unset, and the mail relay beside an edge node
     assert_eq!(reserved(25).as_deref(), Some("smtp-server@listen-port"));
     assert_eq!(reserved(5060).as_deref(), Some("sip-server@port"));

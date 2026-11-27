@@ -14,7 +14,7 @@ packs. The CI engine that runs a repository's pipelines for its pushes and merge
 |---|---|
 | HTTPS | `https://<host>/git/<path>.git` (`.git` is optional) |
 | HTTPS, on a public-site host | `https://<host>/<path>` or `https://<host>/<path>.git`: the page's URL |
-| SSH | `ssh://<username>@<host>:<ssh-server@port>/<path>.git`, or `<username>@<host>:<path>.git` on port 22 |
+| SSH, while the SSH server is on (`ssh-server@enabled`) | `ssh://<username>@<host>:<ssh-server@port>/<path>.git`, or `<username>@<host>:<path>.git` on port 22 |
 
 `<path>` is the repository's `repositoryPath` (`moqui/mr-moqui`), or its `repositoryId`, which always works too and is
 the only address of a repository with no path. `org.moqui.git.GitServices.get#GitCloneUrls` gives the HTTPS and SSH
@@ -95,7 +95,7 @@ first branch pushed) its default branch.
 
 - **HTTPS**: HTTP Basic with the username and the password, or an **access token** or an **app password** (docs/interfaces/Sync.md)
   as the password, which accounts with a second factor need (the password alone cannot complete a login there). `Authorization: Bearer <token>` and
-  an `api_key` header work too. Credentials are taken only over HTTPS (the `webapp-list/webapp[webroot]@https-listen-port` listener, or
+  an `api_key` header work too. Credentials are taken only over HTTPS (the HTTPS listener, `webapp-list/webapp[webroot]@https-listen-enabled`, or
   `X-Forwarded-Proto: https` behind the proxy that `webapp-list/webapp[webroot]@client-ip-header` names), from a client on this machine
   (behind that proxy, the client it names, never the proxy's own loopback address), or with `git-server`
   `allow-http="true"`. A request with no credentials is served what anyone may view ([Access](#access)) and gets 401 for
@@ -1447,7 +1447,7 @@ cluster members an edge node balances, and an edge cluster.
   behind its own authentication and the web protection's checks; every other route of the host is Not Found there
   (`moqui_core::web::reserved`, which scripts read as `ec.web.reservedPaths`).
 - **The SSH tunnel.** The edge node pipes each connection to its SSH tunnel port down the link to the local node's
-  SSH server (`ssh-server@port`), which needs no open port of its own: `edge@ssh-tunnel-port` to the one active pairing, or
+  SSH server (`ssh-server@enabled` there), which needs no open port of its own: `edge@ssh-tunnel-port` to the one active pairing, or
   a pairing's own port (System › Edge Clients › Ports). At most `<edge ssh-tunnels>` (256) connections per port at
   once. A client that a pairing's shared ban names is refused on that pairing's tunnel ports as on its hosts.
 - **Web protection.** The edge node applies its own rules before a request goes down, and the local node applies its

@@ -138,7 +138,7 @@ off, so captions already on then stop only with the call.
 
 ## Call media
 
-Off unless `media-server@port` is set, and only in a binary with the `rtc` feature (Maximal, Enterprise, Debug). One UDP socket on `media-server@host` (127.0.0.1 by default); browsers are told `media-server@public-address` (the bound address by default; a wildcard bind without it does not start). It carries ICE (STUN) and DTLS-SRTP for every browser leg (`crates/moqui-rtc`, on str0m, ICE-lite). A datagram goes to the peer whose ICE session (its ufrag and password from the SDP exchange over the authenticated socket) accepts it; anything else is dropped. A peer exists only after its leg's `join` was bound by the call services and reached the media node; leaving, a newer generation of the leg, the call's end (`send#MediaControl`) and ICE consent loss remove it. At most 200 rooms and 50 legs a room on a node; SDP over 64 KiB is refused. Media is hop by hop: the SFU decrypts and re-encrypts each stream, except the frames of an end-to-end encrypted call (below), which it forwards as they come. The node registers itself (`CallMediaNode`) every 20 seconds; a call whose node stops registering ends.
+Off unless `media-server@enabled` is true (on `media-server@port`, 10000 by default), and only in a binary with the `rtc` feature (Maximal, Enterprise, Debug). One UDP socket on `media-server@host` (127.0.0.1 by default); browsers are told `media-server@public-address` (the bound address by default; a wildcard bind without it does not start). It carries ICE (STUN) and DTLS-SRTP for every browser leg (`crates/moqui-rtc`, on str0m, ICE-lite). A datagram goes to the peer whose ICE session (its ufrag and password from the SDP exchange over the authenticated socket) accepts it; anything else is dropped. A peer exists only after its leg's `join` was bound by the call services and reached the media node; leaving, a newer generation of the leg, the call's end (`send#MediaControl`) and ICE consent loss remove it. At most 200 rooms and 50 legs a room on a node; SDP over 64 KiB is refused. Media is hop by hop: the SFU decrypts and re-encrypts each stream, except the frames of an end-to-end encrypted call (below), which it forwards as they come. The node registers itself (`CallMediaNode`) every 20 seconds; a call whose node stops registering ends.
 
 Cascading media nodes (`media-server@cascade-enabled`, off by default) add relay links between the media nodes of a call on the
 same UDP sockets: one str0m peer a room on each side, DTLS-SRTP like a browser leg, negotiated only by `rtc-signal`
@@ -210,8 +210,10 @@ spool path or a recording of a call whose media is not on it.
 
 ## TURN
 
-The embedded TURN server (`crates/moqui-rtc` `turn/`, host `rtc/turn.rs`) runs on the media node. Each listener is off
-unless set: `media-server/turn-server@port` (UDP and TCP), `media-server/turn-server@tls-port` (TLS), and 443 on `media-server/turn-server@tls443-host`. TLS uses the
+The embedded TURN server (`crates/moqui-rtc` `turn/`, host `rtc/turn.rs`) runs on the media node while
+`media-server/turn-server@enabled` is true (off by default), each listener on its setting that is not empty:
+`media-server/turn-server@port` (UDP and TCP, 3478 by default), `media-server/turn-server@tls-port` (TLS, empty by
+default), and 443 on `media-server/turn-server@tls443-host` (empty by default). TLS uses the
 `runtime/cert` certificates. Relays are UDP sockets in `media-server/turn-server@relay-ports`. The listeners bind `media-server/turn-server@host`, which is
 `media-server@host` when empty. The URLs given to clients name `media-server/turn-server@public-host`, the media node's public address when
 empty. Its rules:
@@ -256,8 +258,9 @@ peer rule.
 ## SIP
 
 The SIP engine (`crates/moqui-sip` on rsipstack, host `src/sip/`) runs beside a media node, only in a binary with the
-`sip` feature (Maximal, Enterprise, Debug). Each listener is off unless set: `sip-server@port` (UDP and TCP on `sip-server@host`),
-`sip-server@tls-port` (TLS on `sip-server@tls-host`, the `runtime/cert` certificates). Each phone leg has a UDP RTP socket in
+`sip` feature (Maximal, Enterprise, Debug), and only while `sip-server@enabled` is true (off by default). Each listener is
+on while its port is not empty: `sip-server@port` (UDP and TCP on `sip-server@host`, 5060 by default),
+`sip-server@tls-port` (TLS on `sip-server@tls-host`, the `runtime/cert` certificates; empty by default). Each phone leg has a UDP RTP socket in
 `sip-server@rtp-ports` on `sip-server@rtp-host`. An exposed SIP listener is scanned within hours, so its rules are release gates
 ([SIP](../interfaces/SIP.md) "Fraud controls"):
 
@@ -451,11 +454,12 @@ The SIP engine (`crates/moqui-sip` on rsipstack, host `src/sip/`) runs beside a 
 ## XMPP
 
 The XMPP server (`crates/moqui-xmpp`, host `src/xmpp/`, [XMPP](../interfaces/XMPP.md)) runs only in a binary with the
-`xmpp` feature (Maximal, Enterprise, Debug) and only when `xmpp-server@domain` is set. Each listener is off unless set:
-`xmpp-server@port` (STARTTLS, required before anything else) on `xmpp-server@host`, `xmpp-server@tls-port` (direct TLS) on
+`xmpp` feature (Maximal, Enterprise, Debug) and only while `xmpp-server@enabled` is true (off by default), for
+`xmpp-server@domain`. Each client listener is on while its port is not written empty:
+`xmpp-server@port` (STARTTLS, required before anything else; 5222 by default) on `xmpp-server@host`, `xmpp-server@tls-port` (direct TLS; 5223 by default) on
 `xmpp-server@tls-host`, and `/xmpp-websocket` with `xmpp-server@websocket-enabled`. Local users only: no server-to-server
 (`xmpp-server@s2s-port` is declared in the default conf and no code reads it). `xmpp-server@host` defaults to `0.0.0.0`, so `xmpp-server@port`
-listens on every IPv4 address once it is set. `xmpp-server@tls-host` is empty by default and then takes `xmpp-server@host`; an empty
+listens on every IPv4 address once XMPP is switched on. `xmpp-server@tls-host` is empty by default and then takes `xmpp-server@host`; an empty
 host is `0.0.0.0`. A direct TLS handshake and a STARTTLS handshake each have 10 seconds. A connection with nothing read
 for 600 seconds is closed, and a write the client does not take for 60 seconds ends it.
 

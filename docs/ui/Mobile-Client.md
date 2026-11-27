@@ -293,7 +293,7 @@ The Kotlin rules (`CallRules`: the ring's time, the join watchdog, which `ringEn
 over the lock screen) have JVM unit tests: `./gradlew :app:testUniversalDebugUnitTest` in `gen/android`, with the
 environment of `scripts/android-env.sh`.
 
-A real call to ring: another user starts it on the local server (with `media-server@port` set, so it has a media node),
+A real call to ring: another user starts it on the local server (with `media-server@enabled` true, so it has a media node),
 for example `curl -u joe.developer:moqui -H 'X-Requested-With: XMLHttpRequest' -X POST
 https://localhost:8443/apps/BasicComms/Calls/startCall -d calleeUserIdList=EX_JOHN_DOE -d video=false`, then the ring
 above with its `callSessionId`; with the app in the foreground the `/notws` ring reaches the shell too.

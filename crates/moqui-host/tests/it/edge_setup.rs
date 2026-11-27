@@ -83,8 +83,11 @@ const SIP_DOMAIN: &str = "sip.edge.example.test";
 const SIP_NUMBER: &str = "+15551230100";
 const SIP_PLAIN_NUMBER: &str = "+15551230101";
 
+// no XMPP client ports of its own (plans/Runtime-Config.md §3.2): the edge node's tunnel ports are free ones, and Apply
+// warns when this node's written 5222 and 5223 differ from them
 const LOCAL_CONF: &str = r#"<edge queue-retry-seconds="0.1"/>
-    <email-client idle-enabled="false"/>"#;
+    <email-client idle-enabled="false"/>
+    <xmpp-server port="" tls-port=""/>"#;
 const EDGE_CONF: &str = r#"<edge queue-retry-seconds="0.1"/>
     <email-client idle-enabled="false"/>
     <smtp-server internet="true" starttls="false"/>"#;
@@ -441,6 +444,7 @@ fn walk_the_wizard(local: &Gate, sales: &str) {
 /// The XMPP area of the wizard on the local node, for its `xmpp-server@domain` (set as a property after the servers started,
 /// so the local node runs no XMPP server).
 fn xmpp_area(local: &Gate, edge: &Gate) {
+    moqui_lib::env::set_property("moqui_conf__xmpp_server__enabled", "true".to_string());
     moqui_lib::env::set_property("moqui_conf__xmpp_server__domain", "chat.example.com".to_string());
     let factory = Arc::clone(local.server.factory());
     let context = factory.new_context();
@@ -560,6 +564,7 @@ fn xmpp_area(local: &Gate, edge: &Gate) {
     );
     // with no xmpp-server@domain, nothing is changed
     moqui_lib::env::clear_property("moqui_conf__xmpp_server__domain");
+    moqui_lib::env::clear_property("moqui_conf__xmpp_server__enabled");
     let parameters = BTreeMap::from([("xmppOn".to_string(), Value::Bool(true))]);
     let refused = moqui_core::service::sync("org.moqui.edge.EdgeServices.apply#EdgeSetup", &parameters);
     let errors =
@@ -1059,6 +1064,7 @@ fn a_local_node_is_attached_from_the_wizard() {
             ),
             ("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_enabled", "true"),
             ("moqui_conf__smtp_server__listen_port", "0"),
+            ("moqui_conf__smtp_server__enabled", "true"),
             ("moqui_conf__smtp_server__hostname", "edge.example.net"),
             ("moqui_conf__mail_delivery__mta", "moqui"),
             ("mail-delivery@bounce-domain", "bounce.example.net"),
@@ -1067,9 +1073,11 @@ fn a_local_node_is_attached_from_the_wizard() {
             ("moqui_conf__edge__xmpp_port", &xmpp_port.to_string()),
             ("moqui_conf__edge__xmpp_tls_port", &xmpp_tls_port.to_string()),
             ("moqui_conf__edge__xmpp_host", "127.0.0.1"),
+            ("moqui_conf__media_server__enabled", "true"),
             ("moqui_conf__media_server__port", &media_port.to_string()),
             ("moqui_conf__media_server__host", "127.0.0.1"),
             ("moqui_conf__media_server__public_address", &media),
+            ("moqui_conf__media_server__turn_server__enabled", "true"),
             ("moqui_conf__media_server__turn_server__port", &turn_port.to_string()),
             ("moqui_conf__media_server__turn_server__host", "127.0.0.1"),
             ("moqui_conf__media_server__turn_server__public_host", "127.0.0.1"),
@@ -1079,6 +1087,7 @@ fn a_local_node_is_attached_from_the_wizard() {
                 "edge-setup-turn-secret",
             ),
             // its SIP engine, on loopback (the local node, started first, runs none)
+            ("moqui_conf__sip_server__enabled", "true"),
             ("moqui_conf__sip_server__port", "0"),
             ("moqui_conf__sip_server__rtp_ports", "42700-42799"),
             ("moqui_conf__sip_server__registrar__enabled", "true"),

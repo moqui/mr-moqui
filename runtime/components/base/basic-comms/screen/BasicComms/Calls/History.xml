@@ -179,7 +179,7 @@ along with this software (see the LICENSE.md file). If not, see
         const caps = ec.service.sync().name('org.moqui.call.CallServices.get#Capabilities').requireNewTransaction(true).disableAuthz().call() || {}
         callsActive = !!caps.active
         callsReason = caps.active ? '' : caps.reasonCode === 'notBuilt' ? L('Calls are not built into this server.')
-            : L('Calls are not available: no media server is running. An administrator sets media-server@port to start one.')
+            : L('Calls are not available: no media server is running. An administrator sets media-server@enabled to start one.')
         const when = (millis) => millis ? ec.l10n.format(new Date(Number(millis)), 'MMM d, h:mm a') : ''
         const active = ec.service.sync().name('org.moqui.call.CallServices.find#ActiveCalls').requireNewTransaction(true).disableAuthz().call() || {}
         callList = Array.from(active.callList || []).map((call) => {

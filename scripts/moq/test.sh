@@ -197,7 +197,9 @@ framework_suites() {
     if [ ${#server[@]} -gt 0 ]; then
         suite "moqui test (framework)" "$MOQ" test "${SUITE_MOQ_OPTS[@]}" -- "${server[@]}" --workers "$TEST_WORKERS"
     fi
-    suite "moqui test demo" "$MOQ" test "${SUITE_MOQ_OPTS[@]}" --nobuild -D demo_disabled=false demo
+    # SSH off as on a demo server: the dev conf turns it on, and a runtime conf outranks the demo component's own
+    suite "moqui test demo" "$MOQ" test "${SUITE_MOQ_OPTS[@]}" --nobuild -D demo_disabled=false \
+        -D moqui_conf__ssh_server__enabled=false demo
     # the binary is built by now. Offline specs open no server; --serve runs the suites that declare one.
     suite "moqui test-client webroot --offline" "$MOQ" test-client "${SUITE_MOQ_OPTS[@]}" --nobuild -- webroot --offline
     suite "moqui test-client runtime/$DEV_SET/dev-aide --offline" "$MOQ" test-client "${SUITE_MOQ_OPTS[@]}" \
@@ -375,7 +377,7 @@ accept_suites() {
         in_names "$name" || continue
         [ -z "$ACCEPT_SPECS" ] || has_spec_file test/acceptance "$name" || continue
         server+=("$name")
-        [ "$name" != demo ] || demo=(-D demo_disabled=false)
+        [ "$name" != demo ] || demo=(-D demo_disabled=false -D moqui_conf__ssh_server__enabled=false)
     done < <(spec_components test/acceptance "${COMPONENT_SETS[@]}")
     while IFS= read -r name; do
         in_names "$name" || continue
@@ -734,7 +736,7 @@ runtime/components/dev, moq or the scripts.
                                     the specs of components/base and components/dev (test/*.spec.js),
                                     on 4 workers (MOQ_TEST_WORKERS)
   moqui test demo                   the demo component's specs, with -D demo_disabled=false (it is off
-                                    by default)
+                                    by default) and SSH off, as on a demo server
   moqui test-client webroot --offline
   moqui test-client runtime/components/dev/dev-aide --offline
                                     the offline client specs: pages at https://moqui.test, no server

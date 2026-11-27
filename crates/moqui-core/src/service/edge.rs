@@ -1451,10 +1451,12 @@ fn host_list(parameters: &BTreeMap<String, Value>) -> Vec<EdgeHostInfo> {
         .collect()
 }
 
-/// The local node's XMPP domain (`xmpp-server@domain`), lower case with no trailing dot; empty when it runs no XMPP server.
+/// The local node's XMPP domain (`xmpp-server@domain` while `xmpp-server@enabled` is true, [`crate::comms::xmpp_domain`]),
+/// lower case with no trailing dot; empty when it runs no XMPP server.
 fn xmpp_domain() -> String {
-    crate::context::conf_env::setting("xmpp-server@domain")
-        .trim()
+    crate::context::ExecutionContext::with_current(|ec| crate::comms::xmpp_domain(ec.factory()))
+        .unwrap_or_else(|| crate::comms::xmpp_domain_by(&crate::context::conf_env::setting))
+        .unwrap_or_default()
         .trim_end_matches('.')
         .to_ascii_lowercase()
 }
@@ -1471,7 +1473,9 @@ fn xmpp_choice(
 ) -> Result<(String, bool), String> {
     let domain = xmpp_domain();
     if domain.is_empty() {
-        return Err("this node runs no XMPP server: set xmpp-server@domain".to_string());
+        return Err(
+            "this node runs no XMPP server: set xmpp-server@enabled=\"true\" and xmpp-server@domain".to_string(),
+        );
     }
     if !offer.xmpp.available {
         return Err("the edge node has no XMPP tunnel ports (edge@xmpp-port, edge@xmpp-tls-port)".to_string());
@@ -1689,7 +1693,7 @@ fn apply_edge_setup(parameters: &BTreeMap<String, Value>, facade: &EntityFacade)
         lines.push(SetupLine::new(
             "calls",
             false,
-            "The edge node runs no media node (media-server@port), so calls stay on this node's own media nodes",
+            "The edge node runs no media node (media-server@enabled), so calls stay on this node's own media nodes",
         ));
     }
     // phones the same way: sipOn given (Discover passes it only when it offered phones), and the edge node's SIP
@@ -1707,7 +1711,7 @@ fn apply_edge_setup(parameters: &BTreeMap<String, Value>, facade: &EntityFacade)
         lines.push(SetupLine::new(
             "sip",
             false,
-            "The edge node runs no SIP engine (sip-server@port, sip-server@tls-port), so this node's trunks do not go through it",
+            "The edge node runs no SIP engine (sip-server@enabled), so this node's trunks do not go through it",
         ));
     }
     let sets = match crate::edge::replica::replica(facade) {

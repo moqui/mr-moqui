@@ -82,7 +82,7 @@ another user is refused against an existing session. Session cookies are not wri
 
 ## Over SSH
 
-When the built-in SSH server runs (`ssh-server@port`, see `crates/moqui-host/src/ssh/server.rs`), the same client runs on an
+When the built-in SSH server runs (`ssh-server@enabled`, on `ssh-server@port`, 2222 by default; see `crates/moqui-host/src/ssh/server.rs`), the same client runs on an
 SSH channel, in the server's process, for any user, as the browser is for any user:
 
 ```

@@ -78,11 +78,7 @@ impl Listener for Ssh {
                 )))
             }
             Ok(None) => {
-                moqui_core::startup::listener(
-                    ctx.factory,
-                    NAME,
-                    State::off("ssh-server@port is not set, or ssh-server@enabled is false"),
-                );
+                moqui_core::startup::listener(ctx.factory, NAME, State::off("ssh-server@enabled is false"));
                 Ok(None)
             }
             Err(err) => Err(err),

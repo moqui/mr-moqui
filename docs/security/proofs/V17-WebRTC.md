@@ -8,7 +8,7 @@ table, and what a status claims, is in the [index](README.md).
 
 | Requirement | L | Topic | Status | Evidence | Proof |
 | --- | --- | --- | --- | --- | --- |
-| v5.0.0-17.1.1 | 2 | TURN relays only to non-reserved addresses | Framework | `crates/moqui-rtc/src/turn/mod.rs` `peer_allowed`: media nodes' media ports and `allowed-peers` only; an XMPP user's credential only `is_public` addresses (no loopback, private, link-local, shared, multicast, broadcast, documentation; IPv4 inside IPv6 judged); TURN off until `media-server/turn-server@port`; SEC-COM-18 open (host's own public address) | `a_peer_that_is_no_media_node_is_refused`, `an_xmpp_users_credential_relays_to_public_addresses_only` (`crates/moqui-rtc/src/turn/tests.rs`) |
+| v5.0.0-17.1.1 | 2 | TURN relays only to non-reserved addresses | Framework | `crates/moqui-rtc/src/turn/mod.rs` `peer_allowed`: media nodes' media ports and `allowed-peers` only; an XMPP user's credential only `is_public` addresses (no loopback, private, link-local, shared, multicast, broadcast, documentation; IPv4 inside IPv6 judged); TURN off until `media-server/turn-server@enabled`; SEC-COM-18 open (host's own public address) | `a_peer_that_is_no_media_node_is_refused`, `an_xmpp_users_credential_relays_to_public_addresses_only` (`crates/moqui-rtc/src/turn/tests.rs`) |
 
 ## V17.2 Media
 

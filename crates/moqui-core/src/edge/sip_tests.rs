@@ -180,7 +180,7 @@ fn a_link_that_is_down_or_without_sip_names_no_sip_node() {
     assert!(linked_sip_node(&status).unwrap_err().contains("unpaired"));
     status.state = crate::edge::LinkState::Linked;
     status.peer.instance_id = "edge-1".to_string();
-    assert!(linked_sip_node(&status).unwrap_err().contains("sip-server@port"));
+    assert!(linked_sip_node(&status).unwrap_err().contains("sip-server@enabled"));
     status.peer.sip_tls_address = "203.0.113.5:5061".to_string();
     assert_eq!(linked_sip_node(&status).unwrap().instance_id, "edge-1");
 }

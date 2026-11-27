@@ -883,8 +883,8 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- ========== The user's settings ========== -->
 
     <service verb="get" noun="ClientSettings">
-        <description>What the current user enters in an XMPP app (basic-comms Settings, Chat apps): enabled (xmpp-server@domain is
-            set), jid (the username in lower case, escaped as XEP-0106 has it, at the domain), server (the domain), port
+        <description>What the current user enters in an XMPP app (basic-comms Settings, Chat apps): enabled (xmpp-server@enabled
+            is true and xmpp-server@domain is set), jid (the username in lower case, escaped as XEP-0106 has it, at the domain), server (the domain), port
             (STARTTLS, xmpp-server@port) and tlsPort (direct TLS, xmpp-server@tls-port), each empty while off, and websocketUrl
             (/xmpp-websocket with xmpp-server@websocket-enabled); and appPasswordList, the user's app passwords that XMPP takes
             (UserServices.get#UserAppPasswords). Behind an edge node the ports are still this node's own: the edge
@@ -897,7 +897,8 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
         <actions><script><![CDATA[
             const prop = (selector) => String(ec.factory.getConfValue(selector) || '').trim()
-            const domain = prop('xmpp-server@domain').toLowerCase()
+            // this server's XMPP domain while its XMPP server is on (plans/Runtime-Config.md 3.2)
+            const domain = prop('xmpp-server@enabled').toLowerCase() === 'true' ? prop('xmpp-server@domain').toLowerCase() : ''
             enabled = !!domain
             server = domain || null
             port = enabled && prop('xmpp-server@port') ? prop('xmpp-server@port') : null

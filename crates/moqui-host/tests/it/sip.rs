@@ -184,7 +184,9 @@ fn a_phone_call_each_way_through_a_fake_trunk_heard_by_a_browser() {
         "sip",
         None,
         &[
+            ("moqui_conf__media_server__enabled", "true"),
             ("moqui_conf__media_server__port", "0"),
+            ("moqui_conf__sip_server__enabled", "true"),
             ("moqui_conf__sip_server__port", "0"),
             ("moqui_conf__sip_server__rtp_ports", "42300-42399"),
         ],
@@ -380,7 +382,9 @@ fn a_busy_user_s_caller_leaves_a_voicemail_through_a_fake_trunk() {
         "sip-voicemail",
         None,
         &[
+            ("moqui_conf__media_server__enabled", "true"),
             ("moqui_conf__media_server__port", "0"),
+            ("moqui_conf__sip_server__enabled", "true"),
             ("moqui_conf__sip_server__port", "0"),
             ("moqui_conf__sip_server__rtp_ports", "42400-42499"),
         ],
@@ -580,7 +584,9 @@ fn the_access_number_takes_a_box_and_pin_plays_a_message_and_7_deletes_it() {
         "sip-voicemail-access",
         None,
         &[
+            ("moqui_conf__media_server__enabled", "true"),
             ("moqui_conf__media_server__port", "0"),
+            ("moqui_conf__sip_server__enabled", "true"),
             ("moqui_conf__sip_server__port", "0"),
             ("moqui_conf__sip_server__rtp_ports", "42500-42599"),
         ],
@@ -769,7 +775,9 @@ fn a_registered_desk_phone_rings_answers_and_is_heard() {
         "sip",
         None,
         &[
+            ("moqui_conf__media_server__enabled", "true"),
             ("moqui_conf__media_server__port", "0"),
+            ("moqui_conf__sip_server__enabled", "true"),
             ("moqui_conf__sip_server__port", "0"),
             ("moqui_conf__sip_server__rtp_ports", "42400-42499"),
             ("moqui_conf__sip_server__registrar__enabled", "true"),
@@ -905,7 +913,9 @@ fn an_ivr_key_puts_the_caller_in_a_queue_and_its_agent_answers() {
         "sip-ivr",
         None,
         &[
+            ("moqui_conf__media_server__enabled", "true"),
             ("moqui_conf__media_server__port", "0"),
+            ("moqui_conf__sip_server__enabled", "true"),
             ("moqui_conf__sip_server__port", "0"),
             ("moqui_conf__sip_server__rtp_ports", "42500-42599"),
             ("moqui_conf__calls__queue__tick_seconds", "1"),

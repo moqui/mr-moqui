@@ -58,7 +58,7 @@ fn a_link_that_is_down_or_without_media_names_no_media_node() {
     assert!(linked_media_node(&status).unwrap_err().contains("unpaired"));
     status.state = crate::edge::LinkState::Linked;
     status.peer.instance_id = "edge-1".to_string();
-    assert!(linked_media_node(&status).unwrap_err().contains("media-server@port"));
+    assert!(linked_media_node(&status).unwrap_err().contains("media-server@enabled"));
     status.peer.media_address = "203.0.113.5:10000".to_string();
     assert_eq!(linked_media_node(&status).unwrap().instance_id, "edge-1");
 }

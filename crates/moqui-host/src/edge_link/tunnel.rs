@@ -24,7 +24,7 @@
 //! - **XMPP** ([`super::TUNNEL_XMPP`], [`super::TUNNEL_XMPPS`]): each connection to `edge@xmpp-port` (STARTTLS) or
 //!   `edge@xmpp-tls-port` (direct TLS), to the XMPP server of the local node whose XMPP domain the connection names
 //!   (plans/Edge-Node2.md §4.1, E16: the TLS server name on the direct TLS port, the stream header's `to` on the
-//!   STARTTLS port, [`super::xmpp-server@domain`]), which ends the TLS (§5.4). The edge node reads only that, sees no stanza,
+//!   STARTTLS port; that node's `xmpp-server@domain` while its `xmpp-server@enabled` is true), which ends the TLS (§5.4). The edge node reads only that, sees no stanza,
 //!   and channel binding works as on the local node's own ports. An all-in-one node's own XMPP ports do the same for
 //!   its pairings' domains ([`xmpp_to_pairing`]), so one pair of ports serves every domain.
 //! - **A port per pairing** ([`watch_rows`], E16): each `moqui.edge.EdgePort` row, an SSH or XMPP port whose
@@ -336,7 +336,7 @@ pub(crate) fn xmpp_domains(
 
 /// This node's own XMPP domain while its own XMPP server runs (an all-in-one node), lower case.
 fn own_xmpp_domain(factory: &ExecutionContextFactory, direct: bool) -> Option<String> {
-    let domain = moqui_core::context::conf_env::setting("xmpp-server@domain");
+    let domain = moqui_core::comms::xmpp_domain(factory)?;
     (crate::xmpp::running(factory, direct))
         .then(|| super::xmpp_domain::host_name(&domain))
         .flatten()
@@ -594,14 +594,13 @@ fn reconcile(
     }
 }
 
-/// On an all-in-one node with its own XMPP server (`xmpp-server@domain` set), the property of the server's own XMPP listener
-/// that `bind` would take: `xmpp-server@port` or `xmpp-server@tls-port` on the same port and an overlapping host. The paired node's
-/// XMPP domain gets tunnel ports of its own (plans/archive/Edge-Node.md §10), so such a tunnel port is skipped, logged.
-pub(crate) fn own_xmpp_clash(bind: SocketAddr) -> Option<&'static str> {
-    let property = |name: &str| moqui_core::context::conf_env::setting_or_property(name);
-    if property("xmpp-server@domain").is_empty() {
-        return None;
-    }
+/// On an all-in-one node with its own XMPP server (`xmpp-server@enabled` true, with its domain), the property of the
+/// server's own XMPP listener that `bind` would take: `xmpp-server@port` or `xmpp-server@tls-port` on the same port and an
+/// overlapping host. The paired node's XMPP domain gets tunnel ports of its own (plans/archive/Edge-Node.md §10), so such
+/// a tunnel port is skipped, logged.
+pub(crate) fn own_xmpp_clash(factory: &ExecutionContextFactory, bind: SocketAddr) -> Option<&'static str> {
+    let property = |name: &str| moqui_core::context::conf_env::setting_on(factory, name);
+    moqui_core::comms::xmpp_domain(factory)?;
     let shared_host = property("xmpp-server@host");
     [
         ("xmpp-server@port", "xmpp-server@host"),

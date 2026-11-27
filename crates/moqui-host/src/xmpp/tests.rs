@@ -12,7 +12,8 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The XMPP connection admission: the per-source cap counts an IPv6 /64 as one source.
+//! The XMPP connection admission: the per-source cap counts an IPv6 /64 as one source; and the client ports the port check
+//! takes.
 
 use std::net::IpAddr;
 
@@ -37,4 +38,33 @@ fn the_per_source_cap_counts_a_64_as_one_source() {
     assert!(admit(&slot.sources, v4).is_some());
     drop(held);
     assert!(admit(&slot.sources, next).is_some());
+}
+
+/// The port check takes XMPP's client ports by the merged conf: none while the switch is off, no domain is set or the
+/// conf's role is a dedicated edge node, and an empty port leaves that client port off (plans/Runtime-Config.md §3.2).
+#[test]
+fn the_client_ports_are_checked_only_while_xmpp_is_on_for_a_domain() {
+    let conf =
+        |xmpp: &str| moqui_lib::node::MNode::parse_text("conf", &format!("<moqui-conf>{xmpp}</moqui-conf>")).unwrap();
+    let ports = |xmpp: &str| -> Vec<u16> {
+        super::listen_targets(&conf(xmpp))
+            .iter()
+            .map(|target| target.port)
+            .collect()
+    };
+    assert_eq!(
+        ports(r#"<xmpp-server enabled="true" domain="chat.example" port="5222" tls-port="" host="127.0.0.1"/>"#),
+        [5222]
+    );
+    assert_eq!(
+        ports(r#"<xmpp-server enabled="true" domain="chat.example" port="5222" tls-port="5223" host="127.0.0.1"/>"#),
+        [5222, 5223]
+    );
+    assert!(ports(r#"<xmpp-server enabled="false" domain="chat.example" port="5222" host="127.0.0.1"/>"#).is_empty());
+    assert!(ports(r#"<xmpp-server enabled="true" domain="" port="5222" host="127.0.0.1"/>"#).is_empty());
+    // a dedicated edge node by the same conf: its client ports tunnel to its local node
+    assert!(ports(
+        r#"<instance node-role="edge"/><xmpp-server enabled="true" domain="chat.example" port="5222" host="127.0.0.1"/>"#
+    )
+    .is_empty());
 }

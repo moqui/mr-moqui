@@ -1069,8 +1069,8 @@ it:
 - **The first certificate comes from a challenge-only listener** (decided with the user, Nov 13). A node with no
   certificate at all still does not bind its HTTPS listener; once a name is set up here it does, and until a
   certificate is there it answers `acme-tls/1` only for a name with a challenge open and refuses every other
-  handshake. So TLS-ALPN-01 gets a first certificate with no port 80, and down an edge node's tunnel. An explicit
-  `webapp_https_listen_port` with no certificate is no longer an error at start: the listener stands by the same way.
+  handshake. So TLS-ALPN-01 gets a first certificate with no port 80, and down an edge node's tunnel. HTTPS switched
+  on (`https-listen-enabled`, the default) with no certificate is not an error at start: the listener stands by the same way.
   It also binds for a name set up on another member, a certificate added to `runtime/cert`, and the length of a
   set-up check (closing after it when nothing else wants it). An edge node that started so takes no links until it
   restarts with a certificate.

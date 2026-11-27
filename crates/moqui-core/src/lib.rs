@@ -17,6 +17,7 @@
 pub mod backup;
 pub mod build_info;
 pub mod cluster;
+pub mod comms;
 pub mod context;
 pub mod devtools;
 pub mod drain;

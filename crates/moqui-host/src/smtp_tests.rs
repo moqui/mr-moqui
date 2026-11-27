@@ -435,6 +435,27 @@ async fn starttls_starts_the_session_over_and_require_tls_waits_for_it() {
     let _ = std::fs::remove_dir_all(runtime);
 }
 
+/// The listener's switch decides (plans/Runtime-Config.md §3.2): off whatever the port; on, at its written port, and an
+/// empty port is refused naming the switch.
+#[test]
+fn the_listener_is_on_by_its_switch_at_its_written_port() {
+    let settings = |enabled: &'static str, port: &'static str| {
+        move |name: &str| match name {
+            "enabled" => enabled.to_string(),
+            "listen-port" => port.to_string(),
+            _ => String::new(),
+        }
+    };
+    assert_eq!(listen_target_by(&settings("false", "2525")).unwrap(), None);
+    assert_eq!(listen_target_by(&settings("", "2525")).unwrap(), None);
+    assert_eq!(
+        listen_target_by(&settings("TRUE", " 2525 ")).unwrap(),
+        Some(("127.0.0.1".to_string(), 2525))
+    );
+    let empty = listen_target_by(&settings("true", "")).unwrap_err().to_string();
+    assert!(empty.contains("smtp-server@enabled"), "{empty}");
+}
+
 #[test]
 fn starttls_with_no_certificate_does_not_start() {
     let runtime = crate::tls::tests::temp_dir("smtp-no-cert");

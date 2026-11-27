@@ -623,7 +623,7 @@ pub fn linked_sip_node(status: &super::LinkStatus) -> Result<&EdgeInfo, String> 
     if status.peer.instance_id.is_empty()
         || (status.peer.sip_address.is_empty() && status.peer.sip_tls_address.is_empty())
     {
-        return Err("The edge node runs no SIP engine (sip-server@port, sip-server@tls-port)".to_string());
+        return Err("The edge node runs no SIP engine (sip-server@enabled)".to_string());
     }
     Ok(&status.peer)
 }

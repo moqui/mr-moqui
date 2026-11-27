@@ -481,13 +481,15 @@ feature("Chat apps gives the XMPP settings, lists the app passwords and offers a
         ec.user.internalLoginUser("basic.comms.spec")
         sys(() => ec.entity.find("moqui.security.UserAppPassword").condition("userId", USER).deleteAll())
         sys(() => call("org.moqui.impl.UserServices.create#UserAppPassword", {name: "Phone chat", scope: "xmpp"}))
-        const served = withConf("xmpp-server@domain", "moqui.local", () => ({
+        const served = withConf("xmpp-server@enabled", "true", () => withConf("xmpp-server@domain", "moqui.local", () => ({
             qvt: render(root, "Settings/ChatApps", "qvt", {}),
             tui: render(root, "Settings/ChatApps", "tui", {}),
             settings: sys(() => call("org.moqui.chat.XmppServices.get#ClientSettings", {}))
-        }))
-        // the terminal renders the sections that show (the qvt page carries both, for the browser to choose)
-        const off = withConf("xmpp-server@domain", "", () => render(root, "Settings/ChatApps", "tui", {}))
+        })))
+        // the terminal renders the sections that show (the qvt page carries both, for the browser to choose); with its
+        // switch off XMPP is not set up though a domain is set (plans/Runtime-Config.md §3.2)
+        const off = withConf("xmpp-server@enabled", "false", () => withConf("xmpp-server@domain", "moqui.local", () =>
+            render(root, "Settings/ChatApps", "tui", {})))
         sys(() => ec.entity.find("moqui.security.UserAppPassword").condition("userId", USER).deleteAll())
         login("john.doe")
         return {served, off}

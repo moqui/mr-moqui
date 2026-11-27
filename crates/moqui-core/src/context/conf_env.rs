@@ -643,6 +643,25 @@ pub const RETIRED_VALUES: &[RetiredValue] = &[
         "webapp-list/webapp[webroot]@grpc-listen-enabled",
         "false keeps it closed; otherwise write the port, 4317 by default",
     ),
+    (
+        "ssh-server@port",
+        &[""],
+        "ssh-server@enabled",
+        "false keeps it closed; otherwise write the port, 2222 by default",
+    ),
+    (
+        "smtp-server@listen-port",
+        &[""],
+        "smtp-server@enabled",
+        "false keeps it closed; otherwise write the port, 2525 by default",
+    ),
+    // an empty plain port of SIP, XMPP or TURN stays valid: that one transport off
+    (
+        "media-server@port",
+        &[""],
+        "media-server@enabled",
+        "false keeps call media off; otherwise write the port, 10000 by default",
+    ),
 ];
 
 /// Why `value` of the attribute at `path` is refused, when it is a retired value ([`RETIRED_VALUES`]): the message names

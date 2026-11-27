@@ -196,6 +196,15 @@ fn a_front_node_has_the_front_set_only() {
     ] {
         properties.push((name, crate::common::free_port().to_string()));
     }
+    // their switches on too (plans/Runtime-Config.md §3.2): a front still starts none of the edge set
+    for name in [
+        "moqui_conf__media_server__enabled",
+        "moqui_conf__media_server__turn_server__enabled",
+        "moqui_conf__sip_server__enabled",
+        "moqui_conf__smtp_server__enabled",
+    ] {
+        properties.push((name, "true".to_string()));
+    }
     let front = crate::common::start_with_files(
         "edge-front-only",
         None,

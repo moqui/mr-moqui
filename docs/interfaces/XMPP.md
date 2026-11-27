@@ -18,14 +18,17 @@ is C3b, not built. The XMPP view is of the same rooms, messages and presence the
 ## Settings
 
 The `xmpp` feature is in the Maximal, Enterprise and Debug packages.
-Everything is off until `xmpp-server@domain` is set; each listener is off until its port is set.
+Everything is off until `xmpp-server@enabled` is true, for `xmpp-server@domain` (switched on with no domain it fails
+and says so on System Home); each client listener is closed while its port is written empty. A node whose clients
+come only through an edge node's ports and the WebSocket writes both empty (`<xmpp-server port="" tls-port=""/>`).
 
 | Property | Default | |
 | --- | --- | --- |
+| `xmpp-server@enabled` | `false` | XMPP's switch |
 | `xmpp-server@domain` | empty | The domain of the users' JIDs, `user@<domain>` |
 | `xmpp-server@rooms-domain`, `xmpp-server@upload-domain` | `rooms.<domain>`, `upload.<domain>` | The MUC service and the upload service |
-| `xmpp-server@port`, `xmpp-server@host` | empty, `0.0.0.0` | STARTTLS (5222 by convention) |
-| `xmpp-server@tls-port`, `xmpp-server@tls-host` | empty, `xmpp-server@host` | Direct TLS with ALPN `xmpp-client` (5223, XEP-0368) |
+| `xmpp-server@port`, `xmpp-server@host` | `5222`, `0.0.0.0` | STARTTLS |
+| `xmpp-server@tls-port`, `xmpp-server@tls-host` | `5223`, `xmpp-server@host` | Direct TLS with ALPN `xmpp-client` (XEP-0368) |
 | `xmpp-server@websocket-enabled` | `false` | `/xmpp-websocket` (RFC 7395) on the HTTP listener |
 | `xmpp-server/upload@url` | `https://<domain>` (and `webapp-list/webapp[webroot]@https-port`) | The base of upload URLs |
 | `xmpp-server/upload@max-bytes` | 20971520 | The largest upload |
@@ -76,7 +79,7 @@ A local server behind an edge node ([Run-Deploy](../Run-Deploy.md), [plans/archi
   one of the node's host names on the edge node. In terminate mode the WebSocket has no exporter, so clients sign in
   with SCRAM-SHA-256 there.
 - The Edge Node wizard on the local node sets this up: Discover offers XMPP when the edge node has a tunnel port and
-  this node an `xmpp-server@domain`, and adds the domain to the passthrough names; Apply sends the domain to the edge node
+  this node runs XMPP (`xmpp-server@enabled`, for its `xmpp-server@domain`), and adds the domain to the passthrough names; Apply sends the domain to the edge node
   and checks `_xmpp-client._tcp` and `_xmpps-client._tcp` against the edge node's name and ports; Test opens a client
   connection through each tunnel port, whose TLS must be this node's own certificate, sending no credentials.
 - While the link is down clients cannot connect; they retry, and what was sent to them waits in the archive.
@@ -362,7 +365,7 @@ message delivery outside the archive; reactions in the archive; receipts (XEP-01
   makes them.
 - `cargo test -p moqui-rtc turn`: an XMPP user's TURN credential relays to public addresses only.
 - `./moq test basic-comms --spec BasicComms`: Chat apps in qvt and tui, marking an app password made before XMPP
-  sign-in, and saying XMPP is not set up while `xmpp-server@domain` is empty.
+  sign-in, and saying XMPP is not set up while `xmpp-server@enabled` is false.
 
 **Not checked live:** Conversations, Monal, Dino and Gajim against a deployment, the XEP-0479 compliance tester, a
 web client over `/xmpp-websocket` with channel binding behind this process's HTTPS, and push notifications reaching an

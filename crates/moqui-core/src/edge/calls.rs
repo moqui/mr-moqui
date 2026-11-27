@@ -389,7 +389,7 @@ pub fn apply(
                 "calls",
                 false,
                 "This node has no live media node of its own, so no new call can start while calls are off: run one \
-                 (media-server@port) or turn calls on",
+                 (media-server@enabled) or turn calls on",
             )),
             Ok(_) => {}
             Err(err) => lines.push(SetupLine::new(
@@ -412,7 +412,7 @@ pub fn apply(
         SetupLine::new(
             "calls",
             false,
-            "The edge node runs no TURN (media-server/turn-server@port), so browsers behind strict firewalls may not connect",
+            "The edge node runs no TURN (media-server/turn-server@enabled), so browsers behind strict firewalls may not connect",
         )
     } else if super::media::turn_secret(factory, &edge.instance_id).is_some() {
         SetupLine::new(
@@ -493,7 +493,7 @@ pub fn linked_media_node(status: &LinkStatus) -> Result<&EdgeInfo, String> {
         return Err(format!("The link is {}", status.state.as_str()));
     }
     if status.peer.instance_id.is_empty() || status.peer.media_address.is_empty() {
-        return Err("The edge node runs no media node (media-server@port)".to_string());
+        return Err("The edge node runs no media node (media-server@enabled)".to_string());
     }
     Ok(&status.peer)
 }

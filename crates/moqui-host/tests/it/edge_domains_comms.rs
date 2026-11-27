@@ -115,13 +115,15 @@ fn two_pairings_xmpp_domains_share_one_pair_of_ports_and_a_port_row_goes_to_its_
     let local = crate::common::start_with_conf_files(
         "edge-domains-local",
         None,
-        "",
+        // only the direct TLS client port, as before the written 5222 (plans/Runtime-Config.md §3.2)
+        r#"<xmpp-server port=""/>"#,
         &[
             (
                 "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
                 &local_port,
             ),
             ("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_enabled", "true"),
+            ("moqui_conf__xmpp_server__enabled", "true"),
             ("moqui_conf__xmpp_server__domain", "moqui.local"),
             ("moqui_conf__xmpp_server__tls_port", "0"),
             ("moqui_conf__xmpp_server__tls_host", "127.0.0.1"),
@@ -313,13 +315,14 @@ fn two_local_nodes_comms_stay_apart() {
     let local = crate::common::start_with_conf_files(
         "edge-domains-acc-local",
         None,
-        "",
+        r#"<xmpp-server port=""/>"#,
         &[
             (
                 "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
                 &local_port,
             ),
             ("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_enabled", "true"),
+            ("moqui_conf__xmpp_server__enabled", "true"),
             ("moqui_conf__xmpp_server__domain", "moqui.local"),
             ("moqui_conf__xmpp_server__tls_port", "0"),
             ("moqui_conf__xmpp_server__tls_host", "127.0.0.1"),
@@ -346,9 +349,11 @@ fn two_local_nodes_comms_stay_apart() {
             ("moqui_conf__edge__xmpp_port", &tunnel_port.to_string()),
             ("moqui_conf__edge__xmpp_tls_port", &tunnel_tls_port.to_string()),
             ("moqui_conf__edge__xmpp_host", "127.0.0.1"),
+            ("moqui_conf__media_server__enabled", "true"),
             ("moqui_conf__media_server__port", &media_port.to_string()),
             ("moqui_conf__media_server__host", "127.0.0.1"),
             ("moqui_conf__media_server__public_address", &media),
+            ("moqui_conf__media_server__turn_server__enabled", "true"),
             ("moqui_conf__media_server__turn_server__port", &turn_port.to_string()),
             ("moqui_conf__media_server__turn_server__host", "127.0.0.1"),
             ("moqui_conf__media_server__turn_server__public_host", "127.0.0.1"),

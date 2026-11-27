@@ -211,6 +211,7 @@ fn sftp_and_the_admin_shell_run_on_the_built_in_server() {
         r#"<ssh-server sftp-root="dbresource://sftp"/>"#,
         &[
             ("moqui_conf__ssh_server__port", "0"),
+            ("moqui_conf__ssh_server__enabled", "true"),
             ("moqui_conf__ssh_server__host_key", &seed),
             ("moqui_conf__cluster_member__transport", "ssh"),
         ],
@@ -1066,6 +1067,7 @@ fn apps_runs_the_terminal_client_over_ssh() {
         r#"<terminal max-sessions-per-user="1"/>"#,
         &[
             ("moqui_conf__ssh_server__port", "0"),
+            ("moqui_conf__ssh_server__enabled", "true"),
             ("moqui_conf__ssh_server__host_key", &seed),
         ],
     );
@@ -1195,6 +1197,7 @@ fn agent_apps_answers_one_command_per_exec() {
         r#"<terminal max-sessions-per-user="1"/>"#,
         &[
             ("moqui_conf__ssh_server__port", "0"),
+            ("moqui_conf__ssh_server__enabled", "true"),
             ("moqui_conf__ssh_server__host_key", &seed),
         ],
     );
@@ -1296,6 +1299,7 @@ fn the_login_dialog_lets_in_a_client_with_no_key() {
         Some(APPS_DATA),
         &[
             ("moqui_conf__ssh_server__port", "0"),
+            ("moqui_conf__ssh_server__enabled", "true"),
             ("moqui_conf__ssh_server__host_key", &seed),
         ],
     );
@@ -1425,6 +1429,7 @@ fn sh_at_the_ssh_prompt_runs_a_host_program() {
         r#"<terminal><host-profile name="plain" command="sh"/></terminal>"#,
         &[
             ("moqui_conf__ssh_server__port", "0"),
+            ("moqui_conf__ssh_server__enabled", "true"),
             ("moqui_conf__ssh_server__host_key", &seed),
             ("moqui_conf__instance__purpose", "dev"),
             (helper.0, &helper.1),
@@ -1481,6 +1486,7 @@ fn attach_at_the_ssh_prompt_takes_a_kept_session() {
         r#"<terminal><host-profile name="plain" command="sh"/></terminal>"#,
         &[
             ("moqui_conf__ssh_server__port", "0"),
+            ("moqui_conf__ssh_server__enabled", "true"),
             ("moqui_conf__ssh_server__host_key", &seed),
             ("moqui_conf__instance__purpose", "dev"),
             (helper.0, &helper.1),

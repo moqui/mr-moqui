@@ -483,6 +483,10 @@ fn set_with(
     }
     // a hook may read or set the conf itself
     drop(held);
+    // a listener's switch set live ends its boot upgrade warning (plans/Runtime-Config.md §8.2; remove with it)
+    for item in &planned {
+        crate::listeners::switch_set_live(factory, &item.target.path.selector());
+    }
 
     let mut outcomes: Vec<SetOutcome> = planned
         .into_iter()

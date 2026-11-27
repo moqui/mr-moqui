@@ -183,7 +183,7 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   and every other bridge. Tap a reply on someone else's card to answer with its words (in a bridged room the buttons
   are the other person's to tap, on their phone); a link opens, a call dials. On a phone the buttons of a message are
   one row that scrolls sideways; on a desktop they wrap. A card is not edited.
-- <a id="xmpp"></a>**XMPP apps.** When the server has XMPP on (`xmpp-server@domain`), the people of the server can use an XMPP
+- <a id="xmpp"></a>**XMPP apps.** When the server has XMPP on (`xmpp-server@enabled`, for `xmpp-server@domain`), the people of the server can use an XMPP
   app (Conversations, Monal, Dino, Gajim, a web client over `/xmpp-websocket`) with their chat. Settings, Chat apps
   shows the address to sign in as (`username@domain`; an email-style username has its `@` written as `\40`), the
   server and its ports, and the app passwords, each saying whether it works with XMPP apps (one made before XMPP
@@ -454,7 +454,7 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   person here goes straight between your devices when it can, and relayed it goes through the server, so they never
   see your network address ([WebRTC, The direct path](../interfaces/WebRTC.md#the-direct-path)). The call's header shows
   the connection's quality, "Reconnecting…" while it comes back, and "Your network is weak" when your side is the cause.
-  Calls need a media server (`media-server@port`); the Calls screen says when there is none. In the terminal a call is not live: its screen shows who is in it (and who is on hold), with Answer, Decline and Leave.
+  Calls need a media server (`media-server@enabled`); the Calls screen says when there is none. In the terminal a call is not live: its screen shows who is in it (and who is on hold), with Answer, Decline and Leave.
 - <a id="encrypted-calls"></a>**End-to-end encrypted calls.** New call and a call link have End-to-end encrypted, and a
   room's owner or moderator can make all of the room's calls so (Room settings, Calls in this room are end-to-end
   encrypted). In such a call only the people in it hear and see each other: each browser encrypts what it sends with a

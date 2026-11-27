@@ -43,11 +43,12 @@ fn an_ssh_clone_url_names_the_edge_nodes_tunnel_behind_one() {
         address("", "", Some(("edge.example.com", 22)), "0").host_and_port(),
         pair("edge.example.com", "22")
     );
-    // no local SSH server behind it: no URL
-    assert_eq!(
-        address("", "", Some(("edge.example.com", 22)), "").host_and_port(),
-        None
-    );
+    // no local SSH server behind it (its switch off): no URL
+    let none_behind = SshAddress {
+        enabled: false,
+        ..address("", "", Some(("edge.example.com", 22)), "2222")
+    };
+    assert_eq!(none_behind.host_and_port(), None);
     // with no edge node, the server's own
     assert_eq!(
         address("", "", None, "2200").host_and_port(),

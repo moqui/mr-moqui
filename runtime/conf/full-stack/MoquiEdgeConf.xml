@@ -79,13 +79,15 @@
         per address, STARTTLS with the member's web certificate, SPF, DKIM, DMARC and ARC, and RCPT TO
         from the shared copies. The PROXY header is read only on that path, because it came over the member's own
         link; the listener's own port reads none unless proxy-protocol is on. The listener must run to take them:
-        smtp-server@listen-port in .env, open as port 25 for a second MX record at the members, or on loopback
+        moqui_conf__smtp_server__enabled=true in .env, on smtp-server@listen-port 25 (written below), open for a second MX
+        record at the members, or on loopback
         (moqui_conf__smtp_server__listen_host=127.0.0.1) when nothing else is to reach it. Mail out leaves from each member's own address,
         DKIM-signed: smtp-server@hostname per member, the name its address's reverse DNS gives, and the SPF of each domain lists
         every member's address (ip4:, not the wizard's v=spf1 mx, which would name the front). MX records name the
         front, and STARTTLS ends on the member, so the MX name's certificate goes on every member. The front relays the
         bytes: MTA-STS for the domains keeps senders on TLS. -->
-    <smtp-server max-connections="100" max-connections-per-ip="5" connections-per-minute="30" internet="true"/>
+    <!-- off here until .env turns it on (moqui_conf__smtp_server__enabled=true), as the mail comment above says -->
+    <smtp-server enabled="false" listen-port="25" max-connections="100" max-connections-per-ip="5" connections-per-minute="30" internet="true"/>
     <mail-delivery mta="moqui"/>
 
     <!-- Chat bridges and SMS: a network's webhook URL is a name through the front, as /channels/{chatBridgeId}/webhook on
@@ -100,7 +102,8 @@
         XMPP and SSH (.env, as in conf/edge-cluster): front_edge members listen on the tunnel ports at their own
         addresses, with SRV records naming each member; edge members bind none, and the front's ports take each local
         node's XMPP domain by its front pairing. -->
-    <media-server port="10000" host="0.0.0.0"><turn-server port="3478"/></media-server>
+    <!-- on, on 10000 and TURN on 3478 (the default conf writes the ports; plans/Runtime-Config.md 3.2) -->
+    <media-server enabled="true" host="0.0.0.0"><turn-server enabled="true"/></media-server>
     <calls><recording segment-mb="16"/></calls>
 
     <entity-facade query-stats="true">

@@ -38,7 +38,8 @@
 
     <!-- What stays the cluster's own, since the front has none of the edge set:
         mail out: an EmailServer with an outside relay or the provider's SMTP, as on one server;
-        mail in: an IMAP sync, or the SMTP listener on every member in internet mode (smtp-server@listen-port, moqui_conf__smtp_server__internet=true,
+        mail in: an IMAP sync, or the SMTP listener on every member in internet mode (moqui_conf__smtp_server__enabled=true,
+            smtp-server@listen-port, moqui_conf__smtp_server__internet=true,
             smtp-server@hostname; docs/interfaces/Mail-Inbound.md) with port 25 on the front as an EdgePort row of kind smtp
             for this pairing, which passes each connection to a live member with a PROXY header naming the client (the
             code takes it as for an edge cluster's members, but this path to a local cluster has no test yet);
@@ -47,12 +48,18 @@
         calls: the members' own media nodes and TURN, at addresses of their own, never through the front
             (docs/interfaces/WebRTC.md, Cluster);
         phones: SIP at the members' own addresses, never through the front;
-        XMPP: the front's XMPP ports take this node's xmpp-server@domain when the wizard sends it;
+        XMPP: the front's XMPP ports take this node's xmpp-server@domain (with moqui_conf__xmpp_server__enabled=true) when
+            the wizard sends it, so the members open no XMPP client port of their own (below);
         PASS: PASS servers of your own reach the cluster as their authority over its host names (conf/pass). -->
 
     <!-- Draining and rolling upgrades, as in conf/local-cluster/MoquiPooledConf.xml: drain a member on its own System ›
         Edge Node (This node's cluster) or on the front's Edge Clients › Clients; the front sends it no new work and its
         /health answers 503. Draining the only live member takes the pairing's names offline at the front. -->
+
+    <!-- XMPP clients come through the front's ports and the WebSocket (plans/Runtime-Config.md §3.2: with
+        xmpp-server@enabled true, 5222 and 5223 open unless written empty). To open a member's own ports, set them to the
+        front's numbers, which Chat apps shows. -->
+    <xmpp-server port="" tls-port=""/>
 
     <entity-facade query-stats="true">
         <datasource group-name="transactional" database-conf-name="postgres"/>

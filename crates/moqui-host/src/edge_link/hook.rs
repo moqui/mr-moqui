@@ -376,7 +376,7 @@ pub(crate) fn start(
                 // an all-in-one node's own XMPP ports take its pairings' domains too (E16, tunnel::xmpp_to_pairing)
                 if let Some(own) = role
                     .all_in_one()
-                    .then(|| super::tunnel::own_xmpp_clash(port.bind))
+                    .then(|| super::tunnel::own_xmpp_clash(factory, port.bind))
                     .flatten()
                 {
                     tracing::info!(

@@ -33,14 +33,18 @@ fn a_clients_user_name_is_logged_escaped_and_cut() {
     assert_eq!(for_log(&"a".repeat(500), MAX_LOGGED_NAME).len(), MAX_LOGGED_NAME + 2);
 }
 
+/// The switch decides (plans/Runtime-Config.md §3.2): off keeps the server off whatever the port; on, the port must be
+/// one, an empty one refused naming the switch.
 #[test]
 fn enabled_false_keeps_the_server_off_with_a_port_set() {
     assert_eq!(conf_listen_target(false, "2222", "").unwrap(), None);
+    assert_eq!(conf_listen_target(false, "", "").unwrap(), None);
     assert_eq!(
         conf_listen_target(true, "2222", "").unwrap(),
         Some(("127.0.0.1".to_string(), 2222))
     );
-    assert_eq!(conf_listen_target(true, "", "").unwrap(), None);
+    let empty = conf_listen_target(true, "", "").unwrap_err().to_string();
+    assert!(empty.contains("ssh-server@enabled"), "{empty}");
 }
 
 #[test]
@@ -48,13 +52,15 @@ fn the_port_check_reads_the_conf_as_the_server_does() {
     let conf =
         |ssh: &str| moqui_lib::node::MNode::parse_text("conf", &format!("<moqui-conf>{ssh}</moqui-conf>")).unwrap();
     assert_eq!(
-        listen_target(&conf(r#"<ssh-server port="2223" host="127.0.0.2"/>"#)).unwrap(),
+        listen_target(&conf(r#"<ssh-server enabled=" True " port="2223" host="127.0.0.2"/>"#)).unwrap(),
         Some(("127.0.0.2".to_string(), 2223))
     );
     assert_eq!(
         listen_target(&conf(r#"<ssh-server enabled="false" port="2223"/>"#)).unwrap(),
         None
     );
+    // a switch not written is off: the default conf writes it
+    assert_eq!(listen_target(&conf(r#"<ssh-server port="2223"/>"#)).unwrap(), None);
 }
 
 #[test]

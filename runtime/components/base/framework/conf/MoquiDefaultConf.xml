@@ -191,11 +191,12 @@
     <cluster-member tls-cert="CHANGEME" tls-key="CHANGEME" https-port="" base-url="" transport="" protocol=""
             bind-address=""/>
 
-    <!-- XMPP for local users (the xmpp feature, C3a; plans/archive/Comms-Framework.md §4.3, §6.5, docs/interfaces/XMPP.md): off while
-        xmpp-server@domain is empty. xmpp-server@domain is the domain of the users' JIDs (user@domain), with the rooms on
+    <!-- XMPP for local users (the xmpp feature, C3a; plans/archive/Comms-Framework.md §4.3, §6.5, docs/interfaces/XMPP.md): on
+        while xmpp-server@enabled is true (plans/Runtime-Config.md 3.2), off by default; on with no xmpp-server@domain it
+        does not start and says so. xmpp-server@domain is the domain of the users' JIDs (user@domain), with the rooms on
         rooms.<domain> and uploads on upload.<domain> (xmpp-server@rooms-domain, xmpp-server@upload-domain to name others); xmpp-server@port
-        (STARTTLS, 5222 by convention) on xmpp-server@host and xmpp-server@tls-port (direct TLS with ALPN xmpp-client, 5223) on
-        xmpp-server@tls-host, each off while empty; the certificates from runtime/cert by name (the domain, rooms.<domain> and
+        (STARTTLS, 5222) on xmpp-server@host and xmpp-server@tls-port (direct TLS with ALPN xmpp-client, 5223) on
+        xmpp-server@tls-host, an empty one leaving that client port off; the certificates from runtime/cert by name (the domain, rooms.<domain> and
         upload.<domain>, else default). xmpp-server@websocket-enabled true serves /xmpp-websocket (RFC 7395) on the HTTP listener.
         xmpp-server/upload@url is the HTTPS base of upload URLs (https://<domain> by default) and xmpp-server/upload@max-bytes their
         largest size; xmpp-server/upload@secret derives the URLs of chat files sent to XMPP clients. xmpp-server@resume-seconds is how
@@ -216,7 +217,8 @@
         server starts: its edge@xmpp-port and edge@xmpp-tls-port tunnel clients to the local node. An all-in-one node
         (moqui_conf__instance__node_role=all-in-one) starts its own on these ports, and tunnels the paired node's domain on edge@xmpp-port and
         edge@xmpp-tls-port, which must differ from them (a tunnel port on the same port is off, logged). -->
-    <xmpp-server domain="" rooms-domain="" upload-domain="" port="" host="0.0.0.0" tls-port="" tls-host="" s2s-port=""
+    <xmpp-server enabled="false" domain="" rooms-domain="" upload-domain="" port="5222" host="0.0.0.0" tls-port="5223"
+            tls-host="" s2s-port=""
             websocket-enabled="false" resume-seconds="300" fast-token-days="14" pep-max-bytes="20971520"
             block-max-jids="1000" push-max-registrations="50" turn-enabled="false" turn-per-hour="30"
             routed-rate="20" routed-burst="200" scram-decoy-key="CHANGEME">
@@ -225,8 +227,9 @@
     </xmpp-server>
 
     <!-- Phone calls over SIP trunks (the sip feature, V1; plans/archive/Comms-Framework.md §5.2, §6.5, docs/interfaces/SIP.md), on a
-        server with call media: sip-server@port (UDP and TCP, 5060 by convention) and sip-server@tls-port (TLS, 5061, the certificate from
-        runtime/cert), off while both are empty; sip-server@host and sip-server@tls-host the addresses they bind (loopback by default),
+        server with call media: on while sip-server@enabled is true (plans/Runtime-Config.md 3.2), off by default.
+        sip-server@port (UDP and TCP, 5060) and sip-server@tls-port (TLS, the certificate from runtime/cert; empty by default,
+        5061 by convention), an empty one leaving that transport off (on with both empty, it does not start and says so); sip-server@host and sip-server@tls-host the addresses they bind (loopback by default),
         sip-server@rtp-ports the UDP range of the phone legs' RTP (one port a leg) on sip-server@rtp-host (sip-server@host by default);
         sip-server@public-address the address in Contact headers and SDP when the bound one is not what trunks reach (required when
         a host binds every address); sip-server@tls-ca-file the CA certificates for TLS to trunks (the system bundle by default).
@@ -245,7 +248,7 @@
         to (sip-server@public-address, else moqui, when empty; changing it needs each phone's password made again). A binding's
         expiry is held between sip-server/registrar@min-expires and sip-server/registrar@max-expires seconds (sip-server/registrar@default-expires
         when the phone asks none), and to sip-server/registrar@nat-expires for a phone behind a NAT without Outbound (RFC 5626). -->
-    <sip-server port="" host="127.0.0.1" tls-port="" tls-host="" tls-ca-file="" rtp-ports="20000-20999" rtp-host=""
+    <sip-server enabled="false" port="5060" host="127.0.0.1" tls-port="" tls-host="" tls-ca-file="" rtp-ports="20000-20999" rtp-host=""
             public-address="" domain="">
         <limits request-rate="20" request-burst="100" max-transactions="2000" max-connections="500"
                 max-connections-per-source="100" max-connections-per-unknown-source="10" max-unknown-connections="250"
@@ -253,8 +256,10 @@
         <registrar enabled="false" min-expires="60" max-expires="3600" default-expires="600" nat-expires="60"/>
     </sip-server>
 
-    <!-- Call media (the rtc feature; plans/archive/Comms-Framework.md §6.5, docs/interfaces/WebRTC.md): the UDP port every browser leg
-        of a call sends its media to (ICE and DTLS-SRTP through the server's SFU), off while empty; 0 is a free port.
+    <!-- Call media (the rtc feature; plans/archive/Comms-Framework.md §6.5, docs/interfaces/WebRTC.md): on while
+        media-server@enabled is true (plans/Runtime-Config.md 3.2), off by default. media-server@port: the UDP port every
+        browser leg of a call sends its media to (ICE and DTLS-SRTP through the server's SFU), 10000; 0 is a free port (an
+        empty port is refused: write enabled="false").
         media-server@host: the address it binds (loopback by default); media-server@public-address: the address it tells browsers, an
         IP or IP:port, for a server behind 1:1 NAT (the bound address by default; required when media-server@host binds every
         address). calls@ring-seconds: how long a call rings before it is missed. calls@guest-joins-per-minute: the most guests
@@ -269,7 +274,10 @@
         calls/captions@prompt-audio: a WAV file a phone leg hears after the captions tones (docs/interfaces/SIP.md, Notices). -->
     <!-- ICE-TCP (W4): a TCP port on media-server@host for browsers that cannot reach the UDP one; off while empty. -->
     <!-- The embedded TURN server on the media node (W4; docs/interfaces/TURN.md), for browsers behind NAT and firewalls that
-        block UDP: media-server/turn-server@port (UDP and TCP, 3478 by convention) and media-server/turn-server@tls-port (TLS, 5349), off while empty; media-server/turn-server@tls443-host
+        block UDP: on while media-server/turn-server@enabled is true and call media runs (plans/Runtime-Config.md 3.2), off
+        by default. media-server/turn-server@port (UDP and TCP, 3478) and media-server/turn-server@tls-port (TLS; empty by
+        default, 5349 by convention), an empty one leaving that transport off (on with neither nor tls443-host, it does
+        not start and says so); media-server/turn-server@tls443-host
         an address of its own for TLS on 443 (the HTTPS listener does not share it); media-server/turn-server@host the address they bind
         (media-server@host by default) and media-server/turn-server@public-host the name or address in the URLs browsers get (the media node's
         public address by default); media-server/turn-server@relay-ports the UDP range of the relays. media-server/turn-server@auth-secret signs the short-lived
@@ -311,8 +319,8 @@
         <recording enabled="false" ack-required="false" policy-revision="1" retention-days="90" queue-frames="4096"
                 segment-mb="64" segment-minutes="30" max-mb="2048" prompt-audio=""/>
     </calls>
-    <media-server port="" host="127.0.0.1" tcp-port="" public-address="" cascade-enabled="false">
-        <turn-server port="" tls-port="" tls443-host="" host="" public-host="" relay-ports="49152-65535"
+    <media-server enabled="false" port="10000" host="127.0.0.1" tcp-port="" public-address="" cascade-enabled="false">
+        <turn-server enabled="false" port="3478" tls-port="" tls443-host="" host="" public-host="" relay-ports="49152-65535"
                 credential-hours="4" external-urls="" max-allocations="1000" max-kbps="4000" allowed-peers=""
                 auth-secret="CHANGEME"/>
     </media-server>
@@ -1197,9 +1205,10 @@
     </email-client>
 
     <!--
-        The built-in SSH server: the terminal client for every user, SFTP, git and the admin shell. enabled: false keeps
-        it off whatever the port (the demo component sets it). port: off while empty; 0 binds an ephemeral port. host: the
-        address to bind. host-key: the base64 of a 32-byte Ed25519 seed (generated into runtime/.env as
+        The built-in SSH server: the terminal client for every user, SFTP, git and the admin shell. enabled: the switch,
+        true or false (plans/Runtime-Config.md 3.2); off by default, and turning it off keeps the port. port: the port it
+        binds when on, 2222 (0 is a port of the kernel's choosing; an empty port is refused: write enabled="false"). host:
+        the address to bind, this machine only by default. host-key: the base64 of a 32-byte Ed25519 seed (generated into runtime/.env as
         moqui_conf__ssh_server__host_key) or an OpenSSH private key. public-host and public-port: the SSH host and port
         git clone URLs show; the webroot webapp's http-host and port when empty. sftp-root: the resource location SFTP serves
         (runtime, file, component or dbresource); sftp-max-file: the largest file it takes, in bytes. max-sessions: the
@@ -1215,7 +1224,7 @@
         terminal client's login dialog (keyboard-interactive with no questions); when false, such a client logs in by
         password at the SSH level or not at all.
     -->
-    <ssh-server enabled="true" port="" host="127.0.0.1" host-key="CHANGEME" public-host=""
+    <ssh-server enabled="false" port="2222" host="127.0.0.1" host-key="CHANGEME" public-host=""
             public-port="" sftp-root="runtime://sftp" sftp-max-file="268435456" max-sessions="8"
             max-sessions-per-user="4" max-sessions-per-source="4" max-dialog-sessions="4"
             max-dialog-sessions-per-source="2" git-password-auth="false" git-any-account="false" login-dialog="true"/>
@@ -1358,8 +1367,10 @@
 
     <!--
         The inbound SMTP listener for hosted and shared mail accounts, behind the edge gateway (a host built with the
-        inbound-smtp feature; docs/interfaces/Mail-Inbound.md). Off while listen-port is empty; 0 binds an ephemeral port.
-        listen-host: the address to bind. allowed-addresses: the gateway's IPs and CIDRs, comma-separated (127.0.0.1 for a
+        inbound-smtp feature; docs/interfaces/Mail-Inbound.md). enabled: the switch, true or false, off by default
+        (plans/Runtime-Config.md 3.2); turning it off keeps the port. listen-port: the port it binds when on, 2525 (the
+        edge and all-in-one confs write 25; 0 is a port of the kernel's choosing; an empty port is refused: write
+        enabled="false"). listen-host: the address to bind. allowed-addresses: the gateway's IPs and CIDRs, comma-separated (127.0.0.1 for a
         gateway on this host); every other address is refused at connect, and an empty list does not start the listener.
         hostname: the name in the greeting and the Received field; empty for the webroot webapp's http-host. authserv-id:
         the authserv-id of the gateway's Authentication-Results; only those are kept (the verdict is trusted, not
@@ -1390,7 +1401,7 @@
         MAIL that would go past one (with its SIZE) is answered 451 4.7.1. A message counts once, whatever its
         recipients.
     -->
-    <smtp-server listen-port="" listen-host="127.0.0.1"
+    <smtp-server enabled="false" listen-port="2525" listen-host="127.0.0.1"
             allowed-addresses="" hostname="" authserv-id="" internet="false" rspamd-url="" arc-trusted-sealers=""
             proxy-protocol="false" spam-headers="X-Spam-Flag,X-Spam-Status,X-Spam" plus-separator="+"
             max-message-size="26214400" max-recipients="100" max-connections="20" command-timeout="300"

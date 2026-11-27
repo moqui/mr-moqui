@@ -26,7 +26,7 @@
 //! between two pairings; each address has one holder.
 //!
 //! The server's host names ([`own_host_names`]) are what a dedicated edge node already reserves (§5.7); an all-in-one
-//! node adds its `xmpp-server@domain` and `sip-server@domain`.
+//! node adds its XMPP domain (`xmpp-server@domain` while `xmpp-server@enabled` is true) and `sip-server@domain`.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -338,6 +338,13 @@ fn domain_property(name: &str) -> String {
     property(name).trim_end_matches('.').to_ascii_lowercase()
 }
 
+/// This node's XMPP domain while its XMPP server is on ([`crate::comms::xmpp_domain`]), as names compare; empty otherwise.
+fn own_xmpp_domain(factory: &ExecutionContextFactory) -> String {
+    crate::comms::xmpp_domain(factory)
+        .map(|domain| domain.trim_end_matches('.').to_ascii_lowercase())
+        .unwrap_or_default()
+}
+
 /// The server's own host names, which no paired node may claim, nor their subdomains (§5.7): its web host, its SMTP
 /// (MX) host, its bounce domain, the host of its chat address and its mr-pass sites' hosts; on an all-in-one node
 /// also its `xmpp-server@domain` and `sip-server@domain`, and the domains of its own receiving accounts ([`own_mail_domains`]), so
@@ -355,7 +362,7 @@ pub fn own_host_names(factory: &ExecutionContextFactory) -> Vec<String> {
     names.extend(url_host(&property(super::setup::CHAT_PUBLIC_URL)));
     names.extend(crate::screen::public_site_hosts(factory));
     if super::settings(factory).all_in_one() {
-        names.push(domain_property("xmpp-server@domain"));
+        names.push(own_xmpp_domain(factory));
         names.push(domain_property("sip-server@domain"));
         match factory.entity() {
             Some(facade) => match own_mail_domains(&facade) {
@@ -428,7 +435,8 @@ fn text(row: &EntityValue, field: &str) -> String {
 
 /// What of the server's own holds `key` of `kind`, for [`claimed_message`] ("the server's EmailAccount 100010"), or
 /// `None` when the server holds no such item. A host name is held when it is one of [`own_host_names`] or a
-/// subdomain of one; an XMPP domain when it is the server's `xmpp-server@domain` or a subdomain (`rooms.`, `upload.`).
+/// subdomain of one; an XMPP domain when it is the server's ([`crate::comms::xmpp_domain`]) or a subdomain (`rooms.`,
+/// `upload.`).
 ///
 /// # Errors
 ///
@@ -460,7 +468,7 @@ pub fn own_claim(
             .one()?
             .map(|_| format!("the server's ChatBridge {key}"))),
         ClaimKind::XmppDomain => {
-            let own = domain_property("xmpp-server@domain");
+            let own = own_xmpp_domain(factory);
             let name = key.trim_end_matches('.').to_ascii_lowercase();
             Ok(super::setup::is_reserved(&name, std::slice::from_ref(&own))
                 .then(|| format!("the server's XMPP domain {own}")))

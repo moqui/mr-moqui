@@ -21,14 +21,15 @@ rustls for STARTTLS.
 
 ## What the deployment configures
 
-The listener starts with the server when `smtp-server@listen-port` is set. The settings are the attributes of the
-`smtp-server` element in `MoquiDefaultConf.xml`; the deployment ones are also properties (`smtp-server@listen-port` and so on,
+The listener starts with the server when `smtp-server@enabled` is true. The settings are the attributes of the
+`smtp-server` element in `MoquiDefaultConf.xml`; the deployment ones are also properties (`smtp-server@enabled` and so on,
 in the environment or `runtime/.env`), and the others are changed in a runtime or component conf, such as
 `<smtp-server max-message-size="52428800"/>`.
 
 | Property or attribute | Default | |
 | --- | --- | --- |
-| `smtp-server@listen-port` | empty (off) | The port the gateway delivers to, such as `2525`. Use a port above 1024: the gateway, not mr-moqui, has port 25. |
+| `smtp-server@enabled` | `false` | The listener's switch: `true` starts it with the server, on its port. |
+| `smtp-server@listen-port` | `2525` | The port the gateway delivers to. Use a port above 1024: the gateway, not mr-moqui, has port 25. |
 | `smtp-server@listen-host` | `127.0.0.1` | The address to listen on: loopback for a gateway on the same host, the WireGuard or private address for a remote one. |
 | `smtp-server@allowed-addresses` | empty | The gateway's addresses, IPs and CIDRs separated by commas (`127.0.0.1`, `10.8.0.1`, `fd00::/8`). Every other address gets `554` at connect. **Empty does not start the listener**, so it never takes mail from everyone. |
 | `smtp-server` `proxy-protocol` | `false` | Each connection starts with a PROXY v1 or v2 header (a TCP proxy such as HAProxy in front of mr-moqui). The address the header names must be in `smtp-server@allowed-addresses` too, so list both the proxy's and the gateway's addresses. |
@@ -201,7 +202,7 @@ relay answering).
 
 ### Mail in
 
-The SMTP listener runs in internet mode (`moqui_conf__smtp_server__internet=true`): set `moqui_conf__smtp_server__listen_port=25`, `moqui_conf__smtp_server__listen_host=0.0.0.0`
+The SMTP listener runs in internet mode (`moqui_conf__smtp_server__internet=true`): set `moqui_conf__smtp_server__enabled=true`, `moqui_conf__smtp_server__listen_port=25`, `moqui_conf__smtp_server__listen_host=0.0.0.0`
 (or `::`) and `smtp-server@hostname` (the MX name, also the authserv-id of its `Authentication-Results`) in the edge node's
 `.env`. It offers STARTTLS with the web certificate, limits each address (`max-connections-per-ip`,
 `connections-per-minute`), checks SPF, DKIM, DMARC and ARC after the data, removes any `Authentication-Results`
@@ -246,7 +247,7 @@ cannot judge, is refused (550 5.7.1, RFC 7489 section 6.6.1).
   it require TLS with a valid certificate. STARTTLS ends on the member, which picks its certificate by the server name
   or `smtp-server@hostname`, so the MX name's certificate goes on every member. SPF must list the members' addresses, where
   mail out leaves from: the wizard's `v=spf1 mx` would name the front, and its MX check expects the member's
-  `smtp-server@hostname`, so set both records by hand in this layout. The listener must run to take them (`smtp-server@listen-port`); its own port 25 may stay open for a second
+  `smtp-server@hostname`, so set both records by hand in this layout. The listener must run to take them (`smtp-server@enabled`); its own port 25 may stay open for a second
   MX record, or listen on loopback, and a PROXY header sent there is not read. Mail out leaves from each member's own
   address, so reverse DNS, SPF and `smtp-server@hostname` are each member's, not the front's. A local cluster behind a front
   alone ([Run-Deploy, A front node](../Run-Deploy.md#a-front-node)) can take its mail the same way, its members'
@@ -304,7 +305,7 @@ address (set it at the cloud provider). MTA-STS for the domains themselves (`_mt
 ### Postfix and Rspamd beside the edge node
 
 They do the internet side instead, with the gateway's rules above. In the edge node's `.env`: `moqui_conf__mail_delivery__mta=postfix`,
-`moqui_conf__smtp_server__internet=false`, `moqui_conf__smtp_server__listen_port=10024` and `moqui_conf__smtp_server__allowed_addresses=127.0.0.1,::1`, and `protocol="lmtp"` on
+`moqui_conf__smtp_server__internet=false`, `moqui_conf__smtp_server__enabled=true`, `moqui_conf__smtp_server__listen_port=10024` and `moqui_conf__smtp_server__allowed_addresses=127.0.0.1,::1`, and `protocol="lmtp"` on
 the `smtp-server` in the runtime's conf. Postfix hands mail for the local node's domains to that LMTP listener; set
 `smtp-server@authserv-id` on the local node to Rspamd's authserv-id, so only its `Authentication-Results` are kept. Mail out is
 relayed to Postfix on `mail-delivery@relay-port` (10025), and Postfix signs it with DKIM through Rspamd and delivers it;

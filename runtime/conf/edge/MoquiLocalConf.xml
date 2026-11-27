@@ -22,14 +22,19 @@
             client with no secret;
         calls: edge/node@calls-enabled (false keeps new calls on this node's own media nodes);
         phones: edge/node@sip-enabled (false sends the replicated trunks and fallbacks empty).
-        XMPP: set xmpp-server@domain here, not on the edge node; give any XMPP ports of this node's own the edge node's numbers,
-        which Chat apps shows. SSH: ssh-server@port here, for the edge node's SSH tunnel, whose host and port the clone URLs
+        XMPP: set moqui_conf__xmpp_server__enabled=true and xmpp-server@domain here (.env), not on the edge node; its own
+        client ports stay closed (below). SSH: ssh-server@enabled here, for the edge node's SSH tunnel, whose host and port the clone URLs
         name (leave ssh-server@public-host and ssh-server@public-port empty; docs/interfaces/Git-Hosting.md). A dev local node's
         command line and shells through the edge node need moqui_conf__terminal__remote=true.
         Mail in: smtp-server@authserv-id in .env, the edge node's authserv-id (its smtp-server@authserv-id, else its smtp-server@hostname).
         Mail the edge node queues here names the edge node's own, so only its Authentication-Results are kept; set
         here, a message the edge node passes on without one is filtered the same way, and this node warns at startup
         while it is empty. -->
+
+    <!-- XMPP clients come through the edge node's tunnel ports and the WebSocket, so this node opens no XMPP client port
+        of its own (plans/Runtime-Config.md §3.2: with xmpp-server@enabled true, 5222 and 5223 open unless written empty).
+        To open its own ports, set them to the edge node's numbers, which Chat apps shows. -->
+    <xmpp-server port="" tls-port=""/>
 
     <!-- Backups: this node holds the business data. The nightly backup_EmbeddedDatabase_daily job is paused in the seed
         data; this sets it running at each boot (docs/Run-Deploy.md, Backups: its mirror, keeping a copy off this host).

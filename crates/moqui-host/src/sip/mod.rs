@@ -13,8 +13,8 @@
  */
 
 //! Phone calls over SIP trunks (plans/archive/Comms-Framework.md §5.1, §5.2, §6.5; docs/interfaces/SIP.md): the SIP engine of
-//! this node. Off while `sip-server@port` and `sip-server@tls-port` are empty, like the other listeners, and only beside this node's
-//! call media (`media-server@port`), since a phone leg's audio joins the call's SFU room here.
+//! this node. On while `sip-server@enabled` is true (plans/Runtime-Config.md §3.2), and only beside this node's call media
+//! (`media-server@enabled`), since a phone leg's audio joins the call's SFU room here.
 //!
 //! - **Listeners.** `sip-server@port` (UDP and TCP) on `sip-server@host`, `sip-server@tls-port` (TLS, the certificate from `runtime/cert`
 //!   as TURN's) on `sip-server@tls-host`; each leg's RTP on a port of `sip-server@rtp-ports` on `sip-server@rtp-host`. `sip-server@public-address`
@@ -197,12 +197,22 @@ fn port_of(property: &dyn Fn(&str) -> String, name: &str) -> Result<Option<u16>,
         .map_err(|_| format!("{name} {text} is not a port"))
 }
 
-/// `None` while both `sip-server@port` and `sip-server@tls-port` are empty.
+/// The SIP settings from `property` (a selector's value); `None` while `sip-server@enabled` is not true.
+///
+/// # Errors
+///
+/// Why the engine cannot start: a setting that does not parse, or the switch on with `sip-server@port` and
+/// `sip-server@tls-port` both empty (an empty one alone leaves that transport off).
 pub(crate) fn settings_from(property: &dyn Fn(&str) -> String) -> Result<Option<SipSettings>, String> {
+    if !moqui_core::context::conf_env::switch_on(&property("sip-server@enabled")) {
+        return Ok(None);
+    }
     let port = port_of(property, "sip-server@port")?;
     let tls_port = port_of(property, "sip-server@tls-port")?;
     if port.is_none() && tls_port.is_none() {
-        return Ok(None);
+        return Err(
+            "sip-server@enabled is true but sip-server@port and sip-server@tls-port are both empty".to_string(),
+        );
     }
     let or = |name: &str, fallback: &str| {
         let value = property(name);
@@ -405,11 +415,13 @@ fn tls_pair(runtime_dir: &Path, name: Option<&str>) -> Option<(Vec<u8>, Vec<u8>)
 /// The startup report's name for the SIP listeners.
 pub(crate) const LISTENER: &str = "SIP";
 
-/// The ports SIP will bind, for the port check before the framework is built: `sip-server@port` over UDP and TCP, and
-/// `sip-server@tls-port`. None while both are empty or a setting does not parse ([`start`] reports that).
-pub(crate) fn listen_targets() -> Vec<crate::port_check::Target> {
+/// The ports SIP will bind by the merged `conf`, for the port check before the framework is built: `sip-server@port` over
+/// UDP and TCP, and `sip-server@tls-port`. None while the switch is off or a setting does not parse ([`start`] reports
+/// that).
+pub(crate) fn listen_targets(conf: &moqui_lib::node::MNode) -> Vec<crate::port_check::Target> {
     use crate::port_check::{Proto, Target};
-    let Ok(Some(settings)) = settings_from(&moqui_core::context::conf_env::setting_or_property) else {
+    let setting = |selector: &str| moqui_core::context::conf_env::conf_attribute(conf, selector);
+    let Ok(Some(settings)) = settings_from(&setting) else {
         return Vec::new();
     };
     let mut targets = Vec::new();
@@ -441,7 +453,7 @@ pub(crate) fn listen_targets() -> Vec<crate::port_check::Target> {
     targets
 }
 
-/// Starts the SIP engine when `sip-server@port` or `sip-server@tls-port` is set, and records it in the startup report. One that
+/// Starts the SIP engine while `sip-server@enabled` is true, and records it in the startup report. One that
 /// cannot start is logged; the server starts without phone calls.
 pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<SipNode> {
     let node = start_node(factory);
@@ -456,22 +468,19 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<SipNode> {
 
 fn start_node(factory: &Arc<ExecutionContextFactory>) -> Option<SipNode> {
     use moqui_core::startup::{listener, State};
-    let settings = match settings_from(&moqui_core::context::conf_env::setting_or_property) {
-        Ok(Some(_)) if moqui_core::edge::front_refuses(factory, "sip-server@port", true) => {
+    let settings = match settings_from(&|selector: &str| moqui_core::context::conf_env::setting_on(factory, selector)) {
+        Ok(Some(_)) if moqui_core::edge::front_refuses(factory, "sip-server@enabled", true) => {
             listener(factory, LISTENER, State::off(moqui_core::edge::FRONT_ONLY));
             return None;
         }
         Ok(Some(settings)) => settings,
         Ok(None) => {
-            listener(
-                factory,
-                LISTENER,
-                State::off("sip-server@port and sip-server@tls-port are not set"),
-            );
+            listener(factory, LISTENER, State::off("sip-server@enabled is false"));
             return None;
         }
         Err(err) => {
             tracing::error!("SIP did not start, the server starts without phone calls: {err}");
+            listener(factory, LISTENER, State::failed(err));
             return None;
         }
     };
@@ -479,23 +488,26 @@ fn start_node(factory: &Arc<ExecutionContextFactory>) -> Option<SipNode> {
         listener(factory, LISTENER, State::Skipped(busy));
         return None;
     }
+    // each refusal below names what is missing on the SIP row as well as in the log (plans/Runtime-Config.md §3.2)
+    let refused = |why: String| {
+        tracing::error!("SIP did not start: {why}");
+        listener(factory, LISTENER, State::failed(why));
+    };
     if lock(&factory.extension(|_| crate::rtc::RtcAddress::default()).0).is_none() {
-        tracing::error!("SIP did not start: phone calls need this server's call media (media-server@port)");
+        refused("phone calls need this server's call media (media-server@enabled)".to_string());
         return None;
     }
     let bind_any = |a: Option<SocketAddr>| a.is_some_and(|a| a.ip().is_unspecified());
     if settings.public.is_none()
         && (bind_any(settings.listen) || bind_any(settings.tls) || settings.rtp_host.is_unspecified())
     {
-        tracing::error!(
-            "SIP did not start: it binds every address; set sip-server@public-address to the one trunks reach"
-        );
+        refused("it binds every address; set sip-server@public-address to the one trunks reach".to_string());
         return None;
     }
     let ports = match PortRange::parse(&settings.rtp_ports, settings.rtp_host) {
         Ok(ports) => Arc::new(ports),
         Err(err) => {
-            tracing::error!("SIP did not start: {err}");
+            refused(err);
             return None;
         }
     };

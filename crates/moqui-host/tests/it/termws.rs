@@ -209,8 +209,10 @@ fn a_stop_closes_terminal_and_xmpp_websockets_at_once() {
     let gate = crate::common::start_with_conf_properties(
         "termws-stop",
         Some(PLAIN_USER),
-        "",
+        // the websocket alone, no client port, as before the written ports (plans/Runtime-Config.md §3.2)
+        r#"<xmpp-server port="" tls-port=""/>"#,
         &[
+            ("moqui_conf__xmpp_server__enabled", "true"),
             ("moqui_conf__xmpp_server__domain", "stop.example"),
             ("moqui_conf__xmpp_server__websocket_enabled", "true"),
         ],

@@ -52,6 +52,8 @@ const stateTexts = {
 
 // ===== facts =====
 const yes = value => ["true", "y", "yes", "1"].includes(text(value).toLowerCase())
+// A listener's switch (plans/Runtime-Config.md 3.2): on only when it is true, as the server reads it
+const switchOn = value => text(value).toLowerCase() === "true"
 // What the server knows, for one call: {features: Set, entries: Map name -> {state, detail}, serverStarted, conf, prop}.
 // A server that does not answer (an older build) leaves the entries empty, and nothing is then said to run.
 function serverFacts() {
@@ -204,8 +206,8 @@ const protocols = [
         entry: "SMTP",
         settingGroup: "Protocols: mail reception",
         on: facts => ({
-            on: !!facts.conf("smtp-server/@listen-port"),
-            reason: ec.l10n.localize("smtp-server@listen-port is not set")
+            on: switchOn(facts.conf("smtp-server/@enabled")),
+            reason: ec.l10n.localize("smtp-server@enabled is false")
         }),
         checks: ["configuration", "listener"],
         listenerTarget: "smtp.listener"
@@ -236,8 +238,8 @@ const protocols = [
         entry: "SSH",
         settingGroup: "Protocols: SSH and Git",
         on: facts => ({
-            on: facts.conf("ssh-server/@enabled") !== "false" && !!facts.conf("ssh-server/@port"),
-            reason: ec.l10n.localize("ssh-server@port is not set, or ssh-server@enabled is false")
+            on: switchOn(facts.conf("ssh-server/@enabled")),
+            reason: ec.l10n.localize("ssh-server@enabled is false")
         }),
         checks: ["configuration", "listener", "publicAddress"],
         listenerTarget: "ssh.listener",
@@ -259,7 +261,12 @@ const protocols = [
         feature: "xmpp",
         entry: "XMPP",
         settingGroup: "Protocols: chat",
-        on: facts => ({on: set(facts, "xmpp-server@domain"), reason: ec.l10n.localize("xmpp-server@domain is not set")}),
+        on: facts => ({
+            on: switchOn(facts.prop("xmpp-server@enabled")) && set(facts, "xmpp-server@domain"),
+            reason: switchOn(facts.prop("xmpp-server@enabled"))
+                ? ec.l10n.localize("no xmpp-server@domain")
+                : ec.l10n.localize("xmpp-server@enabled is false")
+        }),
         checks: ["configuration", "listener", "publicAddress"],
         listenerTarget: "xmpp.listener",
         publicTarget: "xmpp.public"
@@ -271,7 +278,7 @@ const protocols = [
         feature: "rtc",
         entry: "Call media",
         settingGroup: "Protocols: calls",
-        on: facts => ({on: set(facts, "media-server@port"), reason: ec.l10n.localize("media-server@port is not set")}),
+        on: facts => ({on: switchOn(facts.prop("media-server@enabled")), reason: ec.l10n.localize("media-server@enabled is false")}),
         checks: ["configuration"]
     },
     {
@@ -282,8 +289,8 @@ const protocols = [
         entry: "TURN",
         settingGroup: "Protocols: calls",
         on: facts => ({
-            on: set(facts, "media-server/turn-server@port") || set(facts, "media-server/turn-server@tls-port") || set(facts, "media-server/turn-server@external-urls"),
-            reason: ec.l10n.localize("media-server/turn-server@port, media-server/turn-server@tls-port and media-server/turn-server@external-urls are not set")
+            on: switchOn(facts.prop("media-server/turn-server@enabled")) || set(facts, "media-server/turn-server@external-urls"),
+            reason: ec.l10n.localize("media-server/turn-server@enabled is false and media-server/turn-server@external-urls is not set")
         }),
         checks: ["configuration", "listener", "publicAddress"],
         listenerTarget: "turn.listener",
@@ -297,10 +304,7 @@ const protocols = [
         entry: "SIP",
         settingGroup: "Protocols: phone",
         ownerKey: "voice",
-        on: facts => ({
-            on: set(facts, "sip-server@port") || set(facts, "sip-server@tls-port"),
-            reason: ec.l10n.localize("sip-server@port and sip-server@tls-port are not set")
-        }),
+        on: facts => ({on: switchOn(facts.prop("sip-server@enabled")), reason: ec.l10n.localize("sip-server@enabled is false")}),
         checks: ["configuration", "listener"],
         listenerTarget: "sip.listener"
     },

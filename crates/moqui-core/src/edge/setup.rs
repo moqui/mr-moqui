@@ -204,7 +204,7 @@ pub struct EdgeSetup {
     pub mail_domains: Vec<String>,
     pub chat_bridge_ids: Vec<String>,
     pub pass_sites: Vec<String>,
-    /// The local node's XMPP domain (`xmpp-server@domain`), when its clients come through the edge node's tunnel ports;
+    /// The local node's XMPP domain ([`crate::comms::xmpp_domain`]), when its clients come through the edge node's tunnel ports;
     /// empty when not. Its `rooms.` and `upload.` names are the domain's and are not sent.
     pub xmpp_domain: String,
 }
@@ -962,7 +962,7 @@ pub fn receive_echo(
             .unwrap_or_default(),
     };
     let answer = if echo_allowed(node) {
-        edge_check(facade, node, &check)?
+        edge_check(factory, facade, node, &check)?
     } else {
         EchoAnswer {
             ok: false,
@@ -1046,18 +1046,23 @@ fn property_on(name: &str) -> bool {
 }
 
 /// The edge node's side of a round trip, from its copies of `node`'s sets and its own settings.
-fn edge_check(facade: &EntityFacade, node: &str, check: &EchoCheck) -> Result<EchoAnswer, Error> {
+fn edge_check(
+    factory: &ExecutionContextFactory,
+    facade: &EntityFacade,
+    node: &str,
+    check: &EchoCheck,
+) -> Result<EchoAnswer, Error> {
     let answer = |ok: bool, message: String| Ok(EchoAnswer { ok, message });
     match check.check.as_str() {
         "link" => answer(true, "The edge node took the item and answered".to_string()),
         "mailIn" => {
-            if crate::context::conf_env::setting("smtp-server@listen-port")
-                .trim()
-                .is_empty()
-            {
+            if !crate::context::conf_env::switch_on(&crate::context::conf_env::setting_on(
+                factory,
+                "smtp-server@enabled",
+            )) {
                 return answer(
                     false,
-                    "The edge node's SMTP listener is off: set smtp-server@listen-port there".to_string(),
+                    "The edge node's SMTP listener is off: set smtp-server@enabled=\"true\" there".to_string(),
                 );
             }
             let address = check.address.trim().to_ascii_lowercase();

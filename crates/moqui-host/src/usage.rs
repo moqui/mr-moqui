@@ -783,7 +783,7 @@ moqui conf env [--names] [text]
 
   moqui conf env ssh_server
   moqui conf env --names
-  moqui_conf__ssh_server__port=2222 moqui
+  moqui_conf__ssh_server__enabled=true moqui_conf__ssh_server__port=2200 moqui
 ";
 
 const OPERATOR: &str = "\

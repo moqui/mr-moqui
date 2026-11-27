@@ -14,7 +14,8 @@
 
 //! The embedded TURN server's sockets (plans/archive/Comms-Framework.md §6.5, W4; docs/interfaces/TURN.md), on the media node:
 //! UDP and TCP on `media-server/turn-server@port`, TLS on `media-server/turn-server@tls-port` and on 443 of `media-server/turn-server@tls443-host` (an address of its own, since the
-//! HTTPS listener does not share its port), all off while their setting is empty, and the UDP relay sockets in
+//! HTTPS listener does not share its port), while `media-server/turn-server@enabled` is true (plans/Runtime-Config.md §3.2),
+//! each transport off while its setting is empty, and the UDP relay sockets in
 //! `media-server/turn-server@relay-ports`. One thread owns the [`Turn`] and the UDP sockets, and waits on its bounded input queue when
 //! there is nothing to do; the TCP and TLS listeners and each of their connections are tasks on the edge runtime
 //! ([`crate::edge::handle`]), which read a stream a message at a time for the server and write back what it sends. TLS
@@ -148,13 +149,21 @@ fn with_interfaces(configured: &[IpAddr]) -> Vec<IpAddr> {
     own
 }
 
-/// The TURN settings, None while neither `media-server/turn-server@port` nor `media-server/turn-server@tls-port` nor `media-server/turn-server@tls443-host` is set.
+/// The TURN settings from `property` (a selector's value), None while `media-server/turn-server@enabled` is not true.
+///
+/// # Errors
+///
+/// Why it cannot start: a setting that does not parse, or the switch on with `media-server/turn-server@port`,
+/// `media-server/turn-server@tls-port` and `media-server/turn-server@tls443-host` all empty.
 pub(crate) fn settings(
     property: &dyn Fn(&str) -> String,
     media_bind: SocketAddr,
     media_public: SocketAddr,
     extra_peers: &[SocketAddr],
 ) -> Result<Option<TurnSettings>, String> {
+    if !moqui_core::context::conf_env::switch_on(&property("media-server/turn-server@enabled")) {
+        return Ok(None);
+    }
     let udp = port(
         &property("media-server/turn-server@port"),
         "media-server/turn-server@port",
@@ -175,7 +184,9 @@ pub(crate) fn settings(
         )
     };
     if udp.is_none() && tls_port.is_none() && tls443.is_none() {
-        return Ok(None);
+        return Err(
+            "media-server/turn-server@enabled is true but its port, tls-port and tls443-host are all empty".to_string(),
+        );
     }
     let bind = property("media-server/turn-server@host");
     let bind = if bind.trim().is_empty() {

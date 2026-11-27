@@ -17,6 +17,9 @@
         demo data binds), which a production instance refuses unless allowed (mr-mantle account/TestGateways.js, SEC-BOS-129) -->
     <mantle allow-test-gateways="true"/>
 
+    <!-- SSH (the admin shell, SFTP, git) stays off on a demo server: a runtime conf outranks the demo component's own -->
+    <ssh-server enabled="false"/>
+
     <!-- named here, the component loads on a production instance; its own component.xml leaves it off -->
     <component-list>
         <component name="demo" location="components/dev/demo"/>

@@ -1374,7 +1374,7 @@ feature("over XMPP: a position from the owner's XMPP app feeds only a share they
     when() {
         const XMPP = "report#XmppPosition"
         const out = {}
-        withConf("xmpp-server@domain", "loc.example.test", () => {
+        withConf("xmpp-server@enabled", "true", () => withConf("xmpp-server@domain", "loc.example.test", () => {
             // C is A's contact: a direct room of the two (the XMPP roster)
             ec.user.internalLoginUser(username(A))
             sys(() =>
@@ -1563,7 +1563,7 @@ feature("over XMPP: a position from the owner's XMPP app feeds only a share they
             as(A, "stop#Share", {shareId: rough})
             out.afterRevoke = xmppPushes(rough).filter(push => push.event === "ended").length
             as(A, "stop#Share", {shareId: late})
-        })
+        }))
         return out
     },
     then(out) {

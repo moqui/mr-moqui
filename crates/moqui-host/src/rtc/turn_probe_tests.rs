@@ -24,6 +24,7 @@ const SECRET: &str = "edge-turn-secret";
 
 fn turn_node(media: SocketAddr) -> (super::super::turn::TurnNode, String) {
     let property = |name: &str| match name {
+        "media-server/turn-server@enabled" => "true".to_string(),
         "media-server/turn-server@port" => "0".to_string(),
         "media-server/turn-server@host" => "127.0.0.1".to_string(),
         "media-server/turn-server@auth-secret" => SECRET.to_string(),

@@ -812,7 +812,7 @@ check "help chromium-download" 0 'AppArmor profile' -- "$M" help chromium-downlo
 check "help test-all" 0 'whole regression suite' -- "$M" help test-all
 check "test-all dry run offline webroot" 0 'moqui test-client webroot --offline$' -- dry "$M" test-all
 check "test-all dry run offline dev-aide" 0 'moqui test-client runtime/components/dev/dev-aide --offline$' -- dry "$M" test-all
-check "test-all dry run turns the demo component on" 0 'moq test --nobuild -D demo_disabled=false demo$' -- dry "$M" test-all
+check "test-all dry run turns the demo component on" 0 'moq test --nobuild -D demo_disabled=false -D moqui_conf__ssh_server__enabled=false demo$' -- dry "$M" test-all
 check "test-all dry run runs cargo test" 0 'cargo test --workspace$' -- dry "$M" test-all
 lacks "test-all dry run has no node suite" 'node --test' -- dry "$M" test-all
 lacks "test-all dry run runs no acceptance test" 'gate3|client_browser|tui_screens|test-slow|--slow|--acceptance' -- dry "$M" test-all

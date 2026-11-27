@@ -85,8 +85,10 @@ impl Listener for CallMedia {
 
     fn selectors(&self) -> &'static [&'static str] {
         &[
+            "media-server@enabled",
             "media-server@port",
             "media-server@tcp-port",
+            "media-server/turn-server@enabled",
             "media-server/turn-server@port",
         ]
     }
@@ -145,7 +147,7 @@ impl Listener for Sip {
     }
 
     fn selectors(&self) -> &'static [&'static str] {
-        &["sip-server@port", "sip-server@tls-port"]
+        &["sip-server@enabled", "sip-server@port", "sip-server@tls-port"]
     }
 
     fn wanted(&self, _ctx: &Ctx) -> Wanted<(), ()> {
@@ -202,7 +204,12 @@ impl Listener for Xmpp {
     }
 
     fn selectors(&self) -> &'static [&'static str] {
-        &["xmpp-server@domain", "xmpp-server@port", "xmpp-server@tls-port"]
+        &[
+            "xmpp-server@enabled",
+            "xmpp-server@domain",
+            "xmpp-server@port",
+            "xmpp-server@tls-port",
+        ]
     }
 
     fn wanted(&self, _ctx: &Ctx) -> Wanted<(), ()> {
@@ -261,7 +268,11 @@ impl Listener for Smtp {
     }
 
     fn selectors(&self) -> &'static [&'static str] {
-        &["smtp-server@listen-port", "smtp-server@allowed-addresses"]
+        &[
+            "smtp-server@enabled",
+            "smtp-server@listen-port",
+            "smtp-server@allowed-addresses",
+        ]
     }
 
     fn wanted(&self, _ctx: &Ctx) -> Wanted<(), ()> {
@@ -298,7 +309,7 @@ fn smtp_address(server: &SmtpServer) -> Option<SocketAddr> {
     match *server {}
 }
 
-/// The inbound SMTP listener when `smtp-server@listen-port` is set. A listener that cannot start is logged and the server
+/// The inbound SMTP listener while `smtp-server@enabled` is true. A listener that cannot start is logged and the server
 /// starts without it; an empty or bad `smtp-server@allowed-addresses` never starts one.
 #[cfg(feature = "inbound-smtp")]
 fn start_smtp(factory: &Arc<ExecutionContextFactory>) -> Option<SmtpServer> {
@@ -308,10 +319,11 @@ fn start_smtp(factory: &Arc<ExecutionContextFactory>) -> Option<SmtpServer> {
         return None;
     }
     // a front node's port 25 is a TCP port to its pool, never this listener (plans/Edge-Node2.md §4.7)
-    let configured = !moqui_core::context::conf_env::setting("smtp-server@listen-port")
-        .trim()
-        .is_empty();
-    if moqui_core::edge::front_refuses(factory, "smtp-server@listen-port", configured) {
+    let configured = moqui_core::context::conf_env::switch_on(&moqui_core::context::conf_env::setting_on(
+        factory,
+        "smtp-server@enabled",
+    ));
+    if moqui_core::edge::front_refuses(factory, "smtp-server@enabled", configured) {
         listener(factory, crate::smtp::LISTENER, State::off(moqui_core::edge::FRONT_ONLY));
         return None;
     }
@@ -328,7 +340,7 @@ fn start_smtp(factory: &Arc<ExecutionContextFactory>) -> Option<SmtpServer> {
             listener(
                 factory,
                 crate::smtp::LISTENER,
-                State::off("smtp-server@listen-port is not set"),
+                State::off("smtp-server@enabled is false"),
             );
             None
         }
@@ -343,13 +355,11 @@ fn start_smtp(factory: &Arc<ExecutionContextFactory>) -> Option<SmtpServer> {
 /// No SMTP listener in this build: recorded as not built, as the other comms' `_off` starts record theirs.
 #[cfg(not(feature = "inbound-smtp"))]
 fn start_smtp(factory: &Arc<ExecutionContextFactory>) -> Option<SmtpServer> {
-    if !moqui_core::context::conf_env::setting("smtp-server@listen-port")
-        .trim()
-        .is_empty()
-    {
-        tracing::error!(
-            "smtp-server@listen-port is set but this build has no SMTP listener (the inbound-smtp feature)"
-        );
+    if moqui_core::context::conf_env::switch_on(&moqui_core::context::conf_env::setting_on(
+        factory,
+        "smtp-server@enabled",
+    )) {
+        tracing::error!("smtp-server@enabled is true but this build has no SMTP listener (the inbound-smtp feature)");
     }
     moqui_core::startup::listener(factory, SMTP, State::NotBuilt);
     None

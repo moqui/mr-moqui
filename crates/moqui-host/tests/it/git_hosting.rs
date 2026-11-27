@@ -179,6 +179,7 @@ fn any_account_uses_git_over_ssh_by_key_when_the_conf_says_so() {
         r#"<ssh-server git-any-account="true"/><dav-server sftp-drives="false"/>"#,
         &[
             ("moqui_conf__ssh_server__port", "0"),
+            ("moqui_conf__ssh_server__enabled", "true"),
             ("moqui_conf__ssh_server__host_key", &seed),
         ],
     );
@@ -248,6 +249,7 @@ fn repositories_are_cloned_and_pushed_over_http_and_ssh() {
         </webapp></webapp-list>"#,
         &[
             ("moqui_conf__ssh_server__port", "0"),
+            ("moqui_conf__ssh_server__enabled", "true"),
             ("moqui_conf__ssh_server__host_key", &seed),
         ],
     );

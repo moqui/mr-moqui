@@ -39,7 +39,8 @@ const LEG_NODE_ENV: &str = "MOQUI_RTC_LEG_NODE_CLUSTER";
 const LEG_NODE_TEST: &str = "rtc::cascade::leg_node_process";
 /// How long the leg node's process may take to print its ready line.
 const LEG_NODE_START: Duration = Duration::from_secs(30);
-const PROPERTIES: [(&str, &str); 2] = [
+const PROPERTIES: [(&str, &str); 3] = [
+    ("moqui_conf__media_server__enabled", "true"),
     ("moqui_conf__media_server__port", "0"),
     ("moqui_conf__media_server__cascade_enabled", "true"),
 ];

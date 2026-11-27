@@ -25,7 +25,7 @@ fn conf() -> MNode {
                 <datasource group-name="transactional" database-conf-name="h2"/>
                 <load-data location="a"/>
             </entity-facade>
-            <ssh-server port=""/>
+            <ssh-server port="2222"/>
         </moqui-conf>"#,
     )
     .unwrap()
@@ -407,4 +407,49 @@ fn an_environment_name_resolves_to_its_attribute_in_any_spelling() {
     assert_eq!(super::compare_key(&canonical), super::compare_key(&selector));
     assert!(super::env_name_path("MOQUI_CONF").is_none());
     assert!(super::env_name_path("cluster_ssh_port").is_none());
+}
+
+/// SSH's and SMTP's old "off", an empty port, is refused naming the switch; a written port with the switch off is not
+/// (plans/Runtime-Config.md §8.2).
+#[test]
+fn an_empty_ssh_or_smtp_port_is_refused() {
+    for (element, port) in [("ssh-server", "port"), ("smtp-server", "listen-port")] {
+        let empty = MNode::parse_text(
+            "moqui-conf",
+            &format!(r#"<moqui-conf><{element} {port}=""/></moqui-conf>"#),
+        )
+        .unwrap();
+        let err = super::refuse_retired(&empty).unwrap_err().to_string();
+        let switch = format!("{element}@enabled");
+        assert!(
+            err.contains(&switch) && err.contains(&super::env_name_of(&switch)),
+            "{element}: {err}"
+        );
+        let written = MNode::parse_text(
+            "moqui-conf",
+            &format!(r#"<moqui-conf><{element} enabled="false" {port}="2222"/></moqui-conf>"#),
+        )
+        .unwrap();
+        assert!(super::refuse_retired(&written).is_ok(), "{element}");
+    }
+}
+
+/// Call media's empty port, its old "off", is refused naming its switch; an empty plain port of SIP, XMPP or TURN stays
+/// valid, that one transport off beside the other (plans/Runtime-Config.md §8.2).
+#[test]
+fn an_empty_media_port_is_refused_and_an_empty_comms_transport_port_is_not() {
+    let empty = MNode::parse_text("moqui-conf", r#"<moqui-conf><media-server port=" "/></moqui-conf>"#).unwrap();
+    let err = super::refuse_retired(&empty).unwrap_err().to_string();
+    assert!(
+        err.contains("media-server@enabled") && err.contains(&super::env_name_of("media-server@enabled")),
+        "{err}"
+    );
+    let transports = MNode::parse_text(
+        "moqui-conf",
+        r#"<moqui-conf><xmpp-server enabled="true" port="" tls-port="5223"/><sip-server enabled="true" port=""
+            tls-port="5061"/><media-server enabled="true" port="10000"><turn-server enabled="true" port=""
+            tls-port="5349"/></media-server></moqui-conf>"#,
+    )
+    .unwrap();
+    assert!(super::refuse_retired(&transports).is_ok());
 }

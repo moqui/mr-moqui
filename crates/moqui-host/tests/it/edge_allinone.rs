@@ -784,6 +784,7 @@ fn mail_to_recipients_on_both_sides_is_delivered_once_to_each() {
         CONF,
         &[
             ("moqui_conf__smtp_server__listen_port", "0"),
+            ("moqui_conf__smtp_server__enabled", "true"),
             ("moqui_conf__smtp_server__allowed_addresses", "127.0.0.1"),
             ("moqui_conf__smtp_server__hostname", "mx.server.example"),
             ("moqui_conf__mail_delivery__mta", "moqui"),
@@ -1088,12 +1089,14 @@ fn claimed_items_are_refused_by_name_and_webhooks_go_by_owner() {
     let tunnel_port = crate::common::free_port().to_string();
     let starting = Server::spawn(
         "aio-own-server",
-        CONF,
+        // STARTTLS alone, as before the written 5223, which would collide across tests (plans/Runtime-Config.md §3.2)
+        &format!(r#"{CONF}<xmpp-server tls-port=""/>"#),
         &[
             ("moqui_conf__channels__webhooks_enabled", "true"),
             ("moqui_conf__channels__media_key", "an-all-in-one-test-key"),
             ("moqui_conf__smtp_server__hostname", "mx.server.example"),
             ("mail-delivery@bounce-domain", "bounce.server.example"),
+            ("moqui_conf__xmpp_server__enabled", "true"),
             ("moqui_conf__xmpp_server__domain", XMPP_DOMAIN),
             ("moqui_conf__xmpp_server__port", "0"),
             ("moqui_conf__xmpp_server__host", "127.0.0.1"),
@@ -1374,7 +1377,9 @@ fn the_same_call_id_on_both_sides_stays_apart_and_each_recording_on_its_side() {
         "aio-call-server",
         CONF,
         &[
+            ("moqui_conf__media_server__enabled", "true"),
             ("moqui_conf__media_server__port", "0"),
+            ("moqui_conf__media_server__turn_server__enabled", "true"),
             ("moqui_conf__media_server__turn_server__port", "0"),
             ("moqui_conf__media_server__turn_server__relay_ports", "51400-51500"),
             (
@@ -1733,7 +1738,9 @@ fn own_numbers_and_phones_stay_on_the_server_and_the_nodes_go_to_it() {
         "aio-sip-server",
         CONF,
         &[
+            ("moqui_conf__media_server__enabled", "true"),
             ("moqui_conf__media_server__port", "0"),
+            ("moqui_conf__sip_server__enabled", "true"),
             ("moqui_conf__sip_server__port", "0"),
             ("moqui_conf__sip_server__rtp_ports", "42700-42799"),
             ("moqui_conf__sip_server__registrar__enabled", "true"),

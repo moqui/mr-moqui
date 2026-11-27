@@ -98,7 +98,7 @@ feature("a protocol that is not built, one kept off, one that did not start and 
             features: built,
             entries: {
                 HTTP: {state: "on", detail: "tcp 0.0.0.0:8080"},
-                SMTP: {state: "off", detail: "smtp-server@listen-port is not set"},
+                SMTP: {state: "off", detail: "smtp-server@enabled is false"},
                 SSH: {state: "failed", detail: "could not bind 127.0.0.1:22"},
                 XMPP: {state: "skipped", detail: "port 5222 is in use"}
             }
@@ -113,7 +113,12 @@ feature("a protocol that is not built, one kept off, one that did not start and 
             dav: of("dav"),
             wopi: of("wopi"),
             // turned on, in a process that opened no listeners: not known to run, never ready
-            quiet: protocols.readinessOf("ssh", facts({features: built, properties: {"ssh-server/@port": "2222"}, serverStarted: false})),
+            quiet: protocols.readinessOf(
+                "ssh",
+                facts({features: built, properties: {"ssh-server/@enabled": "true", "ssh-server/@port": "2222"}, serverStarted: false})
+            ),
+            // the switch decides, not the port the conf writes
+            sshOff: protocols.readinessOf("ssh", facts({features: built, properties: {"ssh-server/@port": "2222"}})),
             read,
             one: as(users.view, () => invoke(C + "get#ProtocolReadiness", {protocolKey: "smtpIn"})),
             none: as(users.none, () => invoke(C + "get#ProtocolReadiness")),
@@ -130,7 +135,7 @@ feature("a protocol that is not built, one kept off, one that did not start and 
         out.smtp.state === "disabled"
         out.smtp.built === true
         out.smtp.enabled === false
-        out.smtp.reason === "smtp-server@listen-port is not set"
+        out.smtp.reason === "smtp-server@enabled is false"
         out.rtc.state === "absent"
         out.rtc.built === false
         out.rtc.checkList.length === 0
@@ -141,6 +146,8 @@ feature("a protocol that is not built, one kept off, one that did not start and 
         out.dav.state === "ready"
         out.dav.listener === "tcp 0.0.0.0:8080"
         out.quiet.state === "notStarted"
+        out.sshOff.state === "disabled"
+        out.sshOff.reason === "ssh-server@enabled is false"
         new Set([out.smtp.stateText, out.rtc.stateText, out.ssh.stateText, out.dav.stateText, out.quiet.stateText]).size === 5
         // the service: every protocol with one of the states, nothing ready in a run that opened no listener
         out.read.error === ""
@@ -274,7 +281,7 @@ feature("a check that leaves the server runs only when confirmed, and a protocol
         out.kept = Array.from(ec.entity.find(CHECK).condition("adapterKey", "protocol").disableAuthz().list()).map(row =>
             row.getMap()
         )
-        out.smtpOn = !!ec.factory.getConfValue("smtp-server@listen-port")
+        out.smtpOn = String(ec.factory.getConfValue("smtp-server@enabled") ?? "").trim().toLowerCase() === "true"
         context.out = out
     },
     then() {
@@ -283,7 +290,7 @@ feature("a check that leaves the server runs only when confirmed, and a protocol
         out.unconfirmed.reasonCode === "CONFIRM_REQUIRED"
         out.probeUnconfirmed.error.includes("only when it is confirmed")
         out.probeUnknown.error.includes("is not a protocol probe target")
-        // the test conf sets no SMTP port: nothing to connect to, and nothing was tried
+        // the test conf leaves SMTP off (its port is written, its switch false): nothing to connect to, and nothing was tried
         out.smtpOn === false
         out.off.reasonCode === "NOT_ENABLED"
         out.probeOff.reached === false

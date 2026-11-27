@@ -63,11 +63,13 @@
     <!-- Mail (docs/interfaces/Mail-Inbound.md, The edge node as the gateway): each member takes port 25, answering RCPT
         TO from the recipients it builds from the shared copies (again when any member applies a change, told on the
         cluster topic edge-state), and claims delivery rows for mail out. Per member in .env: smtp-server@hostname, its own MX name (an MX record for each member,
-        with the same preference, and reverse DNS for each address naming it); the same on each: moqui_conf__smtp_server__listen_port=25,
-        smtp-server@listen-host, mail-delivery@bounce-domain and mail-delivery/dkim@key. -->
+        with the same preference, and reverse DNS for each address naming it); the same on each: moqui_conf__smtp_server__enabled=true
+        (on smtp-server@listen-port 25, written below), smtp-server@listen-host, mail-delivery@bounce-domain and
+        mail-delivery/dkim@key. -->
     <!-- The authserv-id of this listener's Authentication-Results, and the only one a local node it queues mail for
         trusts on that mail: its authserv-id, else its hostname (with Postfix and Rspamd, Rspamd's authserv_id). -->
-    <smtp-server max-connections="100" max-connections-per-ip="5" connections-per-minute="30" internet="true"/>
+    <!-- off here until .env turns it on (moqui_conf__smtp_server__enabled=true), as the mail comment above says -->
+    <smtp-server enabled="false" listen-port="25" max-connections="100" max-connections-per-ip="5" connections-per-minute="30" internet="true"/>
     <mail-delivery mta="moqui"/>
 
     <!-- Chat bridges and SMS: a network's webhook URL is the cluster's name, /channels/{chatBridgeId}/webhook; any member
@@ -79,7 +81,8 @@
         on one member (no cascading between members). Per member in .env: media-server@public-address and media-server/turn-server@public-host, its
         own; open UDP 10000, UDP and TCP 3478 and the relay range on each. media-server/turn-server@auth-secret the same on each, so a
         pairing's TURN secret is the same on every member, and a revoke ends it on all of them. -->
-    <media-server port="10000" host="0.0.0.0"><turn-server port="3478"/></media-server>
+    <!-- on, on 10000 and TURN on 3478 (the default conf writes the ports; plans/Runtime-Config.md 3.2) -->
+    <media-server enabled="true" host="0.0.0.0"><turn-server enabled="true"/></media-server>
     <calls><recording segment-mb="16"/></calls>
 
     <!-- SIP (docs/interfaces/SIP.md, An edge cluster): every member runs an engine and loads every pairing's trunks;

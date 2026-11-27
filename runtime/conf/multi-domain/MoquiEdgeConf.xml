@@ -48,8 +48,8 @@
         an option: two rows on Edge Clients › Ports. -->
 
     <!-- Mail (docs/interfaces/Mail-Inbound.md, The edge node as the gateway): the MTA in moqui takes port 25 for every
-        pairing's mail domains; set smtp-server@listen-port 25, smtp-server@listen-host 0.0.0.0 and smtp-server@hostname (the MX name of
-        every domain) in .env. RCPT TO is answered from the pairings' replicated recipients: an address goes to the
+        pairing's mail domains, on smtp-server@listen-port 25, written below; set moqui_conf__smtp_server__enabled=true,
+        smtp-server@listen-host 0.0.0.0 and smtp-server@hostname (the MX name of every domain) in .env. RCPT TO is answered from the pairings' replicated recipients: an address goes to the
         pairing whose copies have it, the most specific match first (joe+x@ before joe@), and an address two pairings
         both have gets 451 and is logged until one lets it go. A domain may be split between pairings by address. Mail
         out is signed with the one DKIM key, published in each domain's DNS, and only for the pairing's own domains; the
@@ -57,7 +57,8 @@
         the others' mail. Bounces come back to mail-delivery@bounce-domain, shared. -->
     <!-- The authserv-id of this listener's Authentication-Results, and the only one a local node it queues mail for
         trusts on that mail: its authserv-id, else its hostname (with Postfix and Rspamd, Rspamd's authserv_id). -->
-    <smtp-server max-connections="100" max-connections-per-ip="5" connections-per-minute="30" internet="true"/>
+    <!-- off here until .env turns it on (moqui_conf__smtp_server__enabled=true), as the mail comment above says -->
+    <smtp-server enabled="false" listen-port="25" max-connections="100" max-connections-per-ip="5" connections-per-minute="30" internet="true"/>
     <mail-delivery mta="moqui"/>
 
     <!-- Chat bridges and SMS (docs/interfaces/Chat-Bridges.md): ids come from separate databases and two pairings may
@@ -72,14 +73,15 @@
         revoked pairing loses its TURN access with nothing rotated. edge@call-legs-per-pairing caps one pairing's legs
         at once (200 by default). Set media-server@public-address in .env; open UDP 10000, UDP and TCP 3478 and the relay range
         media-server/turn-server@relay-ports (49152-65535). -->
-    <media-server port="10000" host="0.0.0.0"><turn-server port="3478"/></media-server>
+    <!-- on, on 10000 and TURN on 3478 (the default conf writes the ports; plans/Runtime-Config.md 3.2) -->
+    <media-server enabled="true" host="0.0.0.0"><turn-server enabled="true"/></media-server>
     <calls><recording segment-mb="16"/></calls>
 
     <!-- SIP (docs/interfaces/SIP.md, Behind an edge node): every pairing's trunks register here, each keyed by its
         pairing; an inbound call goes to the pairing whose copies have the number, and a number two pairings have is
         refused (404, logged). Phones register in their pairing's realm (its sip-server@domain, named in its Configure); a
-        realm another pairing named first is refused. Set sip-server@port, sip-server@tls-port, sip-server@host and sip-server@public-address in .env
-        as for one local node, and moqui_conf__sip_server__registrar__enabled=true for outside phones. -->
+        realm another pairing named first is refused. Set moqui_conf__sip_server__enabled=true, sip-server@port, sip-server@tls-port,
+        sip-server@host and sip-server@public-address in .env as for one local node, and moqui_conf__sip_server__registrar__enabled=true for outside phones. -->
 
     <!-- Backups: the link's queue (what waits for each pairing while it is away) is the only data here that matters.
         This sets the paused seed job backup_EmbeddedDatabase_daily running at each boot (docs/Run-Deploy.md, Backups). -->

@@ -55,6 +55,9 @@ pub(crate) trait Entry: Send {
     fn stop_rank(&self) -> u8;
     fn live(&self) -> bool;
     fn fatal_at_boot(&self) -> bool;
+    /// The conf settings it reads ([`Listener::selectors`]), for the test that live entries match the conf schema.
+    #[cfg(test)]
+    fn selectors(&self) -> &'static [&'static str];
     /// The rows its own start records beside its row.
     fn extra_rows(&self) -> &'static [&'static str];
     /// The error of its failed start in this boot pass, when it is fatal at boot: the boot's own error, with its
@@ -533,6 +536,11 @@ impl<L: Listener> Entry for Slot<L> {
 
     fn fatal_at_boot(&self) -> bool {
         self.listener.fatal_at_boot()
+    }
+
+    #[cfg(test)]
+    fn selectors(&self) -> &'static [&'static str] {
+        self.listener.selectors()
     }
 
     fn extra_rows(&self) -> &'static [&'static str] {

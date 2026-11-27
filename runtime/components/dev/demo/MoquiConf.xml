@@ -38,9 +38,10 @@
         </screen>
     </screen-facade>
 
-    <!-- The servers a demo visitor does not need, off whatever ssh-server@port, llm-facade/mcp@server-enabled, llm-facade/a2a@enabled and
-        llm-facade/gateway@enabled say: the MCP server and client, A2A both ways, the LLM gateway, SSH (the admin shell, SFTP,
-        git) and WebDAV. The browser terminal (/termws) and /notws stay on: the terminal shows the same screens, checked
+    <!-- The servers a demo visitor does not need, off: the MCP server and client, A2A both ways, the LLM gateway, SSH (the
+        admin shell, SFTP, git) and WebDAV. A runtime conf, or an environment name, outranks a component's conf: SSH stays
+        off while the runtime conf leaves it so, as conf/MoquiDemoConf.xml does (the dev conf turns it on, so the demo's
+        specs run with -D moqui_conf__ssh_server__enabled=false). The browser terminal (/termws) and /notws stay on: the terminal shows the same screens, checked
         as the user. -->
     <llm-facade>
         <a2a enabled="false" client-enabled="false"/>

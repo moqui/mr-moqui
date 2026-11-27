@@ -1416,6 +1416,29 @@ fn a_registry_dropped_unclosed_drops_what_runs_last_added_first() {
     assert_eq!(taken(&log), ["drop B 2", "drop A 1"]);
 }
 
+/// A boot entry changes in a pass exactly when the conf reload applies its settings there (plans/Runtime-Config.md §8.1,
+/// §8.2): every selector of a live entry is `Apply(Group::Listeners)` in the conf schema, and none of one that waits for a
+/// restart is. Today none is live and none applies; a phase that makes one live changes both together.
+#[test]
+fn live_matches_the_conf_schema() {
+    use moqui_core::context::conf_schema::{attribute_class, Class, Group};
+    let context = ExecutionContextFactory::test_context();
+    let registry = Registry::new(Arc::clone(context.factory()), boot_inputs());
+    add_boot_entries(&registry);
+    let entries = lock(&registry.0.entries);
+    assert!(!entries.is_empty());
+    for entry in entries.iter() {
+        assert!(!entry.selectors().is_empty(), "{}", entry.name());
+        for selector in entry.selectors() {
+            let path = moqui_lib::node::path::AttrPath::parse(selector)
+                .unwrap_or_else(|err| panic!("{}: {selector} is not a selector: {err:?}", entry.name()));
+            let elements: Vec<&str> = path.steps.iter().map(|step| step.element.as_str()).collect();
+            let applies = attribute_class(&elements, &path.attribute) == Class::Apply(Group::Listeners);
+            assert_eq!(applies, entry.live(), "{} {selector}", entry.name());
+        }
+    }
+}
+
 /// The boot's real entries, in their fixed order and stages, stop in ServeProcess's order of before the registry:
 /// the web listeners together; XMPP, SIP, then call media; SMTP, SSH, then the cluster port. Nothing is started.
 #[test]

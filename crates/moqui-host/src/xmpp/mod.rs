@@ -13,10 +13,11 @@
  */
 
 //! XMPP for local users (plans/archive/Comms-Framework.md §4.3, C3a; docs/interfaces/XMPP.md): the host's side of
-//! [`moqui_xmpp`]. Off while `xmpp-server@domain` is empty.
+//! [`moqui_xmpp`]. On while `xmpp-server@enabled` is true, for `xmpp-server@domain` ([`moqui_core::comms::xmpp_domain`];
+//! plans/Runtime-Config.md §3.2); on with no domain it does not start and says so.
 //!
-//! - **Listeners.** `xmpp-server@port` (STARTTLS) on `xmpp-server@host` and `xmpp-server@tls-port` (direct TLS, ALPN `xmpp-client`) on
-//!   `xmpp-server@tls-host`, each off while empty, on a small Tokio runtime of their own; the certificates from `runtime/cert`
+//! - **Listeners.** `xmpp-server@port` (STARTTLS, 5222) on `xmpp-server@host` and `xmpp-server@tls-port` (direct TLS, ALPN
+//!   `xmpp-client`, 5223) on `xmpp-server@tls-host`, an empty one leaving that client port off, on a small Tokio runtime of their own; the certificates from `runtime/cert`
 //!   by the name the client asks for ([`crate::tls::CertStore`]: the domain, `rooms.` and `upload.`, else `default`).
 //!   At most [`PER_SOURCE`] connections from one source at once (an IPv6 /64 is one, an IPv4-mapped address is its IPv4
 //!   one, [`moqui_lib::source_guard::source_key`]) and [`MAX_CONNECTIONS`] in all, WebSockets included.
@@ -163,12 +164,9 @@ fn number<T: std::str::FromStr>(name: &str, default: T) -> T {
     })
 }
 
-/// The server's settings from the properties.
-pub(crate) fn config() -> Option<Config> {
-    let domain = property("xmpp-server@domain");
-    if domain.is_empty() {
-        return None;
-    }
+/// The server's settings from the properties, for `factory`'s XMPP domain; none while its XMPP server is off.
+pub(crate) fn config(factory: &ExecutionContextFactory) -> Option<Config> {
+    let domain = moqui_core::comms::xmpp_domain(factory)?;
     let mut config = Config::for_domain(&domain);
     let rooms = property("xmpp-server@rooms-domain");
     if !rooms.is_empty() {
@@ -232,7 +230,8 @@ pub(crate) fn routes(
     }
 }
 
-/// Start the listeners and the subscription when `xmpp-server@domain` is set. Never on a dedicated edge node, whose client
+/// Start the listeners and the subscription while `xmpp-server@enabled` is true, for `xmpp-server@domain`. Never on a
+/// dedicated edge node, whose client
 /// ports tunnel to its local node (checked for this factory, as a test runs both ends in one process). An all-in-one
 /// node starts its own, on its own ports, beside the tunnel ports of its paired node's domain (plans/archive/Edge-Node.md §10).
 pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<XmppNode> {
@@ -255,18 +254,23 @@ const CLIENT_PORTS: [(&str, &str, bool); 2] = [
     ("xmpp-server@tls-port", "xmpp-server@tls-host", true),
 ];
 
-/// Where the client port `port_name` listens: None while it is empty, else its address or why that listener is off.
-fn client_address(port_name: &str, host_name: &str) -> Option<Result<SocketAddr, String>> {
-    let port = property(port_name);
+/// Where the client port `port_name` listens by the settings `setting` gives: None while it is empty (that client port
+/// off), else its address or why that listener is off.
+fn client_address(
+    setting: &dyn Fn(&str) -> String,
+    port_name: &str,
+    host_name: &str,
+) -> Option<Result<SocketAddr, String>> {
+    let port = setting(port_name).trim().to_string();
     if port.is_empty() {
         return None;
     }
     let Ok(port) = port.parse::<u16>() else {
         return Some(Err(format!("{port_name} {port} is not a port; that listener is off")));
     };
-    let host = Some(property(host_name))
+    let host = Some(setting(host_name).trim().to_string())
         .filter(|host| !host.is_empty())
-        .unwrap_or_else(|| property("xmpp-server@host"));
+        .unwrap_or_else(|| setting("xmpp-server@host").trim().to_string());
     let host = if host.is_empty() { "0.0.0.0".to_string() } else { host };
     Some(
         match (host.as_str(), port).to_socket_addrs().map(|mut found| found.next()) {
@@ -276,16 +280,20 @@ fn client_address(port_name: &str, host_name: &str) -> Option<Result<SocketAddr,
     )
 }
 
-/// The client ports XMPP will bind, for the port check before the framework is built: none while `xmpp-server@domain` is
-/// empty or on a dedicated edge node (`front`, `front_edge` or `edge`), whose client ports tunnel to its local node.
-pub(crate) fn listen_targets() -> Vec<crate::port_check::Target> {
-    if property("xmpp-server@domain").is_empty() || moqui_core::edge::node_role_kind().edge_node() {
+/// The client ports XMPP will bind by the merged `conf`, for the port check before the framework is built: none while
+/// its XMPP server is off ([`moqui_core::comms::xmpp_domain_by`]) or on a dedicated edge node (`front`, `front_edge` or
+/// `edge`), whose client ports tunnel to its local node.
+pub(crate) fn listen_targets(conf: &moqui_lib::node::MNode) -> Vec<crate::port_check::Target> {
+    let setting = |selector: &str| moqui_core::context::conf_env::conf_attribute(conf, selector);
+    // the role by the same merged conf, not the process-wide one, as the port check reads everything else
+    let edge_node = moqui_core::edge::NodeRole::parse(&setting(moqui_core::edge::NODE_ROLE)).edge_node();
+    if moqui_core::comms::xmpp_domain_by(&setting).is_none() || edge_node {
         return Vec::new();
     }
     CLIENT_PORTS
         .iter()
         .filter_map(|(port_name, host_name, _)| {
-            let bind = client_address(port_name, host_name)?.ok()?;
+            let bind = client_address(&setting, port_name, host_name)?.ok()?;
             Some(crate::port_check::Target::optional(
                 LISTENER,
                 port_name,
@@ -299,13 +307,20 @@ pub(crate) fn listen_targets() -> Vec<crate::port_check::Target> {
 
 fn start_node(factory: &Arc<ExecutionContextFactory>) -> Option<XmppNode> {
     use moqui_core::startup::{listener, State};
-    if property("xmpp-server@domain").is_empty() {
-        listener(factory, LISTENER, State::off("xmpp-server@domain is not set"));
+    if !moqui_core::context::conf_env::switch_on(&moqui_core::context::conf_env::setting_on(
+        factory,
+        moqui_core::comms::XMPP_ENABLED,
+    )) {
+        listener(factory, LISTENER, State::off("xmpp-server@enabled is false"));
+        return None;
+    }
+    if moqui_core::comms::xmpp_domain(factory).is_none() {
+        listener(factory, LISTENER, State::failed("no xmpp-server@domain"));
         return None;
     }
     if moqui_core::edge::settings(factory).edge_node() {
         tracing::warn!(
-            "XMPP: xmpp-server@domain is set on a dedicated edge node (instance@node-role {}), which starts no XMPP server: \
+            "XMPP: xmpp-server@enabled is true on a dedicated edge node (instance@node-role {}), which starts no XMPP server: \
              edge@xmpp-port and edge@xmpp-tls-port tunnel clients to the local node",
             moqui_core::edge::settings(factory).role.as_str()
         );
@@ -316,7 +331,7 @@ fn start_node(factory: &Arc<ExecutionContextFactory>) -> Option<XmppNode> {
         listener(factory, LISTENER, State::Skipped(busy));
         return None;
     }
-    let config = config()?;
+    let config = config(factory)?;
     // the services read these, resolved from the conf (its defaults filled in): the bookmarks' room JIDs, the URLs of
     // files sent to XMPP clients; runtime state, not settings (plans/archive/Conf-Paths.md, Decisions)
     moqui_lib::env::set_property("xmpp_resolved_rooms_domain", config.rooms_domain.clone());
@@ -367,7 +382,8 @@ fn start_node(factory: &Arc<ExecutionContextFactory>) -> Option<XmppNode> {
     let mut addresses = (None, None);
     let mut opened = Vec::new();
     for (port_name, host_name, direct) in CLIENT_PORTS {
-        let bind = match client_address(port_name, host_name) {
+        let setting = |selector: &str| moqui_core::context::conf_env::setting_on(factory, selector);
+        let bind = match client_address(&setting, port_name, host_name) {
             None => continue,
             Some(Ok(bind)) => bind,
             Some(Err(reason)) => {

@@ -31,20 +31,26 @@ use super::{Ctx, Listener, Running, Stage, StopHow, StopPhase, Wanted};
 use crate::http::{HttpsPlan, ServeTask, WebContext};
 use crate::port_check::{Proto, Target};
 
-/// The startup report's names.
-pub(crate) const HTTP: &str = "HTTP";
-pub(crate) const HTTPS: &str = "HTTPS";
+/// The startup report's names, as [`moqui_core::listeners::SWITCHES`] has them, so an Off row's reason and its upgrade
+/// warning match ([`moqui_core::listeners::off_reason`]).
+pub(crate) const HTTP: &str = moqui_core::listeners::HTTP_SWITCH.name;
+pub(crate) const HTTPS: &str = moqui_core::listeners::HTTPS_SWITCH.name;
 #[cfg(feature = "grpc")]
-const GRPC: &str = "gRPC";
+const GRPC: &str = moqui_core::listeners::GRPC_SWITCH.name;
 
 /// The row of a web listener of a node reached in process only.
 const IN_PROCESS: &str = "no port, reached in process only";
 
-/// The web listeners' switches (plans/Runtime-Config.md §3.2), which their Off rows name.
-const HTTP_ENABLED: &str = "webapp-list/webapp[webroot]@http-listen-enabled";
-const HTTPS_ENABLED: &str = "webapp-list/webapp[webroot]@https-listen-enabled";
+/// The web listeners' switches and ports (plans/Runtime-Config.md §3.2), from [`moqui_core::listeners::SWITCHES`]: the
+/// Off rows name the switches.
+const HTTP_ENABLED: &str = moqui_core::listeners::HTTP_SWITCH.enabled;
+const HTTP_PORT: &str = moqui_core::listeners::HTTP_SWITCH.ports[0];
+const HTTPS_ENABLED: &str = moqui_core::listeners::HTTPS_SWITCH.enabled;
+const HTTPS_PORT: &str = moqui_core::listeners::HTTPS_SWITCH.ports[0];
 #[cfg(feature = "grpc")]
-const GRPC_ENABLED: &str = "webapp-list/webapp[webroot]@grpc-listen-enabled";
+const GRPC_ENABLED: &str = moqui_core::listeners::GRPC_SWITCH.enabled;
+#[cfg(feature = "grpc")]
+const GRPC_PORT: &str = moqui_core::listeners::GRPC_SWITCH.ports[0];
 
 /// How long a bind on the axum runtime may take before it is given up (`worker::on_runtime`).
 const BIND_LIMIT: Duration = Duration::from_secs(30);
@@ -117,11 +123,7 @@ impl Listener for Http {
     }
 
     fn selectors(&self) -> &'static [&'static str] {
-        &[
-            HTTP_ENABLED,
-            "webapp-list/webapp[webroot]@http-listen-port",
-            "webapp-list/webapp[webroot]@http-bind",
-        ]
+        &[HTTP_ENABLED, HTTP_PORT, "webapp-list/webapp[webroot]@http-bind"]
     }
 
     fn wanted(&self, ctx: &Ctx) -> Wanted<SocketAddr, ()> {
@@ -225,11 +227,7 @@ impl Listener for Https {
     }
 
     fn selectors(&self) -> &'static [&'static str] {
-        &[
-            HTTPS_ENABLED,
-            "webapp-list/webapp[webroot]@https-listen-port",
-            "webapp-list/webapp[webroot]@http-bind",
-        ]
+        &[HTTPS_ENABLED, HTTPS_PORT, "webapp-list/webapp[webroot]@http-bind"]
     }
 
     fn wanted(&self, ctx: &Ctx) -> Wanted<HttpsBind, ()> {
@@ -316,7 +314,7 @@ impl Listener for Grpc {
     }
 
     fn selectors(&self) -> &'static [&'static str] {
-        &[GRPC_ENABLED, "webapp-list/webapp[webroot]@grpc-listen-port"]
+        &[GRPC_ENABLED, GRPC_PORT]
     }
 
     /// The PASS authority's h2c refusal is logged by the boot's reading only, so it is logged once.

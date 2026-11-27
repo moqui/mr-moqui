@@ -360,8 +360,15 @@ pub fn integration(factory: &ExecutionContextFactory, name: impl Into<String>, s
     report(factory).record(Section::Integration, name, state);
 }
 
-/// Record a listener's state in the factory's report.
+/// Record a listener's state in the factory's report; an Off state carries the boot's upgrade warning for it
+/// ([`crate::listeners::off_reason`]).
 pub fn listener(factory: &ExecutionContextFactory, name: impl Into<String>, state: State) {
+    let name = name.into();
+    // an Off row says the boot's upgrade warning (plans/Runtime-Config.md §8.2; remove with it after one release)
+    let state = match state {
+        State::Off(reason) => State::Off(crate::listeners::off_reason(factory, &name, reason)),
+        other => other,
+    };
     report(factory).record(Section::Listener, name, state);
 }
 

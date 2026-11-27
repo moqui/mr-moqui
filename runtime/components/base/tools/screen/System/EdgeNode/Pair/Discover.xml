@@ -17,7 +17,8 @@ along with this software (see the LICENSE.md file). If not, see
     this node's choices filled in: web access (its host names, passthrough or terminate; by default this node's
     the webroot webapp's http-host and the names it has there now), mail (the domains of the hosted and shared accounts, and whether
     the system's and the chosen accounts' outgoing mail goes through the edge node), chat (the bridges whose webhooks
-    go to it), PASS (the sites it serves, and their SSO callback) and XMPP (this node's xmpp-server@domain through the edge
+    go to it), PASS (the sites it serves, and their SSO callback) and XMPP (this node's XMPP server, xmpp-server@enabled
+    for xmpp-server@domain, through the edge
     node's tunnel ports; on by default when both are there, and Next adds the domain to the passthrough names when it
     is in neither list, since uploads and /xmpp-websocket ride on web access) and calls (new calls' media on the edge
     node's media node, with its TURN; on by default when it runs one, unless this node's edge/node@calls-enabled is false,
@@ -51,7 +52,8 @@ along with this software (see the LICENSE.md file). If not, see
                 passOn: on(passOn), passSites: toList(passSites).flatMap((text) => String(text).split(','))
                     .map((text) => text.trim()).filter((text) => text),
                 passCallback: String(passCallback || '').trim(),
-                xmppOn: on(xmppOn), xmppDomain: String(ec.factory.getConfValue('xmpp-server@domain') || '').trim().replace(/\.$/, '').toLowerCase(),
+                xmppOn: on(xmppOn), xmppDomain: String(ec.factory.getConfValue('xmpp-server@enabled') || '').trim().toLowerCase() === 'true'
+                    ? String(ec.factory.getConfValue('xmpp-server@domain') || '').trim().replace(/\.$/, '').toLowerCase() : '',
                 // calls only when the form showed the choice (the edge node's media node was up); else Apply leaves
                 // this node's edge/node@calls-enabled as it is
                 callsOffered: on(callsOffered), callsOn: on(callsOffered) && on(callsOn),
@@ -75,7 +77,7 @@ along with this software (see the LICENSE.md file). If not, see
             const badId = choices.chatBridgeIds.concat(choices.passSites).find((id) => !/^[A-Za-z0-9_.-]{1,63}$/.test(id))
             if (badId) { ec.message.addError(ec.resource.expand('${id} is not an id', '', {id: badId})); return }
             if (choices.xmppOn && !publicName(choices.xmppDomain)) {
-                ec.message.addValidationError(null, 'xmppOn', null, L('This node runs no XMPP server with a public domain: set xmpp-server@domain'), null); return }
+                ec.message.addValidationError(null, 'xmppOn', null, L('This node runs no XMPP server with a public domain: set xmpp-server@enabled and xmpp-server@domain'), null); return }
             // uploads (https://<domain>) and /xmpp-websocket ride on web access: the domain is one of the host names
             if (choices.xmppOn && choices.webOn && !choices.passthroughNames.concat(choices.terminateNames).includes(choices.xmppDomain)) {
                 choices.passthroughNames.push(choices.xmppDomain)
@@ -144,9 +146,10 @@ along with this software (see the LICENSE.md file). If not, see
         mailAvailable = !!mail.available
         chatAvailable = !!chat.webhooks
         passAvailable = !!pass.available
-        // XMPP: the edge node's tunnel ports, to this node's own XMPP server (xmpp-server@domain), which Apply names there so the
-        // ports find this node's clients by their domain (E16)
-        xmppDomain = String(ec.factory.getConfValue('xmpp-server@domain') || '').trim().replace(/\.$/, '').toLowerCase()
+        // XMPP: the edge node's tunnel ports, to this node's own XMPP server (xmpp-server@enabled, for xmpp-server@domain), which
+        // Apply names there so the ports find this node's clients by their domain (E16)
+        xmppDomain = String(ec.factory.getConfValue('xmpp-server@enabled') || '').trim().toLowerCase() === 'true'
+            ? String(ec.factory.getConfValue('xmpp-server@domain') || '').trim().replace(/\.$/, '').toLowerCase() : ''
         const xmppPorts = [xmpp.port ? xmpp.port + ' (STARTTLS)' : '', xmpp.tlsPort ? xmpp.tlsPort + ' (' + L('direct TLS') + ')' : '']
             .filter((text) => text).join(', ')
         xmppAvailable = !!xmpp.available
@@ -333,16 +336,16 @@ along with this software (see the LICENSE.md file). If not, see
                         <default-field><ignored/></default-field></field>
                     <field name="xmppOn"><conditional-field condition="xmppAvailable &amp;&amp; xmppDomain" title="XMPP" tooltip="Outside XMPP clients connect to the edge node's ports, and it pipes them to this node's XMPP server, which ends their TLS. Uploads and the WebSocket need the domain on web access">
                             <check><option key="Y" text="XMPP clients of ${xmppDomain} come through the edge node's ports ${xmppPortsText}"/></check></conditional-field>
-                        <conditional-field condition="xmppAvailable" title="XMPP"><display text="This node runs no XMPP server: set xmpp-server@domain"/></conditional-field>
+                        <conditional-field condition="xmppAvailable" title="XMPP"><display text="This node runs no XMPP server: set xmpp-server@enabled and xmpp-server@domain"/></conditional-field>
                         <conditional-field condition="xmppNeedsNode" title="XMPP"><display text="Several local nodes are linked to the edge node: set xmpp-server@domain here, and Apply names it there"/></conditional-field>
                         <default-field title="XMPP"><display text="The edge node has no XMPP tunnel ports"/></default-field></field>
                     <field name="callsOn"><conditional-field condition="callsAvailable" title="Calls" tooltip="New calls have their media on the edge node's media node, and outside browsers relay through its TURN. Calls already going on stay where they are when this changes">
                             <check><option key="Y" text="New calls have their media on the edge node's media node at ${callsMediaText}"/></check></conditional-field>
-                        <default-field title="Calls"><display text="The edge node runs no media node (media-server@port)"/></default-field></field>
+                        <default-field title="Calls"><display text="The edge node runs no media node (media-server@enabled)"/></default-field></field>
                     <field name="callsOffered"><default-field><hidden/></default-field></field>
                     <field name="sipOn"><conditional-field condition="sipAvailable" title="Phones" tooltip="This node's trunks register from the edge node's SIP engine, which takes their calls and asks this node how to route each; phones outside the office register to its registrar. Off, the trunks and fallbacks are not sent to it">
                             <check><option key="Y" text="This node's trunks and phones go through the edge node's SIP engine at ${sipAddressText}"/></check></conditional-field>
-                        <default-field title="Phones"><display text="The edge node runs no SIP engine (sip-server@port, sip-server@tls-port)"/></default-field></field>
+                        <default-field title="Phones"><display text="The edge node runs no SIP engine (sip-server@enabled)"/></default-field></field>
                     <field name="sipOffered"><default-field><hidden/></default-field></field>
                     <field-layout>
                         <field-group title="Web access"><field-ref name="webOn"/><field-ref name="passthroughNames"/><field-ref name="terminateNames"/></field-group>

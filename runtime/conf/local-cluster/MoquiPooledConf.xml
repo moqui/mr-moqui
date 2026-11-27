@@ -41,7 +41,7 @@
 
     <!-- How peers reach this member, as in MoquiLocalConf.xml: empty for its cluster port (TLS with the cluster
         certificate, client certificate required), notify for Postgres LISTEN/NOTIFY on the shared database when members
-        cannot connect to each other (Postgres only), ssh through its SSH server (ssh-server@port; a build with the ssh
+        cannot connect to each other (Postgres only), ssh through its SSH server (ssh-server@enabled; a build with the ssh
         feature). cluster-member@protocol: empty or grpc for gRPC on HTTP/2, rest for HTTP/1.1 only; members on different
         settings or builds still reach each other. -->
     <cluster-member transport="" protocol=""/>

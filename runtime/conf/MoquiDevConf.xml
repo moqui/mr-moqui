@@ -16,9 +16,10 @@
     <!-- the first administrator's form on an empty database (off by default, MoquiDefaultConf.xml) -->
     <user-facade><login initial-admin-enabled="true"/></user-facade>
     <transaction-facade use-lock-track="true"/>
-    <!-- The built-in SSH server on localhost (its host defaults to 127.0.0.1): the apps in the terminal over SSH for
-        every user, as `ssh -p 2222 john.doe@localhost` (the login dialog without a key); docs/ui/TUI.md "Over SSH" -->
-    <ssh-server port="2222"/>
+    <!-- The built-in SSH server on, on localhost (its port 2222 and host 127.0.0.1 are the default conf's): the apps in
+        the terminal over SSH for every user, as `ssh -p 2222 john.doe@localhost` (the login dialog without a key);
+        docs/ui/TUI.md "Over SSH" -->
+    <ssh-server enabled="true"/>
 
 
     <!-- An external database for testing, in runtime/.env (or the environment), on local mysql8:

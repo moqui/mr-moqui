@@ -67,7 +67,11 @@ fn dkim() -> (String, String) {
 
 /// What this edge node offers, without a node's host names (those are [`offer`]'s).
 fn base_offer(factory: &ExecutionContextFactory, config: &EdgeConfig) -> Offer {
-    let listener = cfg!(feature = "inbound-smtp") && !property("smtp-server@listen-port").is_empty();
+    let listener = cfg!(feature = "inbound-smtp")
+        && moqui_core::context::conf_env::switch_on(&moqui_core::context::conf_env::setting_on(
+            factory,
+            "smtp-server@enabled",
+        ));
     let mta = if property("mail-delivery@mta") == "moqui" {
         "moqui"
     } else {
@@ -106,7 +110,7 @@ fn base_offer(factory: &ExecutionContextFactory, config: &EdgeConfig) -> Offer {
     // tunnel port that is one of them is not listened on (hook.rs), so it is not offered (§10)
     let all_in_one = moqui_core::edge::settings(factory).all_in_one();
     let tunnel = |bind: Option<std::net::SocketAddr>| {
-        bind.filter(|bind| !all_in_one || super::tunnel::own_xmpp_clash(*bind).is_none())
+        bind.filter(|bind| !all_in_one || super::tunnel::own_xmpp_clash(factory, *bind).is_none())
     };
     let (xmpp_tunnel, xmpp_tls_tunnel) = (tunnel(config.xmpp_tunnel), tunnel(config.xmpp_tls_tunnel));
     let mut offer = Offer {

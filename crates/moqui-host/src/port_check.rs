@@ -122,7 +122,7 @@ fn conf_setting(conf: &MNode, path: &str, name: &str) -> String {
 }
 
 /// Every listener's ports, resolved as each listener resolves its own: HTTP, HTTPS, cluster and SSH (from the merged
-/// `conf`, so not while `ssh-server` `enabled` is false), required; then the optional ones that are configured. The
+/// `conf`, so not while `ssh-server` `enabled` is not true), required; then the optional ones that are configured. The
 /// on-demand ranges (TURN relays, SIP RTP legs) are not here.
 #[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
 #[cfg_attr(not(feature = "ssh"), allow(unused_variables))]
@@ -189,12 +189,13 @@ fn targets(bind: &ListenBind, runtime_dir: &Path, conf: &MNode) -> Result<Vec<Ta
             Proto::Tcp,
         ));
     }
+    // the comms listeners, by the merged conf as SSH and SMTP are read
     #[cfg(feature = "rtc")]
-    targets.extend(crate::rtc::listen_targets());
+    targets.extend(crate::rtc::listen_targets(conf));
     #[cfg(feature = "sip")]
-    targets.extend(crate::sip::listen_targets());
+    targets.extend(crate::sip::listen_targets(conf));
     #[cfg(feature = "xmpp")]
-    targets.extend(crate::xmpp::listen_targets());
+    targets.extend(crate::xmpp::listen_targets(conf));
     #[cfg(feature = "edge")]
     targets.extend(crate::edge_link::tunnel_targets());
     Ok(targets)

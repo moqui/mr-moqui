@@ -15,12 +15,13 @@ user guide is [Comms](../tools/Comms.md#calls).
 
 ## Turning it on
 
-Calls need a binary with the `rtc` feature (Maximal, Enterprise, Debug, or `./moq build -- --features rtc`) and a media
-port:
+Calls need a binary with the `rtc` feature (Maximal, Enterprise, Debug, or `./moq build -- --features rtc`) and call media
+switched on:
 
 | Property | Default | |
 | --- | --- | --- |
-| `media-server@port` | empty (off) | The UDP port browsers send media to; `0` is a free port |
+| `media-server@enabled` | `false` | Call media's switch: the media socket runs while it is true |
+| `media-server@port` | `10000` | The UDP port browsers send media to; `0` is a free port |
 | `media-server@host` | `127.0.0.1` | The address it binds |
 | `media-server@public-address` | empty: the bound address | What browsers are told: an IP, or IP:port, for a server behind 1:1 NAT. Required when `media-server@host` binds every address |
 | `calls@ring-seconds` | `45` | How long a call rings before it is missed |
@@ -28,14 +29,14 @@ port:
 | `media-server@cascade-enabled` | `false` | Cascading media nodes ([Cluster](#cluster)): a leg's media goes to the node of its own socket, which relays to the call's node |
 | `calls@direct-path` | `true` | One-to-one calls of two users go peer to peer first ([The direct path](#the-direct-path)); `false` keeps every call on the media server |
 
-On a single server reachable at its own address, `moqui_conf__media_server__port=10000` with `media-server@host` set to that address is
-enough. Behind 1:1 NAT, bind the private address and set `media-server@public-address` to the public one, then forward UDP 10000.
+On a single server reachable at its own address, `moqui_conf__media_server__enabled=true` with `media-server@host` set to that
+address is enough. Behind 1:1 NAT, bind the private address and set `media-server@public-address` to the public one, then forward UDP 10000.
 The advertised address must be reachable from the browsers. A configured address does not prove it: test a call from
 outside the network. For browsers that cannot reach the UDP port, add ICE-TCP (`media-server@tcp-port`) and the embedded
 TURN server, or coturn ([TURN](TURN.md)).
 
 The Calls screen says when calls are unavailable (`get#Capabilities`): supported (the binary has `rtc`), configured
-(this server's port is set) and active (a media server is up in the cluster).
+(this server's `media-server@enabled` is true) and active (a media server is up in the cluster).
 
 ## How a call goes
 
@@ -458,8 +459,9 @@ the edge node is not a member of the local node's cluster:
   `startedDate`: a recording that began before an edge node restart is failed by `expire#Recordings`, as on any media
   node.
 
-Settings: `media-server@port`, `media-server@host` 0.0.0.0, `media-server@public-address` and `media-server/turn-server@port` on the edge node
-(`conf/edge/MoquiEdgeConf.xml` sets all but the address); nothing on the local node, which needs no media port. W7 cascading
+Settings: `media-server@enabled`, `media-server@host` 0.0.0.0, `media-server@public-address` and `media-server/turn-server@enabled`
+on the edge node (`conf/edge/MoquiEdgeConf.xml` sets all but the address, on the default ports); nothing on the local node,
+which needs no call media of its own. W7 cascading
 between the edge node and a local media node is later work.
 
 ## Tests

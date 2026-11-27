@@ -38,6 +38,7 @@ fn the_backup_service_mirrors_a_rotated_dump() {
         None,
         &[
             ("moqui_conf__ssh_server__port", "0"),
+            ("moqui_conf__ssh_server__enabled", "true"),
             ("moqui_conf__ssh_server__host_key", &seed),
         ],
     );

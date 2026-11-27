@@ -345,6 +345,28 @@ impl ExecutionContextFactory {
         super::conf_env::log_overrides(&overrides);
         super::conf_env::refuse_retired(&conf_node)?;
         let artifacts_only = options.artifacts_only;
+        // a port set to turn a listener on whose switch is still off, kept for its Off row (plans/Runtime-Config.md
+        // §8.2; remove after one release); a factory for the artifacts alone starts no listener
+        let upgrade_warnings = if artifacts_only {
+            Vec::new()
+        } else {
+            let named: Vec<(String, PathBuf)> = components
+                .iter()
+                .map(|info| (info.name.clone(), info.location.clone()))
+                .collect();
+            match conf::conf_files_of(&framework_dir, &runtime_dir, &named, options.test_confs) {
+                Ok(files) => crate::listeners::upgrade_warnings(
+                    &conf_node,
+                    &overrides,
+                    &files,
+                    runtime_dir.parent().unwrap_or(&runtime_dir),
+                ),
+                Err(err) => {
+                    tracing::error!("The listeners' upgrade check did not run: {err}");
+                    Vec::new()
+                }
+            }
+        };
         if !artifacts_only {
             let gate = crate::seal::GateRequest {
                 runtime_dir: &runtime_dir,
@@ -442,6 +464,7 @@ impl ExecutionContextFactory {
         // what set each overridden value, for the listeners' upgrade warning and their settings' sources
         // (plans/Runtime-Config.md §8.2)
         super::conf_env::keep_boot_overrides(&factory, overrides);
+        crate::listeners::keep_upgrade_warnings(&factory, upgrade_warnings);
         if artifacts_only {
             factory.pools.attach(&factory);
             return Ok(factory);

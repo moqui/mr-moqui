@@ -8,14 +8,17 @@ Most browsers reach a call's media node on its UDP media port ([WebRTC](WebRTC.m
   `crates/moqui-host/src/rtc/turn.rs`). coturn can take its place (below). The design is
   [plans/archive/Comms-Framework.md](../../plans/archive/Comms-Framework.md) §6.5.
 
-Both need the `rtc` feature and a media node (`media-server@port`). Every listener is off until its setting is set.
+Both need the `rtc` feature and a media node (`media-server@enabled`). The embedded TURN server runs while
+`media-server/turn-server@enabled` is true, on each of its ports that is not empty; ICE-TCP while `media-server@tcp-port`
+is set.
 
 ## Settings
 
 | Property | Default | |
 | --- | --- | --- |
 | `media-server@tcp-port` | empty (off) | ICE-TCP, on `media-server@host`; browsers are told it at `media-server@public-address` |
-| `media-server/turn-server@port` | empty (off) | TURN over UDP and TCP; 3478 by convention |
+| `media-server/turn-server@enabled` | `false` | The embedded TURN server's switch; on with every port below empty it fails |
+| `media-server/turn-server@port` | `3478` | TURN over UDP and TCP; empty leaves it closed |
 | `media-server/turn-server@tls-port` | empty (off) | TURN over TLS; 5349 by convention |
 | `media-server/turn-server@tls443-host` | empty (off) | An address of its own where TURN takes TLS on 443, for networks that let only HTTPS out. The HTTPS listener cannot share it |
 | `media-server/turn-server@host` | `media-server@host` | The address the TURN listeners and relays bind |
@@ -72,7 +75,7 @@ Open these ports on the firewall:
 ## On an edge node
 
 An edge node ([Edge-Node](../../plans/archive/Edge-Node.md) §5.4) runs the embedded TURN of its local nodes' calls, beside
-its media socket (`media-server/turn-server@port` 3478 in `conf/edge/MoquiEdgeConf.xml`, relays to its own media port). The local node gives
+its media socket (`media-server/turn-server@enabled` true in `conf/edge/MoquiEdgeConf.xml`, on 3478, relays to its own media port). The local node gives
 the legs their credentials, and the edge node's TURN checks them. Each pairing has a secret of its own
 ([Edge-Node2](../../plans/Edge-Node2.md) §4.1, E16): base64 of HMAC-SHA1 of the pairing's id, its key's
 fingerprint and when it paired, with the edge node's `media-server/turn-server@auth-secret`, which only the edge node holds; a node paired

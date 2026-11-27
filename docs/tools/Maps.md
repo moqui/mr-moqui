@@ -1091,7 +1091,7 @@ the end by time, stops the feed at once, and a device still sending the share is
   of the user's own with its audience and end, where its last position came from, Stop, Extend (a new end, the
   audience never sent again), Delete trail, a person or group taken out, and for a group Add the group again.
 - **Share my location** (the panel's button): people the user may message (as Chat finds them), groups the user is
-  in, XMPP contacts when the server has XMPP (with "Also use my XMPP app's location": [Over XMPP](#over-xmpp)), a guest
+  in, XMPP contacts when the server has XMPP (`xmpp-server@enabled`, with "Also use my XMPP app's location": [Over XMPP](#over-xmpp)), a guest
   link (its page's link shown once, in the dialog: [Guest links](#guest-links)), until (15 minutes to
   `location@max-share-hours`), exact or approximate, a trail or not, and the name they see.
 - **The terminal.** Browse's twin lists, under its map, the user's own shares (with whom, until, the last position's

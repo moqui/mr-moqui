@@ -1990,8 +1990,8 @@ along with this software (see the LICENSE.md file). If not, see
     <xs:element name="ssh-server">
         <xs:annotation><xs:documentation>The built-in SSH server: the terminal client, SFTP, git and the admin shell.</xs:documentation></xs:annotation>
         <xs:complexType>
-            <xs:attribute name="enabled" type="boolean-expandable" default="true"><xs:annotation><xs:documentation>False keeps the server off whatever the port, and git clone and sync addresses show no SSH.</xs:documentation></xs:annotation></xs:attribute>
-            <xs:attribute name="port" type="xs:string"><xs:annotation><xs:documentation>The port to bind; empty leaves the server off, 0 binds an ephemeral port.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="enabled" type="boolean" default="false"><xs:annotation><xs:documentation>Whether the SSH server is on (plans/Runtime-Config.md 3.2). Off, git clone and sync addresses show no SSH; turning it off keeps the port.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="port" type="port" default="2222"><xs:annotation><xs:documentation>The port to bind when enabled is true; 0 binds a port of the kernel's choosing. Empty is refused: set enabled="false".</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="host" type="xs:string" default="127.0.0.1"><xs:annotation><xs:documentation>The address to bind.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="host-key" type="xs:string"><xs:annotation><xs:documentation>The base64 of a 32-byte Ed25519 seed, or an OpenSSH private key.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="public-host" type="xs:string"><xs:annotation><xs:documentation>The SSH host git clone URLs show; the webapp host when empty.</xs:documentation></xs:annotation></xs:attribute>
@@ -2488,7 +2488,7 @@ along with this software (see the LICENSE.md file). If not, see
         </xs:complexType>
     </xs:element>
     <xs:element name="xmpp-server">
-        <xs:annotation><xs:documentation>XMPP for local users (docs/interfaces/XMPP.md): off while domain is empty.</xs:documentation></xs:annotation>
+        <xs:annotation><xs:documentation>XMPP for local users (docs/interfaces/XMPP.md): on while enabled is true, for its domain.</xs:documentation></xs:annotation>
         <xs:complexType>
             <xs:sequence>
                 <xs:element minOccurs="0" name="upload"><xs:complexType>
@@ -2500,12 +2500,13 @@ along with this software (see the LICENSE.md file). If not, see
                     <xs:attribute name="secret" type="xs:string"><xs:annotation><xs:documentation>A secret.</xs:documentation></xs:annotation></xs:attribute>
                 </xs:complexType></xs:element>
             </xs:sequence>
+            <xs:attribute name="enabled" type="boolean" default="false"><xs:annotation><xs:documentation>Whether the XMPP server is on (plans/Runtime-Config.md 3.2); on with no domain it does not start and says so.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="domain" type="xs:string"/>
             <xs:attribute name="rooms-domain" type="xs:string"/>
             <xs:attribute name="upload-domain" type="xs:string"/>
-            <xs:attribute name="port" type="xs:string"/>
+            <xs:attribute name="port" type="port-optional" default="5222"><xs:annotation><xs:documentation>The STARTTLS client port; empty leaves it off.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="host" type="xs:string" default="0.0.0.0"/>
-            <xs:attribute name="tls-port" type="xs:string"/>
+            <xs:attribute name="tls-port" type="port-optional" default="5223"><xs:annotation><xs:documentation>The direct TLS client port; empty leaves it off.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="tls-host" type="xs:string"/>
             <xs:attribute name="s2s-port" type="xs:string"/>
             <xs:attribute name="websocket-enabled" type="xs:string" default="false"/>
@@ -2545,9 +2546,10 @@ along with this software (see the LICENSE.md file). If not, see
                     <xs:attribute name="nat-expires" type="xs:string" default="60"/>
                 </xs:complexType></xs:element>
             </xs:sequence>
-            <xs:attribute name="port" type="xs:string"/>
+            <xs:attribute name="enabled" type="boolean" default="false"><xs:annotation><xs:documentation>Whether the SIP engine is on (plans/Runtime-Config.md 3.2); it needs this server's call media.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="port" type="port-optional" default="5060"><xs:annotation><xs:documentation>UDP and TCP; empty leaves them off.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="host" type="xs:string" default="127.0.0.1"/>
-            <xs:attribute name="tls-port" type="xs:string"/>
+            <xs:attribute name="tls-port" type="port-optional"><xs:annotation><xs:documentation>TLS, 5061 by convention; empty (the default) leaves it off.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="tls-host" type="xs:string"/>
             <xs:attribute name="tls-ca-file" type="xs:string"/>
             <xs:attribute name="rtp-ports" type="xs:string" default="20000-20999"/>
@@ -2561,8 +2563,9 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:complexType>
             <xs:sequence>
                 <xs:element minOccurs="0" name="turn-server"><xs:complexType>
-                    <xs:attribute name="port" type="xs:string"/>
-                    <xs:attribute name="tls-port" type="xs:string"/>
+                    <xs:attribute name="enabled" type="boolean" default="false"><xs:annotation><xs:documentation>Whether the embedded TURN server is on, beside call media (plans/Runtime-Config.md 3.2).</xs:documentation></xs:annotation></xs:attribute>
+                    <xs:attribute name="port" type="port-optional" default="3478"><xs:annotation><xs:documentation>UDP and TCP; empty leaves them off.</xs:documentation></xs:annotation></xs:attribute>
+                    <xs:attribute name="tls-port" type="port-optional"><xs:annotation><xs:documentation>TLS, 5349 by convention; empty (the default) leaves it off.</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="tls443-host" type="xs:string"/>
                     <xs:attribute name="host" type="xs:string"/>
                     <xs:attribute name="public-host" type="xs:string"/>
@@ -2575,9 +2578,10 @@ along with this software (see the LICENSE.md file). If not, see
                     <xs:attribute name="auth-secret" type="xs:string"><xs:annotation><xs:documentation>A secret.</xs:documentation></xs:annotation></xs:attribute>
                 </xs:complexType></xs:element>
             </xs:sequence>
-            <xs:attribute name="port" type="xs:string"/>
+            <xs:attribute name="enabled" type="boolean" default="false"><xs:annotation><xs:documentation>Whether call media is on (plans/Runtime-Config.md 3.2).</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="port" type="port" default="10000"><xs:annotation><xs:documentation>The UDP port of the browser legs' media; 0 is a free port. Empty is refused: set enabled="false".</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="host" type="xs:string" default="127.0.0.1"/>
-            <xs:attribute name="tcp-port" type="xs:string"/>
+            <xs:attribute name="tcp-port" type="port-optional"><xs:annotation><xs:documentation>ICE-TCP; empty (the default) leaves it off.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="public-address" type="xs:string"/>
             <xs:attribute name="cascade-enabled" type="xs:string" default="false"/>
         </xs:complexType>
@@ -2685,7 +2689,8 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:annotation><xs:documentation>The inbound SMTP listener for hosted and shared mail accounts, behind the edge
             gateway (docs/interfaces/Mail-Inbound.md).</xs:documentation></xs:annotation>
         <xs:complexType>
-            <xs:attribute name="listen-port" type="xs:string"><xs:annotation><xs:documentation>The port to bind; empty leaves the listener off, 0 binds an ephemeral port.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="enabled" type="boolean" default="false"><xs:annotation><xs:documentation>Whether the SMTP listener is on (plans/Runtime-Config.md 3.2); turning it off keeps listen-port. On with no allowed-addresses (and not in internet mode), it does not start and says why.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="listen-port" type="port" default="2525"><xs:annotation><xs:documentation>The port to bind when enabled is true; 0 binds a port of the kernel's choosing. Empty is refused: set enabled="false".</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="listen-host" type="xs:string" default="127.0.0.1"><xs:annotation><xs:documentation>The address to bind.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="allowed-addresses" type="xs:string"><xs:annotation><xs:documentation>The gateway's IPs and CIDRs, comma separated; an empty list does not start the listener, except in internet mode, where it takes any address.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="hostname" type="xs:string"><xs:annotation><xs:documentation>The name in the greeting and the Received field; the webapp host when empty.</xs:documentation></xs:annotation></xs:attribute>

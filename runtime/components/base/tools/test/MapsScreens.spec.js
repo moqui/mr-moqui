@@ -242,7 +242,7 @@ feature("Browse renders its terminal twin for a Maps user, and the app is refuse
 feature("My location shares opens for an owner with ALL_USERS alone, lists their share and stops it; another user stops nothing of it", {
     when() {
         // the share has an XMPP contact too (WRITER, of PLAIN's roster: a direct room of the two), for the opt-in below
-        return withConf("xmpp-server@domain", "maps.example.test", () => myShares())
+        return withConf("xmpp-server@enabled", "true", () => withConf("xmpp-server@domain", "maps.example.test", () => myShares()))
     },
     then({shareId, page, afterOther, afterOwn, optInOther, optInOwn, writerMaps, plainMaps}) {
         optInOther == false

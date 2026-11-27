@@ -100,9 +100,11 @@ function liveMediaNode(instanceId) {
 
 /** What a phone is set up with: the domain, the server's ports, and the transport to choose. */
 function serverSetup() {
+  // a running engine's port, else the conf's while the engine's switch is on (plans/Runtime-Config.md 3.2)
+  const sipOn = property('sip-server@enabled').toLowerCase() === 'true'
   const port = (address, name) => {
     const fromNode = address ? Number(String(address).split(':').pop()) : null
-    return fromNode || (property(name) ? Number(property(name)) : null)
+    return fromNode || (sipOn && property(name) ? Number(property(name)) : null)
   }
   const node = liveSipNodes()[0]
   const sipPort = port(node?.sipAddress, 'sip-server@port')

@@ -28,5 +28,11 @@ runs on the result of the one before; a failure stops the release until it is fi
    `conf_env.rs`): `pass-authority@grpc-host` and `telemetry/receiver@grpc-bind` to
    `webapp-list/webapp[webroot]@grpc-listen-bind`, `pass-authority@grpc-port` and `telemetry/receiver@grpc-port` to
    `webapp-list/webapp[webroot]@grpc-listen-port`; check the runtime's conf files, `.env` and the service environment.
+   The listener switches (plans/Runtime-Config.md §3.2; `RETIRED_VALUES` in `conf_env.rs`): `off` or an empty
+   `http-listen-port`, `https-listen-port` or `grpc-listen-port`, and an empty `ssh-server@port`,
+   `smtp-server@listen-port` or `media-server@port`, refuse the start naming the switch to set; a port alone, or
+   `xmpp-server@domain` alone, no longer turns a listener on, so write each listener's `enabled` (the boot's upgrade
+   warning names any that was set without it); `http-listen-port` no longer follows `http-port`; XMPP switched on
+   listens on 5222 and 5223 unless they are written empty.
 
 Report what ran, what passed, and each failure with its output; a step skipped is named as skipped.

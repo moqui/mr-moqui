@@ -411,7 +411,9 @@ function jidUsername(local) {
  */
 function checkJids(jids) {
     if (!jids.length) return {jidUsers: {}}
-    const domain = text(ec.factory.getConfValue("xmpp-server@domain")).toLowerCase()
+    // this server's XMPP domain while its XMPP server is on (plans/Runtime-Config.md 3.2)
+    const xmppOn = text(ec.factory.getConfValue("xmpp-server@enabled")).toLowerCase() === "true"
+    const domain = xmppOn ? text(ec.factory.getConfValue("xmpp-server@domain")).toLowerCase() : ""
     if (!domain) return refuse("XMPP_OFF", "This server has no XMPP")
     const roster = ec.service.sync().name("org.moqui.chat.XmppServices.get#Roster").call()
     if (ec.message.hasError()) return {reasonCode: "XMPP_NOT_CONTACT"}

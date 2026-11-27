@@ -21,15 +21,30 @@ fn settings(pairs: &[(&str, &str)]) -> Result<Option<SipSettings>, String> {
     settings_from(&|name| map.get(name).cloned().unwrap_or_default())
 }
 
+/// The settings of the switch on, and `pairs`.
+fn on(pairs: &[(&str, &str)]) -> Result<Option<SipSettings>, String> {
+    let mut all = vec![("sip-server@enabled", "true")];
+    all.extend_from_slice(pairs);
+    settings(&all)
+}
+
+/// The engine is on by its switch (plans/Runtime-Config.md §3.2): off whatever the ports say; on, an empty port leaves
+/// that transport off, and on with both empty it does not start, naming them.
 #[test]
 fn the_listeners_are_off_until_a_port_is_set_and_take_their_hosts() {
     assert_eq!(settings(&[("sip-server@rtp-ports", "20000-20999")]), Ok(None));
-    let s = settings(&[("sip-server@port", "5060")]).unwrap().unwrap();
+    assert_eq!(settings(&[("sip-server@port", "5060")]), Ok(None));
+    let none = on(&[("sip-server@rtp-ports", "20000-20999")]).unwrap_err();
+    assert!(
+        none.contains("sip-server@port") && none.contains("sip-server@tls-port"),
+        "{none}"
+    );
+    let s = on(&[("sip-server@port", "5060")]).unwrap().unwrap();
     assert_eq!(s.listen, Some("127.0.0.1:5060".parse().unwrap()));
     assert_eq!(s.tls, None);
     assert_eq!(s.rtp_ports, "20000-20999");
     assert_eq!(s.rtp_host, "127.0.0.1".parse::<IpAddr>().unwrap());
-    let s = settings(&[
+    let s = on(&[
         ("sip-server@tls-port", "5061"),
         ("sip-server@host", "0.0.0.0"),
         ("sip-server@tls-host", "127.0.0.2"),
@@ -46,7 +61,7 @@ fn the_listeners_are_off_until_a_port_is_set_and_take_their_hosts() {
     assert_eq!(s.public, Some("198.51.100.20".parse().unwrap()));
     assert_eq!(s.ca_file, Some(PathBuf::from("/nowhere/ca.pem")));
     assert_eq!(s.limits, RequestLimits::default());
-    let s = settings(&[
+    let s = on(&[
         ("sip-server@port", "5060"),
         ("sip-server/limits@request-rate", "5"),
         ("sip-server/limits@request-burst", "10"),
@@ -69,8 +84,8 @@ fn the_listeners_are_off_until_a_port_is_set_and_take_their_hosts() {
         },
         "one that is not a number keeps its default"
     );
-    assert!(settings(&[("sip-server@port", "fifty")]).is_err());
-    assert!(settings(&[
+    assert!(on(&[("sip-server@port", "fifty")]).is_err());
+    assert!(on(&[
         ("sip-server@port", "5060"),
         ("sip-server@public-address", "sip.example")
     ])
@@ -79,10 +94,10 @@ fn the_listeners_are_off_until_a_port_is_set_and_take_their_hosts() {
 
 #[test]
 fn the_registrar_is_off_until_enabled_and_takes_its_limits_and_domain() {
-    let s = settings(&[("sip-server@port", "5060")]).unwrap().unwrap();
+    let s = on(&[("sip-server@port", "5060")]).unwrap().unwrap();
     assert_eq!(s.registrar, None, "off by default, even with the listener on");
     assert_eq!(s.domain, "moqui");
-    let s = settings(&[
+    let s = on(&[
         ("sip-server@port", "5060"),
         ("sip-server@public-address", "198.51.100.20"),
     ])
@@ -92,7 +107,7 @@ fn the_registrar_is_off_until_enabled_and_takes_its_limits_and_domain() {
         s.domain, "198.51.100.20",
         "the realm is the public address when no domain is set"
     );
-    let s = settings(&[
+    let s = on(&[
         ("sip-server@port", "5060"),
         ("sip-server@domain", "sip.example.com"),
         ("sip-server/registrar@enabled", "true"),

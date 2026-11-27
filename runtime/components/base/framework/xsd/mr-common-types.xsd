@@ -45,6 +45,8 @@ along with this software (see the LICENSE.md file). If not, see
     </xs:union></xs:simpleType>
     <!-- A TCP or UDP port: digits, 0 for one of the kernel's choosing -->
     <xs:simpleType name="port"><xs:restriction base="xs:string"><xs:pattern value="[0-9]{1,5}"/></xs:restriction></xs:simpleType>
+    <!-- The port of one transport of a listener: digits, or empty to leave that transport off -->
+    <xs:simpleType name="port-optional"><xs:restriction base="xs:string"><xs:pattern value="([0-9]{1,5})?"/></xs:restriction></xs:simpleType>
     <xs:simpleType name="non-neg-int-expandable"><xs:union>
         <xs:simpleType><xs:restriction base="xs:nonNegativeInteger"/></xs:simpleType>
         <xs:simpleType><xs:restriction base="xs:string"><xs:pattern value="\$\{.*"/></xs:restriction></xs:simpleType>

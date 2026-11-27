@@ -89,6 +89,11 @@ const OWN_PORTS: [(&str, u16); 20] = [
 /// Other ports a mail server's clients and peers use (submission, SMTPS, XMPP federation), which no row may take.
 const WELL_KNOWN: [(u16, &str); 3] = [(465, "SMTPS"), (587, "mail submission"), (5269, "XMPP federation")];
 
+/// Ports no row may take except on a front node: port 25, the MX port of a node that takes mail, kept for its SMTP
+/// listener whatever port the conf writes (2525 by default, plans/Runtime-Config.md §3.2), as it was while that port was
+/// empty by default. A front node's smtp rows take 25 for an edge cluster's mail ([`SMTP`]).
+const NOT_FRONT: [(u16, &str); 1] = [(25, "SMTP, the mail port")];
+
 /// The port ranges of this node's own sockets, with their defaults: the SIP engine's RTP and the TURN relays.
 const OWN_RANGES: [(&str, &str); 2] = [
     ("sip-server@rtp-ports", "20000-20999"),
@@ -197,6 +202,9 @@ fn reserved_in(port: u16, front: bool, property: impl Fn(&str) -> String) -> Opt
         }
     }
     if let Some((_, what)) = WELL_KNOWN.iter().find(|(known, _)| *known == port) {
+        return Some((*what).to_string());
+    }
+    if let Some((_, what)) = NOT_FRONT.iter().filter(|_| !front).find(|(known, _)| *known == port) {
         return Some((*what).to_string());
     }
     for (name, default) in OWN_RANGES.iter().filter(|_| !front) {

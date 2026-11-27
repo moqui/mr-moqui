@@ -84,7 +84,7 @@ fn texts(value: &ValueMap, key: &str) -> Vec<String> {
 #[test]
 fn the_script_value_has_each_state_as_a_word_in_the_logs_order() {
     let report = StartupReport::default();
-    report.record(Section::Listener, "SSH", State::off("ssh-server@port is not set"));
+    report.record(Section::Listener, "SSH", State::off("ssh-server@enabled is false"));
     report.record(
         Section::Listener,
         "Edge tunnels",
@@ -101,7 +101,7 @@ fn the_script_value_has_each_state_as_a_word_in_the_logs_order() {
         rows(&value, "listeners"),
         [
             ["HTTP", "on", "tcp 0.0.0.0:8080"],
-            ["SSH", "off", "ssh-server@port is not set"],
+            ["SSH", "off", "ssh-server@enabled is false"],
             ["Edge tunnels", "skipped", "port 7000 is in use"],
             ["Other", "on", "tcp 0.0.0.0:9"],
         ]

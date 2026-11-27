@@ -165,6 +165,7 @@ fn a_front_passes_smtp_to_an_edge_member_with_the_clients_address() {
             ("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_enabled", "true"),
             ("moqui_conf__edge__link_key", &new_key().unwrap()),
             ("moqui_conf__smtp_server__listen_port", "0"),
+            ("moqui_conf__smtp_server__enabled", "true"),
             ("moqui_conf__smtp_server__allowed_addresses", "127.0.0.2"),
             (
                 "moqui_conf__edge__link_url",

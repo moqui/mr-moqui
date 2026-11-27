@@ -86,6 +86,7 @@ fn startup_speed() {
     for (name, value) in [
         ("moqui_conf__tools__empty_db_load", load.as_str()),
         ("moqui_conf__ssh_server__port", "0"),
+        ("moqui_conf__ssh_server__enabled", "true"),
         ("moqui_conf__cluster_member__https_port", "0"),
         ("cluster_ssh_port", "0"),
         // HTTPS closed, as in the regression tests (tests/common TEST_LISTENERS_OFF): 8443 is a running server's

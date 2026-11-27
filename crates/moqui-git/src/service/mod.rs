@@ -766,7 +766,7 @@ fn get_blob(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Res
 }
 
 /// `get#GitCloneUrls`: how to clone a repository. Out: `httpsUrl` (`<base>/git/<path>.git`, the path the repository's
-/// `repositoryPath`, else its id), `sshUrl` when the SSH server is on (`ssh-server` `port`, and `enabled` not false),
+/// `repositoryPath`, else its id), `sshUrl` when the SSH server is on (`ssh-server` `enabled` true, on its `port`),
 /// with the current user's username, as the SSH server logs in Moqui users, and `repositoryPath`. The SSH host and
 /// port are `public-host` and `public-port` when either is set; else, on a node paired with an edge node whose offer
 /// names an SSH tunnel to it, that tunnel's host and port (`moqui_core::edge::setup::ssh_address`); else
@@ -809,8 +809,13 @@ pub(crate) fn ssh_host_port() -> Option<(String, String)> {
         .then(|| ExecutionContext::with_current(|ec| moqui_core::edge::setup::ssh_address(ec.factory())).flatten())
         .flatten();
     SshAddress {
-        enabled: ExecutionContext::with_current(|ec| ec.factory().conf_flag("ssh-server", "enabled", true))
-            .unwrap_or(true),
+        // the server's switch (plans/Runtime-Config.md §3.2), by the current factory's conf when there is one
+        enabled: moqui_core::context::conf_env::switch_on(
+            &ExecutionContext::with_current(|ec| {
+                moqui_core::context::conf_env::setting_on(ec.factory(), "ssh-server@enabled")
+            })
+            .unwrap_or_else(|| ssh_setting("enabled")),
+        ),
         public_host,
         public_port,
         edge,
@@ -835,15 +840,14 @@ struct SshAddress {
 
 impl SshAddress {
     /// The host and port an SSH clone URL names; none while the SSH server is off (or listens on port 0 with nothing
-    /// in front of it). The edge node's tunnel only while this node's own server listens behind it.
+    /// in front of it). The edge node's tunnel only while this node's own server is on behind it.
     fn host_and_port(self) -> Option<(String, String)> {
-        let behind = self.edge.is_none() || !self.port.is_empty();
         let port = match &self.edge {
             Some((_, port)) => port.to_string(),
             None if !self.public_port.is_empty() => self.public_port,
             None => self.port,
         };
-        if !self.enabled || !behind || port.is_empty() || port == "0" {
+        if !self.enabled || port.is_empty() || port == "0" {
             return None;
         }
         let host = [

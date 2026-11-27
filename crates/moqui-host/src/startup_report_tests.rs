@@ -40,11 +40,7 @@ fn the_report_orders_listeners_and_lists_what_is_not_built() {
         entry(Section::Listener, "SSH", State::On("tcp 127.0.0.1:2222".into())),
         entry(Section::Integration, "Search", State::on("Postgres")),
         entry(Section::Listener, "HTTP", State::On("tcp 0.0.0.0:8080".into())),
-        entry(
-            Section::Listener,
-            "SIP",
-            State::off("sip-server@port and sip-server@tls-port are not set"),
-        ),
+        entry(Section::Listener, "SIP", State::off("sip-server@enabled is false")),
         entry(Section::Integration, "IPP printing", State::NotBuilt),
         entry(Section::Integration, "SSO", State::on("")),
     ];
@@ -56,7 +52,7 @@ fn the_report_orders_listeners_and_lists_what_is_not_built() {
   Listeners
     HTTP    tcp 0.0.0.0:8080
     SSH     tcp 127.0.0.1:2222
-    SIP     off: sip-server@port and sip-server@tls-port are not set
+    SIP     off: sip-server@enabled is false
   Integrations
     Search  on: Postgres
     SSO     on
@@ -72,7 +68,7 @@ fn the_report_orders_listeners_and_lists_what_is_not_built() {
 fn the_report_leaves_out_the_time_and_cause_of_a_row() {
     let mut caused = entry(Section::Listener, "SSH", State::On("tcp 127.0.0.1:2222".into()));
     caused.since = jiff::Timestamp::now();
-    caused.cause = Some("set ssh-server@port".to_string());
+    caused.cause = Some("set ssh-server@enabled".to_string());
     let plain = entry(Section::Listener, "SSH", State::On("tcp 127.0.0.1:2222".into()));
     assert_eq!(
         render(&header(), &[caused], &[], ""),

@@ -461,7 +461,7 @@ pub struct MailOffer {
     /// moqui (the MTA in moqui) or postfix (Postfix and Rspamd beside it).
     #[prost(string, tag = "2")]
     pub mta: ::prost::alloc::string::String,
-    /// The SMTP listener is on: smtp-server@listen-port is set.
+    /// The SMTP listener is on: smtp-server@enabled is true.
     #[prost(bool, tag = "3")]
     pub listener: bool,
     /// The host name a local node's MX records name: smtp-server@hostname, else the edge node's web host name.

@@ -2,7 +2,7 @@
 
 MR Moqui runs as one process. It can use the embedded Postgres it ships, and it terminates HTTPS itself from certificates in the runtime `cert/` directory (the old nginx-proxy file names still work). These files are the Podman image and four stacks, plus a systemd unit that runs the binary with no container. Choosing a deployment, its properties, upgrades and clusters are in [docs/Run-Deploy.md](../docs/Run-Deploy.md).
 
-There is no nginx-proxy container. Nothing here publishes port 80 or 443. HTTP is 8080 and HTTPS is 8443, so a rootless Podman can bind them. Put a certificate in the data volume's `cert/` directory, then set `moqui_conf__webapp_list__webapp__WEBROOT__https_enabled=true` and `moqui_conf__webapp_list__webapp__WEBROOT__https_port=8443`. Until a certificate is there the HTTPS port is not listening; production does not mint one, and forcing the listen port with an empty `cert/` makes startup fail.
+There is no nginx-proxy container. Nothing here publishes port 80 or 443. HTTP is 8080 and HTTPS is 8443, so a rootless Podman can bind them. Put a certificate in the data volume's `cert/` directory, then set `moqui_conf__webapp_list__webapp__WEBROOT__https_enabled=true` and `moqui_conf__webapp_list__webapp__WEBROOT__https_port=8443`. HTTPS is on by default (`webapp-list/webapp[webroot]@https-listen-enabled`), but until a certificate is there its port is not listening: production does not mint one, and the listener waits for it instead of failing the start.
 
 ## Image
 

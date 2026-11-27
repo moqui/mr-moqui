@@ -382,6 +382,7 @@ mod mail {
             let (first_port_text, cluster_port) = (first_port.to_string(), crate::common::free_port().to_string());
             let mail = [
                 ("moqui_conf__smtp_server__listen_port", "0"),
+                ("moqui_conf__smtp_server__enabled", "true"),
                 ("moqui_conf__smtp_server__allowed_addresses", "127.0.0.1"),
                 ("moqui_conf__smtp_server__hostname", "edge.example.com"),
                 ("moqui_conf__mail_delivery__mta", "postfix"),

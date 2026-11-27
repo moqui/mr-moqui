@@ -21,15 +21,16 @@ call out as their user.
 The engine needs:
 
 - the `sip` feature, in the Maximal, Enterprise and Debug packages;
-- call media on the same server (`media-server@port`, [WebRTC](WebRTC.md)).
-
-Every listener is off until its setting is set.
+- call media on the same server (`media-server@enabled`, [WebRTC](WebRTC.md));
+- its switch, `sip-server@enabled`. It listens on each of its ports that is not empty; switched on with both empty, or
+  without call media, it fails and says why on System Home.
 
 ## Settings
 
 | Property | Default | |
 | --- | --- | --- |
-| `sip-server@port` | empty (off) | SIP over UDP and TCP; 5060 by convention |
+| `sip-server@enabled` | `false` | The SIP engine's switch |
+| `sip-server@port` | `5060` | SIP over UDP and TCP; empty leaves it closed |
 | `sip-server@host` | `127.0.0.1` | The address `sip-server@port` binds |
 | `sip-server@tls-port` | empty (off) | SIP over TLS; 5061 by convention. The certificate comes from `runtime/cert` (for `sip-server@public-address`, else `default`), as the HTTPS listener's and TURN's do. A client must finish its TLS handshake within 10 seconds; at most 128 handshakes run at once, 8 from one source |
 | `sip-server@tls-host` | `sip-server@host` | The address `sip-server@tls-port` binds |
@@ -652,7 +653,7 @@ A local node behind NAT takes its trunks and outside phones through its edge nod
 (SIP)", E8; [Run-Deploy](../Run-Deploy.md#a-local-server-with-an-edge-node)). The edge node runs the SIP listeners,
 the RTP and the call media; the local node keeps the numbers, the users, the call state and the boxes.
 
-- **Setup.** The SIP properties above go in the edge node's `.env` (`sip-server@port`, `sip-server@tls-port`, `sip-server@host`,
+- **Setup.** The SIP properties above go in the edge node's `.env` (`sip-server@enabled`, `sip-server@port`, `sip-server@tls-port`, `sip-server@host`,
   `sip-server@public-address`, `sip-server/registrar@enabled`); the local node needs none. Trunks, numbers and phones are set up on
   the local node. The edge node gets the trunks and the policy by replication (set `voiceTrunks`, `authJson` encrypted
   at rest there), registers them and keeps them registered while the local node is away; it loads them again when a
@@ -731,7 +732,7 @@ the RTP and the call media; the local node keeps the numbers, the users, the cal
 
 - `get#VoiceCapabilities` reports separately (§3.1):
   - supported: the binary has `sip`;
-  - configured: a SIP port is set and a trunk exists;
+  - configured: `sip-server@enabled` is true and a trunk exists;
   - active: a SIP engine runs beside a media node, and a trunk has not failed;
   - the reason when one is not;
   - emergency readiness.

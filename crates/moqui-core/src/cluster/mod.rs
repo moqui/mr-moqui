@@ -957,7 +957,7 @@ fn cluster_base_url() -> Result<String, Error> {
         let address = env::get_prop_or_env(SSH_ADDRESS_PROPERTY);
         if address.is_empty() {
             return Err(Error::new(
-                "cluster-member@transport is ssh but the SSH server is not listening; set ssh-server@port",
+                "cluster-member@transport is ssh but the SSH server is not listening; set ssh-server@enabled=\"true\"",
             ));
         }
         format!("ssh://{address}")

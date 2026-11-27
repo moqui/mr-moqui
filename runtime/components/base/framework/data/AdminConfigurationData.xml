@@ -213,8 +213,12 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- The configuration each protocol runs with (design-admin §9 EffectiveProtocolSettings), shown read only: nonsecret
         settings of the conf, in the groups named "Protocols: ..." that the integration administrator and the
         operations operator read too. No key, host key, key file or shared secret is registered. -->
+    <moqui.server.InstanceSetting settingKey="protocol.smtp.enabled" title="SMTP listener" settingGroup="Protocols: mail reception"
+            description="Whether the listener for hosted and shared mail accounts runs; off by default" valueTypeEnumId="IsvText"
+            propertyName="smtp-server@enabled" restartRequired="Y" sequenceNum="3005"
+            operatorNote="Set moqui_conf__smtp_server__enabled=true (or false) in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.smtp.listenPort" title="SMTP listener port" settingGroup="Protocols: mail reception"
-            description="The port the listener for hosted and shared mail accounts binds; empty keeps it off" valueTypeEnumId="IsvText"
+            description="The port the listener for hosted and shared mail accounts binds while it is on, 2525 by default" valueTypeEnumId="IsvText"
             propertyName="smtp-server@listen-port" restartRequired="Y" sequenceNum="3010"
             operatorNote="Set moqui_conf__smtp_server__listen_port in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.smtp.listenHost" title="SMTP listener address" settingGroup="Protocols: mail reception"
@@ -241,8 +245,12 @@ along with this software (see the LICENSE.md file). If not, see
             description="The certificate the listener offers for STARTTLS" valueTypeEnumId="IsvText"
             propertyName="smtp-server@tls-cert-file" restartRequired="Y" sequenceNum="3070"
             operatorNote="Set moqui_conf__smtp_server__tls_cert_file in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.ssh.enabled" title="SSH server" settingGroup="Protocols: SSH and Git"
+            description="Whether the built-in SSH server (SFTP, the terminal client, git over SSH) runs; off by default" valueTypeEnumId="IsvText"
+            propertyName="ssh-server@enabled" restartRequired="Y" sequenceNum="3075"
+            operatorNote="Set moqui_conf__ssh_server__enabled=true (or false) in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.ssh.port" title="SSH port" settingGroup="Protocols: SSH and Git"
-            description="The port of the built-in SSH server (SFTP, the terminal client, git over SSH); empty keeps it off" valueTypeEnumId="IsvText"
+            description="The port of the built-in SSH server while it is on, 2222 by default" valueTypeEnumId="IsvText"
             propertyName="ssh-server@port" restartRequired="Y" sequenceNum="3080"
             operatorNote="Set moqui_conf__ssh_server__port in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.ssh.host" title="SSH address" settingGroup="Protocols: SSH and Git"
@@ -261,12 +269,16 @@ along with this software (see the LICENSE.md file). If not, see
             description="The base of the clone URLs shown; made from the public host name when empty" valueTypeEnumId="IsvText"
             propertyName="git-server@public-url" restartRequired="Y" sequenceNum="3120"
             operatorNote="Set moqui_conf__git_server__public_url in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.xmpp.enabled" title="XMPP server" settingGroup="Protocols: chat"
+            description="Whether XMPP runs for chat apps, for its domain; off by default" valueTypeEnumId="IsvText"
+            propertyName="xmpp-server@enabled" restartRequired="Y" sequenceNum="3125"
+            operatorNote="Set moqui_conf__xmpp_server__enabled=true (or false) in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.xmpp.domain" title="XMPP domain" settingGroup="Protocols: chat"
-            description="The domain of the users' chat addresses; empty keeps XMPP off" valueTypeEnumId="IsvText"
+            description="The domain of the users' chat addresses; XMPP that is on does not start without one" valueTypeEnumId="IsvText"
             propertyName="xmpp-server@domain" restartRequired="Y" sequenceNum="3130"
             operatorNote="Set moqui_conf__xmpp_server__domain in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.xmpp.port" title="XMPP port" settingGroup="Protocols: chat"
-            description="The STARTTLS port for chat apps" valueTypeEnumId="IsvText"
+            description="The STARTTLS port for chat apps, 5222 by default; empty leaves it closed" valueTypeEnumId="IsvText"
             propertyName="xmpp-server@port" restartRequired="Y" sequenceNum="3140"
             operatorNote="Set moqui_conf__xmpp_server__port in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.xmpp.host" title="XMPP address" settingGroup="Protocols: chat"
@@ -274,11 +286,15 @@ along with this software (see the LICENSE.md file). If not, see
             propertyName="xmpp-server@host" restartRequired="Y" sequenceNum="3150"
             operatorNote="Set moqui_conf__xmpp_server__host in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.xmpp.tlsPort" title="XMPP direct TLS port" settingGroup="Protocols: chat"
-            description="The direct TLS port for chat apps" valueTypeEnumId="IsvText"
+            description="The direct TLS port for chat apps, 5223 by default; empty leaves it closed" valueTypeEnumId="IsvText"
             propertyName="xmpp-server@tls-port" restartRequired="Y" sequenceNum="3160"
             operatorNote="Set moqui_conf__xmpp_server__tls_port in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.rtc.enabled" title="Call media" settingGroup="Protocols: calls"
+            description="Whether call media runs, which calls and phone calls need; off by default" valueTypeEnumId="IsvText"
+            propertyName="media-server@enabled" restartRequired="Y" sequenceNum="3165"
+            operatorNote="Set moqui_conf__media_server__enabled=true (or false) in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.rtc.mediaPort" title="Call media port" settingGroup="Protocols: calls"
-            description="The UDP port of call media; empty keeps calls' media off" valueTypeEnumId="IsvText"
+            description="The UDP port of call media while it is on, 10000 by default" valueTypeEnumId="IsvText"
             propertyName="media-server@port" restartRequired="Y" sequenceNum="3170"
             operatorNote="Set moqui_conf__media_server__port in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.rtc.mediaHost" title="Call media address" settingGroup="Protocols: calls"
@@ -290,15 +306,19 @@ along with this software (see the LICENSE.md file). If not, see
             propertyName="media-server@public-address" restartRequired="Y" sequenceNum="3190"
             operatorNote="Set moqui_conf__media_server__public_address in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.rtc.mediaTcpPort" title="Call media TCP port" settingGroup="Protocols: calls"
-            description="A TCP port for browsers that cannot reach the UDP one" valueTypeEnumId="IsvText"
+            description="A TCP port for browsers that cannot reach the UDP one; empty for none" valueTypeEnumId="IsvText"
             propertyName="media-server@tcp-port" restartRequired="Y" sequenceNum="3200"
             operatorNote="Set moqui_conf__media_server__tcp_port in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.turn.enabled" title="TURN relay" settingGroup="Protocols: calls"
+            description="Whether the built-in relay runs beside call media; off by default" valueTypeEnumId="IsvText"
+            propertyName="media-server/turn-server@enabled" restartRequired="Y" sequenceNum="3205"
+            operatorNote="Set moqui_conf__media_server__turn_server__enabled=true (or false) in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.turn.port" title="TURN port" settingGroup="Protocols: calls"
-            description="The relay's UDP and TCP port; empty keeps it off" valueTypeEnumId="IsvText"
+            description="The relay's UDP and TCP port, 3478 by default; empty leaves it closed" valueTypeEnumId="IsvText"
             propertyName="media-server/turn-server@port" restartRequired="Y" sequenceNum="3210"
             operatorNote="Set moqui_conf__media_server__turn_server__port in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.turn.tlsPort" title="TURN TLS port" settingGroup="Protocols: calls"
-            description="The relay's TLS port" valueTypeEnumId="IsvText"
+            description="The relay's TLS port, usually 5349; empty for none" valueTypeEnumId="IsvText"
             propertyName="media-server/turn-server@tls-port" restartRequired="Y" sequenceNum="3220"
             operatorNote="Set moqui_conf__media_server__turn_server__tls_port in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.turn.publicHost" title="TURN public host" settingGroup="Protocols: calls"
@@ -321,8 +341,12 @@ along with this software (see the LICENSE.md file). If not, see
             description="Whether someone in a call may turn captions on" valueTypeEnumId="IsvText"
             propertyName="calls/captions@enabled" restartRequired="Y" sequenceNum="3270"
             operatorNote="Set moqui_conf__calls__captions__enabled in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.sip.enabled" title="Phone calls (SIP)" settingGroup="Protocols: phone"
+            description="Whether the SIP engine runs for trunks and phones, with call media; off by default" valueTypeEnumId="IsvText"
+            propertyName="sip-server@enabled" restartRequired="Y" sequenceNum="3275"
+            operatorNote="Set moqui_conf__sip_server__enabled=true (or false) in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.sip.port" title="SIP port" settingGroup="Protocols: phone"
-            description="The UDP and TCP port for trunks and phones; empty with the TLS port keeps phone calls off" valueTypeEnumId="IsvText"
+            description="The UDP and TCP port for trunks and phones, 5060 by default; empty leaves it closed" valueTypeEnumId="IsvText"
             propertyName="sip-server@port" restartRequired="Y" sequenceNum="3280"
             operatorNote="Set moqui_conf__sip_server__port in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.sip.host" title="SIP address" settingGroup="Protocols: phone"
@@ -330,7 +354,7 @@ along with this software (see the LICENSE.md file). If not, see
             propertyName="sip-server@host" restartRequired="Y" sequenceNum="3290"
             operatorNote="Set moqui_conf__sip_server__host in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.sip.tlsPort" title="SIP TLS port" settingGroup="Protocols: phone"
-            description="The TLS port for trunks and phones" valueTypeEnumId="IsvText"
+            description="The TLS port for trunks and phones, usually 5061; empty for none" valueTypeEnumId="IsvText"
             propertyName="sip-server@tls-port" restartRequired="Y" sequenceNum="3300"
             operatorNote="Set moqui_conf__sip_server__tls_port in the environment or runtime/.env, or the attribute in the runtime conf, and restart"/>
     <moqui.server.InstanceSetting settingKey="protocol.sip.publicAddress" title="SIP public address" settingGroup="Protocols: phone"

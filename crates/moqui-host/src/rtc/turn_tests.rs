@@ -21,11 +21,14 @@ use std::time::{Duration, Instant};
 
 use super::{settings, start, StreamLimits};
 
+/// The TURN settings of `pairs`, with the switch on unless they set it.
 fn of(pairs: &[(&str, &str)]) -> Result<Option<super::TurnSettings>, String> {
-    let map: HashMap<String, String> = pairs
+    let mut map: HashMap<String, String> = pairs
         .iter()
         .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
         .collect();
+    map.entry("media-server/turn-server@enabled".to_string())
+        .or_insert_with(|| "true".to_string());
     let property = move |name: &str| map.get(name).cloned().unwrap_or_default();
     settings(
         &property,
@@ -35,9 +38,18 @@ fn of(pairs: &[(&str, &str)]) -> Result<Option<super::TurnSettings>, String> {
     )
 }
 
+/// TURN is on by its switch (plans/Runtime-Config.md §3.2): off whatever its ports; on with none of them it does not
+/// start, naming them; on, it needs a secret.
 #[test]
 fn turn_is_off_without_a_listener_and_needs_a_secret() {
-    assert!(of(&[]).unwrap().is_none());
+    assert!(of(&[
+        ("media-server/turn-server@enabled", "false"),
+        ("media-server/turn-server@port", "3478")
+    ])
+    .unwrap()
+    .is_none());
+    let none = of(&[]).unwrap_err();
+    assert!(none.contains("media-server/turn-server@enabled"), "{none}");
     assert!(of(&[("media-server/turn-server@port", "3478")]).is_err());
     let s = of(&[
         ("media-server/turn-server@port", "3478"),

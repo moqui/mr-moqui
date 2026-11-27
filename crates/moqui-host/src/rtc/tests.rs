@@ -16,18 +16,28 @@ use std::collections::HashMap;
 
 use super::media_config_from;
 
+/// The media settings of `pairs`, with the switch on unless they set it.
 fn config(pairs: &[(&str, &str)]) -> Result<Option<super::MediaConfig>, String> {
-    let map: HashMap<String, String> = pairs
+    let mut map: HashMap<String, String> = pairs
         .iter()
         .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
         .collect();
+    map.entry("media-server@enabled".to_string())
+        .or_insert_with(|| "true".to_string());
     media_config_from(&|name: &str| map.get(name).cloned().unwrap_or_default())
 }
 
+/// Call media is on by its switch (plans/Runtime-Config.md §3.2): off whatever the port; on, an empty port is refused
+/// naming the switch.
 #[test]
-fn media_is_off_without_a_port() {
-    assert_eq!(config(&[]), Ok(None));
-    assert_eq!(config(&[("media-server@port", "  ")]), Ok(None));
+fn media_is_off_by_its_switch_and_needs_a_port_when_on() {
+    assert_eq!(
+        config(&[("media-server@enabled", "false"), ("media-server@port", "10000")]),
+        Ok(None)
+    );
+    assert_eq!(config(&[("media-server@enabled", "")]), Ok(None));
+    let empty = config(&[("media-server@port", "  ")]).unwrap_err();
+    assert!(empty.contains("media-server@enabled"), "{empty}");
 }
 
 #[test]

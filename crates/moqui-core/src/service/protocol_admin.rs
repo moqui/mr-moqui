@@ -71,7 +71,8 @@ const ENTRIES: [(Section, &str); 17] = [
 
 /// The conf attributes answered, element and attribute: what decides whether a protocol runs and whom it trusts. No
 /// key, host key or key file is among them.
-const ATTRIBUTES: [(&str, &str); 17] = [
+const ATTRIBUTES: [(&str, &str); 22] = [
+    ("smtp-server", "enabled"),
     ("smtp-server", "listen-port"),
     ("smtp-server", "listen-host"),
     ("smtp-server", "allowed-addresses"),
@@ -87,18 +88,25 @@ const ATTRIBUTES: [(&str, &str); 17] = [
     ("ssh-server", "host"),
     ("ssh-server", "public-host"),
     ("ssh-server", "public-port"),
+    ("xmpp-server", "enabled"),
+    ("sip-server", "enabled"),
+    ("media-server", "enabled"),
+    ("media-server/turn-server", "enabled"),
     ("git-server", "public-url"),
     ("git-server", "allow-http"),
 ];
 
 /// A probe target: its key, whether it leaves the server (a public name, looked up and connected to from here), the
-/// conf properties its host and its port are read from (the first with a value), and the port when none has one.
+/// conf properties its host and its port are read from (the first with a value), the port when none has one, and the
+/// listener's switch, without which it is not configured (plans/Runtime-Config.md §3.2; none for a listener with no
+/// switch yet).
 struct Target {
     key: &'static str,
     external: bool,
     hosts: &'static [&'static str],
     ports: &'static [&'static str],
     default_port: &'static str,
+    enabled: Option<&'static str>,
 }
 
 /// The targets a probe may reach: each listener's own bound address, from this server, and the public names the
@@ -110,6 +118,7 @@ const TARGETS: [Target; 9] = [
         hosts: &["smtp-server@listen-host"],
         ports: &["smtp-server@listen-port"],
         default_port: "",
+        enabled: Some("smtp-server@enabled"),
     },
     Target {
         key: "ssh.listener",
@@ -117,6 +126,7 @@ const TARGETS: [Target; 9] = [
         hosts: &["ssh-server@host"],
         ports: &["ssh-server@port"],
         default_port: "",
+        enabled: Some("ssh-server@enabled"),
     },
     Target {
         key: "xmpp.listener",
@@ -124,6 +134,7 @@ const TARGETS: [Target; 9] = [
         hosts: &["xmpp-server@host"],
         ports: &["xmpp-server@port"],
         default_port: "",
+        enabled: Some("xmpp-server@enabled"),
     },
     Target {
         key: "sip.listener",
@@ -131,6 +142,7 @@ const TARGETS: [Target; 9] = [
         hosts: &["sip-server@host"],
         ports: &["sip-server@port"],
         default_port: "",
+        enabled: Some("sip-server@enabled"),
     },
     Target {
         key: "turn.listener",
@@ -138,6 +150,7 @@ const TARGETS: [Target; 9] = [
         hosts: &["media-server/turn-server@host", "media-server@host"],
         ports: &["media-server/turn-server@port"],
         default_port: "",
+        enabled: Some("media-server/turn-server@enabled"),
     },
     Target {
         key: "web.public",
@@ -145,6 +158,7 @@ const TARGETS: [Target; 9] = [
         hosts: &["webapp-list/webapp[webroot]@http-host"],
         ports: &[],
         default_port: "",
+        enabled: None,
     },
     Target {
         key: "ssh.public",
@@ -152,6 +166,7 @@ const TARGETS: [Target; 9] = [
         hosts: &["ssh-server@public-host", "webapp-list/webapp[webroot]@http-host"],
         ports: &["ssh-server@public-port", "ssh-server@port"],
         default_port: "",
+        enabled: Some("ssh-server@enabled"),
     },
     Target {
         key: "turn.public",
@@ -159,6 +174,7 @@ const TARGETS: [Target; 9] = [
         hosts: &["media-server/turn-server@public-host"],
         ports: &["media-server/turn-server@port"],
         default_port: "",
+        enabled: Some("media-server/turn-server@enabled"),
     },
     Target {
         key: "xmpp.public",
@@ -166,6 +182,7 @@ const TARGETS: [Target; 9] = [
         hosts: &["xmpp-server@domain"],
         ports: &["xmpp-server@port"],
         default_port: "",
+        enabled: Some("xmpp-server@enabled"),
     },
 ];
 
@@ -368,17 +385,27 @@ fn property(name: &str) -> String {
     crate::context::conf_env::setting_or_property(name).trim().to_string()
 }
 
-fn first_property(names: &[&str]) -> String {
-    names
-        .iter()
-        .map(|name| property(name))
-        .find(|value| !value.is_empty())
-        .unwrap_or_default()
-}
-
 /// The host and port of `target` as the conf has them, or what is missing. A listener bound to every address is
 /// reached on this machine; the web address's port is the one links are made with.
 fn target_address(target: &Target) -> Result<(String, u16), &'static str> {
+    target_address_by(target, &property)
+}
+
+/// [`target_address`] by the properties `property` gives.
+fn target_address_by(target: &Target, property: &dyn Fn(&str) -> String) -> Result<(String, u16), &'static str> {
+    if target
+        .enabled
+        .is_some_and(|switch| !crate::context::conf_env::switch_on(&property(switch)))
+    {
+        return Err("notConfigured");
+    }
+    let first_property = |names: &[&str]| {
+        names
+            .iter()
+            .map(|name| property(name))
+            .find(|value| !value.is_empty())
+            .unwrap_or_default()
+    };
     let mut host = first_property(target.hosts);
     let port_text = if target.key == "web.public" {
         let https = property("webapp-list/webapp[webroot]@https-enabled") == "true";
@@ -497,7 +524,9 @@ fn probe_protocol_target(
 
 #[cfg(test)]
 mod tests {
-    use super::{failure_kind, normal_host, own_host_names, state_parts, ATTRIBUTES, ENTRIES, TARGETS};
+    use super::{
+        failure_kind, normal_host, own_host_names, state_parts, target_address_by, ATTRIBUTES, ENTRIES, TARGETS,
+    };
     use crate::startup::State;
 
     /// The names a relay's link base URL may name (plans/archive/Security-Review-Medium.md SEC-ADM-83): the names set up with ACME
@@ -568,12 +597,34 @@ mod tests {
         }
     }
 
+    /// A listener's target is configured only while its switch is on (plans/Runtime-Config.md §3.2): its written port
+    /// alone names nothing to probe.
+    #[test]
+    fn a_target_is_configured_only_while_its_listener_is_on() {
+        let ssh = TARGETS.iter().find(|target| target.key == "ssh.listener").unwrap();
+        let conf = |enabled: &'static str| {
+            move |name: &str| match name {
+                "ssh-server@enabled" => enabled.to_string(),
+                "ssh-server@port" => "2222".to_string(),
+                "ssh-server@host" => "0.0.0.0".to_string(),
+                _ => String::new(),
+            }
+        };
+        assert_eq!(target_address_by(ssh, &conf("false")), Err("notConfigured"));
+        assert_eq!(
+            target_address_by(ssh, &conf("true")),
+            Ok(("127.0.0.1".to_string(), 2222))
+        );
+        let smtp = TARGETS.iter().find(|target| target.key == "smtp.listener").unwrap();
+        assert_eq!(target_address_by(smtp, &conf("true")), Err("notConfigured"));
+    }
+
     #[test]
     fn a_listener_that_is_off_failed_or_not_built_reads_apart() {
         assert_eq!(state_parts(&State::On("tcp 127.0.0.1:2525".into())).0, "on");
         assert_eq!(
-            state_parts(&State::off("smtp-server@listen-port is not set")),
-            ("off", "smtp-server@listen-port is not set")
+            state_parts(&State::off("smtp-server@enabled is false")),
+            ("off", "smtp-server@enabled is false")
         );
         assert_eq!(state_parts(&State::failed("bind")).0, "failed");
         assert_eq!(state_parts(&State::Skipped("busy".into())).0, "skipped");

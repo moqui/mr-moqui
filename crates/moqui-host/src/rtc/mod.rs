@@ -13,7 +13,7 @@
  */
 
 //! The call media node (plans/archive/Comms-Framework.md §6.2, §6.5): the UDP media socket and one driver thread that owns it
-//! and the [`moqui_rtc::Sfu`]. Off while `media-server@port` is empty, like the other listeners. The socket binds
+//! and the [`moqui_rtc::Sfu`]. On while `media-server@enabled` is true (plans/Runtime-Config.md §3.2), on `media-server@port`. The socket binds
 //! `media-server@host` (127.0.0.1 by default) and advertises `media-server@public-address` (the bound address by default; a node
 //! behind 1:1 NAT names its public one) as its ICE candidate.
 //!
@@ -268,20 +268,22 @@ pub(crate) struct MediaConfig {
     pub tcp_port: Option<u16>,
 }
 
-/// The media settings from the properties, `None` while `media-server@port` is empty.
-pub(crate) fn media_config() -> Result<Option<MediaConfig>, String> {
-    media_config_from(&moqui_core::context::conf_env::setting_or_property)
-}
-
+/// The media settings from `property` (a selector's value), `None` while `media-server@enabled` is not true.
+///
+/// # Errors
+///
+/// Why call media cannot start: a setting that does not parse (an empty port is a retired value the boot refuses).
 fn media_config_from(property: &dyn Fn(&str) -> String) -> Result<Option<MediaConfig>, String> {
-    let port = property("media-server@port");
-    let port = port.trim();
-    if port.is_empty() {
+    if !moqui_core::context::conf_env::switch_on(&property("media-server@enabled")) {
         return Ok(None);
     }
-    let port: u16 = port
-        .parse()
-        .map_err(|_| format!("media-server@port {port} is not a port"))?;
+    let port = property("media-server@port");
+    let port = port.trim();
+    let port: u16 = port.parse().map_err(|_| {
+        format!(
+            "media-server@port \"{port}\" is not a port (set media-server@enabled=\"false\" to keep call media off)"
+        )
+    })?;
     let host = property("media-server@host");
     let host = if host.trim().is_empty() {
         "127.0.0.1".to_string()
@@ -326,12 +328,13 @@ fn media_config_from(property: &dyn Fn(&str) -> String) -> Result<Option<MediaCo
 pub(crate) const LISTENER: &str = "Call media";
 pub(crate) const TURN_LISTENER: &str = "TURN";
 
-/// The ports the media node and its TURN server will bind, for the port check before the framework is built: the
-/// media port (UDP), ICE-TCP, and TURN's UDP and TCP, TLS and TLS-on-443 ports. None while `media-server@port` is empty
-/// or a setting does not parse ([`start`] reports that).
-pub(crate) fn listen_targets() -> Vec<crate::port_check::Target> {
+/// The ports the media node and its TURN server will bind by the merged `conf`, for the port check before the framework
+/// is built: the media port (UDP), ICE-TCP, and TURN's UDP and TCP, TLS and TLS-on-443 ports. None while call media is
+/// off or a setting does not parse ([`start`] reports that).
+pub(crate) fn listen_targets(conf: &moqui_lib::node::MNode) -> Vec<crate::port_check::Target> {
     use crate::port_check::{Proto, Target};
-    let Ok(Some(config)) = media_config() else {
+    let setting = |selector: &str| moqui_core::context::conf_env::conf_attribute(conf, selector);
+    let Ok(Some(config)) = media_config_from(&setting) else {
         return Vec::new();
     };
     let host = config.bind.ip();
@@ -351,12 +354,7 @@ pub(crate) fn listen_targets() -> Vec<crate::port_check::Target> {
             Proto::Tcp,
         ));
     }
-    if let Ok(Some(turn)) = turn::settings(
-        &moqui_core::context::conf_env::setting_or_property,
-        config.bind,
-        config.public,
-        &[],
-    ) {
+    if let Ok(Some(turn)) = turn::settings(&setting, config.bind, config.public, &[]) {
         if let Some(port) = turn.port {
             targets.push(Target::optional(
                 TURN_LISTENER,
@@ -395,7 +393,7 @@ pub(crate) fn listen_targets() -> Vec<crate::port_check::Target> {
     targets
 }
 
-/// Starts the media node when `media-server@port` is set, and records it and its TURN server in the startup report. A
+/// Starts the media node while `media-server@enabled` is true, and records it and its TURN server in the startup report. A
 /// node that cannot start is logged; the server starts without calls.
 pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<RtcNode> {
     use moqui_core::startup::{Section, State};
@@ -407,34 +405,45 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<RtcNode> {
         LISTENER,
         State::failed("see the call media error above"),
     );
-    report.record_default(
-        Section::Listener,
-        TURN_LISTENER,
-        State::off(if node.is_some() {
-            "media-server/turn-server@port, media-server/turn-server@tls-port and media-server/turn-server@tls443-host are not set"
-        } else {
-            "call media is not running"
-        }),
-    );
+    // a TURN row nothing recorded: each path records its own, so only one that returned early on an error it logged;
+    // recorded through the listener record when it is missing, so an Off row says any upgrade warning
+    if !report
+        .entries()
+        .iter()
+        .any(|entry| entry.section == Section::Listener && entry.name == TURN_LISTENER)
+    {
+        moqui_core::startup::listener(
+            factory,
+            TURN_LISTENER,
+            State::off(if node.is_some() {
+                "media-server/turn-server@enabled is false"
+            } else {
+                "call media is not running"
+            }),
+        );
+    }
     node
 }
 
 fn start_node(factory: &Arc<ExecutionContextFactory>) -> Option<RtcNode> {
     use moqui_core::startup::{listener, State};
-    let config = match media_config() {
-        Ok(Some(_)) if moqui_core::edge::front_refuses(factory, "media-server@port", true) => {
+    let setting = |selector: &str| moqui_core::context::conf_env::setting_on(factory, selector);
+    let config = match media_config_from(&setting) {
+        Ok(Some(_)) if moqui_core::edge::front_refuses(factory, "media-server@enabled", true) => {
             listener(factory, LISTENER, State::off(moqui_core::edge::FRONT_ONLY));
             listener(factory, TURN_LISTENER, State::off(moqui_core::edge::FRONT_ONLY));
             return None;
         }
         Ok(Some(config)) => config,
         Ok(None) => {
-            listener(factory, LISTENER, State::off("media-server@port is not set"));
+            listener(factory, LISTENER, State::off("media-server@enabled is false"));
             listener(factory, TURN_LISTENER, State::off("call media is not running"));
             return None;
         }
         Err(err) => {
             tracing::error!("Call media did not start, the server starts without it: {err}");
+            listener(factory, LISTENER, State::failed(err));
+            listener(factory, TURN_LISTENER, State::off("call media is not running"));
             return None;
         }
     };
@@ -490,8 +499,8 @@ fn start_node(factory: &Arc<ExecutionContextFactory>) -> Option<RtcNode> {
             Err(err) => tracing::error!("ICE-TCP did not start, media-server@tcp-port {port} did not bind: {err}"),
         }
     }
-    // the embedded TURN server, when its ports are set: one that does not start is logged, and calls go on without it
-    let turn_node = match turn::settings(&moqui_core::context::conf_env::setting_or_property, bound, public, &[]) {
+    // the embedded TURN server, while its switch is on: one that does not start is logged, and calls go on without it
+    let turn_node = match turn::settings(&setting, bound, public, &[]) {
         Ok(Some(settings)) => match crate::port_check::busy(TURN_LISTENER) {
             Some(busy) => {
                 listener(factory, TURN_LISTENER, State::Skipped(busy));
@@ -499,7 +508,15 @@ fn start_node(factory: &Arc<ExecutionContextFactory>) -> Option<RtcNode> {
             }
             None => start_turn(factory, settings),
         },
-        Ok(None) => None,
+        Ok(None) => {
+            // through the listener record, so the Off row says any upgrade warning (plans/Runtime-Config.md §8.2)
+            listener(
+                factory,
+                TURN_LISTENER,
+                State::off("media-server/turn-server@enabled is false"),
+            );
+            None
+        }
         Err(err) => {
             tracing::error!("TURN did not start, calls go on without it: {err}");
             listener(factory, TURN_LISTENER, State::failed(err));
