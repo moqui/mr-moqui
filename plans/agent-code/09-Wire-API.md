@@ -18,17 +18,17 @@ environment,auth,clientRpcPermissions}.ts`, `t3:apps/server/src/ws.ts`, `t3:apps
 
 ### 2.1 Route and auth
 
-- Route `GET /agentws` in `crates/moqui-host/src/http.rs`, handler `crates/moqui-code/src/ws/` (registered by the
+- Route `GET /agentws` in `crates/moqui-host/src/http.rs`, handler `crates/moqui-code/src/ws.rs` (registered by the
   native component, as `/termws` is by `moqui-host`).
 - Auth, as `/notws`: origin check, then the session cookie, else a `login_key` (device or link key). For a browser on
   another origin (none allowed by default) or for a peer link: a ticket from `POST /rest/s1/code/wsTicket` (5 min, one
   use, names its use `rpc` or `media`), passed as `?ticket=`.
-- The gate: the webroot's `endpoint[/agentws]@enabled` (`true`, `false`, or `dev`, the default), the one switch
-  ([14 §1](14-Security.md#1-permissions-and-groups)). Today the route is mounted only when it is on at listen and a
-  change waits for a restart (`endpoint` is a restart class). Once
+- The gate: the webroot's `endpoint[/agentws]@enabled` (`true`, `false`, or `dev`, the default), the one switch ([14
+  §1](14-Security.md#1-permissions-and-groups)); the REST resources and MCP tools read the same value. Today the route
+  is mounted only when it is on at listen and a change waits for a restart (`endpoint` is a restart class). Once
   [Runtime-Config §3.8](../Runtime-Config.md#38-services-carried-on-a-listener) is built, the route stays mounted and
-  checks its switch on each request, from state built from the conf and built again after a reload, so an admin
-  turns `/agentws` off or on while the server runs; off answers 404 and ends the open sockets.
+  checks its switch on each request, from state built from the conf and built again after a reload, so an admin turns
+  `/agentws` off or on while the server runs; off answers 404 and ends the open sockets.
 - A DPoP-bound key (`UserLoginKey.dpopThumbprint`) needs a fresh proof in the `dpop` query parameter at upgrade. The
   proof `jti` is spent.
 - Query `protocol=<n>` (T3 `orchestrationProtocol`). Current `AGENT_CODE_PROTOCOL` = 1. Header

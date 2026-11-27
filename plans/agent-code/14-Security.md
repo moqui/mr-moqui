@@ -30,11 +30,11 @@ the machine. MR Moqui cannot. This file lists every gate.
   instance the admin sets it to `true`. It is the switch for all of Agent Code, not the socket alone: the REST resources
   (`/rest/s1/code/*`) and the MCP tools (`code_thread_send` and the others) read the same endpoint value and refuse
   while it is off, so turning `/agentws` off stops Agent Code, and the screens show that it is off on this instance.
-  While it is on they are gated by `AgentCodeUse` and the sealed `AgentCodeHost` and `AgentCodeAdmin`. Today the route
-  is mounted only when the switch is on at listen, and `endpoint` is a restart class, so a change waits for a restart;
-  once [Runtime-Config §3.8](../Runtime-Config.md#38-services-carried-on-a-listener) is built the route stays mounted
-  and reads its switch on each request, so it turns off and on while the server runs ([09
-  §2.1](09-Wire-API.md#21-route-and-auth)).
+  While it is on, the screens, REST resources, services and tools are gated by `AgentCodeUse` and the sealed
+  `AgentCodeHost` and `AgentCodeAdmin`. Today the route is mounted only when the switch is on at listen, and `endpoint`
+  is a restart class, so a change waits for a restart; once [Runtime-Config
+  §3.8](../Runtime-Config.md#38-services-carried-on-a-listener) is built the route stays mounted and reads its switch on
+  each request, so it turns off and on while the server runs ([09 §2.1](09-Wire-API.md#21-route-and-auth)).
 
 ## 2. Scopes
 
