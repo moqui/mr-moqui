@@ -212,3 +212,50 @@ feature("the guest page's read takes the secret in its body only, and an ended s
         routed.valid == true
     }
 })
+
+feature("a share for a record keeps the record's end: stored no earlier than the share's, never extended past it, and the record's end stops it", {
+    when() {
+        const made = as(A, "create#Share", {audienceList: [toLink()], thruDate: new Date(shared.now + HOUR), label: "Visit"})
+        // store#ShareRecord is no group's: a component's service calls it, after its own check, with authorization off
+        const record = recordThruDate => {
+            ec.user.internalLoginUser(username(A))
+            return sys(() => {
+                const out =
+                    ec.service
+                        .sync()
+                        .name(S + "store#ShareRecord")
+                        .parameters({shareId: made.shareId, recordAdapterKey: "specRecord", recordKey: '{"id":"R1"}', recordThruDate})
+                        .call() || {}
+                const errors = ec.message.hasError() ? ec.message.errorsString : ""
+                ec.message.clearErrors()
+                return Object.assign({errors}, out)
+            })
+        }
+        const early = record(new Date(shared.now + 30 * MINUTE))
+        const stored = record(new Date(shared.now + 2 * HOUR))
+        const granted = as(A, "store#ShareRecord", {
+            shareId: made.shareId,
+            recordAdapterKey: "specRecord",
+            recordKey: '{"id":"R1"}',
+            recordThruDate: new Date(shared.now + 5 * HOUR)
+        })
+        const past = as(A, "update#Share", {shareId: made.shareId, thruDate: new Date(shared.now + 3 * HOUR)})
+        const within = as(A, "update#Share", {shareId: made.shareId, thruDate: new Date(shared.now + 90 * MINUTE)})
+        const share = sys(() => ec.entity.find("moqui.maps.LocationShare").condition("shareId", made.shareId).one())
+        const stopped = sys(() =>
+            ec.service.sync().name(S + "stop#RecordShares").parameters({recordAdapterKey: "specRecord", recordKey: '{"id":"R1"}'}).call()
+        )
+        const after = sys(() => ec.entity.find("moqui.maps.LocationShare").condition("shareId", made.shareId).one())
+        return {early, stored, granted, past, within, share, stopped, after}
+    },
+    then({early, stored, granted, past, within, share, stopped, after}) {
+        early.reasonCode == "AFTER_RECORD_END"
+        stored.errors == ""
+        // not granted to a signed-in user: only a component's service calls it
+        granted.errors != ""
+        ec.user.timestampMillis(share.recordThruDate) == shared.now + 2 * HOUR
+        past.reasonCode == "AFTER_RECORD_END"
+        within.errors == "" && ec.user.timestampMillis(share.thruDate) == shared.now + 90 * MINUTE
+        stopped.stoppedCount == 1 && after.endedDate != null
+    }
+})

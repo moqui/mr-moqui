@@ -37,9 +37,23 @@ along with this software (see the LICENSE.md file). If not, see
         // a call link's guest page (/call/<token>, basic-comms): the call client and m-call-guest, registered before the components
         if (tokenRoute.name === 'call') footer_scripts.add('/js/WebrootCall.js')
         if (tokenRoute.name === 'call') footer_scripts.add('/js/WebrootCall.render.js')
-        // a location share's guest link (/location/<selector>#<secret>, tools; plans/Location-Sharing.md §3.7): no
-        // Referer to a basemap's host at all, and the page kept from every cache
-        if (tokenRoute.name === 'location') { ec.web.response.setHeader('Referrer-Policy', 'no-referrer'); ec.web.response.setHeader('Cache-Control', 'no-store') }
+        // a location share's guest link (/location/<selector>#<secret>, tools; plans/Location-Sharing.md §3.7): a basemap's
+        // host gets this site's origin as its Referer, never the path that holds the selector; the page is kept from every
+        // cache; and its policy lets it reach this server and the public basemap's origins only (MapConfig.js
+        // publicBasemap's allowedOrigins), beside the theme's own outside files
+        if (tokenRoute.name === 'location') {
+            ec.web.response.setHeader('Referrer-Policy', 'strict-origin')
+            ec.web.response.setHeader('Cache-Control', 'no-store')
+            const originOf = (url) => { const found = /^(https?:\/\/[^/?#\s'";]+)/.exec(String(url || '')); return found ? found[1] : null }
+            const basemap = ec.resource.script('component://framework/service/org/moqui/maps/MapConfig.js').publicBasemap()
+            const tiles = Array.from(new Set(Array.from(basemap.allowedOrigins || []).map(originOf).filter(Boolean))).join(' ')
+            const theme = (type) => Array.from(new Set(sri.getThemeValues(type).map(originOf).filter(Boolean))).join(' ')
+            const scripts = [theme('STRT_SCRIPT'), theme('STRT_SCRIPT_FOOTER')].filter(Boolean).join(' ')
+            ec.web.response.setHeader('Content-Security-Policy', ["default-src 'self'", "script-src 'self' 'unsafe-eval' " + scripts,
+                "style-src 'self' 'unsafe-inline' " + theme('STRT_STYLESHEET'), "img-src 'self' data: blob: " + tiles,
+                "connect-src 'self' " + tiles, "font-src 'self' data: " + theme('STRT_STYLESHEET'), "worker-src 'self' blob:",
+                "object-src 'none'", "base-uri 'none'", "frame-ancestors 'none'", "form-action 'self'"].map((part) => part.trim()).join('; '))
+        }
         footer_scripts.add('/js/WebrootVue.qvt.render.js')
         // loaded for its components: it mounts nothing on a page without the moqui-config block
         footer_scripts.add('/js/WebrootVue.qvt.js')

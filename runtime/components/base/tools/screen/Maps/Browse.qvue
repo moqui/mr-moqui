@@ -1281,14 +1281,14 @@ module.exports = {
         postShare(params) {
             return this.request('createShare', { method: 'POST', params }).then((json) => {
                 if (!json.applied) { this.shareError = json.reason || t('Your location was not shared'); return null; }
-                this.shareMade = { shareId: json.shareId, thruDate: json.thruDate, linkUrl: json.linkPath ? window.location.origin + json.linkPath : null };
+                this.shareMade = { shareId: json.shareId, thruDate: json.thruDate, linkUrl: json.linkUrl || null };
                 // shared by this page from now on, while it is open, at the share's precision and interval
                 const approximate = params.precisionEnumId === 'LspApproximate';
                 const form = this.shareForm;
                 const whom = form.users.map((user) => user.label).concat(this.shareTargets.groups.filter((group) => form.groups.includes(group.userGroupId))
                     .map((group) => group.label), this.shareTargets.contacts.filter((contact) => form.jids.includes(contact.jid)).map((contact) => contact.label),
                     form.link ? [t('a guest link')] : []);
-                if (!json.linkPath) this.shareShown = false;
+                if (!json.linkUrl) this.shareShown = false;
                 // shared once it is sent: in the app only after the person's Send in its own dialog
                 return this.sendShare(json.shareId, { approximate, thruDate: json.thruDate, whomText: whom.join(', '), fresh: true, created: true, audienceVersion: 1,
                     intervalSeconds: approximate ? this.shareTargets.approximateIntervalSeconds : this.shareTargets.minIntervalSeconds })

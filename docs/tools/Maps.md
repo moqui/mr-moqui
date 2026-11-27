@@ -1112,19 +1112,33 @@ XMPP is still to come.
   Android app's dialog and service, and a browser's sending while its page is open (`moqui.chat.live.sender`, Chat's
   `reportLiveLocation`), are as for a share started in Maps. Not in an encrypted room, where the server would see each
   position (the decision and its later step are in Comms).
-
 - **Guest links** (LL6; plans/Location-Sharing.md §3.7). A link's token is a selector and a secret; its page is
   `/location/<selector>#<secret>` (`Maps/SharedLocation.xml`, the token route `location` of tools' `MoquiConf.xml`, in the
-  public shell, no sign-in), the secret in the fragment only, which the page takes, clears from the address bar and posts
-  in the body of its read (`get#LinkShare`), so no request line, server log or `Referer` holds it. The page shows the
-  share's label, its purpose text (an ETA its owner wrote) and its latest position with its age, on the country outline
-  or the one basemap an administrator marks public (`MapLayer.isPublic` Y, with no `viewPermission`, registered resource
-  or proxied provider), and as text where no map draws; it reads again every 20 seconds and answers nothing else: no
-  position received before the link was added, an approximate share's cell, at most `location@link-max-views-per-minute`
-  reads a minute for the link. A wrong secret is counted on the link and against the client, and the link is refused
-  from `location@link-max-failed-tries` (10) of them, and once its share ends. A share for a record (Mantle's
-  `create#RecordGuestShare`, a technician's visit) names the record (`store#ShareRecord`), and the record's end stops it
-  (`stop#RecordShares`).
+  public shell, no sign-in). The secret is the URL's fragment, which a browser sends to no server: the public shell
+  (`WebrootPublic.qvt.js`) takes it as it loads, before the page does, sets the address bar to the URL without it (kept
+  for the tab, so a reload still reads it), and the page posts it in the body of its read (`get#LinkShare`), so no
+  request line, server log or `Referer` holds it. Two places can still hold the whole link: the browser's history and its
+  sync keep the URL first opened, fragment and all, and a mail or chat service's link scanner may rewrite or fetch the
+  whole URL; and the mail that carries it holds it until its share ends (below). The page shows the share's label, its
+  purpose text (an ETA its owner wrote) and its latest position with its age, on the country outline or the one basemap
+  an administrator marks public, and as text where no map draws; it reads again every 20 seconds and answers nothing
+  else: no position received before the link was added, an approximate share's cell, at most
+  `location@link-max-views-per-minute` reads a minute for the link. A wrong secret is counted on the link and against the
+  client, and the link is refused from `location@link-max-failed-tries` (10) of them, and once its share ends. The page is
+  sent with `Referrer-Policy: strict-origin` (a tile host that needs a Referer gets this site's origin, never the path
+  with its selector), `Cache-Control: no-store`, and a `Content-Security-Policy` that lets it reach this server, the
+  public basemap's origins and the theme's own outside files only.
+- **A public basemap.** A `MapLayer` with `isPublic` Y and `isBasemap` Y, enabled, with no `viewPermission`, no
+  registered resource (`resourceLocation`), and no provider that is proxied (`proxyRequests` Y) or on a private network
+  (`allowPrivateNetwork` Y); the first by `layerId` is drawn, else the country outline. Configuration does not set
+  `isPublic`: an administrator sets it on the layer by a data load (`<moqui.maps.MapLayer layerId="..." isPublic="Y"/>`)
+  or with the entity tools. Outside requests and the provider's test hold as for any map.
+- **A share for a record.** A component's service that has checked the caller may act on a record (Mantle's
+  `create#RecordGuestShare`, a technician's visit) names the record on the share with its end (`store#ShareRecord`,
+  `recordThruDate`); the share's end is no later, also when `update#Share` extends it (`AFTER_RECORD_END`), and the
+  record's end stops it (`stop#RecordShares`). Mantle mails the link only once the technician's app has confirmed the
+  share (or, in a browser, at the press), and keeps the mail's `EmailMessage` row for the mail queue with the link's
+  secret blanked from its body when the share ends or is stopped (mr-mantle `LocationShareServices.xml`).
 - **The owner's acts.** `create#Share` (the audience, the end, exact or approximate, a trail or not), `update#Share`
   (extend or shorten, add to the audience, change the label or purpose), `stop#Share`, `revoke#Audience` (one person,
   group, XMPP contact or the link), `report#Position` and `delete#Trail` are the owner's alone; another person's share,

@@ -58,6 +58,8 @@ along with this software (see the LICENSE.md file). If not, see
             end and trailKeepDays, set when the share ends</description></field>
         <field name="recordAdapterKey" type="id"/>
         <field name="recordKey" type="text-medium"/>
+        <field name="recordThruDate" type="date-time"><description>A guest share for a record: the record's end (its
+            planned end), which the share's end does not pass, also when extended (plans/Location-Sharing.md §3.7)</description></field>
         <relationship type="one" title="Owner" related="moqui.security.UserAccount" short-alias="owner">
             <key-map field-name="ownerUserId" related="userId"/></relationship>
         <relationship type="one" title="LocationSharePrecision" related="moqui.basic.Enumeration" short-alias="precision">
@@ -67,6 +69,7 @@ along with this software (see the LICENSE.md file). If not, see
         <index name="LOC_SHARE_OWNER"><index-field name="ownerUserId"/><index-field name="thruDate"/></index>
         <index name="LOC_SHARE_END"><index-field name="endedDate"/><index-field name="thruDate"/></index>
         <index name="LOC_SHARE_PURGE"><index-field name="trailPurgeDate"/></index>
+        <index name="LOC_SHARE_RECORD"><index-field name="recordAdapterKey"/><index-field name="recordKey"/></index>
     </entity>
 
     <!-- Who a share is for: a user (LsaUser) the owner may message, a group (LsaUserGroup) the owner is in, read by its

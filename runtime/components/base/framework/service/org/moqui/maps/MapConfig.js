@@ -441,15 +441,16 @@ function resolveLayer(layer, layerId, asBasemap) {
 }
 // The basemap of a page a visitor opens with no sign-in, a guest location link's (Maps/SharedLocation.xml;
 // plans/Location-Sharing.md §3.7): the first enabled basemap the installation marks public (MapLayer isPublic Y) that has
-// no viewPermission, no registered resource (its map-source transition is a signed-in user's) and no proxied provider
-// (the proxy is for signed-in users), resolved as for anyone (resolveLayer: outside requests and the provider's test
+// no viewPermission, no registered resource (its map-source transition is a signed-in user's), no proxied provider
+// (the proxy is for signed-in users) and no provider on a private network (allowPrivateNetwork Y: an address inside this
+// installation's network is not a guest's to reach), resolved as for anyone (resolveLayer: outside requests and the provider's test
 // hold); else the built-in country outline. Nothing of the installation's profiles, other layers or providers is
 // answered: {basemaps: [entry], basemap, allowedOrigins}.
 function publicBasemap() {
     for (const layer of find(LAYER, {isPublic: "Y", isBasemap: "Y"}).orderBy("layerId").limit(20).list()) {
         if (layer.disabled === "Y" || text(layer.viewPermission) || text(layer.resourceLocation)) continue
         const provider = text(layer.providerId) ? one(PROVIDER, {providerId: layer.providerId}) : null
-        if (provider && provider.proxyRequests === "Y") continue
+        if (provider && (provider.proxyRequests === "Y" || provider.allowPrivateNetwork === "Y")) continue
         const resolved = resolveLayer(layer, layer.layerId, true)
         if (!resolved.ok || resolved.entry.kind === "cog") continue
         return {basemaps: [resolved.entry], basemap: resolved.entry.id, allowedOrigins: Array.from(new Set(resolved.origins))}

@@ -55,6 +55,30 @@
         return found && found.tagName === "SCRIPT" && found.type === "application/json" ? found : null;
     };
 
+    // A location share's guest link (/location/<selector>#<secret>, the tools route location; plans/Location-Sharing.md
+    // §3.7): its secret is the URL's fragment. It is taken here, as this script loads and before the route's screen does,
+    // and the address bar is set to the URL without it, so a copy, a bookmark or a later Referer has none; it is kept for
+    // the tab (session storage) so a reload still reads it, and the page asks for it by moqui.routeFragment(). The first
+    // URL may still be in the browser's history and its sync, which keep what was opened.
+    let routeFragment = null;
+    (() => {
+        const element = pageConfigElement(root.document);
+        if (!element || !root.location) return;
+        let config = null;
+        try { config = JSON.parse(element.textContent); } catch (err) { return; }
+        if (!config || !config.route || config.route.name !== "location") return;
+        const key = "moqui.routeFragment:" + config.route.basePath;
+        const hash = String(root.location.hash || "").replace(/^#/, "");
+        if (hash) {
+            routeFragment = hash;
+            if (root.history && root.history.replaceState) root.history.replaceState(null, "", root.location.pathname + root.location.search);
+            try { root.sessionStorage.setItem(key, hash); } catch (err) { /* this page alone */ }
+        } else {
+            try { routeFragment = root.sessionStorage.getItem(key); } catch (err) { routeFragment = null; }
+        }
+    })();
+    if (moqui) moqui.routeFragment = () => routeFragment;
+
     const queryOf = (search) => {
         const out = {};
         new root.URLSearchParams(search || "").forEach((value, key) => { out[key] = value; });

@@ -554,6 +554,10 @@ function update(p) {
     if (!blank(p.thruDate)) {
         const until = checkUntil(p.thruDate, now)
         if (until.reasonCode) return until
+        // a share for a record ends no later than the record's end, as its component stored it (store#ShareRecord;
+        // plans/Location-Sharing.md §3.7)
+        if (share.recordThruDate != null && until.until > millis(share.recordThruDate))
+            return refuse("AFTER_RECORD_END", "A share for a record ends no later than the record's planned end")
         share.thruDate = new Date(until.until)
     }
     if (p.label != null) share.label = text(p.label) || share.label
@@ -1457,16 +1461,23 @@ function linkRead(p) {
 }
 
 /**
- * store#ShareRecord: the record a guest share is for (recordAdapterKey and recordKey, as MapAdapter names records), on a
- * share of the caller's own; called only by a service that has checked the caller may act on the record (Mantle's
+ * store#ShareRecord: the record a guest share is for (recordAdapterKey and recordKey, as MapAdapter names records) and
+ * the record's end (recordThruDate, which the share's end, now and when extended, does not pass), on a share of the
+ * caller's own; called only by a service that has checked the caller may act on the record (Mantle's
  * create#RecordGuestShare), never remotely (plans/Location-Sharing.md §3.1, §3.7).
  */
 function shareRecord(p) {
     const share = ownShare(p.shareId, true)
     if (!share) return notFound()
     if (blank(p.recordAdapterKey) || blank(p.recordKey)) return refuse("BAD_RECORD", "A guest share names its record")
+    const recordThru = millis(p.recordThruDate)
+    if (recordThru == null) return refuse("BAD_RECORD", "A guest share names its record's end")
+    if (millis(share.thruDate) > recordThru)
+        return refuse("AFTER_RECORD_END", "A share for a record ends no later than the record's planned end")
     share.recordAdapterKey = text(p.recordAdapterKey)
     share.recordKey = text(p.recordKey)
+    // update#Share extends it no later than this
+    share.recordThruDate = new Date(recordThru)
     share.update()
     return {}
 }

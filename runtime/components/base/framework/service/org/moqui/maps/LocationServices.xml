@@ -82,7 +82,8 @@ along with this software (see the LICENSE.md file). If not, see
             (addAudienceList, entries as create#Share's; one already there is passed over, but a group already there is
             stamped again, in the audit log, with a new snapshot of its members, which lets in those who joined since),
             and change its label or
-            purpose; with sendFromHere true it is sent from this request's device from now on (the app's Send from this
+            purpose (a share for a record, store#ShareRecord, is extended no later than the record's end:
+            AFTER_RECORD_END); with sendFromHere true it is sent from this request's device from now on (the app's Send from this
             device), or from no device (a browser's Send from here), and the device that sent it is refused as another's
             (409 OTHER_DEVICE), which stops it. The owner's other devices and the audience are told on locationShare:shareId, each user the share
             newly reaches gets the LocationShared notification, and addedUserList (and the owner's push) names them; a
@@ -373,12 +374,15 @@ along with this software (see the LICENSE.md file). If not, see
         <description>The record a guest share is for, as MapAdapter names records (recordAdapterKey, recordKey), on an
             active or ended share of the caller's own. Only for a service that has checked the caller may act on that
             record (Mantle's mantle.other.LocationShareServices.create#RecordGuestShare), which calls it with
-            authorization off: no group is granted it. Refused: SHARE_NOT_FOUND (not the caller's),
-            BAD_RECORD.</description>
+            authorization off: no group is granted it. The record's end (recordThruDate) is kept on the share: its end
+            is no later, now and when update#Share extends it. Refused: SHARE_NOT_FOUND (not the caller's), BAD_RECORD,
+            AFTER_RECORD_END.</description>
         <in-parameters>
             <parameter name="shareId" required="true"/>
             <parameter name="recordAdapterKey" required="true"/>
             <parameter name="recordKey" required="true"/>
+            <parameter name="recordThruDate" type="Timestamp" required="true"><description>The record's end (its planned end):
+                the share ends no later, and update#Share refuses an extension past it (AFTER_RECORD_END)</description></parameter>
         </in-parameters>
         <out-parameters><parameter name="reasonCode"/></out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('shareRecord', context))</script></actions>
