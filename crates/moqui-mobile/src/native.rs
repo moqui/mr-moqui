@@ -201,7 +201,12 @@ pub(crate) fn tell_page(what: &str, json: &str) {
 pub(crate) fn media_action(what: &str, position: f64) {
     let position = (position >= 0.0).then_some(position);
     match (crate::media::action_script(what, position), host()) {
-        (Some(script), Some(host)) => host.tell_app_page(&script),
+        // the session's callbacks run on the main thread: the page's URL is asked of that thread, so not from it
+        (Some(script), Some(host)) => {
+            if let Err(err) = std::thread::Builder::new().name("media-action".into()).spawn(move || host.tell_app_page(&script)) {
+                log::warn!("Media: the page is not told {what}: {err}");
+            }
+        }
         (None, _) => log::warn!("Media: the page is not told {what}: not an action"),
         (Some(_), None) => {}
     }

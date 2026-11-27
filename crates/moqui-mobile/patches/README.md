@@ -50,6 +50,8 @@ invoke key and could call the app's commands as the page, with the account's dev
 - `src/android/kotlin/WryActivity.kt`: `keepWebViewRunning()` (false unless the app says so): while it is true the
   activity's pause does not pause the webview, so a page's audio and its timers go on in the background
   (`MediaPlayback.kt`, src/media.rs).
+- `src/android/main_pipe.rs`: a `GetUrl` answer to a caller that stopped waiting is dropped. wry unwrapped the send,
+  so a URL asked from the main thread (it times out, then the main thread answers) aborted the app.
 
 `./moq android dev` and `build` stop when `cargo tree -i wry` shows a wry that is not this copy (cargo builds a wry the
 patch no longer matches from crates.io with only a warning), so a Tauri update cannot drop the patch unseen.
