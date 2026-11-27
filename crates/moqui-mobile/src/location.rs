@@ -51,6 +51,45 @@ pub(crate) struct ShareAsk {
     pub(crate) interval_seconds: i64,
     /// Whom it is with, for the notification ("Sam and 2 others").
     pub(crate) audience: String,
+    /// The end in the owner's zone, as the server words it ("15:30", "Fri 09:00").
+    pub(crate) until_text: String,
+    /// The audience's revision the person confirms ([`AudienceRevision`]).
+    pub(crate) audience_seq: i64,
+    pub(crate) audience_reach: i64,
+}
+
+/// A share's audience as the server counts it (`report#Position`, `get#AppShare`): the newest entry's sequence and the
+/// people, contacts and link its current entries reach. The phone sends only to an audience the person confirmed in the
+/// app's own dialog; one that grew since (a script or another device adding people or a group after their Send) pauses
+/// the share until they confirm it again.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct AudienceRevision {
+    pub(crate) seq: i64,
+    pub(crate) reach: i64,
+}
+
+impl AudienceRevision {
+    /// The revision in a server's answer, when it has one.
+    pub(crate) fn of(json: &Value) -> Option<Self> {
+        Some(Self {
+            seq: json.get("audienceSeq")?.as_i64()?,
+            reach: json.get("audienceReach")?.as_i64()?,
+        })
+    }
+
+    /// Whether `now` reaches more than this, the confirmed one: a new entry, or more people.
+    pub(crate) fn grown_in(self, now: Self) -> bool {
+        now.seq > self.seq || now.reach > self.reach
+    }
+}
+
+/// The audience each share's person confirmed, by account and share.
+static CONFIRMED: Mutex<Option<HashMap<(String, String), AudienceRevision>>> = Mutex::new(None);
+
+fn confirmed_of(account: &str, share_id: &str) -> Option<AudienceRevision> {
+    moqui_lib::sync::lock(&CONFIRMED)
+        .as_ref()
+        .and_then(|held| held.get(&(account.to_string(), share_id.to_string())).copied())
 }
 
 impl ShareAsk {
@@ -68,7 +107,8 @@ impl ShareAsk {
         if !(1..=3600).contains(&self.interval_seconds) {
             return Err("Not an interval".to_string());
         }
-        self.audience = crate::commands::clip(&self.audience, 200);
+        self.audience = crate::commands::clip(&self.audience, 400);
+        self.until_text = crate::commands::clip(&self.until_text, 40);
         Ok(self)
     }
 
@@ -82,8 +122,19 @@ impl ShareAsk {
             "approximate": self.approximate,
             "intervalSeconds": self.interval_seconds,
             "audience": self.audience,
+            "untilText": self.until_text,
+            "audienceSeq": self.audience_seq,
+            "audienceReach": self.audience_reach,
         })
         .to_string()
+    }
+
+    /// The share as `to_json` wrote it, with its account (`Native.beginLocation`, a share confirmed again).
+    pub(crate) fn from_json(json: &str) -> Option<(String, Self)> {
+        let value: Value = serde_json::from_str(json).ok()?;
+        let account = value.get("account")?.as_str()?.to_string();
+        let share = serde_json::from_value::<Self>(value).ok()?;
+        Some((account, share))
     }
 }
 
@@ -92,9 +143,13 @@ fn with_reporters<T>(work: impl FnOnce(&mut HashMap<(String, String), Reporter>)
     work(held.get_or_insert_with(HashMap::new))
 }
 
-/// The share `share_id` of `account` is sent from here from now on, at most once an `interval_ms`: a reporter for it,
-/// a new one when it was stopped (a Send from this device after another device had it).
-pub(crate) fn begin(account: &str, share_id: &str, interval_ms: i64) {
+/// The share `share_id` of `account` is sent from here from now on, at most once an `interval_ms`, to the audience the
+/// person confirmed (`revision`): a reporter for it, a new one when it was stopped (a Send from this device after
+/// another device had it, an audience confirmed again).
+pub(crate) fn begin(account: &str, share_id: &str, interval_ms: i64, revision: AudienceRevision) {
+    moqui_lib::sync::lock(&CONFIRMED)
+        .get_or_insert_with(HashMap::new)
+        .insert((account.to_string(), share_id.to_string()), revision);
     with_reporters(|reporters| {
         let key = (account.to_string(), share_id.to_string());
         match reporters.get_mut(&key) {
@@ -155,8 +210,19 @@ pub(crate) fn report_location(
                 // the share and the failure only: never the position
                 log::info!("Location: a report of share {share_id} did not reach {account}: {err}");
             }
+            // an audience grown since the person's Send: no more reports until they confirm it again
+            let grown = match (&answer, confirmed_of(account, share_id)) {
+                (Ok((_, json)), Some(confirmed)) => {
+                    AudienceRevision::of(json).is_some_and(|now| confirmed.grown_in(now))
+                }
+                _ => false,
+            };
             let key_changed = key_now().is_some_and(|now| now != key);
             with_reporters(|reporters| match reporters.get_mut(&entry) {
+                Some(reporter) if grown => {
+                    reporter.answered_after(sent, answer, now_ms, key_changed);
+                    reporter.stop(Stopped::AudienceChanged)
+                }
                 Some(reporter) => reporter.answered_after(sent, answer, now_ms, key_changed),
                 None => Outcome::Stopped(Stopped::SignedOut),
             })
@@ -302,6 +368,9 @@ pub(crate) fn read_share(
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_string(),
+        until_text: share.get("untilText").and_then(Value::as_str).unwrap_or("").to_string(),
+        audience_seq: share.get("audienceSeq").and_then(Value::as_i64).unwrap_or(i64::MAX),
+        audience_reach: share.get("audienceReach").and_then(Value::as_i64).unwrap_or(i64::MAX),
     }
     .checked(now_ms)
 }
@@ -309,6 +378,14 @@ pub(crate) fn read_share(
 /// The share `share_id` of `account` is no longer sent from here, with nothing told to its server.
 pub(crate) fn forget_share(account: &str, share_id: &str) {
     with_reporters(|reporters| reporters.remove(&(account.to_string(), share_id.to_string())));
+}
+
+/// The audience the person confirmed for a share, as [`begin`] took it.
+pub(crate) fn revision_of(share: &ShareAsk) -> AudienceRevision {
+    AudienceRevision {
+        seq: share.audience_seq,
+        reach: share.audience_reach,
+    }
 }
 
 /// `account` is signed out or removed here: none of its shares is sent from here any more. The shares it had.

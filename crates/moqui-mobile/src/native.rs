@@ -965,6 +965,39 @@ pub(crate) fn stop_location(dir: &Path, account: &str, share_id: &str) -> &'stat
     .as_str()
 }
 
+/// `Native.readLocationShare(dataDir, account, shareId)`: a share read again from its server with the account's device
+/// key, to confirm an audience that grew ([`crate::location::read_share`]): its JSON for the native code, all of it the
+/// server's, or none when the server has it no longer as this device's (or cannot be reached: asked again later).
+pub(crate) fn read_location_share(dir: &Path, account: &str, share_id: &str) -> Option<String> {
+    let core = network_ready().then(|| core_in(dir).ok()).flatten()?;
+    let signed_in = asked(&core).into_iter().find(|asked| asked.account.id == account)?;
+    match crate::location::read_share(
+        share_id,
+        (&signed_in.account, signed_in.key.as_str()),
+        &LocationPoster(&core),
+        now_ms(),
+    ) {
+        Ok(share) => Some(share.to_json(account)),
+        Err(err) => {
+            log::info!("Location: share {share_id} of {account} was not read again: {err}");
+            None
+        }
+    }
+}
+
+/// `Native.beginLocation(json)`: a share confirmed again by the person (its JSON from [`read_location_share`]): reported
+/// from here with that audience as the confirmed one. Whether it was one.
+pub(crate) fn begin_location(json: &str) -> bool {
+    match crate::location::ShareAsk::from_json(json) {
+        Some((account, share)) => {
+            let revision = crate::location::revision_of(&share);
+            crate::location::begin(&account, &share.share_id, share.interval_seconds * 1000, revision);
+            true
+        }
+        None => false,
+    }
+}
+
 /// Posts a live location share's report or stop through the client's proxy with the account's device key, within
 /// [`moqui_client::location::POST_TIMEOUT`] (15 s): a half-open connection gives up then, not at the proxy's ten
 /// minutes (plans/Location-Sharing.md §3.4).
@@ -1548,6 +1581,37 @@ mod entries {
             env.new_string(super::stop_location(&dir, &account, &share_id))
         })
         .resolve::<LogErrorAndDefault>()
+    }
+
+    /// `Native.readLocationShare(dataDir, account, shareId)`: a share read again from its server, or null.
+    #[no_mangle]
+    pub extern "system" fn Java_org_moqui_mobile_Native_readLocationShare<'caller>(
+        mut env: EnvUnowned<'caller>,
+        _class: JClass<'caller>,
+        data_dir: JString<'caller>,
+        account: JString<'caller>,
+        share_id: JString<'caller>,
+    ) -> JString<'caller> {
+        env.with_env(|env| -> Result<JString<'caller>, jni::errors::Error> {
+            let dir = client_dir(&data_dir.try_to_string(env)?);
+            let (account, share_id) = (account.try_to_string(env)?, share_id.try_to_string(env)?);
+            match super::read_location_share(&dir, &account, &share_id) {
+                Some(json) => env.new_string(json),
+                None => Ok(JString::default()),
+            }
+        })
+        .resolve::<LogErrorAndDefault>()
+    }
+
+    /// `Native.beginLocation(json)`: a share confirmed again, reported from here; whether it was one.
+    #[no_mangle]
+    pub extern "system" fn Java_org_moqui_mobile_Native_beginLocation<'caller>(
+        mut env: EnvUnowned<'caller>,
+        _class: JClass<'caller>,
+        json: JString<'caller>,
+    ) -> jboolean {
+        env.with_env(|env| -> Result<bool, jni::errors::Error> { Ok(super::begin_location(&json.try_to_string(env)?)) })
+            .resolve::<LogErrorAndDefault>()
     }
 
     /// `Native.forgetLocation(account, shareId)`: the location service no longer sends a share (its end, the

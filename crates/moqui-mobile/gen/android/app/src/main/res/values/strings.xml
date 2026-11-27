@@ -63,6 +63,11 @@
     <string name="location_stop">Stop</string>
     <string name="location_confirm_title">Share your location from this phone?</string>
     <string name="location_confirm_send">Send</string>
+    <string name="location_confirm_text">Send your location from this phone to %1$s until %2$s? It goes on while the app is in the background, with a notification and Stop.</string>
+    <string name="location_confirm_text_approximate">Send about where you are (to within about 1 km) from this phone to %1$s until %2$s? It goes on while the app is in the background, with a notification and Stop.</string>
+    <string name="location_confirm_whom_default">the people you chose</string>
+    <string name="location_paused_title">Who sees your location changed</string>
+    <string name="location_paused_text">People were added to a location share since you said Send, so this phone stopped sending it. Open the app to confirm who sees it now.</string>
     <string name="location_stop_unconfirmed_title">Your server was not told the share stopped</string>
     <string name="location_stop_unconfirmed">This phone no longer sends your location, but your server could not be told; the share shows your last position until %1$s.</string>
     <string name="location_stopping_title">Stopping location sharing</string>

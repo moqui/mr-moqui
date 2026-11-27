@@ -58,6 +58,14 @@ object Native {
      * `gone`, `signedOut`, or `retry` (no answer yet). Not on the main thread.
      */
     @JvmStatic external fun stopLocation(dataDir: String, account: String, shareId: String): String?
+    /**
+     * A share read again from its server with the account's device key (`get#AppShare`), to confirm its grown audience:
+     * its JSON as `LocationShare.Sent.of` reads it, all of it the server's, or null when the server has it no longer as
+     * this device's. Not on the main thread.
+     */
+    @JvmStatic external fun readLocationShare(dataDir: String, account: String, shareId: String): String?
+    /** A share confirmed again (its JSON from [readLocationShare]): Rust reports it with that audience as the confirmed one. */
+    @JvmStatic external fun beginLocation(json: String): Boolean
     /** A share no longer sent by the location service: Rust's reporter of it goes too. */
     @JvmStatic external fun forgetLocation(account: String, shareId: String)
     @JvmStatic external fun vaultLock()

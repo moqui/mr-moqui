@@ -4,7 +4,6 @@ package org.moqui.mobile
 
 import android.app.NotificationManager
 import android.content.Context
-import android.text.format.DateFormat
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.work.BackoffPolicy
@@ -17,7 +16,6 @@ import androidx.work.Worker
 import androidx.work.WorkerParameters
 import org.json.JSONArray
 import org.json.JSONObject
-import java.util.Date
 import java.util.concurrent.TimeUnit
 
 /**
@@ -150,7 +148,7 @@ object LocationStops {
     private fun notice(context: Context, thruMs: Long) {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
         LocationShare.ensureChannel(context)
-        val until = DateFormat.getTimeFormat(context).format(Date(thruMs))
+        val until = LocationRules.untilFallback(thruMs, System.currentTimeMillis())
         val text = context.getString(R.string.location_stop_unconfirmed, until)
         val notification = NotificationCompat.Builder(context, LocationShare.CHANNEL)
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)

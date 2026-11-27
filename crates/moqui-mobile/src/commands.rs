@@ -919,21 +919,27 @@ pub(crate) fn location_share_start(
         &crate::native::LocationPoster(&state.core),
         crate::native::now_ms(),
     )?;
-    crate::location::begin(&account, &share.share_id, share.interval_seconds * 1000);
+    // a share already sent from here goes on as it was when the person says Not now (or the service cannot take it);
+    // a new one is begun before the service may report it, and let go again unless it starts
+    let was = crate::location::sending(&account).contains(&share.share_id);
+    let revision = crate::location::revision_of(&share);
+    if !was {
+        crate::location::begin(&account, &share.share_id, share.interval_seconds * 1000, revision);
+    }
     #[cfg(target_os = "android")]
-    {
-        let answer = crate::android::location_start(&share.to_json(&account))?;
-        if answer != "started" {
-            crate::location::forget_share(&account, &share.share_id);
-        }
-        Ok(answer)
-    }
+    let answer = crate::android::location_start(&share.to_json(&account))?;
     #[cfg(not(target_os = "android"))]
-    {
-        crate::location::forget_share(&account, &share.share_id);
+    let answer = {
         log::info!("No location service here for share {}", share.share_id);
-        Ok("unavailable".to_string())
+        "unavailable".to_string()
+    };
+    if answer == "started" {
+        // the audience the person just confirmed, also for one sent already
+        crate::location::begin(&account, &share.share_id, share.interval_seconds * 1000, revision);
+    } else if !was {
+        crate::location::forget_share(&account, &share.share_id);
     }
+    Ok(answer)
 }
 
 /// The page stopped a share (its Stop), or it is sent from another device or page now: this phone no longer sends it.

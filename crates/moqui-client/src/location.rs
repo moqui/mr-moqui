@@ -91,6 +91,9 @@ pub enum Stopped {
     OtherDevice,
     /// 401, 403, or an answer that is not the transition's JSON: the account is signed out.
     SignedOut,
+    /// The share's audience grew after the person confirmed whom the phone sends to (the host compares the report's
+    /// audience revision with the confirmed one): not sent until they confirm it again.
+    AudienceChanged,
 }
 
 impl Stopped {
@@ -101,6 +104,7 @@ impl Stopped {
             Self::NotFound => "notFound",
             Self::OtherDevice => "otherDevice",
             Self::SignedOut => "signedOut",
+            Self::AudienceChanged => "audienceChanged",
         }
     }
 }

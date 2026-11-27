@@ -560,7 +560,7 @@ is sent from the phone by the app, also while it is in the background. The Kotli
 (JVM-tested); the Rust is `src/location.rs` with `moqui_client::location`. None of it was run on a device or the
 emulator yet (LL7's walk).
 
-- **From the page's Share only.** A server page has `moquiDesktop.location` (`allow`, `start`, `stop`, `status`; the
+- **Started by the person's Send in the app's own dialog.** A server page has `moquiDesktop.location` (`allow`, `start`, `stop`, `status`; the
   host commands `location_allow`, `location_share_start`, `location_share_stop`, `location_share_status`, each for the
   page's account while it is the current one). Browse's Share asks `allow` first: without the location permission the
   app shows a dialog that says why (to send where you are to the people you chose, until the time you chose, with a
@@ -570,12 +570,21 @@ emulator yet (LL7's walk).
   approximate (about 3 km² on Android 12+) before the server rounds them. Not now, or the dialog dismissed, answers no
   and no share is started. Once the share is made, `start` names it (its id alone): the host reads it from the server
   with the account's device key (`/qapps/clientLocationShare`, `get#AppShare`: whom with, until when, exact or
-  approximate, its interval, and that this device sends it), and the app asks in its own dialog, guarded against
-  touches through another app's window (`ObscuredTouches`): "Send your location from this phone to Sam and 2 others until
-  15:30? It goes on while the app is in the background, with a notification and Stop.", Send or Not now. **That native
-  dialog is the control**: a server page's script can reach the app's IPC and ask for a start, but nothing is sent from
-  the phone in the background without the person's Send there, and its words, like the notification's, are the
-  server's, never the page's. Send starts `LocationShareService`, a foreground service of type `location`
+  approximate, its interval, its audience's revision, and that this device sends it), and the app asks in its own
+  dialog: "Send your location from this phone to Sam Smith (sam) and Family (4 members) until Fri 09:00? It goes on while
+  the app is in the background, with a notification and Stop.", Send or Not now. The words are the server's: each person
+  by name and unique username, a group with the members it reaches, "anyone with the guest link", and the end with its
+  weekday when it is not today. The dialog refuses touches through another app's window (`ObscuredTouches`, and Send's
+  own check of `FLAG_WINDOW_IS_PARTIALLY_OBSCURED`), hides other apps' overlays while it shows (Android 12+,
+  `HIDE_OVERLAY_WINDOWS`), keeps Send disabled for a second after it has the window's focus, marks its text sensitive
+  for accessibility services (Android 14+), and goes with no answer after a minute. **That native dialog is the
+  control**, and it guards two things: the start of sending from this phone, and the audience it sends to. A server
+  page's script can reach the app's IPC and ask for a start, but nothing is sent from the phone without the person's
+  Send there; and each report's answer carries the audience's revision (`audienceSeq`, `audienceReach`), so when the
+  audience grows after the Send (people or a group added, a group added again that reaches more, by a script or another
+  device) the phone stops sending that share and a notification asks the person to open the app, where the same dialog
+  asks again with the server's words (Send sends it again to that audience; Not now stops the share on the server). It
+  does not guard what the server does with the reports it gets, nor the shares a browser or another device sends. Send starts `LocationShareService`, a foreground service of type `location`
   (`FOREGROUND_SERVICE_LOCATION`), only while the app is in front (`LocationShare.foreground`), with the permission and
   notifications allowed (`LocationRules.mayStart`); `start` answers `started`, `declined` (Not now: a share just made
   is stopped, and the page sends nothing) or `unavailable` (the page sends while it is open, as a browser does). So the

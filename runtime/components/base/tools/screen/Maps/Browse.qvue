@@ -1288,13 +1288,15 @@ module.exports = {
                 const whom = form.users.map((user) => user.label).concat(this.shareTargets.groups.filter((group) => form.groups.includes(group.userGroupId))
                     .map((group) => group.label), this.shareTargets.contacts.filter((contact) => form.jids.includes(contact.jid)).map((contact) => contact.label),
                     form.link ? [t('a guest link')] : []);
-                this.sendShare(json.shareId, { approximate, thruDate: json.thruDate, whomText: whom.join(', '), fresh: true, created: true,
-                    intervalSeconds: approximate ? this.shareTargets.approximateIntervalSeconds : this.shareTargets.minIntervalSeconds });
                 if (!json.linkToken) this.shareShown = false;
-                moqui.notifyMessages([{ type: 'success', message: t('Your location is shared until') + ' ' + this.untilText(json.thruDate) }], null);
-                // the app bar's chip at once, before the share's started push
-                if (this.$root && this.$root.loadShellIndicators) this.$root.loadShellIndicators();
-                return this.refreshShares().then(() => json.shareId);
+                // shared once it is sent: in the app only after the person's Send in its own dialog
+                return this.sendShare(json.shareId, { approximate, thruDate: json.thruDate, whomText: whom.join(', '), fresh: true, created: true,
+                    intervalSeconds: approximate ? this.shareTargets.approximateIntervalSeconds : this.shareTargets.minIntervalSeconds })
+                    .then(() => {
+                        // the app bar's chip at once, before the share's started push
+                        if (this.$root && this.$root.loadShellIndicators) this.$root.loadShellIndicators();
+                        return this.refreshShares();
+                    }).then(() => json.shareId);
             }, (err) => { this.shareError = String(err && err.message || err); return null; });
         },
         // ---- the Android app (plans/Location-Sharing.md §3.4, LL3): its location service sends a share from this phone, also
@@ -1310,18 +1312,30 @@ module.exports = {
         // started (created) is stopped, one taken over is left with this device and not sent from it
         sendShare(shareId, info) {
             const native = this.nativeLocation();
-            if (!native) { this.startSending(shareId, info); return Promise.resolve(false); }
+            const shared = () => {
+                if (info.thruDate) moqui.notifyMessages([{ type: 'success', message: t('Your location is shared until') + ' ' + this.untilText(info.thruDate) }], null);
+            };
+            const onPage = () => { this.startSending(shareId, info); shared(); return false; };
+            if (!native) return Promise.resolve(onPage());
             return Promise.resolve(native.start({ shareId })).then((answer) => {
                 if (answer === 'started') {
                     this.stopSending(shareId);
                     if (!this.nativeSending.includes(shareId)) this.nativeSending = this.nativeSending.concat([shareId]);
                     this.noteSending();
-                } else if (answer === 'declined') {
-                    if (info.created) this.shareAction('stopShare', { shareId });
-                    moqui.notifyMessages(null, [t('Your location is not sent from this phone')]);
-                } else this.startSending(shareId, info);
-                return answer === 'started';
-            }, () => { this.startSending(shareId, info); return false; });
+                    shared();
+                    return true;
+                }
+                if (answer === 'declined') {
+                    // the person's Not now: a share just made is stopped; one taken over stays this device's, and nothing
+                    // sends it (its audience sees its last position grow old), which the person is told plainly
+                    if (info.created) {
+                        this.shareAction('stopShare', { shareId });
+                        moqui.notifyMessages(null, [t('Your location was not shared')]);
+                    } else moqui.notifyMessages(null, [t('Nothing sends this share now: its audience sees your last position until you send it again or stop it')]);
+                    return false;
+                }
+                return onPage();
+            }, onPage);
         },
         // what the app's service sends now, read when the shares are (it stops a share by itself at its end, a 410, another
         // device's takeover, a sign-out, its notification's Stop or the permission taken away)

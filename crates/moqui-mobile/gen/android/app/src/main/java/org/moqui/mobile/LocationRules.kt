@@ -167,15 +167,25 @@ object LocationRules {
      */
     fun allowed(asked: Boolean, permitted: Boolean): Boolean = asked && permitted
 
+    /** How long the confirmation's Send stays disabled after the dialog has the window's focus (tapjacking). */
+    const val SEND_DELAY_MS = 1_000L
+
+    /** Whom the confirmation names: the server's words, or null for none (the dialog then says "the people you chose"). */
+    fun confirmWhom(audience: String): String? = audience.trim().ifEmpty { null }
+
+    /** Whether a touch on Send is refused: one that came through another app's window, wholly or in part. */
+    fun obscured(partially: Boolean, wholly: Boolean): Boolean = partially || wholly
+
     /**
-     * The app's own question before a share is sent from this phone, with the server's words for whom and until when:
-     * "Send your location from this phone to Sam and 2 others until 15:30? ...".
+     * The end as the phone words it when the server gave none: "15:30" today, "Fri 09:00" another day (the server's
+     * `untilWords` does the same in the owner's zone).
      */
-    fun confirmText(audience: String, until: String, approximate: Boolean): String {
-        val whom = audience.trim().ifEmpty { "the people you chose" }
-        val what = if (approximate) "about where you are (to within about 1 km)" else "your location"
-        return "Send $what from this phone to $whom until $until? It goes on while the app is in the background, " +
-            "with a notification and Stop."
+    fun untilFallback(thruMs: Long, nowMs: Long, zone: java.util.TimeZone = java.util.TimeZone.getDefault()): String {
+        val day = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.ROOT).apply { timeZone = zone }
+        val sameDay = day.format(java.util.Date(thruMs)) == day.format(java.util.Date(nowMs))
+        val format = java.text.SimpleDateFormat(if (sameDay) "HH:mm" else "EEE HH:mm", java.util.Locale.getDefault())
+        format.timeZone = zone
+        return format.format(java.util.Date(thruMs))
     }
 
     /** Whether the share starts after the question: Send, with the app still in front. */

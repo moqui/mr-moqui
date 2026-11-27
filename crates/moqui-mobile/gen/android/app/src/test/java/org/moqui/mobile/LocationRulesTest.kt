@@ -147,13 +147,14 @@ class LocationRulesTest {
         assertTrue(LocationRules.confirmed(true, true))
         assertFalse(LocationRules.confirmed(false, true))
         assertFalse(LocationRules.confirmed(true, false))
-        assertEquals(
-            "Send your location from this phone to Sam and 2 others until 15:30? It goes on while the app is in the " +
-                "background, with a notification and Stop.",
-            LocationRules.confirmText("Sam and 2 others", "15:30", false)
-        )
-        assertTrue(LocationRules.confirmText(" ", "9:05", true).startsWith("Send about where you are (to within about 1 km) " +
-            "from this phone to the people you chose until 9:05?"))
+        // the server's words, or none
+        assertEquals("Sam Smith (sam) and Family (4 members)", LocationRules.confirmWhom(" Sam Smith (sam) and Family (4 members) "))
+        assertNull(LocationRules.confirmWhom("  "))
+        // a touch through another window, wholly or in part, never presses Send; it waits a second after focus
+        assertTrue(LocationRules.obscured(true, false))
+        assertTrue(LocationRules.obscured(false, true))
+        assertFalse(LocationRules.obscured(false, false))
+        assertTrue(LocationRules.SEND_DELAY_MS >= 1_000L)
     }
 
     @Test
@@ -163,5 +164,17 @@ class LocationRulesTest {
         assertNull(LocationRules.provider(true, false, false, true, false))
         assertEquals("gps", LocationRules.provider(true, true, false, true, false))
         assertEquals("fused", LocationRules.provider(false, false, true, true, false))
+    }
+
+    @Test
+    fun anEndNotTodayNamesItsDay() {
+        val utc = java.util.TimeZone.getTimeZone("UTC")
+        // 2026-11-27 (a Friday) 10:00 UTC, and the next day's 09:05
+        val now = 1_795_773_600_000L
+        val today = now + 5 * 3_600_000L
+        val tomorrow = now + 23 * 3_600_000L + 5 * 60_000L
+        assertEquals("15:00", LocationRules.untilFallback(today, now, utc))
+        val next = LocationRules.untilFallback(tomorrow, now, utc)
+        assertTrue(next, next.endsWith("09:05") && next.length > 5)
     }
 }
