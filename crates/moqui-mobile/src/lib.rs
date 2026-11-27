@@ -301,6 +301,7 @@ fn shell_webview(app: &AppHandle, host: &Arc<MobileHost>) -> tauri::Result<()> {
             // a hash): the calls the page joined end with it
             load_host.page_gone(None);
             load_host.page.started(payload.url());
+            load_host.fresh.started(payload.url());
             if let Some(core) = moqui_lib::sync::lock(&load_host.client).clone() {
                 core.sockets().close_for(MAIN);
             }

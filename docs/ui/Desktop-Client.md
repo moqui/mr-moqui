@@ -105,8 +105,9 @@ A bad value is logged and its default used; a runtime with no framework conf, or
 defaults. The element is in `mr-moqui-conf.xsd`; the parsing is `moqui_client::conf`.
 
 With `start-path`, the start screen is the home. The shell shows no chat panel, no list of apps and no ⌂ button on the
-server's pages. Back goes back one page, and at the start screen it leaves the app. The mobile app can build a second
-app this way ([moqui-mobile](../../crates/moqui-mobile/README.md#another-app)).
+server's pages. Back goes back one page, and at the start screen it leaves the app; so it does on the shell's own page
+(a start screen that is the server's page and has not loaded: offline, the server down). The mobile app can build a
+second app this way ([moqui-mobile](../../crates/moqui-mobile/README.md#another-app)).
 
 - **Kept with the account.** The mode is set when the account is created here, from the build's mode or the sign-in's
   choice (password and SSO alike). An account already personal stays personal when shared is chosen: nothing is

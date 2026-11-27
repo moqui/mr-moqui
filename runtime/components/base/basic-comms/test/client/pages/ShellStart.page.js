@@ -131,6 +131,9 @@ test("a start screen the shell does not bundle opens as the server's page, as /q
         assert.equal(root.view, null);
         assert.ok(!root.atStart);
         assert.ok(!document.querySelector(".m-shell-chat"), "no chat panel under it");
+        // the shell itself showing (offline, the server down, before the page loads): Back leaves the app, and opens nothing
+        assert.equal(moqui.back.pop(), false, "Back with the shell showing and no view leaves the app");
+        assert.deepEqual(host.remotes, ["/qapps/feed"], "no server page opened again");
     } finally {
         shellState.startPath = "/qapps/BasicComms/Chat";
         host.remotes.length = 0;

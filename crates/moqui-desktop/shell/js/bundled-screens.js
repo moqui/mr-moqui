@@ -1738,10 +1738,11 @@ module.exports = {
     mounted() {
         // Back with no layer open goes back in the shell's history, and at the home answers that it did nothing (so
         // Android's back leaves the app there). With a start screen, the home is that screen: from anywhere else Back
-        // goes back towards it, never to the chat panel or the apps.
+        // goes back towards it, never to the chat panel or the apps. With no view (the shell itself showing: a start screen
+        // that is the server's page, offline, the server down, before it loads) there is nothing to go back to here either.
         if (moqui.back) {
             moqui.back.base = () => {
-                if (this.startPath ? this.atStart : !this.view) return false;
+                if (!this.view || this.atStart) return false;
                 this.historyBack();
                 return true;
             };

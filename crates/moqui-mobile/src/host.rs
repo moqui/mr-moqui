@@ -43,6 +43,8 @@ pub(crate) const MAIN: &str = "main";
 /// change shows (no page of the account before it stays behind Back), and the build's start screen (Back there leaves
 /// the app). Its first page load on that origin takes it, so a redirect's page (`scheme::redirect_page`, which the
 /// WebView replaces) or the page it goes to clears the history, whichever loads first; then the next page adds to it.
+/// A navigation that never comes (the webview refused it, or a page of another origin started first) takes it back, so a
+/// later page of that origin does not clear the history.
 #[derive(Debug, Default)]
 pub(crate) struct FreshLoad(Mutex<Option<String>>);
 
@@ -50,6 +52,19 @@ impl FreshLoad {
     /// A host's navigation to `url`: fresh, or (none) one that adds to the history.
     pub(crate) fn navigating(&self, url: Option<&Url>) {
         *moqui_lib::sync::lock(&self.0) = url.map(|url| url.origin().ascii_serialization());
+    }
+
+    /// A new document of `url` started: one of another origin than the fresh navigation's took its place.
+    pub(crate) fn started(&self, url: &Url) {
+        let origin = url.origin();
+        let mut fresh = moqui_lib::sync::lock(&self.0);
+        if origin.is_tuple()
+            && fresh
+                .as_deref()
+                .is_some_and(|fresh| fresh != origin.ascii_serialization())
+        {
+            *fresh = None;
+        }
     }
 
     /// A page of `url` loaded: whether the webview's history is to be cleared now.
@@ -658,10 +673,14 @@ impl MobileHost {
         match self.app.get_webview_window(MAIN) {
             Some(window) => {
                 if let Err(err) = window.navigate(url.clone()) {
+                    self.fresh.navigating(None);
                     log::error!("The page did not load: {err}");
                 }
             }
-            None => log::warn!("No webview to show {url}"),
+            None => {
+                self.fresh.navigating(None);
+                log::warn!("No webview to show {url}");
+            }
         }
     }
 

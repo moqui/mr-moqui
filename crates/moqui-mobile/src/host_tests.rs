@@ -219,6 +219,15 @@ fn a_fresh_navigation_clears_the_history_once_at_its_first_load() {
     fresh.navigating(Some(&start));
     fresh.navigating(None);
     assert!(!fresh.loaded(&start));
+    // a page of another origin started in its place: the fresh one never came, and a later page of its origin adds to the
+    // history; a page of its own origin starting (a redirect's) keeps it
+    fresh.navigating(Some(&start));
+    fresh.started(&url(&format!("{SHELL}/")));
+    assert!(!fresh.loaded(&home));
+    fresh.navigating(Some(&start));
+    fresh.started(&start);
+    fresh.started(&url("about:blank"));
+    assert!(fresh.loaded(&home));
 }
 
 #[test]
