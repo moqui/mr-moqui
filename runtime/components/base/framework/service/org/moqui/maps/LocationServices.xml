@@ -1,0 +1,203 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Shared live location (plans/Location-Sharing.md §1, §3.2): a person shares where they are, until a time they choose,
+    with people they choose. Only the owner starts, changes, stops and reports a share; only the owner and the share's
+    current audience read it (a group's current members, a user whose entry is not revoked), and every read checks that
+    again; another person's share, an ADMIN's request included, answers as not found. The model is
+    entity/MapLocationEntities.xml, the logic LocationShares.js beside this file, the settings the conf's location element,
+    the grants data/MapsLocationData.xml (LocationShareServices, every signed-in user).
+
+    Positions are never logged, audited, cached or put in an error message: the position parameters are plain text read
+    by LocationShares.js (so no conversion error repeats a value), report#Position remembers no parameters, and a refusal
+    names its reason only. A position is pushed on the topic locationShare:<shareId> to the audience's current users only
+    (directOnly), never saved as a notification or pushed to a phone (persistOnSend false); an approximate share's is
+    rounded to about 1 km before it is stored or sent. Start, extension, stop and an audience added or revoked are in the
+    entity audit log (LocationShare thruDate and revokedDate, the audience's fields), never a position. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
+
+    <service verb="create" noun="Share">
+        <description>Start sharing the current user's location, the owner, until thruDate (after now, at most
+            location@max-share-hours from now), exact or approximate (precisionEnumId LspExact, the default, or
+            LspApproximate), with a trail kept only when keepTrail is true (for trailKeepDays after the share ends, at most
+            and by default location@trail-max-days). audienceList holds at least one entry, each {audienceTypeEnumId,
+            userId, userGroupId, jid}: LsaUser a user the owner may message (the chat directory's rule,
+            ChatServices.get#RefusedUsers with blocks; a user it refuses answers as one that does not exist), LsaUserGroup a
+            group the owner is in now (never ALL_USERS or a group of external users), LsaXmpp a contact of the owner's XMPP
+            roster (username@xmpp-server@domain, XmppServices.get#Roster; kept for the XMPP server to deliver), LsaLink a
+            guest link (one a share), whose token is returned here once and kept only as its digest. Each audience user is
+            told who shares with them and until when (the LocationShared notification). Refused with a reasonCode:
+            BAD_UNTIL, TOO_LONG, BAD_PRECISION, BAD_TRAIL_DAYS, AUDIENCE_EMPTY, BAD_AUDIENCE, USER_NOT_FOUND,
+            GROUP_NOT_ALLOWED, XMPP_OFF, XMPP_NOT_CONTACT, ONE_LINK.</description>
+        <in-parameters>
+            <parameter name="audienceList" type="List" required="true"/>
+            <parameter name="thruDate" type="Timestamp" required="true"/>
+            <parameter name="precisionEnumId" default-value="LspExact"/>
+            <parameter name="keepTrail" type="Boolean" default="false"/>
+            <parameter name="trailKeepDays" type="Integer"/>
+            <parameter name="label"/>
+            <parameter name="purposeText"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="shareId"/>
+            <parameter name="thruDate" type="Timestamp"/>
+            <parameter name="linkToken"><description>The guest link's token, returned this once</description></parameter>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('create', context))</script></actions>
+    </service>
+
+    <service verb="update" noun="Share">
+        <description>Change an active share of the current user's own: extend or shorten it (thruDate, after now and at most
+            location@max-share-hours from now: extending is the owner's act again), add to its audience (addAudienceList,
+            entries as create#Share's; one already there is passed over), and change its label or purpose. The owner's
+            other devices and the audience are told on locationShare:shareId, and each user added gets the LocationShared
+            notification; a link added returns its token once. Refused: SHARE_NOT_FOUND (not the caller's), SHARE_ENDED,
+            and create#Share's reasons.</description>
+        <in-parameters>
+            <parameter name="shareId" required="true"/>
+            <parameter name="thruDate" type="Timestamp"/>
+            <parameter name="addAudienceList" type="List"/>
+            <parameter name="label"/>
+            <parameter name="purposeText"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="thruDate" type="Timestamp"/>
+            <parameter name="linkToken"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('update', context))</script></actions>
+    </service>
+
+    <service verb="stop" noun="Share">
+        <description>Stop a share of the current user's own at once: its latest position is deleted, its audience and the
+            owner's other devices are told on locationShare:shareId, and a device still sending gets 410. A kept trail stays
+            for its trailKeepDays, or until delete#Trail. A share already ended is left as it is. Refused: SHARE_NOT_FOUND
+            (not the caller's).</description>
+        <in-parameters><parameter name="shareId" required="true"/></in-parameters>
+        <out-parameters><parameter name="reasonCode"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('stop', context))</script></actions>
+    </service>
+
+    <service verb="revoke" noun="Audience">
+        <description>Take one entry of a share of the current user's own out of its audience (a person, a group, an XMPP
+            contact or the link): it reads nothing from now on, and its users are told on locationShare:shareId. Refused:
+            SHARE_NOT_FOUND (not the caller's), AUDIENCE_NOT_FOUND.</description>
+        <in-parameters>
+            <parameter name="shareId" required="true"/>
+            <parameter name="audienceSeqId" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="reasonCode"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('revoke', context))</script></actions>
+    </service>
+
+    <service verb="report" noun="Position" no-remember-parameters="true">
+        <description>A position of an active share, from its owner only: latitude and longitude (degrees, in range),
+            accuracy (metres, optional), heading (degrees from north) and speed (metres a second), observedDate (when the
+            device took it: not in the future, later than the latest one; now when not given). At most one a
+            location@min-interval-seconds a share: a sooner one is dropped with statusCode 429 (RATE_LIMITED,
+            retryAfterSeconds). An approximate share's position is rounded here to about 1 km (accuracy at least 1000, no
+            heading or speed) before it is stored or sent. It replaces the share's LocationLatest, adds a trail point when
+            the share keeps a trail, and is sent on locationShare:shareId to the audience's current users. statusCode 200;
+            410 (SHARE_ENDED) for a share ended or stopped, which stops the device; 404 (SHARE_NOT_FOUND) for one that is
+            not the caller's; 400 for a value out of range (BAD_POSITION, BAD_ACCURACY, BAD_HEADING, BAD_SPEED, BAD_DATE);
+            409 (STALE) for one not later than the latest. A refusal names no value.</description>
+        <in-parameters>
+            <parameter name="shareId" required="true"/>
+            <!-- plain text, read and checked by LocationShares.js, so that no conversion error repeats a position -->
+            <parameter name="latitude"/>
+            <parameter name="longitude"/>
+            <parameter name="accuracy"/>
+            <parameter name="heading"/>
+            <parameter name="speed"/>
+            <parameter name="observedDate" type="Timestamp"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="statusCode" type="Integer"/>
+            <parameter name="reasonCode"/>
+            <parameter name="retryAfterSeconds" type="Integer"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('report', context))</script></actions>
+    </service>
+
+    <service verb="find" noun="MyShares">
+        <description>The current user's own shares: the active ones, and with includeEnded those ended too (for their kept
+            trails), the newest first, at most 200. Each with its audience (every entry, revoked ones marked: a person's or
+            group's name, a JID, and for the link only that there is one and when it was last viewed, never its token or
+            digest), its end, its latest position while it is active and its trail's size.</description>
+        <in-parameters><parameter name="includeEnded" type="Boolean" default="false"/></in-parameters>
+        <out-parameters><parameter name="shareList" type="List"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('findMine', context))</script></actions>
+    </service>
+
+    <service verb="find" noun="SharedWithMe">
+        <description>The active shares of other people whose current audience holds the current user (as a user whose entry
+            is not revoked, or a current member of a group whose entry is not revoked), soonest to end first, at most 200:
+            the owner's name, the label and purpose, the end, whether it is approximate, and the latest position with its
+            age. The audience is checked at this read, so a person taken out of a group sees nothing of it.</description>
+        <out-parameters><parameter name="shareList" type="List"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('findShared', context))</script></actions>
+    </service>
+
+    <service verb="get" noun="Share">
+        <description>One share for its owner (with its audience as find#MyShares has it), or for a member of its current
+            audience while it is active: the share, its latest position (while active) and, when it keeps a trail, a page of
+            the trail in time order (trailPageIndex, trailPageSize up to 1000) with its count. A share that is not the
+            caller's and whose current audience does not hold the caller, or that has ended for a viewer, answers
+            SHARE_NOT_FOUND.</description>
+        <in-parameters>
+            <parameter name="shareId" required="true"/>
+            <parameter name="trailPageIndex" type="Integer" default="0"/>
+            <parameter name="trailPageSize" type="Integer" default="500"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="share" type="Map"/>
+            <parameter name="latest" type="Map"/>
+            <parameter name="trailList" type="List"/>
+            <parameter name="trailCount" type="Integer"/>
+            <parameter name="trailPageIndex" type="Integer"/>
+            <parameter name="trailPageSize" type="Integer"/>
+            <parameter name="trailPageMaxIndex" type="Integer"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('get', context))</script></actions>
+    </service>
+
+    <service verb="delete" noun="Trail">
+        <description>Delete the whole kept trail of a share of the current user's own, now, whether the share is active or
+            ended; an active share goes on keeping the positions it gets from now on. Refused: SHARE_NOT_FOUND.</description>
+        <in-parameters><parameter name="shareId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="deletedCount" type="Integer"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('deleteTrail', context))</script></actions>
+    </service>
+
+    <service verb="clean" noun="LocationShares" authenticate="anonymous-all" allow-remote="false" transaction="ignore">
+        <description>The hourly job (clean_LocationShares_hourly): ends the shares past their thruDate (endedDate set, the
+            latest position deleted, the audience told), deletes the trail points of each ended share past its
+            trailKeepDays (at most location@trail-max-days), and removes the shares ended more than location@trail-max-days
+            ago with no trail left, with their audience (the audit log keeps who shared with whom and when). Each share is
+            on its own, in its own transaction: one that fails is logged by its id and the rest go on. Out: endedCount,
+            trailDeletedCount (points), removedCount, failedCount.</description>
+        <out-parameters>
+            <parameter name="endedCount" type="Integer"/>
+            <parameter name="trailDeletedCount" type="Integer"/>
+            <parameter name="removedCount" type="Integer"/>
+            <parameter name="failedCount" type="Integer"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('clean', context))</script></actions>
+    </service>
+</services>
