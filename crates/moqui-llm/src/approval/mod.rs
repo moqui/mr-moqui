@@ -622,7 +622,15 @@ pub fn request(ctx: &mut TurnContext<'_>, request: &ApprovalRequest) -> Requeste
     let mut card = view.to_json();
     card["tool"] = json!(ctx.call.name);
     // the risk a loaded skill says the write has: shown on the card, it never skips the approval
-    if let Some((skill, risk)) = crate::skills::risk_of_write(ctx, &request.target_name) {
+    // a screen write by its location and by the URL path of its screen, which skills name (SEC-BOS-133)
+    let screen_path = matches!(request.target_kind, TargetKind::Screen)
+        .then(|| request.snapshot["path"].as_str())
+        .flatten()
+        .map(|path| path.split(['?', '#']).next().unwrap_or(path));
+    let targets: Vec<&str> = std::iter::once(request.target_name.as_str())
+        .chain(screen_path)
+        .collect();
+    if let Some((skill, risk)) = crate::skills::risk_of_write(ctx, &targets) {
         card["risk"] = json!({"skill": skill, "risk": risk.as_str()});
     }
     // a tool call's write (another system's, a canvas Mutation) has no sim preview
@@ -1139,7 +1147,8 @@ pub(crate) fn decider_may_write(
     target_name: &str,
     args: &Json,
 ) -> Result<(), String> {
-    let refused = |what: &str| format!("you may not run {what} yourself, so only the person who asked the agent may approve it");
+    let refused =
+        |what: &str| format!("you may not run {what} yourself, so only the person who asked the agent may approve it");
     match target_kind {
         TargetKind::Screen => {
             let write: crate::screen::PendingWrite =
