@@ -97,8 +97,8 @@ pub enum Status {
     /// Installed: served from `revision`'s directory.
     Installed { revision: i64 },
     /// Stopped: `code` says why (TOO_LARGE, NO_SPACE, CHECKSUM, BAD_PACKAGE, NOT_FOUND, NOT_READY, UNAUTHORIZED,
-    /// OFFLINE, SERVER, CHANGED, PAUSED); `retry` when a later try may do (a network cut, a server error), false once
-    /// the host gave up on it ([`Packages::give_up`]).
+    /// OFFLINE, SERVER, CHANGED, PAUSED, GAVE_UP for one the host gave up before it ran); `retry` when a later try may
+    /// do (a network cut, a server error), false once the host gave up on it ([`Packages::give_up`]).
     Failed {
         revision: i64,
         code: String,
@@ -143,8 +143,8 @@ pub(crate) struct Job {
     pub(crate) gone: AtomicBool,
     /// Who runs it (Android's WorkManager work id), so a stop of a run that ended pauses no other.
     pub(crate) runner: Mutex<Option<String>>,
-    /// The last runner that took the job or tried to ([`Packages::tried_by`]): only it may give the job up, so a stale
-    /// run never ends a job a new tap queued.
+    /// The runner the host enqueued for the job ([`Packages::expect_runner`]), or the last that took it: only it may
+    /// give the job up, so a stale run never ends a job a new tap queued.
     pub(crate) last_runner: Mutex<Option<String>>,
     /// The bytes the run counts against the account's cap while it downloads, beside what is on disk (its whole
     /// file once it passed the check, [`Packages::reserve`]).
@@ -445,9 +445,10 @@ impl Packages {
         }
     }
 
-    /// `runner` tried `revision` of a package without taking its job (Android's worker with no network yet), so it
-    /// may give the job up after: only when no run holds it and it is of that revision.
-    pub fn tried_by(&self, account: &str, package_id: &str, revision: i64, runner: &str) {
+    /// The host enqueued `runner` (Android's WorkManager work id) for the job of `revision` it just queued: that runner
+    /// alone may give the job up, before it took it too (a worker with no network on its last run). A worker the host
+    /// replaced is another runner, so it never ends the job a new tap queued.
+    pub fn expect_runner(&self, account: &str, package_id: &str, revision: i64, runner: &str) {
         let jobs = moqui_lib::sync::lock(&self.jobs);
         if let Some(job) = jobs.get(&(account.to_string(), package_id.to_string())) {
             if job.revision == revision && !job.running.load(Ordering::SeqCst) {
@@ -458,8 +459,8 @@ impl Packages {
 
     /// The host gave up on a package's download (Android's worker after its runs): its last failure is told as final
     /// (`retry` false), and a download that never ran as failed, `why` saying what stopped it ("there was no
-    /// network"), its part kept for a download asked again. Only the job of `revision` that `runner` last took or
-    /// tried ([`Self::tried_by`]), and that no run holds: a stale run never ends a job a new tap queued. The state the
+    /// network"), its part kept for a download asked again. Only the job of `revision` that `runner` was enqueued for
+    /// ([`Self::expect_runner`]) or last took, and that no run holds: a stale run never ends a job a new tap queued. The state the
     /// job now has.
     pub fn give_up(&self, account: &str, package_id: &str, revision: i64, runner: &str, why: &str) -> Option<Status> {
         let jobs = moqui_lib::sync::lock(&self.jobs);

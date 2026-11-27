@@ -54,7 +54,7 @@
 # §2.4)
 -keep class org.moqui.mobile.PackageDownloadWorker {
     public <init>(android.content.Context, androidx.work.WorkerParameters);
-    public static boolean start(android.content.Context, java.lang.String, java.lang.String, long, boolean);
+    public static java.lang.String start(android.content.Context, java.lang.String, java.lang.String, long, boolean);
     public static void cancel(android.content.Context, java.lang.String, java.lang.String);
     public static void cancelAccount(android.content.Context, java.lang.String);
 }

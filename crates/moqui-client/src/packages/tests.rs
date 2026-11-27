@@ -1253,8 +1253,8 @@ fn a_give_up_is_the_last_runners_of_its_revision() {
         packages.give_up(ACCOUNT, PACKAGE, 1, "work-1", "x"),
         Some(Status::Queued { revision: 1 })
     );
-    // its own worker, which tried with no network, gives it up with what stopped it
-    packages.tried_by(ACCOUNT, PACKAGE, 1, "work-3");
+    // the worker the host enqueued for it, with no network on its last run, gives it up with what stopped it
+    packages.expect_runner(ACCOUNT, PACKAGE, 1, "work-3");
     let given = packages
         .give_up(ACCOUNT, PACKAGE, 1, "work-3", "there was no network")
         .unwrap();
@@ -1263,5 +1263,54 @@ fn a_give_up_is_the_last_runners_of_its_revision() {
             if code == "GAVE_UP" && reason.contains("no network")),
         "{given:?}"
     );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The fourth review of OF2: a worker the host replaced (a new tap queued the job again) cannot end the new job, also
+/// on its last run with no network: only the work enqueued for the new job may.
+#[test]
+fn a_replaced_worker_cannot_give_up_the_job_a_new_tap_queued() {
+    let dir = dir("replaced-give-up");
+    let packages = packages(&dir);
+    packages.queue(ACCOUNT, PACKAGE, 1).unwrap();
+    packages.expect_runner(ACCOUNT, PACKAGE, 1, "work-old");
+    // a new tap: a new job, its new work enqueued; the old work, stopped, reaches its give-up after
+    assert!(packages.queue(ACCOUNT, PACKAGE, 1).unwrap().1);
+    packages.expect_runner(ACCOUNT, PACKAGE, 1, "work-new");
+    assert_eq!(
+        packages.give_up(ACCOUNT, PACKAGE, 1, "work-old", "there was no network"),
+        Some(Status::Queued { revision: 1 })
+    );
+    let given = packages
+        .give_up(ACCOUNT, PACKAGE, 1, "work-new", "there was no network")
+        .unwrap();
+    assert!(
+        matches!(&given, Status::Failed { code, retry: false, .. } if code == "GAVE_UP"),
+        "{given:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The fourth review of OF2: a swap that installs a revision removes every copy left aside (`.K.old`), its own and
+/// other revisions', so none stays hidden and counted against the cap.
+#[test]
+fn a_swap_removes_the_copies_left_aside() {
+    let dir = dir("aside-others");
+    let packages = packages(&dir);
+    let package_dir = dir.join(format!("data/{ACCOUNT}.packages/{PACKAGE}"));
+    for name in [".1.old", ".7.old"] {
+        std::fs::create_dir_all(package_dir.join(name)).unwrap();
+        std::fs::write(package_dir.join(name).join("manifest.json"), vec![b'x'; 1000]).unwrap();
+    }
+    let server = Fake::new(package(2), 2);
+    assert_eq!(
+        download(&packages, &server, ACCOUNT, PACKAGE, 2, MAX),
+        Status::Installed { revision: 2 }
+    );
+    let left: Vec<_> = std::fs::read_dir(&package_dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(left, ["2"]);
     let _ = std::fs::remove_dir_all(&dir);
 }

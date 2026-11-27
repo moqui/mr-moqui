@@ -538,7 +538,13 @@ impl Run<'_> {
         moqui_lib::sync::lock(&self.packages.manifests).retain(|path, _| !path.starts_with(dir));
         for entry in std::fs::read_dir(dir).into_iter().flatten().filter_map(Result::ok) {
             let name = entry.file_name().to_string_lossy().into_owned();
-            let earlier = name != self.revision.to_string() && name.bytes().all(|b| b.is_ascii_digit());
+            // an earlier revision, and any revision's copy left aside (`.K.old`), which would count against the cap
+            let digits = |text: &str| !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit());
+            let aside = name
+                .strip_prefix('.')
+                .and_then(|rest| rest.strip_suffix(".old"))
+                .is_some_and(digits);
+            let earlier = (name != self.revision.to_string() && digits(&name)) || aside;
             if earlier {
                 if let Err(err) = remove_tree(&entry.path()) {
                     tracing::error!(

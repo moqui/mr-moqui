@@ -407,36 +407,39 @@ pub(crate) fn register_worker_start() -> Result<(), String> {
     })
 }
 
-/// An offline map package's download handed to the worker (`PackageDownloadWorker.start`, plans/Maps-Offline.md §2.4).
+/// An offline map package's download handed to the worker (`PackageDownloadWorker.start`, plans/Maps-Offline.md §2.4):
+/// the id of the work enqueued.
 pub(crate) fn package_worker_start(
     account: &str,
     package_id: &str,
     revision: i64,
     wifi_only: bool,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let started = with_context(|env, app| {
         let class = app_class(env, app, jni_str!("org.moqui.mobile.PackageDownloadWorker"))?;
         let account = env.new_string(account)?;
         let package_id = env.new_string(package_id)?;
-        env.call_static_method(
-            &class,
-            jni_str!("start"),
-            jni_sig!("(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;JZ)Z"),
-            &[
-                JValue::Object(app),
-                JValue::Object(&account),
-                JValue::Object(&package_id),
-                JValue::Long(revision),
-                JValue::Bool(wifi_only),
-            ],
-        )?
-        .z()
+        let id = env
+            .call_static_method(
+                &class,
+                jni_str!("start"),
+                jni_sig!("(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;JZ)Ljava/lang/String;"),
+                &[
+                    JValue::Object(app),
+                    JValue::Object(&account),
+                    JValue::Object(&package_id),
+                    JValue::Long(revision),
+                    JValue::Bool(wifi_only),
+                ],
+            )?
+            .l()?;
+        if id.is_null() {
+            return Ok(None);
+        }
+        let id = env.cast_local::<jni::objects::JString>(id)?;
+        Ok(Some(id.try_to_string(env)?))
     })?;
-    if started {
-        Ok(())
-    } else {
-        Err("The download was not scheduled".to_string())
-    }
+    started.ok_or_else(|| "The download was not scheduled".to_string())
 }
 
 /// A package's worker cancelled (`PackageDownloadWorker.cancel`), or every one of an account's when `package_id` is none
