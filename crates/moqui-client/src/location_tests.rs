@@ -370,3 +370,41 @@ fn a_report_gives_up_at_its_timeout_and_reads_the_answer() {
     server.join().unwrap();
     assert_eq!(answer.unwrap(), (429, json!({ RETRY_AFTER: 12 })));
 }
+
+/// An answer whose body stalls after its headers gives up at the timeout too: the timeout covers the body's read.
+#[test]
+fn a_report_whose_answer_stalls_after_its_headers_gives_up_at_its_timeout() {
+    use std::io::{Read, Write};
+    let proxy = crate::proxy::Proxy::new().unwrap();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut seen = Vec::new();
+        let mut buffer = [0_u8; 4096];
+        while !String::from_utf8_lossy(&seen).contains("latitude=") {
+            let read = stream.read(&mut buffer).unwrap();
+            if read == 0 {
+                break;
+            }
+            seen.extend_from_slice(&buffer[..read]);
+        }
+        // the headers and the body's start, then nothing
+        stream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n{\"stat")
+            .unwrap();
+        stream.flush().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1_500));
+        drop(stream);
+    });
+    let started = std::time::Instant::now();
+    let quick = std::time::Duration::from_millis(500);
+    let answer = post_form(&proxy, &base, "k", REPORT_PATH, &[("latitude", "40.5")], quick);
+    assert!(answer.is_err(), "{answer:?}");
+    assert!(
+        started.elapsed() < std::time::Duration::from_millis(1_200),
+        "{:?}",
+        started.elapsed()
+    );
+    server.join().unwrap();
+}
