@@ -382,13 +382,17 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="progress" type="number-integer"><description>Percent of the build done</description></field>
         <field name="cancelRequested" type="text-indicator"><description>Y: the build stops between its batches of
             tiles</description></field>
-        <field name="jobRunId" type="id"><description>The MapPackageBuild run building it</description></field>
+        <field name="jobRunId" type="id"><description>The MapPackageBuild run building it; empty while a pending package
+            waits its turn (maps@package-concurrent-builds)</description></field>
+        <field name="buildKey" type="text-short"><description>The build asked for, a random key: its run's job parameter and
+            the names of its files. A run writes only while the row holds its key, so a run ended as stale and asked for
+            again never writes over the next; empty when no build is asked for</description></field>
         <field name="revision" type="number-integer"><description>The build: 1, then one more for each Update. The
             download URL names it, and a request for another is 409</description></field>
         <field name="estimatedSize" type="number-integer"><description>The estimate's bytes when it was asked</description></field>
         <field name="tileCount" type="number-integer"/>
         <field name="location" type="text-medium"><description>The built zip:
-            runtime://tmp/map-packages/{packageId}-{revision}.zip</description></field>
+            runtime://tmp/map-packages/{packageId}-{revision}-{buildKey}.zip</description></field>
         <field name="size" type="number-integer"/>
         <field name="sha256" type="text-medium"><description>The zip's SHA-256 (hex): its strong ETag is
             sha256-{sha256}</description></field>

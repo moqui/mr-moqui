@@ -476,6 +476,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="maxBytes" type="Long"/>
             <parameter name="target" required="true"/>
             <parameter name="packageId"/>
+            <parameter name="buildKey"><description>The build the run is: its progress is written, and it goes on, only while
+                the package's row holds this key (a run it no longer holds stops as CANCELLED)</description></parameter>
             <parameter name="progressFrom" type="Integer"/>
             <parameter name="progressTo" type="Integer"/>
         </in-parameters>
@@ -558,8 +560,10 @@ along with this software (see the LICENSE.md file). If not, see
             region) the tiles of the region and zooms and their bytes, read from the archive's directories
             (estimate#PackageExtract); the rest near enough; and what is left out and why (omitted: a layer not offered,
             a provider's remote tiles, record layers, a profile's overlay layers). Refused (applied false, reasonCode,
-            reason): BBOX_INVALID, ZOOMS_INVALID, CONFIG_UNAVAILABLE, TOO_MANY_TILES, TOO_LARGE (past
-            maps@package-max-bytes, 2 GiB, with the estimate). Changes nothing. MAPS_APP_SERVICES.</description>
+            reason): BBOX_INVALID, ZOOMS_INVALID, CONFIG_UNAVAILABLE, NO_ARCHIVE (no registered basemap archive can be cut),
+            TOO_MANY_TILES, TOO_LARGE (past maps@package-max-bytes, 2 GiB, with the estimate), TOO_LARGE_FOR_USER (with
+            their other packages past maps@package-user-max-bytes, 8 GiB). The postal and Overture rows are counted in the
+            region and sized near enough. Changes nothing. MAPS_APP_SERVICES.</description>
         <implements service="org.moqui.maps.MapSourceServices.define#PackageRequest"/>
         <out-parameters>
             <parameter name="applied" type="Boolean"/>
@@ -573,9 +577,11 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="create" noun="Package">
         <description>A new offline map package of the signed-in user's, estimated as estimate#Package does it and refused
-            as it refuses (and TOO_MANY_PACKAGES past 50), its sources' registered revisions recorded, built by a run of the
-            MapPackageBuild ServiceJob as the user (build#Package), which notifies them when it ends. Out: packageId,
-            started (false when the job did not start: the package is failed), estimate. MAPS_APP_SERVICES.</description>
+            as it refuses, and TOO_MANY_PACKAGES past 50 and PACKAGE_BUSY while another of theirs is pending or building (the
+            user's account row locked, so the counts hold under concurrent requests); its sources' registered revisions
+            recorded, built by a run of the MapPackageBuild ServiceJob as the user (build#Package) when the installation has
+            room (maps@package-concurrent-builds, 1: it waits pending until then), which notifies them when it ends. Out:
+            packageId, started (false when the job did not start: the package is failed), estimate. MAPS_APP_SERVICES.</description>
         <implements service="org.moqui.maps.MapSourceServices.define#PackageRequest"/>
         <out-parameters>
             <parameter name="applied" type="Boolean"/>
@@ -591,9 +597,9 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="update" noun="Package">
         <description>Build one of the signed-in user's offline map packages again (a new revision), from what they may see
             now and the archives as registered now, estimated and refused as create#Package is; the package's earlier
-            revision stays downloadable until the new one is ready, and its file is removed then. A package being built
-            is PACKAGE_BUSY (a run that ended without saying so is ended first); another user's, or none,
-            RECORD_UNAVAILABLE. MAPS_APP_SERVICES.</description>
+            revision stays downloadable until the new one is ready, and its file is removed then. Read locked: a package
+            being built, or another of the user's, is PACKAGE_BUSY (a run that ended without saying so is ended first); another
+            user's, or none, RECORD_UNAVAILABLE. MAPS_APP_SERVICES.</description>
         <in-parameters><parameter name="packageId" required="true"/></in-parameters>
         <out-parameters>
             <parameter name="applied" type="Boolean"/>
@@ -642,9 +648,14 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapPackages.js').execute('findPackages', context))</script></actions>
     </service>
 
-    <service verb="build" noun="Package" allow-remote="false">
-        <description>The MapPackageBuild ServiceJob's run (create#Package and update#Package start it, as the user): the
-            user's own package packageId, pending or building, built as a new revision. A source registered again since the
+    <service verb="build" noun="Package" allow-remote="false" transaction="ignore">
+        <description>The MapPackageBuild ServiceJob's run (started as the user when its turn comes, scheduled by
+            create#Package and update#Package and by each build's end): the user's own package packageId, pending or
+            building, built as a new revision, while the package holds the run's buildKey (a run it no longer holds, one ended
+            as stale and asked for again, writes nothing; its files are named by its key, so two runs never share one).
+            transaction ignore: it holds no transaction while it cuts, each write its own, so its cancel and the sources'
+            revisions are read as committed. Each extract has what is left of maps@package-max-bytes, and the zip past it
+            fails the build. A source registered again since the
             build was asked fails it (checked when it starts and again when the cuts end). Each basemap archive the
             profile offers the user now is cut to the region and zooms (build#PackageExtract), with its style made
             package-relative, its sprites and the map fonts; then the outline, and as asked the user's places and the
@@ -652,12 +663,16 @@ along with this software (see the LICENSE.md file). If not, see
             in it and the active Overture imports' places and addresses in it, each with its licenses; then manifest.json
             (the package, the frozen effective configuration with every URL package-relative, the sources, each member's
             path, size and SHA-256, what was left out and what failed) and the zip (ec.resource.writeZip, the archives,
-            sprites and fonts stored as they are) at runtime://tmp/map-packages/{packageId}-{revision}.zip, its size and
+            sprites and fonts stored as they are) at runtime://tmp/map-packages/{packageId}-{revision}-{buildKey}.zip, its size and
             SHA-256 recorded. A member that cannot be read is logged and named in the manifest's failures, and the rest
             goes on. Progress and the cancel are on the row; the outcome is written in a transaction of its own, and a
             failed or cancelled build leaves no file of its own (an earlier revision stays). Another user's package changes
             nothing. Out: name, statusId and reason, for the job's notification.</description>
-        <in-parameters><parameter name="packageId" required="true"/></in-parameters>
+        <in-parameters>
+            <parameter name="packageId" required="true"/>
+            <parameter name="buildKey" required="true"><description>The build's key, given when it was asked for: a run whose
+                key the package no longer holds writes nothing</description></parameter>
+        </in-parameters>
         <out-parameters>
             <parameter name="name"/>
             <parameter name="statusId"/>

@@ -3,10 +3,13 @@
 // the MapPackageBuild job from what its owner may see, a basemap layer they may not see left out; its zip is served to
 // its owner by range with its SHA-256 as the strong ETag and refused another user, and a stale revision is 409; its
 // manifest lists every member with its size and SHA-256 and names no URL of this server; a package past
-// maps@package-max-bytes is refused at its estimate; a cancel ends a build cancelled, and an archive registered again
-// since the build was asked fails it; the Offline page renders once in qvt and once in the terminal (its own template);
-// the hourly clean removes an expired package's file and a deleted one's. The cut's bounds, the antimeridian and the writer are moqui-tools' and moqui-lib's
-// Rust tests.
+// maps@package-max-bytes is refused at its estimate; one build at a time: a user's second refused while theirs is
+// building, another user's waiting its turn and started when the build ends; a cancel ends a build cancelled, a run
+// whose key the package does not hold writes nothing, and an archive registered again since the build was asked fails
+// it; the Offline page renders once in qvt and once in the terminal (its own template); the hourly clean removes an
+// expired package's file and a deleted one's; the owner's places and the overlays they read are packaged, another
+// user's places and an unshared overlay never, a shared one until its share is revoked. The cut's bounds, the
+// antimeridian and the writer are moqui-tools' and moqui-lib's Rust tests.
 // Run: ./moq test framework --spec MapsPackages
 const S = "org.moqui.maps.MapSourceServices."
 const OWNER = "MAPS_PKG_OWNER"
@@ -102,6 +105,7 @@ function packageOf(packageId, fields) {
                 statusId: "MapPkgPending",
                 progress: 0,
                 cancelRequested: "N",
+                buildKey: "SPECKEY",
                 createdDate: ec.user.nowTimestamp
             },
             REGION,
@@ -191,6 +195,10 @@ spec({
         }
         const del = (entity, field, values) => ec.entity.find(entity).condition(field, "in", values).deleteAll()
         del("moqui.maps.MapPackage", "ownerUserId", [OWNER, OTHER])
+        // the overlay feature's rows, should it stop part way
+        del("moqui.resource.ResourceShare", "shareId", ["MAPS_PKG_SHARE_OVERLAY", "MAPS_PKG_SHARE_PLACES"])
+        del("moqui.maps.MapOverlay", "ownerUserId", [OWNER, OTHER])
+        del("moqui.resource.ResourceDrive", "driveId", ["MAPS_PKG_OWN_DRIVE", "MAPS_PKG_OTHER_DRIVE"])
         del("moqui.service.job.ServiceJobRun", "jobRunId", [FAKE_RUN])
         del("moqui.maps.MapProfile", "profileId", [PROFILE])
         del("moqui.maps.MapLayer", "layerId", [VISIBLE, HIDDEN])
@@ -268,7 +276,7 @@ feature("a package is cut from what its owner may see, its manifest lists every 
         out.estimate.estimate.omitted.some(entry => entry.id == HIDDEN && entry.kind == "basemap")
         out.created.applied == true && out.created.started == true
         out.row.statusId == "MapPkgReady" && out.row.revision == 1 && out.row.sha256.length == 64
-        out.row.location == ROOT + "/" + out.created.packageId + "-1.zip"
+        out.row.location.startsWith(ROOT + "/" + out.created.packageId + "-1-") && out.row.location.endsWith(".zip")
         out.zipSha == out.row.sha256
         out.listed.downloadUrl == "/apps/maps/Offline/package?packageId=" + out.created.packageId + "&revision=1"
         out.listed.tag == "sha256-" + out.row.sha256
@@ -297,7 +305,7 @@ feature("a package is cut from what its owner may see, its manifest lists every 
             .every(entry => !/^(\/|[a-z]+:)/i.test(entry.url || "") && !/^(\/|[a-z]+:)/i.test(entry.styleUrl || ""))
         !JSON.stringify(out.manifest).includes("/apps/maps")
         out.updated.applied == true && out.second.statusId == "MapPkgReady" && out.second.revision == 2
-        out.second.location == ROOT + "/" + out.created.packageId + "-2.zip" && out.firstAfter == false
+        out.second.location.startsWith(ROOT + "/" + out.created.packageId + "-2-") && out.firstAfter == false
         out.firstUrl.status == 409
         out.deleted.applied == true && out.fileAfter == false && out.rowAfter == false
     }
@@ -320,7 +328,7 @@ feature("a package past maps@package-max-bytes is refused at its estimate, and n
     }
 })
 
-feature("a cancel ends a build cancelled, and an archive registered again since it was asked fails it", {
+feature("one build at a time: a user's second refused, another user's waits its turn, a cancel ends a build, and a replaced archive fails one", {
     when() {
         const out = {}
         ec.artifactExecution.disableAuthz()
@@ -328,16 +336,33 @@ feature("a cancel ends a build cancelled, and an archive registered again since 
         // a build under way (its job run not ended): a cancel is asked, and the run reads it at its start
         make("moqui.service.job.ServiceJobRun", {jobRunId: FAKE_RUN, jobName: "MapPackageBuild", startTime: ec.user.nowTimestamp})
         packageOf("MAPS_PKG_CANCEL", {statusId: "MapPkgBuilding", jobRunId: FAKE_RUN, sourceRevisions: JSON.stringify({[VISIBLE]: revision})})
+        const asked = Object.assign({name: "Spec waiting", profileId: PROFILE, basemapLayerIds: [VISIBLE], includePostal: "N"}, REGION)
+        // the owner has one build under way: a second is refused; another user's waits, the installation's one build busy
+        out.ownerBusy = as(OWNER, () => invoke(S + "create#Package", asked))
+        out.waiting = as(OTHER, () => invoke(S + "create#Package", asked))
+        const waitingRow = packageRow(out.waiting.packageId) || {}
+        out.waitingRow = {statusId: waitingRow.statusId, jobRunId: waitingRow.jobRunId || null}
+        out.waitingText =
+            ((as(OTHER, () => invoke(S + "find#Packages").packageList) || []).find(entry => entry.packageId == out.waiting.packageId) || {})
+                .statusText
         out.otherCancel = as(OTHER, () => invoke(S + "cancel#Package", {packageId: "MAPS_PKG_CANCEL"}))
         out.cancel = as(OWNER, () => invoke(S + "cancel#Package", {packageId: "MAPS_PKG_CANCEL"}))
         out.asked = packageRow("MAPS_PKG_CANCEL").cancelRequested
         out.busyDelete = as(OWNER, () => invoke(S + "delete#Package", {packageId: "MAPS_PKG_CANCEL"}))
-        out.run = asSignedIn(OWNER, () => invoke(S + "build#Package", {packageId: "MAPS_PKG_CANCEL"}))
+        out.run = asSignedIn(OWNER, () => invoke(S + "build#Package", {packageId: "MAPS_PKG_CANCEL", buildKey: "SPECKEY"}))
         out.cancelled = packageRow("MAPS_PKG_CANCEL").statusId
         out.cancelledFiles = buildFiles("MAPS_PKG_CANCEL")
-        // asked for when the archive had another revision: it was registered again since
+        // the build's end gave the waiting one its turn
+        const deadline = Date.now() + 10000
+        while (Date.now() < deadline && ["MapPkgPending", "MapPkgBuilding"].includes(String(packageRow(out.waiting.packageId)?.statusId)))
+            sleep(50)
+        out.waitedStatus = packageRow(out.waiting.packageId)?.statusId
+        // asked for when the archive had another revision: it was registered again since; a run with a key the package
+        // does not hold writes nothing
         packageOf("MAPS_PKG_REPLACED", {sourceRevisions: JSON.stringify({[VISIBLE]: "an-earlier-revision"})})
-        out.replacedRun = asSignedIn(OWNER, () => invoke(S + "build#Package", {packageId: "MAPS_PKG_REPLACED"}))
+        out.strayRun = asSignedIn(OWNER, () => invoke(S + "build#Package", {packageId: "MAPS_PKG_REPLACED", buildKey: "ANOTHERKEY"}))
+        out.strayStatus = packageRow("MAPS_PKG_REPLACED").statusId
+        out.replacedRun = asSignedIn(OWNER, () => invoke(S + "build#Package", {packageId: "MAPS_PKG_REPLACED", buildKey: "SPECKEY"}))
         const replaced = packageRow("MAPS_PKG_REPLACED")
         out.replaced = {statusId: replaced.statusId, statusNote: String(replaced.statusNote || ""), location: replaced.location}
         out.replacedFiles = buildFiles("MAPS_PKG_REPLACED")
@@ -353,6 +378,11 @@ feature("a cancel ends a build cancelled, and an archive registered again since 
         return out
     },
     then(out) {
+        out.ownerBusy.reasonCode == "PACKAGE_BUSY"
+        out.waiting.applied == true && out.waitingRow.statusId == "MapPkgPending" && out.waitingRow.jobRunId == null
+        out.waitingText == "Waiting for its turn"
+        out.waitedStatus == "MapPkgReady"
+        out.strayRun.statusId == null && out.strayRun.reason.includes("another run") && out.strayStatus == "MapPkgPending"
         out.otherCancel.reasonCode == "RECORD_UNAVAILABLE"
         out.cancel.applied == true && out.asked == "Y"
         out.busyDelete.reasonCode == "PACKAGE_BUSY"
@@ -388,5 +418,78 @@ feature("the hourly clean removes the file of a package not downloaded for maps@
         out.kept && out.keptStatus == "MapPkgReady"
         !out.expired && out.oldStatus == "MapPkgExpired" && !out.oldLocation
         !out.orphan
+    }
+})
+
+feature("a package holds the owner's places and the overlays they read now, never another user's places or an unshared overlay", {
+    when() {
+        ec.artifactExecution.disableAuthz()
+        const roots = {own: "dbresource://maps-packages-spec/own", other: "dbresource://maps-packages-spec/other"}
+        for (const [driveId, ownerUserId, rootLocation] of [
+            ["MAPS_PKG_OWN_DRIVE", OWNER, roots.own],
+            ["MAPS_PKG_OTHER_DRIVE", OTHER, roots.other]
+        ])
+            make("moqui.resource.ResourceDrive", {driveId, driveName: "Maps packages " + driveId, driveKindEnumId: "RdkShared", rootLocation,
+                ownerUserId, createdDate: ec.user.nowTimestamp})
+        const point = label => JSON.stringify({type: "FeatureCollection",
+            features: [{type: "Feature", properties: {label}, geometry: {type: "Point", coordinates: [30, 30]}}]})
+        const overlays = [
+            ["MAPS_PKG_P_OWN", OWNER, "MAPS_PKG_OWN_DRIVE", roots.own, "Maps/places.geojson", "Y"],
+            ["MAPS_PKG_O_MINE", OWNER, "MAPS_PKG_OWN_DRIVE", roots.own, "Maps/overlays/mine.geojson", "N"],
+            ["MAPS_PKG_O_PRIVATE", OTHER, "MAPS_PKG_OTHER_DRIVE", roots.other, "private.geojson", "N"],
+            ["MAPS_PKG_O_SHARED", OTHER, "MAPS_PKG_OTHER_DRIVE", roots.other, "shared.geojson", "N"],
+            ["MAPS_PKG_P_OTHER", OTHER, "MAPS_PKG_OTHER_DRIVE", roots.other, "Maps/places.geojson", "Y"]
+        ]
+        for (const [overlayId, ownerUserId, driveId, root, path, isPlaces] of overlays) {
+            ec.resource.getLocationReference(root + "/" + path).putText(point(overlayId))
+            make("moqui.maps.MapOverlay", {overlayId, ownerUserId, label: overlayId, driveId, path, formatEnumId: "MLF_GEOJSON", isPlaces,
+                featureCount: 1, rejectedCount: 0, minLongitude: 30, minLatitude: 30, maxLongitude: 30, maxLatitude: 30,
+                createdDate: ec.user.nowTimestamp})
+        }
+        // the other user shares one overlay and their places with the owner, not the private overlay
+        for (const [shareId, path] of [
+            ["MAPS_PKG_SHARE_OVERLAY", "shared.geojson"],
+            ["MAPS_PKG_SHARE_PLACES", "Maps/places.geojson"]
+        ])
+            make("moqui.resource.ResourceShare", {shareId, driveId: "MAPS_PKG_OTHER_DRIVE", path, sharedWithUserId: OWNER,
+                permissionEnumId: "RspView", createdByUserId: OTHER, createdDate: ec.user.nowTimestamp})
+        const members = (packageId, revision) => {
+            const deadline = Date.now() + 10000
+            while (Date.now() < deadline && String(packageRow(packageId)?.revision) !== String(revision)) sleep(50)
+            ec.artifactExecution.disableAuthz()
+            const row = packageRow(packageId) || {}
+            removeTree(UNZIPPED)
+            const paths = row.location && String(row.revision) === String(revision) ? unzipStored(row.location, UNZIPPED) : []
+            const manifest = paths.length ? JSON.parse(ec.resource.getLocationText(UNZIPPED + "/manifest.json") || "{}") : {}
+            return {statusId: row.statusId, paths, layers: Array.from(manifest.configuration?.layers || []).map(layer => layer.id)}
+        }
+        const asked = Object.assign({name: "Spec overlays", profileId: PROFILE, basemapLayerIds: [VISIBLE], includePlaces: "Y",
+            includeOverlays: "Y", includePostal: "N", includeOverture: "N"}, REGION)
+        const created = as(OWNER, () => invoke(S + "create#Package", asked))
+        const first = members(created.packageId, 1)
+        // the share revoked: the next build leaves the overlay out
+        ec.artifactExecution.disableAuthz()
+        const share = ec.entity.find("moqui.resource.ResourceShare").condition("shareId", "MAPS_PKG_SHARE_OVERLAY").one()
+        share.set("revokedDate", ec.user.nowTimestamp)
+        share.update()
+        const updated = as(OWNER, () => invoke(S + "update#Package", {packageId: created.packageId}))
+        const second = members(created.packageId, 2)
+        as(OWNER, () => invoke(S + "delete#Package", {packageId: created.packageId}))
+        ec.artifactExecution.disableAuthz()
+        ec.entity.find("moqui.resource.ResourceShare").condition("shareId", "in", ["MAPS_PKG_SHARE_OVERLAY", "MAPS_PKG_SHARE_PLACES"]).deleteAll()
+        ec.entity.find("moqui.maps.MapOverlay").condition("overlayId", "in", overlays.map(row => row[0])).deleteAll()
+        for (const [, , , root, path] of overlays) removeTree(root + "/" + path)
+        ec.entity.find("moqui.resource.ResourceDrive").condition("driveId", "in", ["MAPS_PKG_OWN_DRIVE", "MAPS_PKG_OTHER_DRIVE"]).deleteAll()
+        return {created, first, updated, second}
+    },
+    then({created, first, updated, second}) {
+        created.applied == true && first.statusId == "MapPkgReady"
+        first.paths.includes("places.geojson") && first.paths.includes("overlays/MAPS_PKG_O_MINE.geojson")
+        first.paths.includes("overlays/MAPS_PKG_O_SHARED.geojson")
+        !first.paths.some(path => path.includes("MAPS_PKG_O_PRIVATE") || path.includes("MAPS_PKG_P_OTHER"))
+        first.layers.includes("places") && first.layers.includes("overlay:MAPS_PKG_O_SHARED") && !first.layers.includes("overlay:MAPS_PKG_P_OTHER")
+        updated.applied == true && second.statusId == "MapPkgReady"
+        second.paths.includes("overlays/MAPS_PKG_O_MINE.geojson") && !second.paths.includes("overlays/MAPS_PKG_O_SHARED.geojson")
+        second.paths.includes("places.geojson") && !second.paths.some(path => path.includes("MAPS_PKG_P_OTHER"))
     }
 })

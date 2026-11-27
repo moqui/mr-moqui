@@ -9,7 +9,7 @@
 // now, each cut to the box and zooms (build#PackageExtract: moqui-tools maps_extract.rs), their styles, sprites and fonts,
 // the outline, and as the owner asked their places, the overlays they can read now that meet the box (a tiled overlay as
 // its tiles' extract), the postal codes and the Overture places and addresses of the box, then a manifest and the zip
-// (ec.resource.writeZip, every member stored as it is), at runtime://tmp/map-packages/{packageId}-{revision}.zip. A
+// (ec.resource.writeZip, every member stored as it is), at runtime://tmp/map-packages/{packageId}-{revision}-{buildKey}.zip. A
 // member that cannot be read is logged and named in the manifest's failures, and the rest goes on; an archive registered
 // again before or while it is cut fails the build (its recorded revision is checked when the build starts and when the
 // cuts end, and the cut checks its tag when it starts and ends). Record layers (an app's records) and a provider's remote
@@ -37,7 +37,12 @@ const STALE_MS = 60 * 60 * 1000
 const MAX_PACKAGES = 50
 const MAX_ZOOM = 16
 const DEFAULT_MAX_BYTES = 2147483648
+const DEFAULT_USER_MAX_BYTES = 8589934592
+const DEFAULT_CONCURRENT_BUILDS = 1
 const DEFAULT_KEEP_DAYS = 30
+// what a lookup row takes in its member, near enough, for the estimate
+const POSTAL_ROW_BYTES = 200
+const OVERTURE_ROW_BYTES = {PLACES: 400, ADDRESSES: 250}
 // the rows of a lookup member at most: a region's postal codes, its Overture places and addresses
 const MAX_POSTAL = 50000
 const MAX_OVERTURE = 200000
@@ -77,6 +82,14 @@ const find = (entity, conditions) =>
 const one = (entity, conditions) => find(entity, conditions).one()
 const maxBytes = () => (Number(conf("maps@package-max-bytes")) > 0 ? Number(conf("maps@package-max-bytes")) : DEFAULT_MAX_BYTES)
 const keepDays = () => (Number(conf("maps@package-keep-days")) > 0 ? Number(conf("maps@package-keep-days")) : DEFAULT_KEEP_DAYS)
+const userMaxBytes = () =>
+    Number(conf("maps@package-user-max-bytes")) > 0 ? Number(conf("maps@package-user-max-bytes")) : DEFAULT_USER_MAX_BYTES
+const concurrentBuilds = () =>
+    Number.isInteger(Number(conf("maps@package-concurrent-builds"))) && Number(conf("maps@package-concurrent-builds")) > 0
+        ? Number(conf("maps@package-concurrent-builds"))
+        : DEFAULT_CONCURRENT_BUILDS
+// a build's own key, in its row while it is the package's build, its job's parameters and its files' names
+const newBuildKey = () => (text(ec.user.randomString(20)).replace(/[^A-Za-z0-9]/g, "") + Date.now().toString(36)).slice(0, 24)
 const bytesText = value => {
     const bytes = Number(value)
     if (!Number.isFinite(bytes) || bytes < 0) return ""
@@ -255,7 +268,8 @@ function overlaysOf(fields, box) {
     if (fields.includeOverlays !== "Y" && fields.includePlaces !== "Y") return []
     const found = Array.from(overlays().execute("findOverlays", {}).overlayList || [])
     return found.filter(entry => {
-        if (entry.isPlaces && entry.isOwn) return fields.includePlaces === "Y"
+        // another user's places are theirs, even shared: never in a package
+        if (entry.isPlaces) return entry.isOwn && fields.includePlaces === "Y"
         return fields.includeOverlays === "Y" && meets(entry.bounds, box)
     })
 }
@@ -273,9 +287,70 @@ const extractParameters = (source, fields) => ({
     maxZoom: num(fields.maxZoom)
 })
 
-// What the package would hold, from the archives' directories: {ok, bytes, tileCount, layers, omitted, revisions} or a
-// refusal (TOO_LARGE past maps@package-max-bytes, with the estimate)
-function estimateOf(fields) {
+// The reasons of an extract's refusal a user is shown as they are (they name no path of the server); any other is
+// logged where it failed and shown in general words
+const SHOWN_REASONS = ["NO_TILES", "NO_ZOOMS", "TOO_LARGE", "TOO_MANY_TILES", "BBOX_INVALID", "ZOOMS_INVALID"]
+const reasonOf = out => (SHOWN_REASONS.includes(text(out?.reasonCode)) && text(out?.reason)) || L("the map archive could not be read")
+
+// The lookup members' rows in the box near enough, from counts: {postal, overture: {PLACES, ADDRESSES}} with their bytes
+function lookupBytes(fields, box) {
+    const cf = ec.entity.conditionFactory
+    const spans = box.west > box.east ? [[box.west, 180], [-180, box.east]] : [[box.west, box.east]]
+    const inBox = () =>
+        cf.makeCondition(
+            [
+                cf.makeCondition("latitude", "greater-equals", box.south),
+                cf.makeCondition("latitude", "less-equals", box.north),
+                spans
+                    .map(([from, to]) =>
+                        cf.makeCondition(
+                            cf.makeCondition("longitude", "greater-equals", from),
+                            "and",
+                            cf.makeCondition("longitude", "less-equals", to)
+                        )
+                    )
+                    .reduce((all, each) => (all ? cf.makeCondition(all, "or", each) : each), null)
+            ],
+            "and"
+        )
+    let bytes = 0
+    try {
+        if (fields.includePostal === "Y")
+            bytes += Math.min(MAX_POSTAL, Number(ec.entity.find("moqui.basic.GeoPoint").condition(inBox()).disableAuthz().count())) * POSTAL_ROW_BYTES
+        if (fields.includeOverture === "Y")
+            for (const [themeId, entity] of [
+                ["PLACES", "moqui.maps.OverturePlace"],
+                ["ADDRESSES", "moqui.maps.OvertureAddress"]
+            ]) {
+                const imports = Array.from(find("moqui.maps.OvertureRegionTheme", {themeId}).list())
+                    .map(row => text(row.activeImportId))
+                    .filter(id => id)
+                if (!imports.length) continue
+                const rows = Number(
+                    ec.entity.find(entity).condition("importId", "in", imports).condition(inBox()).disableAuthz().count()
+                )
+                bytes += Math.min(MAX_OVERTURE, rows) * OVERTURE_ROW_BYTES[themeId]
+            }
+    } catch (err) {
+        ec.logger.warn("Map package estimate: the lookup rows could not be counted: " + (err?.message ?? err))
+    }
+    return bytes
+}
+
+// The bytes the user's other packages hold: their files, or a busy one's estimate
+function userBytes(exceptPackageId) {
+    let total = 0
+    for (const row of Array.from(find(PACKAGE, {ownerUserId: ec.user.userId}).selectField("packageId,statusId,size,estimatedSize").list())) {
+        if (exceptPackageId && String(row.packageId) === String(exceptPackageId)) continue
+        total += BUSY.includes(text(row.statusId)) ? num(row.estimatedSize) || 0 : num(row.size) || 0
+    }
+    return total
+}
+
+// What the package would hold, from the archives' directories and counts of the lookup rows: {ok, estimate, revisions}
+// or a refusal: NO_ARCHIVE (no registered basemap archive to cut), TOO_LARGE past maps@package-max-bytes, TOO_LARGE_FOR_USER
+// past maps@package-user-max-bytes with the user's other packages (exceptPackageId, the one updated, left out)
+function estimateOf(fields, exceptPackageId) {
     const config = effectiveConfig(fields.profileId)
     if (!config) return refused("CONFIG_UNAVAILABLE", L("Your map configuration could not be read"))
     const box = boxOf(fields)
@@ -290,7 +365,8 @@ function estimateOf(fields) {
         const out = probe(S + "estimate#PackageExtract", Object.assign(extractParameters(source, fields), {maxBytes: limit}), errors)
         if (!out || !out.valid) {
             if (text(out?.reasonCode) === "TOO_LARGE" || text(out?.reasonCode) === "TOO_MANY_TILES") return out
-            omitted.push({id, kind: "archive", reason: text(out?.reason) || errors[0] || L("not read")})
+            if (errors.length) ec.logger.warn("Map package estimate: " + id + " not estimated: " + errors[0])
+            omitted.push({id, kind: "archive", reason: reasonOf(out)})
             return null
         }
         layers.push({id, label, bytes: Number(out.bytes) || 0, tileCount: Number(out.tileCount) || 0,
@@ -302,9 +378,17 @@ function estimateOf(fields) {
     }
     for (const archive of archives) {
         const stop = estimateOne(archive.layerIds[0], archive.entries.map(entry => entry.label).join(", "), archive.source)
-        if (stop) return refused(text(stop.reasonCode), text(stop.reason))
-        for (const id of archive.layerIds.slice(1)) revisions[id] = archive.source.revision
+        if (stop) return refused(text(stop.reasonCode), reasonOf(stop))
+        if (revisions[archive.layerIds[0]] !== undefined)
+            for (const id of archive.layerIds.slice(1)) revisions[id] = archive.source.revision
     }
+    // a package needs a basemap archive of this server: a provider's tiles are not packaged
+    if (!layers.length)
+        return refused(
+            "NO_ARCHIVE",
+            L("No map archive of this server can be cut for this region: an offline map needs a basemap registered under Maps › Configuration › Archives"),
+            {estimate: {omitted}}
+        )
     for (const entry of overlaysOf(fields, box)) {
         if (entry.tilesStatus === "ready") {
             const source = sources().packageOverlayArchive(entry.overlayId)
@@ -313,9 +397,10 @@ function estimateOf(fields) {
                 continue
             }
             const stop = estimateOne("overlay:" + entry.overlayId, entry.label, source)
-            if (stop) return refused(text(stop.reasonCode), text(stop.reason))
+            if (stop) return refused(text(stop.reasonCode), reasonOf(stop))
         } else bytes += Math.max(1024, (Number(entry.featureCount) || 0) * 200)
     }
+    bytes += lookupBytes(fields, box)
     // record layers and a profile's other overlay layers are not packaged in this build
     for (const layer of Array.from(config.recordLayers || []))
         omitted.push({id: layer.id, kind: "record", reason: L("a record layer is read at each request, not packaged")})
@@ -328,6 +413,17 @@ function estimateOf(fields) {
             say("The package would be about ${size}, more than the ${limit} a package may be: choose a smaller region or fewer zooms", {
                 size: bytesText(bytes),
                 limit: bytesText(limit)
+            }),
+            {estimate}
+        )
+    const others = userBytes(exceptPackageId)
+    const userLimit = userMaxBytes()
+    if (others + bytes > userLimit)
+        return refused(
+            "TOO_LARGE_FOR_USER",
+            say("Your offline maps would hold about ${size} in all, more than the ${limit} you may keep: delete one first", {
+                size: bytesText(others + bytes),
+                limit: bytesText(userLimit)
             }),
             {estimate}
         )
@@ -344,25 +440,71 @@ function estimatePackage(p) {
     return {applied: true, reasonCode: null, reason: null, estimate: found.estimate}
 }
 
-// The package's run handed to a worker when this transaction commits; it runs as the user. The job's rows are no group's
-// to read: it is started as the framework, for the owner checked here
+// A package's run handed to a worker when this transaction commits, with its build's key; it runs as the package's owner.
+// The job's rows are no group's to read: it is started as the framework, for the owner checked when it was asked for
 function startBuild(row) {
-    const jobRunId = quietly(() => ec.service.job(BUILD_JOB).parameters({packageId: String(row.packageId)}).run())
+    const jobRunId = quietly(() =>
+        ec.service
+            .job(BUILD_JOB)
+            .parameters({packageId: String(row.packageId), buildKey: text(row.buildKey)})
+            .run()
+    )
     if (jobRunId) {
         row.set("jobRunId", String(jobRunId))
         writeRow(row, false)
         return true
     }
     ec.message.clearErrors()
-    row.setAll({statusId: "MapPkgFailed", statusNote: L("The build did not start")})
+    row.setAll({statusId: "MapPkgFailed", statusNote: L("The build did not start"), buildKey: null})
     writeRow(row, false)
     return false
+}
+
+// Start the waiting builds the installation has room for (maps@package-concurrent-builds): the busy packages are read
+// locked, so two schedulers at once count each other's; a package handed to the job (its jobRunId) counts, a pending one
+// without waits its turn, oldest first. Called where a build is asked for and where one ends, and by the hourly clean.
+function scheduleBuilds() {
+    try {
+        const busy = Array.from(
+            ec.entity
+                .find(PACKAGE)
+                .condition("statusId", "in", BUSY)
+                .orderBy("createdDate,packageId")
+                .forUpdate(true)
+                .disableAuthz()
+                .list()
+        )
+        let running = busy.filter(row => text(row.jobRunId)).length
+        for (const row of busy) {
+            if (running >= concurrentBuilds()) break
+            if (text(row.jobRunId) || !text(row.buildKey)) continue
+            if (startBuild(row)) running++
+        }
+    } catch (err) {
+        ec.logger.error("Map packages: the waiting builds were not started: " + (err?.message ?? err))
+    }
+}
+
+// The signed-in user's account row, locked: what serializes their creates and updates, so their counts hold
+const lockUser = () => find("moqui.security.UserAccount", {userId: ec.user.userId}).forUpdate(true).one()
+// A refusal when the user has a package pending or building (one at a time), but the one given
+function userBusy(exceptPackageId) {
+    const rows = Array.from(
+        ec.entity.find(PACKAGE).condition("ownerUserId", ec.user.userId).condition("statusId", "in", BUSY).disableAuthz().list()
+    )
+    const other = rows.find(row => String(row.packageId) !== String(exceptPackageId || "") && !endStale(row))
+    return other
+        ? refused("PACKAGE_BUSY", say("Your offline map ${name} is being built: wait for it to end, or cancel it", {name: text(other.name)}))
+        : null
 }
 
 function createPackage(p) {
     if (!text(ec.user.userId)) throw new Error(L("Sign in to make an offline map"))
     const request = requestOf(p)
     if (!request.ok) return request
+    lockUser()
+    const busy = userBusy(null)
+    if (busy) return busy
     const count = Number(find(PACKAGE, {ownerUserId: ec.user.userId}).count())
     if (count >= MAX_PACKAGES)
         return refused("TOO_MANY_PACKAGES", say("You have ${count} offline maps: delete one first", {count}))
@@ -379,40 +521,47 @@ function createPackage(p) {
             estimatedSize: found.estimate.bytes,
             tileCount: found.estimate.tileCount,
             sourceRevisions: JSON.stringify(found.revisions),
+            buildKey: newBuildKey(),
             createdDate: ec.user.nowTimestamp
         })
     )
     writeRow(row, true)
-    const started = startBuild(row)
+    scheduleBuilds()
+    const started = text(packageStatus(row.packageId)) !== "MapPkgFailed"
     return {applied: true, reasonCode: null, reason: null, packageId: String(row.packageId), started, estimate: found.estimate}
 }
+const packageStatus = packageId => one(PACKAGE, {packageId})?.statusId
 
-// The user's own package, or null
-function ownPackage(packageId) {
+// The user's own package (locked with forUpdate), or null
+function ownPackage(packageId, forUpdate) {
     const id = text(packageId)
-    const row = id ? one(PACKAGE, {packageId: id}) : null
+    const row = id ? find(PACKAGE, {packageId: id}).forUpdate(!!forUpdate).one() : null
     return row && text(ec.user.userId) && row.ownerUserId === ec.user.userId ? row : null
 }
 const notThere = () => refused("RECORD_UNAVAILABLE", L("The offline map is not available"))
 
-// Whether a busy package's run has ended without saying so: no run recorded, its ServiceJobRun gone or ended, or no word
-// from it (its row's last write) for STALE_MS
+// Whether a busy package's run has ended without saying so: its ServiceJobRun gone or ended, or no word from it (its
+// row's last write) for STALE_MS. A pending package not yet handed to the job waits its turn: it has not ended; a
+// building one with no run has.
 function runEnded(row) {
     const jobRunId = text(row.jobRunId)
-    if (!jobRunId) return true
+    if (!jobRunId) return text(row.statusId) !== "MapPkgPending"
     const run = one("moqui.service.job.ServiceJobRun", {jobRunId})
     if (!run || run.endTime) return true
     const since = millisOf(row.lastUpdatedStamp) ?? millisOf(run.startTime)
     return since !== null && Date.now() - since > STALE_MS
 }
-// A busy package whose run has ended is ended here: failed, or cancelled when a cancel was asked
+// A busy package whose run has ended is ended here: failed, or cancelled when a cancel was asked. Its build's key goes,
+// so a run that was only slow stops at its next batch and writes nothing
 function endStale(row) {
     if (!BUSY.includes(text(row.statusId)) || !runEnded(row)) return false
     const cancelled = row.cancelRequested === "Y"
     row.setAll({
         statusId: cancelled ? "MapPkgCancelled" : "MapPkgFailed",
         statusNote: cancelled ? L("Cancelled") : L("The build stopped without finishing"),
-        cancelRequested: "N"
+        cancelRequested: "N",
+        buildKey: null,
+        jobRunId: null
     })
     writeRow(row, false)
     return true
@@ -420,13 +569,16 @@ function endStale(row) {
 
 function updatePackage(p) {
     if (!text(ec.user.userId)) throw new Error(L("Sign in to update an offline map"))
-    const row = ownPackage(p.packageId)
+    lockUser()
+    const row = ownPackage(p.packageId, true)
     if (!row) return notThere()
     if (BUSY.includes(text(row.statusId)) && !endStale(row))
         return refused("PACKAGE_BUSY", L("The offline map is being built: wait for it to end, or cancel it"))
+    const busy = userBusy(row.packageId)
+    if (busy) return busy
     const request = requestOf(row.getMap())
     if (!request.ok) return request
-    const found = estimateOf(request.fields)
+    const found = estimateOf(request.fields, row.packageId)
     if (!found.ok) return found
     row.setAll({
         statusId: "MapPkgPending",
@@ -436,21 +588,28 @@ function updatePackage(p) {
         estimatedSize: found.estimate.bytes,
         tileCount: found.estimate.tileCount,
         sourceRevisions: JSON.stringify(found.revisions),
+        buildKey: newBuildKey(),
         jobRunId: null
     })
     writeRow(row, false)
-    const started = startBuild(row)
+    scheduleBuilds()
+    const started = text(packageStatus(row.packageId)) !== "MapPkgFailed"
     return {applied: true, reasonCode: null, reason: null, packageId: String(row.packageId), started, estimate: found.estimate}
 }
 
 // ===== cancel#Package, delete#Package, find#Packages =====
 function cancelPackage(p) {
     if (!text(ec.user.userId)) throw new Error(L("Sign in to cancel"))
-    const row = ownPackage(p.packageId)
+    const row = ownPackage(p.packageId, true)
     if (!row || !BUSY.includes(text(row.statusId))) return refused("RECORD_UNAVAILABLE", L("The offline map is not being built"))
     row.set("cancelRequested", "Y")
-    // a run that has ended without saying so is ended now; a live one stops at its next batch of tiles
-    if (!endStale(row)) writeRow(row, false)
+    if (text(row.statusId) === "MapPkgPending" && !text(row.jobRunId)) {
+        // waiting its turn: it ends now, and never starts
+        row.setAll({statusId: "MapPkgCancelled", statusNote: L("Cancelled"), cancelRequested: "N", buildKey: null})
+        writeRow(row, false)
+    } else if (!endStale(row)) writeRow(row, false)
+    // a run that has ended without saying so is ended now, its turn given to the next; a live one stops at its next batch
+    scheduleBuilds()
     return {applied: true, reasonCode: null, reason: null}
 }
 
@@ -471,7 +630,7 @@ function removeTree(location) {
 
 function deletePackage(p) {
     if (!text(ec.user.userId)) throw new Error(L("Sign in to delete an offline map"))
-    const row = ownPackage(p.packageId)
+    const row = ownPackage(p.packageId, true)
     if (!row) return notThere()
     if (BUSY.includes(text(row.statusId)) && !endStale(row))
         return refused("PACKAGE_BUSY", L("The offline map is being built: cancel it first"))
@@ -504,7 +663,8 @@ function packageEntry(row) {
         maxZoom: num(row.maxZoom),
         zoomsText: num(row.minZoom) + "–" + num(row.maxZoom),
         statusId,
-        statusText: L(STATUS_TEXT[statusId] || statusId),
+        statusText:
+            statusId === "MapPkgPending" && !text(row.jobRunId) ? L("Waiting for its turn") : L(STATUS_TEXT[statusId] || statusId),
         statusNote: text(row.statusNote) || null,
         progress: num(row.progress),
         revision: num(row.revision),
@@ -598,6 +758,8 @@ function postalRows(box) {
             .disableAuthz()
             .list()
     )
+    // the points of the box cut at their limit: some codes may be left out
+    const pointsCut = points.length >= MAX_POSTAL * 4
     const pointOf = new Map(points.map(point => [point.geoPointId, point]))
     const best = new Map()
     const ids = Array.from(pointOf.keys())
@@ -663,7 +825,7 @@ function postalRows(box) {
         const set = one("moqui.maps.GeoDataSet", {dataSetId})
         return {dataSetId, license: text(set?.licenseName) || null, licenseUrl: text(set?.licenseUrl) || null, attribution: text(set?.attribution) || null}
     })
-    return {rows, licenses, truncated: rows.length >= MAX_POSTAL}
+    return {rows, licenses, truncated: pointsCut || rows.length >= MAX_POSTAL}
 }
 
 // The rows of the active Overture imports of a theme whose point is in the box, with each import's licenses
@@ -729,38 +891,108 @@ function frozenConfig(config, build) {
     return frozen
 }
 
+// The run as the package's owner: a run is started by whoever's request or job found the installation room for it
+// (scheduleBuilds), so it signs in as the owner, whose build key the row holds (their own create or update asked for this
+// build), reads and cuts only what the owner may see, and signs back after; a run whose key the package does not hold
+// does nothing
 function buildPackage(p) {
+    const packageId = text(p.packageId)
+    const row = packageId ? one(PACKAGE, {packageId}) : null
+    const buildKey = text(p.buildKey)
+    if (!row || !buildKey || text(row.buildKey) !== buildKey)
+        return {name: text(row?.name) || null, statusId: null, reason: L("The offline map is built by another run")}
+    const before = text(ec.user.username)
+    const switched = text(ec.user.userId) !== text(row.ownerUserId)
+    if (switched) {
+        const account = one("moqui.security.UserAccount", {userId: row.ownerUserId})
+        const signedIn = account && quietly(() => ec.user.internalLoginUser(text(account.username)))
+        ec.message.clearErrors()
+        if (!signedIn) {
+            ec.logger.error("Map package " + packageId + ": its owner could not be signed in for its build")
+            return {statusId: null, reason: L("The offline map is not available")}
+        }
+    }
+    try {
+        return buildAsOwner(p)
+    } finally {
+        if (switched) {
+            if (before) ec.user.internalLoginUser(before)
+            else ec.user.logoutLocal()
+            ec.message.clearErrors()
+        }
+    }
+}
+
+// Tell the owner how their build ended: only them (directOnly), the package's name and outcome
+function notifyOwner(row, statusId, note) {
+    try {
+        const outcome =
+            statusId === "MapPkgReady" ? L("ready to download") : statusId === "MapPkgCancelled" ? L("cancelled") : L("not built")
+        ec.makeNotificationMessage()
+            .topic(BUILD_JOB)
+            .userId(row.ownerUserId)
+            .directOnly(true)
+            .message({packageId: String(row.packageId), name: text(row.name), statusId, outcome, reason: note || null})
+            .title("Offline map ${name}: ${outcome}")
+            .link("/qapps/maps/Offline")
+            .type(statusId === "MapPkgReady" ? "success" : statusId === "MapPkgCancelled" ? "info" : "warning")
+            .send()
+    } catch (err) {
+        ec.logger.warn("Map package " + row.packageId + ": its owner was not notified: " + (err?.message ?? err))
+    }
+}
+
+function buildAsOwner(p) {
     const packageId = text(p.packageId)
     const row = packageId ? one(PACKAGE, {packageId}) : null
     if (!row || !text(ec.user.userId) || row.ownerUserId !== ec.user.userId)
         return {statusId: null, reason: L("The offline map is not available")}
     const name = text(row.name)
+    // this run's build: the key it was started with is still the package's, or another run (an Update after this one was
+    // ended as stale) holds it and this one writes nothing
+    const buildKey = text(p.buildKey)
+    if (!buildKey || text(row.buildKey) !== buildKey)
+        return {name, statusId: text(row.statusId) || null, reason: L("The offline map is built by another run")}
     if (!BUSY.includes(text(row.statusId))) return {name, statusId: text(row.statusId) || null}
     const next = (num(row.revision) || 0) + 1
-    const folder = ROOT + "/" + safeName(packageId) + "-" + next
+    // the build's own files, named by its key: two runs never share one
+    const folder = ROOT + "/" + safeName(packageId) + "-" + next + "-" + safeName(buildKey)
     const zip = folder + ".zip"
+    const limit = maxBytes()
     // The outcome on the row as it is now (the extract wrote its progress, a cancel may have been asked), in a transaction
-    // of its own, so a failure later in the job does not leave it building; the build's files removed unless it is ready
+    // of its own, only while the row is still this build's; the build's files removed unless it is ready and written.
+    // Then the next waiting build has its turn
     const end = (statusId, note, fields) => {
         if (statusId !== "MapPkgReady") removeTree(zip)
         removeTree(folder)
         let current = null
         ec.transaction.runRequireNew(60, "Error writing a map package's outcome", () => {
             current = find(PACKAGE, {packageId}).forUpdate(true).one()
-            if (!current) return
-            current.setAll(Object.assign({statusId, statusNote: note || null, cancelRequested: "N"}, fields || {}))
+            if (!current || text(current.buildKey) !== buildKey) {
+                current = null
+                return
+            }
+            current.setAll(
+                Object.assign({statusId, statusNote: note || null, cancelRequested: "N", buildKey: null, jobRunId: null}, fields || {})
+            )
             writeRow(current, false)
         })
         if (!current) removeTree(zip)
         if (statusId !== "MapPkgReady") ec.logger.warn("Map package " + packageId + " not built: " + (note || statusId))
-        return {name, statusId, reason: note || null}
+        if (current) notifyOwner(row, statusId, note)
+        ec.transaction.runRequireNew(60, "Error starting the next map package build", scheduleBuilds)
+        return {name, statusId: current ? statusId : null, reason: current ? note || null : L("The offline map is built by another run")}
     }
     const fresh = () => find(PACKAGE, {packageId}).one()
-    const cancelled = () => fresh()?.cancelRequested === "Y"
+    // a cancel asked, or the package no longer this build's
+    const cancelled = () => {
+        const now = fresh()
+        return !now || now.cancelRequested === "Y" || text(now.buildKey) !== buildKey
+    }
     if (row.cancelRequested === "Y") return end("MapPkgCancelled", L("Cancelled"))
     ec.transaction.runRequireNew(60, "Error writing a map package's state", () => {
         const current = find(PACKAGE, {packageId}).forUpdate(true).one()
-        if (current) {
+        if (current && text(current.buildKey) === buildKey) {
             current.setAll({statusId: "MapPkgBuilding", progress: 0})
             writeRow(current, false)
         }
@@ -850,14 +1082,21 @@ function buildPackage(p) {
         if (entry.tilesStatus === "ready") extractable.push({kind: "overlay", entry, source: sources().packageOverlayArchive(entry.overlayId)})
     const share = extractable.length ? 80 / extractable.length : 0
     let progressAt = 0
+    // the bytes the members so far take: each extract has what is left of maps@package-max-bytes
+    const used = () => build.members.reduce((sum, member) => sum + (Number(member.size) || 0), 0)
+    const tooLarge = () =>
+        say("The offline map passed the ${limit} a package may be: choose a smaller region or fewer zooms", {limit: bytesText(limit)})
     const extract = (id, source, path) => {
         const errors = []
+        const left = limit - used()
+        if (left <= 0) return {stop: "TOO_LARGE", reason: tooLarge()}
         const out = probe(
             S + "build#PackageExtract",
             Object.assign(extractParameters(source, fields), {
-                maxBytes: maxBytes(),
+                maxBytes: left,
                 target: folder + "/" + path,
                 packageId,
+                buildKey,
                 progressFrom: Math.round(progressAt),
                 progressTo: Math.round(progressAt + share)
             }),
@@ -869,8 +1108,9 @@ function buildPackage(p) {
             return {ok: true, out}
         }
         const code = text(out?.reasonCode)
-        if (code === "CANCELLED" || code === "SOURCE_CHANGED" || code === "TOO_LARGE") return {stop: code, reason: text(out?.reason)}
-        build.failures.push({path, error: text(out?.reason) || errors[0] || L("not cut")})
+        if (code === "TOO_LARGE") return {stop: code, reason: tooLarge()}
+        if (code === "CANCELLED" || code === "SOURCE_CHANGED") return {stop: code, reason: ""}
+        build.failures.push({path, error: reasonOf(out)})
         ec.logger.error("Map package " + packageId + ": " + id + " could not be cut: " + (text(out?.reason) || errors[0] || ""))
         return {ok: false}
     }
@@ -922,13 +1162,16 @@ function buildPackage(p) {
         }
     }
     if (cancelled()) return end("MapPkgCancelled", L("Cancelled"))
+    // a package with no basemap cut is no offline map
+    if (!build.basemaps.length) return end("MapPkgFailed", L("No basemap archive could be cut for the region"))
     // the overlays drawn whole and the places, as the overlay transition gives them to the owner now
     for (const entry of own) {
         if (entry.tilesStatus === "ready") continue
         const content = overlays().execute("overlayContent", {overlayId: entry.overlayId})
         const path = entry.isPlaces && entry.isOwn ? "places.geojson" : "overlays/" + safeName(entry.overlayId) + ".geojson"
         if (!content || !content.ok) {
-            build.failures.push({path, error: text(content?.reason) || L("not read")})
+            build.failures.push({path, error: L("the overlay could not be read")})
+            ec.logger.warn("Map package " + packageId + ": " + path + " not read: " + text(content?.reason))
             continue
         }
         if (build.addText(path, String(content.geojson)))
@@ -968,6 +1211,7 @@ function buildPackage(p) {
     if (cancelled()) return end("MapPkgCancelled", L("Cancelled"))
     // the archives cut as they were asked for: one registered again while it was cut fails the build
     if (replaced()) return end("MapPkgFailed", changed)
+    if (used() > limit) return end("MapPkgFailed", tooLarge())
     const builtDate = ec.user.nowTimestamp
     const manifest = {
         schemaVersion: SCHEMA_VERSION,
@@ -1016,6 +1260,7 @@ function buildPackage(p) {
     }
     const facts = fileFacts(zip)
     if (!facts) return end("MapPkgFailed", L("The package file could not be read back"))
+    if (facts.size > limit) return end("MapPkgFailed", tooLarge())
     if (cancelled()) return end("MapPkgCancelled", L("Cancelled"))
     const previous = text(row.location)
     const done = end(
@@ -1025,7 +1270,7 @@ function buildPackage(p) {
         {progress: 100, revision: next, location: zip, size: facts.size, sha256: facts.sha256, builtDate}
     )
     // the old revision's file goes once the new one is ready
-    if (previous && previous !== zip && fresh()?.location === zip) removeTree(previous)
+    if (done.statusId && previous && previous !== zip && fresh()?.location === zip) removeTree(previous)
     return done
 }
 
@@ -1099,18 +1344,22 @@ function recordDownload(row) {
 function cleanPackages() {
     let removedCount = 0
     const cutoff = Date.now() - keepDays() * 86400000
-    const rows = Array.from(find(PACKAGE, {}).selectField("packageId,statusId,location,builtDate,lastDownloadDate,revision").list())
+    const rows = Array.from(
+        find(PACKAGE, {}).selectField("packageId,statusId,location,builtDate,lastDownloadDate,revision,buildKey").list()
+    )
     const byId = new Map(rows.map(row => [String(row.packageId), row]))
+    const named = new Set(rows.map(row => text(row.location)).filter(location => location))
     for (const row of rows) {
         if (BUSY.includes(text(row.statusId)) || !text(row.location)) continue
         const last = Math.max(millisOf(row.lastDownloadDate) ?? 0, millisOf(row.builtDate) ?? 0)
         if (!last || last >= cutoff) continue
         try {
-            removeTree(text(row.location))
-            removedCount++
+            // under the row's lock, and only while it is still idle with that file: an Update meanwhile keeps it
             ec.transaction.runRequireNew(30, "Error writing an expired map package", () => {
                 const current = find(PACKAGE, {packageId: row.packageId}).forUpdate(true).one()
-                if (!current || BUSY.includes(text(current.statusId))) return
+                if (!current || BUSY.includes(text(current.statusId)) || text(current.location) !== text(row.location)) return
+                removeTree(text(row.location))
+                removedCount++
                 current.setAll({location: null, size: null, sha256: null, statusId: "MapPkgExpired",
                     statusNote: say("Removed after ${days} days with no download: update it to build it again", {days: keepDays()})})
                 writeRow(current, false)
@@ -1126,10 +1375,11 @@ function cleanPackages() {
         return ref.getExists() && ref.isDirectory() ? Array.from(ref.getDirectoryEntries() || []) : []
     })
     for (const entry of entries) {
-        const match = /^(.+)-(\d+)(\.zip)?$/.exec(text(entry.fileName))
+        // {packageId}-{revision}-{buildKey}, a folder or a zip
+        const match = /^(.+)-(\d+)-([A-Za-z0-9]+)(\.zip)?$/.exec(text(entry.fileName))
         const row = match ? byId.get(match[1]) : null
-        if (row && text(row.location) === text(entry.location)) continue
-        if (row && BUSY.includes(text(row.statusId)) && Number(match[2]) > (num(row.revision) || 0)) continue
+        if (named.has(text(entry.location))) continue
+        if (row && BUSY.includes(text(row.statusId)) && match[3] === text(row.buildKey)) continue
         try {
             removeTree(text(entry.location))
             removedCount++
@@ -1137,6 +1387,8 @@ function cleanPackages() {
             ec.logger.error("Map package file " + entry.location + " not removed: " + (err?.message ?? err))
         }
     }
+    // a waiting build whose turn was missed has it now
+    ec.transaction.runRequireNew(60, "Error starting the next map package build", scheduleBuilds)
     return {removedCount}
 }
 

@@ -2407,6 +2407,13 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="package-max-bytes" type="non-neg-int-expandable" default="2147483648"><xs:annotation><xs:documentation>
                 The largest offline map package a user may build, in bytes (2 GiB): a package whose estimate passes it is
                 refused before anything is cut (plans/Maps-Offline.md).</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="package-user-max-bytes" type="non-neg-int-expandable" default="8589934592"><xs:annotation><xs:documentation>
+                The most bytes one user's offline map packages may hold in all, in bytes (8 GiB): their ready packages and
+                the new one's estimate; a package past it is refused at its estimate.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="package-concurrent-builds" type="non-neg-int-expandable" default="1"><xs:annotation><xs:documentation>
+                How many offline map packages the installation builds at once (the job workers are shared with the
+                scheduled jobs): another waits, pending, and starts when one ends. A user has at most one pending or
+                building.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="package-keep-days" type="non-neg-int-expandable" default="30"><xs:annotation><xs:documentation>
                 How many days an offline map package's file is kept with no download (from when it was built, or last
                 downloaded) before the hourly clean removes it; Update builds it again.</xs:documentation></xs:annotation></xs:attribute>

@@ -70,8 +70,9 @@ The installation-wide switches are attributes of the `maps` conf element (`Moqui
 or the environment (`moqui_conf__maps__external_requests`) and shown read-only under Configuration:
 `maps@external-requests` (false: no outside basemap or layer is offered and the server makes no outside request for
 maps), `maps@max-features` (the most features one record layer or viewport sends, and a user's overlay may have),
-`maps@import-max-bytes`, `maps@overlay-max-bytes` (a user's overlay file, 10 MiB), and `maps@package-max-bytes` and
-`maps@package-keep-days` ([Offline packages](#offline-packages)). A page
+`maps@import-max-bytes`, `maps@overlay-max-bytes` (a user's overlay file, 10 MiB), and `maps@package-max-bytes`,
+`maps@package-user-max-bytes`, `maps@package-concurrent-builds` and `maps@package-keep-days`
+([Offline packages](#offline-packages)). A page
 `Content-Security-Policy` stricter than the default needs each provider's host in `connect-src`, `img-src` and
 `font-src`; the readiness checks name what to add. A map with a [COG layer](#cloud-optimized-geotiff) decodes it in module
 workers of this server (the OpenLayers build's decoder entry under `libs/openlayers/`), so such a policy also needs `worker-src` (or `child-src`,
@@ -898,38 +899,49 @@ screen says so.
 
 **Building.** Estimate reads the size before anything is built: for each archive the tiles of the region found through
 its directories, their distinct contents and their bytes (`MapSourceServices.estimate#PackageExtract`, in Rust,
-`moqui-tools` `maps_extract.rs`: no tile is read), and a package past `maps@package-max-bytes` is refused there, as is a
-region of more than 4,000,000 tiles. Build (`create#Package`) records the archives' registered revisions and starts a run
-of the `MapPackageBuild` ServiceJob as the user, who is told when it ends (topic `MapPackageBuild`). The run cuts each
-archive (`build#PackageExtract`): for each zoom the tiles of the region sorted by tile ID, found through the directories
-as the tile transition finds one (kept by the archive's tag), read by range in batches by offset (neighbouring tiles one
-read) and handed as stored to a streaming writer (`moqui-lib` `pmtiles.rs` `ArchiveWriter`), which writes the tile data to
-a part file and keeps only the directory entries, a content the archive shares between tiles (the sea) read and stored
-once, the archive's metadata JSON copied whole. An archive registered again since Build, or replaced while it is cut (its
-tag and size checked when the cut starts and ends, a file on disk by its modification time too), fails the run: never a
-mixed extract. The other members are read as the owner; one that cannot be read is logged and named in the manifest's
-`failures`, and the rest goes on. The zip is `runtime://tmp/map-packages/<packageId>-<revision>.zip`, with its size and
-SHA-256 on the row. The run's progress is on the row, and Cancel (`cancel#Package`) stops it at its next batch of tiles; a
-run that stopped with no word for an hour is ended when its owner next updates, cancels or deletes the package. Update
-(`update#Package`) builds it again as a new revision from what the owner may see and the archives as registered then; the
-earlier revision stays downloadable until the new one is ready, and its file is removed then. Delete removes the row, its
-download records and the file. The hourly `clean_MapPackages_hourly` job (`clean#MapPackages`) removes the file of a
-package not downloaded for `maps@package-keep-days` since it was built or last downloaded (the package is left Expired;
-Update builds it again) and any file under `runtime://tmp/map-packages` no package names.
+`moqui-tools` `maps_extract.rs`: no tile is read, and one zoom's tile IDs at most are held), the postal and Overture rows
+counted in the region and sized near enough. A package past `maps@package-max-bytes` is refused there, as is a region of
+more than 4,000,000 tiles, one with no registered basemap archive to cut (`NO_ARCHIVE`), and one that would take the
+user's packages past `maps@package-user-max-bytes` (`TOO_LARGE_FOR_USER`). Build (`create#Package`) records the
+archives' registered revisions and a random build key, and its run of the `MapPackageBuild` ServiceJob starts as the
+user when the installation has room: at most `maps@package-concurrent-builds` packages are built at once (the job
+workers are shared with the scheduled jobs), another waits, pending ("Waiting for its turn"), and starts when one ends
+(the hourly clean starts any whose turn was missed); a user has at most one package pending or building
+(`PACKAGE_BUSY`). The user is told when it ends (topic `MapPackageBuild`). The run holds no transaction while it cuts,
+each write its own, and writes only while the package still holds its build key; its files are named by the key, so
+two runs never share one. It cuts each archive (`build#PackageExtract`): for each zoom in turn the tiles of the region
+sorted by tile ID, found through the directories as the tile transition finds one (kept by the archive's tag), read by
+range in batches by offset (neighbouring tiles one read) and handed as stored to a streaming writer (`moqui-lib`
+`pmtiles.rs` `ArchiveWriter`), which writes the tile data to a part file and keeps only the directory entries and a
+bounded map of the contents the archive shares between tiles (the sea, read and stored once), the archive's metadata JSON
+copied whole. Each archive has what is left of `maps@package-max-bytes` after the members before it, and a zip past it
+fails the run. An archive registered again since Build, or replaced while it is cut (its tag and size checked when the
+cut starts and ends, a file on disk by its modification time too), fails the run: never a mixed extract; so does a
+region where no basemap could be cut. The other members are read as the owner; one that cannot be read is logged and
+named in the manifest's `failures` in general words (no path of the server), and the rest goes on. The zip is
+`runtime://tmp/map-packages/<packageId>-<revision>-<buildKey>.zip`, with its size and SHA-256 on the row. The run's
+progress is on the row, and Cancel (`cancel#Package`) stops it at its next batch of tiles (a package still waiting ends
+at once); a run that stopped with no word for an hour is ended when its owner next updates, cancels or deletes the
+package, and a run so ended that was only slow stops at its next batch, its key gone. Update (`update#Package`) builds it
+again as a new revision from what the owner may see and the archives as registered then; the earlier revision stays
+downloadable until the new one is ready, and its file is removed then. Delete removes the row, its download records and
+the file. The hourly `clean_MapPackages_hourly` job (`clean#MapPackages`) removes the file of a package not downloaded
+for `maps@package-keep-days` since it was built or last downloaded (the package is left Expired; Update builds it again)
+and any file under `runtime://tmp/map-packages` no package names, a busy package's own build left alone.
 
-**The settings** are attributes of the `maps` conf element: `maps@package-max-bytes` (2 GiB) and `maps@package-keep-days`
-(30).
+**The settings** are attributes of the `maps` conf element: `maps@package-max-bytes` (2 GiB), `maps@package-user-max-bytes`
+(8 GiB), `maps@package-concurrent-builds` (1) and `maps@package-keep-days` (30).
 
 **The screen** is Maps › Offline maps (`Maps/Offline.xml`, `MAPS_APP`): the user's packages with their state, zooms, size
 and built date, with Download, Update, Cancel and Delete; and New offline map, the region drawn as a box on the map (the
 one its west, south, east and north parameters name, else the user's map's initial view), its zooms, its basemaps and
 what else it holds, with Estimate and Build. Its terminal page (`Offline.tui.json`) lists the packages and their states
 with Update, Cancel and Delete; a package is not made from the terminal. The `package` transition
-(`/apps/maps/Offline/package?packageId=…&revision=…`) sends the zip by `ec.web.sendPinnedResourceResponse` with its SHA-256 as the strong `ETag` (`sha256-…`), by range (one
-`Range`, `If-Range`), so a download resumes; it checks the owner on every request (`get#PackageAccess`: another user's
+(`/apps/maps/Offline/package?packageId=…&revision=…`) sends the zip by `ec.web.sendPinnedResourceResponse` with its
+SHA-256 as the strong `ETag` (`sha256-…`), by range (one `Range`, `If-Range`), so a download resumes; it checks the owner on every request (`get#PackageAccess`: another user's
 package is 404) and answers 409 for a revision that is no longer the package's. Each download is recorded
 (`moqui.maps.MapPackageDownload`: the package, the revision and, for a request signed in by a device's key, that
-`UserLoginKey` and its device name), so an owner can see which device holds which package.
+`UserLoginKey` and its device name); the account's Devices list showing each device's packages is coming (OF4).
 
 ## Tests
 
@@ -1000,8 +1012,10 @@ refused with no outside request) are a page test,
 Offline packages: `framework/test/MapsPackages.spec.js` (a package cut from a small fixture archive by the build job and
 served to its owner by range with its strong tag, refused another user and 409 for another revision; a basemap the owner
 may not see left out; the manifest listing every member with its size and SHA-256 and no URL of this server; a package
-past `maps@package-max-bytes` refused at its estimate; a cancel; an archive registered again since the build was asked
-failing it; the Offline page once in qvt and once in the terminal), with the box's tile set (across the antimeridian, at
+past `maps@package-max-bytes` refused at its estimate; a user's second build refused and another user's waiting its turn
+and started when the build ends; a cancel; a run whose key the package does not hold writing nothing; an archive
+registered again since the build was asked failing it; the owner's places and the overlays they read packaged, another
+user's places and an unshared overlay never, a shared one until its share is revoked; the Offline page once in qvt and once in the terminal), with the box's tile set (across the antimeridian, at
 zoom 0, a tile's edge), the extract's bounds, a shared content cut once, a replaced archive and a cancel leaving no file in
 Rust (`moqui-tools` `maps_extract_tests.rs`), and the streaming writer giving the bytes the whole-archive writer gave
 (`moqui-lib` `pmtiles_tests.rs`).
