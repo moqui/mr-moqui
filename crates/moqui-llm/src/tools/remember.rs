@@ -21,8 +21,8 @@
 //! of the next one.
 //!
 //! Text a tool read (an email, a note, a page) can say "remember …", so the call keeps the fact at once only when the
-//! request is plainly the user's: on the drawer or the terminal, with no tool output read since the user's last
-//! message ([`crate::memory::needs_confirmation`]). Otherwise it is a confirm card (an approval the user accepts,
+//! request is plainly the user's: on the drawer or the terminal, with no outside tool output in the conversation's
+//! active window, a turn before the user's last message included ([`crate::memory::needs_confirmation`], SEC-AI-93). Otherwise it is a confirm card (an approval the user accepts,
 //! inline or in the room), and the fact is kept only when they do. Each kept fact is a `memory.saved` event, which the
 //! drawer shows as "Remembered: … [Forget]". The write is the user's own record, so the read fence lifts for it.
 

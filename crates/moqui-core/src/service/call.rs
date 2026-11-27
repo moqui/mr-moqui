@@ -1519,7 +1519,9 @@ fn execute(
                     parameters,
                     facade.sim_active(),
                 )
-                .map_err(|err| LibError::new(err.message()))
+                // the transport's reason (a certificate refused, a connection refused) stays as the source, for the log
+                // (SEC-OUT-92)
+                .map_err(|err| LibError::new(err.message()).with_source(err))
             })
         }
         ServiceKind::EntityAuto => run_entity(facade, &def.verb, &def.noun, parameters, 0, generic),

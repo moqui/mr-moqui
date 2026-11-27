@@ -219,7 +219,9 @@ what is not built ([Edge-Node2 §3](../plans/Edge-Node2.md#3-topologies)).
   build of Maximal, carry the dev tools (the file watcher, Dev AIDE): they open only on a dev instance, and the server
   warns at start when it finds them on a production one. A production image leaves them out: `./moq build --enterprise`,
   or Maximal without them (`cargo build --profile release --no-default-features -F maximal -p moqui`)
-  ([Packaging](Build-Test.md#packages), SEC-OUT-14).
+  ([Packaging](Build-Test.md#packages), SEC-OUT-14). `podman/build.sh` builds the default `--release`, with the dev
+  tools: for a production image build Maximal without them first, as above, and then run `podman/build.sh --nobuild`,
+  which packs `target/release/moqui` as it is (SEC-OUT-90).
 - **Purpose**: `instance@purpose` is `production` everywhere except in the dev conf. An archive's `MoquiConf.xml` is
   the production conf.
 - **Seal**: the server starts sealed and opens its listeners only once unsealed: `moqui operator init` with `tpm` (or
@@ -310,7 +312,11 @@ time it is needed, and runs as its own process; unlike the runtime files they ar
 this is packaging and delivery only. `moqui embedded unpack [postgres|opensearch|chromium|all]` unpacks them ahead of
 the first start (a container image). OpenSearch starts when the search backend is `opensearch`, the cluster is local
 and not running, and `runtime/opensearch` has no install of its own; its config (seeded from the install on the first
-start), data and logs stay in `runtime/opensearch`. Chromium is used for PDF and the browser tests after
+start), data and logs stay in `runtime/opensearch`. That OpenSearch is the `opensearch-min` distribution, without the
+security plugin: it listens on loopback with no sign-in, so any local user or process of the host reads, rewrites and
+deletes every search index on port 9200, past the server's own authorization. On a host shared with other users keep
+the default Postgres search backend, or run an OpenSearch with the security plugin of your own and give the server its
+credentials (`search-facade/cluster@user` and `@password`, from `.env`). Chromium is used for PDF and the browser tests after
 `screen-facade/pdf@chromium-path` and `runtime/chromium`, before an installed one.
 
 **Checksums.** `moqui embedded checksum` prints the SHA-256 of each part built in, in `sha256sum` format: `runtime`
@@ -708,6 +714,13 @@ moqui_conf__entity_facade__datasource__TRANSACTIONAL__password=...
 | `schema-name` | | Empty for the default schema |
 | `user`, `password` | `moqui`, ... | |
 | `sslmode` | | Empty is verified TLS. `verify-full` checks the authority and the name, `verify-ca` the authority only and needs `sslrootcert` (it trusts that file alone, as libpq does; without it the connection is refused), `require` encrypts without checking, and `disable` turns TLS off (for a local dev server only) |
+
+On MySQL (`mysql`, `mysql8`) the same `sslmode` and `sslrootcert` apply (SEC-DAT-97). An upgrade from a build before
+this changes two things: `sslmode=require` now encrypts without checking the certificate, where before the mode was
+ignored and the certificate checked in full (set `verify-full` to keep that); and a conf connection with no mode
+(`database-conf` `jdbc-uri` style, no `sslmode`) is `verify-full` to a server off loopback and plain to `127.0.0.1`,
+`localhost` or `::1`. A MySQL server with no TLS needs `sslmode=disable`, a database extract from it too
+(`jdbc_extract`).
 | `sslrootcert` | `/etc/moqui/db-ca.pem` | A PEM file of the authorities to trust instead of the public ones |
 
 `entity-facade@crypt-pass`, made into `seal.json` by `moqui operator init`, is the key of encrypted fields; it moves
@@ -2558,7 +2571,10 @@ The get tasks take `-t git|current|release|binary` and `-r <repository>`. `--dev
 `runtime/components/dev`. A component with a `Cargo.toml` is linked into the binary on the next build
 ([Native-Components](dev/Native-Components.md)). A new component loads at the next start. System › Components can also
 load it on a running server, with its data, when it has no Rust code
-([Component-Deploy](tools/Component-Deploy.md#loading-a-component)).
+([Component-Deploy](tools/Component-Deploy.md#loading-a-component)). A component deployed that way is updated, moved aside and removed
+only in its own directory under a directory named `components` (`runtime/components/addon/<name>` by default): a conf
+whose `component-dir` is not named `components` (Moqui Java's `runtime/component`) has its deploys and removals refused
+(plans/Security-Review-Low.md SEC-TLS-104).
 
 ## Moving from Moqui Java
 

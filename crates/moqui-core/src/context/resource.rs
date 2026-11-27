@@ -1219,7 +1219,8 @@ fn db_snap(info: &DbResourceInfo, facade: EntityFacade) -> DbSnap {
     }
 }
 
-fn scheme_of(location: &str) -> &str {
+/// The scheme a location is served by: what is before its first `:` (two characters or more, with no `/`), else `file`.
+pub(crate) fn scheme_of(location: &str) -> &str {
     match location.split_once(':') {
         Some((scheme, _)) if scheme.len() > 1 && !scheme.contains('/') => scheme,
         _ => "file",

@@ -2701,6 +2701,49 @@ fn an_agents_render_leaves_out_the_text_of_ai_opt_out_fields_of_row_forms_and_vi
     client_model(&agent);
 }
 
+/// SEC-AI-94: in an agent's render a form-list found or sorted by one of its `ai-opt-out` fields (from the path's query,
+/// whatever tool or canvas asked) shows no rows, so the rows a find keeps tell nothing of the field; the person's render
+/// of the same request shows them.
+#[test]
+fn an_agents_find_by_an_ai_opt_out_field_shows_no_rows() {
+    let xml = r#"<screen require-authentication="false">
+        <actions><script>rows = [{caseId: 'C1', title: 'Visible title', reason: 'Secret reason'}]</script></actions>
+        <widgets><form-list name="Cases" list="rows" skip-form="true">
+            <field name="title"><default-field><display/></default-field></field>
+            <field name="reason" ai-opt-out="true"><default-field><display/></default-field></field>
+        </form-list></widgets></screen>"#;
+    let path = std::env::temp_dir().join(format!("moqui-tui-{}-ai-opt-out-find.xml", std::process::id()));
+    std::fs::write(&path, xml).unwrap();
+    let context = ExecutionContextFactory::test_context();
+    let render = |origin: crate::screen::RenderOrigin, parameters: &[(&str, &str)]| {
+        let output = make_render(context.factory())
+            .root_screen(path.to_string_lossy().into_owned())
+            .render_mode("tui")
+            .parameters(
+                parameters
+                    .iter()
+                    .map(|(name, value)| ((*name).to_string(), Value::string(*value)))
+                    .collect(),
+            )
+            .origin(origin)
+            .render()
+            .unwrap_or_else(|err| panic!("{err}"))
+            .body_text();
+        let doc: Json = serde_json::from_str(&output).unwrap();
+        list_named(&doc, "Cases")["rows"].as_array().map_or(0, Vec::len)
+    };
+    let agent = || crate::screen::RenderOrigin::Agent {
+        agent_id: "assist".to_string(),
+        run_id: None,
+    };
+    let found = [("reason", "Secret"), ("reason_op", "begins")];
+    assert_eq!(render(crate::screen::RenderOrigin::Internal, &found), 1);
+    assert_eq!(render(agent(), &found), 0);
+    assert_eq!(render(agent(), &[("orderByField", "-reason")]), 0);
+    assert_eq!(render(agent(), &[("title", "Visible")]), 1);
+    let _ = std::fs::remove_file(&path);
+}
+
 /// A form-list's `row-open-field` marks its field's links `open`, so the client opens the row by that link before the
 /// row's first link to another screen (Monitor Logs' Surrounding entries, not the user's account); a board card opens
 /// it too.

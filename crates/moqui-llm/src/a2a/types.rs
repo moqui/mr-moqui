@@ -304,6 +304,7 @@ pub fn parse_message(value: Option<&Json>, limits: PartLimits) -> Result<InMessa
         )));
     }
     let mut chunks = Vec::new();
+    let mut given: usize = 0;
     let mut data = None;
     let mut locations = Vec::new();
     let mut kept = Vec::new();
@@ -346,6 +347,7 @@ pub fn parse_message(value: Option<&Json>, limits: PartLimits) -> Result<InMessa
                         limits.max_part_bytes
                     )));
                 }
+                given += text.len();
                 chunks.push(text.to_string());
                 kept.push(part.clone());
             }
@@ -394,6 +396,7 @@ pub fn parse_message(value: Option<&Json>, limits: PartLimits) -> Result<InMessa
                         limits.max_part_bytes
                     )));
                 }
+                given += text.len();
                 chunks.push(text);
                 if data.is_none() {
                     data = Some(value);
@@ -401,6 +404,14 @@ pub fn parse_message(value: Option<&Json>, limits: PartLimits) -> Result<InMessa
                 kept.push(part.clone());
             }
         }
+    }
+    // the caller's own text in the message (its texts and data), not only each part's, is at most one part's limit
+    // (SEC-AI-85); an attached file and a location of this server are short notes
+    if given > limits.max_part_bytes {
+        return Err(A2aError::invalid_params(format!(
+            "the message's text is over {} bytes",
+            limits.max_part_bytes
+        )));
     }
     string_list(message.get("extensions"), "message.extensions")?;
     Ok(InMessage {

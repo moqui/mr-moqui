@@ -793,7 +793,11 @@ fn an_answer_link_no_tool_returned_is_an_invented_reference() {
         &bed,
         request("Open E03"),
         vec![
-            calls(vec![tool("f1", "data", json!({"path": "/apps/tooltest/Things", "limit": 5}))]),
+            // SEC-AI-92: a step that also calls a tool has its text checked too
+            calls(vec![
+                Step::Text("Looking it up, [see here](https://evil.example/s?d=1) or <https://evil.example/raw>.".into()),
+                tool("f1", "data", json!({"path": "/apps/tooltest/Things", "limit": 5})),
+            ]),
             fake::Reply::text(
                 "See [E03](/apps/tooltest/Thing?enumId=E03), [E77](/apps/tooltest/Thing?enumId=E77) and [the report](/apps/nowhere/Report).",
             ),
@@ -814,10 +818,50 @@ fn an_answer_link_no_tool_returned_is_an_invented_reference() {
         json!(["/apps/tooltest/Thing?enumId=E77", "/apps/nowhere/Report"])
     );
     let events = event_types(&bed, &started.run_id);
-    let (_, checked) = events.iter().find(|(kind, _)| kind == "answer.references").unwrap();
+    let references: Vec<&Json> = events
+        .iter()
+        .filter(|(kind, _)| kind == "answer.references")
+        .map(|(_, payload)| payload)
+        .collect();
+    assert_eq!(references.len(), 2, "{references:?}");
     assert_eq!(
-        checked["text"],
+        references[1]["text"],
         "See [E03](/apps/tooltest/Thing?enumId=E03), E77 and the report."
+    );
+    // what is stored, and so read again on a reload, has no live invented link: the tool step's text included
+    let message_ids: Vec<Value> = bed
+        .facade
+        .find("moqui.agent.AgentMessage")
+        .unwrap()
+        .eq("runId", Value::string(&started.run_id))
+        .eq("role", Value::string("assistant"))
+        .disable_authz()
+        .list()
+        .unwrap()
+        .values()
+        .iter()
+        .filter_map(|row| text_of(row, "messageId").map(Value::string))
+        .collect();
+    let stored: Vec<String> = bed
+        .facade
+        .find("moqui.agent.AgentMessagePart")
+        .unwrap()
+        .condition(moqui_db::sql::Condition::is_in("messageId", message_ids))
+        .disable_authz()
+        .list()
+        .unwrap()
+        .values()
+        .iter()
+        .filter_map(|row| text_of(row, "textValue"))
+        .collect();
+    let all = stored.join("\n");
+    assert!(
+        all.contains("Looking it up, see here or `https://evil.example/raw`."),
+        "{all}"
+    );
+    assert!(
+        !all.contains("](https://evil.example") && !all.contains("E77]("),
+        "{all}"
     );
 }
 
@@ -947,12 +991,27 @@ fn data_reads_no_text_of_ai_opt_out_columns_and_entity_fields() {
                     "data",
                     json!({"entity": "moqui.test.TestEntity", "where": {"testLong": "%Secret%"}}),
                 ),
+                // SEC-AI-94: the same find and sort written in the path's query
+                tool(
+                    "o6",
+                    "data",
+                    json!({"path": "/apps/tooltest/Cases?description=Thing&description_op=begins"}),
+                ),
+                tool(
+                    "o7",
+                    "data",
+                    json!({"path": "/apps/tooltest/Cases?orderByField=-description"}),
+                ),
             ]),
             fake::Reply::text("Done."),
         ],
         RunState::Completed,
     );
-    assert_eq!(results.len(), 5, "{results:?}");
+    assert_eq!(results.len(), 7, "{results:?}");
+    for refused in &results[5..7] {
+        assert!(refused.starts_with("{\"error\":\"ai_opt_out\""), "{refused}");
+        assert!(!refused.contains("Thing number"), "{refused}");
+    }
     let first: Vec<&str> = results[0].lines().collect();
     assert_eq!(
         first[0], "CaseList on /apps/tooltest/Cases (showing 3 of 30)",

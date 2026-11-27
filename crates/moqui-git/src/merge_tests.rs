@@ -221,3 +221,20 @@ fn a_conflict_refuses_the_merge_and_names_the_paths() {
     }
     assert_eq!(store.read_ref("refs/heads/main").unwrap(), Some(main));
 }
+
+/// SEC-GIT-97: a commit a service makes names its own user in `Moqui-User-Id`: a trailer of that name the caller wrote in
+/// the message is replaced, not kept.
+#[test]
+fn a_callers_user_trailer_is_replaced_with_the_committer() {
+    let author = super::super::ops::Author {
+        name: "Dev".to_string(),
+        email: "dev@example.com".to_string(),
+        user_id: Some("DEV".to_string()),
+        seconds: None,
+    };
+    let message = super::with_user_trailer("Fix it\n\nTask: PROJ-1\nMoqui-User-Id: ADMIN\n", &author);
+    assert_eq!(message, "Fix it\n\nTask: PROJ-1\nMoqui-User-Id: DEV\n");
+    assert_eq!(super::super::ops::user_of(&message).as_deref(), Some("DEV"));
+    let plain = super::with_user_trailer("Fix it\n\nmoqui-user-id: ADMIN", &author);
+    assert_eq!(plain, "Fix it\n\nMoqui-User-Id: DEV\n");
+}

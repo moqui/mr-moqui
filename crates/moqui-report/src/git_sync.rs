@@ -270,6 +270,7 @@ fn read_sync(ec: &ExecutionContext, sync_id: &str) -> Result<Json, Error> {
 pub fn push(factory: &Arc<ExecutionContextFactory>, sync: &Json) -> Result<Json, Error> {
     let sync_id = text(sync, "syncId", "");
     let result = as_sync_user(factory, sync, |ec| {
+        repository_access(text(sync, "repositoryId", ""), "update")?;
         let definitions = folder_definitions(ec, text(sync, "folder", ""))?;
         let (files, unchanged) = changed_files(ec, sync, &definitions)?;
         if !files.is_empty() {
@@ -315,6 +316,7 @@ pub fn pull(factory: &Arc<ExecutionContextFactory>, sync: &Json) -> Result<Json,
             text(sync, "path", ""),
             text(sync, "folder", ""),
         );
+        repository_access(repository, "view")?;
         let resource = ec.factory().resource();
         let source = directory(repository, path);
         let entries = resource.list(&source)?;
@@ -571,6 +573,14 @@ fn authorize() -> Result<(), Error> {
     moqui_core::user::authorize_own("AT_SERVICE", ADMIN, "update").map_err(fail)
 }
 
+/// The current user's `action` of the hosted repository `repository` (`AT_GIT_REPOSITORY`: `view` to pull, `update` to
+/// push): the `git://` resources a sync reads and writes check no access of their own, so the git sync grant is not
+/// a grant of every repository (SEC-TLS-108).
+fn repository_access(repository: &str, action: &str) -> Result<(), Error> {
+    moqui_core::user::authorize_own("AT_GIT_REPOSITORY", repository, action)
+        .map_err(|error| fail(format!("git sync of repository {repository}: {error}")))
+}
+
 pub fn store_sync(ec: &ExecutionContext, _service: &ServiceInfo<'_>, params: &Parameters) -> Result<Parameters, Error> {
     authorize()?;
     let params = input(params);
@@ -581,16 +591,29 @@ pub fn store_sync(ec: &ExecutionContext, _service: &ServiceInfo<'_>, params: &Pa
             return Err(fail(format!("a git sync needs {name}")));
         }
     }
-    let _metadata = ec.disable_authz();
     let existing = if sync_id.is_empty() {
         None
     } else {
+        let _metadata = ec.disable_authz();
         facade
             .find(ENTITY)?
             .eq("syncId", Value::string(&sync_id))
             .for_update(true)
             .one()?
     };
+    // the caller writes and reads the repository through the sync, as its user does at each run (SEC-TLS-108)
+    let repository = params["repositoryId"]
+        .as_str()
+        .filter(|repository| !repository.is_empty())
+        .map(str::to_owned)
+        .or_else(|| {
+            existing
+                .as_ref()
+                .and_then(|row| row.get("repositoryId").and_then(Value::as_str).map(str::to_owned))
+        })
+        .unwrap_or_default();
+    repository_access(&repository, "update")?;
+    let _metadata = ec.disable_authz();
     // a push and a pull sign in as the sync's user: anyone else's account is the caller's to name only as Login as
     // allows it, with ADMIN_LOGIN_AS and no access the caller lacks (SEC-TLS-109)
     let caller = moqui_core::user::current_user_id().map_err(fail)?.unwrap_or_default();

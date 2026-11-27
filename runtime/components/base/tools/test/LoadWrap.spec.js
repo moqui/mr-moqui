@@ -89,10 +89,19 @@ feature("a DATABASE_ADMIN user's wrapped load is refused an ADMIN_ADV membership
                 entityNames: ["moqui.security.UserGroupMember"], description: "Spec load wrap" }).disableAuthz().call() || {}
             const planned = !!(wrap.dropJobId && wrap.restoreJobId)
             ec.message.clearErrors()
+            // the text in a private file, as Data › Load passes it (SEC-DAT-96): read by the job and deleted
+            const textLocation = ec.resource.writePrivateFile(membershipXml(dbaId), "xml")
+            const written = ec.resource.getLocationReference(textLocation).getExists()
             // as the ServiceJob runs it: authorization off
             ec.artifactExecution.disableAuthz()
             const out = ec.service.sync().name("moqui.tools.DatabaseLoadServices.run#LoadWrap").parameters({ dropJobId: wrap.dropJobId,
-                restoreJobId: wrap.restoreJobId, xmlText: membershipXml(dbaId) }).call() || {}
+                restoreJobId: wrap.restoreJobId, textLocation }).call() || {}
+            ec.message.clearErrors()
+            const deleted = !ec.resource.getLocationReference(textLocation).getExists()
+            // a location that is not such a file is neither read nor deleted
+            ec.service.sync().name("moqui.tools.DatabaseLoadServices.run#LoadWrap").parameters({ dropJobId: wrap.dropJobId,
+                restoreJobId: wrap.restoreJobId, textLocation: "component://tools/data/ToolsSecurityData.xml" }).call()
+            const otherRefused = ec.message.errorsString
             ec.message.clearErrors()
             let direct = null
             try {
@@ -103,10 +112,13 @@ feature("a DATABASE_ADMIN user's wrapped load is refused an ADMIN_ADV membership
             direct = direct || ec.message.errorsString
             ec.message.clearErrors()
             ec.artifactExecution.enableAuthz()
-            return { planned, out, direct }
+            return { planned, out, direct, textLocation, written, deleted, otherRefused }
         }
-        const { planned, out, direct } = run()
+        const { planned, out, direct, textLocation, written, deleted, otherRefused } = run()
         planned
+        /^runtime:\/\/tmp\/private\/[0-9a-f]{32}\.xml$/.test(textLocation)
+        written && deleted
+        otherRefused.includes("not a private file of the load")
         out.dropStatusId == "DbjsDone"
         out.loaded === false
         String(out.loadError).includes("moqui.security.UserGroupMember")

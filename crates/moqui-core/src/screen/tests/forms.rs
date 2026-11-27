@@ -1871,6 +1871,8 @@ fn an_auto_foreign_key_is_a_drop_down_and_from_date_defaults_to_now() {
         r#"<screen require-authentication="false"><widgets>
         <form-single name="MemberEdit"><auto-fields-entity entity-name="moqui.security.UserGroupMember" field-type="edit"/></form-single>
         <form-single name="MemberFind"><auto-fields-entity entity-name="moqui.security.UserGroupMember" field-type="find"/></form-single>
+        <form-single name="ServerEdit"><auto-fields-entity entity-name="moqui.basic.email.EmailServer" field-type="edit"/></form-single>
+        <form-list name="AccountList" list="rows"><auto-fields-entity entity-name="moqui.security.UserAccount" field-type="display"/></form-list>
         <form-single name="EnumDisplay">{display}</form-single>
         <form-single name="EnumEdit">{edit}{indicator}</form-single>
         <form-single name="EnumFind">{find}</form-single>
@@ -1913,6 +1915,37 @@ fn an_auto_foreign_key_is_a_drop_down_and_from_date_defaults_to_now() {
             .first_named(sub)
             .unwrap_or_else(|| panic!("{sub} of {name} in {}", form.write_string()))
     };
+
+    // SEC-DAT-92: the auto fields leave out an encrypted field and the password fields, which the form would show
+    // decrypted or as the stored hash
+    let server = assembled("ServerEdit");
+    let names = |form: &MNode| -> Vec<String> {
+        form.children_named("field")
+            .iter()
+            .filter_map(|field| field.attribute("name"))
+            .collect()
+    };
+    assert!(names(&server).contains(&"smtpHost".to_string()), "{:?}", names(&server));
+    assert!(
+        !names(&server)
+            .iter()
+            .any(|name| name == "mailPassword" || name == "smtpPassword"),
+        "{:?}",
+        names(&server)
+    );
+    let accounts = assembled("AccountList");
+    assert!(
+        names(&accounts).contains(&"username".to_string()),
+        "{:?}",
+        names(&accounts)
+    );
+    assert!(
+        !names(&accounts)
+            .iter()
+            .any(|name| name == "currentPassword" || name == "passwordSalt"),
+        "{:?}",
+        names(&accounts)
+    );
 
     let member = assembled("MemberEdit");
     let group = sub_of(&member, "userGroupId", "default-field");

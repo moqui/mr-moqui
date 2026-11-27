@@ -1343,8 +1343,11 @@
                 }
                 kids.push(h("div", { class: "row items-center no-wrap q-mt-xs" }, [
                     this.notice ? h("div", { class: "text-caption m-muted col", "data-assist-sfc-notice": "" }, this.notice) : h("div", { class: "col" }),
+                    // what the canvas itself holds (its source and values, the assistant's) may leave in an image of another site
+                    // while this is on, which the toggle says (SEC-AI-05)
                     h(R("q-toggle"), { dense: true, size: "sm", modelValue: this.external, "onUpdate:modelValue": (value) => this.setExternal(value),
-                        label: L("Other sites"), class: "text-caption", "data-assist-sfc-external": "" }),
+                        label: L("Other sites"), class: "text-caption", "data-assist-sfc-external": "",
+                        title: L("Lets the canvas show other sites' images and content; what the canvas shows can then reach those sites") }),
                 ]));
                 return h("div", { class: "m-assist-vue-sfc", "data-assist-canvas-version": String(this.version || ""), "data-assist-sfc-ignored": String(this.ignored),
                     "data-assist-sfc-dropped": String(this.dropped) }, kids);

@@ -691,14 +691,15 @@ fn run_waiting(
             rows_affected: Some(outcome.load_count as i64),
             duration_ms: Some(i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX)),
             error_text: outcome.failure.clone(),
-            detail_json: Some(format!(
-                r#"{{"runId":"{run_id}","mappingId":"{}","target":"{}","jobName":{},"check":{check},"loaded":{},"errors":{}}}"#,
-                mapping.mapping_id.clone().unwrap_or_default(),
-                serde_json::to_string(&moqui_core::service::current_job_name()).unwrap_or_else(|_| "null".to_string()),
-                mapping.target_name,
-                outcome.load_count,
-                outcome.error_count
-            )),
+            detail_json: Some(run_detail_json(&RunDetail {
+                run_id: &run_id,
+                mapping_id: mapping.mapping_id.as_deref().unwrap_or_default(),
+                target: &mapping.target_name,
+                job_name: moqui_core::service::current_job_name().as_deref(),
+                check,
+                loaded: outcome.load_count,
+                errors: outcome.error_count,
+            })),
             ..crate::audit::AuditEntry::default()
         },
     );
@@ -1655,6 +1656,32 @@ fn inline_spreadsheet_load(parameters: &BTreeMap<String, Value>) -> Result<BTree
     let mut out = BTreeMap::new();
     out.insert("recordCount".to_string(), Value::I64(outcome.load_count as i64));
     Ok(out)
+}
+
+/// What the `DbaEtlRun` audit row records of a run.
+struct RunDetail<'a> {
+    run_id: &'a str,
+    mapping_id: &'a str,
+    target: &'a str,
+    job_name: Option<&'a str>,
+    check: bool,
+    loaded: u64,
+    errors: u64,
+}
+
+/// The `DbaEtlRun` audit row's `detailJson`: JSON written by the serializer, so each value is escaped and sits under its
+/// own key, the caller's target name included (SEC-TLS-115).
+fn run_detail_json(detail: &RunDetail<'_>) -> String {
+    serde_json::json!({
+        "runId": detail.run_id,
+        "mappingId": detail.mapping_id,
+        "target": detail.target,
+        "jobName": detail.job_name,
+        "check": detail.check,
+        "loaded": detail.loaded,
+        "errors": detail.errors,
+    })
+    .to_string()
 }
 
 #[cfg(test)]

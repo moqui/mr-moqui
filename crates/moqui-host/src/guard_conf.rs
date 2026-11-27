@@ -142,6 +142,25 @@ pub(crate) fn request_host(host: &str) -> String {
     name.trim_end_matches('.').to_ascii_lowercase()
 }
 
+/// Whether a `Host` header (or authority) has a well formed port: none, or digits after the host name or the closing
+/// bracket of an IPv6 literal. The rules' [`request_host`], the screens' host root and the public-site routing each cut
+/// the port their own way, so a request whose port is not digits (`shop.example:x`) is refused before any of them reads
+/// it, or a per-host rule would miss a request the host's screens then serve (SEC-WEB-82).
+pub(crate) fn host_port_valid(host: &str) -> bool {
+    let host = host.trim();
+    let rest = match host.strip_prefix('[') {
+        Some(literal) => match literal.split_once(']') {
+            Some((_, rest)) => rest,
+            None => return false,
+        },
+        None => host.find(':').map_or("", |at| &host[at..]),
+    };
+    rest.is_empty()
+        || rest
+            .strip_prefix(':')
+            .is_some_and(|port| port.bytes().all(|byte| byte.is_ascii_digit()))
+}
+
 /// A `client-rule`: `deny` or exempt the clients of its ranges, for its hosts.
 #[derive(Debug)]
 pub(super) struct ClientRule {

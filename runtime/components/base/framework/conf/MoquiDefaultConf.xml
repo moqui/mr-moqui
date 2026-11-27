@@ -1002,7 +1002,8 @@
         <bind feature="classify" reasoning="none"/>
         <bind feature="ai-field" reasoning="low"/>
         <limits max-concurrent-runs="8" run-queue="64" max-steps="40" max-run-seconds="900" user-daily-tokens="2000000"
-                user-daily-cost="20" approval-ttl-minutes="30" lease-seconds="60" heartbeat-seconds="15" event-text-flush-ms="300"/>
+                user-daily-cost="20" approval-ttl-minutes="30" lease-seconds="60" heartbeat-seconds="15" event-text-flush-ms="300"
+                user-open-runs="4"/><!-- user-open-runs: the most agent runs of one user waiting or working at once; 0 none -->
         <content-log enabled="false" redact="true" retention-days="14"/>
         <screen-sessions max="64" max-per-user="4" idle-minutes="30"/>
         <!-- the entities the data tool reads directly with authorization off (the agent's other reads go through screen
@@ -1614,7 +1615,7 @@
             default-group-name="transactional" entity-eca-enabled="true" sequenced-id-prefix=""
             distributed-cache-invalidate="false" dci-topic-factory="" query-stats="false"
             database-locale="" database-time-zone="UTC"
-            rest-max-page-size="1000" screen-max-rows="100000"
+            rest-max-page-size="1000" screen-max-rows="100000" max-reply-bytes="1073741824"
             crypt-salt="20201202" crypt-iter="10" crypt-algo="PBEWithHmacSHA256AndAES_128"
             crypt-pass="MoquiDefaultPassword:CHANGEME" crypt-pass-old="MoquiDefaultPassword:CHANGEME"
             crypt-read-plain="false"

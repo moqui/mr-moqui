@@ -146,7 +146,9 @@ const HOST_CONFIG_ENTITY_KEYS: &[&str] = &[
 /// and whose `allowPrivateNetwork` and test-print gate `store#Connection` keeps (SEC-RTE-83); and the
 /// service jobs, their parameters and their users, which the job runner calls with authorization off as the service a row
 /// names, so a generic write would schedule any service, with any parameters, as any of its users (SEC-TLS-85). System ›
-/// Operations, ETL's Schedule and the services that keep their own jobs write them through their own calls.
+/// Operations, ETL's Schedule and the services that keep their own jobs write them through their own calls. And the grid
+/// views and saved queries, which may hold SQL another user runs (SEC-TLS-100), and the deployed components, whose
+/// location a removal moves aside (SEC-TLS-104).
 const SERVICE_WRITTEN_ENTITY_KEYS: &[&str] = &[
     "entityauditlog",
     "recoveryaction",
@@ -194,6 +196,16 @@ const SERVICE_WRITTEN_ENTITY_KEYS: &[&str] = &[
     "servicejob",
     "servicejobparameter",
     "servicejobuser",
+    // a grid view or saved query may hold SQL that another user runs when they open it: store#GridView and
+    // store#SavedQuery refuse a SQL source from a user who may not run SQL and write only the caller's own rows, so a
+    // generic write would plant SQL in a shared or another user's row (SEC-TLS-100)
+    "gridview",
+    "savedquery",
+    // a deployed component's location is the directory remove#Component moves aside and a deploy stages beside; only
+    // the deploy services write it and its attestation and history (SEC-TLS-104)
+    "deployedcomponent",
+    "deployedcomponentattestation",
+    "deployedcomponenthistory",
 ];
 
 /// The text after the last `.`, in lower case.
@@ -744,6 +756,12 @@ mod tests {
             "moqui.monitor.IngestKey",
             "moqui.monitor.ScrapeTarget",
             "moqui.monitor.SyntheticCheck",
+            // SEC-TLS-100: SQL planted in a shared or another user's view or query; SEC-TLS-104: a component's directory
+            "moqui.database.GridView",
+            "moqui.database.SavedQuery",
+            "moqui.server.DeployedComponent",
+            "moqui.server.DeployedComponentAttestation",
+            "moqui.server.DeployedComponentHistory",
         ] {
             assert!(!is_restricted_generic_entity(name), "{name}");
             assert!(is_service_written_entity(name) && is_generic_write_refused(name), "{name}");

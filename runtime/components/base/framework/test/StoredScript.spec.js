@@ -33,6 +33,8 @@ const cleanup = () => {
     ec.entity.find("moqui.security.EntityFilter").condition("entityFilterId", "like", "SPEC_SS_%").deleteAll()
     ec.entity.find("moqui.security.EntityFilterSet").condition("entityFilterSetId", "SPEC_SS_SET").deleteAll()
     ec.entity.find("moqui.screen.SubscreensItem").condition("screenLocation", "component://spec/StoredScript.xml").deleteAll()
+    ec.entity.find("moqui.screen.ScreenDocument").condition("screenLocation", "component://spec/StoredScript.xml").deleteAll()
+    ec.entity.find("moqui.resource.wiki.WikiSpace").condition("wikiSpaceId", "like", "SPEC_SS_%").deleteAll()
     ec.entity.find("moqui.basic.LocalizedMessage").condition("original", "like", "Spec stored %").deleteAll()
     ec.entity.find("moqui.basic.email.EmailTextBlock").condition("emailTextBlockId", "like", "SPEC_SS_%").deleteAll()
     for (const userId of [adminId, dbaId]) {
@@ -102,3 +104,29 @@ feature("stored script text needs DATABASE_ADMIN; plain text and kept placeholde
         out.blockJoined.includes("DATABASE_ADMIN") && one("moqui.basic.email.EmailTextBlock", {emailTextBlockId: "SPEC_SS_TB3"}) == null
     },
 })
+
+// SEC-SCR-92: a field that names a location selects text run where its record is used (a screen definition, a document
+// rendered by its extension's renderer, a decorator screen): a location other than a component's needs DATABASE_ADMIN
+feature("a location of run text other than a component's needs DATABASE_ADMIN", {
+    expect() {
+        const run = () => ({
+            remoteScreen: writeAs("spec.ss.admin", "moqui.screen.SubscreensItem", { screenLocation: "component://spec/StoredScript.xml",
+                subscreenName: "remote", userGroupId: "ALL_USERS", subscreenLocation: "https://evil.example/Remote.xml", menuTitle: "Remote" }),
+            componentScreen: writeAs("spec.ss.admin", "moqui.screen.SubscreensItem", { screenLocation: "component://spec/StoredScript.xml",
+                subscreenName: "local", userGroupId: "ALL_USERS", subscreenLocation: "component://spec/Local.xml", menuTitle: "Local" }),
+            document: writeAs("spec.ss.admin", "moqui.screen.ScreenDocument", { screenLocation: "component://spec/StoredScript.xml",
+                docIndex: 1, docTitle: "Doc", docLocation: "dbresource://spec/doc.md.fancy" }),
+            dbaDocument: writeAs("spec.ss.dba", "moqui.screen.ScreenDocument", { screenLocation: "component://spec/StoredScript.xml",
+                docIndex: 2, docTitle: "Doc", docLocation: "dbresource://spec/doc.md" }),
+            decorator: writeAs("spec.ss.admin", "moqui.resource.wiki.WikiSpace", { wikiSpaceId: "SPEC_SS_W1",
+                rootPageLocation: "dbresource://WikiSpace/SPEC_SS_W1", decoratorScreenLocation: "dbresource://spec/Decorator.xml" }),
+        })
+        const out = run()
+        out.remoteScreen.includes("DATABASE_ADMIN")
+        out.componentScreen === ""
+        out.document.includes("DATABASE_ADMIN") && one("moqui.screen.ScreenDocument", {screenLocation: "component://spec/StoredScript.xml", docIndex: 1}) == null
+        out.dbaDocument === ""
+        out.decorator.includes("DATABASE_ADMIN") && one("moqui.resource.wiki.WikiSpace", {wikiSpaceId: "SPEC_SS_W1"}) == null
+    },
+})
+

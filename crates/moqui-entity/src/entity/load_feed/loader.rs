@@ -508,7 +508,12 @@ fn refuse_restricted(facade: &EntityFacade, record: &Record, options: &LoadOptio
         && crate::entity::sensitive::is_user_account_entity(&full_name)
         && crate::entity::sensitive::USER_ACCOUNT_SECRET_FIELDS
             .iter()
-            .any(|field| record.fields.get(*field).is_some_and(|value| !moqui_lib::object::is_empty(value)))
+            .any(|field| {
+                record
+                    .fields
+                    .get(*field)
+                    .is_some_and(|value| !moqui_lib::object::is_empty(value))
+            })
     {
         return Err(Error::new(format!(
             "The password fields of {full_name} are not allowed in this data load"
@@ -845,7 +850,7 @@ pub(super) fn call_data_file_service(
         );
         return Ok(());
     }
-    with_load_slot(facade, |slot| slot.services.push(service.clone()));
+    with_load_slot(facade, |slot| super::keep_service(&mut slot.services, &service));
     (crate::hooks::get().run_data_file_service)(facade, &service)
 }
 
