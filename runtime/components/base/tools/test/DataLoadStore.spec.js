@@ -208,3 +208,39 @@ feature("Load's load names the record the database refuses, stores none of that 
         correctedStored == 2
     },
 })
+
+// before, with the foreign-key worker chosen, the data was read for its entities outside the load's error handling: a
+// value its field's type does not take was an HTTP 500 that replaced the form, and a location not there read as "The
+// data names no entity to load" (TOOL-UI-007)
+feature("Load with the foreign keys dropped names a value that does not read and a missing location, keeps the form and starts no job", {
+    when() {
+        const jobs = () => ec.entity.find("moqui.database.DatabaseJob").disableAuthz().count()
+        const before = jobs()
+        const typed = post("john.doe", "Data/Load/load", { wrapForeignKeys: "true",
+            xmlText: `<entity-facade-xml><moqui.test.TestEntity testId="SPEC_DLS_TYPED" testNumberInteger="not-an-integer"/></entity-facade-xml>` })
+        const missing = post("john.doe", "Data/Load/load", { wrapForeignKeys: "true", location: "component://tools/data/NoSuchSpecDataLoad.xml" })
+        return { typed, missing, started: jobs() - before }
+    },
+    then({ typed, missing, started }) {
+        typed.errors.includes("Nothing was loaded and no job was started")
+        typed.errors.includes("not-an-integer")
+        typed.errors.includes("testNumberInteger")
+        missing.errors.includes("Nothing was loaded and no job was started")
+        missing.errors.includes("component://tools/data/NoSuchSpecDataLoad.xml")
+        !missing.errors.includes("The data names no entity to load")
+        started == 0
+    },
+})
+
+// before, a file that failed was only logged: the page said "Loaded 0 records" for a location not there, and only the
+// count of the files that loaded for a batch with one bad file (TOOL-UI-006)
+feature("Load names a location it could not load as a form error, beside the count of what loaded", {
+    when() {
+        return post("john.doe", "Data/Load/load", { location: "component://tools/data/NoSuchSpecDataLoad.xml" })
+    },
+    then({ errors, messages }) {
+        errors.includes("Could not load [component://tools/data/NoSuchSpecDataLoad.xml]")
+        errors.includes("No such file")
+        messages.includes("Loaded 0 records from [component://tools/data/NoSuchSpecDataLoad.xml]")
+    },
+})

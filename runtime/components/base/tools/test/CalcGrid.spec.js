@@ -24,6 +24,10 @@ const dashboardsCall = (transition, parameters, method) => {
 
 const OUTSIDER = "spec.calcgrid.outsider"
 const OUTSIDER_ID = "SPEC_CALCGRID_OUTSIDER"
+// a second Tools user, and a group of john.doe's and theirs that a document is shared with
+const PEER = "spec.calcgrid.peer"
+const PEER_ID = "SPEC_CALCGRID_PEER"
+const SHARE_GROUP = "SPEC_CALCGRID_SHARE"
 
 spec({
     setupSpec() {
@@ -32,11 +36,22 @@ spec({
         const row = ec.entity.makeValue("moqui.security.UserAccount")
         row.setFields({userId: OUTSIDER_ID, username: OUTSIDER, userFullName: "Spec CalcGrid Outsider"}, true, null, null)
         row.create()
+        ec.entity.makeValue("moqui.security.UserAccount").setAll({userId: PEER_ID, username: PEER, userFullName: "Spec CalcGrid Peer"}).create()
+        ec.entity.makeValue("moqui.security.UserGroup").setAll({userGroupId: SHARE_GROUP, description: "Spec CalcGrid share"}).create()
+        for (const [userGroupId, userId] of [["ADMIN", PEER_ID], [SHARE_GROUP, PEER_ID], [SHARE_GROUP, "EX_JOHN_DOE"]])
+            ec.entity.makeValue("moqui.security.UserGroupMember").setAll({userGroupId, userId, fromDate: ec.user.nowTimestamp}).create()
         ec.artifactExecution.enableAuthz()
     },
     cleanupSpec() {
+        // a document a failed feature left shared with the group goes first
+        for (const definitionId of ["spec-calcgrid-revoke", "spec-calcgrid-revoke-board"])
+            ec.service.sync().name("org.moqui.report.ReportServices.delete#Definition").parameters({definitionId}).disableAuthz().call()
+        ec.message.clearErrors()
         ec.artifactExecution.disableAuthz()
-        ec.entity.find("moqui.security.UserAccount").condition("userId", OUTSIDER_ID).deleteAll()
+        ec.entity.find("moqui.security.UserGroupMember").condition("userId", PEER_ID).deleteAll()
+        ec.entity.find("moqui.security.UserGroupMember").condition("userGroupId", SHARE_GROUP).deleteAll()
+        ec.entity.find("moqui.security.UserGroup").condition("userGroupId", SHARE_GROUP).deleteAll()
+        ec.entity.find("moqui.security.UserAccount").condition("userId", "in", [OUTSIDER_ID, PEER_ID]).deleteAll()
         ec.artifactExecution.enableAuthz()
     }
 })
@@ -521,5 +536,94 @@ feature("a member whose scope changed leaves a saved document's room: on a viewp
         framed.includes('"name":"enumId"')
         // back in the scope of the room it left: the frame's leaving is why it is gone
         String(afterFrame.json.errors).includes("ROOM_GONE")
+    },
+})
+
+// A document is opened only by one who may read it, and what they opened follows the share as it is now: when the owner
+// takes the share away, or a member leaves the group it is shared with, the other person's open room answers their next
+// edit, read and frame by sending them to open it again, which is refused; their edit is not made, and the owner's room
+// and cells are as they were (DASH-UI-008).
+feature("a share taken away ends the other person's open editing and frames at once, and the owner's cells stay", {
+    when() {
+        const opened = call("calcOpen", {sourceJson: JSON.stringify(source), columnsJson: JSON.stringify(["enumId"])}, "post")
+        call("calcEdit", {roomId: opened.json.roomId, opsJson: JSON.stringify([{op: "addSheet"}, {op: "renameSheet", sheet: 1, name: "Notes"},
+            {op: "input", sheet: 1, row: 1, column: 1, value: "Shared range"}, {op: "input", sheet: 1, row: 2, column: 1, value: "saved value"}])}, "post")
+        const definitionId = "spec-calcgrid-revoke"
+        const share = (roomId, userGroupId) => call("calcSave", {roomId, userGroupId, definitionId, title: "Revoked"}, "post")
+        const saved = share(opened.json.roomId, SHARE_GROUP)
+        const owner = saved.json.roomId
+        const text = (cells, row) => (Array.from(cells.json.texts || []).find(cell => cell.row === row && cell.column === 1) || {}).text || ""
+        const cells = roomId => call("calcCells", {roomId, sheet: 1, row: 1, column: 1, width: 1, height: 3})
+        const frame = () => {
+            const out = ec.service.sync().name("org.moqui.calc.CalcServices.get#CalcFrame").parameters({definitionId, range: "Notes!A1:A2"}).call() || {}
+            const read = {frame: JSON.stringify(out.frame || null), errors: ec.message.getErrorsString()}
+            ec.message.clearErrors()
+            return read
+        }
+        const asPeer = body => { ec.user.internalLoginUser(PEER); try { return body() } finally { ec.message.clearErrors(); login("john.doe") } }
+        const out = {saved, owner}
+        // a dashboard of the other person's with the range on it: rendered, its range panel's refusal is that panel's
+        const board = "spec-calcgrid-revoke-board"
+        const render = () => {
+            const out = ec.service.sync().name("org.moqui.report.ReportServices.render#Dashboard").parameters({definitionId: board}).call() || {}
+            const panel = ((out.dashboard || {}).panels || {})["calc-" + definitionId] || {}
+            const read = {rendered: !!out.dashboard, panel: JSON.stringify(panel), errors: ec.message.getErrorsString()}
+            ec.message.clearErrors()
+            return read
+        }
+        // shared: the other person opens it, reads the range and edits it
+        out.before = asPeer(() => {
+            const room = call("calcOpen", {definitionId}, "post")
+            ec.service.sync().name("org.moqui.report.ReportServices.save#Definition").parameters({definition: {id: board, type: "dashboard", title: "Revoked board", body: {panels: {}}}}).call()
+            const panel = dashboardsCall("calcAddPanel", {definitionId, dashboardId: board, range: "Notes!A1:A2", visualization: "table"}, "post")
+            return {room, frame: frame(), panel, board: render(),
+                edit: call("calcEdit", {roomId: room.json.roomId, opsJson: JSON.stringify([{op: "input", sheet: 1, row: 3, column: 1, value: "second editor"}])}, "post")}
+        })
+        // the owner takes the share away: the open room's next edit is refused, and so are an open and a frame
+        out.unshared = share(owner, "")
+        out.after = asPeer(() => ({
+            edit: call("calcEdit", {roomId: out.before.room.json.roomId, opsJson: JSON.stringify([{op: "input", sheet: 1, row: 2, column: 1, value: "stale write"}])}, "post"),
+            open: call("calcOpen", {definitionId}, "post"), frame: frame(), board: render()}))
+        // shared again and opened, then the person leaves the group: a mounted range's next read is refused, and the room left
+        share(owner, SHARE_GROUP)
+        out.reopened = asPeer(() => call("calcOpen", {definitionId}, "post"))
+        ec.artifactExecution.disableAuthz()
+        ec.entity.find("moqui.security.UserGroupMember").condition("userGroupId", SHARE_GROUP).condition("userId", PEER_ID).deleteAll()
+        ec.artifactExecution.enableAuthz()
+        out.left = asPeer(() => ({frame: frame(), cells: cells(out.reopened.json.roomId)}))
+        // the owner's room answers, with the saved cell and the edit made while it was shared
+        const mine = cells(owner)
+        out.mine = {errors: mine.json.errors, saved: text(mine, 2), second: text(mine, 3)}
+        call("calcDelete", {definitionId}, "post")
+        asPeer(() => ec.service.sync().name("org.moqui.report.ReportServices.delete#Definition").parameters({definitionId: board}).call())
+        ec.message.clearErrors()
+        return out
+    },
+    then({saved, owner, before, unshared, after, reopened, left, mine}) {
+        !before.panel.json.errors
+        before.board.rendered
+        before.board.panel.includes("saved value")
+        // the board is drawn; its range panel says it may not be read, and the page has no error of it
+        after.board.rendered
+        !after.board.panel.includes("saved value")
+        after.board.panel.includes("may not read definition")
+        after.board.errors == ""
+        !saved.json.errors
+        String(owner).startsWith("d")
+        !before.room.json.errors
+        before.frame.frame.includes("saved value")
+        !before.edit.json.errors
+        !unshared.json.errors
+        String(after.edit.json.errors).includes("ROOM_GONE")
+        String(after.open.json.errors).includes("may not read definition")
+        after.frame.frame == "null"
+        after.frame.errors.includes("may not read definition")
+        !reopened.json.errors
+        left.frame.frame == "null"
+        left.frame.errors.includes("may not read definition")
+        String(left.cells.json.errors).includes("ROOM_GONE")
+        !mine.errors
+        mine.saved == "saved value"
+        mine.second == "second editor"
     },
 })

@@ -28,13 +28,26 @@ The November 25 nine-plan execution queue is superseded. Its 147 rows, counts an
 | Tools | Standalone Maps moves to its own ledger. Grid verifies the source and receiver. See TOOL-B04. |
 | BasicComms | Mention and ring transaction fix, including recipient events. See COM-B12. |
 
+### November 26 Tools, System, Dashboards and calls follow-up
+
+On `8eaf230b3`, ten original activities received new branch evidence. SYS-03, DASH-06 and DASH-08 were additional selections. The cumulative count is **68 of 147 original activities revisited**, with **79** carrying earlier evidence. All ten still have partial activity status. The separate count for the 16 added Maps and Dev AIDE activities is unchanged.
+
+| Priority | Finding | Next observation |
+|---|---|---|
+| P1 · DASH-UI-008 | A former workbook collaborator’s active editor could change the owner’s workbook after sharing ended. A fresh open was refused. | Verify active editor and range-consumer access follows the current share, and compare the owner’s cell after a refused edit. [DASH-B06](ui-review-dashboards.md#dash-b06--shared-panel-workbook-editors-and-range-consumer) |
+| P2 · TOOL-UI-006 | Standard Data Load reported an ordinary row count when one file failed or a named file was missing. | Submit mixed files and confirm the operator can identify every failed input and its reason. [TOOL-B07](ui-review-tools.md#tool-b07--independent-files-create-only-and-cancellation) |
+| P2 · TOOL-UI-007 | A typed-value error during foreign-key worker preparation replaced the Load form with HTTP 500. | Keep the invalid value on the form with a field-level explanation and job status. [TOOL-B08](ui-review-tools.md#tool-b08--selected-differences-worker-results-and-recovery) |
+| P2 · DASH-UI-007 | A reader revisiting an unshared dashboard saw a renderer exception and stack. | Return an understandable unavailable state and verify the owner can still open the dashboard. [DASH-B05](ui-review-dashboards.md#dash-b05--concurrent-editors-shared-reader-and-restoration) |
+
+Tools exercised selected differences, import modes and formats, refusal, and foreign-key worker recovery. System followed a registered row rule and a time-limited membership through the other user’s actual Grid access. Dashboards covered library revisions, stale dashboard saves, restoration, workbook undo and a shared range. BasicComms followed both phone transfers to the recipient, a queue timeout to the same caller’s voicemail, and a host’s recording to playback. The media and phone peers were local. [System](ui-review-system.md#sys-b07--two-user-row-scope), [BasicComms](ui-review-basic-comms.md#com-b14--phone-transfers-queue-history-and-retained-playback), [local evidence and cleanup](ui-refinement-evidence/next-8eaf/manifest.json).
+
 ### November 26 inspection follow-up
 
-Both original P2 rechecks passed on `fa75eceb6`. The review revisited all 30 original activities that had carried inspection-only evidence, starting with System and Tools. Twenty-eight now have a successful action or consumer check and open branches. The Tools Load walk exposed a failure, and Gallery’s versioned attachment walk still needs a record-file provider. The native and service checks below cover only their named branches.
+Both original P2 rechecks passed on `fa75eceb6`. The review revisited all 30 original activities that had carried inspection-only evidence, starting with System and Tools. On that build, twenty-eight had a successful action or consumer check and open branches. The Tools Load walk exposed a failure, and Gallery’s versioned attachment walk still needs a record-file provider. The native and service checks below cover only their named branches.
 
 | Owner | Activities revisited | Outcome |
 |---|---:|---|
-| [System](ui-review-system.md#sys-b05--november-26-inspection-follow-up) | 11 | Selected browser and terminal sessions ended independently. The requested backup produced two readable catalogs. Import, export, audit and grant comparisons reached their readers. The one-row import summary has a copy defect. |
+| [System](ui-review-system.md#sys-b05--november-26-inspection-follow-up) | 11 | Selected browser and terminal sessions ended independently. The requested backup produced two readable catalogs. Import, export, audit and grant comparisons reached their readers. The one-row import summary exposed SYS-UI-003, verified below. |
 | [Tools](ui-review-tools.md#tool-b05--november-26-inspection-follow-up) | 7 | Six advanced through stored data, a reader or a local peer. One failed on invalid XML row content in Data Load. |
 | [Monitor](ui-review-system-monitoring.md#mon-b05--november-26-inspection-follow-up) | 3 | A 4,000 ms request reached Trace Detail. Authenticated replay and alternate-mount access were exercised on separate fixtures. |
 | [AI and integrations](ui-review-system-ai-integrations.md#ai-b05--november-26-inspection-follow-up) | 3 | A controlled 503 reached the failed-call detail. Tool policy and edge routing have scoped, partial evidence. |
@@ -43,10 +56,12 @@ Both original P2 rechecks passed on `fa75eceb6`. The review revisited all 30 ori
 
 The change-led pass has now revisited **65 of 147 original IDs**. The other **82** retain earlier evidence. Of the 16 added Maps and Dev AIDE activities, **14 demonstrated their selected local outcomes** after the geomap recheck. MAP-07 still depends on a current public Overture edition and DEVW-14 on the installed issue-tracker UI. No original activity was promoted to complete in this batch. Physical notification display remains conditional on a registered device.
 
-**Open findings from this batch**
+**Findings from this batch and their live rechecks**
 
-- **P2 · TOOL-UI-005.** Standard Tools Data Load returned HTTP 500 with “commit failed” for a two-row XML submission containing one bad foreign key. Neither row persisted. The page omitted the failing row and field. Correcting the value stored both rows. [Tools finding and receipt](ui-review-tools.md#tool-b05--november-26-inspection-follow-up). **Fixed 2026-11-26**, not rechecked live: a form error names the refused record, and the input is kept.
-- **P3 · SYS-UI-003.** Standard System Import Detail showed “1 rows” for a successfully applied single row. The stored translation and the counts were correct. [System finding and receipt](ui-review-system.md#sys-b05--november-26-inspection-follow-up). **Fixed 2026-11-26**, not rechecked live.
+- **P2 · TOOL-UI-005.** Standard Tools Data Load returned HTTP 500 with “commit failed” for a two-row XML submission containing one bad foreign key. Neither row persisted. The page omitted the failing row and field. Correcting the value stored both rows. [Tools finding and receipt](ui-review-tools.md#tool-b05--november-26-inspection-follow-up). **Verified on 8eaf230b3.** [TOOL-B06](ui-review-tools.md#tool-b06--november-26-live-fix-verification).
+- **P3 · SYS-UI-003.** Standard System Import Detail showed “1 rows” for a successfully applied single row. The stored translation and the counts were correct. [System finding and receipt](ui-review-system.md#sys-b05--november-26-inspection-follow-up). **Verified on 8eaf230b3.** [SYS-B06](ui-review-system.md#sys-b06--november-26-live-fix-verification).
+
+Both findings passed their original Standard UI rechecks. Of the 30 formerly inspection-only activities, 29 now have successful branch evidence and SH-11 still needs a versioned record-file provider. The rechecks cover two previously revisited IDs, so the total remains 65 of 147.
 
 John Doe and independent scoped browser sessions exercised Standard and Material. Access Review had measured 1920×1080 light and dark, 1280×900 light and 390×844 dark samples with keyboard focus. The terminal walk used 120×40. The frame and mode checks apply to their named screens. The existing suites returned 125 passing component/browser features and 17 passing native cases. Download checks, database reads and listener cleanup are recorded in the [local evidence manifest](ui-refinement-evidence/inspection-fa75/manifest.json).
 

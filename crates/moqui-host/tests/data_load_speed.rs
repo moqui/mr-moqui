@@ -165,7 +165,7 @@ fn load(facade: &EntityFacade, location: &Path, options: &LoadOptions) -> usize 
 
 fn load_location(facade: &EntityFacade, location: &str, options: &LoadOptions) -> usize {
     let loaded = load_entity_data(facade, location, options).unwrap_or_else(|err| panic!("load {location}: {err}"));
-    assert_eq!(loaded.failed_files, 0, "failed files in {location}");
+    assert_eq!(loaded.failures, Vec::new(), "failed files in {location}");
     let errors = errors();
     assert!(errors.is_empty(), "load {location}: {errors:?}");
     usize::try_from(loaded.records).unwrap_or(usize::MAX)
