@@ -57,7 +57,9 @@ pub use outbox::{
     draft_get, draft_list, draft_put, draft_remove, file_save, outbox_add, outbox_discard, outbox_kinds, outbox_list,
     outbox_retry, outbox_unsent,
 };
-pub use packages::{packages_cancel, packages_delete, packages_download, packages_list, packages_status};
+pub use packages::{
+    packages_addresses, packages_cancel, packages_delete, packages_download, packages_list, packages_status,
+};
 pub use sockets::{socket_close, socket_open, socket_send};
 pub use vault::{vault_call, vault_memory};
 

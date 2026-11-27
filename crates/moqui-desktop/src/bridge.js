@@ -353,7 +353,11 @@
                 revision: Number(revision) }),
             cancel: (packageId) => shellAsk("packages_cancel", { packageId: String(packageId || "") }),
             remove: (packageId) => shellAsk("packages_delete", { packageId: String(packageId || "") }),
-            status: () => shellAsk("packages_status")
+            status: () => shellAsk("packages_status"),
+            // a package's Overture addresses searched by the server's matching (plans/Maps-Offline.md §2.5)
+            addresses: (packageId, text, options) => shellAsk("packages_addresses", { packageId: String(packageId || ""), text: String(text || ""),
+                country: options && options.country ? String(options.country) : null, near: options && Array.isArray(options.near) ? options.near.map(Number) : null,
+                limit: options && options.limit ? Number(options.limit) : null })
         })
     }));
 })();

@@ -376,7 +376,11 @@
                 revision: Number(revision), wifiOnly: wifiOnly === true }),
             cancel: (packageId) => shellAsk("packages_cancel", { packageId: String(packageId || "") }),
             remove: (packageId) => shellAsk("packages_delete", { packageId: String(packageId || "") }),
-            status: () => shellAsk("packages_status")
+            status: () => shellAsk("packages_status"),
+            // a package's Overture addresses searched by the server's matching (plans/Maps-Offline.md §2.5)
+            addresses: (packageId, text, options) => shellAsk("packages_addresses", { packageId: String(packageId || ""), text: String(text || ""),
+                country: options && options.country ? String(options.country) : null, near: options && Array.isArray(options.near) ? options.near.map(Number) : null,
+                limit: options && options.limit ? Number(options.limit) : null })
         }),
         // the shell's call joined or over (WebrootCall.js): the phone's native call (MT2) is kept while it lasts
         callState: (callSessionId, state, name) => shellAsk("call_state", { callSessionId: String(callSessionId || ""), state: String(state || ""),

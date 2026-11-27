@@ -14,7 +14,8 @@
 
 //! The shell's commands of the offline map packages (plans/Maps-Offline.md §2.4, OF2; `moqui_client::packages`):
 //! `packages_list` (the server's and the device's), `packages_download`, `packages_cancel`, `packages_delete` and
-//! `packages_status`, for the current account, each refusing a page that is not the shell
+//! `packages_status`, and the offline screen's address search `packages_addresses` (§2.5), for the current account,
+//! each refusing a page that is not the shell
 //! ([`crate::ShellHost::is_shell_page`]). They answer ids, names, revisions, sizes and states, never a path on the
 //! device; the page reads a package's files at `/__moqui-app/maps/<packageId>/<path>` ([`crate::scheme`]).
 //!
@@ -171,4 +172,43 @@ pub fn packages_delete(
 pub fn packages_status(app: AppHandle, webview: Webview, nonce: Option<String>) -> Result<Value, String> {
     let (state, account) = shell_account(&app, &webview, nonce.as_deref())?;
     Ok(state.core.packages().status(&account))
+}
+
+/// Search the current account's package for an address (plans/Maps-Offline.md §2.5,
+/// [`moqui_client::packages::Packages::search_addresses`]): the server's address matching over the package's Overture
+/// addresses, `text` read as `country` (ISO alpha-2, or each country of its rows when empty), `near` the map's middle
+/// (`[lon, lat]`) breaking ties, at most `limit` candidates (20).
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn packages_addresses(
+    app: AppHandle,
+    webview: Webview,
+    nonce: Option<String>,
+    package_id: String,
+    text: String,
+    country: Option<String>,
+    near: Option<Vec<f64>>,
+    limit: Option<usize>,
+) -> Result<Value, String> {
+    let (core, account) = {
+        let (state, account) = shell_account(&app, &webview, nonce.as_deref())?;
+        (Arc::clone(&state.core), account)
+    };
+    if text.len() > 200 {
+        return Err("The address is too long".to_string());
+    }
+    let near = near
+        .filter(|pair| pair.len() == 2 && pair.iter().all(|value| value.is_finite()))
+        .map(|pair| (pair[0], pair[1]));
+    blocking(move || {
+        Ok(core.packages().search_addresses(
+            &account,
+            &package_id,
+            &text,
+            country.as_deref().unwrap_or(""),
+            near,
+            limit.unwrap_or(10),
+        ))
+    })
+    .await
 }

@@ -128,6 +128,7 @@ pub fn run() {
             moqui_client_tauri::packages_cancel,
             moqui_client_tauri::packages_delete,
             moqui_client_tauri::packages_status,
+            moqui_client_tauri::packages_addresses,
             scheme::scheme_fetch,
             commands::client_show_shell,
             commands::open_in_shell,

@@ -28,6 +28,8 @@
 //!   revision is stale: the package list is read again and the new revision offered ([`Status::Stale`]).
 //! - **Serving** ([`serve`]): `/__moqui-app/maps/<packageId>/<path>` on the shell's origin, from the package's
 //!   directory: HEAD, GET and one `Range` as a 206 slice read from the file, never the whole file in memory.
+//! - **Addresses** ([`Packages::search_addresses`], plans/Maps-Offline.md §2.5): the server's address matching over
+//!   the package's Overture addresses, for the offline screen's search.
 //!
 //! A member is at most [`MEMBER_MAX`] (2 GiB less a byte): Android's WebView reads an intercepted body's length as an
 //! Int32 and cannot check a range that ends past it (wry's `RustWebViewClient.kt`, `SkippedPrefixInputStream`), so a
@@ -36,6 +38,7 @@
 //!
 //! The page never has a path of these: the commands answer package ids, names, revisions, sizes and states only.
 
+mod addresses;
 mod download;
 mod serve;
 mod unzip;
@@ -48,6 +51,7 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+pub use addresses::{search_rows as search_address_rows, ADDRESSES_MEMBER};
 pub use download::{download, list, PackageServer, ProxyServer, ServerAnswer};
 pub use serve::{answer as serve, Served, PATH_PREFIX};
 

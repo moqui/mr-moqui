@@ -16,7 +16,8 @@
 //! member of a zip, decompressed within limits ([`text`]); the parsers of the registered sources, each yielding typed
 //! records ([`census`], [`geonames`], [`operator`]); postal-code normalization by country ([`postal`]); the derived Geo
 //! and point IDs ([`ids`]); and the coordinate checks and precision rules here. A user's overlay is read by [`overlay`],
-//! and one too large to draw whole is cut into vector tiles ([`tiles`], over [`simplify`] and [`mvt`]). An OGC service's
+//! and one too large to draw whole is cut into vector tiles ([`tiles`], over [`simplify`] and [`mvt`]). Overture's
+//! address matching is [`address`]. An OGC service's
 //! capabilities are read by [`ogc`]. No ExecutionContext: the importer that
 //! writes the rows is `moqui_tools::geo`.
 //!
@@ -24,6 +25,7 @@
 //! be read as a whole (no such member, a missing header column, a decompression limit passed) is an
 //! [`Error`](crate::error::Error).
 
+pub mod address;
 pub mod admin1;
 pub mod census;
 pub mod geonames;

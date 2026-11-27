@@ -1,10 +1,11 @@
 // Users' overlays and saved places (plans/archive/Maps.md §4.1, §4.2, §8; org.moqui.maps.MapServices store#Overlay, get#OverlayContent,
-// find#Overlays, store#Place; MapOverlays.js; tools screen/Maps/Browse.xml overlay): a file is read before it is kept (one
+// find#Overlays, store#Place; MapOverlays.js; tools screen/Maps/Browse.xml overlay, savePlace): a file is read before it is kept (one
 // that cannot be drawn is refused with nothing written, a format that is not GeoJSON, GPX or KML, more than
 // maps@max-features features), an upload is kept in Maps/overlays of the personal drive with its bad feature counted and
 // its KML network link and script not passed on; the overlay transition answers the owner and a holder of the file's
 // share, and refuses a non-holder and the holder once the share is revoked, writing no ResourceRecent; saved places are a
-// GeoJSON file of the personal drive, found by Browse's search; a file past maps@max-features is offered simplifying on the
+// GeoJSON file of the personal drive, found by Browse's search (one the apps saved offline kept once by its clientRef); a file
+// past maps@max-features is offered simplifying on the
 // server, and with generalize is kept and cut into tiles beside it (the MapOverlayTiles job) that the tile transition
 // answers its owner and refuses a non-holder; a delimited text and a binary WKB upload are read by their own readers; and
 // an overlay edited on the map is saved by its owner only, beside a KML file as name.edited.geojson, refused for a
@@ -244,6 +245,44 @@ feature("saved places are a GeoJSON file of the personal drive, refused out of r
         out.found[0].precisionEnumId == "GPP_USER_CONFIRMED"
     }
 })
+
+// Browse's savePlace as the user, a POST: its JSON answer
+function savePlace(userId, params) {
+    return as(userId, () => {
+        const res = ec.screen
+            .makeTest()
+            .rootScreen("component://webroot/screen/webroot.xml")
+            .render("apps/maps/Browse/savePlace", params, "post")
+        return JSON.parse(String(res.output || "{}"))
+    })
+}
+
+feature(
+    "a place saved offline is kept once by its clientRef: sent again it answers the first save (plans/Maps-Offline.md §2.5)",
+    {
+        when() {
+            const params = {label: "Ferry dock", longitude: "-71.05", latitude: "42.36", clientRef: "maps-ovl-place-1"}
+            const out = {first: savePlace(OWNER, params), again: savePlace(OWNER, params)}
+            out.file = JSON.parse(fileText(ownerDrive(), "Maps/places.geojson") || "{}")
+            return out
+        },
+        then(out) {
+            out.first.applied == true
+            out.first.duplicate == false
+            out.again.applied == true
+            out.again.duplicate == true
+            out.again.placeId == out.first.placeId
+            out.file.features.filter(feature => feature.properties.name === "Ferry dock").length == 1
+        },
+        cleanup() {
+            ec.entity
+                .find("moqui.basic.client.ClientRequestRef")
+                .condition("clientRef", "maps-ovl-place-1")
+                .disableAuthz()
+                .deleteAll()
+        }
+    }
+)
 
 // A little-endian WKB point as the characters of an uploadedFile's binary bytes
 const wkbPoint = (lon, lat) => {

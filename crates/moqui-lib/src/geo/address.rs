@@ -15,9 +15,11 @@
 //! Address matching of O2 (plans/archive/Maps-Overture.md §O2, plans/archive/Maps.md §6.1): the parts of an address a person typed
 //! ([`parse`]), the keys an address point and a query are compared by ([`street_key`], [`number_key`], [`unit_key`],
 //! [`postcode_key`], [`fold`]) and the ranking of the points found into candidates ([`rank`]). No database and no
-//! context: the service reads the rows (`address_service::search_overture_addresses`) and hands them here.
+//! context: the server's service reads the rows (`moqui-maps` `address_service::search_overture_addresses`) and hands
+//! them here, and so does the apps' search of an offline map package's addresses (`moqui-client` `packages::addresses`,
+//! plans/Maps-Offline.md §2.5), which is why it is here, in moqui-lib, with no Parquet reader or codec beside it.
 //!
-//! **Normalization.** Case and the diacritics of Latin letters are folded (`moqui_lib::geo::admin1::fold_name`), dots
+//! **Normalization.** Case and the diacritics of Latin letters are folded (`crate::geo::admin1::fold_name`), dots
 //! inside a word dropped (`St.`, `p.za`), other punctuation made a space, and each word of a street mapped to one
 //! spelling by the tables of its country's languages ([`STREET_WORDS`]): English (with the directionals), Italian,
 //! French, German, Spanish, Portuguese and Dutch; a German or Dutch street's `-straße`, `-strasse`, `-straat` or `-platz`
@@ -31,8 +33,8 @@
 //! street's estimate with its points' extent. Overture's schema 2.0 does not say what an address point stands for, so a
 //! candidate says its position kind is not stated.
 
-use moqui_lib::geo::admin1::fold_name;
-use moqui_lib::geo::postal::lookup_code;
+use crate::geo::admin1::fold_name;
+use crate::geo::postal::lookup_code;
 
 /// Points of one address closer than this are one candidate: its units and entrances (the evaluation's same-address
 /// spread: Boston's 99th percentile 30 m, Amsterdam's 28 m).
@@ -383,7 +385,7 @@ pub fn unit_key(unit: &str) -> String {
         .concat()
 }
 
-/// A postal code's key for `country`: its country's rules (`moqui_lib::geo::postal`: a ZIP+4 read as its ZIP code, a
+/// A postal code's key for `country`: its country's rules (`crate::geo::postal`: a ZIP+4 read as its ZIP code, a
 /// British, Canadian or Dutch code without its space), else upper case letters and digits.
 #[must_use]
 pub fn postcode_key(postcode: &str, country: &str) -> String {

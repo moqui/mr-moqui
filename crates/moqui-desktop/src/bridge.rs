@@ -136,7 +136,8 @@ pub(crate) fn setup(builder: tauri::Builder) -> tauri::Builder {
             moqui_client_tauri::packages_download,
             moqui_client_tauri::packages_cancel,
             moqui_client_tauri::packages_delete,
-            moqui_client_tauri::packages_status
+            moqui_client_tauri::packages_status,
+            moqui_client_tauri::packages_addresses
         ])
 }
 

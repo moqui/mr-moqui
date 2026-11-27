@@ -186,13 +186,22 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
-    <!-- Save place: a named point to the user's places file (store#Place); remove one (delete#Place) -->
+    <!-- Save place: a named point to the user's places file (store#Place); remove one (delete#Place). A clientRef (a
+        place the apps' offline Maps screen saved, sent by the outbox: plans/Maps-Offline.md §2.5) makes it once: sent
+        again it answers the first save with duplicate true (ClientSyncServices.call#ClientRequest). -->
     <transition name="savePlace">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.maps.MapServices.store#Place').requireNewTransaction(true)
-                .parameters({label: label || '', longitude: longitude ?? '', latitude: latitude ?? ''}).call()
+            const parameters = {label: label || '', longitude: longitude ?? '', latitude: latitude ?? ''}
+            const ref = String(clientRef ?? '')
+            const call = ref
+                ? ec.service.sync().name('org.moqui.edge.ClientSyncServices.call#ClientRequest').requireNewTransaction(true)
+                    .parameters({serviceName: 'org.moqui.maps.MapServices.store#Place', clientRef: ref, parameters}).call()
+                : null
+            const out = call ? Object.assign({}, call.result || {}) : ec.service.sync().name('org.moqui.maps.MapServices.store#Place')
+                .requireNewTransaction(true).parameters(parameters).call()
             if (ec.message.hasError()) { const errors = ec.message.getErrorsString(); ec.message.clearErrors(); ec.web.sendJsonResponse({errors}) }
-            else ec.web.sendJsonResponse({applied: out.applied, reason: out.reason, placeId: out.placeId, overlayId: out.overlayId})
+            else ec.web.sendJsonResponse({applied: out.applied, reason: out.reason, placeId: out.placeId, overlayId: out.overlayId,
+                duplicate: !!(call && call.duplicate)})
         ]]></script></actions>
         <default-response type="none"/>
     </transition>

@@ -74,6 +74,7 @@ fn main() {
         "packages_cancel",
         "packages_delete",
         "packages_status",
+        "packages_addresses",
     ]);
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest))
         .expect("the Tauri build steps failed");
