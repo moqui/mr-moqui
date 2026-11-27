@@ -176,6 +176,11 @@ priceMap.price == 16.99
 - `===` and `!==` stay strict JavaScript.
 - A bare value, `!x`, and the sides of `&&` and `||` use Groovy truth: `null`, `false`, zero (a number or a
   decimal), and an empty string, list, map or `Set` are false.
+- `a || b` gives `a` when `a` is true by Groovy truth, else `b`; `a && b` gives `b` when `a` is true, else `a`. The
+  value is the operand's own, as in JavaScript, so `&&` and `||` work inside a condition as values:
+  `Array.from(row.items || [])` is the list or `[]`, and `(row.name || "") == ""` compares the name. Only the operand
+  chosen by Groovy truth differs from JavaScript (`[] || x` is `x`, `[] && x` is `[]`). Each side is evaluated once, and
+  the right side only when it is chosen. The condition as a whole is then judged by Groovy truth, as any value is.
 - A condition that is a call and returns `undefined` passes, as a void method call does in Spock. So an action in
   `then` that returns nothing (`capture.clear()`) passes without checking anything, while a call that returns a
   value is checked as any condition is: `map.delete(key)` on a missing key returns false and fails the feature. Do
@@ -391,7 +396,7 @@ http.requests()[0].headers["Idempotency-Key"]
 
 | Method | |
 |---|---|
-| `add({method, url, bodyContains, status, body, headers, contentType, error, times})` | A fixture. `url` is exact, or a prefix when it ends with `*`; `method` and `bodyContains` narrow it; `status` is 200 by default; `body` is text, or a `Uint8Array` for a binary answer (a zip); `error` fails the call as a transport error after recording it; `times` is how many requests it answers (absent or 0, any number) |
+| `add({method, url, bodyContains, status, body, headers, contentType, error, times, ranges})` | A fixture. `url` is exact, or a prefix when it ends with `*`; `method` and `bodyContains` narrow it; `status` is 200 by default; `body` is text, or a `Uint8Array` for a binary answer (a zip); `error` fails the call as a transport error after recording it; `times` is how many requests it answers (absent or 0, any number); `ranges` true answers as a file server does: a request with one `Range` (`bytes=a-b`, `a-`, `-n`) with that part of `body`, 206 and `Content-Range` (416 past the end; a range whose end is before its start is ignored), and an `If-Match` or `If-Unmodified-Since` that the fixture's `ETag` or `Last-Modified` header does not meet with 412 |
 | `requests()`, `last()`, `count()` | The recorded requests, oldest first, each `{method, url, headers, body, fixture, at}`, `fixture` the index of the fixture that answered or -1 (the 500 most recent). The values of Authorization, Proxy-Authorization, Cookie and `*Api-Key` headers are `[redacted]` |
 | `enable()`, `disable()`, `isEnabled()` | Answer and record; off by default. `enable()` is refused outside a `moqui test` run |
 | `allowNetwork(urlPrefixes)` | Let requests to these URL prefixes go to the network while the fixtures are off (see below); an empty list closes it again |

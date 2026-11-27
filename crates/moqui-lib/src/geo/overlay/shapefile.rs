@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A zipped shapefile as an overlay (plans/Maps.md §4.1, §7; the ESRI Shapefile Technical Description, 1998, and
+//! A zipped shapefile as an overlay (plans/archive/Maps.md §4.1, §7; the ESRI Shapefile Technical Description, 1998, and
 //! dBASE III): the zip's one `.shp`, read record by record in order (its `.shx` index is not needed), with the `.dbf`
 //! record of the same number as the feature's properties (read as a GeoJSON feature's are: name, title or label and
 //! description or desc kept as plain text, the other fields counted), the `.prj` for its CRS and the `.cpg` for the
@@ -22,8 +22,9 @@
 //!
 //! - The CRS: a `.prj` of WGS84 (a GEOGCS of the WGS 84 datum, or WKT2's GEOGCRS of it or its ensemble) or Web
 //!   Mercator (EPSG:3857 by its authority, or a projection named Web or Pseudo Mercator or Mercator_Auxiliary_Sphere)
-//!   is read; any other is refused by name
-//!   (CRS_UNSUPPORTED) until reprojection is built; with no `.prj` the coordinates are read as WGS84 when the file's
+//!   is read, and so is a CRS of the projection registry the `.prj` names by its EPSG authority, by ESRI's name for it
+//!   (`WGS_1984_UTM_Zone_33N`, `British_National_Grid`) or by its parameters ([`crate::geo::proj::Registry::find_wkt`]);
+//!   any other is refused by name (CRS_UNSUPPORTED); with no `.prj` the coordinates are read as WGS84 when the file's
 //!   bounding box is within degrees, and refused when not.
 //! - Bounded: at most 64 zip entries; each member read is inflated to at most what is left of four times the overlay's
 //!   `max_bytes` for all of them, and at most a hundred times its compressed size (past a MiB). Every record's length,
@@ -92,8 +93,11 @@ impl Members<'_> {
     }
 }
 
-/// A `.prj`'s CRS: WGS84 or Web Mercator, else refused by the name it gives.
-fn prj_crs(text: &str) -> Result<Crs, OverlayError> {
+/// A `.prj`'s CRS: WGS84, Web Mercator or a registered one, else refused by the name it gives.
+fn prj_crs(text: &str, projections: &crate::geo::proj::Registry) -> Result<Crs, OverlayError> {
+    if let Some(found) = projections.find_wkt(text) {
+        return Ok(Crs::of_code(found.code).unwrap_or(Crs::Registered(found.code)));
+    }
     let upper = text.trim().to_ascii_uppercase();
     let name = text.split('"').nth(1).map_or_else(
         || super::plain_text(text, 80, false),
@@ -441,7 +445,7 @@ impl Reader {
             return Err(not_format("the .shp is not a shapefile (its header is not one)"));
         }
         let crs = match &prj {
-            Some(text) => prj_crs(text)?,
+            Some(text) => prj_crs(text, &self.projections)?,
             None => {
                 let in_degrees = [(36, 180.0), (44, 90.0), (52, 180.0), (60, 90.0)]
                     .iter()
@@ -493,7 +497,7 @@ impl Reader {
                 self.count("{count} records had fields in the .cpg's code page, which were left out");
             }
             let (label, description) = self.pick_properties(found.as_ref().map(|record| &record.properties));
-            self.use_crs(crs);
+            self.use_crs(crs)?;
             match record {
                 Ok(content) => self.add_raw(shape(content), &label, &description)?,
                 Err(reason) => {

@@ -25,9 +25,12 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="userId"/>
             <parameter name="username"><description>The user, or with accountUpdate the new
                 username.</description></parameter>
-            <parameter name="accountUpdate" type="Boolean" default="false"><description>From update#UserAccount: refuse
-                only a change to who can log in (username, disabled, requirePasswordChange); the name, email address,
-                locale and time zone may change.</description></parameter>
+            <parameter name="accountUpdate" type="Boolean" default="false"><description>From update#UserAccount: only the
+                name, email address, locale, time zone and currency may change; any other field of the account given
+                (changes) that differs from the row is refused, an allow-list (SEC-DEV-83: terminateDate or ipAllowed would
+                lock every visitor out).</description></parameter>
+            <parameter name="changes" type="Map"><description>With accountUpdate, the fields update#UserAccount was
+                given.</description></parameter>
             <parameter name="disabled"/>
             <parameter name="requirePasswordChange"/>
         </in-parameters>
@@ -51,6 +54,12 @@ along with this software (see the LICENSE.md file). If not, see
             <if condition="userAccount == null || !sharedIds.includes(userAccount.get('userId'))"><return/></if>
 
             <if condition="!accountUpdate || (username &amp;&amp; username != userAccount.get('username')) || disabled == 'Y' || requirePasswordChange == 'Y'">
+                <return error="true" message="The demo login cannot be changed on this demo server."/></if>
+            <set field="mayChange" from="['userId', 'userFullName', 'emailAddress', 'locale', 'timeZone', 'currencyUomId', 'lastUpdatedStamp']"/>
+            <set field="changedFields" from="Array.from(ec.entity.getEntityDefinition('moqui.security.UserAccount').getAllFieldNames())
+                    .map(String).filter(name =&gt; !mayChange.includes(name) &amp;&amp; changes != null &amp;&amp; changes[name] != null
+                    &amp;&amp; String(changes[name]) != String(userAccount.get(name) ?? ''))"/>
+            <if condition="changedFields.length">
                 <return error="true" message="The demo login cannot be changed on this demo server."/></if>
         </actions>
     </service>

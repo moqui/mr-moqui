@@ -4,7 +4,8 @@
 // mentions, activity, links, the preview cache row no other message links, its thread root's count, the room's last
 // message and its room changes, for one marker change; an encrypted room's key backup of a session no event uses any
 // more, once its rotation period is past; past its time, a message answered nowhere (the timeline, search, summaries,
-// XMPP history) and filed nowhere; a failing room skipped while the others go; and a forward of an expiring message refused.
+// XMPP history) and filed nowhere; a failing room skipped while the others go; a forward of an expiring message refused;
+// and a room that is gone keeping its live location links (ChatLiveShare) for the shares' clean.
 // Run: ./moq test framework --spec ChatExpiry
 const A = "CHAT_EXPIRY_A"
 const B = "CHAT_EXPIRY_B"
@@ -337,5 +338,21 @@ feature("scheduled send: a message sent at its time takes the room's timer then,
         gone
         status == "CrmDropped"
         reason == "messageGone"
+    }
+})
+
+feature("a room that is gone keeps its live location links for the shares' clean, so the owner's later block still reaches them", {
+    when() {
+        const key = {chatRoomId: "CHAT_EXPIRY_GONE_ROOM", eventSeq: 1}
+        sys(() => ec.entity.makeValue("moqui.chat.ChatLiveShare").setFields(Object.assign({shareId: "CHAT_EXPIRY_GONE_SHARE", ownerUserId: A,
+            createdDate: ec.user.nowTimestamp}, key), true, null, null).createOrUpdate())
+        const round = sys(() => ec.service.sync().name(EXPIRY + "expire#RoomMessages").parameters({chatRoomId: key.chatRoomId, nowMillis: Date.now()}).call() || {})
+        const kept = count("moqui.chat.ChatLiveShare", key)
+        sys(() => ec.entity.find("moqui.chat.ChatLiveShare").condition(key).deleteAll())
+        return {round, kept}
+    },
+    then({round, kept}) {
+        round.deletedCount == 0
+        kept == 1
     }
 })

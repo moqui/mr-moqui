@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A user's geographic file as a map overlay (plans/Maps.md §4.1, §8): a GeoJSON, TopoJSON, EsriJSON, GPX, KML, GML,
+//! A user's geographic file as a map overlay (plans/archive/Maps.md §4.1, §8): a GeoJSON, TopoJSON, EsriJSON, GPX, KML, GML,
 //! WKT, WKB, delimited text (a WKT, WKB or latitude and longitude column) or zipped shapefile read, checked and made a
 //! sanitized GeoJSON FeatureCollection in WGS84 for the browser, which draws only that. The readers of the formats added
 //! after GeoJSON, GPX and KML are the submodules ([`topojson`], [`esrijson`], [`wkt`] with the delimited text, [`wkb`],
@@ -27,8 +27,11 @@
 //!   GeoJSON or TopoJSON file is WGS84 unless its (pre-2016) `crs` member names EPSG:4326 or CRS84 (the same), or
 //!   EPSG:3857 (Web Mercator, converted here); an EsriJSON file's `spatialReference`, a GML geometry's `srsName` (an
 //!   EPSG:4326 URN or URL read latitude first, as GML has it), an EWKT or EWKB SRID and a shapefile's `.prj` may name
-//!   the same two. Any other CRS is refused (CRS_UNSUPPORTED), since no reprojection is made here (§4.1). The CRS
-//!   recorded is the file's (its first geometry's).
+//!   the same two, or a CRS of the projection registry ([`super::proj::Registry`], the `moqui.maps.MapProjection`
+//!   rows: UTM, the British National Grid, NAD83, Lambert-93, LAEA Europe and those an administrator adds), converted
+//!   to WGS84 here with the transform it records (P4c; a GML URN or URL of one is read in its authority's axis order,
+//!   the row's). Any other CRS is refused (CRS_UNSUPPORTED) by its name. The CRS recorded is the file's (its first
+//!   geometry's), with what converting it did ([`Overlay::transform`]).
 //! - Each feature is checked by itself: a geometry that is not sane (a position out of range or not a number, a line of
 //!   fewer than two positions, a ring of fewer than four, a nesting that is not its type's) rejects that feature, which
 //!   is counted and named in the notes, and the rest are kept. A file with no feature left is refused.
@@ -53,6 +56,8 @@ use std::collections::BTreeMap;
 use serde_json::{json, Map, Value};
 
 use crate::node::MNode;
+
+use super::proj::Registry;
 
 /// The formats read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -188,8 +193,11 @@ pub struct Overlay {
     pub rejected: usize,
     /// west, south, east, north of every position kept.
     pub bounds: Option<[f64; 4]>,
-    /// The file's CRS as it declared it (its first geometry's): EPSG:4326, or EPSG:3857, whose positions are converted.
-    pub crs: &'static str,
+    /// The file's CRS as it declared it (its first geometry's): EPSG:4326, EPSG:3857 or a registered `EPSG:n`, whose
+    /// positions are converted.
+    pub crs: String,
+    /// What converting the CRS to WGS84 did, in words (the provenance): empty for WGS84.
+    pub transform: String,
     /// What was not read or kept, in words: each kind once with its count, and the first rejected features by number.
     pub notes: Vec<String>,
 }
@@ -228,6 +236,19 @@ pub fn convert_overlay_bytes(
     format: OverlayFormat,
     limits: &OverlayLimits,
 ) -> Result<Overlay, OverlayError> {
+    convert_overlay_with(bytes, format, limits, &Registry::empty())
+}
+
+/// Read `bytes` as a file of `format`, converting a CRS of `projections` (the registry's rows) to WGS84.
+///
+/// # Errors
+/// As [`convert_overlay`].
+pub fn convert_overlay_with(
+    bytes: &[u8],
+    format: OverlayFormat,
+    limits: &OverlayLimits,
+    projections: &Registry,
+) -> Result<Overlay, OverlayError> {
     if bytes.len() > limits.max_bytes {
         return Err(OverlayError::new(
             "TOO_LARGE",
@@ -238,7 +259,7 @@ pub fn convert_overlay_bytes(
             ),
         ));
     }
-    let mut reader = Reader::new(limits);
+    let mut reader = Reader::new(limits, projections);
     match format {
         OverlayFormat::Shapefile => reader.shapefile(bytes, limits.max_bytes)?,
         OverlayFormat::Wkb => reader.wkb_file(bytes)?,
@@ -344,11 +365,15 @@ struct Reader {
     /// a note's text to the times it happened
     counted: BTreeMap<&'static str, usize>,
     bounds: Option<[f64; 4]>,
-    crs: &'static str,
+    crs: String,
     /// whether `crs` was set by the file (its first geometry's), so a later geometry in another is noted
     crs_given: bool,
-    /// the geometry read now is in EPSG:3857: each position converted
-    mercator: bool,
+    /// the CRS of the geometry read now, whose positions are converted from it
+    current: Crs,
+    /// what converting the file's CRS did, for its provenance
+    transform: String,
+    /// the registered CRSs a file may be in
+    projections: Registry,
     /// the feature number, 1 first, as the file holds them
     number: usize,
     /// a GeoJSON feature's own id, kept for the next feature added when it is short, plain and not used yet
@@ -357,7 +382,7 @@ struct Reader {
 }
 
 impl Reader {
-    fn new(limits: &OverlayLimits) -> Self {
+    fn new(limits: &OverlayLimits, projections: &Registry) -> Self {
         Self {
             max_features: limits.max_features,
             positions_left: (limits.max_bytes / 4).max(1000),
@@ -366,9 +391,11 @@ impl Reader {
             rejects_named: Vec::new(),
             counted: BTreeMap::new(),
             bounds: None,
-            crs: "EPSG:4326",
+            crs: "EPSG:4326".to_string(),
             crs_given: false,
-            mercator: false,
+            current: Crs::Wgs84,
+            transform: String::new(),
+            projections: projections.clone(),
             number: 0,
             given_id: None,
             ids: std::collections::HashSet::new(),
@@ -463,6 +490,7 @@ impl Reader {
             rejected: self.rejected,
             bounds: self.bounds,
             crs: self.crs,
+            transform: self.transform,
             notes,
         })
     }
@@ -472,15 +500,27 @@ impl Reader {
         if !lon.is_finite() || !lat.is_finite() {
             return Err("a coordinate is not a number".to_string());
         }
-        let (lon, lat) = if self.mercator {
-            if lon.abs() > MERCATOR_EDGE * 1.000_001 || lat.abs() > MERCATOR_EDGE * 1.01 {
-                return Err("a Web Mercator coordinate is outside the projection".to_string());
+        let (lon, lat) = match self.current {
+            Crs::WebMercator => {
+                if lon.abs() > MERCATOR_EDGE * 1.000_001 || lat.abs() > MERCATOR_EDGE * 1.01 {
+                    return Err("a Web Mercator coordinate is outside the projection".to_string());
+                }
+                let longitude = (lon / EARTH_RADIUS).to_degrees();
+                let latitude = (2.0 * (lat / EARTH_RADIUS).exp().atan() - std::f64::consts::FRAC_PI_2).to_degrees();
+                (longitude.clamp(-180.0, 180.0), latitude)
             }
-            let longitude = (lon / EARTH_RADIUS).to_degrees();
-            let latitude = (2.0 * (lat / EARTH_RADIUS).exp().atan() - std::f64::consts::FRAC_PI_2).to_degrees();
-            (longitude.clamp(-180.0, 180.0), latitude)
-        } else {
-            (lon, lat)
+            Crs::Registered(code) | Crs::RegisteredAuthority(code) => {
+                let Some(entry) = self.projections.get(code) else {
+                    return Err(format!("a coordinate in EPSG:{code}, which is not registered"));
+                };
+                // easting (longitude) first: a GML reader puts a northing-first URN's positions so before this
+                let (x, y) = (lon, lat);
+                entry
+                    .projection
+                    .to_wgs84(x, y)
+                    .ok_or_else(|| format!("a coordinate outside EPSG:{code}'s projection ({x}, {y})"))?
+            }
+            Crs::Wgs84 | Crs::Wgs84LatFirst => (lon, lat),
         };
         if !(-180.0..=180.0).contains(&lon) {
             return Err(format!("a longitude out of range ({lon})"));
@@ -511,16 +551,49 @@ impl Reader {
         Ok(positions)
     }
 
-    /// The CRS of the geometry read next: the file's is its first geometry's, and a geometry in another is noted.
-    fn use_crs(&mut self, crs: Crs) {
+    /// The CRS of the geometry read next: the file's is its first geometry's, and a geometry in another is noted. A CRS
+    /// that is not WGS84 or Web Mercator must be registered (CRS_UNSUPPORTED by its name otherwise).
+    fn use_crs(&mut self, crs: Crs) -> Result<(), OverlayError> {
         let name = crs.code();
+        let transform = match crs {
+            Crs::Registered(code) | Crs::RegisteredAuthority(code) => match self.projections.get(code) {
+                Some(entry) => format!("{name} ({}) to WGS84: {}", entry.label, entry.projection.describe()),
+                // a row that is there but whose definition the server does not read says so, not that it is unknown
+                None => match self.projections.unreadable(code) {
+                    Some(reason) => {
+                        return Err(OverlayError::new(
+                            "CRS_UNSUPPORTED",
+                            format!(
+                                "the file's coordinates are in {name}, a registered map projection whose definition the server does not convert ({}): a map draws it, but an overlay in it is given in WGS84",
+                                plain_text(reason, 160, false)
+                            ),
+                        ))
+                    }
+                    None => return Err(crs_unsupported(&name)),
+                },
+            },
+            Crs::WebMercator => "EPSG:3857 to WGS84: inverse Web Mercator (the sphere)".to_string(),
+            Crs::Wgs84 | Crs::Wgs84LatFirst => String::new(),
+        };
         if !self.crs_given {
             self.crs = name;
+            self.transform = transform;
             self.crs_given = true;
         } else if self.crs != name {
             self.count("{count} geometries were in another CRS than the file's first, and converted");
         }
-        self.mercator = crs == Crs::WebMercator;
+        self.current = crs;
+        Ok(())
+    }
+
+    /// Whether a CRS's positions are given northing (latitude) first: an EPSG:4326 URN, or a registered CRS named by its
+    /// authority whose axis order is so.
+    fn north_first(&self, crs: Crs) -> bool {
+        match crs {
+            Crs::Wgs84LatFirst => true,
+            Crs::RegisteredAuthority(code) => self.projections.get(code).is_some_and(|entry| entry.north_first),
+            _ => false,
+        }
     }
 
     /// A feature's label and description from its properties (the first of `name`, `title`, `label`, and of
@@ -707,15 +780,10 @@ impl Reader {
             .and_then(Value::as_str)
             .unwrap_or_default();
         match Crs::of_name(name) {
-            // a GeoJSON position is longitude first whatever its CRS's axis order
-            Some(Crs::Wgs84 | Crs::Wgs84LatFirst) => {
-                self.use_crs(Crs::Wgs84);
-                Ok(())
-            }
-            Some(Crs::WebMercator) => {
-                self.use_crs(Crs::WebMercator);
-                Ok(())
-            }
+            // a GeoJSON position is longitude (easting) first whatever its CRS's axis order
+            Some(Crs::Wgs84 | Crs::Wgs84LatFirst) => self.use_crs(Crs::Wgs84),
+            Some(Crs::WebMercator) => self.use_crs(Crs::WebMercator),
+            Some(Crs::Registered(code) | Crs::RegisteredAuthority(code)) => self.use_crs(Crs::Registered(code)),
             None => Err(crs_unsupported(name)),
         }
     }
@@ -1104,21 +1172,25 @@ enum Raw {
     Collection(Vec<Raw>),
 }
 
-/// The CRSs read: WGS84 (longitude first, or latitude first as a GML EPSG:4326 URN gives it) and Web Mercator.
+/// The CRSs read: WGS84 (longitude first, or latitude first as a GML EPSG:4326 URN gives it), Web Mercator, and a CRS
+/// of the projection registry by its EPSG code (named by its authority's URN or URL: in that authority's axis order).
+/// Whether a registered code is in the registry is decided when it is used ([`Reader::use_crs`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Crs {
     Wgs84,
     Wgs84LatFirst,
     WebMercator,
+    Registered(u32),
+    RegisteredAuthority(u32),
 }
 
 impl Crs {
-    /// A CRS by its EPSG code; None for one not read here (0, no SRID, is WGS84).
+    /// A CRS by its EPSG code (0, no SRID, is WGS84); another code is a registered one's.
     fn of_code(code: u32) -> Option<Self> {
         match code {
             0 | 4326 => Some(Self::Wgs84),
             3857 | 900_913 | 3785 | 102_100 | 102_113 => Some(Self::WebMercator),
-            _ => None,
+            code => Some(Self::Registered(code)),
         }
     }
 
@@ -1135,20 +1207,25 @@ impl Crs {
             .find(|part| !part.is_empty())
             .and_then(|code| code.parse().ok())?;
         let crs = Self::of_code(code).filter(|_| code != 0)?;
+        // a registered CRS by an EPSG name only: another authority's number is not one of the registry's
+        if matches!(crs, Self::Registered(_)) && !upper.contains("EPSG") {
+            return None;
+        }
         let lat_first = upper.starts_with("URN:")
             || upper.starts_with("HTTP://WWW.OPENGIS.NET/DEF/CRS/")
             || upper.starts_with("HTTPS://WWW.OPENGIS.NET/DEF/CRS/");
-        Some(if crs == Self::Wgs84 && lat_first {
-            Self::Wgs84LatFirst
-        } else {
-            crs
+        Some(match crs {
+            Self::Wgs84 if lat_first => Self::Wgs84LatFirst,
+            Self::Registered(code) if lat_first => Self::RegisteredAuthority(code),
+            crs => crs,
         })
     }
 
-    fn code(self) -> &'static str {
+    fn code(self) -> String {
         match self {
-            Self::Wgs84 | Self::Wgs84LatFirst => "EPSG:4326",
-            Self::WebMercator => "EPSG:3857",
+            Self::Wgs84 | Self::Wgs84LatFirst => "EPSG:4326".to_string(),
+            Self::WebMercator => "EPSG:3857".to_string(),
+            Self::Registered(code) | Self::RegisteredAuthority(code) => format!("EPSG:{code}"),
         }
     }
 }
@@ -1158,7 +1235,7 @@ fn crs_unsupported(name: &str) -> OverlayError {
     OverlayError::new(
         "CRS_UNSUPPORTED",
         format!(
-            "the file's coordinates are in {}, which is not read here: give it in WGS84 (EPSG:4326) or Web Mercator (EPSG:3857)",
+            "the file's coordinates are in {}, which is not read here: give it in WGS84 (EPSG:4326), Web Mercator (EPSG:3857) or a CRS of the map projections an administrator registered",
             if name.is_empty() { "a CRS that is not named".to_string() } else { name }
         ),
     )

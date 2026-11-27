@@ -33,6 +33,16 @@
       <script>result = ec.resource.script("component://framework/service/org/moqui/public/Account.js").execute("beginRegistration", input || {})</script>
     </actions>
   </service>
+  <service verb="send" noun="RegistrationVerification" authenticate="false" allow-remote="false">
+    <description>After begin#Registration commits (registerOnCommit): a new code for the challenge and its verification mail, so
+      no code is in a call queued to the database (SEC-PSA-06). No route names it.</description>
+    <in-parameters>
+      <parameter name="challengeId" required="true"/>
+    </in-parameters>
+    <actions>
+      <script>ec.resource.script("component://framework/service/org/moqui/public/Account.js").execute("sendVerification", {challengeId})</script>
+    </actions>
+  </service>
   <service verb="verify" noun="Registration" authenticate="anonymous-all" allow-remote="false">
     <in-parameters>
       <parameter name="input" type="Map"/>

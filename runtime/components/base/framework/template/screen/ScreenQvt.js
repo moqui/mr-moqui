@@ -2936,7 +2936,7 @@
         return attr(node, "condition") ? `if (${attr(node, "condition")}) {\n${body}}\n` : body;
     });
 
-    // map-view (plans/Maps.md §3.2): an m-map with its configuration (ScreenSupport's mapViewExpr, checked: WGS84, longitude first)
+    // map-view (plans/archive/Maps.md §3.2): an m-map with its configuration (ScreenSupport's mapViewExpr, checked: WGS84, longitude first)
     // as the value of a bound attribute, JSON, never template text, so nothing in a label is compiled; the effective
     // configuration's transition as config-url, the height and the class. Nothing for a false condition.
     const mapViewWidget = stmt((node) => {

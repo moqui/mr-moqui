@@ -175,7 +175,7 @@ fn expected(range: std::ops::Range<u64>) -> Vec<u8> {
     range.map(|at| (at % 251) as u8).collect()
 }
 
-/// One range reads only its bytes (`plans/Maps.md` §5): a span, a suffix, a range past the end (416), several ranges
+/// One range reads only its bytes (`plans/archive/Maps.md` §5): a span, a suffix, a range past the end (416), several ranges
 /// (the whole file), and a streamed body over the inline size that reads nothing until it is sent.
 #[test]
 fn a_range_is_answered_with_only_its_bytes() {

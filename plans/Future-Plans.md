@@ -107,6 +107,26 @@ After v0.1.0 ([§4.1](archive/Vault-Instances.md#41-the-model), [§4.6](archive/
 - **Attachments in a vault**: files encrypted with their item.
 - **Dynamic credentials** made for one lease and dropped after it, as Vault's database engine makes them.
 
+## Maps
+
+From [Maps](archive/Maps.md), archived 2026-11-26 (with [Maps-Overture](archive/Maps-Overture.md)); guide [Maps](../docs/tools/Maps.md).
+Offline packages and shared live location are built ([Maps-Offline](archive/Maps-Offline.md),
+[Location-Sharing](archive/Location-Sharing.md), archived 2026-11-27). After v0.1.0 ([§4.1](archive/Maps.md#41-initial-source-choices),
+[§6.2](archive/Maps.md#62-sources-researched), [§6.4](archive/Maps.md#64-geo-data-importer), [§7](archive/Maps.md#7-useful-rust-server-work),
+[§9](archive/Maps.md#9-delivery-and-acceptance)):
+- **WFS-T**: editing an OGC layer's features on its server.
+- **More data**: boundaries into `Geo.wellKnownText` (Natural Earth, geoBoundaries with each boundary's license),
+  GeoNames alternate names for localized Geo names, national postal files (Ordnance Survey Code-Point Open, with OSTN15
+  for a centimetre transformation), Overture Divisions, and GeoPackage (it needs an SQLite reader on the server).
+- **Spatial queries**: an index of `GeoPoint` latitude and longitude, PostGIS or dynamic record-layer tiles through
+  the tile endpoint, when a dataset needs them; reprojection of large overlays beyond EPSG:3857.
+- **Routing**, Google and other external maps, and device integrations ("find my" devices, home automation).
+- **PASS public maps**: a published-data adapter with its own rate and resource limits.
+- **iOS** for offline packages and live location sharing (the apps' MD7).
+- **Live location, later**: Check In ("tell them when I arrive", built on a live share); live location in encrypted
+  rooms, each report sealed to the room's device keys (today it is offered only in unencrypted rooms); XMPP positions
+  to and from federated servers (local users only today) ([Location-Sharing §3.5, §3.6](archive/Location-Sharing.md#35-in-chat)).
+
 ## Dev AIDE
 
 From [design-dev-aide](archive/design-dev-aide.md), archived 2026-11-26. P1a to P13, the component template and the finishing work of Nov 25

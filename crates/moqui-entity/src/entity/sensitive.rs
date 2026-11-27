@@ -86,7 +86,9 @@ const SECRET_CONFIG_ENTITY_KEYS: &[&str] = &["emailserver", "systemmessageremote
 /// the ETL mappings, value maps and runs (§10), whose `expression` fields run as the mapping's user, so a generic write
 /// could plant a script in another user's mapping or take it over; and the database jobs and their statements (§6), whose
 /// text `run#DatabaseJob` executes as written, so a generic write would run any SQL past the SQL runner's permission
-/// and its confirmation (plans/Security-Review-Medium.md SEC-TLS-88). No entity-auto service writes them either.
+/// and its confirmation (plans/Security-Review-Medium.md SEC-TLS-88); and a person's shared live locations
+/// (plans/archive/Location-Sharing.md §1), which no grant reads for anyone but the owner and the share's audience. No
+/// entity-auto service writes them either.
 const AUDIT_ENTITY_KEYS: &[&str] = &[
     "databaseaudit",
     // the replay keys of signed requests: a generic delete would let a captured message through again (SEC-DAT-90)
@@ -101,6 +103,17 @@ const AUDIT_ENTITY_KEYS: &[&str] = &[
     "etlvaluemapentry",
     "etlrun",
     "etlrunerror",
+    // a person's shared live location (plans/archive/Location-Sharing.md §1, "No other reader"): its shares, their audiences and
+    // link digests, the latest position (and the XMPP app's, kept apart) and the trail, which only
+    // org.moqui.maps.LocationServices reads and writes, for the owner and the current audience; no generic tool, REST
+    // resource or agent reads them, an ADMIN's included
+    "locationshare",
+    "locationshareaudience",
+    "locationshareaudiencemember",
+    "locationshareowner",
+    "locationlatest",
+    "locationtrailpoint",
+    "locationxmpplatest",
 ];
 
 /// Managed-instance configuration (`moqui.server.instance`, plans/archive/Vault-Instances.md §4.1): a host type names the
@@ -135,7 +148,9 @@ const HOST_CONFIG_ENTITY_KEYS: &[&str] = &[
 /// and whose `allowPrivateNetwork` and test-print gate `store#Connection` keeps (SEC-RTE-83); and the
 /// service jobs, their parameters and their users, which the job runner calls with authorization off as the service a row
 /// names, so a generic write would schedule any service, with any parameters, as any of its users (SEC-TLS-85). System ›
-/// Operations, ETL's Schedule and the services that keep their own jobs write them through their own calls.
+/// Operations, ETL's Schedule and the services that keep their own jobs write them through their own calls. And the grid
+/// views and saved queries, which may hold SQL another user runs (SEC-TLS-100), and the deployed components, whose
+/// location a removal moves aside (SEC-TLS-104).
 const SERVICE_WRITTEN_ENTITY_KEYS: &[&str] = &[
     "entityauditlog",
     "recoveryaction",
@@ -183,6 +198,16 @@ const SERVICE_WRITTEN_ENTITY_KEYS: &[&str] = &[
     "servicejob",
     "servicejobparameter",
     "servicejobuser",
+    // a grid view or saved query may hold SQL that another user runs when they open it: store#GridView and
+    // store#SavedQuery refuse a SQL source from a user who may not run SQL and write only the caller's own rows, so a
+    // generic write would plant SQL in a shared or another user's row (SEC-TLS-100)
+    "gridview",
+    "savedquery",
+    // a deployed component's location is the directory remove#Component moves aside and a deploy stages beside; only
+    // the deploy services write it and its attestation and history (SEC-TLS-104)
+    "deployedcomponent",
+    "deployedcomponentattestation",
+    "deployedcomponenthistory",
 ];
 
 /// The text after the last `.`, in lower case.
@@ -210,9 +235,9 @@ pub fn is_secret_config_entity(entity_name: &str) -> bool {
     SECRET_CONFIG_ENTITY_KEYS.contains(&simple_entity_key(entity_name).as_str())
 }
 
-/// `DatabaseAudit`, `SqlRunToken`, `DatabaseConnection`, the ETL mappings and runs and the database jobs
-/// ([`AUDIT_ENTITY_KEYS`]): read and written only by their own services, never through generic entity reads, writes or
-/// loads.
+/// `DatabaseAudit`, `SqlRunToken`, `DatabaseConnection`, the ETL mappings and runs, the database jobs and the shared
+/// live locations ([`AUDIT_ENTITY_KEYS`]): read and written only by their own services, never through generic entity
+/// reads, writes or loads.
 pub fn is_audit_entity(entity_name: &str) -> bool {
     AUDIT_ENTITY_KEYS.contains(&simple_entity_key(entity_name).as_str())
 }
@@ -687,6 +712,19 @@ mod tests {
         assert!(!is_secret_config_entity("moqui.database.DatabaseConnection"));
         assert!(is_restricted_generic_entity("moqui.database.DatabaseConnection"));
         assert!(!is_audit_entity("moqui.entity.EntityAuditLog"));
+        // shared live locations: only their own services read them, never a generic read, an ADMIN's included
+        for name in [
+            "moqui.maps.LocationShare",
+            "moqui.maps.LocationShareAudience",
+            "moqui.maps.LocationShareAudienceMember",
+            "moqui.maps.LocationShareOwner",
+            "moqui.maps.LocationLatest",
+            "moqui.maps.LocationTrailPoint",
+            "moqui.maps.LocationXmppLatest",
+        ] {
+            assert!(is_audit_entity(name), "{name}");
+            assert!(is_restricted_generic_entity(name), "{name}");
+        }
         // a database job's statements run as written: no generic read or write, whose text would run past the SQL
         // runner's permission (SEC-TLS-88)
         for name in [
@@ -721,6 +759,12 @@ mod tests {
             "moqui.monitor.IngestKey",
             "moqui.monitor.ScrapeTarget",
             "moqui.monitor.SyntheticCheck",
+            // SEC-TLS-100: SQL planted in a shared or another user's view or query; SEC-TLS-104: a component's directory
+            "moqui.database.GridView",
+            "moqui.database.SavedQuery",
+            "moqui.server.DeployedComponent",
+            "moqui.server.DeployedComponentAttestation",
+            "moqui.server.DeployedComponentHistory",
         ] {
             assert!(!is_restricted_generic_entity(name), "{name}");
             assert!(is_service_written_entity(name) && is_generic_write_refused(name), "{name}");

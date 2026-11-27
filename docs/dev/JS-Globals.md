@@ -279,6 +279,8 @@ helper functions above are also on the class Java has them on. Sources: `script/
 | `cleanHtml(text)` | The HTML cleaned as an `allow-html="safe"` parameter is |
 | `cleanChatHtml(text)` | The HTML cleaned for a chat message: the safe set, with an image only when its `src` is this server's `/richTextImage/<id>` |
 | `cleanMarkdown(text)` | Markdown whose rendered HTML holds nothing the safe set removes comes back as written; otherwise each piece of raw HTML that holds something it removes is cleaned to it (a block whole, an inline tag in its context), the markdown around it as it was. What `update#WikiPage` saves for an `md` page of a space without `allowAnyHtml`; `render#WikiPage` cleans again when it shows the page |
+| `regexTest(pattern, text, ignoreCase)` | Whether the text has a match of the pattern, matched in time linear in the text by the Rust `regex` syntax (no back-references or look-around), so a pattern a user writes cannot backtrack for as long as the request lasts (a forum's content rule). A pattern over 1000 characters or one that does not compile throws |
+| `regexMask(pattern, text, mask, ignoreCase)` | The text with each character of each match replaced by the first character of `mask` (`*` by default), matched as `regexTest` matches |
 | `encodeForXmlAttribute(text, addZeroWidthSpaces)` | Text escaped for an XML attribute, characters above ASCII as character references |
 | `decodeFromXml(text)` | `&lt;`, `&gt;`, `&quot;`, `&apos;` and `&amp;` put back. Null for null |
 | `urlEncodeIfNeeded(text)` | URL-encoded unless it is already safe. A space is `+` |
@@ -414,7 +416,7 @@ A node kept in the context keeps its methods. The form, service and entity defin
 |---|---|
 | `System.getProperty(name)` | A system property or environment value, null when it is not set or empty, null for a conf attribute's environment name (`moqui_conf__...`: read the conf with `ec.factory.getConfValue`, [JS-Core-API](JS-Core-API.md)), and null for a name of a password, secret, token, credential or key (`_key`, `_pass`, `_pw`, `crypt`), so the crypt pass, the session key and passwords given in the environment never reach a script; a credential a script sends to another server (`pass@client-secret`) is named to `RestClient.addPropertyHeader` ([JS-Core-API](JS-Core-API.md)), which sends it without returning it |
 | `System.isPropertySet(name)` | Whether a property, a secret one too, has a value other than the `CHANGEME` placeholder; the value is not returned |
-| `System.propertyMatches(name, given)` | Whether `given` is the property's value, compared by digest on the server; false when either is empty. For a client secret a caller presents |
+| `System.propertyMatches(name, given)` | Whether `given` is the property's value, compared by digest on the server; false when either is empty or the value is the `CHANGEME` placeholder (or ends with it). For a client secret a caller presents |
 | `System.secretCodeHash(name, text)` | `ec.user.singleUseCodeHash` of the secret's value followed by `text`, for `xmpp-server/upload@secret` only (an XMPP file's download token); null when it is not set |
 | `ResourceReference.isTextFilename(filename)` | Whether the content type of the file name is a text type. It is the only member: get a reference with `ec.resource.getLocationReference(location)` ([JS-Core-API](JS-Core-API.md#ecresource)) |
 

@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Build the images from the Maximal package: the server's, localhost/moqui:latest, and the one pipeline jobs run in,
 # localhost/moqui-build:latest (Containerfile.build; docs/interfaces/Pipelines.md "Images").
-#   podman/build.sh                 ./moq build --release, then the server image
+#   podman/build.sh                 ./moq build --release (Maximal with the dev tools), then the server image; for a
+#                                   production image build Maximal without them first and use --nobuild
+#                                   (docs/Run-Deploy.md, Production checklist)
 #   podman/build.sh --nobuild       images only, using the existing target/release/moqui
 #   podman/build.sh --in-build-image   the binary built in localhost/moqui-build (Debian 13) into target/build-image,
 #                                   for a host whose glibc is newer than the images' (Ubuntu 26.04: 2.43, Debian 13:

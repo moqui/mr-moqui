@@ -1306,6 +1306,14 @@ pub(crate) fn screen_document(screen_location: &str) -> Result<ScreenDocument, E
         return Ok(ScreenDocument::Missing(format!("No document found for index {index}")));
     };
     let location = text(&document, "docLocation");
+    // a document is this server's text, never fetched from another server, whose renderer the location's extension
+    // would pick (SEC-SCR-92); a location other than a component's is a DATABASE_ADMIN holder's to write
+    // (Security.eecas.xml ScreenDocumentLocation)
+    if super::definition::remote_location(&location) {
+        return Ok(ScreenDocument::Missing(format!(
+            "Document {index} is not at a location of this server"
+        )));
+    }
     let factory = ExecutionContext::with_current(|ec| std::sync::Arc::clone(ec.factory()))
         .ok_or_else(|| Error::new("no execution context"))?;
     let rendered = crate::script::template::TemplateRegistry::of(&factory)

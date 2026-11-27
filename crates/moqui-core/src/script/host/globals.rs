@@ -84,7 +84,7 @@ const GLOBALS_JS: &str = concat!(
     for (const name of ["encodeHtml", "encodeHtmlJsSafe", "fieldValuesEncodeHtmlJsSafe", "ipMatches",
         "isSafeSinglePathSegment", "isSameOriginRedirect", "lastPathSegment", "reportSaveLocationProblem"]) web[name] = hidden[name];
     for (const name of ["encodeForXmlAttribute", "base64UrlEncode", "base64UrlDecode", "base64Encode", "base64Decode",
-        "cleanHtml", "cleanChatHtml", "cleanMarkdown",
+        "cleanHtml", "cleanChatHtml", "cleanMarkdown", "regexTest", "regexMask",
         "urlEncodeIfNeeded"]) string[name] = hidden[name];
     // the checks Security.eecas.xml runs, a global of a whole runtime (`oxide::engine`) as the helpers are
     helpers.UserSecurityChecks = {
@@ -308,6 +308,8 @@ pub(crate) static SHIM: Shim = Shim {
         method!("StringUtilities", "cleanHtml", [OptText], None, leaf, clean_html),
         method!("StringUtilities", "cleanChatHtml", [OptText], None, leaf, clean_chat_html),
         method!("StringUtilities", "cleanMarkdown", [OptText], None, leaf, clean_markdown),
+        method!("StringUtilities", "regexTest", [Text, OptText, OptBool], None, leaf, regex_test),
+        method!("StringUtilities", "regexMask", [Text, OptText, OptText, OptBool], None, leaf, regex_mask),
         method!(
             "StringUtilities",
             "urlEncodeIfNeeded",
@@ -702,14 +704,15 @@ fn is_property_set(call: &mut Call<'_>) -> Result<Ret, HostError> {
 }
 
 /// `System.propertyMatches(name, given)`: whether `given` is the value of the property, or of the conf attribute a
-/// selector names, compared by digest so the time does not depend on how much matched; false when either is empty. The
-/// value is not returned.
+/// selector names, compared by digest so the time does not depend on how much matched; false when either is empty, and
+/// when the value is the `CHANGEME` placeholder or ends with it, which is unset as `isConfValueSet` reads it
+/// (SEC-PSA-81: a PASS client left with the conf's placeholder is no client). The value is not returned.
 fn property_matches(call: &mut Call<'_>) -> Result<Ret, HostError> {
     use sha2::Digest as _;
     // a conf attribute by its selector (a PASS client's secret), else a property
     let value = crate::context::conf_env::setting_or_property(&call.text_or_empty(0));
     let given = call.opt_text(1).unwrap_or_default();
-    if value.is_empty() || given.is_empty() {
+    if value.trim().is_empty() || value.trim().ends_with("CHANGEME") || given.is_empty() {
         return Ok(false.into());
     }
     Ok((sha2::Sha256::digest(value.as_bytes()) == sha2::Sha256::digest(given.as_bytes())).into())
@@ -836,6 +839,71 @@ fn clean_chat_html(call: &mut Call<'_>) -> Result<Ret, HostError> {
 /// A wiki page's markdown with its raw HTML cleaned to the safe set, the markdown around it kept (SEC-SCR-81).
 fn clean_markdown(call: &mut Call<'_>) -> Result<Ret, HostError> {
     Ok(moqui_lib::safe_html::clean_markdown(&call.opt_text(0).unwrap_or_default()).into())
+}
+
+/// The longest pattern [`linear_regex`] takes.
+const LINEAR_PATTERN_MAX: usize = 1000;
+
+/// How many compiled patterns [`linear_regex`] keeps; past it the cache starts again.
+const LINEAR_CACHE_MAX: usize = 256;
+
+/// The patterns [`linear_regex`] compiled, by pattern and case: a forum post runs each of up to 200 rules on many pieces
+/// of its text, so a pattern is compiled once, not on every call.
+fn linear_cache() -> &'static std::sync::Mutex<std::collections::HashMap<(String, bool), regex::Regex>> {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<(String, bool), regex::Regex>>> =
+        std::sync::OnceLock::new();
+    CACHE.get_or_init(Default::default)
+}
+
+/// `pattern` compiled by the Rust `regex` crate, whose matching takes time linear in the text: no back-references or
+/// look-around, so a pattern a user writes (a forum's content rule, SEC-PFS-90) cannot backtrack for as long as the
+/// request lasts. Kept compiled in a bounded cache ([`LINEAR_CACHE_MAX`]). An error for a pattern over
+/// [`LINEAR_PATTERN_MAX`] characters or one that does not compile.
+fn linear_regex(pattern: &str, ignore_case: bool) -> Result<regex::Regex, HostError> {
+    if pattern.chars().count() > LINEAR_PATTERN_MAX {
+        return Err(HostError::message(format!(
+            "a pattern has at most {LINEAR_PATTERN_MAX} characters"
+        )));
+    }
+    let key = (pattern.to_string(), ignore_case);
+    if let Some(found) = moqui_lib::sync::lock(linear_cache()).get(&key) {
+        return Ok(found.clone());
+    }
+    let compiled = regex::RegexBuilder::new(pattern)
+        .case_insensitive(ignore_case)
+        .size_limit(1 << 20)
+        .build()
+        .map_err(|err| HostError::message(format!("not a pattern this matcher takes: {err}")))?;
+    let mut cache = moqui_lib::sync::lock(linear_cache());
+    if cache.len() >= LINEAR_CACHE_MAX {
+        cache.clear();
+    }
+    cache.insert(key, compiled.clone());
+    Ok(compiled)
+}
+
+/// `StringUtilities.regexTest(pattern, text, ignoreCase)`: whether `text` has a match of `pattern`, in linear time
+/// ([`linear_regex`]).
+fn regex_test(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let re = linear_regex(call.text(0).unwrap_or_default(), call.bool(2).unwrap_or(false))?;
+    Ok(re.is_match(&call.opt_text(1).unwrap_or_default()).into())
+}
+
+/// `StringUtilities.regexMask(pattern, text, mask, ignoreCase)`: `text` with each character of each match of `pattern`
+/// replaced by the first character of `mask` (`*` by default), in linear time ([`linear_regex`]).
+fn regex_mask(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let re = linear_regex(call.text(0).unwrap_or_default(), call.bool(3).unwrap_or(false))?;
+    let text = call.opt_text(1).unwrap_or_default();
+    let mask = call.opt_text(2).and_then(|mask| mask.chars().next()).unwrap_or('*');
+    let mut out = String::with_capacity(text.len());
+    let mut last = 0;
+    for found in re.find_iter(&text) {
+        out.push_str(&text[last..found.start()]);
+        out.extend(std::iter::repeat_n(mask, found.as_str().chars().count()));
+        last = found.end();
+    }
+    out.push_str(&text[last..]);
+    Ok(out.into())
 }
 
 fn url_encode_if_needed(call: &mut Call<'_>) -> Result<Ret, HostError> {

@@ -12,17 +12,19 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The header and metadata of a PMTiles version 3 archive (plans/Maps.md §4.1, §5; the format:
+//! The header and metadata of a PMTiles version 3 archive (plans/archive/Maps.md §4.1, §5; the format:
 //! <https://github.com/protomaps/PMTiles/blob/main/spec/v3/spec.md>), read when a map archive is registered: the 127
 //! bytes at its start and its JSON metadata, checked so that an archive a map cannot draw is refused by name before a
 //! browser asks for it. No ExecutionContext: the service that reads the bytes through the resource facade is
 //! `moqui_tools::maps_archive`.
 //!
-//! Also the archive's directories and tile IDs, for the Z/X/Y tile endpoint (`moqui_tools::maps_tiles`, plans/Maps.md §5
+//! Also the archive's directories and tile IDs, for the Z/X/Y tile endpoint (`moqui_tools::maps_tiles`, plans/archive/Maps.md §5
 //! "a later Rust endpoint returning individual Z/X/Y tiles"): a tile's ID in the format's Hilbert order ([`tile_id`]), a
 //! directory decoded ([`decode_directory`]) and a tile found through the root and its leaves, run lengths included
-//! ([`locate_tile`]); and an archive written whole from its tiles ([`write_archive`]), for an overlay generalized on the
-//! server (`moqui_tools::maps_simplify`). Compression is the caller's: the reader is handed decompressed directories and
+//! ([`locate_tile`]); and an archive written as its tiles come ([`ArchiveWriter`]: the tile data streamed to a part
+//! file, only the directory entries kept), for a region cut from an archive into an offline map package
+//! (`moqui_tools::maps_extract`, plans/archive/Maps-Offline.md §2.2), or whole in memory ([`write_archive`], the writer over a
+//! `Vec`), for an overlay generalized on the server (`moqui_tools::maps_simplify`). Compression is the caller's: the reader is handed decompressed directories and
 //! the writer compresses with the function it is given, so this crate takes no compression dependency. Written here
 //! rather than on the `pmtiles` crate (MIT or Apache-2.0), whose reader is async over its own backends (Tokio, an HTTP
 //! client or memory maps, `bytes`, `async-compression`) and does not fit the resource facade's synchronous `read_at`; the
@@ -775,10 +777,260 @@ fn directories(entries: &[Entry], compress: &dyn Fn(&[u8]) -> Vec<u8>) -> (Vec<u
     }
 }
 
+/// The parts of an archive [`ArchiveWriter::finish`] made: its header, the bytes that come before the tile data (the
+/// header, the root directory, the metadata and the leaf directories, in that order) and the sink the tile data was
+/// written to, which goes after them.
+pub struct FinishedArchive<W> {
+    pub header: Header,
+    pub prefix: Vec<u8>,
+    pub data: W,
+}
+
+/// A PMTiles version 3 archive written as its tiles come (plans/archive/Maps-Offline.md §2.2, a regional extract of hundreds of
+/// MB): each tile's bytes go to `data` (a part file) when they are added, and only the directory entries are kept, so a
+/// writer holds the entries and the last tile, never the tile data. Tiles come in ascending tile ID order; a tile of the
+/// same content as the one right before it extends that one's run (clustered, as [`write_archive`] writes). A tile added
+/// with a key ([`ArchiveWriter::add_keyed`], the offset of its content in the archive it was cut from) and a later tile
+/// of the same key ([`ArchiveWriter::repeat_keyed`]) share one stored content, so a source's shared tiles (the sea, the
+/// empty land) stay shared. The keys are bounded ([`KEYS_MAX`] by default): past the bound the keys never repeated are
+/// let go, so a key may be forgotten and its content written again, never one shared wrongly. [`ArchiveWriter::finish`]
+/// lays out the directories and the header, the tile data's offsets then known: the caller writes the prefix and then
+/// the data after it.
+pub struct ArchiveWriter<W: std::io::Write> {
+    data: W,
+    data_len: u64,
+    entries: Vec<Entry>,
+    /// The content of the last entry when its bytes were handed in, for a run of identical neighbours
+    last: Option<Vec<u8>>,
+    /// Where each keyed content is in the tile data: its offset and length, and whether a tile repeated it
+    keyed: std::collections::HashMap<u64, (u64, u32, bool)>,
+    keys_max: usize,
+    addressed: u64,
+    contents: u64,
+}
+
+/// The keys an [`ArchiveWriter`] keeps by default (some 24 bytes each, and the map's own).
+pub const KEYS_MAX: usize = 1 << 18;
+
+impl<W: std::io::Write> ArchiveWriter<W> {
+    /// A writer whose tile data goes to `data`.
+    pub fn new(data: W) -> Self {
+        Self::with_keys_max(data, KEYS_MAX)
+    }
+
+    /// A writer that keeps at most `keys_max` keys (at least 1).
+    pub fn with_keys_max(data: W, keys_max: usize) -> Self {
+        Self {
+            data,
+            data_len: 0,
+            entries: Vec::new(),
+            last: None,
+            keyed: std::collections::HashMap::new(),
+            keys_max: keys_max.max(1),
+            addressed: 0,
+            contents: 0,
+        }
+    }
+
+    /// Keep `key` at `place`: past the bound, the keys no tile repeated are let go first, then all of them.
+    fn keep(&mut self, key: u64, place: (u64, u32)) {
+        if self.keyed.len() >= self.keys_max {
+            self.keyed.retain(|_, (_, _, repeated)| *repeated);
+            if self.keyed.len() >= self.keys_max / 2 {
+                self.keyed.clear();
+            }
+        }
+        self.keyed.insert(key, (place.0, place.1, false));
+    }
+
+    /// The tiles added, each tile of a run counted.
+    #[must_use]
+    pub fn tile_count(&self) -> u64 {
+        self.addressed
+    }
+
+    /// The bytes of tile data written so far.
+    #[must_use]
+    pub fn data_len(&self) -> u64 {
+        self.data_len
+    }
+
+    /// Whether a content of `key` was written.
+    #[must_use]
+    pub fn has_key(&self, key: u64) -> bool {
+        self.keyed.contains_key(&key)
+    }
+
+    /// Whether `tile_id` continues the last entry's run; an error when it is not after it.
+    fn order(&self, tile_id: u64) -> Result<bool, Error> {
+        let Some(last) = self.entries.last() else {
+            return Ok(false);
+        };
+        let next = last.tile_id + u64::from(last.run_length);
+        if tile_id < next {
+            return Err(Error::new("the archive's tiles are not in tile ID order"));
+        }
+        Ok(tile_id == next)
+    }
+
+    /// Tile `tile_id` with `content` (compressed as the archive's tiles are).
+    ///
+    /// # Errors
+    ///
+    /// A tile ID not after the last one, a tile larger than 4 GiB, or a write of the tile data that fails.
+    pub fn add_tile(&mut self, tile_id: u64, content: &[u8]) -> Result<(), Error> {
+        self.add(tile_id, None, content)
+    }
+
+    /// Tile `tile_id` with `content`, known by `key` (the offset of its content in the archive it was cut from): a
+    /// content of a key already written is not written again, the tile pointing at the one stored.
+    ///
+    /// # Errors
+    ///
+    /// As [`ArchiveWriter::add_tile`].
+    pub fn add_keyed(&mut self, tile_id: u64, key: u64, content: &[u8]) -> Result<(), Error> {
+        if self.keyed.contains_key(&key) {
+            return self.repeat_keyed(tile_id, key);
+        }
+        self.add(tile_id, Some(key), content)
+    }
+
+    /// Tile `tile_id` with the content already written under `key`.
+    ///
+    /// # Errors
+    ///
+    /// A key with no content written, or a tile ID not after the last one.
+    pub fn repeat_keyed(&mut self, tile_id: u64, key: u64) -> Result<(), Error> {
+        let Some(known) = self.keyed.get_mut(&key) else {
+            return Err(Error::new("a tile repeats a content that was not written"));
+        };
+        known.2 = true;
+        let (offset, length) = (known.0, known.1);
+        let continues = self.order(tile_id)?;
+        self.addressed += 1;
+        if let Some(last) = self.entries.last_mut() {
+            if continues && last.offset == offset && last.length == length {
+                last.run_length += 1;
+                return Ok(());
+            }
+        }
+        // this entry's bytes are not at hand: a run of it is told by its place, as above
+        self.last = None;
+        self.entries.push(Entry {
+            tile_id,
+            offset,
+            length,
+            run_length: 1,
+        });
+        Ok(())
+    }
+
+    fn add(&mut self, tile_id: u64, key: Option<u64>, content: &[u8]) -> Result<(), Error> {
+        let length = u32::try_from(content.len()).map_err(|_| Error::new("a tile larger than 4 GiB"))?;
+        let continues = self.order(tile_id)?;
+        // the same content as the tile right before it: one run
+        if continues && self.last.as_deref() == Some(content) {
+            if let Some(last) = self.entries.last_mut() {
+                last.run_length += 1;
+                self.addressed += 1;
+                let place = (last.offset, last.length);
+                if let Some(key) = key {
+                    self.keep(key, place);
+                }
+                return Ok(());
+            }
+        }
+        self.data
+            .write_all(content)
+            .map_err(|err| Error::new(format!("writing the archive's tile data: {err}")))?;
+        let offset = self.data_len;
+        self.data_len += u64::from(length);
+        self.addressed += 1;
+        self.contents += 1;
+        self.entries.push(Entry {
+            tile_id,
+            offset,
+            length,
+            run_length: 1,
+        });
+        if let Some(key) = key {
+            self.keep(key, (offset, length));
+        }
+        self.last = Some(content.to_vec());
+        Ok(())
+    }
+
+    /// The header, the directories and `metadata` (JSON, compressed by `compress` as `options.internal_compression`
+    /// says) of the tiles added, and the data sink, flushed: header, root directory, metadata, leaf directories, then
+    /// the tile data.
+    ///
+    /// # Errors
+    ///
+    /// No tile added, or a flush of the data that fails.
+    pub fn finish(
+        mut self,
+        metadata: &[u8],
+        options: &ArchiveOptions,
+        compress: &dyn Fn(&[u8]) -> Vec<u8>,
+    ) -> Result<FinishedArchive<W>, Error> {
+        if self.entries.is_empty() {
+            return Err(Error::new("an archive needs at least one tile"));
+        }
+        self.data
+            .flush()
+            .map_err(|err| Error::new(format!("writing the archive's tile data: {err}")))?;
+        let (root, leaves) = directories(&self.entries, compress);
+        let metadata = compress(metadata);
+        let header_len = HEADER_LEN as u64;
+        let root_offset = header_len;
+        let metadata_offset = root_offset + root.len() as u64;
+        let leaf_offset = metadata_offset + metadata.len() as u64;
+        let tile_data_offset = leaf_offset + leaves.len() as u64;
+        let [west, south, east, north] = options.bounds;
+        let header = Header {
+            version: 3,
+            root_offset,
+            root_length: root.len() as u64,
+            metadata_offset,
+            metadata_length: metadata.len() as u64,
+            leaf_offset,
+            leaf_length: leaves.len() as u64,
+            tile_data_offset,
+            tile_data_length: self.data_len,
+            addressed_tiles: self.addressed,
+            tile_entries: self.entries.len() as u64,
+            tile_contents: self.contents,
+            clustered: true,
+            internal_compression: options.internal_compression,
+            tile_compression: options.tile_compression,
+            tile_type: options.tile_type,
+            min_zoom: options.min_zoom,
+            max_zoom: options.max_zoom,
+            min_lon: west,
+            min_lat: south,
+            max_lon: east,
+            max_lat: north,
+            center_zoom: options.center_zoom,
+            center_lon: (west + east) / 2.0,
+            center_lat: (south + north) / 2.0,
+        };
+        let mut prefix = Vec::with_capacity(usize::try_from(tile_data_offset).unwrap_or(0));
+        prefix.extend_from_slice(&header.to_bytes());
+        prefix.extend_from_slice(&root);
+        prefix.extend_from_slice(&metadata);
+        prefix.extend_from_slice(&leaves);
+        Ok(FinishedArchive {
+            header,
+            prefix,
+            data: self.data,
+        })
+    }
+}
+
 /// A whole PMTiles version 3 archive of `tiles` (tile ID and content, in ascending tile ID order, each content already
-/// compressed as `options.tile_compression` says) with `metadata` (JSON): header, root directory, metadata, leaf
-/// directories, tile data. Consecutive tiles of the same content are one run (clustered). `compress` compresses the
-/// directories and the metadata as `options.internal_compression` says.
+/// compressed as `options.tile_compression` says) with `metadata` (JSON), in memory: an [`ArchiveWriter`] writing its
+/// tile data to a `Vec`, the prefix and the data put together. Consecutive tiles of the same content are one run
+/// (clustered). `compress` compresses the directories and the metadata as `options.internal_compression` says.
 ///
 /// # Errors
 ///
@@ -792,79 +1044,13 @@ pub fn write_archive<I>(
 where
     I: IntoIterator<Item = (u64, Vec<u8>)>,
 {
-    let mut entries: Vec<Entry> = Vec::new();
-    let mut data: Vec<u8> = Vec::new();
-    // where the last content written starts in data: it runs to data's end
-    let mut last_start = 0usize;
-    let mut addressed = 0u64;
+    let mut writer = ArchiveWriter::new(Vec::new());
     for (tile_id, content) in tiles {
-        let length = u32::try_from(content.len()).map_err(|_| Error::new("a tile larger than 4 GiB"))?;
-        if let Some(last) = entries.last_mut() {
-            let next = last.tile_id + u64::from(last.run_length);
-            if tile_id < next {
-                return Err(Error::new("the archive's tiles are not in tile ID order"));
-            }
-            // the same content as the tile right before it: one run
-            if tile_id == next && data[last_start..] == content[..] {
-                last.run_length += 1;
-                addressed += 1;
-                continue;
-            }
-        }
-        addressed += 1;
-        last_start = data.len();
-        entries.push(Entry {
-            tile_id,
-            offset: last_start as u64,
-            length,
-            run_length: 1,
-        });
-        data.extend_from_slice(&content);
+        writer.add_tile(tile_id, &content)?;
     }
-    if entries.is_empty() {
-        return Err(Error::new("an archive needs at least one tile"));
-    }
-    let (root, leaves) = directories(&entries, compress);
-    let metadata = compress(metadata);
-    let header_len = HEADER_LEN as u64;
-    let root_offset = header_len;
-    let metadata_offset = root_offset + root.len() as u64;
-    let leaf_offset = metadata_offset + metadata.len() as u64;
-    let tile_data_offset = leaf_offset + leaves.len() as u64;
-    let [west, south, east, north] = options.bounds;
-    let header = Header {
-        version: 3,
-        root_offset,
-        root_length: root.len() as u64,
-        metadata_offset,
-        metadata_length: metadata.len() as u64,
-        leaf_offset,
-        leaf_length: leaves.len() as u64,
-        tile_data_offset,
-        tile_data_length: data.len() as u64,
-        addressed_tiles: addressed,
-        tile_entries: entries.len() as u64,
-        tile_contents: entries.len() as u64,
-        clustered: true,
-        internal_compression: options.internal_compression,
-        tile_compression: options.tile_compression,
-        tile_type: options.tile_type,
-        min_zoom: options.min_zoom,
-        max_zoom: options.max_zoom,
-        min_lon: west,
-        min_lat: south,
-        max_lon: east,
-        max_lat: north,
-        center_zoom: options.center_zoom,
-        center_lon: (west + east) / 2.0,
-        center_lat: (south + north) / 2.0,
-    };
-    let mut out = Vec::with_capacity(usize::try_from(tile_data_offset).unwrap_or(0) + data.len());
-    out.extend_from_slice(&header.to_bytes());
-    out.extend_from_slice(&root);
-    out.extend_from_slice(&metadata);
-    out.extend_from_slice(&leaves);
-    out.extend_from_slice(&data);
+    let finished = writer.finish(metadata, options, compress)?;
+    let mut out = finished.prefix;
+    out.extend_from_slice(&finished.data);
     Ok(out)
 }
 

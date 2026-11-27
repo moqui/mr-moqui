@@ -391,6 +391,8 @@ pub struct LimitsConf {
     pub lease_seconds: u32,
     pub heartbeat_seconds: u32,
     pub event_text_flush_ms: u32,
+    /// `limits@user-open-runs`: the most runs of one user waiting or working at once (SEC-AI-89); 0 is no limit.
+    pub user_open_runs: u32,
 }
 
 impl Default for LimitsConf {
@@ -406,6 +408,7 @@ impl Default for LimitsConf {
             lease_seconds: 60,
             heartbeat_seconds: 15,
             event_text_flush_ms: 300,
+            user_open_runs: 4,
         }
     }
 }
@@ -774,6 +777,7 @@ impl LlmConf {
                 lease_seconds: number(&limits, "lease-seconds").unwrap_or(base.lease_seconds),
                 heartbeat_seconds: number(&limits, "heartbeat-seconds").unwrap_or(base.heartbeat_seconds),
                 event_text_flush_ms: number(&limits, "event-text-flush-ms").unwrap_or(base.event_text_flush_ms),
+                user_open_runs: number(&limits, "user-open-runs").unwrap_or(base.user_open_runs),
             }
         });
         let content_log = child("content-log").map_or_else(ContentLogConf::default, |log| ContentLogConf {

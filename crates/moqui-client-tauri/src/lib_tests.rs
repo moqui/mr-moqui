@@ -317,3 +317,95 @@ fn the_shell_is_told_the_start_path() {
     assert!(crate::commands::state_json(&state)["startPath"].is_null());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// plans/archive/Maps-Offline.md §2.4: a shared device's sign-out deletes the account's offline map packages with its data; a
+/// personal one's keeps them, to read offline after the next sign-in.
+#[test]
+fn a_shared_sign_out_deletes_the_accounts_map_packages_and_a_personal_one_keeps_them() {
+    for (mode, kept) in [
+        (moqui_client::conf::DeviceMode::Shared, false),
+        (moqui_client::conf::DeviceMode::Personal, true),
+    ] {
+        let Fixture {
+            state, dir, account, ..
+        } = fixture(&format!("packages-{}", mode.as_str()), true);
+        moqui_lib::sync::lock(state.core.accounts()).set_device_mode(&account, mode);
+        let revision = dir.join(format!("client/data/{account}.packages/P1/1"));
+        std::fs::create_dir_all(&revision).unwrap();
+        std::fs::write(
+            revision.join("manifest.json"),
+            br#"{"package":{"name":"Lakes"},"members":[]}"#,
+        )
+        .unwrap();
+        assert_eq!(state.core.packages().status(&account)[0]["packageId"], "P1");
+        crate::commands::signed_out_in(&state, &account, false);
+        assert_eq!(revision.exists(), kept, "{}", mode.as_str());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// plans/archive/Maps-Offline.md §2.4: a package's file is answered to the shell's page only, by range, and a server page on
+/// the app origin is told nothing of it; the path never reaches the server.
+#[test]
+fn a_packages_file_is_the_shells_by_range_and_no_server_pages() {
+    let Fixture {
+        state, dir, account, ..
+    } = fixture("package-file", true);
+    let revision = dir.join(format!("client/data/{account}.packages/P1/1"));
+    std::fs::create_dir_all(revision.join("style")).unwrap();
+    let style = br#"{"version":8}"#;
+    // served as its tag: the download checked it
+    let sha = "ab".repeat(32);
+    std::fs::write(revision.join("style/light.json"), style).unwrap();
+    let manifest = format!(
+        r#"{{"package":{{"name":"Lakes"}},"members":[{{"path":"style/light.json","size":{},"sha256":"{sha}"}}]}}"#,
+        style.len()
+    );
+    std::fs::write(revision.join("manifest.json"), manifest).unwrap();
+    let request = |range: Option<&str>| {
+        let mut request = tauri::http::Request::builder()
+            .method("GET")
+            .uri("http://moqui-shell.localhost/__moqui-app/maps/P1/style/light.json");
+        if let Some(range) = range {
+            request = request.header("Range", range);
+        }
+        request.body(Vec::new()).unwrap()
+    };
+    let path = "/__moqui-app/maps/P1/style/light.json";
+    let shell = crate::scheme::package_file(&state, "main", &request(Some("bytes=1-7")), path, crate::SHELL_ORIGIN);
+    assert_eq!(shell.status(), 206);
+    assert_eq!(shell.body().as_slice(), &style[1..8]);
+    assert_eq!(
+        shell.headers().get("etag").and_then(|value| value.to_str().ok()),
+        Some(format!("\"sha256-{sha}\"").as_str())
+    );
+    let page = crate::scheme::package_file(&state, "remote-1", &request(None), path, crate::APP_ORIGIN);
+    assert_eq!(page.status(), 404);
+    // a server page's webview asking the shell's origin (an image or a font it embeds): nothing
+    let embedded = crate::scheme::package_file(&state, "remote-1", &request(None), path, crate::SHELL_ORIGIN);
+    assert_eq!(embedded.status(), 404);
+    // the shell's webview, but a request that says it is another origin's
+    for (name, value) in [
+        ("Origin", "http://moqui-app.localhost"),
+        ("Sec-Fetch-Site", "cross-site"),
+    ] {
+        let mut asked = request(None);
+        asked
+            .headers_mut()
+            .insert(name, tauri::http::HeaderValue::from_static(value));
+        let refused = crate::scheme::package_file(&state, "main", &asked, path, crate::SHELL_ORIGIN);
+        assert_eq!(refused.status(), 404, "{name}");
+    }
+    let mut own = request(None);
+    own.headers_mut().insert(
+        "Origin",
+        tauri::http::HeaderValue::from_static("http://moqui-shell.localhost"),
+    );
+    let own = crate::scheme::package_file(&state, "main", &own, path, crate::SHELL_ORIGIN);
+    assert_eq!(own.status(), 200);
+    assert_eq!(
+        own.headers().get("cache-control").and_then(|value| value.to_str().ok()),
+        Some("no-store")
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

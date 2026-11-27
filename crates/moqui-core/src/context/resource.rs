@@ -386,7 +386,7 @@ pub struct ResourceStat {
 }
 
 /// What the storage names a file's content by ([`ResourceFacade::content_address`]): what a reader records to stay on
-/// that content (`plans/Maps.md` §5), with `tag`, the strong validator the content has when it is opened, to pin it by
+/// that content (`plans/archive/Maps.md` §5), with `tag`, the strong validator the content has when it is opened, to pin it by
 /// ([`crate::web::send_pinned_response`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ContentAddress {
@@ -1219,7 +1219,8 @@ fn db_snap(info: &DbResourceInfo, facade: EntityFacade) -> DbSnap {
     }
 }
 
-fn scheme_of(location: &str) -> &str {
+/// The scheme a location is served by: what is before its first `:` (two characters or more, with no `/`), else `file`.
+pub(crate) fn scheme_of(location: &str) -> &str {
     match location.split_once(':') {
         Some((scheme, _)) if scheme.len() > 1 && !scheme.contains('/') => scheme,
         _ => "file",

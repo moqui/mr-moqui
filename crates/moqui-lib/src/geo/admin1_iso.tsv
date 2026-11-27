@@ -3,7 +3,7 @@
 # work of GeoNames' admin1CodesASCII.txt and is excluded from the repository's CC0 dedication; attribution: GeoNames
 # (geonames.org). The ISO 3166-2 codes come from Wikidata (query.wikidata.org, CC0).
 #
-# GeoNames first-level codes to ISO 3166-2 (moqui_lib::geo::admin1, plans/Maps.md §6.3): `{country}.{GeoNames admin1
+# GeoNames first-level codes to ISO 3166-2 (moqui_lib::geo::admin1, plans/archive/Maps.md §6.3): `{country}.{GeoNames admin1
 # code}`, a tab, and the ISO 3166-2 subdivision code after its `{country}-`. GeoNames' first-level codes are FIPS 10-4 (or
 # GeoNames' own where FIPS has none) for every country but the US, Switzerland, Belgium and Montenegro, whose codes are ISO
 # and are not listed. A code not listed has no known ISO code: the importer matches it by name, else makes {country}_A1_{code}.

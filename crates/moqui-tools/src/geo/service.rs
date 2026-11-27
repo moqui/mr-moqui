@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.maps.GeoDataServices` (plans/Maps.md §6.4): `import#GeoData` (a run, done here: a ServiceJob runs it in
+//! `org.moqui.maps.GeoDataServices` (plans/archive/Maps.md §6.4): `import#GeoData` (a run, done here: a ServiceJob runs it in
 //! the background), `cancel#GeoDataImport` (the flag a run reads between batches) and `remove#GeoData`. They need the
 //! MAPS_ADMIN authorization (the artifact group names the services), checked again here as the user with
 //! authorization on, also in a ServiceJob, whose call is made with it off; the rows are then written as the

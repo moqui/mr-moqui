@@ -1,4 +1,4 @@
-// The Maps terminal walk (plans/Maps.md §3.2, §9): each Maps screen in the tui render mode, as the terminal client asks it, with
+// The Maps terminal walk (plans/archive/Maps.md §3.2, §9): each Maps screen in the tui render mode, as the terminal client asks it, with
 // authorization on, on the walks' fixture (MapsWalkFixtures): Browse's map component and its terminalMap (the saved place, the
 // record layer's features, the cut said, the attribution); LocalMap's map with the record's place and Choose location, whose
 // typed latitude and longitude Save location posts through the adapter; the record a user may not read not available; Saved

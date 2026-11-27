@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The local-map dialog (plans/Maps.md §3.2; docs/tools/Maps.md "The local-map dialog"), opened beside an address or a
+<!-- The local-map dialog (plans/archive/Maps.md §3.2; docs/tools/Maps.md "The local-map dialog"), opened beside an address or a
     coordinate field of any app with View map: a dynamic-dialog whose id is LocalMapDialog, loading this screen with
     adapterKey and recordKey (its key fields as JSON) and an optional addressPurpose, or a plain longitude, latitude and
     label, or a plain postalCode and countryGeoId (an address with no point: its local postal-area position from
@@ -22,7 +22,8 @@ along with this software (see the LICENSE.md file). If not, see
     Every signed-in user reaches it and its transitions (MAPS_DIALOG, data/MapsSecurityData.xml); an app shows it
     under its own route by the thin-wrapper rule (include-screen and a transition-include of getConfig and storeLocation).
     The record's place is read here, in the actions, through get#EffectiveConfig, whose adapter checks the caller's access
-    first (a record they may not read is "not available", with nothing of it shown), and given to the map-view as its
+    first (a record they may not read is "not available", with nothing of it shown; a record's address with no point is
+    matched by the installation's local geocoder when it has one, else shown at its postal area, and never saved), and given to the map-view as its
     points, view (a postal area's extent) and features (an area or a line), so html, print, text and the terminal show the
     same place (its coordinates, precision and source, which the browser's map lists with Copy and the terminal's copies
     with c) as the browser; the browser asks getConfig for the basemap and layers only. Neither asks a record layer's
@@ -63,7 +64,7 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
-    <!-- A registered map archive (a PMTiles layer's, plans/Maps.md §5), read by range by every map, the Browse page's and any
+    <!-- A registered map archive (a PMTiles layer's, plans/archive/Maps.md §5), read by range by every map, the Browse page's and any
         app's dialog alike: the effective configuration hands a map this path with the layer's ID and its registered revision
         (MapSources.js). Each request (GET, HEAD, every range) checks the caller again and writes nothing
         (MapSourceServices.get#SourceAccess: the layer, its viewPermission and its drive's access, so a revoked share is
@@ -87,7 +88,7 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
-    <!-- One Z/X/Y tile of a registered map archive (plans/Maps.md §5: a client with no PMTiles reader, such as OpenLayers'
+    <!-- One Z/X/Y tile of a registered map archive (plans/archive/Maps.md §5: a client with no PMTiles reader, such as OpenLayers'
         XYZ vector tile source or a terminal), at tile/{layerId}/{revision}/{z}/{x}/{y} (y may end in .mvt, .pbf or .png):
         layerId a registered PMTiles layer, or overlay:ID, a user's overlay generalized on the server. Each request checks the
         caller again, as source does, and writes nothing (MapSourceServices.get#ArchiveTile: the layer, its viewPermission
@@ -133,7 +134,7 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
-    <!-- A proxied map provider's style, TileJSON, tiles and sprites (proxyRequests Y; plans/Maps.md §4.2): the effective
+    <!-- A proxied map provider's style, TileJSON, tiles and sprites (proxyRequests Y; plans/archive/Maps.md §4.2): the effective
         configuration hands a map providerProxy/{providerId}/{the provider's own path} in place of the provider's URLs, and a
         rewritten style or TileJSON names only such paths. Each GET checks the caller and the path again
         (MapSourceServices.get#ProviderAsset: one of the provider's layers offered to them, outside requests on, a path its
@@ -252,7 +253,11 @@ along with this software (see the LICENSE.md file). If not, see
                 : plain ? {id: 'place', lon: plainLon, lat: plainLat, label: String(label || '')}
                 : postalMatch ? {id: 'place', lon: Number(postalMatch.lon), lat: Number(postalMatch.lat), label: String(label || '') || postalMatch.displayCode,
                     precision: postalMatch.precisionText, sourceText: postalMatch.sourceText} : null
-            placePoints = place ? [place] : []
+            // an address matched by the local geocoder (not saved) says so, and several address points are choices, none chosen
+            addressNote = record?.addressNote || ''
+            const choices = Array.from(record?.addressChoices || []).map(choice => ({id: String(choice.id), lon: Number(choice.lon), lat: Number(choice.lat),
+                label: String(choice.label || ''), precision: choice.precision || null, sourceText: choice.source || null}))
+            placePoints = (place ? [place] : []).concat(choices)
             // the record's view (a postal area's extent, else its point and zoom) and its area or line, when it is not a point
             mapExtent = postalMatch && Array.isArray(postalMatch.extent) ? postalMatch.extent.join(',')
                 : Array.isArray(mapConfig.extent) && mapConfig.extent.length === 4 ? mapConfig.extent.join(',') : ''
@@ -288,6 +293,7 @@ along with this software (see the LICENSE.md file). If not, see
             <label condition="recordError" type="p" style="text-negative" text="${recordError.message}"/>
             <label condition="record &amp;&amp; !place" type="p" style="m-muted" text="This record has no location on the map yet."/>
             <label condition="approximateText" type="p" style="text-caption m-muted q-mb-xs" text="${approximateText}"/>
+            <label condition="addressNote" type="p" style="text-caption m-muted q-mb-xs" text="${addressNote}"/>
             <label condition="!adapterKey &amp;&amp; !place &amp;&amp; !postalNote" type="p" style="m-muted" text="No place was given to show."/>
             <label condition="postalNote" type="p" style="m-muted" text="${postalNote}"/>
             <label condition="placeNamesText" type="p" style="text-caption m-muted" text="${placeNamesText}"/>

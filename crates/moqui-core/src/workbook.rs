@@ -266,8 +266,12 @@ pub fn model_xlsx(model: &Model<'_>) -> Result<Vec<u8>, Error> {
 ///
 /// # Errors
 ///
-/// Returns the reader's error.
+/// Returns the reader's error, or an error for a file whose parts expand past
+/// [`crate::service::spreadsheet::MAX_EXPANDED_BYTES`].
 pub fn open_xlsx(bytes: &[u8], name: &str) -> Result<Model<'static>, Error> {
+    // the engine's reader builds each part's XML tree in memory with no bound of its own (SEC-TLS-114)
+    crate::service::spreadsheet::check_expanded_size(bytes, crate::service::spreadsheet::MAX_EXPANDED_BYTES)
+        .map_err(|err| Error::new(err.to_string()))?;
     let workbook = ironcalc::import::load_from_xlsx_bytes(bytes, name, "en", "UTC")
         .map_err(|err| Error::new(format!("Error reading xlsx: {err}")))?;
     Model::from_workbook(workbook, "en").map_err(engine_error)

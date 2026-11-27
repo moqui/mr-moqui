@@ -145,19 +145,30 @@ function passwordAllowed(password) {
             Number(rules.minOthers)
     )
 }
+/* The account a registration's address names, by its email address or its user name, either ignoring case, as
+   create#UserAccount refuses one (SEC-PSA-06). */
+function accountNamed(field, email) {
+    return Array.from(
+        ec.entity
+            .find('moqui.security.UserAccount')
+            .condition(ec.entity.conditionFactory.makeCondition(field, 'equals', email).ignoreCase())
+            .limit(2)
+            .list(),
+    )[0] || null
+}
 function beginRegistration(p) {
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(p.emailAddress || ''))
         fail('Unprocessable', ec.l10n.localize('A valid email address is required'))
     const email = p.emailAddress.trim().toLowerCase(),
         template = ec.factory.getConfValue('pass-authority@verification-template')
     if (!template) fail('Unavailable', ec.l10n.localize('Verification mail is not configured'))
-    const old = ec.entity
-        .find('moqui.security.UserAccount')
-        .condition('emailAddress', email)
-        .one()
+    const old = accountNamed('emailAddress', email)
     const own = old && old.userId === ec.user.userId
+    const neutral = { message: ec.l10n.localize('If eligible, verification instructions will be sent to the address.') }
     if (ec.user.userId && !own)
         fail('Unprocessable', ec.l10n.localize('Sign out before registering another address'))
+    // Every request costs one password hash, as a new account's creation does, so the time of the answer does not tell a
+    // new address from a claimed, unclaimed or refused one (SEC-PSA-06); the mail goes after the commit, on a worker.
     // A disabled account that never verified its address belongs to nobody yet; a later request replaces its challenge.
     const unclaimed =
         old &&
@@ -168,66 +179,99 @@ function beginRegistration(p) {
             userId: old.userId,
             newAccount: 'Y',
         }).one()
-    if (!old || own || unclaimed) {
-        let userId = old?.userId
-        if (!old) {
-            const placeholder = unusablePassword()
-            userId = ec.service
-                .sync()
-                .name('org.moqui.impl.UserServices.create#UserAccount')
-                .parameters({
-                    username: email,
-                    emailAddress: email,
-                    newPassword: placeholder,
-                    newPasswordVerify: placeholder,
-                    disabled: 'Y',
-                    deferIdentityLink: true,
-                })
-                .call().userId
-            if (ec.message.hasError() || !userId) {
-                ec.message.clearErrors()
-                fail('Unavailable', ec.l10n.localize('Registration is temporarily unavailable'))
+    // an address another account has as its user name (not its email address) cannot make an account: answered as every
+    // other request is, so the answer does not tell it apart
+    const nameTaken = !old && !!accountNamed('username', email)
+    if (nameTaken || (old && !own && !unclaimed)) {
+        ec.user.hashPassword(unusablePassword())
+        return neutral
+    }
+    if (old) ec.user.hashPassword(unusablePassword())
+    // a new account and its challenge are written in one transaction of their own, so an account is never left without
+    // its challenge (which would keep its address from registering again); a refusal (a name taken since the check) is
+    // logged and answered as every other request is, never as a failure that tells the address apart
+    ec.message.pushErrors()
+    try {
+        ec.transaction.runRequireNew(null, 'Registration not begun', () => {
+            let userId = old?.userId
+            if (!old) {
+                const placeholder = unusablePassword()
+                userId = ec.service
+                    .sync()
+                    .name('org.moqui.impl.UserServices.create#UserAccount')
+                    .parameters({
+                        username: email,
+                        emailAddress: email,
+                        newPassword: placeholder,
+                        newPasswordVerify: placeholder,
+                        disabled: 'Y',
+                        deferIdentityLink: true,
+                    })
+                    .call()?.userId
+                if (ec.message.hasError() || !userId) throw new Error('the account was not made')
             }
-        }
-        for (const earlier of find('RegistrationChallenge', { userId })
-            .forUpdate(true)
-            .list())
-            if (!earlier.consumedAt) {
-                earlier.set('consumedAt', ec.user.nowTimestamp)
-                earlier.update()
-            }
-        const token = ec.user.randomString(64)
-        create('RegistrationChallenge', {
-            challengeId: ec.user.randomString(32),
-            userId,
-            emailAddress: email,
-            tokenHash: digest(token),
-            expiresAt: now() + 3600000,
-            newAccount: own ? 'N' : 'Y',
-        })
-        ec.service
-            .sync()
-            .name('org.moqui.mail.EmailServices.send#EmailTemplate')
-            .parameters({
-                emailTemplateId: template,
-                toAddresses: email,
-                bodyParameters: { verificationToken: token },
-                // no EmailMessage row: its body would keep the token in clear (SEC-MAIL-65)
-                createEmailMessage: false,
+            for (const earlier of find('RegistrationChallenge', { userId })
+                .forUpdate(true)
+                .list())
+                if (!earlier.consumedAt) {
+                    earlier.set('consumedAt', ec.user.nowTimestamp)
+                    earlier.update()
+                }
+            // the challenge's code is made by the worker that mails it (sendVerification): nothing of it is in this
+            // request's parameters, so a call queued to the database when the service queue is full holds no code; until
+            // then the digest is of a value nobody knows. The address is the account's own as stored (its case kept).
+            const challengeId = ec.user.randomString(32)
+            create('RegistrationChallenge', {
+                challengeId,
+                userId,
+                emailAddress: old?.emailAddress || email,
+                tokenHash: digest(ec.user.randomString(64)),
+                expiresAt: now() + 3600000,
+                newAccount: own ? 'N' : 'Y',
             })
-            .call()
-        // The answer stays the same either way; the challenge remains, so asking again resends.
-        if (ec.message.hasError()) {
-            ec.message.clearErrors()
-            ec.logger.error(
-                'Registration verification mail failed for user ' + userId,
-            )
-        }
+            ec.service
+                .special()
+                .name('org.moqui.public.AccountServices.send#RegistrationVerification')
+                .parameters({ challengeId })
+                .registerOnCommit()
+        })
+    } catch (error) {
+        ec.logger.error('Registration could not begin for a requested address: ' + String(error?.message || error).split('\n')[0])
+    } finally {
+        ec.message.clearErrors()
+        ec.message.popErrors()
     }
-    return {
-        message:
-            ec.l10n.localize('If eligible, verification instructions will be sent to the address.'),
+    return neutral
+}
+/* send#RegistrationVerification, after the registration's commit: a new code for the challenge (its digest kept, the code
+   only in the mail) and the verification mail. A challenge consumed or expired since gets none; a failed send is logged,
+   and asking again resends. */
+function sendVerification(p) {
+    const c = find('RegistrationChallenge', { challengeId: p.challengeId || '' })
+        .forUpdate(true)
+        .one()
+    if (!c || c.consumedAt || ec.user.timestampMillis(c.expiresAt) <= now()) return {}
+    const template = ec.factory.getConfValue('pass-authority@verification-template')
+    if (!template) return {}
+    const token = ec.user.randomString(64)
+    c.set('tokenHash', digest(token))
+    c.update()
+    ec.service
+        .sync()
+        .name('org.moqui.mail.EmailServices.send#EmailTemplate')
+        .parameters({
+            emailTemplateId: template,
+            toAddresses: c.emailAddress,
+            bodyParameters: { verificationToken: token },
+            // no EmailMessage row: its body would keep the token in clear (SEC-MAIL-65)
+            createEmailMessage: false,
+        })
+        .call()
+    if (ec.message.hasError()) {
+        ec.message.clearErrors()
+        ec.logger.error('Registration verification mail failed for challenge ' + c.challengeId)
     }
+    return {}
 }
 function verifyRegistration(p) {
     const c = find('RegistrationChallenge', {
@@ -244,7 +288,8 @@ function verifyRegistration(p) {
         .condition('userId', c.userId)
         .forUpdate(true)
         .one()
-    if (!ua || ua.emailAddress !== c.emailAddress)
+    // the address compared ignoring case: an account stored with a capital is still its own (SEC-PSA-06)
+    if (!ua || String(ua.emailAddress || '').toLowerCase() !== String(c.emailAddress || '').toLowerCase())
         fail('NotFound', ec.l10n.localize('Verification link expired or not found'))
     if (
         !find('VerifiedAddress', {
@@ -544,6 +589,7 @@ function execute(op, p) {
             throttle('registration', p.emailAddress)
             return beginRegistration(p)
         }
+        if (op === 'sendVerification') return sendVerification(p)
         if (op === 'verifyRegistration') {
             throttle('verification')
             return verifyRegistration(p)

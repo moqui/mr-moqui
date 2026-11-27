@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Maps (plans/Maps.md §3.1, §3.2): three artifact groups, so the record dialog, the Maps app and its configuration are
+<!-- Maps (plans/archive/Maps.md §3.1, §3.2): three artifact groups, so the record dialog, the Maps app and its configuration are
     granted apart. A user may open a record's map without the Maps app, System, BOSS or any app's access; an app shows the
     dialog under its own route by the thin-wrapper rule, with its grants naming its own screen. Writes to a record are its
     adapter's own check, never a Maps grant. -->
@@ -57,6 +57,17 @@ along with this software (see the LICENSE.md file). If not, see
         <authz artifactAuthzId="MAPS_DIALOG_USERS" userGroupId="ALL_USERS" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
     </artifactGroups>
 
+    <!-- My location shares (Maps/MyShares.xml; plans/archive/Location-Sharing.md §3.3): where the app bar's "Sharing location" chip
+        goes, for every signed-in user, since any user may share their location, not only a Maps user. ALWAYS, not
+        inherited, as MAPS_DIALOG: the screen and its transitions only. What it calls is LocationServices' (find#MyShares,
+        stop#Share, update#Share: LocationShareServices, every signed-in user), which act on the caller's own shares only. -->
+    <artifactGroups artifactGroupId="MAPS_SHARES" description="Maps: my location shares">
+        <artifacts artifactName="component://tools/screen/Maps/MyShares.xml" artifactTypeEnumId="AT_XML_SCREEN" inheritAuthz="N"/>
+        <artifacts artifactName="component://tools/screen/Maps/MyShares\.xml/[A-Za-z]+" artifactTypeEnumId="AT_XML_SCREEN_TRANS"
+                nameIsPattern="Y" inheritAuthz="N"/>
+        <authz artifactAuthzId="MAPS_SHARES_USERS" userGroupId="ALL_USERS" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
+    </artifactGroups>
+
     <!-- What the Maps app changes for its user: their preferences, saved views, overlays and saved places, each service acting
         on the signed-in user's own (a saved view another user shared is read, never changed; an overlay or a places file
         shared with them in Files is read through its drive's access, checked by the service, never changed here); and the
@@ -78,6 +89,12 @@ along with this software (see the LICENSE.md file). If not, see
         <artifacts artifactName="org.moqui.maps.MapServices.store#Place" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
         <artifacts artifactName="org.moqui.maps.MapServices.delete#Place" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
         <artifacts artifactName="org.moqui.maps.MapServices.find#Places" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+        <!-- offline map packages (plans/archive/Maps-Offline.md, Maps/Offline.xml): each acts on the signed-in user's own packages,
+            built from what they may see; the build job's run and the cut itself are no group's -->
+        <artifacts artifactName="org\.moqui\.maps\.MapSourceServices\.(estimate|create|update|cancel|delete)#Package" artifactTypeEnumId="AT_SERVICE"
+                nameIsPattern="Y" inheritAuthz="N"/>
+        <artifacts artifactName="org.moqui.maps.MapSourceServices.find#Packages" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+        <artifacts artifactName="org.moqui.maps.MapSourceServices.get#PackageAccess" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
         <authz artifactAuthzId="MAPS_APP_SVC_USERS" userGroupId="MAPS_USERS" authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
         <authz artifactAuthzId="MAPS_APP_SVC_ADMIN" userGroupId="ADMIN" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
     </artifactGroups>
@@ -90,6 +107,7 @@ along with this software (see the LICENSE.md file). If not, see
         <artifacts artifactName="org.moqui.maps.MapServices.check#Readiness" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
         <artifacts artifactName="org.moqui.maps.MapSourceServices.check#ArchiveReadiness" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
         <artifacts artifactName="org.moqui.maps.MapServices.check#GeoDataReadiness" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+        <artifacts artifactName="org.moqui.maps.OvertureServices.check#OvertureReadiness" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
         <authz artifactAuthzId="MAPS_READINESS_ALL" userGroupId="ALL_USERS" authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
     </artifactGroups>
 
@@ -107,10 +125,19 @@ along with this software (see the LICENSE.md file). If not, see
         <artifacts artifactName="org.moqui.maps.MapServices.store#ProfileSettings" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
         <artifacts artifactName="org.moqui.maps.MapServices.get#OgcLayerOptions" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
         <artifacts artifactName="org.moqui.maps.MapServices.store#OgcLayer" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+        <!-- the projection registry (P4c) -->
+        <artifacts artifactName="org.moqui.maps.MapServices.find#Projections" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+        <artifacts artifactName="org.moqui.maps.MapServices.store#Projection" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+        <artifacts artifactName="org.moqui.maps.MapSourceServices.check#ProjectionDefinition" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
         <!-- map archives (MapSourceServices): registering one also checks that its caller may change Configuration -->
         <artifacts artifactName="org.moqui.maps.MapSourceServices.read#ArchiveHeader" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+        <!-- a COG's header (P4c), as an archive's: register#ArchiveLayer calls it after its own check -->
+        <artifacts artifactName="org.moqui.maps.MapSourceServices.read#CogHeader" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
         <artifacts artifactName="org.moqui.maps.MapSourceServices.register#ArchiveLayer" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
         <artifacts artifactName="org.moqui.maps.MapSourceServices.find#ArchiveLayers" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N"/>
+        <!-- Overture data (plans/archive/Maps-Overture.md), each asked again of the caller's own grant (OvertureData.js); its two
+            read# services (the moqui-maps crate's) are no group's -->
+        <artifacts artifactName="org\.moqui\.maps\.OvertureServices\.(find|acknowledge|store|start|run|cancel|activate|discard|rollback|remove)#.*" artifactTypeEnumId="AT_SERVICE" nameIsPattern="Y" inheritAuthz="Y"/>
         <authz artifactAuthzId="MAPS_ADMIN_ADMIN" userGroupId="ADMIN" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
         <authz artifactAuthzId="MAPS_ADMIN_USERS_DENY" userGroupId="MAPS_USERS" authzTypeEnumId="AUTHZT_DENY" authzActionEnumId="AUTHZA_ALL"/>
     </artifactGroups>

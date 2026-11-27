@@ -1,0 +1,306 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Overture (plans/archive/Maps-Overture.md; docs/tools/Maps.md "Overture places and buildings"): the themes (Places, Buildings)
+    with their licenses by source, attribution and obligations, and Acknowledge license; the regions with each theme's
+    active and previous release, last run and Import, Cancel, Activate and Discard (a run held for license review), Roll
+    back and Remove; Add region (a box, a release from the catalog or the latest when imported, the profile its Buildings
+    layer is shown in, the themes); and the run history. Over org.moqui.maps.OvertureServices, MAPS_ADMIN's like the screen. An
+    import is a run of the OvertureImport ServiceJob, never in the request; on a server built without the overture feature
+    nothing can be imported and the screen says so. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
+        default-menu-title="Overture" default-menu-index="3" menu-image="sym_o_location_city" menu-image-type="icon">
+
+    <transition name="acknowledgeLicense">
+        <actions><script><![CDATA[
+            const licenses = String(context.licenses || '').split(',').map(text => text.trim()).filter(Boolean)
+            ec.service.sync().name('org.moqui.maps.OvertureServices.acknowledge#OvertureLicense').parameters({themeId, licenses}).call()
+            if (!ec.message.hasError()) ec.message.addMessage(ec.l10n.localize('License acknowledged: the theme may be imported.'), 'success')
+        ]]></script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="releaseOptions" read-only="true">
+        <actions><script><![CDATA[
+            const found = ec.service.sync().name('org.moqui.maps.OvertureServices.find#OvertureReleases').call() || {}
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Array.from(found.releases || []).map(release => ({value: release.version,
+                label: release.version + (release.latest ? ' (' + ec.l10n.localize('latest') + ')' : '')})))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="storeRegion">
+        <actions><script><![CDATA[
+            const themeIds = [].concat(context.themeIds || []).map(String).filter(Boolean)
+            ec.service.sync().name('org.moqui.maps.OvertureServices.store#OvertureRegion').parameters({regionId: context.regionId || null,
+                regionName, west, south, east, north, releaseVersion: context.releaseVersion || null, profileId: context.profileId || null,
+                themeIds}).call()
+            if (!ec.message.hasError()) ec.message.addMessage(ec.l10n.localize('Region saved: import a theme of it when its license is acknowledged.'), 'success')
+        ]]></script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="startImport">
+        <actions><script><![CDATA[
+            const started = ec.service.sync().name('org.moqui.maps.OvertureServices.start#OvertureImport').parameters({regionId, themeId,
+                force: context.force === 'true'}).call() || {}
+            if (!ec.message.hasError()) ec.message.addMessage(ec.resource.expand(ec.l10n.localize('Import ${id} started in the background: you are notified when it ends.'), '',
+                {id: started.importId || ''}), 'success')
+        ]]></script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="cancelImport">
+        <service-call name="org.moqui.maps.OvertureServices.cancel#OvertureImport" in-map="{importId: importId}"/>
+        <actions>
+            <if condition="!ec.message.hasError()"><script>ec.message.addMessage(ec.l10n.localize('Cancel requested: the run stops at its next row group, and the active release stays.'), 'success')</script></if>
+        </actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="activateImport">
+        <actions><script><![CDATA[
+            const run = ec.entity.find('moqui.maps.OvertureImport').condition('importId', String(importId || '')).disableAuthz().one()
+            const licenses = String(run?.newLicenses || '').split(',').map(text => text.trim()).filter(Boolean)
+            if (run && licenses.length) ec.service.sync().name('org.moqui.maps.OvertureServices.acknowledge#OvertureLicense')
+                .parameters({themeId: run.themeId, licenses}).call()
+            if (!ec.message.hasError()) ec.service.sync().name('org.moqui.maps.OvertureServices.activate#OvertureImport').parameters({importId}).call()
+            if (!ec.message.hasError()) ec.message.addMessage(ec.l10n.localize('Licenses acknowledged and the release activated.'), 'success')
+        ]]></script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="discardImport">
+        <service-call name="org.moqui.maps.OvertureServices.discard#OvertureImport" in-map="{importId: importId}"/>
+        <actions>
+            <if condition="!ec.message.hasError()"><script>ec.message.addMessage(ec.l10n.localize('Discarded: what it read is deleted, and the active release stays.'), 'success')</script></if>
+        </actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="rollbackTheme">
+        <service-call name="org.moqui.maps.OvertureServices.rollback#OvertureTheme" in-map="{regionId: regionId, themeId: themeId}"/>
+        <actions>
+            <if condition="!ec.message.hasError()"><script>ec.message.addMessage(ec.l10n.localize('The previous release is active again.'), 'success')</script></if>
+        </actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="removeTheme">
+        <service-call name="org.moqui.maps.OvertureServices.remove#OvertureTheme" in-map="{regionId: regionId, themeId: context.themeId || null}"/>
+        <actions>
+            <if condition="!ec.message.hasError()"><script>ec.message.addMessage(ec.l10n.localize('Removed: its places, footprints and layer are gone; the run history stays.'), 'success')</script></if>
+        </actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+
+    <actions>
+        <service-call name="org.moqui.maps.OvertureServices.find#OvertureData" out-map="found" transaction="force-new" ignore-error="true"/>
+        <service-call name="org.moqui.maps.MapServices.find#Configuration" out-map="configuration" transaction="force-new" ignore-error="true"/>
+        <script><![CDATA[
+            available = !!found?.themes
+            ec.message.clearErrors()
+            const colorOf = status => status === 'OviActive' ? 'positive' : status === 'OviFailed' ? 'negative' : status === 'OviReview' ? 'warning'
+                : ['OviCancelled', 'OviSuperseded', 'OviRemoved', 'OviRolledBack'].includes(status) ? 'grey-7' : 'primary'
+            const L = value => ec.l10n.localize(value)
+            themeRows = Array.from(found?.themes || []).map(theme => Object.assign({}, theme, {ackColor: theme.acknowledged ? 'positive' : 'warning'}))
+            themeOptions = themeRows.map(theme => ({value: theme.themeId, label: theme.themeName}))
+            profileOptions = Array.from(configuration?.profileList || []).map(row => ({value: row.profileId, label: row.profileName}))
+            regionThemeRows = []
+            for (const region of Array.from(found?.regions || [])) {
+                if (!region.themes.length) regionThemeRows.push({regionId: region.regionId, regionName: region.regionName, box: region.box,
+                    areaText: region.area + ' km²', themeName: L('No theme'), activeText: '', lastText: '', statusText: '', statusColor: 'grey-7',
+                    inProgress: false, review: false, canImport: false, canRollback: false})
+                for (const theme of region.themes) {
+                    const last = theme.last
+                    regionThemeRows.push({regionId: region.regionId, regionName: region.regionName, box: region.box, areaText: region.area + ' km²',
+                        themeId: theme.themeId, themeName: theme.themeName,
+                        activeText: theme.activeRelease ? theme.activeRelease + (theme.activeRows != null ? ' · ' + theme.activeRows + ' ' + L('rows') : '') : L('None yet'),
+                        previousText: theme.previousRelease || '',
+                        statusText: last ? last.statusText : '', statusColor: last ? colorOf(last.statusId) : 'grey-7',
+                        lastText: last ? [last.releaseVersion, last.finishedText || last.startedText, last.failureText || (last.newLicenses ? L('New licenses') + ': ' + last.newLicenses : '')].filter(Boolean).join(' · ') : '',
+                        importId: last ? last.importId : null, inProgress: !!last?.inProgress, review: !!last?.review,
+                        canImport: !last?.inProgress && !!found.built && !found.offline, canRollback: !!theme.previousImportId && !last?.inProgress})
+                }
+            }
+            runRows = Array.from(found?.runs || []).map(run => Object.assign({}, run, {statusColor: colorOf(run.statusId),
+                countsText: [run.rowsKept != null ? run.rowsKept + ' ' + L('kept') : '', run.rowsRejected ? run.rowsRejected + ' ' + L('rejected') : '',
+                    run.rowGroupsRead != null ? run.rowGroupsRead + '/' + ((run.rowGroupsRead || 0) + (run.rowGroupsSkipped || 0)) + ' ' + L('row groups') : '',
+                    run.bytesRead != null ? Math.round(run.bytesRead / 1024) + ' KiB' : '', run.changesText || ''].filter(Boolean).join(' · ')}))
+            notBuilt = available && found.built === false
+            externalOff = available && found.offline === true
+            maxArea = found?.maxArea
+        ]]></script>
+    </actions>
+    <widgets>
+        <label text="Overture places, buildings and addresses" type="h5"/>
+        <label type="p" style="text-caption m-muted"
+                text="Optional regional data from an Overture Maps release: places for the search of Browse, building footprints as a map layer, and address points for the local address search (the Overture addresses geocoder, enabled under Providers once a region's addresses are active). A region of up to ${maxArea} km² is read from a release you choose, by range from Overture's files, staged, checked and only then made active; the release before it is kept for rollback. Nothing outside these places, footprints and address points is changed: no party, facility, address or record's location."/>
+        <label type="p" style="text-negative" condition="!available" text="Overture settings are not available to you."/>
+        <label type="p" style="text-warning" condition="notBuilt" text="This server is built without the overture feature: what is imported stays usable, but nothing can be imported or refreshed here."/>
+        <label type="p" style="text-warning" condition="externalOff" text="Outside requests for maps are off (maps@external-requests): nothing is downloaded, and imported data stays usable."/>
+        <section name="OvertureSections" condition="available">
+            <widgets>
+                <container-box id="OvertureThemesBox">
+                    <box-header title="Themes and licenses"/>
+                    <box-body>
+                        <form-list name="ThemeList" list="themeRows" skip-form="true" paginate="false">
+                            <field name="themeName"><default-field title="Theme"><display/></default-field></field>
+                            <field name="licenseName"><default-field title="License"><display/></default-field></field>
+                            <field name="attribution"><default-field title="Attribution"><display/></default-field></field>
+                            <field name="acknowledgedText">
+                                <default-field title="Acknowledged">
+                                    <render-mode>
+                                        <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${html(ackColor)}">${html(acknowledgedText)}</q-chip>]]></text>
+                                        <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: acknowledgedText})}]]></text>
+                                        <text type="html">${html(acknowledgedText)}</text>
+                                        <text type="text,csv">${acknowledgedText}</text>
+                                    </render-mode>
+                                </default-field>
+                            </field>
+                            <field name="actions">
+                                <default-field title="">
+                                    <container-dialog id="AcknowledgeOverture_${themeId}" button-text="Acknowledge license" icon="sym_o_license" width="600"
+                                            title="Acknowledge the license of ${themeName}">
+                                        <label type="p" text="${description}"/>
+                                        <label type="p" text="License: ${licenseName} (${licenseUrl})"/>
+                                        <label type="p" text="Attribution shown with its data: ${attribution}"/>
+                                        <label type="p" text="Source licenses covered: ${licenses}"/>
+                                        <label type="p" style="text-warning" text="${obligations}"/>
+                                        <label type="p" style="text-caption m-muted" text="Acknowledging records your name and the time. A run that finds a source under another license waits for you to review it."/>
+                                        <form-single name="AcknowledgeOverture" transition="acknowledgeLicense" map="{themeId: themeId}">
+                                            <field name="themeId"><default-field><hidden/></default-field></field>
+                                            <field name="submitButton"><default-field title="Acknowledge license"><submit/></default-field></field>
+                                        </form-single>
+                                    </container-dialog>
+                                </default-field>
+                            </field>
+                            <columns type="mobile">
+                                <column><field-ref name="themeName"/><field-ref name="licenseName"/></column>
+                                <column><field-ref name="acknowledgedText"/><field-ref name="actions"/></column>
+                            </columns>
+                        </form-list>
+                    </box-body>
+                </container-box>
+
+                <container-box id="OvertureRegionsBox">
+                    <box-header title="Regions"/>
+                    <box-toolbar>
+                        <container-dialog id="AddOvertureRegion" button-text="Add region" icon="sym_o_add" width="600" title="Add a region">
+                            <label type="p" style="text-caption m-muted" text="A box in degrees (WGS84), west less than east, of at most ${maxArea} km²."/>
+                            <form-single name="AddOvertureRegion" transition="storeRegion">
+                                <field name="regionName"><default-field title="Name"><text-line size="40"/></default-field></field>
+                                <field name="west"><default-field title="West (longitude)"><text-line size="12"/></default-field></field>
+                                <field name="south"><default-field title="South (latitude)"><text-line size="12"/></default-field></field>
+                                <field name="east"><default-field title="East (longitude)"><text-line size="12"/></default-field></field>
+                                <field name="north"><default-field title="North (latitude)"><text-line size="12"/></default-field></field>
+                                <field name="releaseVersion"><default-field title="Release">
+                                    <drop-down allow-empty="true">
+                                        <dynamic-options transition="releaseOptions" server-search="false" min-length="0"/>
+                                    </drop-down>
+                                </default-field></field>
+                                <field name="profileId"><default-field title="Show buildings in profile">
+                                    <drop-down allow-empty="true"><list-options list="profileOptions" key="${value}" text="${label}"/></drop-down>
+                                </default-field></field>
+                                <field name="themeIds"><default-field title="Themes">
+                                    <check><list-options list="themeOptions" key="${value}" text="${label}"/></check>
+                                </default-field></field>
+                                <field name="submitButton"><default-field title="Save region"><submit/></default-field></field>
+                            </form-single>
+                        </container-dialog>
+                        <link url="." text="Refresh page" icon="refresh"/>
+                    </box-toolbar>
+                    <box-body>
+                        <label type="p" style="m-muted" condition="!regionThemeRows.length" text="No region yet. Acknowledge a theme's license, add a region, then Import."/>
+                        <form-list name="RegionThemeList" list="regionThemeRows" skip-form="true" paginate="false">
+                            <field name="regionName"><default-field title="Region"><display/></default-field></field>
+                            <field name="box"><default-field title="Box (W, S, E, N)"><display/></default-field></field>
+                            <field name="areaText"><default-field title="Area"><display/></default-field></field>
+                            <field name="themeName"><default-field title="Theme"><display/></default-field></field>
+                            <field name="activeText"><default-field title="Active release"><display/></default-field></field>
+                            <field name="previousText"><default-field title="Previous"><display/></default-field></field>
+                            <field name="statusText">
+                                <default-field title="Last run">
+                                    <render-mode>
+                                        <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${html(statusColor)}">${html(statusText)}</q-chip>]]></text>
+                                        <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: statusText})}]]></text>
+                                        <text type="html">${html(statusText)}</text>
+                                        <text type="text,csv">${statusText}</text>
+                                    </render-mode>
+                                </default-field>
+                            </field>
+                            <field name="lastText"><default-field title="Run"><display/></default-field></field>
+                            <field name="actions">
+                                <default-field title="">
+                                    <link url="startImport" text="Import" icon="sym_o_download" link-type="hidden-form-link" condition="themeId &amp;&amp; canImport"
+                                            parameter-map="{regionId: regionId, themeId: themeId}"/>
+                                    <link url="cancelImport" text="Cancel" icon="sym_o_cancel" link-type="hidden-form-link" condition="inProgress"
+                                            confirmation="Stop this run? What it read is deleted and the active release stays." parameter-map="{importId: importId}"/>
+                                    <link url="activateImport" text="Acknowledge and activate" icon="sym_o_verified" link-type="hidden-form-link" condition="review"
+                                            confirmation="This release has sources under licenses not acknowledged yet (${lastText}). Acknowledge them and make it active?"
+                                            parameter-map="{importId: importId}"/>
+                                    <link url="discardImport" text="Discard" icon="sym_o_delete_sweep" link-type="hidden-form-link" condition="review"
+                                            confirmation="Discard this release? What it read is deleted, and the active release stays." parameter-map="{importId: importId}"/>
+                                    <link url="rollbackTheme" text="Roll back" icon="sym_o_undo" link-type="hidden-form-link" condition="canRollback"
+                                            confirmation="Make the previous release (${previousText}) active again? The active one is removed."
+                                            parameter-map="{regionId: regionId, themeId: themeId}"/>
+                                    <link url="removeTheme" text="Remove" icon="sym_o_delete" btn-type="danger" link-type="hidden-form-link" condition="!inProgress"
+                                            confirmation="Remove ${themeName} of ${regionName}? Its places, footprints and layer are deleted; the run history stays."
+                                            parameter-map="{regionId: regionId, themeId: themeId || ''}"/>
+                                </default-field>
+                            </field>
+                            <columns type="mobile">
+                                <column><field-ref name="regionName"/><field-ref name="themeName"/><field-ref name="activeText"/></column>
+                                <column><field-ref name="statusText"/><field-ref name="actions"/></column>
+                            </columns>
+                        </form-list>
+                    </box-body>
+                </container-box>
+
+                <container-box id="OvertureRunsBox">
+                    <box-header title="Runs"/>
+                    <box-body>
+                        <label type="p" style="m-muted" condition="!runRows.length" text="No import has run."/>
+                        <form-list name="OvertureRunList" list="runRows" skip-form="true" paginate="false">
+                            <field name="importId"><default-field title="Run"><display/></default-field></field>
+                            <field name="regionName"><default-field title="Region"><display/></default-field></field>
+                            <field name="themeName"><default-field title="Theme"><display/></default-field></field>
+                            <field name="releaseVersion"><default-field title="Release"><display/></default-field></field>
+                            <field name="statusText">
+                                <default-field title="Status">
+                                    <render-mode>
+                                        <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${html(statusColor)}">${html(statusText)}</q-chip>]]></text>
+                                        <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: statusText})}]]></text>
+                                        <text type="html">${html(statusText)}</text>
+                                        <text type="text,csv">${statusText}</text>
+                                    </render-mode>
+                                </default-field>
+                            </field>
+                            <field name="countsText"><default-field title="Read"><display/></default-field></field>
+                            <field name="startedText"><default-field title="Started"><display/></default-field></field>
+                            <field name="finishedText"><default-field title="Ended"><display/></default-field></field>
+                            <field name="userName"><default-field title="By"><display/></default-field></field>
+                            <field name="failureText"><default-field title="Why it failed"><display/></default-field></field>
+                            <columns type="mobile">
+                                <column><field-ref name="regionName"/><field-ref name="themeName"/><field-ref name="releaseVersion"/></column>
+                                <column><field-ref name="statusText"/><field-ref name="countsText"/></column>
+                            </columns>
+                        </form-list>
+                    </box-body>
+                </container-box>
+            </widgets>
+        </section>
+    </widgets>
+</screen>

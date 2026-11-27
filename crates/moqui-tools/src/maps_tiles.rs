@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.maps.MapSourceServices.read#ArchiveTile` (plans/Maps.md §5, "a later Rust endpoint returning individual
+//! `org.moqui.maps.MapSourceServices.read#ArchiveTile` (plans/archive/Maps.md §5, "a later Rust endpoint returning individual
 //! Z/X/Y tiles"): one tile of a registered PMTiles archive, for the LocalMap `tile` transition, which serves clients
 //! with no PMTiles reader (an OpenLayers XYZ vector tile source, a terminal, another program) through the same resource
 //! facade and the same per-request access check as the map-source transition: MapSources.js checks the caller and
@@ -38,8 +38,8 @@ use crate::group_db::{flag, number, text, Out};
 
 /// The most bytes one directory may take, as stored and decompressed (a planet archive's largest leaves are a few MB).
 const DIRECTORY_MAX: u64 = 16 * 1024 * 1024;
-/// The most bytes a tile may take decompressed, when the client takes no gzip.
-const TILE_MAX: u64 = 16 * 1024 * 1024;
+/// The most bytes a tile may take decompressed, when the client takes no gzip, and as stored in an extract.
+pub(crate) const TILE_MAX: u64 = 16 * 1024 * 1024;
 /// The bound on what is kept: directories, and their entries in all (an entry is 24 bytes, so about 48 MB at most).
 const CACHED_DIRECTORIES: usize = 256;
 const CACHED_ENTRIES: usize = 2 * 1024 * 1024;
@@ -113,7 +113,7 @@ fn keep_directory(key: &str, entries: &Arc<Vec<Entry>>) {
 }
 
 /// The bytes of `length` at `offset`, all of them or an error: a source gives fewer only at its end.
-fn read_exact(source: &dyn ByteSource, offset: u64, length: u64, what: &str) -> Result<Vec<u8>, LibError> {
+pub(crate) fn read_exact(source: &dyn ByteSource, offset: u64, length: u64, what: &str) -> Result<Vec<u8>, LibError> {
     let wanted = usize::try_from(length).map_err(|_| LibError::new(format!("the {what} is too large")))?;
     let bytes = source.read_at(offset, wanted)?;
     if bytes.len() != wanted {
@@ -123,7 +123,7 @@ fn read_exact(source: &dyn ByteSource, offset: u64, length: u64, what: &str) -> 
 }
 
 /// `stored` decompressed by `compression`, at most `max` bytes.
-fn decompress(stored: Vec<u8>, compression: Compression, max: u64, what: &str) -> Result<Vec<u8>, LibError> {
+pub(crate) fn decompress(stored: Vec<u8>, compression: Compression, max: u64, what: &str) -> Result<Vec<u8>, LibError> {
     match compression {
         Compression::None | Compression::Unknown => Ok(stored),
         Compression::Gzip => {
@@ -142,6 +142,54 @@ fn decompress(stored: Vec<u8>, compression: Compression, max: u64, what: &str) -
             other.name()
         ))),
     }
+}
+
+/// The key what is kept of an archive's content goes by: its tag and its size.
+pub(crate) fn content_key(tag: &str, size: u64) -> String {
+    format!("{tag}:{size}")
+}
+
+/// The header of the archive whose content is `source` (kept by `content`, [`content_key`]), checked against `size`:
+/// an archive whose sections are not where its header says is read no further, and not kept.
+pub(crate) fn archive_header(source: &dyn ByteSource, content: &str, size: u64) -> Result<Header, LibError> {
+    if let Some(header) = kept_header(content) {
+        return Ok(header);
+    }
+    let header = Header::parse(&read_exact(source, 0, HEADER_LEN as u64, "header")?)?;
+    if let Some(problem) = header.problems(size).into_iter().next() {
+        return Err(LibError::new(format!("the archive cannot be read: {problem}")));
+    }
+    keep_header(content, &header);
+    Ok(header)
+}
+
+/// The entries of the directory at `offset` of `length` bytes of the archive whose content is `source`, decompressed
+/// by `internal`, kept by `content` ([`content_key`]) and the offset.
+pub(crate) fn archive_directory(
+    source: &dyn ByteSource,
+    content: &str,
+    internal: Compression,
+    offset: u64,
+    length: u64,
+) -> Result<Arc<Vec<Entry>>, LibError> {
+    let key = format!("{content}@{offset}");
+    if let Some(entries) = kept_directory(&key) {
+        return Ok(entries);
+    }
+    if length > DIRECTORY_MAX {
+        return Err(LibError::new(format!(
+            "a directory of the archive is {length} bytes, more than the {DIRECTORY_MAX} read here"
+        )));
+    }
+    let stored = read_exact(source, offset, length, "directory")?;
+    let entries = Arc::new(decode_directory(&decompress(
+        stored,
+        internal,
+        DIRECTORY_MAX,
+        "directory",
+    )?)?);
+    keep_directory(&key, &entries);
+    Ok(entries)
 }
 
 /// What a tile request is answered with.
@@ -203,19 +251,8 @@ pub(crate) fn answer_tile(source: &dyn ByteSource, request: &TileRequest<'_>) ->
         });
     };
     // what is kept is the content's: its tag and its size
-    let content = format!("{tag}:{}", request.size);
-    let header = match kept_header(&content) {
-        Some(header) => header,
-        None => {
-            let header = Header::parse(&read_exact(source, 0, HEADER_LEN as u64, "header")?)?;
-            // an archive whose sections are not where its header says is read no further, and not kept
-            if let Some(problem) = header.problems(request.size).into_iter().next() {
-                return Err(LibError::new(format!("the archive cannot be read: {problem}")));
-            }
-            keep_header(&content, &header);
-            header
-        }
-    };
+    let content = content_key(tag, request.size);
+    let header = archive_header(source, &content, request.size)?;
     let vector = header.tile_type.is_vector();
     if request.z < header.min_zoom || request.z > header.max_zoom {
         return Ok(TileAnswer::Missing { vector });
@@ -224,24 +261,7 @@ pub(crate) fn answer_tile(source: &dyn ByteSource, request: &TileRequest<'_>) ->
     let gzip = stored_gzip && request.accept_gzip;
     let internal = header.internal_compression;
     let found = locate_tile(&header, id, |offset, length| {
-        let key = format!("{content}@{offset}");
-        if let Some(entries) = kept_directory(&key) {
-            return Ok(entries);
-        }
-        if length > DIRECTORY_MAX {
-            return Err(LibError::new(format!(
-                "a directory of the archive is {length} bytes, more than the {DIRECTORY_MAX} read here"
-            )));
-        }
-        let stored = read_exact(source, offset, length, "directory")?;
-        let entries = Arc::new(decode_directory(&decompress(
-            stored,
-            internal,
-            DIRECTORY_MAX,
-            "directory",
-        )?)?);
-        keep_directory(&key, &entries);
-        Ok(entries)
+        archive_directory(source, &content, internal, offset, length)
     })?;
     let Some((offset, length)) = found else {
         return Ok(TileAnswer::Missing { vector });

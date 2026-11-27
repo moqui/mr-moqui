@@ -2,7 +2,7 @@
   "generatedBy": "build/libs/refresh.mjs",
   "notices": {
     "path": "NOTICES.md",
-    "sha256": "48252107ae62507b927338f40f8073e91b7c22ee3849241a638cffc8bcb8215a"
+    "sha256": "1666b5fb5ceab885a68ba16974b1391a64a985dbfe3880f49e921963d4234474"
   },
   "libraries": [
     {
@@ -769,14 +769,20 @@
     },
     {
       "id": "openlayers",
-      "name": "OpenLayers with ol-mapbox-style and PMTiles (bundled)",
+      "name": "OpenLayers with ol-mapbox-style, PMTiles, geotiff.js and proj4 (bundled)",
       "version": "10.11.0",
-      "license": "BSD-2-Clause AND BSD-3-Clause AND ISC AND MIT",
-      "note": "Bundles ol, ol-mapbox-style, mapbox-to-css-font and @mapbox/unitbezier (BSD-2-Clause), ol-pmtiles, pmtiles, pbf and @maplibre/maplibre-gl-style-spec (BSD-3-Clause: the style spec's package.json says ISC, its LICENSE.txt is the BSD-3-Clause text of MapLibre and of the Mapbox code it contains), quickselect and tinyqueue (ISC), rbush and fflate (MIT). ol.css is OpenLayers'. Each license text is below once, with the packages it is the license of.",
+      "license": "BSD-2-Clause AND BSD-3-Clause AND ISC AND MIT AND Apache-2.0 AND Zlib AND CC0-1.0",
+      "note": "Bundles ol, ol-mapbox-style, mapbox-to-css-font and @mapbox/unitbezier (BSD-2-Clause), ol-pmtiles, pmtiles, pbf and @maplibre/maplibre-gl-style-spec (BSD-3-Clause: the style spec's package.json says ISC, its LICENSE.txt is the BSD-3-Clause text of MapLibre and of the Mapbox code it contains), quickselect and tinyqueue (ISC), rbush and fflate (MIT); and in the lazy raster part geotiff, @petamoriken/float16, quick-lru, proj4, mgrs and wkt-parser (MIT), zstddec (MIT, with the BSD-3-Clause license of the Zstandard decoder it compiles to WebAssembly), pako (MIT, its inflate a port of zlib under the zlib license), xml-utils (CC0-1.0) and lerc (Apache-2.0, its package carrying no license file: its source's notice, with the License's text as the web-worker package carries it). web-worker itself is not bundled. ol.css is OpenLayers'. Each license text is below once, with the packages it is the license of.",
       "source": "https://registry.npmjs.org/ol/-/ol-10.11.0.tgz",
       "npm": "ol@10.11.0",
       "tarballIntegrity": "sha512-OJ+lrx7kx/1O7Xx18Ff9QkVnwZIEL0OuhJQSy2sYgzzDvyZ2qHvuZEGAajbSstUyBwaS1OtQ4RWnY84tRMDdqg==",
-      "build": "esbuild --bundle --minify --format=iife --global-name=MoquiOl --platform=browser --target=es2020 --legal-comments=none of an entry (OPENLAYERS_ENTRY) that exports Map, View, Overlay, Geolocation, Feature, Collection, unByKey, the projection and extent helpers, the Tile, Vector, VectorTile, Image and Group layers, the XYZ, Vector, VectorTile, TileWMS, ImageWMS and WMTS sources, the WMTS tile grid from a recorded matrix set, the bbox loading strategy, the GeoJSON, GPX, KML, TopoJSON and MVT formats, Point and polygonFromExtent, the controls, the interactions (Select, Modify, Draw and Snap among them), the style classes, ol-mapbox-style's apply, applyStyle and applyBackground, PMTilesVectorSource and PMTilesRasterSource, and PMTiles, FetchSource and FileSource. Exposes the global MoquiOl. The build fails when the bundle holds an unreviewed package, evaluates code, or names an unreviewed host.",
+      "build": "geotiff's dist-module/worker/create.js replaced by patches/geotiff-3.1.0-beta.0-worker-create.js (its original's SHA-256 checked first), then esbuild --bundle --minify --splitting --format=esm --platform=browser --target=es2020 --legal-comments=none of three entries, ol-map (OPENLAYERS_ENTRY), ol-raster (RASTER_ENTRY: the GeoTIFF source, the WebGL tile layer, proj4 and its register, the projection lookup refused) and ol-tiff-decoder (TIFF_WORKER_ENTRY, a module worker), into shared chunks under openlayers/chunks/, every file named by its hash ([name]-[hash].min.js), with openlayers/ol-map.json naming the three entries and openlayers/parts.json the files of the main part (its entry and the chunks it imports, ol.css and ol-map.json), which the desktop and mobile shell bundles alone. ol-map is an entry (OPENLAYERS_ENTRY) that exports Map, View, Overlay, Geolocation, Feature, Collection, unByKey, the projection and extent helpers, the Tile, Vector, VectorTile, Image and Group layers, the XYZ, Vector, VectorTile, TileWMS, ImageWMS and WMTS sources, the WMTS tile grid from a recorded matrix set, the bbox loading strategy, the GeoJSON, GPX, KML, TopoJSON and MVT formats, Point and polygonFromExtent, the controls, the interactions (Select, Modify, Draw and Snap among them), the style classes, ol-mapbox-style's apply, applyStyle and applyBackground, PMTilesVectorSource and PMTilesRasterSource, and PMTiles, FetchSource and FileSource; m-map sets it as the global MoquiOl. The build fails when the bundle holds an unreviewed package, evaluates code, or names an unreviewed host.",
+      "patches": [
+        {
+          "path": "patches/geotiff-3.1.0-beta.0-worker-create.js",
+          "sha256": "14c301540405615fd3e5476c4b687f0661dead0536a131040ad77dbe80b3d157"
+        }
+      ],
       "files": [
         {
           "path": "openlayers/ol.css",
@@ -785,10 +791,118 @@
           "sha256": "abc8afd72cc10bd29cc143f443bae4a6804bd3cb3fb262e6b6a6bc6c924ea34f"
         },
         {
-          "path": "openlayers/ol-map.min.js",
+          "path": "openlayers/chunks/chunk-6W2IA7BM.min.js",
           "from": "build",
-          "size": 705690,
-          "sha256": "1cf4da13c0f7055768204f50df8f1cd7c3f4507752c7e0999976225272f69c99"
+          "size": 781,
+          "sha256": "692e687dce9fc072c4d373cf55c7ccac673b9bcf9b68c2e0f404b049b71d1b4f"
+        },
+        {
+          "path": "openlayers/chunks/chunk-E6DU5LVM.min.js",
+          "from": "build",
+          "size": 1328,
+          "sha256": "b90c270e0f2a88f55440d60aa20180fd4ad853ac3e89481b9c4e02ccdff7e719"
+        },
+        {
+          "path": "openlayers/chunks/chunk-EXMCKHUE.min.js",
+          "from": "build",
+          "size": 47207,
+          "sha256": "b4c73a74bcdd1b0d03055e806d5df07ac256c06c9ccfae9355766564c0c2f369"
+        },
+        {
+          "path": "openlayers/chunks/chunk-MNA67FBW.min.js",
+          "from": "build",
+          "size": 52012,
+          "sha256": "c85513873fde2e2c34008515854c14d54f6f5d8d077886612a90efff612594a4"
+        },
+        {
+          "path": "openlayers/chunks/chunk-R4VSY7W2.min.js",
+          "from": "build",
+          "size": 8039,
+          "sha256": "252fe0d2aca7d96e216acaabb2eacad3dec7e96126e32c556b0eb958406a3c3f"
+        },
+        {
+          "path": "openlayers/chunks/chunk-X6LCUXIH.min.js",
+          "from": "build",
+          "size": 135086,
+          "sha256": "f66e8ac912b1f1f8769dadb4df9c18747abe6afa9afd720ea525ee8d99c0792b"
+        },
+        {
+          "path": "openlayers/chunks/deflate-KIXF43Q4.min.js",
+          "from": "build",
+          "size": 216,
+          "sha256": "8a3ab8ab28b1f672c69aa1072c826b4363de7ddcd1093c50ddec1b38834a233a"
+        },
+        {
+          "path": "openlayers/chunks/jpeg-WE5TZX3F.min.js",
+          "from": "build",
+          "size": 11031,
+          "sha256": "ca26b5ea4f574c3489642808d76ddd9fdd8531ce9e2ef628c139faed6c50b4cf"
+        },
+        {
+          "path": "openlayers/chunks/lerc-LBDEB3DV.min.js",
+          "from": "build",
+          "size": 97175,
+          "sha256": "900e9a8b994f7f35c1d78e00cbfb6abecee7b726575cedba4f4ad701df3c5cc6"
+        },
+        {
+          "path": "openlayers/chunks/lzw-22KS4ARO.min.js",
+          "from": "build",
+          "size": 1502,
+          "sha256": "38c9916a571611e2dde996ed14d553ca104e0da7aec9343a182239c84ddd7b7a"
+        },
+        {
+          "path": "openlayers/chunks/packbits-TUD4BK6U.min.js",
+          "from": "build",
+          "size": 378,
+          "sha256": "529dbc5118969751997d75c48728d23dc196e2b6ccdfabe0d609417f3bdd9a23"
+        },
+        {
+          "path": "openlayers/chunks/raw-OII6CPTY.min.js",
+          "from": "build",
+          "size": 146,
+          "sha256": "51db28aade89d35629ce8b357fe3071efe205ec7c4f2d96b879eee45c03accea"
+        },
+        {
+          "path": "openlayers/chunks/webimage-ETNZDU2X.min.js",
+          "from": "build",
+          "size": 984,
+          "sha256": "89eb3171d3916113059f2793f8d9528568dc66bb91a532b0d1582776bbf7d478"
+        },
+        {
+          "path": "openlayers/chunks/zstd-3ARLWTU4.min.js",
+          "from": "build",
+          "size": 81084,
+          "sha256": "cc5515dd950e1a17a24a5062520a6ecb4c0d56a607ff6b6eeb020c9e7420638f"
+        },
+        {
+          "path": "openlayers/ol-map-WGG2ZZMM.min.js",
+          "from": "build",
+          "size": 574802,
+          "sha256": "d45dd70afbd5b5b9069b1c52f1546bee20d95f2615931ebfe38585b309ccc3eb"
+        },
+        {
+          "path": "openlayers/ol-map.json",
+          "from": "build",
+          "size": 115,
+          "sha256": "bec5c4c6055955c0588e8515f21677b0a8795d31335ba84d6f39504196f7a505"
+        },
+        {
+          "path": "openlayers/ol-raster-Z5PPGLWN.min.js",
+          "from": "build",
+          "size": 194305,
+          "sha256": "23c02030b7037e692b251e84682a3f87cc8306e2a2fa00fb81c2d1faf868a551"
+        },
+        {
+          "path": "openlayers/ol-tiff-decoder-BHWUW6YP.min.js",
+          "from": "build",
+          "size": 432,
+          "sha256": "46c538800133d9fc90d3062b0008d311479fa4d29023b31e2d64f348ed550f5e"
+        },
+        {
+          "path": "openlayers/parts.json",
+          "from": "build",
+          "size": 121,
+          "sha256": "9980e0b069f9e0e9cf2000336f6a5cc6a85cb4e1c02345c3e2ccc8cc18a69386"
         }
       ]
     },

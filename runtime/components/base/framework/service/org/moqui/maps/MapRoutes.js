@@ -1,5 +1,5 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
-// A record's links on a map (plans/Maps.md §3.2; docs/tools/Maps.md "Record links"): an adapter's get#RecordMapContext names
+// A record's links on a map (plans/archive/Maps.md §3.2; docs/tools/Maps.md "Record links"): an adapter's get#RecordMapContext names
 // where its record's links go by route key ({label, route, parameters}), never a URL, and the components register where a key
 // goes as moqui.maps.MapRoute seed rows. resolveLinks gives the framework's LocalMap and Browse (get#EffectiveConfig,
 // record.resolvedLinks) a URL for each link it can, in the host app's context (routeApp, which an app's mount of the dialog

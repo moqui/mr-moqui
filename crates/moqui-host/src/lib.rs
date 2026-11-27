@@ -51,6 +51,9 @@ use moqui_vault_server as _;
 // CalcGrid, the same way, where xlsx (the spreadsheet engine) is built in.
 #[cfg(feature = "xlsx")]
 use moqui_calc as _;
+// Optional Overture data for Maps, the same way, under its feature.
+#[cfg(feature = "overture")]
+use moqui_maps as _;
 // The business messaging channels (the sms chat bridge adapter), the same way.
 #[cfg(feature = "channels")]
 use moqui_channels as _;
@@ -2788,7 +2791,7 @@ fn load_one(
     tracing::info!("Loading entity data from {location}");
     let loaded = moqui_core::entity::load_feed::load_entity_data(facade, location, options)?;
     let records = loaded.records;
-    *failed_files += loaded.failed_files;
+    *failed_files += u64::try_from(loaded.failures.len()).unwrap_or(u64::MAX);
     report_message_errors(location);
     tracing::info!(
         "Loaded {records} records from {location} in {:.2}s",

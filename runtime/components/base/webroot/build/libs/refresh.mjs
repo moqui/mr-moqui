@@ -1,8 +1,8 @@
 // Build and verify the browser assets from both npm lockfiles: the webroot component's script of
 // build/js-build.json. The steps every component's build shares are in ../js-kit.mjs.
 import { checkManifest, componentName, esbuildBinary, installProject, mode, outputDir, outputLabel, publish, run, sha256, status, summary, toLf, withWork } from '../js-kit.mjs';
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { assetPack, fontLibraries, packs } from '../fonts/build.mjs';
@@ -162,7 +162,7 @@ const OPENUI_PATCHES = [
   'patches/openui-lang-core-0.2.18-failed-query.patch',
 ];
 
-// The map of m-map (js/WebrootMap.js, plans/Maps.md §3.2): OpenLayers with ol-mapbox-style, ol-pmtiles and pmtiles, bundled
+// The map of m-map (js/WebrootMap.js, plans/archive/Maps.md §3.2): OpenLayers with ol-mapbox-style, ol-pmtiles and pmtiles, bundled
 // as the global MoquiOl. OPENLAYERS_PACKAGES are the packages the bundle holds whose license file is in the package;
 // pmtiles and ol-pmtiles carry none, so their license is PMTILES_LICENSE. The build fails when the bundle holds a package
 // that is in neither list, or a second copy of one under another's node_modules.
@@ -175,11 +175,17 @@ const OPENLAYERS_PACKAGES = [
   'pbf', 'rbush', 'quickselect', 'fflate',
 ];
 const PMTILES_PACKAGES = ['pmtiles', 'ol-pmtiles'];
+// The lazy raster and projection part (plans/archive/Maps.md P4c): geotiff.js and its decoders, proj4 with mgrs and wkt-parser.
+// Each carries its license file but lerc, whose notice is LERC_NOTICE. web-worker, a dependency of geotiff, is not in the
+// bundle: GEOTIFF_WORKER_CREATE replaces the module that would use it (and that holds every decoder again as a string).
+const RASTER_PACKAGES = ['geotiff', '@petamoriken/float16', 'pako', 'quick-lru', 'xml-utils', 'zstddec', 'proj4', 'mgrs',
+  'wkt-parser'];
+const LERC_PACKAGE = 'lerc';
 // What m-map uses: the map and view, the projection and extent helpers, the layers and sources, the formats of overlays
 // and of the Natural Earth outline (TopoJSON), the controls, the default interactions with Select, Modify and Draw to
 // pick a point, the style classes, an Overlay for a popup, Geolocation, ol-mapbox-style's apply, applyStyle and
 // applyBackground for a MapLibre style, and the PMTiles sources, with pmtiles' FetchSource and FileSource for a source
-// m-map makes itself. The OGC layers (plans/Maps.md P4a): TileWMS and ImageWMS with the Image layer, WMTS with its tile
+// m-map makes itself. The OGC layers (plans/archive/Maps.md P4a): TileWMS and ImageWMS with the Image layer, WMTS with its tile
 // grid made from a matrix set the server recorded (createFromCapabilitiesMatrixSet), and the bbox loading strategy of a
 // WFS layer read as GeoJSON.
 const OPENLAYERS_ENTRY = `export { default as Map } from 'ol/Map.js';
@@ -231,6 +237,65 @@ export { apply, applyStyle, applyBackground } from 'ol-mapbox-style';
 export { PMTilesVectorSource, PMTilesRasterSource } from 'ol-pmtiles';
 export { PMTiles, FetchSource, FileSource } from 'pmtiles';
 `;
+// The lazy part m-map imports only when a map needs it (a COG layer, a view or layer in a registered projection;
+// js/WebrootMap.js map.needsRaster): OpenLayers' GeoTIFF source and WebGL tile layer, and proj4 with OpenLayers' register.
+// It is built with the main bundle as ES modules split into shared chunks (esbuild --splitting), so it reuses the main
+// bundle's OpenLayers (one projection registry, one getUid counter) and adds only what the main one lacks. On load it sets
+// the projection lookup of ol/proj/proj4 to a refusal (the default asks spatialreference.org for a code it does not know:
+// a map registers its projections from the effective configuration, and fetches none). It exports setWorkerFactory
+// (GEOTIFF_WORKER_CREATE), which m-map calls with the decoder worker of the same build (ol-tiff-decoder, by the name
+// OPENLAYERS_FILES gives it).
+const RASTER_ENTRY = `import { setProjectionCodeLookup } from 'ol/proj/proj4.js';
+setProjectionCodeLookup((code) => Promise.reject(new Error('The projection ' + code + ' is not registered for this map: an administrator registers it')));
+export { setWorkerFactory } from './node_modules/geotiff/dist-module/worker/create.js';
+export { default as GeoTIFF } from 'ol/source/GeoTIFF.js';
+export { default as WebGLTileLayer } from 'ol/layer/WebGLTile.js';
+export { register as registerProj4, fromProjectionCode } from 'ol/proj/proj4.js';
+export { default as proj4 } from 'proj4';
+`;
+// geotiff's decoder worker, a module worker (ol-tiff-decoder.js): what geotiff's own worker/decoder.js does, as an entry of
+// the split build, so its decoders are the chunks the page would import too and each loads only when a tile of its
+// compression is decoded (LERC's and Zstandard's WebAssembly among them).
+const TIFF_WORKER_ENTRY = `import { getDecoder } from 'geotiff';
+self.addEventListener('message', async (e) => {
+  const { compression, decoderParameters, buffer, ...extra } = e.data;
+  try {
+    const decoder = await getDecoder(compression, decoderParameters);
+    const decoded = await decoder.decode(buffer);
+    self.postMessage({ decoded, ...extra }, [decoded]);
+  } catch (error) {
+    self.postMessage({ error: error instanceof Error ? error.message : String(error), ...extra });
+  }
+});
+`;
+// geotiff's worker/create.js makes its decoder worker from a 246 KB string of every decoder again (LERC's and Zstandard's
+// WebAssembly as base64 among them) through a Blob URL, and imports web-worker for Node. It is replaced, before the bundle
+// is built, by this reviewed file: the worker is the one RASTER_ENTRY sets (ol-tiff-decoder.js). The original's SHA-256 is
+// checked first, so a geotiff that changes it stops the build for review.
+const GEOTIFF_WORKER_CREATE = 'patches/geotiff-3.1.0-beta.0-worker-create.js';
+// Every file of the OpenLayers build is named by its content (esbuild's [hash], with .min. so the server keeps it a year,
+// immutable), so a browser never pairs an entry with another build's chunks or raster part after an upgrade. The one file
+// with a fixed name is this map of the entries, openlayers/ol-map.json ({main, raster, decoder}), which m-map fetches with
+// cache: "no-cache" (revalidated each time, a 304 when it is unchanged) before it imports the main entry by its name.
+const OPENLAYERS_FILES = 'openlayers/ol-map.json';
+// The files of each part a client bundles alone (plans/archive/Maps-Offline.md §2.5): {main: [...]}, each path relative to
+// openlayers/, the main entry with every chunk it imports (statically or dynamically) and ol.css and ol-map.json. The
+// desktop and mobile shell stages only these (crates/moqui-desktop/shell/libs.txt "openlayers main"): no COG layer is
+// packaged, so the raster part and its decoders stay out.
+const OPENLAYERS_PARTS = 'openlayers/parts.json';
+const GEOTIFF_WORKER_CREATE_ORIGINAL = '22990a381113766c0fd034548948f3de3ae4de4c392d278304b33fd1634078bd';
+// lerc's package carries no license file: the notice of its LercDecode.js, and the Apache License 2.0's text, which is the
+// web-worker package's LICENSE file in the same tree (the license itself, unchanged)
+const LERC_NOTICE = `Copyright 2015-2021 Esri
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the
+License. You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an
+"AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific
+language governing permissions and limitations under the License.
+
+A copy of the license and additional notices are located with the source distribution at: http://github.com/Esri/lerc/`;
 // The map loads what its layers name, so it fetches (styles, TileJSON, sprites, tiles: fetch and XMLHttpRequest), and the
 // raster source behind a hillshade layer runs its operation in a Worker made from a Blob. It must not evaluate code or
 // keep state of its own, and every URL it names (absolute, ws, or a protocol-relative //host in a string) is one of these,
@@ -251,10 +316,12 @@ export { PMTiles, FetchSource, FileSource } from 'pmtiles';
 //   read and its image loaded. m-map reads KML with an iconUrlFunction that answers a blank data: icon for every href (the
 //   pushpin's too), with extractStyles: false, and styles the layer itself.
 // - https://github.com: a link in an error message.
+// - https://spatialreference.org: ol/proj/proj4's default lookup of a projection code it does not know (in the lazy raster
+//   part). RASTER_ENTRY replaces it with a refusal when the part loads, before any source is made, so it is never asked.
 const OPENLAYERS_HOSTS = [
   'http://earth.google.com', 'http://www.google.com', 'http://www.opengis.net', 'http://www.topografix.com',
   'http://www.w3.org', 'https://api.mapbox.com', 'https://${…}.tiles.mapbox.com', 'https://cdn.jsdelivr.net',
-  'https://developers.google.com', 'https://github.com', 'https://maps.google.com',
+  'https://developers.google.com', 'https://github.com', 'https://maps.google.com', 'https://spatialreference.org',
 ];
 // The license of pmtiles and ol-pmtiles, whose npm packages carry no license file: the LICENSE of their repository at the
 // commit each release names (gitHead 3b10e67e for pmtiles 4.5.0, 3f8279aa for ol-pmtiles 2.0.2; the same text at both).
@@ -297,7 +364,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.`;
 // (OPENLAYERS_HOSTS). That is the Fontsource layout, so each face is that package's own CSS (every subset, each by
 // unicode-range), with only the woff2 sources.
 const MAP_FONT_FACES = ['400', '400-italic', '500', '700'];
-// The local Protomaps profile (plans/Maps.md §4.1, §5): a regional Protomaps PMTiles archive registered as a layer draws
+// The local Protomaps profile (plans/archive/Maps.md §4.1, §5): a regional Protomaps PMTiles archive registered as a layer draws
 // with these. The styles are the output of @protomaps/basemaps (layers() of a namedFlavor, lang "en"), generated here
 // with Node from the package's CommonJS build into protomaps/light.json and protomaps/dark.json, each with one vector
 // source, "protomaps", that m-map binds to the archive (applyStyle, updateSource false), its sprite at
@@ -750,30 +817,47 @@ licenses/Unicode-3.0.txt, from ${UNICODE_URL}.
     produce: (ctx) => ctx.typescriptFiles(),
   },
   {
-    // The map of m-map (js/WebrootMap.js, plans/Maps.md §3.2), loaded with moqui.loadScript when the first map mounts.
+    // The map of m-map (js/WebrootMap.js, plans/archive/Maps.md §3.2), imported (an ES module, import()) when the first map mounts.
     // OpenLayers, ol-mapbox-style, ol-pmtiles and pmtiles ship ES modules, so this is a bundle of what OPENLAYERS_ENTRY
-    // exports. Pinned Nov 25, 2026: each is the newest release of its line at least two weeks old (ol 10.11.0 of Oct 4,
-    // ol-mapbox-style 13.9.0 of Nov 1, ol-pmtiles 2.0.2, which needs ol 9 or later, and pmtiles 4.5.0 of Aug 10).
-    id: 'openlayers', name: 'OpenLayers with ol-mapbox-style and PMTiles (bundled)', npm: 'ol',
-    license: 'BSD-2-Clause AND BSD-3-Clause AND ISC AND MIT',
+    // exports, split by esbuild with the lazy raster part (RASTER_ENTRY) and its decoder worker (TIFF_WORKER_ENTRY) so the
+    // three share one copy of OpenLayers. Pinned Nov 25, 2026: each is the newest release of its line at least two weeks old
+    // (ol 10.11.0 of Oct 4, ol-mapbox-style 13.9.0 of Nov 1, ol-pmtiles 2.0.2, which needs ol 9 or later, and pmtiles 4.5.0
+    // of Aug 10). The raster part (P4c, Nov 26, 2026): proj4 2.22.0 of Aug 31 (2.23.0 of Nov 12 is inside the cooldown), and
+    // geotiff 3.1.0-beta.0 of Mar 30, a prerelease: ol 10.11.0 depends on geotiff ^3.1.0-beta.0, which no release satisfies
+    // (3.0.5 is below it and no 3.1.0 is published), so it is the version OpenLayers was built and tested against.
+    id: 'openlayers', name: 'OpenLayers with ol-mapbox-style, PMTiles, geotiff.js and proj4 (bundled)', npm: 'ol',
+    license: 'BSD-2-Clause AND BSD-3-Clause AND ISC AND MIT AND Apache-2.0 AND Zlib AND CC0-1.0',
     licenseNote: 'Bundles ol, ol-mapbox-style, mapbox-to-css-font and @mapbox/unitbezier (BSD-2-Clause), ol-pmtiles, ' +
       'pmtiles, pbf and @maplibre/maplibre-gl-style-spec (BSD-3-Clause: the style spec\'s package.json says ISC, its ' +
       'LICENSE.txt is the BSD-3-Clause text of MapLibre and of the Mapbox code it contains), quickselect and tinyqueue ' +
-      '(ISC), rbush and fflate (MIT). ' +
+      '(ISC), rbush and fflate (MIT); and in the lazy raster part geotiff, @petamoriken/float16, quick-lru, proj4, mgrs and ' +
+      'wkt-parser (MIT), zstddec (MIT, with the BSD-3-Clause license of the Zstandard decoder it compiles to WebAssembly), ' +
+      'pako (MIT, its inflate a port of zlib under the zlib license), xml-utils (CC0-1.0) and lerc (Apache-2.0, its package ' +
+      'carrying no license file: its source\'s notice, with the License\'s text as the web-worker package carries it). ' +
+      'web-worker itself is not bundled. ' +
       'ol.css is OpenLayers\'. Each license text is below once, with the packages it is the license of.',
     copy: [['ol.css', 'openlayers/ol.css']],
-    noticeText: () => `--- ${PMTILES_PACKAGES.map((p) => p + ' ' + pins[p]).join(', ')}: LICENSE of the repository ---\n${PMTILES_LICENSE}\n`,
-    noticePackages: OPENLAYERS_PACKAGES,
+    patches: [GEOTIFF_WORKER_CREATE],
+    noticeText: (ctx) => `--- ${PMTILES_PACKAGES.map((p) => p + ' ' + pins[p]).join(', ')}: LICENSE of the repository ---\n${PMTILES_LICENSE}\n\n` +
+      `--- ${LERC_PACKAGE} ${ctx.installedVersion(LERC_PACKAGE)}: the notice of LercDecode.js (the package carries no license file) ---\n${LERC_NOTICE}\n\n` +
+      `--- The Apache License, Version 2.0 (lerc's), as web-worker ${ctx.installedVersion('web-worker')}'s LICENSE carries it ---\n${ctx.packageText('web-worker', 'LICENSE').trimEnd()}\n\n` +
+      `--- pako ${ctx.installedVersion('pako')}: the zlib license of lib/zlib, which its inflate is a port of ---\n${ctx.zlibNotice()}\n`,
+    noticePackages: [...OPENLAYERS_PACKAGES, ...RASTER_PACKAGES],
     noticeDedupe: true,
-    build: 'esbuild --bundle --minify --format=iife --global-name=MoquiOl --platform=browser --target=es2020 ' +
-      '--legal-comments=none of an entry (OPENLAYERS_ENTRY) that exports Map, View, Overlay, Geolocation, Feature, ' +
+    build: 'geotiff\'s dist-module/worker/create.js replaced by ' + GEOTIFF_WORKER_CREATE + ' (its original\'s SHA-256 checked ' +
+      'first), then esbuild --bundle --minify --splitting --format=esm --platform=browser --target=es2020 ' +
+      '--legal-comments=none of three entries, ol-map (OPENLAYERS_ENTRY), ol-raster (RASTER_ENTRY: the GeoTIFF source, the ' +
+      'WebGL tile layer, proj4 and its register, the projection lookup refused) and ol-tiff-decoder (TIFF_WORKER_ENTRY, a ' +
+      'module worker), into shared chunks under openlayers/chunks/, every file named by its hash ([name]-[hash].min.js), ' +
+      'with openlayers/ol-map.json naming the three entries and openlayers/parts.json the files of the main part (its entry and ' +
+      'the chunks it imports, ol.css and ol-map.json), which the desktop and mobile shell bundles alone. ol-map is an entry (OPENLAYERS_ENTRY) that exports Map, View, Overlay, Geolocation, Feature, ' +
       'Collection, unByKey, the projection and extent helpers, the Tile, Vector, VectorTile, Image and Group layers, the ' +
       'XYZ, Vector, VectorTile, TileWMS, ImageWMS and WMTS sources, the WMTS tile grid from a recorded matrix set, the bbox ' +
       'loading strategy, the GeoJSON, GPX, KML, TopoJSON and MVT formats, Point and polygonFromExtent, the ' +
       'controls, the interactions (Select, Modify, Draw and Snap among them), the style classes, ol-mapbox-style\'s apply, applyStyle and applyBackground, ' +
-      'PMTilesVectorSource and PMTilesRasterSource, and PMTiles, FetchSource and FileSource. Exposes the global MoquiOl. ' +
+      'PMTilesVectorSource and PMTilesRasterSource, and PMTiles, FetchSource and FileSource; m-map sets it as the global MoquiOl. ' +
       'The build fails when the bundle holds an unreviewed package, evaluates code, or names an unreviewed host.',
-    produce: (ctx) => [['openlayers/ol-map.min.js', ctx.esbuildOpenLayers()]],
+    produce: (ctx) => ctx.esbuildOpenLayers(),
     licenseFiles: [],
   },
   {
@@ -788,7 +872,7 @@ licenses/Unicode-3.0.txt, from ${UNICODE_URL}.
     licenseFiles: ['LICENSE'],
   },
   {
-    // The local Protomaps profile's styles and sprites (PROTOMAPS_FLAVORS; plans/Maps.md §4.1), for a regional archive
+    // The local Protomaps profile's styles and sprites (PROTOMAPS_FLAVORS; plans/archive/Maps.md §4.1), for a regional archive
     // registered as the LOCAL_PROTOMAPS layers (framework data/MapsSetupData.xml). Pinned Nov 25, 2026: 5.7.2 of Mar 10.
     id: 'protomaps', name: 'Protomaps basemap styles (generated) and sprites', npm: '@protomaps/basemaps',
     license: 'BSD-3-Clause AND CC0-1.0 AND MIT',
@@ -900,6 +984,24 @@ function main() {
   withWork(workArg, buildAssets);
 }
 
+// One file of the OpenLayers build (an entry or a chunk): it must not evaluate code, keep state of its own or open a socket,
+// and every URL it names (absolute, ws, or a protocol-relative //host in a string) is one of OPENLAYERS_HOSTS.
+function checkOpenLayersText(name, bytes) {
+  const text = bytes.toString('utf8');
+  for (const banned of ['eval(', 'new function(', 'importscripts', 'websocket', 'sendbeacon', 'document.cookie',
+    'localstorage', 'sessionstorage', 'indexeddb']) {
+    if (text.toLowerCase().includes(banned)) throw new Error(`the OpenLayers bundle's ${name} names ${banned}`);
+  }
+  // every scheme://host and string-literal //host, a template placeholder in it written ${…}
+  const host = (found) => found.replace(/\$\{[^}]*\}/g, '${…}').toLowerCase();
+  const hosts = new Set([
+    ...[...text.matchAll(/\b((?:https?|wss?):)\/\/([^\s"'`/\\)<>,;?#]+)/gi)].map((m) => m[1].toLowerCase() + '//' + host(m[2])),
+    ...[...text.matchAll(/["'`]\/\/([^\s"'`/\\)<>,;?#]+\.[^\s"'`/\\)<>,;?#]+)/g)].map((m) => '//' + host(m[1])),
+  ]);
+  const unlisted = [...hosts].filter((found) => !OPENLAYERS_HOSTS.includes(found)).sort();
+  if (unlisted.length) throw new Error(`the OpenLayers bundle's ${name} names ${unlisted.join(', ')} (a \${…} is a host built at run time): review each and add it`);
+}
+
 function buildAssets(work) {
   const outputs = new Map(); // path under libs/ -> Buffer
   const libMeta = [];
@@ -923,6 +1025,19 @@ function buildAssets(work) {
   };
   const ctx = {
     package: id => packages[id],
+    installedVersion: (pkg) => JSON.parse(readFileSync(join(build, 'node_modules', pkg, 'package.json'))).version,
+    packageText: (pkg, file) => readFileSync(join(build, 'node_modules', pkg, file), 'utf8'),
+    // the zlib license of pako's lib/zlib (the comment at the top of its inflate.js), its comment markers taken off
+    zlibNotice() {
+      const lines = readFileSync(join(build, 'node_modules/pako/lib/zlib/inflate.js'), 'utf8').split('\n');
+      const notice = [];
+      for (const line of lines.slice(1)) {
+        if (!line.startsWith('//')) { if (notice.length) break; continue; }
+        notice.push(line.replace(/^\/\/ ?/, ''));
+      }
+      if (!notice.some((line) => line.includes('This notice may not be removed'))) throw new Error('pako\'s zlib notice moved: review it');
+      return notice.join('\n').trim();
+    },
     version: (id) => LIBS.find((l) => l.id === id).version,
     esbuildCompilerDom() {
       writeFileSync(join(build, 'cd-entry.js'), "module.exports = require('@vue/compiler-dom');\n");
@@ -1042,37 +1157,64 @@ export const atob = typeof globalThis.atob === 'function' ? globalThis.atob.bind
       return out;
     },
     esbuildOpenLayers() {
+      // geotiff's worker module replaced by the reviewed one (GEOTIFF_WORKER_CREATE), its original checked first
+      const create = join(build, 'node_modules/geotiff/dist-module/worker/create.js');
+      if (sha256(readFileSync(create)) !== GEOTIFF_WORKER_CREATE_ORIGINAL)
+        throw new Error('geotiff\'s dist-module/worker/create.js is not the one ' + GEOTIFF_WORKER_CREATE + ' replaces: review it');
+      writeFileSync(create, readFileSync(join(source, GEOTIFF_WORKER_CREATE)));
       writeFileSync(join(build, 'ol-entry.js'), OPENLAYERS_ENTRY);
-      const out = esbuild(['ol-entry.js', '--bundle', '--minify', '--format=iife', '--global-name=MoquiOl',
-        '--platform=browser', '--target=es2020', '--legal-comments=none', '--metafile=ol-inputs.json']);
+      writeFileSync(join(build, 'ol-raster-entry.js'), RASTER_ENTRY);
+      writeFileSync(join(build, 'ol-tiff-decoder-entry.js'), TIFF_WORKER_ENTRY);
+      const outdir = join(build, 'out', 'openlayers');
+      rmSync(outdir, { recursive: true, force: true });
+      run(esbuildBinary(join(build, 'node_modules')), ['ol-map=ol-entry.js', 'ol-raster=ol-raster-entry.js',
+        'ol-tiff-decoder=ol-tiff-decoder-entry.js', '--bundle', '--minify', '--splitting', '--format=esm',
+        '--platform=browser', '--target=es2020', '--legal-comments=none', '--entry-names=[name]-[hash].min',
+        '--chunk-names=chunks/[name]-[hash].min',
+        `--outdir=${outdir}`, '--metafile=ol-inputs.json', '--log-level=error'], { cwd: build });
       // the packages in the bundle are the reviewed ones, each the single top-level copy whose license is printed
-      const output = Object.values(JSON.parse(readFileSync(join(build, 'ol-inputs.json'))).outputs)[0];
-      const reviewed = [...OPENLAYERS_PACKAGES, ...PMTILES_PACKAGES];
+      const outputs = JSON.parse(readFileSync(join(build, 'ol-inputs.json'))).outputs;
+      const reviewed = [...OPENLAYERS_PACKAGES, ...PMTILES_PACKAGES, ...RASTER_PACKAGES, LERC_PACKAGE];
+      const entries = ['ol-entry.js', 'ol-raster-entry.js', 'ol-tiff-decoder-entry.js'];
       const unreviewed = new Set();
-      for (const [path, input] of Object.entries(output.inputs)) {
-        if (!input.bytesInOutput || path === 'ol-entry.js') continue;
-        // the style spec's dist carries its own copies of a few small dependencies (STYLE_SPEC_INLINED)
-        const inlined = path.match(/^node_modules\/@maplibre\/maplibre-gl-style-spec\/dist\/node_modules\/((?:@[^/]+\/)?[^/]+)\//);
-        if (inlined && STYLE_SPEC_INLINED.includes(inlined[1])) continue;
-        const pkg = path.match(/^node_modules\/((?:@[^/]+\/)?[^/]+)\/(.*)$/);
-        if (!pkg || pkg[2].includes('node_modules/')) throw new Error(`the OpenLayers bundle holds ${path}, not a top-level package`);
-        if (!reviewed.includes(pkg[1])) unreviewed.add(pkg[1]);
+      const files = [];
+      const entryNames = {};
+      for (const [outPath, output] of Object.entries(outputs)) {
+        for (const [path, input] of Object.entries(output.inputs)) {
+          // a Node built-in a package's browser field turns off (esbuild's empty stand-in, "(disabled):http")
+          if (!input.bytesInOutput || entries.includes(path) || path.startsWith('(disabled):')) continue;
+          // the style spec's dist carries its own copies of a few small dependencies (STYLE_SPEC_INLINED)
+          const inlined = path.match(/^node_modules\/@maplibre\/maplibre-gl-style-spec\/dist\/node_modules\/((?:@[^/]+\/)?[^/]+)\//);
+          if (inlined && STYLE_SPEC_INLINED.includes(inlined[1])) continue;
+          const pkg = path.match(/^node_modules\/((?:@[^/]+\/)?[^/]+)\/(.*)$/);
+          if (!pkg || pkg[2].includes('node_modules/')) throw new Error(`the OpenLayers bundle holds ${path}, not a top-level package`);
+          if (!reviewed.includes(pkg[1])) unreviewed.add(pkg[1]);
+        }
+        const name = relative(outdir, join(build, outPath)).split(sep).join('/');
+        files.push(['openlayers/' + name, readFileSync(join(build, outPath))]);
+        const role = { 'ol-entry.js': 'main', 'ol-raster-entry.js': 'raster', 'ol-tiff-decoder-entry.js': 'decoder' }[output.entryPoint];
+        if (role && outPath.endsWith('.js')) entryNames[role] = name;
       }
+      if (!entryNames.main || !entryNames.raster || !entryNames.decoder) throw new Error('the OpenLayers build lacks an entry');
+      files.push([OPENLAYERS_FILES, Buffer.from(JSON.stringify(entryNames) + '\n')]);
+      // the main part: its entry and what it imports, by esbuild's own account of the outputs (OPENLAYERS_PARTS)
+      const mainOut = Object.keys(outputs).find((outPath) => outputs[outPath].entryPoint === 'ol-entry.js' && outPath.endsWith('.js'));
+      const mainFiles = new Set();
+      const visit = (outPath) => {
+        const name = relative(outdir, join(build, outPath)).split(sep).join('/');
+        if (mainFiles.has(name)) return;
+        if (!outputs[outPath]) throw new Error(`the OpenLayers main part imports ${outPath}, which the build did not write`);
+        mainFiles.add(name);
+        for (const imported of outputs[outPath].imports || []) if (!imported.external) visit(imported.path);
+      };
+      visit(mainOut);
+      if ([...mainFiles].some((name) => name === entryNames.raster || name === entryNames.decoder)) throw new Error('the OpenLayers main part imports the raster part');
+      const parts = { main: ['ol-map.json', 'ol.css', ...[...mainFiles].sort()] };
+      files.push([OPENLAYERS_PARTS, Buffer.from(JSON.stringify(parts) + '\n')]);
       if (unreviewed.size) throw new Error(`the OpenLayers bundle holds ${[...unreviewed].join(', ')}: review each license and add it`);
-      const text = out.toString('utf8');
-      for (const banned of ['eval(', 'new function(', 'importscripts', 'websocket', 'sendbeacon', 'document.cookie',
-        'localstorage', 'sessionstorage', 'indexeddb']) {
-        if (text.toLowerCase().includes(banned)) throw new Error(`the OpenLayers bundle names ${banned}`);
-      }
-      // every scheme://host and string-literal //host, a template placeholder in it written ${…}
-      const host = (name) => name.replace(/\$\{[^}]*\}/g, '${…}').toLowerCase();
-      const hosts = new Set([
-        ...[...text.matchAll(/\b((?:https?|wss?):)\/\/([^\s"'`/\\)<>,;?#]+)/gi)].map((m) => m[1].toLowerCase() + '//' + host(m[2])),
-        ...[...text.matchAll(/["'`]\/\/([^\s"'`/\\)<>,;?#]+\.[^\s"'`/\\)<>,;?#]+)/g)].map((m) => '//' + host(m[1])),
-      ]);
-      const unlisted = [...hosts].filter((name) => !OPENLAYERS_HOSTS.includes(name)).sort();
-      if (unlisted.length) throw new Error(`the OpenLayers bundle names ${unlisted.join(', ')} (a \${…} is a host built at run time): review each and add it`);
-      return out;
+      for (const [name, bytes] of files) if (name.endsWith('.js')) checkOpenLayersText(name, bytes);
+      files.sort((a, b) => a[0].localeCompare(b[0]));
+      return files;
     },
     mapFonts() {
       const root = packages.mapfonts.root;
@@ -1183,7 +1325,7 @@ process.stdout.write(JSON.stringify(out));`;
       files.push({ path: to, from: lib.produce ? 'build' : 'generated' });
     }
     let text = '';
-    if (lib.noticeText) text += lf(lib.noticeText()) + '\n';
+    if (lib.noticeText) text += lf(lib.noticeText(ctx)) + '\n';
     for (const f of lib.licenseFiles ?? []) text += `--- ${f} ---\n${readFileSync(join(root, f), 'utf8').trimEnd()}\n\n`;
     // noticeDedupe: a license text that several packages share is printed once, after the list of them
     const shared = new Map();

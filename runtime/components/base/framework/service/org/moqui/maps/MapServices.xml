@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Maps (plans/Maps.md §3.2): the contracts a record or layer adapter implements, and the registry that resolves an adapter
+<!-- Maps (plans/archive/Maps.md §3.2): the contracts a record or layer adapter implements, and the registry that resolves an adapter
     from its key. A component registers an adapter as a moqui.maps.MapAdapter seed row naming its services; a browser sends
     only the adapterKey, never a service or entity name, query, path or URL. The adapter is the owning domain's guarded
     service: it checks the caller's access to the record (and its organization scope) itself, on every call, and the
@@ -66,6 +66,11 @@ along with this software (see the LICENSE.md file). If not, see
                 shows its local postal-area position (get#PostalLocation, approximate, with a broad extent) and no outside
                 service is asked; never a substitute for a recorded point</description></parameter>
             <parameter name="countryGeoId"><description>The country of postalCode: a Geo ID or an ISO alpha-2 or alpha-3 code</description></parameter>
+            <parameter name="address1"><description>With no geometry: the address's street line (number and street), which the
+                installation's local geocoder (MPK_GEOCODER_OVERTURE, this server's own index, no outside request) matches when
+                one is enabled, before the postal area; the point found is shown, never saved</description></parameter>
+            <parameter name="address2"><description>Its second line, used only when it names a unit (Apt, Suite, #)</description></parameter>
+            <parameter name="city"><description>Its locality</description></parameter>
         </out-parameters>
     </service>
 
@@ -218,7 +223,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="get" noun="EffectiveConfig">
         <description>The configuration a map draws (m-map's, WebrootMap.js), for a map-view's config-url and the Maps
-            screens. Precedence (plans/Maps.md §4.2): the installation's policy (maps@external-requests: false leaves out
+            screens. Precedence (plans/archive/Maps.md §4.2): the installation's policy (maps@external-requests: false leaves out
             every profile, basemap and layer drawn from an outside host) constrains every choice; the profile is the one
             asked for (profileId, the consumer's), else the user's own maps.profile preference, else their groups' (the
             ALL_USERS one is the installation's default), else OUTLINE; the user's maps.preferences (basemap, layer
@@ -257,12 +262,23 @@ along with this software (see the LICENSE.md file). If not, see
                 empty for the initial view</description></parameter>
             <parameter name="recordLayers" type="Boolean" default="true"><description>false: the record layers are listed and
                 no adapter is asked for their features (the local-map dialog, which shows one record)</description></parameter>
+            <parameter name="locationShares" type="Boolean" default="false"><description>true: the configuration carries
+                locationShares (plans/archive/Location-Sharing.md §3.3), the caller's own active shares and those shared with them
+                now, read only through LocationServices find#MyShares, find#SharedWithMe and get#Share, which check the
+                caller against each share's current audience: Maps › Browse's getConfig asks for them (its terminal twin reads
+                the same through MapConfig.js liveShares), a map-view's config-url and the local-map dialog do not; with
+                locationSharesMineFailed or locationSharesTheirsFailed true when the read of the own shares or of those shared
+                with the caller failed</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="config" type="Map"><description>{profileId, profile: {profileId, profileName, basemaps, basemap,
                 allowedOrigins, notice}, layers, recordLayers, center, zoom, extent, units, points, features, featuresTruncated, record,
                 fallbacks: [{kind, id, reasonCode, message}], layerErrors: [{id, label, reasonCode, message}],
-                externalRequests}</description></parameter>
+                externalRequests, and with locationShares: locationShares [{shareId, role (owner or viewer), label, ownerName
+                (a viewer's), purposeText, fromDate, thruDate (epoch millis), approximate, keepTrail, latest {latitude,
+                longitude, accuracy, heading, speed, observedDate, ageSeconds} or null, trail [[longitude, latitude]] (its
+                latest 500 points, of at most 10 shares, when kept), and an owner's trailKeepDays, trailCount, audience
+                [{audienceSeqId, audienceTypeEnumId, userGroupId, name}] and reportIntervalSeconds}]}</description></parameter>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapConfig.js').execute('effectiveConfig', context))</script></actions>
     </service>
@@ -298,6 +314,9 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="restoreLastView" type="Boolean"/>
             <parameter name="lastView" type="Map"><description>{center: [lon, lat], zoom}</description></parameter>
             <parameter name="layers" type="Map"><description>{layerId: true or false}</description></parameter>
+            <parameter name="rasters" type="Map"><description>A COG layer's band settings by its ID (P4c): {layerId: {rgb: [r, g,
+                b] or band, min, max, colormap (grey, viridis, terrain, magma), nodata}}, each band one of the layer's; a layer's
+                null clears its settings (RASTER_INVALID for one that does not read)</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="applied" type="Boolean"/>
@@ -376,6 +395,45 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapConfig.js').execute('findConfiguration', context))</script></actions>
     </service>
+    <service verb="find" noun="Projections">
+        <description>The map projection registry (P4c, MapProjection) for Maps › Configuration › Projections: each row with
+            its definition, axis order, area of use, extent, whether it is enabled and whether the server reads its definition
+            (check#ProjectionDefinition: overlays in it are converted and a COG's bounds known) or only a browser draws it,
+            with the reason. For a caller who may open Configuration (their own grant; PERMISSION_DENIED otherwise).</description>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="projectionList" type="List"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapConfig.js').execute('findProjections', context))</script></actions>
+    </service>
+    <service verb="store" noun="Projection">
+        <description>Add or change a map projection (P4c, MapProjection), or enable or disable one (only projectionId and
+            disabled given), for a caller who may change Maps › Configuration (their own grant; PERMISSION_DENIED). The code is
+            an EPSG code other than EPSG:4326 and EPSG:3857 (every map's own); the definition PROJ.4 text of plain parameters
+            (no URL, no grid but +nadgrids=@null), which a browser registers with proj4 (DEFINITION_INVALID otherwise); the
+            area of use west, south, east, north in degrees; the extent four numbers in its units. The answer says whether the
+            server reads it too (serverReadable, serverReason): one it does not is still drawn by a map, and an overlay in it
+            is refused with that reason.</description>
+        <in-parameters>
+            <parameter name="projectionId" required="true"/>
+            <parameter name="label"/>
+            <parameter name="proj4Definition" allow-html="any"/>
+            <parameter name="axisOrder"/>
+            <parameter name="bounds"><description>west,south,east,north in degrees</description></parameter>
+            <parameter name="projectedExtent"><description>minx,miny,maxx,maxy in its units; empty for none</description></parameter>
+            <parameter name="disabled"><description>Y or N; empty to leave it</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="serverReadable" type="Boolean"/>
+            <parameter name="serverReason"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapConfig.js').execute('storeProjection', context))</script></actions>
+    </service>
     <service verb="store" noun="ProfileSettings">
         <description>Enable or disable a map profile and make one the installation's default (the ALL_USERS
             UserGroupPreference maps.profile), for a caller who may open and change Maps › Configuration (its view and update;
@@ -388,6 +446,9 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="profileId" required="true"/>
             <parameter name="enabled"><description>Y or N; empty to leave it</description></parameter>
             <parameter name="makeDefault" type="Boolean"/>
+            <parameter name="viewProjection"><description>The projection the profile's map is drawn in (P4c): EPSG:3857 (also
+                for empty), EPSG:4326 or a MapProjection row's code; a basemap of vector tiles is drawn only in EPSG:3857, so it
+                is refused with another (PROJECTION_INCOMPATIBLE); not given to leave it</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="applied" type="Boolean"/>
@@ -484,7 +545,10 @@ along with this software (see the LICENSE.md file). If not, see
             network is shown and changed only in Tools. The engine's rules hold: a change of the URL or the kind clears the
             key and disables the provider until a test passes, and a provider is enabled only after a passing test of its
             configuration as it is. The test is one GET with no credentials, following no redirect and reading at most
-            2 MB (a style document must parse and name only its own origin; a raster template must answer an image), to no
+            2 MB (a style document must parse and name only its own origin; a raster template must answer an image; a
+            raster provider whose URL is a Cloud Optimized GeoTIFF, a .tif or .tiff path with no tile placeholder, as a
+            bucket of COGs has, is read as registering one of its COGs reads it: one range of its first 64 KiB, a 206 this
+            site may read by CORS, its header one a map draws, never through the proxy or with a key), to no
             internal address unless the private network is allowed; an archive provider has no URL (ARCHIVE_ENDPOINT). While maps@external-requests is false a provider is neither tested nor enabled
             (EXTERNAL_REQUESTS_OFF). Needs ADMIN_CONNECTION_VIEW to read and ADMIN_CONNECTION_MANAGE to change or test; no
             group is authorized to call it directly.</description>
@@ -510,7 +574,7 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- ========== Postal lookup and Geo data readiness (P2; MapLookup.js, GeoData.js) ========== -->
 
     <service verb="get" noun="PostalLocation">
-        <description>A postal code's place from the local Geo data (plans/Maps.md §6.1, §6.3; GeoDataServices imports it), for a
+        <description>A postal code's place from the local Geo data (plans/archive/Maps.md §6.1, §6.3; GeoDataServices imports it), for a
             map, a search and an address with no point: country and code only, no street address, party or outside request.
             The country is a Geo ID or an ISO alpha-2 or alpha-3 code; the code is read by the importer's rules
             (normalize#PostalCode: leading zeros kept, a US ZIP+4 read as its ZIP code). Each match is the code's active
@@ -720,9 +784,14 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- ========== Address and place search (P3; MapGeocoders.js) ========== -->
 
     <service verb="find" noun="Places">
-        <description>Candidate places for a text from one configured geocoder (plans/Maps.md §6.1, §6.2, §8): the provider named,
+        <description>Candidate places for a text from one configured geocoder (plans/archive/Maps.md §6.1, §6.2, §8): the provider named,
             or the enabled geocoder (a MapProvider of a kind under MPK_GEOCODER: the US Census geocoder, a self-hosted
-            Nominatim or Photon) that passed its test as it is configured now, first by sequenceNum. Each candidate is
+            Nominatim or Photon, or this server's own index of Overture address points, MPK_GEOCODER_OVERTURE) that passed its
+            test as it is configured now and may be asked now (an outside one with outside requests on, the local one while a
+            region's addresses are active), first by sequenceNum. The local geocoder sends nothing: its candidates are address
+            matches (GPP_ADDRESS_MATCH, the point's position kind not stated), a number found without its suffix or a street
+            (GPP_PLACE_ESTIMATE), each with its source dataset, license, GERS ID and release; a text it does not match is
+            answered with the postal area of the code read from it (NO_ADDRESS_MATCH, approximate) or none (NO_MATCH). Each candidate is
             {label (plain text), lon, lat, matchKind (address, street, postal, place), precisionEnumId and precisionText
             (the Census geocoder's: an address placed by street-range interpolation, GPP_STREET_RANGE, never a rooftop; an address point
             GPP_ADDRESS_MATCH; a postal code GPP_POSTAL_AREA; a street or place GPP_PLACE_ESTIMATE), extent}; several are

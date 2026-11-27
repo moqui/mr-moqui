@@ -814,6 +814,14 @@ fn the_admin_service_refuses_a_stale_exposure_edit() {
     ]);
     assert!(errors.is_empty(), "{errors:?}");
     assert_eq!(out.get("serviceClassification"), Some(&Value::string("AgclRead")));
+    assert_eq!(out.get("everyAgentUser"), Some(&Value::Bool(false)));
+    // SEC-AI-13: a service that needs no authentication is every agent user's, which the editor is told
+    let (out, errors) = store(&[
+        ("toolName", Value::string("anyone_noop")),
+        ("serviceName", Value::string("org.moqui.impl.BasicServices.noop")),
+    ]);
+    assert!(errors.is_empty(), "{errors:?}");
+    assert_eq!(out.get("everyAgentUser"), Some(&Value::Bool(true)));
     let (_, errors) = store(&[
         ("toolName", Value::string("a2a__other")),
         ("serviceName", Value::string("x")),
@@ -1293,4 +1301,66 @@ fn the_lazy_catalog_refuses_when_the_tool_policy_cannot_be_read() {
     assert_eq!(run::wait_for(&bed.factory, &run_id, WAIT).unwrap(), RunState::Completed);
     let results = results(&bed);
     assert!(results[0].contains("tool policy could not be read"), "{}", results[0]);
+}
+
+/// SEC-AI-89: a user with `limits@user-open-runs` (4) runs waiting or working gets no new run (429, with a retry), so
+/// one user does not fill the node's agent workers; one ended makes room.
+#[test]
+fn a_user_with_too_many_open_runs_is_refused_a_new_one() {
+    let bed = bed("open-runs");
+    let _entered = bed.ctx.enter();
+    {
+        let _authz = bed.ctx.disable_authz();
+        row(
+            &bed.facade,
+            "moqui.agent.AgentConversation",
+            &[("conversationId", "OPEN_C"), ("userId", USER), ("agentId", "assist")],
+        );
+        for at in 0..4 {
+            let status = if at % 2 == 0 {
+                RunState::Submitted
+            } else {
+                RunState::Working
+            };
+            row(
+                &bed.facade,
+                "moqui.agent.AgentRun",
+                &[
+                    ("runId", &format!("OPEN_{at}")),
+                    ("conversationId", "OPEN_C"),
+                    ("agentId", "assist"),
+                    ("userId", USER),
+                    ("statusId", status.status_id()),
+                ],
+            );
+        }
+    }
+    let request = StartRequest {
+        user_id: USER.to_string(),
+        text: "Do it".to_string(),
+        extra_caps: vec![TEST_CAP.to_string()],
+        ..StartRequest::default()
+    };
+    let refused = run::start_run(&bed.factory, &request).unwrap_err();
+    assert!(refused.to_string().contains("waiting or working"), "{refused}");
+    assert_eq!(
+        moqui_core::context::ErrorKind::of(&refused),
+        moqui_core::context::ErrorKind::Tarpit,
+        "{refused}"
+    );
+    {
+        let _authz = bed.ctx.disable_authz();
+        let mut ended = bed
+            .facade
+            .find("moqui.agent.AgentRun")
+            .unwrap()
+            .eq("runId", Value::string("OPEN_0"))
+            .one()
+            .unwrap()
+            .unwrap();
+        ended.set("statusId", Value::string(RunState::Completed.status_id()));
+        ended.update(&bed.facade).unwrap();
+    }
+    fake::script(&bed.endpoint, vec![fake::Reply::text("Done.")]);
+    run::start_run(&bed.factory, &request).unwrap();
 }

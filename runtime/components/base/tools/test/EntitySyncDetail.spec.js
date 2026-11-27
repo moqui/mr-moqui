@@ -57,3 +57,20 @@ feature("the Detail form's Update stores its fields and keeps the password unles
         afterChanged.targetPassword == "spec-sync-pass-two"
     },
 })
+// A numeric text-line shows its stored number grouped, and an untouched field posts that text back: the update reads
+// it in the user's locale, as Java's convertFromString does, so changing only the delay stores the delay and keeps the
+// split (plans/ui-review-system-ai-integrations.md AI-UI-006).
+feature("a one-field edit posts the other numbers as the form shows them, grouped, and stores the change", {
+    when() {
+        update({syncSplitMillis: "60000", delayBufferMillis: "5000", recordThreshold: "1500", targetPassword: ""})
+        const edited = update({syncSplitMillis: "60,000", delayBufferMillis: "6000", recordThreshold: "1,500", targetPassword: ""})
+        return {edited, after: stored()}
+    },
+    then({edited, after}) {
+        edited.errors == ""
+        edited.status == 302
+        after.syncSplitMillis == 60000
+        after.recordThreshold == 1500
+        after.delayBufferMillis == 6000
+    },
+})

@@ -277,10 +277,11 @@ impl Runtime {
         span.set_attribute(KeyValue::new("moqui.head.sampled", sampled));
         // a root of its trace on this thread: the spans that wait under it are decided when it ends
         let root = is_root.then(|| {
-            open_tail(context.trace_id.0);
+            open_tail(context.trace_id.0, self.shared.config.capacity.tail_trace_spans);
             Box::new(RootTail {
                 trace: context.trace_id.0,
                 tracer: self.tracer.clone(),
+                shared: Arc::clone(&self.shared),
                 started: std::time::Instant::now(),
                 slow: self.shared.live.load().slow_root,
                 sampled,
@@ -555,6 +556,8 @@ pub(super) struct OwnedSpan {
 struct RootTail {
     trace: [u8; 16],
     tracer: SdkTracer,
+    /// Where the spans its tail had no room for are counted as dropped, when the trace is kept.
+    shared: Arc<Shared>,
     started: std::time::Instant,
     slow: Duration,
     sampled: bool,
@@ -612,9 +615,30 @@ impl OwnedSpan {
         }
         if let Some(root) = self.root.take() {
             let tail = close_tail(&root.trace);
-            let keep = root.sampled || self.error || root.started.elapsed() > root.slow || tail.important;
+            let keep = root.sampled || self.error || root.started.elapsed() > root.slow || tail.spans.has_important();
+            let dropped = tail.spans.dropped();
+            let spans = tail.spans.into_spans();
+            // the root says how many spans of its trace this thread dropped (MON-UI-003): past the bound, or, with
+            // the trace not kept here, all of them, which counts only if the export keeps the trace for an error
+            // on another thread
+            let (key, lost) = if keep {
+                (super::DROPPED_SPANS, dropped)
+            } else {
+                (super::UNKEPT_SPANS, dropped + spans.len() as u64)
+            };
+            if lost > 0 {
+                self.span.set_attribute(KeyValue::new(key, i64::try_from(lost).unwrap_or(i64::MAX)));
+            }
             if keep {
-                for span in tail.spans {
+                root.shared
+                    .counters
+                    .dropped
+                    .fetch_add(dropped, std::sync::atomic::Ordering::Relaxed);
+                // the failed and slow spans first: the export's tail buffer, shared with the trace's spans of other
+                // threads and bounded as a whole, then drops ordinary ones when it is full
+                let (important, ordinary): (Vec<DoneSpan>, Vec<DoneSpan>) =
+                    spans.into_iter().partition(|span| span.important);
+                for span in important.into_iter().chain(ordinary) {
                     span.materialize(&root.tracer);
                 }
             }
@@ -659,6 +683,8 @@ struct DoneSpan {
     end: SystemTime,
     attributes: Vec<KeyValue>,
     error: Option<String>,
+    /// It failed or was a slow artifact hit: it keeps its trace, and a full tail makes room for it.
+    important: bool,
 }
 
 impl PendingSpan {
@@ -695,9 +721,10 @@ impl PendingSpan {
             end: self.start + elapsed,
             attributes: std::mem::take(&mut self.attributes),
             error: self.error.take(),
+            important,
         };
         // its root ended first (the span left its thread): it goes out as it would have, to the export's tail rule
-        if let Some(done) = add_to_tail(done, important) {
+        if let Some(done) = add_to_tail(done) {
             done.materialize(&self.tracer);
         }
     }
@@ -709,6 +736,12 @@ impl Drop for PendingSpan {
             self.set_error("execution panicked");
         }
         self.close();
+    }
+}
+
+impl super::tail::Waiting for DoneSpan {
+    fn important(&self) -> bool {
+        self.important
     }
 }
 
@@ -732,12 +765,16 @@ impl DoneSpan {
     }
 }
 
-/// The spans waiting under a root open on this thread, by trace.
+/// The spans waiting under a root open on this thread, by trace, at most `limit` of them: the export's tail buffer
+/// keeps no more of a trace (telemetry tail-trace-spans), and a long root holding every span under it held a record of
+/// each of its frames for its whole life, about 2 KB a row of a Geo data import (plans/archive/Maps.md §6.3). The
+/// spans past `limit` are counted as dropped when the trace is kept. A failed or slow span keeps the trace when the
+/// buffer holds one, which it always does once one came, as the conf's floor for the bound is one.
 #[derive(Default)]
 struct Tail {
     trace: [u8; 16],
-    important: bool,
-    spans: Vec<DoneSpan>,
+    limit: usize,
+    spans: super::tail::TraceBuffer<DoneSpan>,
 }
 
 thread_local! {
@@ -754,11 +791,12 @@ fn tail_open(trace: &[u8; 16]) -> bool {
     TAILS.with_borrow(|tails| tails.iter().any(|tail| &tail.trace == trace))
 }
 
-fn open_tail(trace: [u8; 16]) {
+fn open_tail(trace: [u8; 16], limit: usize) {
     TAILS.with_borrow_mut(|tails| {
         if tails.len() < MAX_OPEN_TAILS {
             tails.push(Tail {
                 trace,
+                limit,
                 ..Tail::default()
             });
         }
@@ -772,16 +810,29 @@ fn close_tail(trace: &[u8; 16]) -> Tail {
     })
 }
 
-/// Add an ended pending span to its trace's tail; the span back when its root is not open on this thread.
-fn add_to_tail(done: DoneSpan, important: bool) -> Option<DoneSpan> {
+/// Add an ended pending span to its trace's tail; the span back when its root is not open on this thread. A full tail
+/// drops the span, or for an important one the latest ordinary span it holds.
+fn add_to_tail(done: DoneSpan) -> Option<DoneSpan> {
     let trace = done.trace.to_bytes();
     TAILS.with_borrow_mut(|tails| match tails.iter_mut().rev().find(|tail| tail.trace == trace) {
         Some(tail) => {
-            tail.important |= important;
-            tail.spans.push(done);
+            let room = tail.spans.len() < tail.limit;
+            tail.spans.add(done, room, |_| true);
             None
         }
         None => Some(done),
+    })
+}
+
+/// How many spans wait under the root of `trace` open on this thread.
+#[cfg(test)]
+pub(super) fn waiting_spans(trace: &[u8; 16]) -> usize {
+    TAILS.with_borrow(|tails| {
+        tails
+            .iter()
+            .rev()
+            .find(|tail| &tail.trace == trace)
+            .map_or(0, |tail| tail.spans.len())
     })
 }
 

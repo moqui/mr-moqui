@@ -62,9 +62,9 @@ pub(crate) fn history_limit() -> i64 {
     conf_number("password", "history-limit", 5)
 }
 
-/// Java uses 12 when the attribute is missing. The XML default, when present, is 104.
+/// `password/@change-weeks`, 104 as the shipped conf and the XSD give it (SEC-WEB-92: Java's 12 is not used).
 pub(crate) fn change_weeks() -> i64 {
-    conf_number("password", "change-weeks", 12)
+    conf_number("password", "change-weeks", 104)
 }
 
 pub(crate) fn password_hash_type() -> String {
@@ -104,7 +104,7 @@ pub(crate) fn max_failures() -> i64 {
     conf_number("login", "max-failures", 3)
 }
 
-/// Conf default is 5. Java's in-code fallback when the attribute is missing is 30; this reads the attribute.
+/// `login/@disable-minutes`, 5 as the shipped conf and the XSD give it.
 pub(crate) fn disable_minutes() -> i64 {
     conf_number("login", "disable-minutes", 5)
 }
@@ -146,6 +146,80 @@ fn conf_text_opt(child: &str, name: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::password_acceptable;
+
+    /// The value `MoquiDefaultConf.xml` gives `attr` on the `user-facade` element `child`.
+    fn shipped(conf: &str, child: &str, attr: &str) -> String {
+        let at = conf
+            .find(&format!("<{child} "))
+            .unwrap_or_else(|| panic!("no <{child}> in the conf"));
+        let element = &conf[at..at + conf[at..].find('>').unwrap()];
+        let start = element
+            .find(&format!(" {attr}=\""))
+            .unwrap_or_else(|| panic!("no {child}@{attr}"))
+            + attr.len()
+            + 3;
+        element[start..start + element[start..].find('"').unwrap()].to_string()
+    }
+
+    /// Each fallback the code uses when an attribute is missing (no execution context, here) is the default the
+    /// shipped conf writes, so a missing attribute never means another policy: `change-weeks` was 12 in the code and the
+    /// XSD and 104 in the conf (SEC-WEB-92).
+    #[test]
+    fn the_policy_fallbacks_are_the_shipped_conf_defaults() {
+        let conf = include_str!("../../../../runtime/components/base/framework/conf/MoquiDefaultConf.xml");
+        let xsd = include_str!("../../../../runtime/components/base/framework/xsd/mr-moqui-conf.xsd");
+        let rules = super::password_rules();
+        let numbers = [
+            ("password", "min-length", rules.min_length),
+            ("password", "min-digits", rules.min_digits),
+            ("password", "min-others", rules.min_others),
+            ("password", "history-limit", super::history_limit()),
+            ("password", "change-weeks", super::change_weeks()),
+            ("password", "email-expire-hours", super::email_expire_hours()),
+            ("login", "max-failures", super::max_failures()),
+            ("login", "disable-minutes", super::disable_minutes()),
+            (
+                "login",
+                "reauth-email-codes-per-hour",
+                super::reauth_email_codes_per_hour(),
+            ),
+        ];
+        for (child, attr, fallback) in numbers {
+            assert_eq!(shipped(conf, child, attr), fallback.to_string(), "{child}@{attr}");
+            let declared = format!("name=\"{attr}\" type=");
+            if let Some(at) = xsd.find(&declared) {
+                let line = &xsd[at..at + xsd[at..].find('>').unwrap()];
+                assert!(
+                    line.contains(&format!("default=\"{fallback}\"")),
+                    "the XSD default of {child}@{attr}: {line}"
+                );
+            }
+        }
+        assert_eq!(
+            shipped(conf, "password", "encrypt-hash-type"),
+            super::password_hash_type()
+        );
+        assert_eq!(
+            shipped(conf, "login-key", "encrypt-hash-type"),
+            super::login_key_hash_type()
+        );
+        assert_eq!(
+            shipped(conf, "login-key", "expire-hours"),
+            super::login_key_expire_hours().to_string()
+        );
+        assert_eq!(
+            shipped(conf, "login-key", "device-expire-hours"),
+            super::login_key_device_expire_hours().to_string()
+        );
+        assert_eq!(
+            shipped(conf, "password", "email-require-change"),
+            super::email_require_change().to_string()
+        );
+        assert_eq!(
+            shipped(conf, "login", "history-store"),
+            super::login_history_store().to_string()
+        );
+    }
 
     #[test]
     fn password_acceptable_rejects_secret_and_accepts_a_mixed_password() {

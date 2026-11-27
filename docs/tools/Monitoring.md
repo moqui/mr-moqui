@@ -126,7 +126,14 @@ with an `artifact` override and the receiver limits written out:
   (OpenSearch) added in place when the server starts; rows written before have them empty. Any other change to a
   telemetry mapping is refused, so history is never dropped.
 - **Capacity:** `queue-records` (8192), `queue-bytes` (33554432), `tail-traces` (1024) and `tail-trace-spans` (512)
-  on `<telemetry>`. A sixteenth of the queue is kept for request and job roots. A bad value warns and keeps the default.
+  on `<telemetry>`. A sixteenth of the queue is kept for request and job roots. `tail-trace-spans` is the spans one
+  trace holds while its root decides, on the thread under an open root and in the export's buffer; past it a span is
+  dropped and counted, and in both a failed or slow span takes the place of the latest ordinary one, so a long trace
+  that ends in a failure keeps it. A kept root records the spans of its trace dropped there, and the children the
+  full export queue refused with it, as `moqui.trace.dropped_spans`, and Trace Detail then shows "At least N spans of
+  this trace were dropped when it was recorded". The count is a lower bound: a span of a new trace past
+  `tail-traces`, a buffer expired after 120 seconds, a span that ended after its root was decided and a span the queue
+  refused before the export are counted only in the dropped counter. A bad value warns and keeps the default.
 - **Retention** is per index and per metric granularity, in days; the `clean_TelemetryData_daily` job applies it and
   `rollup_TelemetryMetrics_hourly` rolls minutes into hours and days.
 - **Day partitions** (Postgres search backend): `<search-facade><postgres partition-telemetry="true"
@@ -264,7 +271,7 @@ the shipped one.
 | Overview | Request rate and duration, job runs, top error groups and telemetry loss |
 | Operations | Business operations: runs ended, commits, rollbacks, retries and pending per operation, with average and p50/p95/p99 duration; outcomes over time, rollbacks and retries by operation, and duration percentiles. An operation narrows the dashboard to it |
 | Services | Services, endpoints and instances (with version) as tables that narrow the dashboard when clicked; request rate, 5xx errors and duration percentiles over time; the busiest artifacts, linking to Artifacts |
-| Traces | Requests (SERVER root spans) by default, or all spans, searched by service, span name (`*` wildcard), status, duration range, user and a query; TraceDetail draws the waterfall, span attributes, a flame graph of self time by span path, and the trace's logs |
+| Traces | Requests (SERVER root spans) by default, or all spans, searched by service, span name (`*` wildcard), status, duration range, user and a query; TraceDetail draws the waterfall, span attributes, a flame graph of self time by span path, and the trace's logs, with a notice when the trace passes the display limit or its root counts dropped spans (`moqui.trace.dropped_spans`, under Capacity) |
 | Logs | Explore over `otel_logs`: query, filters, paging both ways, context lines, a live tail, the trace link per line, CSV, and log patterns |
 | Errors | Failed requests and jobs over time, error groups by fingerprint, then samples, the stack and their traces and logs |
 | Compare | Two ranges or versions side by side: requests, 5xx errors and duration percentiles per `service.version`, and the documents |
@@ -419,7 +426,8 @@ Dashboards (menu index 96, `DASHBOARDS_APP`) holds the general tool.
     countries from a country field: a Moqui `geoId` (ISO alpha-3), alpha-2 or a numeric code. The outline is Natural
     Earth's 110m countries (`libs/naturalearth`, inlined into the print document). The TUI plots braille points over
     a land mask. For a viewer whose own grants open the Maps app, a country or a point opens Maps' Browse there
-    (`appLinks.maps`; [Maps, From a dashboard](Maps.md#from-a-dashboard)), with a plain extent or point.
+    (`appLinks.maps`; [Maps, From a dashboard](Maps.md#from-a-dashboard)), with a plain extent or point; in the TUI,
+    `M` on a table row in table mode.
   - Two query modes over spans feed the first two:
     - `mode: "serviceMap"` gives the calls between services: a span whose parent is in another service, a CLIENT span
       to a database (`db:<system>`), and a CLIENT span to a `server.address` that no span answered.

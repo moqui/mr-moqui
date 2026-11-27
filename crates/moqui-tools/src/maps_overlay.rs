@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.maps.MapSourceServices.convert#Overlay` (plans/Maps.md §4.1, §8): a geographic file of one of the formats
+//! `org.moqui.maps.MapSourceServices.convert#Overlay` (plans/archive/Maps.md §4.1, §8): a geographic file of one of the formats
 //! [`moqui_lib::geo::overlay`] reads (GeoJSON, TopoJSON, EsriJSON, GPX, KML, GML, WKT, WKB, delimited text, a zipped
 //! shapefile), at a resource location or given as text or bytes, read and checked there and answered as a sanitized
 //! GeoJSON FeatureCollection in WGS84 with its feature count, bounds, CRS and notes. It writes nothing. It reads any
@@ -22,8 +22,9 @@
 use std::collections::BTreeMap;
 
 use moqui_lib::error::Error as LibError;
-use moqui_lib::geo::overlay::{convert_overlay_bytes, OverlayFormat, OverlayLimits};
-use moqui_lib::object::Value;
+use moqui_lib::geo::overlay::{convert_overlay_with, OverlayFormat, OverlayLimits};
+use moqui_lib::geo::proj::Registry;
+use moqui_lib::object::{to_plain_string, Value};
 
 use moqui_core::context::ExecutionContext;
 use moqui_core::entity::EntityFacade;
@@ -37,7 +38,67 @@ const READ_WINDOW: usize = 1024 * 1024;
 pub(crate) fn register(map: &mut BTreeMap<&'static str, moqui_core::extension::RustServiceFn>) -> Result<(), String> {
     use moqui_core::rust_service;
     rust_service!(map, convert_overlay_service)?;
+    rust_service!(map, check_projection_definition)?;
     Ok(())
+}
+
+/// The registry of projections an overlay may be converted from (`moqui.maps.MapProjection`, P4c): each row read with
+/// its PROJ.4 definition; a row that does not read here (a method or grid not read) is logged by its code and left out,
+/// so a file in it is refused by name, and the others are used.
+pub(crate) fn projection_registry(facade: &EntityFacade) -> Registry {
+    let mut registry = Registry::empty();
+    let rows = ExecutionContext::with_current(|ec| {
+        let _authz = ec.disable_authz();
+        facade
+            .find("moqui.maps.MapProjection")
+            .and_then(|find| find.limit(2000).list())
+    });
+    let rows = match rows {
+        Some(Ok(rows)) => rows,
+        Some(Err(err)) => {
+            tracing::error!("Map projections not read: {}", err.message());
+            return registry;
+        }
+        None => return registry,
+    };
+    for row in rows.iter() {
+        let field = |name: &str| row.get(name).map(to_plain_string).unwrap_or_default();
+        if field("disabled") == "Y" {
+            continue;
+        }
+        let code = field("projectionId");
+        // WGS84 and Web Mercator are every reader's own
+        if code == "EPSG:4326" || code == "EPSG:3857" {
+            continue;
+        }
+        if let Err(err) = registry.add(&code, &field("label"), &field("proj4Definition"), &field("axisOrder")) {
+            tracing::warn!("Map projection {code} is not used on the server: {err}");
+        }
+    }
+    registry
+}
+
+/// `check#ProjectionDefinition` (P4c): whether the server reads a map projection's PROJ.4 `definition` for converting
+/// overlays and a COG's bounds (`moqui-lib` `geo/proj.rs`). Out: `readable`, `reason` (why not, in words), `transform`
+/// (what converting from it does, its provenance) and `geographic`. A definition the server does not read may still be
+/// one a browser draws (proj4js reads every method); the caller says so.
+pub(crate) fn check_projection_definition(
+    parameters: &BTreeMap<String, Value>,
+    _facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let mut out = Out::new();
+    match moqui_lib::geo::proj::Projection::parse_proj4(&text(parameters, "definition")) {
+        Ok(projection) => {
+            out.insert("readable".to_string(), Value::Bool(true));
+            out.insert("transform".to_string(), Value::string(projection.describe()));
+            out.insert("geographic".to_string(), Value::Bool(projection.is_geographic()));
+        }
+        Err(reason) => {
+            out.insert("readable".to_string(), Value::Bool(false));
+            out.insert("reason".to_string(), Value::string(reason));
+        }
+    }
+    Ok(out)
 }
 
 fn number(parameters: &BTreeMap<String, Value>, key: &str) -> Option<u64> {
@@ -93,10 +154,11 @@ pub(crate) const FORMATS_READ: &str = "GeoJSON, TopoJSON, EsriJSON, GPX, KML, GM
 /// extension), `maxBytes`, `maxFeatures`, `summaryOnly` (no `geojson` text). Out: `valid`; when not, `reasonCode` and
 /// `reason` (FORMAT_UNKNOWN, NOT_FOUND, NOT_READ, NOT_TEXT, or the reader's: TOO_LARGE, NOT_PARSED, NOT_FORMAT,
 /// CRS_UNSUPPORTED, TOO_MANY_FEATURES, NO_FEATURES); when it is, `format`, `featureCount`, `rejectedCount`, `bounds`
-/// [west, south, east, north], `crs`, `notes`, `size` and `geojson`.
+/// [west, south, east, north], `crs` with `transform` (what converting it to WGS84 did, empty for WGS84), `notes`, `size`
+/// and `geojson`. A CRS of the projection registry ([`projection_registry`]) is converted, any other refused.
 pub(crate) fn convert_overlay_service(
     parameters: &BTreeMap<String, Value>,
-    _facade: &EntityFacade,
+    facade: &EntityFacade,
 ) -> Result<BTreeMap<String, Value>, LibError> {
     let out = Out::new();
     let format_name = text(parameters, "format");
@@ -135,7 +197,7 @@ pub(crate) fn convert_overlay_service(
         max_bytes: usize::try_from(max_bytes).unwrap_or(usize::MAX),
         max_features: usize::try_from(max_features).unwrap_or(usize::MAX),
     };
-    let overlay = match convert_overlay_bytes(&content, format, &limits) {
+    let overlay = match convert_overlay_with(&content, format, &limits, &projection_registry(facade)) {
         Ok(overlay) => overlay,
         Err(err) => return refusal(out, err.code, err.message),
     };
@@ -156,7 +218,8 @@ pub(crate) fn convert_overlay_service(
             Value::List(bounds.iter().map(|value| Value::F64(*value)).collect())
         }),
     );
-    out.insert("crs".to_string(), Value::string(overlay.crs));
+    out.insert("crs".to_string(), Value::string(overlay.crs.clone()));
+    out.insert("transform".to_string(), Value::string(overlay.transform.clone()));
     out.insert(
         "notes".to_string(),
         Value::List(overlay.notes.iter().cloned().map(Value::string).collect()),

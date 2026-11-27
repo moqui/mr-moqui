@@ -203,10 +203,11 @@ optional argument is an output report that it overwrites, not a screen to lint.
 
 Before each commit, in either pass, run only localized checks for what changed: the focused regression specs, lint,
 and the focused acceptance walks and fixture specs of the activities involved. An added or changed acceptance test
-always runs, then its component's acceptance suite. In the refinement pass, also rerun the affected activities for
+always runs, alone; a component's whole acceptance suite runs only with the user's permission. In the refinement pass, also rerun the affected activities for
 each batch, then update the running notes and commit the batch. At the end of the refinement pass, run the full
-regression suites once (`./moq test-apps`, and `./moq test-framework` when framework code changed), then the full
-acceptance run: `./moq accept` over the application components, or `./moq accept-all` when framework code changed.
+regression suites once (`./moq test-apps`, and `./moq test-framework` when framework code changed), then, with the
+user's permission, the full acceptance run: `./moq accept` over the application components, or `./moq accept-all`
+when framework code changed.
 Record that boundary in the component plan; a multi-wave pass finishes after its last planned wave. This
 user-directed review cadence applies to future review iterations as well.
 

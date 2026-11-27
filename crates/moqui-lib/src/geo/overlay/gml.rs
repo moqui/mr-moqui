@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A GML file as an overlay (plans/Maps.md §4.1): GML 3.2 simple features (and GML 3.1 and 2, which differ in names),
+//! A GML file as an overlay (plans/archive/Maps.md §4.1): GML 3.2 simple features (and GML 3.1 and 2, which differ in names),
 //! as a WFS answer or an OGR export has them. Each child of a `featureMember`, `featureMembers` or `member` is a feature
 //! (a file whose root is a geometry is one feature): its first geometry (Point, LineString, LinearRing, Polygon,
 //! MultiPoint, MultiLineString, MultiCurve, MultiPolygon, MultiSurface, MultiGeometry, a Curve of line segments, a
@@ -100,6 +100,8 @@ fn child_named(node: &MNode, names: &[&str]) -> Option<MNode> {
 /// Reads a GML geometry's coordinates, latitude first or not.
 struct Coordinates {
     crs: Crs,
+    /// the positions are northing (latitude) first: an EPSG:4326 URN, or a registered CRS's URN whose order is so
+    north_first: bool,
 }
 
 impl Coordinates {
@@ -107,10 +109,22 @@ impl Coordinates {
     /// another, or in one not read, rejects the feature: positions of one geometry are converted one way)
     fn member(&self, member: &MNode) -> Result<Self, String> {
         let Some(name) = member.attribute("srsName").filter(|name| !name.trim().is_empty()) else {
-            return Ok(Self { crs: self.crs });
+            return Ok(Self {
+                crs: self.crs,
+                north_first: self.north_first,
+            });
         };
         match Crs::of_name(&name) {
-            Some(crs) if crs.code() == self.crs.code() => Ok(Self { crs }),
+            // the same CRS: its own form's order (a short name easting first, an authority's URN its order)
+            Some(crs) if crs.code() == self.crs.code() => Ok(Self {
+                crs,
+                north_first: match (crs, self.crs) {
+                    (Crs::Wgs84LatFirst, _) => true,
+                    (Crs::RegisteredAuthority(_), Crs::RegisteredAuthority(_)) => self.north_first,
+                    (Crs::RegisteredAuthority(_), _) => false,
+                    _ => false,
+                },
+            }),
             Some(_) => Err("a member geometry in another CRS than its geometry's".to_string()),
             None => Err(format!(
                 "a member geometry in a CRS that is not read ({})",
@@ -120,7 +134,7 @@ impl Coordinates {
     }
 
     fn pair(&self, x: f64, y: f64) -> Position {
-        if self.crs == Crs::Wgs84LatFirst {
+        if self.north_first {
             [y, x]
         } else {
             [x, y]
@@ -417,8 +431,11 @@ impl Reader {
                 Crs::Wgs84
             }
         };
-        self.use_crs(crs);
-        let reader = Coordinates { crs };
+        self.use_crs(crs)?;
+        let reader = Coordinates {
+            crs,
+            north_first: self.north_first(crs),
+        };
         self.add_raw(reader.geometry(node, 0), label, description)
     }
 }

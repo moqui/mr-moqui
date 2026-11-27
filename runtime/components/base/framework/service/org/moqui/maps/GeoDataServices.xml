@@ -13,7 +13,7 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
-    <!-- The Geo data importer (plans/Maps.md §6.4), in crates/moqui-tools/src/geo, with the parsers, postal-code rules and
+    <!-- The Geo data importer (plans/archive/Maps.md §6.4), in crates/moqui-tools/src/geo, with the parsers, postal-code rules and
         derived IDs in moqui-lib's geo module. A run brings a registered data set (moqui.maps.GeoDataSet, MapEntities.xml)
         into moqui.basic.Geo, GeoPostalCode, GeoPostalCodePlace, GeoPoint, GeoPointAssoc and GeoAssoc (BasicEntities.xml)
         and is a moqui.maps.GeoDataImport row. For MAPS_ADMIN (the artifact group names these services), checked again
@@ -192,7 +192,7 @@ along with this software (see the LICENSE.md file). If not, see
             written. An operator's file is an upload (file, at most maps@import-max-bytes, kept under
             dbresource://moqui/maps/import/(userId)/) or a location the importer allows. A refused job start leaves the run
             failed. everyCountry (a set read a country at a time) imports every country of its countryCodes that has a country
-            Geo as a queue (plans/Maps.md §6.3): a pending run a country sharing a queueId (the first run's ID), refused while
+            Geo as a queue (plans/archive/Maps.md §6.3): a pending run a country sharing a queueId (the first run's ID), refused while
             a run of the source key is in progress (one with no word for an hour not counted; the data set's row is locked
             so two starts do not both pass); only the first starts here, and each run starts the next when it ends
             (import#GeoData), one at a time, each its own run and edition; cancel#GeoDataImport with the queueId cancels the

@@ -140,6 +140,36 @@ fn refused(status: u16, message: &str) -> Response {
     response_of(gateway::error(status, kind, None, None, message))
 }
 
+/// The most of a body read before the caller's credentials are checked: a request that declares more, or no length, is
+/// authenticated from its head first ([`authenticate_head`]).
+const PRE_AUTH_BODY: usize = 64 * 1024;
+
+/// Check the credentials of `request` (its head) in the request pool; the response to send when they do not open the
+/// gateway, none when they do.
+async fn authenticate_head(state: &HttpState, client: std::net::IpAddr, request: &HttpRequest) -> Option<Response> {
+    let factory = Arc::clone(&state.factory);
+    let job_factory = Arc::clone(&factory);
+    let guard = Arc::clone(&state.guard);
+    let head = request.clone();
+    let (done, answer) = oneshot::channel::<Result<(), Reply>>();
+    let submitted = factory.request_pool().try_submit(Arc::clone(&factory), move || {
+        let checked = gateway::authenticate_head(&job_factory, &head);
+        if moqui_core::web::take_auth_failure() {
+            guard.record(client, Event::AuthFailure);
+        }
+        let _ = done.send(checked);
+        Ok(())
+    });
+    if submitted.is_err() {
+        return Some(state.guard.unavailable("the server is busy; try again"));
+    }
+    match answer.await {
+        Ok(Ok(())) => None,
+        Ok(Err(reply)) => Some(response_of(reply)),
+        Err(_) => Some(refused(500, "the gateway request ended without a response")),
+    }
+}
+
 /// `/llm/v1` and `/llm/v1/{*rest}`.
 pub(crate) async fn handle(
     State(state): State<Arc<HttpState>>,
@@ -152,6 +182,18 @@ pub(crate) async fn handle(
         .get::<ClientAddr>()
         .map_or(peer.ip(), |client| client.0);
     let (parts, body) = request.into_parts();
+    // nothing of the body is read while the gateway is off or for a request with no credential: every route needs one
+    // (SEC-AI-88)
+    if !gateway::enabled(&state.factory) {
+        return response_of(gateway::off());
+    }
+    let credential = parts
+        .headers
+        .get(axum::http::header::AUTHORIZATION)
+        .is_some_and(|value| !value.as_bytes().trim_ascii().is_empty());
+    if !credential {
+        return response_of(gateway::credentials_required());
+    }
     let declared = parts
         .headers
         .get(axum::http::header::CONTENT_LENGTH)
@@ -160,24 +202,33 @@ pub(crate) async fn handle(
     if declared.is_some_and(|length| length > MAX_BODY) {
         return refused(413, &format!("the request is over {MAX_BODY} bytes"));
     }
-    let body = match read_body(&state, body, MAX_BODY).await {
-        Ok(body) => body,
-        Err(refusal) => return refusal.response(),
-    };
     let headers: Vec<(String, String)> = parts
         .headers
         .iter()
         .filter_map(|(name, value)| Some((name.as_str().to_ascii_lowercase(), value.to_str().ok()?.to_string())))
         .collect();
-    let gateway_request = HttpRequest {
+    let mut gateway_request = HttpRequest {
         method: parts.method.as_str().to_string(),
         path: parts.uri.path().strip_prefix("/llm/v1").unwrap_or_default().to_string(),
         query: Vec::new(),
         headers,
-        body: body.to_vec(),
+        body: Vec::new(),
         secure: secure_request(over_tls, &parts, peer.ip(), state.guard.conf().addressing()),
         client_ip: client.to_string(),
         origin: Origin::default(),
+    };
+    // a body that may be over PRE_AUTH_BODY is read only once the credentials are known to open the gateway, so an
+    // anonymous caller with any header gets at most that much read (SEC-AI-88)
+    let small = declared.is_some_and(|length| length <= PRE_AUTH_BODY);
+    if !small {
+        if let Some(response) = authenticate_head(&state, client, &gateway_request).await {
+            return response;
+        }
+    }
+    let limit = if small { PRE_AUTH_BODY } else { MAX_BODY };
+    gateway_request.body = match read_body(&state, body, limit).await {
+        Ok(body) => body.to_vec(),
+        Err(refusal) => return refusal.response(),
     };
     let factory = Arc::clone(&state.factory);
     let job_factory = Arc::clone(&factory);

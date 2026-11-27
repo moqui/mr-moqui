@@ -560,7 +560,10 @@ mod cluster {
     }
 
     /// The dumps of the other databases beside `dump` that one save wrote with it ([`database_dump_path`]), by
-    /// database name.
+    /// database name: only `moqui_<name>` ones, the names the framework gives a datasource group's database. A file
+    /// beside the chosen dump is restored by the cluster's superuser into the database its name names, so another name
+    /// that shares the suffix (`template1.dump`, a file someone put in a shared backup folder) is left out with a
+    /// warning, never restored (SEC-TLS-98); a group whose conf names a database of its own is restored by hand.
     pub fn sibling_dumps(dump: &Path) -> Vec<(String, PathBuf)> {
         let Some(dir) = dump.parent() else {
             return Vec::new();
@@ -577,7 +580,22 @@ mod cluster {
                 let name = path.file_name()?.to_str()?;
                 let database = name.strip_suffix(suffix.as_str())?.to_string();
                 let plain = !database.is_empty() && database.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_');
-                (plain && database != DATABASE && database != "postgres").then_some((database, path))
+                if !plain || database == DATABASE {
+                    return None;
+                }
+                let named = database
+                    .strip_prefix(DATABASE)
+                    .and_then(|rest| rest.strip_prefix('_'))
+                    .is_some_and(|rest| !rest.is_empty());
+                if !named {
+                    tracing::warn!(
+                        "{} is beside the dump restored but names the database {database}, not a {DATABASE}_<name> \
+                         one: it is not restored",
+                        path.display()
+                    );
+                    return None;
+                }
+                Some((database, path))
             })
             .collect();
         found.sort();

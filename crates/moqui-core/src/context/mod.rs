@@ -56,7 +56,7 @@ pub use message::{ErrorMark, MessageFacade, ValidationError};
 pub use moqui_entity::error::{client_text, DeniedArtifact, Error, ErrorKind};
 pub use resource::millis_of;
 pub use save_location::{report_save_location_problem, report_save_roots, DEFAULT_REPORT_SAVE_ROOTS};
-pub(crate) use resource::split_version;
+pub(crate) use resource::{scheme_of, split_version};
 pub use resource::version_author;
 pub(crate) use resource::{apply_changes_each, last_change_by_stat, tree_size_by_walk};
 pub use resource::{

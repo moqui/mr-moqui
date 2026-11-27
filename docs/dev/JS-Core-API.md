@@ -134,6 +134,7 @@ the user services call.
 |---|---|
 | `userId`, `username` | The signed-in user's id and username; null with nobody signed in |
 | `loginKeyKind` | The kind of login key this request's user signed in with (the `api_key` or `login_key` header, or `loginUserKey`), read from its `UserLoginKey`: `device` (a device's key, `deviceName`), `token` (an access token, `description`, or a key made for git alone, which only git over HTTP and the REST resources that declare `key-scope` `git` take: `scope` `git`), `session` (a `getLoginKey` key) or `scoped` (a key for one service, `scope`, which only that service's login and the REST resources that declare its `key-scope` take; such a key, and a token, sign in their request alone, never the web session); null for a password, cookie or any other login. For this request only: the session's next request by cookie has none |
+| `loginKeyId` | The id of that `UserLoginKey`, with `loginKeyKind`: its stored hash, as `get#UserDeviceKeys` names a device (`loginKey`), never the key itself; null for any other login, and for this request only. A location share records the device it is sent from by it ([Maps, Live location](../tools/Maps.md#live-location)) |
 | `userAccount` | The signed-in `UserAccount` as a map, without its credential and lockout columns; null with nobody |
 | `locale`, `setLocale(locale)` | The session's locale (`en_US`); setting saves it on the signed-in user's account. Null or empty clears it |
 | `timeZone`, `setTimeZone(zone)` | The session's time zone (an IANA name), the user's own, else the server's; setting saves it on the account. An unknown zone is an error |
@@ -158,7 +159,7 @@ the user services call.
 | `getClientIp()` | The request's client address; empty outside a request |
 | `loginUser(username, password)` | Whether the user is logged in. A failure adds its message to `ec.message` and returns false; false with no message when a second factor is still needed |
 | `internalLoginUser(username, secondFactorVerified)` | Logs the user in without a password; a failure is a message and false. A job's login borrows the account: it leaves `UserAccount.hasLoggedOut` as it is (a person's sign-in, a second factor's code, clears it). `secondFactorVerified` true, from a screen that has just verified the second factor's code of a sign-in whose password this session checked, makes it a strong sign-in (the vault's wrapped key needs one) |
-| `loginUserKey(loginKey)` | Whether the login key logged its user in; a key that does not adds an error message |
+| `loginUserKey(loginKey, scope)` | Whether the login key logged its user in; a key that does not adds an error message. With `scope` (`git`), a key made for that scope logs in too, as that scope's own login takes it, and a key of another scope does not: Smithy's Forgejo API signs in its access tokens so |
 | `loginAnonymousIfNoUser()` | With nobody logged in the session becomes anonymous; whether this call did that |
 | `logoutUser()` | Logs out; true unless it failed. It marks the account `hasLoggedOut`, which ends its sessions in every browser |
 | `logoutLocal()` | Ends this context's login only (Java's `logoutLocal`), writing nothing to the account: the end of a job's `internalLoginUser`, so the person's own sessions go on; true unless it failed |
@@ -344,12 +345,13 @@ Change sets, version notes and change logs are described in
 | `hmac(key, message, encoding)` | HMAC-SHA256 of the message with a secret key (both as UTF-8), lower-case hex, or unpadded URL-safe base64 with `base64url`: the same for the same key and message (a keyed derivation; `makeGrant` for a token that expires); refused without a key |
 | `gunzip(source, target, maxBytes)` | Unpacks a gzip file to a location, refusing output over `maxBytes` (4 GB) |
 | `extractArchive(source, target, limits)` | Unpacks an archive under a location, within the limits |
-| `writeZip(target, entries)` | A zip of the files at the entries' locations (`[{path, location}]`): `{count, size, failures: [{path, error}]}` |
+| `writeZip(target, entries)` | A zip of the files at the entries' locations (`[{path, location, stored}]`), each deflated, or with `stored` true as it is (a file already compressed, such as a map archive): `{count, size, failures: [{path, error}]}` |
 | `writeTarGz(target, entries)` | A `.tar.gz` of entries |
 | `extractText(location, cacheKey, maxChars, cacheOnly)` | The text of a PDF, spreadsheet or text file (100000 characters), kept under `runtime://tmp/file-text` by the key; `""` when it has none; null with `cacheOnly` when not extracted yet |
 | `readSheetPreview(location, sheetName, maxRows, maxCols)` | The first rows of a sheet (100 by 26): `{sheetNames, sheetName, rows, truncated}`; null when it is not a spreadsheet |
 | `makeGrant(key, subject, ttlSeconds)` | A signed grant for the subject, valid `ttlSeconds` (3600); with no key of the script's own, `ec.user.serverGrant` |
 | `checkGrant(key, subject, token)` | Whether the token is a valid grant of the same key and subject |
+| `writePrivateFile(text, extension)` | The text in a new file of the server's user alone (mode 0600, a random name under `runtime/tmp/private`, made 0700), and its `runtime://` location: for text a job reads and deletes (`getLocationReference(location).delete()`), which its parameters would keep. The extension is 1 to 8 lower-case letters and digits |
 
 ### Barcodes and rendering
 
@@ -787,10 +789,10 @@ const orders = ec.entity.find("mantle.order.OrderHeader").condition(cf.makeCondi
 | `messageNoActionFiles(flag)` | With false, no message for a file that had nothing to load |
 | `restrictSensitiveEntities(flag)` | Refuse records of the entities a request may not name |
 | `protectUserAccounts(flag)` | With `restrictSensitiveEntities`, also refuse a `UserAccount` record that sets a password field (`currentPassword`, `passwordSalt` and the rest), or that changes an identity field (`username`, `emailAddress`, `disabled` and the rest) of an account that is there; a new account may set those. Tools' Data Load sets it, the seed and component loads do not |
-| `load(messages)` | Loads; the number of records. The messages are added to an array given |
+| `load(messages, failures)` | Loads; the number of records. The messages are added to an array given. As Java, the load sets the caller's transaction aside and loads each text and file in a transaction of its own. A file or location that fails (a directory's file included) is logged, named in the messages and added to a `failures` array given as `{location, reason}`, and the next one loads. A text that fails loads nothing and throws: the message names the text, the record (`Could not store moqui.basic.Enumeration [enumId=X]`) and the database's reason |
 | `check()`, `check(messages)` | Compares the data with the database and writes nothing: the messages of what did not match, or with an array the fields checked |
 | `checkInfo()`, `checkInfo(diffInfoList, messages)` | A row for each record not found and each field that did not match, or with arrays the fields checked |
-| `list()` | The values of the records the data has, with nothing written |
+| `list()`, `list(messages, failures)` | The values of the records the data has, with nothing written; a location that fails is in the arrays given, as for `load` |
 
 `ec.entity.makeDataWriter()` writes records as entity data. Each setter returns the writer.
 
@@ -813,8 +815,9 @@ const orders = ec.entity.find("mantle.order.OrderHeader").condition(cf.makeCondi
 | `text()` | The data as text |
 
 ```js
-const messages = []
-const loaded = ec.entity.makeDataLoader().location("component://my-app/data/MyDemoData.xml").load(messages)
+const messages = [], failures = []
+const loaded = ec.entity.makeDataLoader().location("component://my-app/data/MyDemoData.xml").load(messages, failures)
+for (const failure of failures) ec.message.addError(`Could not load [${failure.location}]: ${failure.reason}`)
 const xml = ec.entity.makeDataWriter().entityName("moqui.basic.Enumeration").filterMap({ enumTypeId: "MyType" }).text()
 ```
 
@@ -1013,7 +1016,7 @@ const page = ec.service.rest().uri().protocol("https").host("example.com").port(
 | `isLastRunBeforeLastSchedule(cron, lastRun, description, now)` | Whether there is no last run, or it is before the latest time the expression came due |
 | `restApi.resolveService(path, method)` | The service of a Service REST API path (without `/rest/s1`): `{serviceName, path, method, pathParameters}`; not an authorization check |
 | `restApi.getRootResources()`, `restApi.getFreshRootResources()` | The root resources of the Service REST API |
-| `getServiceDefinition(serviceName)` | The definition with its auto-parameters expanded, or null: `inParameterNames`, `inParameterInfoMap`, `outParameterInfoMap` (each `{name, type, required, parameterNode}`), `serviceNode`, `getInParameter(name)`, `convertValidateCleanParameters(parameters)`. It does not run the service |
+| `getServiceDefinition(serviceName)` | The definition with its auto-parameters expanded, or null: `serviceName`, `verb`, `noun`, `inParameterNames`, `inParameterInfoMap`, `outParameterInfoMap` (each `{name, type, required, parameterNode}`), `serviceNode`, `getInParameter(name)`, `convertValidateCleanParameters(parameters)`. It does not run the service |
 | `getKnownServiceNames()` | The names of the defined services |
 | `getAllServiceInfo(levels)` | A row for each service package down a number of name levels (2) |
 | `getSecaRuleCount()`, `secaRulesByServiceName.get(serviceName)` | How many service ECA rules there are; the rules of a service, or null |
@@ -1129,7 +1132,7 @@ empty, and a send needs a request.
 | `getFieldValidationErrors(fieldName)` | The validation errors of one field, of the submit that led here and of this request |
 | `saveScreenLastInfo(path)` | Remembers the current screen path, or the one given, so a login can go back to it |
 | `getScreenHistory()` | The pages the user got in `html`, newest first: `[{name, url, urlNoParams}]` |
-| `sendJsonResponse(value)` | The value as the JSON response; entity values and lists as plain maps and lists |
+| `sendJsonResponse(value)` | The value as the JSON response; entity values and lists as plain maps and lists. With errors in the message facade they are added as `errors` and the status is 500, or 400 when every one is a validation error |
 | `sendJsonError(status, message)` | A JSON error response |
 | `sendError(errorCode, message, throwable)` | An error response as HTML, JSON or plain text, by the request's `Accept` |
 | `sendTextResponse(text, contentType, filename)` | A text response, `text/plain` by default; a file name sends it as an attachment |
@@ -1367,7 +1370,7 @@ Members Moqui Java does not have.
 | `ec.context` | Property reads and writes, `in`, `delete`, `Object.keys` |
 | `ec.user` | `machineTimeZone`, `passwordRules`, `loginRules`, `endVisit`, `hashPassword`, `passwordsMatch`, `checkOldPassword`, `checkCountedCode`, `takeFactorCode`, `countFailedLogin`, `initialAdminLocal`, `initialAdminAllowed`, `singleUseCodeHash`, `randomCode`, `randomString`, `serverGrant`, `checkServerGrant`, `totpSecret`, `totpCodeValid`, `totpCodeStep`, `totpUri`, `timestampMillis` |
 | `ec.l10n` | `getAvailableTimeZones`, `getAvailableLocales`, the time zone argument of `format` |
-| `ec.resource` | `makeChangeSet`, `putContent`, `getLastChange`, `getChildChanges`, `getChangeLog`, `getTreeSize`, `getContentAddress`, `restoreVersion`, `getVersionBytes`, `textDiff`, `readLines`, `digest`, `digestText`, `hmac`, `gunzip`, `extractArchive`, `writeZip`, `writeTarGz`, `extractText`, `readSheetPreview`, `makeThumbnail`, `makeStickerThumbnail`, `makePdfPreview`, `imageAvailable`, `makeGrant`, `checkGrant`, `markdownHtml`, `code128Svg`, `barcodeSvg`, `parseGs1`, `isValidGs1CheckDigit`, `theme`; version notes on a reference's `putText`, `putBytes` and `putStream`, and `getVersionDiff` |
+| `ec.resource` | `makeChangeSet`, `putContent`, `getLastChange`, `getChildChanges`, `getChangeLog`, `getTreeSize`, `getContentAddress`, `restoreVersion`, `getVersionBytes`, `textDiff`, `readLines`, `digest`, `digestText`, `hmac`, `gunzip`, `extractArchive`, `writeZip`, `writeTarGz`, `extractText`, `readSheetPreview`, `makeThumbnail`, `makeStickerThumbnail`, `makePdfPreview`, `imageAvailable`, `makeGrant`, `checkGrant`, `writePrivateFile`, `markdownHtml`, `code128Svg`, `barcodeSvg`, `parseGs1`, `isValidGs1CheckDigit`, `theme`; version notes on a reference's `putText`, `putBytes` and `putStream`, and `getVersionDiff` |
 | `ec.artifactExecution` | `runAsSystem`, `runAsUser`, `isPermitted`, `isPermittedOwn` |
 | `ec.entity` | `checkTables`, `runSqlStatement`, `testConfConnection`, `runSqlCountConf`, `runSqlUpdateConf`; EntityFind `forNoKeyUpdate`, `purge`; the `forNoKeyUpdate` argument of `findRelated` and `findRelatedOne`; EntityValue `getEntityNamePretty`, and fields and relationships as properties; EntityList as an array with the Array methods |
 | `ec.service` | `throwOnError`, `nextCronExecution`, `restApi.resolveService`, `passAuthority`, `ssoAvailable`; RestClient `addPropertyHeader`, `bodyBytes`, `multipart`, `streamFrom`, `followRedirects`, `denyInternal`, `allowInternal`, `send`; response `bytes` |

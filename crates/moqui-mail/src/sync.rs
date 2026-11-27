@@ -3347,14 +3347,7 @@ pub(super) fn open_pop(
     server: &ServerInfo,
     settings: &StoreSettings,
 ) -> Result<Pop3, SyncFailure> {
-    let classify = |err: moqui_core::context::Error| {
-        let text = err.message().to_string();
-        if text.starts_with("mail server rejected the command") {
-            SyncFailure::Auth(format!("POP3 {} refused the sign-in: {text}", server.host))
-        } else {
-            SyncFailure::Connect(format!("POP3 {}: {text}", server.host))
-        }
-    };
+    let classify = |err: moqui_core::context::Error| pop_failure(&server.host, err.message());
     if !server.is_oauth() {
         return Pop3::open(settings).map_err(classify);
     }
@@ -3372,6 +3365,20 @@ pub(super) fn open_pop(
             Pop3::open_xoauth2(settings, &fresh).map_err(classify)
         }
         other => other,
+    }
+}
+
+/// A POP3 sign-in's failure: a command the server rejected is a refused sign-in, but for a busy or failing server's answer
+/// (RFC 2449, 3206), which is tried again later (COM-UI-040).
+pub(super) fn pop_failure(host: &str, text: &str) -> SyncFailure {
+    let upper = text.to_ascii_uppercase();
+    let temporary = ["[IN-USE]", "[LOGIN-DELAY]", "[SYS/TEMP]", "[SYS/PERM]"]
+        .iter()
+        .any(|code| upper.contains(code));
+    if text.starts_with("mail server rejected the command") && !temporary {
+        SyncFailure::Auth(format!("POP3 {host} refused the sign-in: {text}"))
+    } else {
+        SyncFailure::Connect(format!("POP3 {host}: {text}"))
     }
 }
 

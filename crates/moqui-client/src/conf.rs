@@ -16,7 +16,8 @@
 //! `<client-conf>` element, which the host reads from its merged conf and hands over (this crate has no framework).
 //!
 //! ```xml
-//! <client-conf device-mode="choose" mirror-days="90" prefetch-rooms="20" prefetch-mail="100" store-max-mb="512"/>
+//! <client-conf device-mode="choose" mirror-days="90" prefetch-rooms="20" prefetch-mail="100" store-max-mb="512"
+//!     packages-max-mb="4096"/>
 //! ```
 //!
 //! A build of one app sets `start-path` too, for example `start-path="/apps/feed"`.
@@ -77,6 +78,9 @@ pub struct ClientConf {
     /// `start-path`: the screen the shell opens after the sign-in, as the app's home (a server path such as
     /// `/apps/feed`); none by default, so the shell shows the server's apps. Back at that screen leaves the app.
     pub start_path: Option<String>,
+    /// `packages-max-mb`: the size cap of an account's offline map packages on the device in MB, outside the store's
+    /// (plans/archive/Maps-Offline.md §2.4); 4096 by default, a few regions at their zooms. At least 1.
+    pub packages_max_mb: u64,
 }
 
 impl Default for ClientConf {
@@ -88,6 +92,7 @@ impl Default for ClientConf {
             prefetch_mail: 100,
             store_max_mb: 512,
             start_path: None,
+            packages_max_mb: 4096,
         }
     }
 }
@@ -126,6 +131,7 @@ impl ClientConf {
                 Some(path) => conf.start_path = path,
                 None => bad(name, value, "none"),
             },
+            "packages-max-mb" => number(name, value, 1, &mut conf.packages_max_mb),
             _ => tracing::warn!("client-conf attribute {name} is not known, ignored"),
         });
         conf
@@ -134,6 +140,11 @@ impl ClientConf {
     /// The store's size cap in bytes.
     pub fn store_max_bytes(&self) -> u64 {
         self.store_max_mb.saturating_mul(1024 * 1024)
+    }
+
+    /// The offline map packages' size cap in bytes.
+    pub fn packages_max_bytes(&self) -> u64 {
+        self.packages_max_mb.saturating_mul(1024 * 1024)
     }
 }
 

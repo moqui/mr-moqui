@@ -24,10 +24,12 @@ const PASSWORD = params.password ?? "moqui"
 const VIEW_USER = "sec.view.only"
 const VIEW_PASSWORD = "SecView1!!"
 
-// test_a01_more.py: test_echopath_extra_path_is_html_escaped
-feature("A01 an extra path on echopath is HTML-escaped", {
+// test_a01_more.py: test_echopath_extra_path_is_html_escaped. Moqui Java's sample echopath screen is gone (SEC-RTE-89):
+// the path is not served, and nothing of it is echoed.
+feature("A01 the sample echopath screen is not served", {
     when() { return { res: session().get("/echopath/<script>alert(1)</script>") } },
     then({ res }) {
+        res.status == 404
         !res.text.includes("<script>alert(1)</script>")
     },
 })

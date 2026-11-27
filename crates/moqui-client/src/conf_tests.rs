@@ -24,17 +24,20 @@ fn a_missing_attribute_takes_its_default() {
             conf.mirror_days,
             conf.prefetch_rooms,
             conf.prefetch_mail,
-            conf.store_max_mb
+            conf.store_max_mb,
+            conf.packages_max_mb
         ),
-        (90, 20, 100, 512)
+        (90, 20, 100, 512, 4096)
     );
     assert_eq!(conf.store_max_bytes(), 512 * 1024 * 1024);
+    assert_eq!(conf.packages_max_bytes(), 4096 * 1024 * 1024);
 }
 
 #[test]
 fn the_attributes_are_read() {
     let conf = ClientConf::parse(
-        r#"<client-conf device-mode="shared" mirror-days="30" prefetch-rooms="0" prefetch-mail=" 25 " store-max-mb="64"/>"#,
+        r#"<client-conf device-mode="shared" mirror-days="30" prefetch-rooms="0" prefetch-mail=" 25 " store-max-mb="64"
+            packages-max-mb="1024"/>"#,
     );
     assert_eq!(
         conf,
@@ -44,7 +47,8 @@ fn the_attributes_are_read() {
             prefetch_rooms: 0,
             prefetch_mail: 25,
             store_max_mb: 64,
-            start_path: None
+            start_path: None,
+            packages_max_mb: 1024
         }
     );
     assert_eq!(
@@ -57,7 +61,7 @@ fn the_attributes_are_read() {
 fn a_bad_value_or_text_takes_the_default() {
     let conf = ClientConf::parse(
         r#"<client-conf device-mode="kiosk" mirror-days="0" prefetch-rooms="-1" prefetch-mail="many" store-max-mb="0"
-            unknown="x"/>"#,
+            packages-max-mb="-5" unknown="x"/>"#,
     );
     assert_eq!(conf, ClientConf::default());
     assert_eq!(ClientConf::parse("<client-conf"), ClientConf::default());

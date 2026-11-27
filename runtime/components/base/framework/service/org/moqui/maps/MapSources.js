@@ -1,4 +1,4 @@
-// Map archives of org.moqui.maps.MapSourceServices (plans/Maps.md §4.1, §5; docs/tools/Maps.md "Archives"): registering a
+// Map archives of org.moqui.maps.MapSourceServices (plans/archive/Maps.md §4.1, §5; docs/tools/Maps.md "Archives"): registering a
 // PMTiles archive as a layer's revision, the access check of the map-source transition (LocalMap.xml source), the
 // same-origin URL the effective configuration hands a map (MapConfig.js), the archives Configuration lists and their
 // readiness.
@@ -26,6 +26,12 @@
 // as the strong ETag and Cache-Control private for resource-facade@pinned-max-age.
 //
 // What reaches a browser: the transition's path with the layer's ID and revision, never the location.
+//
+// A Cloud Optimized GeoTIFF layer (MLF_COG, P4c) is an archive of the same kind: registered from a location with its
+// header read in Rust (read#CogHeader: TIFF or BigTIFF, its directories bounded, tiled, overviews, its EPSG CRS one a map
+// knows) and its revision pinned and served by range through the same transition with the same check, which geotiff.js
+// reads in the browser. A COG at a provider's URL (no location) is read once from there to record its header (one range,
+// no credentials, no redirect, CORS required, since the browser reads it directly); nothing of it is pinned.
 
 const LAYER = "moqui.maps.MapLayer"
 const PROVIDER = "moqui.maps.MapProvider"
@@ -34,7 +40,16 @@ const PROFILE = "moqui.maps.MapProfile"
 const CONFIGURATION_SCREEN = "component://tools/screen/Maps/Configuration.xml"
 const SOURCE_PATH = "/apps/maps/LocalMap/source"
 const PMTILES = ["MLF_PMTILES_VECTOR", "MLF_PMTILES_RASTER"]
-// storage that reads a range of a file without reading the rest (plans/Maps.md §5, the backend table)
+const COG = "MLF_COG"
+// the formats a registered archive is read by range in: PMTiles and Cloud Optimized GeoTIFF
+const ARCHIVE_FORMATS = PMTILES.concat([COG])
+// the bytes a provider's COG is first read in: its header and directories (a COG's are at its start)
+const COG_HEAD = 65536
+// a provider's COG URL: https, a host with no credentials, a path
+const COG_URL_PATTERN = /^https:\/\/[^\/?#@\s]+\//i
+// the band settings a COG layer starts with when nobody chose any, from its header (P4c; MapConfig.js reads them)
+const COLORMAPS = ["grey", "viridis", "terrain", "magma"]
+// storage that reads a range of a file without reading the rest (plans/archive/Maps.md §5, the backend table)
 const RANGED_SCHEMES = ["file", "runtime", "component", "dbresource", "git"]
 const MAX_ARCHIVES = 200
 // An archive on the server's disk is registered only under the runtime's maps directory (runtime://maps/..., or a file: path
@@ -187,7 +202,7 @@ function storageAllows(location) {
 function check(layer, layerId, revision) {
     const missing = () => refusal("SOURCE_MISSING", say("the map archive ${layerId} is not registered", {layerId}), 404)
     if (!layer || layer.disabled === "Y") return missing()
-    if (!PMTILES.includes(text(layer.formatEnumId)) || !text(layer.resourceLocation)) return missing()
+    if (!ARCHIVE_FORMATS.includes(text(layer.formatEnumId)) || !text(layer.resourceLocation)) return missing()
     if (!text(layer.sourceRevision) || !text(layer.sourceTag) || layer.sourceSize == null)
         return refusal("SOURCE_NOT_REGISTERED", L("its archive has not been registered (Maps › Configuration › Archives)"), 404)
     // one the caller may not see is, to them, one that is not there
@@ -238,7 +253,7 @@ function sourceAccess(p) {
         : {ok: false, status: out.status, reasonCode: out.reasonCode, reason: out.reason}
 }
 
-// ===== get#ArchiveTile: the tile transition, every request (plans/Maps.md §5, a Z/X/Y endpoint) =====
+// ===== get#ArchiveTile: the tile transition, every request (plans/archive/Maps.md §5, a Z/X/Y endpoint) =====
 // One tile of a registered archive, or of a user's overlay generalized into one on the server (overlay:ID, MapOverlays.js
 // buildTiles), for a client with no PMTiles reader. The same check as the map-source transition, on every request: a layer
 // by check() above; an overlay by its file's own access, the reader's in its drive at its path now (a revoked share or a
@@ -289,7 +304,13 @@ function archiveTile(p) {
     const revision = text(p.revision)
     let target
     if (layerId.startsWith("overlay:")) target = overlayArchive(layerId.slice("overlay:".length), revision)
-    else target = check(layerId ? one(LAYER, {layerId}) : null, layerId || "(none)", revision)
+    else {
+        const layer = layerId ? one(LAYER, {layerId}) : null
+        // a COG has no tiles of this kind: its ranges are the map-source transition's
+        if (layer && text(layer.formatEnumId) === COG)
+            return {ok: false, status: 404, reasonCode: "NOT_TILED", reason: L("A GeoTIFF is read by range, not as tiles")}
+        target = check(layer, layerId || "(none)", revision)
+    }
     if (!target.ok) return {ok: false, status: target.status, reasonCode: target.reasonCode, reason: target.reason}
     // the caller was checked above; the archive's storage is read as the framework
     const read = quietly(() =>
@@ -328,6 +349,29 @@ function archiveTile(p) {
 function servedUrl(layer) {
     const out = check(layer, layer?.layerId || "(none)", null)
     return out.ok ? {ok: true, url: out.url} : refusal(out.reasonCode, out.reason, out.status)
+}
+
+// For MapPackages.js (an offline package, plans/archive/Maps-Offline.md §2.2): a registered archive layer the current user may read
+// now, as the map-source transition decides it, with what an extract pins it by: its location, tag and size, its
+// registered revision and, for a file on disk, its modification time; or the refusal
+function packageSource(layerId) {
+    const layer = text(layerId) ? one(LAYER, {layerId: text(layerId)}) : null
+    if (layer && text(layer.formatEnumId) === COG) return refusal("NOT_TILED", L("A GeoTIFF is not packaged"), 404)
+    const out = check(layer, text(layerId) || "(none)", null)
+    if (!out.ok) return out
+    return Object.assign(out, {
+        revision: text(layer.sourceRevision),
+        modifiedMillis: text(layer.sourceAddressKind) === "file" ? millis(layer.sourceModifiedDate) : null,
+        raster: text(layer.formatEnumId) === "MLF_PMTILES_RASTER"
+    })
+}
+// For MapPackages.js: a user's overlay generalized into tiles, read by the current user now, pinned as packageSource is
+function packageOverlayArchive(overlayId) {
+    const row = text(overlayId) ? ec.entity.find(OVERLAY).condition({overlayId: text(overlayId)}).disableAuthz().one() : null
+    if (!row) return refusal("OVERLAY_MISSING", L("The overlay is not available"), 404)
+    const out = overlayArchive(text(overlayId), text(row.tilesRevision))
+    if (!out.ok) return out
+    return Object.assign(out, {revision: text(row.tilesRevision), modifiedMillis: millis(row.tilesModifiedDate)})
 }
 
 // ===== registering =====
@@ -394,6 +438,175 @@ const statOf = location =>
         return ref && ref.getExists() ? {size: Number(ref.getSize()), modified: millis(ref.getLastModified())} : null
     })
 
+// ===== Cloud Optimized GeoTIFF (P4c) =====
+// The band settings a COG starts with: its first three bands as red, green and blue when it has three or more of 8 bits
+// (an image), else its first band through the grey colormap; stretched between its statistics, else its type's range.
+function rasterDefaults(cog) {
+    const bands = Number(cog.bands) || 1
+    const stats = Array.from(cog.statistics || [])
+    const range = {uint8: [0, 255], uint16: [0, 65535], int8: [-128, 127], int16: [-32768, 32767], uint32: [0, 4294967295]}[
+        text(cog.sampleType)
+    ] || [0, 1]
+    const statsOf = band => stats.find(row => Number(row[0]) === band)
+    const image = bands >= 3 && Number(cog.bitsPerSample) === 8
+    const first = statsOf(1)
+    const out = image
+        ? {rgb: [1, 2, 3], min: range[0], max: range[1]}
+        : {band: 1, min: first ? Number(first[1]) : range[0], max: first ? Number(first[2]) : range[1], colormap: COLORMAPS[0]}
+    const nodata = Number(cog.nodata)
+    if (text(cog.nodata) && Number.isFinite(nodata)) out.nodata = nodata
+    return out
+}
+// The layer fields a COG's header gives: its CRS, its bounds in WGS84 and what a map needs of it (rasterJson)
+function cogFields(cog, extra) {
+    const bounds = Array.from(cog.wgs84Bounds || []).map(Number)
+    const raster = Object.assign(
+        {
+            bands: Number(cog.bands) || 1,
+            sampleType: text(cog.sampleType),
+            compression: text(cog.compression),
+            width: Number(cog.width),
+            height: Number(cog.height),
+            tileWidth: Number(cog.tileWidth),
+            overviews: Number(cog.overviews) || 0,
+            nodata: text(cog.nodata) || null,
+            epsg: text(cog.epsg),
+            bounds: Array.from(cog.bounds || []).map(Number),
+            statistics: Array.from(cog.statistics || []).map(row => Array.from(row).map(Number)),
+            defaults: rasterDefaults(cog)
+        },
+        extra || {}
+    )
+    const fields = {crs: text(cog.epsg) || null, rasterJson: JSON.stringify(raster), minZoom: null, maxZoom: null}
+    if (bounds.length === 4 && bounds.every(Number.isFinite))
+        Object.assign(fields, {minLongitude: bounds[0], minLatitude: bounds[1], maxLongitude: bounds[2], maxLatitude: bounds[3]})
+    return fields
+}
+const production = () => text(ec.factory.getConfValue("instance@purpose")) === "production"
+const privateAllowed = row => row?.allowPrivateNetwork === "Y" || (row?.allowPrivateNetwork !== "N" && !production())
+// One range of a provider's COG at its URL, its first COG_HEAD bytes, as a browser's geotiff.js asks it: with an Origin of
+// this site, no credentials, no redirect, ten seconds, to no internal address when denyInternal. It must be a 206
+// (NO_RANGES) that this site may read by CORS (* or its origin: NO_CORS), and its header, read in Rust (read#CogHeader), one a
+// map draws (COG_INVALID, with its problems). {ok: true, header} or {ok: false, reasonCode, reason, problems}. Registering a
+// provider's COG reads it so, and so does the test of a raster provider whose endpoint is a COG (MapProviders.js).
+function readCogHead(url, denyInternal) {
+    const no = (reasonCode, reason, extra) => Object.assign({ok: false, reasonCode, reason}, extra || {})
+    // an https URL with no credentials: a browser reads it without the page's, and none is sent from here
+    if (!COG_URL_PATTERN.test(text(url)))
+        return no("LOCATION_INVALID", L("A provider's COG is at an https URL of the provider's own host"))
+    const mapConfig = ec.resource.script("component://framework/service/org/moqui/maps/MapConfig.js")
+    // this site's own origin, which a browser sends with its range requests; with none known only * passes
+    const pageOrigin = mapConfig.originOf(text(ec.web ? ec.web.getWebappRootUrl(true, null) : "")) || ""
+    let response
+    try {
+        let client = ec.service
+            .rest()
+            .method("GET")
+            .uri(url)
+            .timeout(10)
+            .followRedirects(false)
+            .addHeader("Range", "bytes=0-" + (COG_HEAD - 1))
+            .addHeader("Origin", pageOrigin || "https://moqui.invalid")
+        client = denyInternal ? client.denyInternal() : client.allowInternal()
+        response = client.send()
+    } catch (error) {
+        return no("SOURCE_UNREAD", say("Its URL did not answer: ${error}", {error: text(error?.message ?? error).slice(0, 200)}))
+    }
+    const status = Number(response.getStatusCode())
+    if (status !== 206)
+        return no(
+            "NO_RANGES",
+            status >= 200 && status < 300
+                ? L("Its URL answered the whole file, not the range asked: a COG is read by range")
+                : say("Its URL answered HTTP ${status}", {status})
+        )
+    const allowed = text(response.headerFirst("access-control-allow-origin"))
+    if (!(allowed === "*" || (pageOrigin && allowed.toLowerCase().replace(/\/+$/, "") === pageOrigin)))
+        return no(
+            "NO_CORS",
+            L("Its URL does not let this site read it (CORS: * or this site's origin), so a browser cannot draw it")
+        )
+    const range = /\/(\d+)\s*$/.exec(text(response.headerFirst("content-range")))
+    let bytes
+    try {
+        bytes = response.bytes(COG_HEAD + 1024)
+    } catch (error) {
+        return no("NO_RANGES", L("Its URL answered more than the range asked"))
+    }
+    // the reader's own errors only, apart from any the caller already has
+    let header = null
+    let failure = ""
+    ec.message.pushErrors()
+    try {
+        header = ec.service
+            .sync()
+            .name("org.moqui.maps.MapSourceServices.read#CogHeader")
+            .parameters({bytes, size: range ? Number(range[1]) : bytes.length})
+            .disableAuthz()
+            .call()
+        if (ec.message.hasError()) failure = ec.message.getErrorsString()
+    } catch (error) {
+        failure = String(error?.message ?? error)
+    } finally {
+        ec.message.clearErrors()
+        ec.message.popErrors()
+    }
+    if (failure) return no("HEADER_UNREAD", failure)
+    const problems = Array.from(header?.problems || []).map(text)
+    if (problems.length)
+        return no("COG_INVALID", say("A map cannot draw this GeoTIFF: ${problems}", {problems: problems.join("; ")}), {problems})
+    return {ok: true, header}
+}
+// A provider's COG: its URL on the provider's own origin, the provider enabled and tested and outside requests on; one range
+// of its start, which must be a 206 the page's origin may read by CORS, then its header read in Rust from those bytes
+function registerCogUrl(layer, refused) {
+    const url = text(layer.sourceUrl)
+    if (!COG_URL_PATTERN.test(url))
+        return refused("LOCATION_INVALID", L("A provider's COG is at an https URL of the provider's own host"))
+    if (text(ec.factory.getConfValue("maps@external-requests")) === "false")
+        return refused("EXTERNAL_REQUESTS_OFF", L("Outside requests are turned off (maps@external-requests)"))
+    const provider = text(layer.providerId) ? one(PROVIDER, {providerId: layer.providerId}) : null
+    if (!provider) return refused("PROVIDER_MISSING", L("A COG at a URL is its provider's: give the layer its provider"))
+    const mapConfig = ec.resource.script("component://framework/service/org/moqui/maps/MapConfig.js")
+    const own = mapConfig.originOf(provider.endpointUrl)
+    if (!own || mapConfig.originOf(url) !== own) return refused("URL_NOT_PROVIDERS", L("Its URL is not on its provider's host"))
+    if (provider.disabled === "Y") return refused("PROVIDER_DISABLED", L("Its provider is not enabled"))
+    if (text(provider.apiKey) || provider.proxyRequests === "Y")
+        return refused(
+            "PROVIDER_PROXIED",
+            L("A COG is read by the browser itself, so its provider has no key and is not reached through this server")
+        )
+    const providers = ec.resource.script("component://framework/service/org/moqui/maps/MapProviders.js")
+    if (!providers.tested(provider))
+        return refused("PROVIDER_UNTESTED", L("Its provider has not passed a test as it is configured now"))
+    const read = readCogHead(url, !privateAllowed(provider))
+    if (!read.ok) return refused(read.reasonCode, read.reason, read.problems ? {problems: read.problems} : null)
+    const header = read.header
+    const fields = Object.assign(
+        {layerId: layer.layerId, sourceRegisteredDate: ec.user.nowTimestamp, disabled: "N"},
+        cogFields(header.cog || {}, {cors: true})
+    )
+    asCaller(() => ec.entity.makeValue(LAYER).setAll(fields).update())
+    const name = text(layer.layerName) ? L(layer.layerName) : layer.layerId
+    return {
+        applied: true,
+        layerId: layer.layerId,
+        layerIds: [layer.layerId],
+        size: header.size,
+        cog: header.cog || {},
+        notes: Array.from(header.notes || []).map(text),
+        reason: say(
+            "${name}: its GeoTIFF's header is read (${bands} bands of ${type}, ${crs}); the browser reads it from its provider",
+            {
+                name,
+                bands: header.cog?.bands,
+                type: text(header.cog?.sampleType),
+                crs: fields.crs
+            }
+        )
+    }
+}
+
 // register#ArchiveLayer
 function register(p) {
     const refused = (reasonCode, reason, extra) => Object.assign({applied: false, reasonCode, reason}, extra || {})
@@ -402,8 +615,15 @@ function register(p) {
     const layerId = text(p.layerId)
     const layer = layerId ? ec.entity.find(LAYER).condition({layerId}).disableAuthz().one() : null
     if (!layer) return refused("RECORD_UNAVAILABLE", say("The map layer ${layerId} is not registered", {layerId}))
-    if (!PMTILES.includes(text(layer.formatEnumId)))
-        return refused("FORMAT_NOT_ARCHIVE", L("Only a PMTiles layer (vector or raster) is registered as an archive"))
+    if (!ARCHIVE_FORMATS.includes(text(layer.formatEnumId)))
+        return refused(
+            "FORMAT_NOT_ARCHIVE",
+            L("Only a PMTiles layer (vector or raster) or a Cloud Optimized GeoTIFF layer is registered as an archive")
+        )
+    const isCog = text(layer.formatEnumId) === COG
+    // a provider's COG: its header read from its URL
+    if (isCog && !text(p.resourceLocation) && !text(layer.resourceLocation) && text(layer.sourceUrl))
+        return registerCogUrl(layer, refused)
     const location = text(p.resourceLocation) || text(layer.resourceLocation)
     if (!location) return refused("LOCATION_MISSING", L("Give the archive's location"))
     if (location.includes("#") || location.includes("?"))
@@ -439,7 +659,7 @@ function register(p) {
         if (text(row.formatEnumId) !== format)
             return refused(
                 "FORMAT_MISMATCH",
-                say("The layer ${layerId} is not a PMTiles layer of the same format, so it cannot draw the same archive", {
+                say("The layer ${layerId} is not a layer of the same format, so it cannot draw the same archive", {
                     layerId: id
                 })
             )
@@ -467,7 +687,7 @@ function register(p) {
         )
     const header = ec.service
         .sync()
-        .name("org.moqui.maps.MapSourceServices.read#ArchiveHeader")
+        .name(isCog ? "org.moqui.maps.MapSourceServices.read#CogHeader" : "org.moqui.maps.MapSourceServices.read#ArchiveHeader")
         .parameters({location: pinned})
         .disableAuthz()
         .call()
@@ -475,12 +695,16 @@ function register(p) {
     const problems = Array.from(header?.problems || []).map(text)
     if (!header?.found) return refused("SOURCE_GONE", problems[0] || say("There is no file at ${location}", {location}))
     if (problems.length)
-        return refused("ARCHIVE_INVALID", say("A map cannot draw this archive: ${problems}", {problems: problems.join("; ")}), {
-            problems
-        })
+        return isCog
+            ? refused("COG_INVALID", say("A map cannot draw this GeoTIFF: ${problems}", {problems: problems.join("; ")}), {
+                  problems
+              })
+            : refused("ARCHIVE_INVALID", say("A map cannot draw this archive: ${problems}", {problems: problems.join("; ")}), {
+                  problems
+              })
     const head = header.header || {}
     const vector = text(layer.formatEnumId) === "MLF_PMTILES_VECTOR"
-    if (vector ? !head.vector : !head.raster)
+    if (!isCog && (vector ? !head.vector : !head.raster))
         return refused(
             "TILE_TYPE_MISMATCH",
             say("The archive's tiles are ${tileType}, and the layer is a PMTiles ${format} layer", {
@@ -514,14 +738,18 @@ function register(p) {
         sourceModifiedDate: modified === null ? null : new Date(modified),
         sourceRegisteredDate: ec.user.nowTimestamp,
         driveId: drive ? drive.driveId : null,
-        minZoom: Number(head.minZoom),
-        maxZoom: Number(head.maxZoom),
-        minLongitude: Number(head.minLongitude),
-        minLatitude: Number(head.minLatitude),
-        maxLongitude: Number(head.maxLongitude),
-        maxLatitude: Number(head.maxLatitude),
         disabled: "N"
     }
+    if (isCog) Object.assign(fields, cogFields(header.cog || {}))
+    else
+        Object.assign(fields, {
+            minZoom: Number(head.minZoom),
+            maxZoom: Number(head.maxZoom),
+            minLongitude: Number(head.minLongitude),
+            minLatitude: Number(head.minLatitude),
+            maxLongitude: Number(head.maxLongitude),
+            maxLatitude: Number(head.maxLatitude)
+        })
     // each layer's own: the archive's attribution and version where the layer has none
     // the layer chosen and those asked for are enabled; one that only names the location keeps its state
     const fieldsOf = row => {
@@ -536,7 +764,9 @@ function register(p) {
     asCaller(() => {
         for (const row of [layer].concat(others)) ec.entity.makeValue(LAYER).setAll(fieldsOf(row)).update()
         // a profile drawn from it that still starts at the seed's whole-world view starts at the archive's center
-        const centered = Array.from(ec.entity.find(PROFILE).condition("basemapLayerId", "in", layerIds).disableAuthz().list())
+        const centered = isCog
+            ? []
+            : Array.from(ec.entity.find(PROFILE).condition("basemapLayerId", "in", layerIds).disableAuthz().list())
         for (const profile of centered) {
             const seedView = num(profile.centerLongitude) === 0 && num(profile.centerLatitude) === 20 && num(profile.zoom) === 2
             if (!seedView || profile.minLongitude != null) continue
@@ -573,21 +803,34 @@ function register(p) {
         driveId: fields.driveId,
         header: head,
         metadata,
-        notes,
+        cog: isCog ? header.cog || {} : null,
+        notes: isCog
+            ? Array.from(header.notes || [])
+                  .map(text)
+                  .concat(notes)
+            : notes,
         reason:
             previous && previous !== fields.sourceRevision
                 ? say("${name}: the new revision is registered; a map that was drawing the old one loads again", {name})
-                : say(
-                      others.length
-                          ? "${name}: their archive is registered (${size}, zoom ${min} to ${max})"
-                          : "${name}: its archive is registered (${size}, zoom ${min} to ${max})",
-                      {
-                          name,
-                          size: bytesText(fields.sourceSize),
-                          min: fields.minZoom,
-                          max: fields.maxZoom
-                      }
-                  )
+                : isCog
+                  ? say("${name}: its GeoTIFF is registered (${size}, ${bands} bands of ${type}, ${crs})", {
+                        name,
+                        size: bytesText(fields.sourceSize),
+                        bands: header.cog?.bands,
+                        type: text(header.cog?.sampleType),
+                        crs: fields.crs
+                    })
+                  : say(
+                        others.length
+                            ? "${name}: their archive is registered (${size}, zoom ${min} to ${max})"
+                            : "${name}: its archive is registered (${size}, zoom ${min} to ${max})",
+                        {
+                            name,
+                            size: bytesText(fields.sourceSize),
+                            min: fields.minZoom,
+                            max: fields.maxZoom
+                        }
+                    )
     }
 }
 
@@ -595,6 +838,11 @@ function register(p) {
 // The state of one archive layer now: {state (ready, warning, failed), reasonCode, message}
 function stateOf(layer) {
     const location = text(layer.resourceLocation)
+    // a provider's COG: its header read from its URL, nothing pinned
+    if (!location && text(layer.formatEnumId) === COG && text(layer.sourceUrl))
+        return text(layer.rasterJson)
+            ? {state: "ready", reasonCode: "", message: L("Read by the browser from its provider; its header is recorded")}
+            : {state: "warning", reasonCode: "NOT_REGISTERED", message: L("Its header is not read yet: register it")}
     if (!location) return {state: "warning", reasonCode: "LOCATION_MISSING", message: L("No archive location is set")}
     if (!text(layer.sourceRevision))
         return {state: "warning", reasonCode: "NOT_REGISTERED", message: L("Its archive is not registered yet: register it")}
@@ -664,7 +912,7 @@ function findArchives() {
     const layers = Array.from(
         ec.entity
             .find(LAYER)
-            .condition("formatEnumId", "in", PMTILES)
+            .condition("formatEnumId", "in", ARCHIVE_FORMATS)
             .orderBy("layerName")
             .limit(MAX_ARCHIVES)
             .disableAuthz()
@@ -718,6 +966,238 @@ function findArchives() {
     }
 }
 
+// The page policy's room for a COG layer (P4c): geotiff decodes in module workers of this server (libs/openlayers/
+// the build's decoder entry), which worker-src (else child-src, script-src, default-src) must allow as 'self'; their LERC and
+// Zstandard decoders instantiate WebAssembly, which a policy that reaches the worker's own response (this server sends a
+// screen's policy only with screens, so only a proxy that adds it to every file) must allow with 'wasm-unsafe-eval' and
+// connect-src data:. A check row when an enabled COG layer is there; null otherwise.
+function rasterCspCheck(layers) {
+    if (!layers.some(layer => text(layer.formatEnumId) === COG && layer.disabled !== "Y")) return null
+    const directives = ec.resource.script("component://framework/service/org/moqui/maps/MapProviders.js").cspDirectives()
+    const lower = sources => sources.map(source => source.toLowerCase())
+    const worker = directives["worker-src"] || directives["child-src"] || directives["script-src"] || directives["default-src"]
+    const workerOk = !worker || lower(worker.sources).some(source => ["'self'", "*", "https:", "http:"].includes(source))
+    const script = directives["script-src"] || directives["default-src"]
+    const wasmOk = !script || lower(script.sources).some(source => ["'wasm-unsafe-eval'", "'unsafe-eval'"].includes(source))
+    const base = {
+        checkKey: "maps.raster.csp",
+        title: L("Map GeoTIFF decoding"),
+        subject: L("Content-Security-Policy"),
+        fixRoute: "mapsConfiguration"
+    }
+    if (!workerOk)
+        return Object.assign(base, {
+            state: "warning",
+            reasonCode: "CSP_WORKER",
+            message: say(
+                "The page's Content-Security-Policy does not let a map start its GeoTIFF decoder: add 'self' to worker-src (${where}), so COG layers draw",
+                {
+                    where:
+                        directives["worker-src"]?.from === "header"
+                            ? L("in the screen-render header")
+                            : L("with webapp@csp-append")
+                }
+            )
+        })
+    // informational: the worker of this server has no policy of its own unless a proxy adds one
+    if (!wasmOk)
+        return Object.assign(base, {
+            state: "ready",
+            reasonCode: "CSP_WASM",
+            message: L(
+                "The page's Content-Security-Policy has no 'wasm-unsafe-eval': a map's GeoTIFF decoder worker has no policy of its own here, but a proxy that adds this policy to every file stops its LERC and Zstandard decoders; there, add 'wasm-unsafe-eval' to script-src and data: to connect-src"
+            )
+        })
+    return Object.assign(base, {
+        state: "ready",
+        reasonCode: "",
+        message: L("COG layers decode in module workers of this server, which the page's policy allows")
+    })
+}
+
+// ===== room to replace an archive =====
+// Registering a new revision keeps the old one while maps move to it (a drive's old content blob until it is collected, the
+// git version a map still reads, the file on disk until it is replaced), so the filesystem an archive is on needs free room
+// for the largest archive on it once more. An archive on disk (runtime://maps/) is on the runtime's filesystem (the status
+// map's row that holds "runtime"; a maps directory mounted apart is not watched, and is taken as the runtime's). A drive's
+// archive and a Git LFS object are content blobs in the database: on the filesystem of runtime/db (the row that holds
+// "database", else the runtime's, which runtime/db is then on) when the database is the embedded one, and not measured when
+// it is external. A local backup of the embedded database copies those blobs again, so when the backups are written on a
+// watched filesystem the next one needs the database's archives once more there.
+//
+// layers: MapLayer rows (each registered location counted once, by its sourceSize); filesystems: the status map's
+// Resources.Filesystems rows ({mountPoint, holds, availableBytes}; none off Unix), or null when the status map could not be
+// read; backup: {embedded: whether the content blobs are in the embedded database, holds: the watched directory the local
+// backups are written under ("database", "runtime", ...), or null when none is written or where cannot be told}. The check
+// row, or null when no archive is registered.
+function archiveSpace(layers, filesystems, backup) {
+    const archives = new Map()
+    for (const layer of Array.from(layers || [])) {
+        const location = text(layer.resourceLocation)
+        if (!location || !text(layer.sourceRevision) || archives.has(location)) continue
+        const scheme = schemeOf(location)
+        const where =
+            scheme === "runtime" || scheme === "file" ? "disk" : scheme === "dbresource" || scheme === "git" ? "database" : ""
+        if (where) archives.set(location, {where, size: num(layer.sourceSize) || 0})
+    }
+    if (!archives.size) return null
+    if (filesystems == null) return spaceUnread()
+    const rows = Array.from(filesystems)
+    if (!rows.length)
+        return Object.assign(spaceUnread(), {
+            message: L(
+                "This server reports no filesystem's free space (only on Unix): the room to replace a map archive is not measured"
+            )
+        })
+    const holding = label =>
+        rows.find(row =>
+            Array.from(row.holds || [])
+                .map(String)
+                .includes(label)
+        )
+    // a runtime directory not on a filesystem of its own is on the runtime's
+    const rowOf = label => holding(label) || holding("runtime")
+    const embedded = backup?.embedded === true
+    const inDatabase = Array.from(archives.values()).filter(archive => archive.where === "database")
+    const needs = new Map()
+    const need = (row, field, bytes) => {
+        const entry = needs.get(row) || {largest: 0, backup: 0}
+        entry[field] = field === "largest" ? Math.max(entry.largest, bytes) : entry.backup + bytes
+        needs.set(row, entry)
+    }
+    let unread = false
+    for (const archive of archives.values()) {
+        if (archive.where === "database" && !embedded) continue
+        const row = rowOf(archive.where === "disk" ? "runtime" : "database")
+        if (row) need(row, "largest", archive.size)
+        else unread = true
+    }
+    if (embedded && inDatabase.length && text(backup?.holds)) {
+        const row = rowOf(text(backup.holds))
+        if (row)
+            need(
+                row,
+                "backup",
+                inDatabase.reduce((sum, archive) => sum + archive.size, 0)
+            )
+    }
+    const external = inDatabase.length && !embedded
+    const notes = []
+    if (external) notes.push(L("Archives in drives and git are kept in an external database, whose room is not measured here"))
+    if (unread) notes.push(L("The filesystem an archive is on is not reported, so its room is not measured"))
+    const short = []
+    const fits = []
+    for (const [row, entry] of needs) {
+        const values = {
+            mount: text(row.mountPoint),
+            free: bytesText(num(row.availableBytes)),
+            needed: bytesText(entry.largest + entry.backup),
+            largest: bytesText(entry.largest),
+            backup: bytesText(entry.backup)
+        }
+        if ((num(row.availableBytes) ?? 0) >= entry.largest + entry.backup)
+            fits.push(say("${mount} has ${free} free, room for ${needed}", values))
+        else if (entry.largest && entry.backup)
+            short.push(
+                say(
+                    "${mount} has ${free} free and needs ${needed}: the largest archive on it (${largest}) once more to replace it, and the database's archives (${backup}) in the next local backup",
+                    values
+                )
+            )
+        else if (entry.largest)
+            short.push(
+                say("${mount} has ${free} free and needs ${needed}: the largest archive on it once more to replace it", values)
+            )
+        else
+            short.push(
+                say(
+                    "${mount} has ${free} free and needs ${needed}: the database's archives once more in the next local backup written there",
+                    values
+                )
+            )
+    }
+    const base = spaceUnread()
+    if (short.length)
+        return Object.assign(base, {state: "warning", reasonCode: "ARCHIVE_SPACE_LOW", message: short.concat(notes).join(". ")})
+    if (notes.length)
+        return Object.assign(base, {
+            reasonCode: external ? "ARCHIVE_SPACE_EXTERNAL_DB" : "ARCHIVE_SPACE_UNREAD",
+            message: notes.concat(fits).join(". ")
+        })
+    return Object.assign(base, {state: "ready", reasonCode: null, message: fits.join(". ")})
+}
+// The space check when what it reads could not be read (the status map, the backup job; each failure logged), and the row
+// the others start from
+const spaceUnread = () => ({
+    checkKey: "maps.archive.space",
+    title: L("Room to replace map archives"),
+    subject: L("Disk space"),
+    fixRoute: "mapsConfiguration",
+    state: "unavailable",
+    reasonCode: "ARCHIVE_SPACE_UNREAD",
+    message: L(
+        "The free space of the filesystems map archives are on could not be read, so the room to replace one is not measured"
+    )
+})
+// What archiveSpace reads of this server: the filesystems and the database's kind from the status map (only those), and
+// where the local backups go. The content blobs (drives' files, Git LFS objects) are the content group's
+// (ResourceEntities.xml), whose datasource with no database-conf-name of its own is in the transactional one's database: so
+// they are in the embedded database when the transactional datasource is embedded and the content one is not on another
+// server (a read clone or another group does not count). The backup job's directory and schedule are Backups.js's
+// (scheduledDirectory: a cron expression, not paused); a directory inside the runtime is placed by its watched directory;
+// one outside it (or relative) is left out, since no host API names the filesystem of a path and a mount point's prefix
+// would put a separately mounted backup disk on "/".
+// Whether the content blobs are in the embedded database, from the status map's DataSources rows ({group, embedded}): the
+// transactional datasource embedded and the content one absent or embedded; a read clone or another group does not count
+function embeddedOf(sources) {
+    const rows = Array.from(sources || [])
+    const group = name => rows.find(source => text(source.group) === name)
+    const content = group("content")
+    return group("transactional")?.embedded === true && (!content || content.embedded === true)
+}
+// The space check of these layers, setup() reading the server (spaceSetup): a failure of its reads is its own row's,
+// unavailable, never the provider's, and with no registered archive there is no row
+function spaceCheck(layers, setup) {
+    try {
+        const read = setup()
+        return archiveSpace(layers, read.filesystems, read.backup)
+    } catch (error) {
+        ec.logger.error("Map readiness maps.archive.space could not be checked: " + String(error?.message ?? error))
+        return Array.from(layers || []).some(layer => text(layer.resourceLocation) && text(layer.sourceRevision))
+            ? spaceUnread()
+            : null
+    }
+}
+function spaceSetup() {
+    let status
+    try {
+        // Filesystems is in the plain map too; whether a datasource is embedded only in the sensitive one
+        status = ec.factory.getStatusMap(true) || {}
+    } catch (error) {
+        ec.logger.error("Map readiness maps.archive.space: the status map could not be read: " + String(error?.message ?? error))
+        return {filesystems: null, backup: {embedded: false, holds: null}}
+    }
+    const filesystems = Array.from(status.Resources?.Filesystems || []).map(row => ({
+        mountPoint: row.mountPoint,
+        holds: Array.from(row.holds || []),
+        availableBytes: row.availableBytes
+    }))
+    const embedded = embeddedOf(status.DataSources)
+    let holds = null
+    if (embedded) {
+        const backups = ec.resource.script("component://framework/service/org/moqui/admin/Backups.js")
+        const directory = text(backups.scheduledDirectory())
+        if (directory) {
+            const runtime = String(ec.factory.getRuntimePath() || "").replace(/\/+$/, "")
+            const path = directory.replace(/^file:(\/\/)?/i, "")
+            const labels = {db: "database", log: "logs", tmp: "temp", txlog: "transaction log", opensearch: "search"}
+            if (runtime && path.startsWith(runtime + "/") && !/(^|\/)\.\.(\/|$)/.test(path))
+                holds = labels[path.slice(runtime.length + 1).split("/")[0]] || "runtime"
+        }
+    }
+    return {filesystems, backup: {embedded, holds}}
+}
+
 // check#ArchiveReadiness: the maps.archives provider, for ADMIN_OVERVIEW_VIEW
 function readiness(p) {
     if (text(p.providerKey) !== "maps.archives") throw new Error("Unknown Maps readiness check " + text(p.providerKey))
@@ -729,7 +1209,7 @@ function readiness(p) {
     const layers = Array.from(
         ec.entity
             .find(LAYER)
-            .condition("formatEnumId", "in", PMTILES)
+            .condition("formatEnumId", "in", ARCHIVE_FORMATS)
             .orderBy("layerName")
             .limit(MAX_ARCHIVES)
             .disableAuthz()
@@ -750,6 +1230,10 @@ function readiness(p) {
                 fixRoute: "mapsConfiguration"
             }
         })
+    const csp = rasterCspCheck(layers)
+    if (csp) checks.push(csp)
+    const space = spaceCheck(layers, spaceSetup)
+    if (space) checks.push(space)
     if (!checks.length)
         checks.push({
             checkKey: "maps.archive.none",
@@ -770,5 +1254,15 @@ const operations = {sourceAccess, archiveTile, register, findArchives, readiness
     // for the effective configuration (MapConfig.js)
     servedUrl,
     tileUrl,
-    SOURCE_PATH
+    // the room to replace archives, from given rows (MapsSource.spec.js)
+    archiveSpace,
+    // a provider's COG read by one range (MapProviders.js, the test of a COG provider)
+    readCogHead,
+    // the space check's parts, for MapsSource.spec.js
+    embeddedOf,
+    spaceCheck,
+    SOURCE_PATH,
+    // for offline packages (MapPackages.js)
+    packageSource,
+    packageOverlayArchive
 })

@@ -1,4 +1,4 @@
-// OGC map services of the mapProvider connection kind (plans/Maps.md §4.1 "WMS/WMTS service configuration", §9 P4): the
+// OGC map services of the mapProvider connection kind (plans/archive/Maps.md §4.1 "WMS/WMTS service configuration", §9 P4): the
 // kinds MPK_WMS (WMS 1.3.0), MPK_WMTS (WMTS 1.0.0) and MPK_WFS (WFS 2.0.0, read as GeoJSON), their test, the layers an
 // administrator adds from what the test recorded, the source a map draws them from, and what the proxy forwards for a
 // proxied one. MapProviders.js calls the test and the proxy's checks; MapConfig.js the layer source.

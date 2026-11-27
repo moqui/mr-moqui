@@ -54,6 +54,18 @@ fn timeout_millis(remaining: std::time::Duration) -> Result<u64, moqui_lib::erro
     Ok(u64::try_from(remaining.as_millis()).unwrap_or(u64::MAX).max(1))
 }
 
+/// Whether a conf connection to MySQL with `mode` (its sslmode) to `host` uses TLS: as the mode says; with none, yes,
+/// verified in full as a Postgres connection with none is, but to this machine: over plain TCP the password is sent to
+/// whatever key the other end gives (SEC-DAT-97).
+#[cfg(feature = "mysql")]
+fn mysql_tls(mode: &str, host: &str) -> bool {
+    if mode.is_empty() {
+        !matches!(host, "localhost" | "127.0.0.1" | "::1")
+    } else {
+        moqui_core::entity::datasource::tls_wanted(mode)
+    }
+}
+
 /// A driver for a database named by its `database-list` conf name: `postgres`, or `mysql` and `mysql8`. An empty port
 /// is the default. A Postgres host is TLS, as an external Postgres is reached elsewhere, except a loopback host (no
 /// TLS) and a host starting with `/` (a Unix socket directory, as libpq reads it).
@@ -106,16 +118,9 @@ pub fn conf_driver(conf: &ConfDb) -> Result<Arc<dyn DbDriver>, Error> {
         }
         #[cfg(feature = "mysql")]
         "mysql" | "mysql8" => Arc::new(
-            mysql::MysqlDriver::new(
-                host,
-                port_of(3306)?,
-                user,
-                password,
-                database,
-                !mode.is_empty() && moqui_core::entity::datasource::tls_wanted(mode),
-            )
-            .tls_options(moqui_core::entity::datasource::tls_verify(mode), ssl_root_cert)
-            .address_guard(*address_guard),
+            mysql::MysqlDriver::new(host, port_of(3306)?, user, password, database, mysql_tls(mode, host))
+                .tls_options(moqui_core::entity::datasource::tls_verify(mode), ssl_root_cert)
+                .address_guard(*address_guard),
         ),
         other => {
             let _ = (
@@ -216,5 +221,18 @@ mod tests {
             err.to_string().contains("no database driver for database conf oracle"),
             "{err}"
         );
+    }
+}
+
+#[cfg(all(test, feature = "mysql"))]
+mod mysql_tls_tests {
+    /// SEC-DAT-97: a conf connection to MySQL with no sslmode is TLS but to this machine, as a Postgres one is; a mode
+    /// says on or off.
+    #[test]
+    fn a_mysql_conf_connection_with_no_mode_is_tls_off_loopback() {
+        assert!(super::mysql_tls("", "db.example.com"));
+        assert!(!super::mysql_tls("", "127.0.0.1"));
+        assert!(!super::mysql_tls("disable", "db.example.com"));
+        assert!(super::mysql_tls("verify-full", "localhost"));
     }
 }

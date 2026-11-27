@@ -32,6 +32,9 @@ pub const JANE_PASSWORD: &str = "wxyz-2345-6789-abcd-efgh";
 
 /// A PEP node the fake answers as past the user's bytes in all.
 pub const FULL_NODE: &str = "urn:xmpp:test:full";
+/// A PEP node the fake answers as the services refuse one (get#PepNodeRefused: `refused`) that the session's own list
+/// does not name, as when the two lists disagree.
+pub const SERVICE_REFUSED_NODE: &str = "urn:xmpp:test:refused";
 /// A JID the fake answers as one block or push registration past the user's cap.
 pub const FULL_JID: &str = "full.example.org";
 
@@ -67,6 +70,23 @@ pub struct State {
     pub refused_from: Vec<IpAddr>,
     pub statuses: HashMap<String, String>,
     pub push: Vec<(String, Json)>,
+    /// The user's location share that takes the XMPP app's location (`takeXmppLocation`) for its XMPP contacts, which
+    /// `report#XmppPosition` reports (plans/archive/Location-Sharing.md §3.6), else none, which the service answers
+    /// `NO_XMPP_SHARE`.
+    pub location_share: Option<LocationShare>,
+    /// What `report#XmppPosition` answers in place of taking the report (a 429, a 400), when set.
+    pub location_answer: Option<Json>,
+    /// The parameters of each `report#XmppPosition`.
+    pub location_reports: Vec<Json>,
+    /// The JIDs each user blocked (`get#BlockedJids`), by userId.
+    pub blocks: HashMap<String, Vec<String>>,
+}
+
+/// A location share as `report#XmppPosition` stands in for it: its XMPP contacts' users, and whether it is approximate.
+#[derive(Clone)]
+pub struct LocationShare {
+    pub audience: Vec<String>,
+    pub approximate: bool,
 }
 
 pub struct Fake {
@@ -472,6 +492,9 @@ impl Fake {
             }
             // a cap the services hold (SEC-COM-20), for the names a test gives to be past it
             services::PEP_PUBLISH if text(p, "node") == FULL_NODE => Ok(json!({"resourceConstraint": true})),
+            services::PEP_PUBLISH | services::PEP_ITEMS if text(p, "node") == SERVICE_REFUSED_NODE => {
+                Ok(json!({"refused": true}))
+            }
             services::BLOCK if p["jidList"].to_string().contains(FULL_JID) => Ok(json!({"resourceConstraint": true})),
             services::PUSH_ENABLE if text(p, "pushJid") == FULL_JID => Ok(json!({"resourceConstraint": true})),
             services::PEP_PUBLISH => {
@@ -537,7 +560,34 @@ impl Fake {
                     .collect();
                 Ok(json!({"targetList": list}))
             }
-            services::BLOCKS => Ok(json!({"jidList": []})),
+            // the service takes the report through report#Position and pushes what the share's audience may see to its
+            // XMPP contacts' users alone: here an approximate share's "cell" is the fix to two places, a stand-in for
+            // the services' grid
+            services::LOCATION_REPORT => {
+                state.location_reports.push(p.clone());
+                if let Some(answer) = state.location_answer.clone() {
+                    return Ok(answer);
+                }
+                let Some(share) = state.location_share.clone() else {
+                    return Ok(json!({"statusCode": 403, "reasonCode": "NO_XMPP_SHARE"}));
+                };
+                let number = |field: &str| text(p, field).parse::<f64>().ok();
+                let (mut latitude, mut longitude, mut accuracy) =
+                    (number("latitude"), number("longitude"), number("accuracy"));
+                if share.approximate {
+                    let cell = |value: Option<f64>| value.map(|value| (value * 100.0).round() / 100.0);
+                    (latitude, longitude, accuracy) = (cell(latitude), cell(longitude), Some(1000.0));
+                }
+                let body = json!({"topic": format!("{}S1", crate::registry::LOCATION_TOPIC), "userIds": share.audience,
+                    "message": {"shareId": "S1", "ownerUserId": me, "event": "position", "latitude": latitude,
+                        "longitude": longitude, "accuracy": accuracy, "observedDate": p.get("observedMillis"),
+                        "thruDate": 1_900_000_000_000_i64}});
+                if let Some(server) = self.server.get().and_then(Weak::upgrade) {
+                    server.registry.deliver_notice(&body);
+                }
+                Ok(json!({"statusCode": 200}))
+            }
+            services::BLOCKS => Ok(json!({"jidList": state.blocks.get(&me).cloned().unwrap_or_default()})),
             services::STATUSES => Ok(json!({"statusMap": {}})),
             services::SET_STATUS => {
                 state.statuses.insert(me, text(p, "status"));

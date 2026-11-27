@@ -681,7 +681,7 @@ function finish(target, batch) {
         state,
         // the previews an apply or a retry rewrote are part of the fingerprint
         inputFingerprint: fingerprintOf(batch.request.validatedRevision, items),
-        lastError: failedCount ? failedCount + " rows need attention" : null,
+        lastError: failedCount ? failedCount + (Number(failedCount) === 1 ? " row needs attention" : " rows need attention") : null,
         appliedDate: batch.row.appliedDate || ec.user.nowTimestamp,
         completedDate: state === "complete" ? ec.user.nowTimestamp : null
     })

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! An EsriJSON file as an overlay (plans/Maps.md §4.1; the ArcGIS REST API's FeatureSet): its features' points,
+//! An EsriJSON file as an overlay (plans/archive/Maps.md §4.1; the ArcGIS REST API's FeatureSet): its features' points,
 //! multipoints, polylines and polygons (rings grouped as the format winds them: clockwise outer rings, counterclockwise
 //! holes), their `attributes` read as properties. The `spatialReference` (the set's, or a geometry's own) is WGS84 when
 //! it is absent; EPSG:4326 and Web Mercator (3857, 102100, ...) are read, any other refused. Curves (`curvePaths`,
@@ -46,9 +46,8 @@ fn reference_crs(reference: Option<&Value>) -> Result<Option<Crs>, OverlayError>
         .iter()
         .find_map(|name| reference.get(*name).and_then(Value::as_u64));
     match code.and_then(|code| u32::try_from(code).ok()) {
-        Some(code) => Crs::of_code(code)
-            .map(Some)
-            .ok_or_else(|| crs_unsupported(&format!("WKID {code}"))),
+        // a WKID not WGS84 or Web Mercator is an EPSG code of the registry, or refused when it is used
+        Some(code) => Ok(Crs::of_code(code)),
         None if reference.get("wkt").is_some() => Err(crs_unsupported("a spatial reference given as WKT")),
         None => Ok(None),
     }
@@ -155,7 +154,7 @@ impl Reader {
         let crs = reference_crs(shape.get("spatialReference"))?
             .or(set_crs)
             .unwrap_or(Crs::Wgs84);
-        self.use_crs(crs);
+        self.use_crs(crs)?;
         let (label, description) = self.pick_properties(feature.get("attributes").and_then(Value::as_object));
         self.add_raw(geometry(shape), &label, &description)
     }

@@ -528,6 +528,32 @@ fn the_request_host_is_read_without_its_port() {
     assert_eq!(super::request_host(""), "");
 }
 
+/// A `Host` whose port is not digits is refused before the rules read it: the rules would take `shop.example:x` for a
+/// host of its own, and the screens cut it at the colon and serve `shop.example` (SEC-WEB-82).
+#[test]
+fn a_host_whose_port_is_not_digits_is_refused() {
+    for good in [
+        "shop.example",
+        "shop.example:8443",
+        "shop.example:",
+        "[2001:db8::1]",
+        "[2001:db8::1]:443",
+        "",
+    ] {
+        assert!(super::host_port_valid(good), "{good}");
+    }
+    for bad in [
+        "shop.example:x",
+        "shop.example:80x",
+        "shop.example:80:81",
+        "[2001:db8::1]x",
+        "[2001:db8::1]:a",
+        "[::1",
+    ] {
+        assert!(!super::host_port_valid(bad), "{bad}");
+    }
+}
+
 /// A ban started here is told ([`super::Guard::set_notifier`]); one told by another node is applied, never to a
 /// trusted proxy or an exempt client; one a paired node told holds for its hosts only; a lift ends them.
 #[test]

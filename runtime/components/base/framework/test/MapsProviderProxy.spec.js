@@ -1,4 +1,4 @@
-// A map provider reached through this server (plans/Maps.md §4.2, "a proxy is an explicit provider option"; MapProviders.js
+// A map provider reached through this server (plans/archive/Maps.md §4.2, "a proxy is an explicit provider option"; MapProviders.js
 // providerAsset, tools screen/Maps/LocalMap.xml providerProxy): a keyed provider with proxyRequests Y is tested as the
 // proxy asks it, the key added and the paths its style names recorded; the effective configuration hands its layer the
 // proxy's same-origin path; the style and its TileJSON come back rewritten to the proxy's paths with the key out of them;

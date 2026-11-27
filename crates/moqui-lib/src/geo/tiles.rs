@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A user's overlay too large to draw whole cut into vector tiles (plans/Maps.md §7 "Geometry/import jobs"; docs/tools/
+//! A user's overlay too large to draw whole cut into vector tiles (plans/archive/Maps.md §7 "Geometry/import jobs"; docs/tools/
 //! Maps.md "Large overlays"): its features (sanitized GeoJSON from [`super::overlay`]) projected to Web Mercator, and for
 //! each zoom from 0 simplified to half a pixel of a 256-pixel tile ([`super::simplify`]), clipped to each tile they
 //! touch with a small buffer, points thinned to one a pixel, and written as one MVT layer `overlay` with each feature's
@@ -102,6 +102,32 @@ fn rings(value: &Value) -> Option<Vec<Vec<Xy>>> {
 }
 
 impl TileFeature {
+    /// Feature `id` of `shape` (already in the unit square, [`project`]); `None` for a shape with no position.
+    #[must_use]
+    pub fn new(id: u64, shape: Shape, label: String, description: String) -> Option<Self> {
+        let mut bbox = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
+        let mut grow = |point: &Xy| {
+            bbox = [
+                bbox[0].min(point[0]),
+                bbox[1].min(point[1]),
+                bbox[2].max(point[0]),
+                bbox[3].max(point[1]),
+            ];
+        };
+        match &shape {
+            Shape::Points(points) => points.iter().for_each(&mut grow),
+            Shape::Lines(lines) => lines.iter().flatten().for_each(&mut grow),
+            Shape::Polygons(polygons) => polygons.iter().flatten().flatten().for_each(&mut grow),
+        }
+        bbox[0].is_finite().then_some(Self {
+            id,
+            shape,
+            label,
+            description,
+            bbox,
+        })
+    }
+
     /// A GeoJSON Feature (WGS84, as an overlay's reading gives it) as feature `id`; `None` for one with no geometry of a
     /// kind tiled (Point, LineString, Polygon and their Multi kinds).
     #[must_use]

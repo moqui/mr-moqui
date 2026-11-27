@@ -586,6 +586,18 @@ fn serve_servlet(
     flags: (bool, bool),
 ) -> Result<WebResponse, Error> {
     use crate::web::servlet::Handler;
+    // `tokenRoute` is the token route's own ([`token_route::dispatch`], which calls the screens without this): one a
+    // request sends (a JSON object parameter) never reaches a screen as the route's, `/PublicShell`'s base path and
+    // context among them (SEC-RTE-18)
+    let unbound;
+    let parameters = if parameters.contains_key(token_route::ROUTE_PARAMETER) {
+        let mut without = parameters.clone();
+        without.remove(token_route::ROUTE_PARAMETER);
+        unbound = without;
+        &unbound
+    } else {
+        parameters
+    };
     match &found.servlet.handler {
         Handler::Screen => dispatch_request(factory, request, root, parameters, json_list, login_error, flags, None),
         Handler::Fop => {

@@ -524,6 +524,9 @@ fn mysql_driver(conf: &DatasourceConf) -> Result<Arc<dyn DbDriver>, Error> {
         &conf.database,
         conf.tls,
     )
+    // the datasource's sslmode and sslrootcert, as a Postgres datasource takes them: a private authority, verify-ca
+    // or require, not only the public roots in full (SEC-DAT-97)
+    .tls_options(conf.tls_verify, &conf.tls_root_cert)
     .isolation(
         conf.isolation_level
             .map(moqui_core::entity::datasource::IsolationLevel::sql),

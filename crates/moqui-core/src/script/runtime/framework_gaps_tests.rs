@@ -1127,6 +1127,42 @@ fn data_loader_check_info_gives_diff_rows() {
     );
 }
 
+/// As Java's `internalRun`, a load sets its caller's transaction aside and loads each text in one of its own. Inside a
+/// screen's transaction, whose cache would hold the writes until its commit, a record the database refuses fails the
+/// load, which names the text and the record; the caller's own write still commits (TOOL-UI-005).
+#[test]
+fn a_load_in_a_cached_transaction_fails_at_its_record_and_the_caller_commits() {
+    let context = database();
+    let _entered = context.enter();
+    let facade = context.factory().entity().unwrap();
+    let tx = facade.default_transactions().unwrap();
+    let thrown = tx
+        .run(crate::transaction::TransactionAttribute::Cache, None, || {
+            run_script(
+                r#"ec.artifactExecution.disableAuthz();
+                const foo = ec.entity.makeValue("moqui.test.Foo"); foo.fooId = "CALLER"; foo.create()"#,
+            )?;
+            let _refused = crate::testing::FailTable::new("test_entity");
+            Ok(crate::script::eval_value(
+                r#"(function () {
+                    try {
+                        ec.entity.makeDataLoader().xmlText(`<entity-facade-xml>
+                            <moqui.test.TestEntity testId="LOAD_A" testMedium="a"/></entity-facade-xml>`).load();
+                        return "";
+                    } catch (e) { return String(e.message); }
+                })()"#,
+            )?)
+        })
+        .unwrap();
+    let thrown = moqui_lib::object::to_plain_string(&thrown);
+    assert!(
+        thrown.starts_with("Error loading xmlText: Could not store moqui.test.TestEntity [testId=LOAD_A]"),
+        "{thrown}"
+    );
+    holds(r#"ec.entity.find("moqui.test.Foo").condition("fooId", "CALLER").one() != null"#);
+    holds(r#"ec.entity.find("moqui.test.TestEntity").condition("testId", "LOAD_A").one() == null"#);
+}
+
 /// Java's `list()` (P4a-18): the values of the records, a nested record after the one it is in and with its key, and
 /// nothing written.
 #[test]

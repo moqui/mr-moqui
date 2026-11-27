@@ -1,4 +1,4 @@
-// The Maps walks' fixture (client/MapsBrowseWalk, client/MapsDialogWalk; plans/Maps.md §9), run on the walks' server by
+// The Maps walks' fixture (client/MapsBrowseWalk, client/MapsDialogWalk; plans/archive/Maps.md §9), run on the walks' server by
 // client/suite.js: maps.walk, a Maps user the framework's test adapter lets write (MAPS_SPEC_STORE), and maps.walk.plain,
 // with ALL_USERS alone; the test adapter (framework test/service/org/moqui/mapstest) registered as MAPS_WALK_ADAPTER and
 // granted to every user, as a component would; a record layer of it on the outline profile (its features one more than a

@@ -1,4 +1,4 @@
-// Users' overlays and saved places of org.moqui.maps.MapServices (plans/Maps.md §4.1, §4.2, §8; docs/tools/Maps.md
+// Users' overlays and saved places of org.moqui.maps.MapServices (plans/archive/Maps.md §4.1, §4.2, §8; docs/tools/Maps.md
 // "Overlays and places"): a geographic file (GeoJSON, TopoJSON, EsriJSON, GPX, KML, GML, WKT, WKB, delimited text, a
 // zipped shapefile) added as a personal overlay, the overlay transition's access check and content, the overlays a user
 // owns or reads through a share, the saved places file, and the editing of one's own overlay (editOverlay, saveEdit).
@@ -183,7 +183,7 @@ function quietly(read) {
         if (!wasDisabled) ec.artifactExecution.enableAuthz()
     }
 }
-// convert#Overlay (Rust): {valid, reasonCode, reason, featureCount, rejectedCount, bounds, crs, notes, geojson}
+// convert#Overlay (Rust): {valid, reasonCode, reason, featureCount, rejectedCount, bounds, crs, transform, notes, geojson}
 function convert(parameters) {
     const out = probe(
         "org.moqui.maps.MapSourceServices.convert#Overlay",
@@ -211,6 +211,8 @@ function recordReading(row, reading) {
     row.set("maxLongitude", bounds[2])
     row.set("maxLatitude", bounds[3])
     row.set("sourceCrs", text(reading.crs) || "EPSG:4326")
+    // the provenance of a converted CRS (P4c): what converting it to WGS84 did, empty for WGS84
+    row.set("crsTransform", text(reading.transform).slice(0, 250) || null)
     row.set(
         "importNotes",
         Array.from(reading.notes || [])
@@ -721,7 +723,7 @@ function saveEdit(p) {
         if (!written) return refused("NOT_SAVED", errors[0] || L("The overlay was not saved"))
         path = cleanPath(written.path)
     }
-    const kept = {sourceCrs: row.sourceCrs, importNotes: row.importNotes}
+    const kept = {sourceCrs: row.sourceCrs, crsTransform: row.crsTransform, importNotes: row.importNotes}
     if (path !== cleanPath(row.path)) {
         row.set("sourcePath", cleanPath(row.path))
         row.set("path", path)
@@ -999,6 +1001,32 @@ function storePlace(p) {
     const row = placesRow(driveId)
     return {applied: true, reasonCode: null, reason: null, placeId, overlayId: String(row.overlayId)}
 }
+// Browse's savePlace after its transaction failed (plans/archive/Maps-Offline.md §2.5): the answer to a place sent by its
+// clientRef whose claim, save and kept result were rolled back together. Two sends of one ref can overlap (the apps'
+// outbox sends again after a lost answer): the second's claim misses the first's row while it is uncommitted, then its
+// insert meets the row's key and its transaction fails. So the ref is read again, now committed: a row there is the first
+// send's, answered as the duplicate it is with its kept result. With none, a service's own refusal of its input
+// (unprocessable: the Unprocessable kind throwOnError marks, a ref that is not one or a parameter not valid) is answered as
+// that error, which will not pass; any other (the overlapping send not yet committed, a lock wait, a deadlock, a timeout)
+// is thrown again, a 500 the outbox tries again later.
+// {outcome: duplicate (with result), errors, or rethrow}
+function placeAfterFailure(p) {
+    const row = ec.entity
+        .find("moqui.basic.client.ClientRequestRef")
+        .condition({userId: ec.user.userId, serviceName: "org.moqui.maps.MapServices.store#Place", clientRef: text(p.clientRef)})
+        .disableAuthz()
+        .one()
+    if (row) {
+        let result = {}
+        try {
+            result = row.resultJson ? JSON.parse(row.resultJson) : {}
+        } catch (err) {
+            result = {}
+        }
+        return {outcome: "duplicate", result}
+    }
+    return {outcome: yes(p.unprocessable) ? "errors" : "rethrow", result: null}
+}
 function deletePlace(p) {
     if (!text(ec.user.userId)) throw new Error(L("Sign in to remove a place"))
     const placeId = text(p.placeId)
@@ -1065,6 +1093,7 @@ function overlayLayerReadable(layerId) {
 }
 
 const operations = {
+    placeAfterFailure,
     storeOverlay,
     editOverlay,
     saveEdit,

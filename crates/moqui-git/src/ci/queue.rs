@@ -127,26 +127,49 @@ pub fn enabled(entity: &EntityFacade) -> bool {
 /// (docs/interfaces/Git-Hosting.md, Reachability): the commit is the event's own, a pushed ref's or a merge request's
 /// head, a hidden one's too. A commit no ref of the repository reaches any more (another repository's of its fork
 /// network, a head its merge request has left) reads as one that is not there, so a run is not a way to read it.
-fn read_at(provider: &GitProvider, repository_id: &str, commit_id: &str, name: &str) -> Result<Option<String>, Error> {
+///
+/// A file over `most` bytes is not read: its size is answered (`Err` of the inner result), so a large `ci.xml` or
+/// `component.xml` costs no memory on each event or for each viewer (SEC-GIT-89).
+fn read_at(
+    provider: &GitProvider,
+    repository_id: &str,
+    commit_id: &str,
+    name: &str,
+    most: usize,
+) -> Result<Option<Result<String, u64>>, Error> {
     let _rows = crate::rows_guard();
     let _hidden = crate::reach::with_hidden(true);
-    Ok(provider
-        .blob_at(repository_id, commit_id, &[name.to_string()])?
-        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned()))
+    Ok(
+        match provider.file_at(repository_id, commit_id, &[name.to_string()], most as u64)? {
+            Some(crate::browse::FileAt::Content(bytes)) => Some(Ok(String::from_utf8_lossy(&bytes).into_owned())),
+            Some(crate::browse::FileAt::TooLarge(size)) => Some(Err(size)),
+            None => None,
+        },
+    )
 }
 
 /// The pipelines of `repository_id` at `commit_id`: its `ci.xml`, else the built-in pipeline when its root has a
 /// `component.xml`.
 pub fn definition(provider: &GitProvider, repository_id: &str, commit_id: &str) -> Result<Definition, Error> {
     let limits = super::limits();
-    if let Some(text) = read_at(provider, repository_id, commit_id, "ci.xml")? {
-        return Ok(match super::file::parse(&text, &limits) {
-            Ok(file) => Definition::File(file),
-            Err(err) => Definition::Invalid(err.to_string()),
-        });
+    match read_at(provider, repository_id, commit_id, "ci.xml", limits.max_bytes)? {
+        Some(Ok(text)) => {
+            return Ok(match super::file::parse(&text, &limits) {
+                Ok(file) => Definition::File(file),
+                Err(err) => Definition::Invalid(err.to_string()),
+            })
+        }
+        Some(Err(size)) => {
+            return Ok(Definition::Invalid(format!(
+                "the file is {size} bytes, over this server's limit of {}",
+                limits.max_bytes
+            )))
+        }
+        None => {}
     }
-    let Some(component) =
-        read_at(provider, repository_id, commit_id, "component.xml")?.and_then(|text| builtin::component(&text))
+    let Some(component) = read_at(provider, repository_id, commit_id, "component.xml", limits.max_bytes)?
+        .and_then(Result::ok)
+        .and_then(|text| builtin::component(&text))
     else {
         return Ok(Definition::None);
     };

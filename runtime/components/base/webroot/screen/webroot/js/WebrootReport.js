@@ -563,13 +563,19 @@
     // The bundled outline (Natural Earth 110m countries as TopoJSON, from world-atlas), loaded once; the print document
     // inlines it as moquiReportGeo.
     report.outlinePath = "/libs/naturalearth/countries-110m.json";
+    // The outline when it is already at hand (loaded, or inlined by the print document), else null. It is marked raw so
+    // a panel holding it in its data does not make its geometries reactive.
+    report.currentOutline = () => {
+        if (root.moquiReportGeo && !report.outline) report.outline = report.rawOutline(report.topoCountries(root.moquiReportGeo));
+        return report.outline || null;
+    };
+    report.rawOutline = (outline) => root.Vue && root.Vue.markRaw ? root.Vue.markRaw(outline) : outline;
     report.loadOutline = () => {
-        if (root.moquiReportGeo && !report.outline) report.outline = report.topoCountries(root.moquiReportGeo);
-        if (report.outline) return Promise.resolve(report.outline);
+        if (report.currentOutline()) return Promise.resolve(report.outline);
         if (!report.outlineLoading) report.outlineLoading = root.fetch(report.outlinePath, { credentials: "same-origin" }).then((response) => {
             if (!response.ok) throw new Error("Map outline unavailable (" + response.status + ")");
             return response.json();
-        }).then((topology) => (report.outline = report.topoCountries(topology))).catch((error) => { report.outlineLoading = null; throw error; });
+        }).then((topology) => (report.outline = report.rawOutline(report.topoCountries(topology)))).catch((error) => { report.outlineLoading = null; throw error; });
         return report.outlineLoading;
     };
     // Countries of a TopoJSON topology: {id (ISO numeric), name, polygons of [lon, lat] rings, centroid}.
@@ -626,16 +632,27 @@
             .sort((a, b) => b.value - a.value);
         return { mode: "countries", countries, listed, unmatched: unmatched.slice(0, 20), max, field: value && value.field };
     };
-    // A geomap's drill-down into Maps (plans/Maps.md §2, the Dashboard geomap row): Browse centered on a country's largest
+    // A geomap's drill-down into Maps (plans/archive/Maps.md §2, the Dashboard geomap row): Browse centered on a country's largest
     // land area (its extent, so an overseas territory does not widen it) or on a point, a plain extent or point and nothing
     // else of the panel's rows. Offered only where the dashboard's screen names the maps link (appLinks.maps: a viewer whose
-    // own grants open the Maps app); "" otherwise.
+    // own grants open the Maps app); "" otherwise. Each outer ring across the antimeridian (Russia, Fiji) is unwrapped
+    // first, before its area is taken and its largest picked, so its area and extent are its own and not the world's: west
+    // greater than east, as Browse and m-map take an extent across it. A ring still wider than 180° unwrapped (one around a
+    // pole) keeps its plain longitudes.
     report.countryExtent = (country) => {
+        const unwrap = (ring) => {
+            const lons = ring.map((point) => point[0]);
+            if (Math.max(...lons) - Math.min(...lons) <= 180) return ring;
+            const shifted = ring.map(([lon, lat]) => [lon < 0 ? lon + 360 : lon, lat]), across = shifted.map((point) => point[0]);
+            return Math.max(...across) - Math.min(...across) <= 180 ? shifted : ring;
+        };
         const area = (points) => Math.abs(points.reduce((sum, point, at) => { const next = points[(at + 1) % points.length]; return sum + point[0] * next[1] - next[0] * point[1]; }, 0));
-        const outer = (country && country.polygons || []).map((polygon) => polygon[0]).filter((ring) => ring && ring.length).sort((a, b) => area(b) - area(a))[0];
+        const outer = (country && country.polygons || []).map((polygon) => polygon[0]).filter((ring) => ring && ring.length).map(unwrap)
+            .sort((a, b) => area(b) - area(a))[0];
         if (!outer) return null;
         const lons = outer.map((point) => point[0]), lats = outer.map((point) => point[1]);
-        return [Math.min(...lons), Math.min(...lats), Math.max(...lons), Math.max(...lats)].map((value) => Math.round(value * 1e4) / 1e4);
+        const wrap = (lon) => lon > 180 ? lon - 360 : lon;
+        return [wrap(Math.min(...lons)), Math.min(...lats), wrap(Math.max(...lons)), Math.max(...lats)].map((value) => Math.round(value * 1e4) / 1e4);
     };
     report.mapsUrl = (maps, place) => {
         if (!maps || !place) return "";
@@ -708,6 +725,48 @@
     };
     // Leaving the page for another view, in one place so a test can watch it.
     report.navigate = (href) => root.location.assign(href);
+    // Back from Maps to the geomap place that opened it (plans/ui-review-maps.md MAP-UI-001): the page loads again and its
+    // outline after it, so leaving keeps the page, the panel and the place ({country} or {point}) in the tab's
+    // sessionStorage, and the panel focuses that place once it has drawn it on the page Back brought.
+    report.geomapReturnKey = "moqui.report.geomapReturn";
+    const pageOf = (href) => { const url = new root.URL(href, root.location.href); return url.pathname + url.search; };
+    let geomapReturn = null;
+    report.leaveGeomap = (href, panelId, place) => {
+        try { root.sessionStorage.setItem(report.geomapReturnKey, JSON.stringify(Object.assign({ page: pageOf(root.location.href), panel: panelId || "" }, place))); }
+        catch (error) { /* no storage: Back lands on the page without the focus */ }
+        report.navigate(href);
+    };
+    // How this page came: "back_forward" for Back or Forward, "navigate" for a link, "" when the browser does not say.
+    report.navigationType = () => {
+        try { const entry = root.performance.getEntriesByType("navigation")[0]; return entry && entry.type || ""; } catch (error) { return ""; }
+    };
+    const savedReturn = () => {
+        try { const saved = JSON.parse(root.sessionStorage.getItem(report.geomapReturnKey) || "null"); return saved && saved.page === pageOf(root.location.href) ? saved : null; }
+        catch (error) { return null; }
+    };
+    const dropSavedReturn = () => { try { root.sessionStorage.removeItem(report.geomapReturnKey); } catch (error) { /* no storage */ } };
+    // Read once as the page loads. A place left from this page leaves storage either way, and is held for its panel only
+    // when Back or Forward brought the page (a later visit by a link is no return); one left from another page (Maps loads
+    // this script too) stays for that page. Once the viewer acts, the return is past, so a panel drawn later takes no focus.
+    report.takeGeomapReturn = () => {
+        geomapReturn = null;
+        const saved = savedReturn();
+        if (!saved) return;
+        dropSavedReturn();
+        if (report.navigationType() !== "back_forward") return;
+        geomapReturn = saved;
+        const drop = () => { geomapReturn = null; };
+        for (const type of ["keydown", "pointerdown"]) root.addEventListener(type, drop, { capture: true, once: true });
+    };
+    // The place held for this page's panel, or null; it is held until the panel has drawn and focused it.
+    report.geomapReturn = (panelId) => geomapReturn && geomapReturn.page === pageOf(root.location.href) && geomapReturn.panel === (panelId || "") ? geomapReturn : null;
+    report.clearGeomapReturn = () => { geomapReturn = null; };
+    // takeGeomapReturn and the saved-place helpers catch storage errors; reading root.sessionStorage here could throw where storage is blocked
+    if (root.addEventListener) {
+        report.takeGeomapReturn();
+        // a page the back-forward cache restored was not loaded again: its own focus stands, and the place it saved is dropped
+        root.addEventListener("pageshow", (event) => { if (event.persisted) { geomapReturn = null; if (savedReturn()) dropSavedReturn(); } });
+    }
     // Whether the text went to the clipboard; a browser that refuses, or does not answer within a second, leaves it to the viewer.
     report.copyText = async (text) => { try { if (!root.navigator.clipboard) return false; return await Promise.race([root.navigator.clipboard.writeText(text).then(() => true), new Promise((resolve) => root.setTimeout(() => resolve(false), 1000))]); } catch (_) { return false; } };
     report.mergeLogHits = (previous, incoming, limit) => {
@@ -1374,10 +1433,10 @@
             title: String, height: { type: String, default: "300px" }, dashboardId: String, panelId: String, screenUrl: String, range: Object, variables: Object, syncGroup:String,filters:{type:Array,default:()=>[]},
             editable:Boolean, embedded:Boolean, single:Boolean, appLinks:Object, display:Boolean },
         emits:["filter"],
-        data: () => ({ sortField: -1, descending: false, inspector: false, inspection: null, busy: false, actionError: "", menu: false, shared: "", status: "", flameFocus: null, outlineReady: false, outlineError: "" }),
+        data: () => ({ sortField: -1, descending: false, inspector: false, inspection: null, busy: false, actionError: "", menu: false, shared: "", status: "", flameFocus: null, outline: report.currentOutline(), outlineError: "" }),
         computed: { themeDark() { return !!(this.$q && this.$q.dark && this.$q.dark.isActive); } },
-        mounted() { this.needOutline(); this.colorFlameLabels(); },
-        updated() { this.needOutline(); this.colorFlameLabels(); },
+        mounted() { this.needOutline(); this.colorFlameLabels(); this.focusGeomapReturn(); },
+        updated() { this.needOutline(); this.colorFlameLabels(); this.focusGeomapReturn(); },
         watch: {
             themeDark() {
                 // Resolve the palette and translucent fills after Quasar has changed the body theme.
@@ -1419,11 +1478,24 @@
                     label.setAttribute("fill", chosen.get(key));
                 }
             },
-            // A geomap waits for the bundled outline; the panel draws again once it is loaded.
+            // A geomap waits for the bundled outline. The render reads it from this panel's data, not from moqui.report
+            // (which Vue does not track), so setting it there when the load finishes draws the countries
+            // (plans/ui-review-dashboards.md DASH-UI-006).
             needOutline() {
-                if ((this.panel.visualization || this.panel.type) !== "geomap" || report.outline || this.outlineError || this.outlineRequested) return;
+                if ((this.panel.visualization || this.panel.type) !== "geomap" || this.outline || this.outlineError || this.outlineRequested) return;
                 this.outlineRequested = true;
-                report.loadOutline().then(() => { this.outlineReady = true; }).catch((error) => { this.outlineError = String(error && error.message || error); });
+                report.loadOutline().then((outline) => { this.outline = outline; }).catch((error) => { this.outlineError = String(error && error.message || error); });
+            },
+            // Back from Maps: the country or point that opened it is focused again once drawn (report.leaveGeomap).
+            focusGeomapReturn() {
+                if ((this.panel.visualization || this.panel.type) !== "geomap" || !this.outline || !this.$el || !this.$el.querySelectorAll) return;
+                const saved = report.geomapReturn(this.panelId);
+                if (!saved) return;
+                const mark = saved.country != null ? "data-country" : "data-point", value = String(saved.country != null ? saved.country : saved.point);
+                const place = Array.from(this.$el.querySelectorAll("svg [" + mark + "][data-maps-url]")).find((node) => node.getAttribute(mark) === value);
+                if (!place) return;
+                report.clearGeomapReturn();
+                place.focus();
             },
             // The app's links: the dashboard's, or a standalone panel's own (Explore's histogram).
             links(){return this.appLinks || this.panel.appLinks;},
@@ -1507,8 +1579,6 @@
             const shared = this.status ? h("p", { role: "status", class: "q-my-xs" }, [this.status, " ", this.shared ? h("input", { type: "text", readonly: true, value: this.shared, "aria-label": T("Panel link"), style: { width: "min(100%,40rem)" }, onFocus: (event) => event.target.select() }) : null,
                 E.button("Close", () => { this.status = ""; this.shared = ""; })]) : null;
             let content;
-            // The print document inlines the outline, so its map is drawn in the first pass.
-            if (visual === "geomap" && !report.outline && root.moquiReportGeo) report.loadOutline();
             if (visual === "text") content = h(root.Vue.resolveComponent("m-markdown"), { text: report.substituteVariables(this.panel.text || "", Object.assign({}, this.variables, this.panel.repeatValues), this.range) });
             // a panel that could not be read (a dataset the viewer may not read, a failed query) says so, never "no data"
             else if (!rows.length && report.unavailable(this.panel)) content = h("p", { role: "alert", class: "text-negative" }, T("Not available: {0}", report.unavailable(this.panel)));
@@ -1575,21 +1645,21 @@
                         h("rect", { width: "100%", height: rowHeight - 1, style: { width: "max(0.5px, calc(100% - 1px))" }, fill: report.color(colors[rect.depth % colors.length]), opacity: 0.35 + 0.65 * (rect.self / rect.total || 0) }),
                         // a frame narrower than 1% of the graph keeps its title tooltip but draws no label
                         rect.w >= 0.01 ? h("text", { class: "m-report-flame-label", x: 3, y: 14, "font-size": "12", fill: "currentColor" }, rect.name) : null])))]);
-            } else if (visual === "geomap" && report.geomap(frame, this.panel, report.outline)) {
-                const map = report.geomap(frame, this.panel, report.outline), formatted = (value) => report.format(value, map.field || { type: "number" });
+            } else if (visual === "geomap" && report.geomap(frame, this.panel, this.outline)) {
+                const map = report.geomap(frame, this.panel, this.outline), formatted = (value) => report.format(value, map.field || { type: "number" });
                 // a country or a point opens Maps there, where the dashboard's screen offers it (appLinks.maps); else nothing changes
-                const maps = (this.links() || {}).maps, opens = (place, name) => {
-                    const url = report.mapsUrl(maps, place);
+                const maps = (this.links() || {}).maps, opens = (place, name, mark) => {
+                    const url = report.mapsUrl(maps, place), leave = () => report.leaveGeomap(url, this.panelId, mark);
                     return url ? { tabindex: 0, role: "link", "aria-label": T("Open in Maps") + ": " + name, "data-maps-url": url, style: { cursor: "pointer" },
-                        onClick: () => report.navigate(url), onKeydown: (event) => { if (event.key === "Enter") report.navigate(url); } } : {};
+                        onClick: leave, onKeydown: (event) => { if (event.key === "Enter") leave(); } } : {};
                 };
                 const base = map.countries.map((country, at) => h("path", Object.assign({ key: "c" + at, d: report.countryPath(country), fill: country.value != null ? "var(--q-primary)" : "rgba(127,127,127,0.18)", "fill-opacity": country.value != null ? country.shade : 1,
-                    stroke: "var(--m-panel-bg, white)", "stroke-width": "0.2", "data-country": country.id }, opens({ extent: report.countryExtent(country) }, country.name)), [h("title", country.name + (country.value != null ? ": " + formatted(country.value) : ""))]));
+                    stroke: "var(--m-panel-bg, white)", "stroke-width": "0.2", "data-country": country.id }, opens({ extent: report.countryExtent(country) }, country.name, { country: country.id })), [h("title", country.name + (country.value != null ? ": " + formatted(country.value) : ""))]));
                 const points = (map.points || []).map((point, at) => h("circle", Object.assign({ key: "p" + at, cx: point.x, cy: point.y, r: point.r, fill: "var(--q-negative)", "fill-opacity": "0.6", "data-point": point.label || at },
-                    opens({ lon: point.lon, lat: point.lat }, point.label || report.format(point.lat, { type: "number" }) + ", " + report.format(point.lon, { type: "number" }))), [h("title", (point.label ? point.label + ": " : "") + formatted(point.value))]));
+                    opens({ lon: point.lon, lat: point.lat }, point.label || report.format(point.lat, { type: "number" }) + ", " + report.format(point.lon, { type: "number" }), { point: String(point.label || at) })), [h("title", (point.label ? point.label + ": " : "") + formatted(point.value))]));
                 content = h("figure", { class: "m-report-geomap q-ma-none" }, [
                     h("svg", { viewBox: "0 0 360 150", width: "100%", style: { maxHeight: this.height }, role: "img", "aria-label": map.mode === "points" ? "Map of " + map.points.length + " places" : "Map of " + map.listed.length + " countries" }, [...base, ...points]),
-                    !report.outline ? h("p", { role: "status", class: "text-caption" }, this.outlineError || "Loading the map outline…") : null,
+                    !this.outline ? h("p", { role: "status", class: "text-caption" }, this.outlineError || "Loading the map outline…") : null,
                     map.mode === "countries" ? h("details", [h("summary", "Values by country"), h("table", { class: "q-table" }, [h("tbody", map.listed.slice(0, 50).map((item) => h("tr", { key: item.id }, [h("td", item.name), h("td", formatted(item.value))])))]),
                         map.unmatched.length ? h("p", { class: "text-caption" }, "Not a known country code: " + map.unmatched.join(", ")) : null]) : null]);
             } else if (visual === "stateTimeline") {
@@ -1668,10 +1738,11 @@
     };
     components["m-dashboard"] = {
         props: { dashboard: { type: Object, default: () => ({ panels: {} }) }, frames: { type: Object, default: () => ({}) } },
-        data() { return { syncGroup:"report-dashboard-"+Math.random().toString(36).slice(2), keyPrefix:"", keyAt:0, panelRefs:{}, selectedPanel:"", activeTabs: {}, kiosk: !!(this.dashboard && this.dashboard.kiosk), refreshSeconds: 0, timer: null, shareStatus: "", shareLink: "" }; },
+        data() { return { syncGroup:"report-dashboard-"+Math.random().toString(36).slice(2), keyPrefix:"", keyAt:0, panelRefs:{}, selectedPanel:"", activeTabs: {}, kiosk: !!(this.dashboard && this.dashboard.kiosk), refreshSeconds: 0, timer: null, shareStatus: "", shareLink: "", livePanels: {} }; },
         mounted() {
             this.refreshSeconds = Number(this.dashboard.refreshSeconds) || 0;
             this.setRefresh();
+            this.follow();
             // An embed is one part of another screen: it takes no page keys and leaves the page's URL alone.
             if (this.dashboard.embedded) return;
             this.onKey = (event) => {
@@ -1695,8 +1766,61 @@
             this.onRange=(event)=>{if(event.detail.group!==this.syncGroup)return;const url=new root.URL(root.location.href);url.searchParams.set('from',event.detail.from);url.searchParams.set('thru',event.detail.thru);url.searchParams.delete('cursor');url.searchParams.delete('pageIndex');root.location.assign(url.href);};
             root.document.addEventListener('moqui-report-range',this.onRange);
         },
-        beforeUnmount() { root.clearInterval(this.timer); root.document.removeEventListener("keydown", this.onKey);root.document.removeEventListener("moqui-report-range",this.onRange); },
+        beforeUnmount() { root.clearInterval(this.timer); root.clearTimeout(this.liveTimer); for (const room of Object.keys(this.watches || {})) this.unwatch(room); root.document.removeEventListener("keydown", this.onKey);root.document.removeEventListener("moqui-report-range",this.onRange); },
         methods: {
+            // A panel whose source says when it changed (a CalcGrid range: the room its frame was read from, whose topic
+            // this view joins as a watcher) is read again then, in place: an edit shows, and a share taken away reads as
+            // the panel's refusal, its values gone, without a reload (DASH-UI-008).
+            follow() {
+                const client = this.$root && this.$root.notificationClient;
+                if (!client || !client.registerListener) return;
+                this.watches = this.watches || {};
+                const panels = Object.assign({}, this.dashboard.panels || {}, this.livePanels), wanted = {};
+                for (const [id, panel] of Object.entries(panels)) for (const live of (panel && Array.isArray(panel.live) ? panel.live : []))
+                    if (live && live.kind === "calc" && live.room) (wanted[live.room] = wanted[live.room] || []).push(id);
+                for (const room of Object.keys(this.watches)) if (!wanted[room]) this.unwatch(room);
+                for (const [room, ids] of Object.entries(wanted)) {
+                    if (this.watches[room]) { this.watches[room].ids = ids; continue; }
+                    const clientId = "dashboard-" + Math.random().toString(36).slice(2), join = () => client.send({ calc: "join", room, client: clientId, watch: true });
+                    const watch = { ids, clientId, client };
+                    watch.off = client.registerListener("calc:" + room, (frame) => { if (frame && (frame.type === "changed" || frame.reopen)) this.panelsChanged(watch.ids); });
+                    watch.offState = client.onState ? client.onState((state) => { if (state === "open") join(); }) : () => {};
+                    this.watches[room] = watch;
+                    join();
+                }
+            },
+            unwatch(room) {
+                const watch = this.watches && this.watches[room];
+                if (!watch) return;
+                delete this.watches[room];
+                try { watch.client.send({ calc: "leave", room, client: watch.clientId }); } catch (_) { /* the socket is gone */ }
+                watch.off(); watch.offState();
+            },
+            // a burst of edits is read once
+            panelsChanged(ids) {
+                this.changedPanels = this.changedPanels || new Set();
+                for (const id of ids) this.changedPanels.add(id);
+                root.clearTimeout(this.liveTimer);
+                this.liveTimer = root.setTimeout(() => {
+                    const changed = Array.from(this.changedPanels); this.changedPanels.clear();
+                    Promise.all(changed.map((id) => this.readPanel(id))).then(() => this.follow());
+                }, 250);
+            },
+            // the panel as the server renders it now, through the dashboard screen's inspectPanel transition
+            async readPanel(id) {
+                const time = this.dashboard.absoluteTime || {};
+                const parameters = new root.URLSearchParams({ definitionId: this.dashboard.definitionId || "", panelId: id, from: time.from || "now-7d", thru: time.thru || "now",
+                    variables: JSON.stringify(this.dashboard.variableValues || {}), filtersJson: JSON.stringify(this.dashboard.filters || []) });
+                try {
+                    const response = await root.fetch((this.dashboard.screenUrl || "/apps/dashboards/Dashboard") + "/inspectPanel?" + parameters.toString(), { credentials: "same-origin", headers: { Accept: "application/json" } });
+                    const result = response.ok ? await response.json() : null;
+                    const panel = result && result.dashboard && result.dashboard.panels && result.dashboard.panels[id];
+                    // the dashboard itself no longer read (not shared, or gone): the panel says so, with no values
+                    const read = panel || { title: (this.livePanels[id] || (this.dashboard.panels || {})[id] || {}).title || id, frames: [], live: [],
+                        notices: [{ level: "error", complete: false, message: (result && (result.errors || result.error)) || "This panel is not available to you now" }] };
+                    this.livePanels = Object.assign({}, this.livePanels, { [id]: read });
+                } catch (_) { /* read again at the next change */ }
+            },
             allPanels(){root.location.assign(report.allPanelsUrl());},
             applyFilters(pills){const url=new root.URL(root.location.href);url.searchParams.set('filtersJson',JSON.stringify(pills));url.searchParams.delete('cursor');url.searchParams.delete('pageIndex');root.location.assign(url.href);},
             addFilter(pill){
@@ -1733,9 +1857,10 @@
         },
         render() {
             const h = reportElement, panels = this.dashboard.panels || {};
-            const entries = Array.isArray(panels) ? panels.map((panel, at) => [panel.id || String(at), panel]) : Object.entries(panels);
+            // a panel read again since the page was drawn (follow) is shown as read
+            const entries = (Array.isArray(panels) ? panels.map((panel, at) => [panel.id || String(at), panel]) : Object.entries(panels)).map(([id, item]) => [id, this.livePanels[id] || item]);
             const byId = Object.fromEntries(entries);
-            const panel = (id, position) => byId[id] ? h("div", { key: id, style: Object.assign({minWidth:"0"},position),onFocusin:()=>{this.selectedPanel=id;},onMouseenter:()=>{this.selectedPanel=id;} }, [h(components["m-report-panel"], { ref:instance=>{this.panelRefs[id]=instance;},panel: byId[id], frames: this.frames[id] || byId[id].frames,
+            const panel = (id, position) => byId[id] ? h("div", { key: id, style: Object.assign({minWidth:"0"},position),onFocusin:()=>{this.selectedPanel=id;},onMouseenter:()=>{this.selectedPanel=id;} }, [h(components["m-report-panel"], { ref:instance=>{this.panelRefs[id]=instance;},panel: byId[id], frames: this.livePanels[id] ? this.livePanels[id].frames || [] : this.frames[id] || byId[id].frames,
                 frame: byId[id].frame || { fields: [] }, dashboardId: this.dashboard.definitionId, panelId: id, screenUrl: this.dashboard.screenUrl, appLinks: this.dashboard.appLinks, range: this.dashboard.absoluteTime, variables: this.dashboard.variableValues, syncGroup:this.syncGroup,filters:this.dashboard.filters || [],onFilter:this.addFilter,
                 editable: !!this.dashboard.editable && !this.dashboard.embedded, embedded: !!this.dashboard.embedded, single: !!this.dashboard.panelId, display: !!this.dashboard.display })]) : h("p", { role: "alert" }, "Panel " + id + " is unavailable");
             const auto = (items) => h("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,640px),1fr))", gap: "12px" } }, items);

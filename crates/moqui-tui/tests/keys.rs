@@ -556,6 +556,90 @@ fn the_focus_stays_when_a_page_comes_before_the_level_that_holds_it() {
     assert_eq!(session.focus_id(), "second");
 }
 
+const GEOMAP_DASHBOARD_JSON: &str = r#"{ "v": 1, "screen": { "path": "/dash", "title": "Dashboard" }, "c": [
+  { "t": "link", "id": "edit", "text": "Edit", "url": "/dash/Edit" },
+  { "t": "component", "id": "Dashboard", "name": "report-dashboard", "props": { "dashboard": {
+      "definitionId": "d", "appLinks": { "maps": "/maps/Browse" },
+      "panels": { "sales": { "title": "Sales", "visualization": "geomap" } } },
+    "frames": { "sales": [ { "fields": [
+      { "name": "countryGeoId", "type": "string", "values": ["USA", "FRA"] },
+      { "name": "sales", "type": "number", "values": [3, 9] } ] } ] } } } ] }"#;
+
+const MAPS_BROWSE_JSON: &str = r#"{ "v": 1, "screen": { "path": "/maps/Browse", "title": "Browse" },
+  "c": [ { "t": "link", "id": "places", "text": "Places", "url": "/maps/Places" } ] }"#;
+
+/// Back to a screen puts back what it held when it was left: a dashboard's geomap opened in Maps from its table's
+/// second row (M) comes back in table mode on that row, with the focus on it, so M opens the same place again
+/// (MAP-UI-001: the table mode and cell were lost and the focus went to the screen's first item).
+#[test]
+fn back_puts_back_the_component_state_and_focus_the_screen_was_left_with() {
+    let link = FakeLink::from_json(&[GEOMAP_DASHBOARD_JSON, MAPS_BROWSE_JSON]).unwrap();
+    let mut session = Session::start("/dash");
+    session.run_now(&link);
+    assert_eq!(session.focus_id(), "edit");
+    assert!(session.focus_key("Dashboard"), "{:?}", session.focus_order());
+    press(&mut session, &link, Key::Char('g'));
+    press(&mut session, &link, Key::Down);
+    let france = "/maps/Browse?extent=-4.5918%2C42.3433%2C8.0983%2C51.148";
+    press(&mut session, &link, Key::Char('M'));
+    session.run_now(&link);
+    assert_eq!(session.path(), "/maps/Browse");
+    session.press(&KeyPress::with_alt(Key::Left), &link);
+    session.run_now(&link);
+    assert_eq!(session.path(), "/dash");
+    assert_eq!(session.focus_id(), "Dashboard");
+    let state = session.component_state("Dashboard").unwrap();
+    assert!(state.closed.contains("__table_mode"), "{state:?}");
+    assert_eq!(state.local["tables"]["sales"]["row"], 1);
+    // a key opens the same place again, and a navigate that is not Back starts the screen over
+    press(&mut session, &link, Key::Char('M'));
+    session.run_now(&link);
+    assert_eq!(session.path(), "/maps/Browse");
+    let asked: Vec<String> = levels(&link)
+        .into_iter()
+        .filter(|(path, _)| path.starts_with("/maps/Browse"))
+        .map(|(path, parameters)| format!("{path}?extent={}", parameters["extent"].replace(',', "%2C")))
+        .collect();
+    assert_eq!(asked, [france, france]);
+    session.navigate("/dash", true);
+    session.run_now(&link);
+    assert_eq!(session.focus_id(), "edit");
+    assert!(!session
+        .component_state("Dashboard")
+        .unwrap()
+        .closed
+        .contains("__table_mode"));
+}
+
+/// What a screen held is put back only by the reply to its Back: a Back the server refused (a login it wanted) drops
+/// it, and the screen asked for again after the login starts over.
+#[test]
+fn a_back_that_fails_puts_nothing_back_later() {
+    let link = FakeLink::from_json(&[GEOMAP_DASHBOARD_JSON, MAPS_BROWSE_JSON]).unwrap();
+    let mut session = Session::start("/dash");
+    session.run_now(&link);
+    assert!(session.focus_key("Dashboard"), "{:?}", session.focus_order());
+    press(&mut session, &link, Key::Char('g'));
+    press(&mut session, &link, Key::Down);
+    press(&mut session, &link, Key::Char('M'));
+    session.run_now(&link);
+    assert_eq!(session.path(), "/maps/Browse");
+    link.require_login("pw");
+    session.press(&KeyPress::with_alt(Key::Left), &link);
+    session.run_now(&link);
+    assert!(matches!(session.top_overlay(), Some(Overlay::Login(_))));
+    typed(&mut session, &link, "john");
+    press(&mut session, &link, Key::Tab);
+    typed(&mut session, &link, "pw");
+    press(&mut session, &link, Key::Enter);
+    session.run_now(&link);
+    assert!(session.top_overlay().is_none());
+    assert_eq!(session.path(), "/dash");
+    assert_eq!(session.focus_id(), "edit");
+    let state = session.component_state("Dashboard").unwrap();
+    assert!(!state.closed.contains("__table_mode"), "{state:?}");
+}
+
 #[test]
 fn gallery_list_to_detail_replaces_the_only_level() {
     let (mut session, link) = list_session();

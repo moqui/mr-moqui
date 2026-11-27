@@ -1,4 +1,4 @@
-// PMTiles version 3 archives made in a spec (plans/Maps.md §5), for the map archive specs (MapsSource, MapsArchiveBackends,
+// PMTiles version 3 archives made in a spec (plans/archive/Maps.md §5), and a small Cloud Optimized GeoTIFF (cog), for the map archive specs (MapsSource, MapsArchiveBackends,
 // MapsLocalFixtures): an archive of given tiles with an uncompressed root directory and metadata, the tile IDs of the format
 // (pmtiles' zxyToTileId, its Hilbert order), tiles of ASCII text a range read can be compared by, and a vector tile (MVT)
 // of an "earth" polygon and a "water" polygon that the Protomaps styles draw. Loaded with
@@ -220,4 +220,86 @@ function mvtTile() {
 
 const put = (location, bytes) => ec.resource.getLocationReference(location).putBytes(bytes)
 
-;({zxyToTileId, viewportTiles, archive, asciiTiles, mvtTile, put, ascii})
+// A Cloud Optimized GeoTIFF made in a spec (P4c, the COG layers of MapsSource): a little-endian classic TIFF of one uint8
+// band, size by size pixels in tiles of 256 (uncompressed, each tile's bytes after the header), georeferenced in an EPSG
+// CRS by a pixel scale and a tiepoint (its GeoKeys: a projected CRS by ProjectedCSTypeGeoKey), with GDAL's no-data. Its
+// directory and values are in its first bytes, as a COG's are. options: {size, epsg, origin: [x, y], pixel, strips}
+function cog(options = {}) {
+    const size = options.size || 512
+    const tile = 256
+    const across = Math.ceil(size / tile)
+    const tiles = across * across
+    const epsg = options.epsg || 32633
+    const [originX, originY] = options.origin || [500000, 6000000]
+    const pixel = options.pixel || 10
+    const entries = [
+        [256, 4, [size]], // ImageWidth
+        [257, 4, [size]], // ImageLength
+        [258, 3, [8]], // BitsPerSample
+        [259, 3, [1]], // Compression: none
+        [262, 3, [1]], // Photometric: black is zero
+        [277, 3, [1]], // SamplesPerPixel
+        [284, 3, [1]], // PlanarConfiguration
+        options.strips ? [273, 4, [0]] : [322, 3, [tile]], // StripOffsets, or TileWidth
+        options.strips ? [278, 4, [size]] : [323, 3, [tile]], // RowsPerStrip, or TileLength
+        [324, 4, new Array(tiles).fill(0)], // TileOffsets, set below
+        [325, 4, new Array(tiles).fill(tile * tile)], // TileByteCounts
+        [339, 3, [1]], // SampleFormat: unsigned
+        [33550, 12, [pixel, pixel, 0]], // ModelPixelScale
+        [33922, 12, [0, 0, 0, originX, originY, 0]], // ModelTiepoint
+        [34735, 3, [1, 1, 0, 3, 1024, 0, 1, 1, 1025, 0, 1, 1, 3072, 0, 1, epsg]], // GeoKeyDirectory
+        [42113, 2, "0"] // GDAL_NODATA
+    ].sort((a, b) => a[0] - b[0])
+    const size_of = {2: 1, 3: 2, 4: 4, 12: 8}
+    const valueBytes = ([, type, values]) => (type === 2 ? values.length + 1 : values.length * size_of[type])
+    const ifdStart = 8
+    const tableEnd = ifdStart + 2 + entries.length * 12 + 4
+    let extraAt = tableEnd
+    const placed = entries.map(entry => {
+        const length = valueBytes(entry)
+        if (length <= 4) return {entry, offset: null}
+        const offset = extraAt
+        extraAt += length + (length % 2)
+        return {entry, offset}
+    })
+    const dataStart = extraAt
+    const total = dataStart + tiles * tile * tile
+    const view = new DataView(new ArrayBuffer(total))
+    const bytes = new Uint8Array(view.buffer)
+    bytes[0] = 73
+    bytes[1] = 73
+    view.setUint16(2, 42, true)
+    view.setUint32(4, ifdStart, true)
+    view.setUint16(ifdStart, entries.length, true)
+    const writeValues = (at, [, type, values]) => {
+        if (type === 2) {
+            for (let i = 0; i < values.length; i++) bytes[at + i] = values.charCodeAt(i)
+            bytes[at + values.length] = 0
+            return
+        }
+        values.forEach((value, index) => {
+            if (type === 3) view.setUint16(at + index * 2, value, true)
+            else if (type === 4) view.setUint32(at + index * 4, value, true)
+            else view.setFloat64(at + index * 8, value, true)
+        })
+    }
+    placed.forEach(({entry, offset}, index) => {
+        const [tag, type, values] = entry
+        if (tag === 324) entry[2] = values.map((unused, n) => dataStart + n * tile * tile)
+        const at = ifdStart + 2 + index * 12
+        view.setUint16(at, tag, true)
+        view.setUint16(at + 2, type, true)
+        view.setUint32(at + 4, type === 2 ? values.length + 1 : entry[2].length, true)
+        if (offset === null) writeValues(at + 8, entry)
+        else {
+            view.setUint32(at + 8, offset, true)
+            writeValues(offset, entry)
+        }
+    })
+    view.setUint32(ifdStart + 2 + entries.length * 12, 0, true)
+    // each pixel a value from its position: the tiles a range read can be compared by
+    for (let i = dataStart; i < total; i++) bytes[i] = (i * 13) % 251
+    return bytes
+}
+
+;({zxyToTileId, viewportTiles, archive, asciiTiles, mvtTile, put, ascii, cog})

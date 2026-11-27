@@ -1,5 +1,5 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
-// MapsDialogWalk (plans/Maps.md §3.2, §9): the local-map dialog in a browser on the qvt shell, at desktop and phone width.
+// MapsDialogWalk (plans/archive/Maps.md §3.2, §9): the local-map dialog in a browser on the qvt shell, at desktop and phone width.
 // Saved views' View map opens it as an app opens it beside an address, for a plain point (the saved view's place): its
 // label and coordinates show, Escape closes it and the focus is back on View map; on a phone the dialog fills the screen.
 // A record the user may write (MapsWalkFixtures: maps.walk and the test adapter's LOCATED): its place, source and Open in

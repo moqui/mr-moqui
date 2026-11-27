@@ -134,3 +134,38 @@ fn a_push_is_the_account_whose_keys_open_it_with_its_outer_kind() {
     let unread = vec![("chat.example.org-ba9876543210".to_string(), None)];
     assert!(open_with(&unread, &to_b).is_none());
 }
+
+/// plans/archive/Maps-Offline.md §2.4: the worker is told to run again for a cut, a server error, a pause or a run still under
+/// way, and done for every end the shell reads (installed, refused, cancelled, stale).
+#[test]
+fn a_package_download_is_tried_again_only_when_it_may_go_on() {
+    use moqui_client::packages::Status;
+    let failed = |retry| Status::failed(1, "OFFLINE", "cut", retry);
+    assert_eq!(package_outcome(&failed(true)), PACKAGE_RETRY);
+    assert_eq!(
+        package_outcome(&Status::Downloading {
+            revision: 1,
+            done: 1,
+            total: 2
+        }),
+        PACKAGE_RETRY
+    );
+    assert_eq!(package_outcome(&Status::Queued { revision: 1 }), PACKAGE_RETRY);
+    // the last run gives up a failure to try again, never a pause (WorkManager runs it again) or a run under way
+    assert!(package_gives_up(&failed(true)));
+    assert!(!package_gives_up(&Status::failed(1, "PAUSED", "later", true)));
+    assert!(!package_gives_up(&failed(false)));
+    assert!(!package_gives_up(&Status::Downloading {
+        revision: 1,
+        done: 1,
+        total: 2
+    }));
+    for ended in [
+        failed(false),
+        Status::Installed { revision: 1 },
+        Status::Cancelled { revision: 1 },
+        Status::Stale { revision: Some(2) },
+    ] {
+        assert_eq!(package_outcome(&ended), PACKAGE_DONE, "{ended:?}");
+    }
+}

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.maps.MapSourceServices.generalize#Overlay` (plans/Maps.md §7 "Geometry/import jobs"; docs/tools/Maps.md
+//! `org.moqui.maps.MapSourceServices.generalize#Overlay` (plans/archive/Maps.md §7 "Geometry/import jobs"; docs/tools/Maps.md
 //! "Large overlays"): a user's overlay file too large to draw whole (past the 4 MiB of GeoJSON a map draws, or past
 //! `maps@max-features`), read and sanitized as an overlay ([`moqui_lib::geo::overlay`], with a larger feature limit),
 //! cut into simplified vector tiles for each zoom ([`moqui_lib::geo::tiles`]) and written as a PMTiles archive
@@ -26,7 +26,7 @@ use std::collections::BTreeMap;
 use std::io::Write;
 
 use moqui_lib::error::Error as LibError;
-use moqui_lib::geo::overlay::{convert_overlay_bytes, OverlayFormat, OverlayLimits};
+use moqui_lib::geo::overlay::{convert_overlay_with, OverlayFormat, OverlayLimits};
 use moqui_lib::geo::tiles::{build_tiles, Progress, TileFeature, TilerLimits, LAYER, MAX_ZOOM};
 use moqui_lib::object::{to_plain_string, Value};
 use moqui_lib::pmtiles::{write_archive, ArchiveOptions, Compression, TileType};
@@ -127,7 +127,12 @@ pub(crate) fn generalize_overlay(
         max_bytes: usize::try_from(max_bytes).unwrap_or(usize::MAX),
         max_features: usize::try_from(limit(parameters, "maxFeatures", DEFAULT_MAX_FEATURES)).unwrap_or(usize::MAX),
     };
-    let overlay = match convert_overlay_bytes(&content, format, &limits) {
+    let overlay = match convert_overlay_with(
+        &content,
+        format,
+        &limits,
+        &crate::maps_overlay::projection_registry(facade),
+    ) {
         Ok(overlay) => overlay,
         Err(err) => return refusal(out, err.code, err.message),
     };

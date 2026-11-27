@@ -748,12 +748,21 @@ impl AgentTool for SaveSkillTool {
             classification: Classification::Write,
             args: json!({"markdown": markdown}),
             summary: format!("Save the skill {} as yours: {}", skill.name, skill.description),
-            changes: vec![crate::approval::ChangeRow {
-                field: "skill".to_string(),
-                label: "Skill".to_string(),
-                current: String::new(),
-                proposed: format!("{}: {}", skill.name, skill.description),
-            }],
+            // the text it would keep, not only its name: the card is where the user reads what they confirm (SEC-AI-101)
+            changes: vec![
+                crate::approval::ChangeRow {
+                    field: "skill".to_string(),
+                    label: "Skill".to_string(),
+                    current: String::new(),
+                    proposed: format!("{}: {}", skill.name, skill.description),
+                },
+                crate::approval::ChangeRow {
+                    field: "markdown".to_string(),
+                    label: "Text".to_string(),
+                    current: String::new(),
+                    proposed: card_text(markdown),
+                },
+            ],
             preview: crate::approval::PreviewMode::None,
             ..crate::approval::ApprovalRequest::default()
         };
@@ -798,6 +807,18 @@ impl AgentTool for SaveSkillTool {
         }
     }
 }
+
+/// A skill's text as its confirm card shows it: whole up to [`CARD_TEXT_CHARS`], else cut there with a note.
+fn card_text(markdown: &str) -> String {
+    if markdown.chars().count() <= CARD_TEXT_CHARS {
+        return markdown.to_string();
+    }
+    let cut: String = markdown.chars().take(CARD_TEXT_CHARS).collect();
+    format!("{cut}\n… (cut at {CARD_TEXT_CHARS} characters)")
+}
+
+/// The most of a skill's text its confirm card shows.
+const CARD_TEXT_CHARS: usize = 4000;
 
 /// Keep the skill `save_skill` wrote as the user's personal, learned skill.
 fn save_as_tool(ctx: &crate::run::context::TurnContext<'_>, markdown: &str) -> ToolOutcome {
