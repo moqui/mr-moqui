@@ -403,6 +403,93 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
 
+    <service verb="estimate" noun="PackageExtract" type="rust" location="moqui_tools::maps_extract::estimate_package_extract" allow-remote="false">
+        <description>What cutting a region (west, south, east, north in WGS84 degrees, west east of east across the
+            antimeridian) at zooms minZoom to maxZoom from the PMTiles archive at location (pinned as tag of size bytes, a
+            file on disk by modifiedMillis too) would make, for an offline map package (plans/Maps-Offline.md §2.2;
+            moqui-tools maps_extract.rs): the tiles found through its directories (the header and directories read by range
+            and kept by the tag, as read#ArchiveTile keeps them; no tile is read), their distinct contents and bytes, and
+            the archive's size near enough (bytes), with the zooms of the request the archive has. Refused (reasonCode,
+            reason): BBOX_INVALID, ZOOMS_INVALID, SOURCE_MISSING, SOURCE_GONE, SOURCE_CHANGED (no longer that tag and size),
+            NO_ZOOMS, TOO_MANY_TILES (the box covers more than maxTiles tiles, at most 4,000,000, counted before anything is
+            read), TOO_LARGE (bytes past maxBytes), NOT_READ (logged). Writes nothing. It reads whatever location it is
+            given, so no group is granted it and it is not remote: MapPackages.js calls it after its check of the
+            owner.</description>
+        <in-parameters>
+            <parameter name="location" required="true"/>
+            <parameter name="tag" required="true"/>
+            <parameter name="size" type="Long" required="true"/>
+            <parameter name="modifiedMillis" type="Long"/>
+            <parameter name="west" type="Double" required="true"/>
+            <parameter name="south" type="Double" required="true"/>
+            <parameter name="east" type="Double" required="true"/>
+            <parameter name="north" type="Double" required="true"/>
+            <parameter name="minZoom" type="Integer" default="0"/>
+            <parameter name="maxZoom" type="Integer" default="14"/>
+            <parameter name="maxTiles" type="Long"/>
+            <parameter name="maxBytes" type="Long"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="valid" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="tileCount" type="Long"/>
+            <parameter name="contentCount" type="Long"/>
+            <parameter name="tileBytes" type="Long"/>
+            <parameter name="bytes" type="Long"/>
+            <parameter name="minZoom" type="Integer"/>
+            <parameter name="maxZoom" type="Integer"/>
+        </out-parameters>
+    </service>
+
+    <service verb="build" noun="PackageExtract" type="rust" location="moqui_tools::maps_extract::build_package_extract" allow-remote="false">
+        <description>The region and zooms of estimate#PackageExtract cut from the archive at location into a new PMTiles
+            archive at target (a .pmtiles location under runtime://tmp/map-packages/, TARGET_INVALID otherwise), for an
+            offline map package (moqui-tools maps_extract.rs over moqui-lib pmtiles.rs ArchiveWriter): the tiles of the box
+            for each zoom, sorted by tile ID, found through the directories and read by range in batches by offset
+            (neighbouring tiles one read), each handed as stored to the streaming writer, which writes the tile data to a
+            part file and keeps only the directory entries; a content the source shares between tiles is read and stored
+            once; the source's metadata JSON is copied whole, the directories gzipped. The archive's tag and size are
+            checked when the cut starts and again when it ends (reopened, a file on disk by its modification time too): an
+            archive replaced meanwhile is SOURCE_CHANGED and nothing is kept. With packageId its progress, from
+            progressFrom to progressTo percent, is written to that MapPackage's row in a transaction of its own between
+            batches (at most once a second), and the row's cancelRequested read then (CANCELLED, cancelled true). Out: size,
+            sha256 (hex), tileCount, contentCount, minZoom, maxZoom, reads; refused as the estimate is, and NO_TILES. A
+            refused or failed cut leaves no file. It reads whatever location it is given, so no group is granted it and it
+            is not remote: MapPackages.js calls it in the MapPackageBuild job after its check of the owner.</description>
+        <in-parameters>
+            <parameter name="location" required="true"/>
+            <parameter name="tag" required="true"/>
+            <parameter name="size" type="Long" required="true"/>
+            <parameter name="modifiedMillis" type="Long"/>
+            <parameter name="west" type="Double" required="true"/>
+            <parameter name="south" type="Double" required="true"/>
+            <parameter name="east" type="Double" required="true"/>
+            <parameter name="north" type="Double" required="true"/>
+            <parameter name="minZoom" type="Integer" default="0"/>
+            <parameter name="maxZoom" type="Integer" default="14"/>
+            <parameter name="maxTiles" type="Long"/>
+            <parameter name="maxBytes" type="Long"/>
+            <parameter name="target" required="true"/>
+            <parameter name="packageId"/>
+            <parameter name="progressFrom" type="Integer"/>
+            <parameter name="progressTo" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="valid" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="cancelled" type="Boolean"/>
+            <parameter name="size" type="Long"/>
+            <parameter name="sha256"/>
+            <parameter name="tileCount" type="Long"/>
+            <parameter name="contentCount" type="Long"/>
+            <parameter name="minZoom" type="Integer"/>
+            <parameter name="maxZoom" type="Integer"/>
+            <parameter name="reads" type="Long"/>
+        </out-parameters>
+    </service>
+
     <service verb="find" noun="ArchiveLayers">
         <description>The PMTiles layers for Maps › Configuration › Archives, for a caller who may open Configuration
             (PERMISSION_DENIED otherwise): each with its location, registered revision, version, size, zoom range, drive,
