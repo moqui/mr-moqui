@@ -1204,7 +1204,13 @@ const SHELL_ROUTES = { 'Chat': 'chat', 'Inbox': 'mail', 'Inbox/Mail': 'mail', 'I
     'Settings/Devices': 'devices' };
 const VIEW_PATHS = { chat: ['Chat'], mail: ['Inbox', 'Mail'], compose: ['Inbox', 'Compose'], call: ['Calls', 'Call'], dialer: ['Calls', 'Dialer'],
     devices: ['Settings', 'Devices'] };
-const VIEW_TITLES = { chat: 'Chat', mail: 'Mail', compose: 'New message', call: 'Call', dialer: 'Dialer', devices: 'My devices' };
+const VIEW_TITLES = { chat: 'Chat', mail: 'Mail', compose: 'New message', call: 'Call', dialer: 'Dialer', devices: 'My devices', maps: 'Offline maps' };
+// The offline Maps screen (plans/Maps-Offline.md §2.5): bundled as the shell's own, shown at Maps' Offline path; Maps'
+// other screens are the server's, in an app window
+const MAPS_OFFLINE = 'Shell/MapsOffline';
+const MAPS_OFFLINE_PATH = 'maps/Offline';
+const MAPS_BROWSE = '/qapps/maps/Browse';
+const isMapsApp = (app) => /^\/(?:qapps|apps)\/maps(?:\/|$)/.test(String((app && app.path) || ''));
 // what waits unsent, as the sign-out lists it (moquiDesktop.outbox.unsent: the outbox's operations and the drafts)
 const unsentItems = (found) => {
     const ops = (found && Array.isArray(found.operations)) ? found.operations : [];
@@ -1216,6 +1222,7 @@ const unsentItems = (found) => {
         if (op.kind === 'mail-send') return { key: op.id, icon: 'sym_o_mail', label: fields.subject || t('(no subject)'), caption: t('Mail') };
         if (op.kind === 'chat-read') return { key: op.id, icon: 'sym_o_done_all', label: t('A room marked read'), caption: '' };
         if (op.kind === 'mail-state') return { key: op.id, icon: 'sym_o_inbox', label: t('A change to mail threads'), caption: String(payload.action || '') };
+        if (op.kind === 'map-place') return { key: op.id, icon: 'sym_o_add_location_alt', label: payload.label || t('A saved place'), caption: t('Maps') };
         return { key: op.id, icon: 'sym_o_outbox', label: String(op.kind || ''), caption: '' };
     });
     const drafts = (found && Array.isArray(found.drafts)) ? found.drafts.length : 0;
@@ -1342,6 +1349,11 @@ module.exports = {
         viewTitle() { return this.view ? t(VIEW_TITLES[this.view]) : ''; },
         // the server holds calls (its clientConfig's calls) and the call store is here, as m-qapps-root has them
         callsOn() { return !!(moqui.call && this.userId && this.config && this.config.calls); },
+        // the offline map packages of this app (moquiDesktop.packages, plans/Maps-Offline.md §2.5), for an account with the
+        // server's Maps app (its shellData's apps, which the store keeps for offline use): one without it sees no Maps
+        // entry, and the offline screen saves no place for it
+        mapsOn() { return !!(host() && host().packages && this.componentOf('maps') && this.mapsApp); },
+        mapsApp() { return this.apps.find(isMapsApp) || null; },
         // the comms screens this shell shows itself, in the drawer
         commsItems() {
             return [{ key: 'chat', view: 'chat', icon: 'sym_o_chat', label: t('Chat'), link: this.commsLink + '/Chat' },
@@ -1448,13 +1460,19 @@ module.exports = {
         failed(err) { this.$q.notify({ type: 'negative', message: String((err && err.message) || err) }); },
         // ---- the screens shown here, and the rest in app windows ----
         // the bundled comms screen of a view, under the paths shell.js named it
-        componentOf(view) { return VIEW_PATHS[view] ? moqui.bundledComponent(this.basePath + '/' + this.commsRel + '/' + VIEW_PATHS[view].join('/')) : null; },
+        componentOf(view) {
+            if (view === 'maps') return moqui.bundledComponent(MAPS_OFFLINE);
+            return VIEW_PATHS[view] ? moqui.bundledComponent(this.basePath + '/' + this.commsRel + '/' + VIEW_PATHS[view].join('/')) : null;
+        },
         // where a link goes: {view, pathList, parameters} for a comms screen this shell shows, else null (an app window)
         route(url) {
             const text = String(url || '');
             const quest = text.indexOf('?');
             const path = (quest >= 0 ? text.slice(0, quest) : text).replace(/\.(qvt|qvue|qjs)$/, '').replace(/\/+$/, '');
             const match = /^\/(?:qapps|apps)\/(.+)$/.exec(path);
+            // Maps' Offline screen: the bundled offline Maps screen (the device's packages), online or not
+            if (match && match[1] === MAPS_OFFLINE_PATH && this.componentOf('maps'))
+                return { view: 'maps', pathList: MAPS_OFFLINE_PATH.split('/'), parameters: moqui.searchToObj(quest >= 0 ? text.slice(quest + 1) : '') };
             const comms = this.commsRel;
             if (!match || match[1].indexOf(comms + '/') !== 0) return null;
             const view = SHELL_ROUTES[match[1].slice(comms.length + 1)];
@@ -1480,6 +1498,18 @@ module.exports = {
                 params: this.bodyParameters || {}, fullPath: this.currentLinkUrl, meta: {}, hash: '', matched: [{ path: this.currentPath }] });
         },
         openPalette() { this.paletteOpen = true; },
+        // Maps (plans/Maps-Offline.md §2.5): Browse, the server's page, when the server answers; the offline screen with the
+        // device's packages when it does not (moqui.connection: the host's unreachable answer, or none)
+        openMaps() {
+            if (!this.mapsApp) return;
+            if (this.isOffline) { this.setUrl('/qapps/maps/Offline'); return; }
+            host().openRemote(MAPS_BROWSE).catch((err) => this.failed(err));
+        },
+        // an app of the drawer: its page in an app window; Maps offline is the offline screen
+        openApp(app) {
+            if (isMapsApp(app) && this.isOffline && this.mapsOn) { this.setUrl('/qapps/maps/Offline'); return; }
+            this.setUrl(app.path);
+        },
         // the palette's Ctrl+Enter (a new tab on the web): the server's page in an app window
         openNewTab(url) { host().openRemote(this.getLinkPath(String(url || ''))).catch((err) => this.failed(err)); },
         // the link of a dm or record room in place of the link itself (Chat.qvue replaceRoom)
@@ -2260,6 +2290,69 @@ module.exports = {
                                     _createVNode(_component_q_separator, { spaced: "" })
                                   ], 64))
                                 : _createCommentVNode("", true),
+                              (_ctx.mapsOn)
+                                ? (_openBlock(), _createElementBlock(_Fragment, { key: 1 }, [
+                                    _createVNode(_component_q_item_label, { header: "" }, {
+                                      default: _withCtx(() => [
+                                        _createTextVNode(_toDisplayString(_ctx.t('Maps')), 1)
+                                      ]),
+                                      _: 1
+                                    }),
+                                    _createVNode(_component_q_item, {
+                                      clickable: "",
+                                      class: "m-shell-maps",
+                                      onClick: _ctx.openMaps
+                                    }, {
+                                      default: _withCtx(() => [
+                                        _createVNode(_component_q_item_section, { avatar: "" }, {
+                                          default: _withCtx(() => [
+                                            _createVNode(_component_q_icon, { name: "sym_o_map" })
+                                          ]),
+                                          _: 1
+                                        }),
+                                        _createVNode(_component_q_item_section, null, {
+                                          default: _withCtx(() => [
+                                            _createTextVNode(_toDisplayString(_ctx.t('Maps')), 1)
+                                          ]),
+                                          _: 1
+                                        }),
+                                        _createVNode(_component_q_item_section, { side: "" }, {
+                                          default: _withCtx(() => [
+                                            _createVNode(_component_q_icon, {
+                                              name: _ctx.isOffline ? 'sym_o_cloud_off' : 'sym_o_open_in_new',
+                                              size: "xs"
+                                            }, null, 8, ["name"])
+                                          ]),
+                                          _: 1
+                                        })
+                                      ]),
+                                      _: 1
+                                    }, 8, ["onClick"]),
+                                    _createVNode(_component_q_item, {
+                                      clickable: "",
+                                      active: _ctx.view === 'maps',
+                                      class: "m-shell-maps-offline",
+                                      onClick: $event => (_ctx.setUrl('/qapps/maps/Offline'))
+                                    }, {
+                                      default: _withCtx(() => [
+                                        _createVNode(_component_q_item_section, { avatar: "" }, {
+                                          default: _withCtx(() => [
+                                            _createVNode(_component_q_icon, { name: "sym_o_offline_pin" })
+                                          ]),
+                                          _: 1
+                                        }),
+                                        _createVNode(_component_q_item_section, null, {
+                                          default: _withCtx(() => [
+                                            _createTextVNode(_toDisplayString(_ctx.t('Offline maps')), 1)
+                                          ]),
+                                          _: 1
+                                        })
+                                      ]),
+                                      _: 1
+                                    }, 8, ["active", "onClick"]),
+                                    _createVNode(_component_q_separator, { spaced: "" })
+                                  ], 64))
+                                : _createCommentVNode("", true),
                               _createVNode(_component_q_item_label, { header: "" }, {
                                 default: _withCtx(() => [
                                   _createTextVNode(_toDisplayString(_ctx.t('Applications')), 1)
@@ -2270,7 +2363,7 @@ module.exports = {
                                 return (_openBlock(), _createBlock(_component_q_item, {
                                   key: app.name,
                                   clickable: "",
-                                  onClick: $event => (_ctx.setUrl(app.path))
+                                  onClick: $event => (_ctx.openApp(app))
                                 }, {
                                   default: _withCtx(() => [
                                     _createVNode(_component_q_item_section, { avatar: "" }, {
@@ -2307,7 +2400,7 @@ module.exports = {
                                 }, 1032, ["onClick"]))
                               }), 128)),
                               (!_ctx.apps.length)
-                                ? (_openBlock(), _createBlock(_component_q_item, { key: 1 }, {
+                                ? (_openBlock(), _createBlock(_component_q_item, { key: 2 }, {
                                     default: _withCtx(() => [
                                       _createVNode(_component_q_item_section, null, {
                                         default: _withCtx(() => [
@@ -3245,6 +3338,843 @@ module.exports = {
                           _: 1
                         }))
                       : _createCommentVNode("", true)
+                  ]))
+                }
+            })();
+            delete target.template;
+        }
+        return { component: component, style: null, scoped: false };
+    } };
+    moqui.qvtBundled["Shell/MapsOffline"] = { make: function (Vue) {
+        const module = { exports: {} };
+        const define = moqui.define;
+        // the file's script as it is (not indented: a template string in it keeps its text)
+        const returned = (function (exports) {
+const t = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
+const host = () => window.moquiDesktop;
+const fill = (text, values) => String(text).replace(/\{(\w+)\}/g, (match, key) => (values[key] == null ? '' : String(values[key])));
+const message = (err) => String((err && (err.message || err.error)) || err || t('That did not work'));
+// a package's files on the shell's origin (moqui_client::packages::serve), the id a plain name
+const baseOf = (packageId) => (/^[A-Za-z0-9_.:-]{1,64}$/.test(String(packageId || '')) && !/^\.+$/.test(String(packageId)) ? '/__moqui-app/maps/' + packageId + '/' : '');
+// the host answers a file past 16 MiB only by range: a member is read in slices of that, joined
+const SLICE = 16 * 1024 * 1024;
+const readMember = async (url) => {
+    const parts = [];
+    let at = 0, total = null;
+    do {
+        const response = await fetch(url, { cache: 'no-store', headers: { Range: 'bytes=' + at + '-' + (at + SLICE - 1) } });
+        if (response.status === 200) return response.text();
+        if (response.status !== 206) throw new Error(t('Not read from this device') + ': HTTP ' + response.status);
+        // a slice that does not say the whole file's length cannot be joined: an error, never a file cut short
+        const range = /^bytes \d+-\d+\/(\d+)$/.exec(String(response.headers.get('Content-Range') || '').trim());
+        if (!range) throw new Error(t('Not read from this device') + ': ' + t('a slice without its Content-Range'));
+        total = Number(range[1]);
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        if (!bytes.length) break;
+        parts.push(bytes);
+        at += bytes.length;
+    } while (at < total);
+    const joined = new Uint8Array(at);
+    let offset = 0;
+    parts.forEach((part) => { joined.set(part, offset); offset += part.length; });
+    return new TextDecoder().decode(joined);
+};
+// text folded for search: case and the marks of letters
+const fold = (value) => String(value == null ? '' : value).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+const matches = (words, ...fields) => { const all = fold(fields.filter((field) => field).join(' ')); return words.every((word) => all.includes(word)); };
+// a point within a package's region [west, south, east, north] (west past east crosses the antimeridian)
+const inBox = (bbox, lon, lat) => {
+    if (!Array.isArray(bbox) || bbox.length !== 4 || !Number.isFinite(lon) || !Number.isFinite(lat)) return Number.isFinite(lon) && Number.isFinite(lat);
+    const [west, south, east, north] = bbox.map(Number);
+    if (lat < south || lat > north) return false;
+    return west <= east ? lon >= west && lon <= east : lon >= west || lon <= east;
+};
+// the results of each source at most, so one source (200,000 Overture places) does not crowd out the others
+const PER_SOURCE = 10;
+const bytesText = (size) => {
+    const n = Number(size) || 0;
+    if (n >= 1073741824) return (n / 1073741824).toFixed(1) + ' GB';
+    if (n >= 1048576) return (n / 1048576).toFixed(1) + ' MB';
+    return Math.max(1, Math.round(n / 1024)) + ' KB';
+};
+const dateText = (value) => {
+    if (value === null || value === undefined || value === '') return '';
+    const date = new Date(typeof value === 'number' || /^\d+$/.test(String(value)) ? Number(value) : String(value));
+    if (isNaN(date.getTime())) return '';
+    return moqui.chat && moqui.chat.dateTime ? moqui.chat.dateTime(date.getTime()) : date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+};
+
+module.exports = {
+    name: 'ShellMapsOffline',
+    data() {
+        return {
+            serverList: null, serverError: '', device: [], loaded: false, error: '', wifiOnly: false,
+            // the package opened: its row, its manifest and what was read of its files (account, id and revision)
+            opened: null, manifest: null, mapConfig: null, kept: null,
+            query: '', results: [], searched: false, searching: false, addressNote: '',
+            center: null, picked: null, placeName: '', outboxOps: [], placeKinds: false
+        };
+    },
+    computed: {
+        supported() { return !!(host() && host().packages && typeof host().packages.status === 'function'); },
+        // the phone (its notifications are its pushes, pushDelivers): a download may wait for Wi-Fi
+        phone() { return !!(host() && host().pushDelivers === true); },
+        offline() { return !!((moqui.connection && moqui.connection.offline) || (this.$root && this.$root.isOffline)); },
+        // the server's packages and the device's, one row each: what it holds, what the server has, a download's state
+        rows() {
+            const byId = new Map();
+            (Array.isArray(this.serverList) ? this.serverList : []).forEach((entry) => byId.set(String(entry.packageId), { server: entry, device: null }));
+            this.device.forEach((entry) => {
+                const id = String(entry.packageId);
+                const row = byId.get(id) || { server: null, device: null };
+                row.device = entry;
+                byId.set(id, row);
+            });
+            return Array.from(byId.entries()).map(([packageId, { server, device }]) => {
+                const download = device && device.download ? device.download : null;
+                const state = download ? download.state : '';
+                const busy = ['queued', 'downloading', 'checking'].includes(state);
+                const installed = !!(device && device.installed);
+                const serverRevision = server && server.downloadUrl ? Number(server.revision) : null;
+                const newer = serverRevision !== null && (!installed || serverRevision > Number(device.revision));
+                const built = installed ? dateText(device.builtDate) : (server ? server.builtText || dateText(server.builtDate) : '');
+                const size = installed ? bytesText(device.size) : (server && server.sizeText) || '';
+                const zooms = installed && device.minZoom != null ? device.minZoom + '–' + device.maxZoom : (server && server.zoomsText) || '';
+                const caption = [built ? t('Built') + ' ' + built : '', size, zooms ? t('Zooms') + ' ' + zooms : '',
+                    installed && newer ? t('A newer version is on the server') : ''].filter((part) => part).join(' · ');
+                let stateText = '';
+                let progress = null;
+                if (state === 'queued') stateText = this.phone && this.wifiOnly ? t('Waiting to download on Wi-Fi') : t('Waiting to download');
+                else if (state === 'downloading') {
+                    progress = download.total ? Math.min(1, download.done / download.total) : 0;
+                    stateText = fill(t('Downloading: {done} of {total}'), { done: bytesText(download.done), total: bytesText(download.total) });
+                } else if (state === 'checking') stateText = t('Checking the download');
+                else if (state === 'failed') stateText = t('Not downloaded') + ': ' + (download.reason || download.code || '') + (download.retry ? ' (' + t('try again') + ')' : '');
+                else if (state === 'stale') stateText = t('It was built again on the server: download the new version');
+                else if (!installed && server && !server.downloadUrl) stateText = server.statusText || t('Not ready on the server yet');
+                return { packageId, name: (device && device.name) || (server && server.name) || '', installed, busy, failed: state === 'failed',
+                    revision: installed ? Number(device.revision) : null, serverRevision, canDownload: newer && !busy, caption, stateText, progress,
+                    builtDate: installed ? device.builtDate : server && server.builtDate };
+            }).sort((a, b) => (a.name || a.packageId).localeCompare(b.name || b.packageId));
+        },
+        downloading() { return this.rows.some((row) => row.busy); },
+        builtText() {
+            const pkg = (this.manifest && this.manifest.package) || {};
+            const built = dateText(pkg.builtDate);
+            return [this.offline ? t('Offline: this map is read from this device') : t('Read from this device'),
+                built ? t('built') + ' ' + built : '', pkg.minZoom != null ? t('zooms') + ' ' + pkg.minZoom + '–' + pkg.maxZoom : ''].filter((part) => part).join(', ');
+        },
+        // the package's sources as text: an archive's own notice is often HTML, never shown as markup (map.packageSources)
+        sources() {
+            const list = moqui.map && moqui.map.packageSources ? moqui.map.packageSources(this.manifest) : [];
+            const kinds = { basemap: t('Basemap'), postal: t('Postal codes'), overture: t('Overture') };
+            return list.map((source) => ({ text: [kinds[source.kind] || source.kind, source.attribution, source.sourceAttribution].filter((part) => part).join(': '),
+                licenses: source.licenses.join(', ') }));
+        },
+        notice() { return moqui.map && moqui.map.plainText ? moqui.map.plainText(this.manifest && this.manifest.notice, 500) : ''; },
+        // whether this account may save a place: it has the Maps app (Shell/Root's mapsApp, from its kept shellData); a
+        // screen mounted on its own (a test's) may
+        mapsAccess() { const root = this.$root; return !(root && root !== this && 'mapsApp' in root && !root.mapsApp); },
+        // the point a saved place takes: the last place found or chosen on the map, else the map's center
+        pointToSave() { return this.picked || this.center; },
+        // the places saved here that wait in the outbox (map-place), with their state
+        queuedPlaces() {
+            return this.outboxOps.filter((op) => op.kind === 'map-place' && op.state !== 'acked').map((op) => {
+                const payload = op.payload || {};
+                const failed = op.state === 'failed' || op.state === 'conflict';
+                // held: the server asked for a sign-in (a 401, or a 403 it gave no reason for); it may be discarded
+                const held = op.state === 'held';
+                return { id: op.id, label: payload.label || t('A place'), failed, held,
+                    stateText: failed ? t('Not saved') + (op.error ? ': ' + op.error : '') : held ? t('Waiting for a sign-in to this server')
+                        : op.state === 'sending' ? t('Saving') : t('Waits for the server, then is saved to your places') };
+            });
+        }
+    },
+    watch: {
+        // a new revision installed while a package is open: opened again once (not at every poll, nor again after a
+        // failed open), what was read of the old one dropped
+        rows(rows) {
+            if (!this.opened || !this.kept) return;
+            const row = rows.find((one) => one.packageId === this.kept.packageId);
+            if (!row || !row.installed || row.revision === this.kept.revision || this.reopened === row.packageId + ':' + row.revision) return;
+            this.reopened = row.packageId + ':' + row.revision;
+            this.open(row);
+        }
+    },
+    methods: {
+        t,
+        readList() {
+            const packages = host().packages;
+            return Promise.resolve(packages.list()).then((answer) => {
+                this.serverList = answer && Array.isArray(answer.server) ? answer.server : null;
+                this.serverError = answer && answer.server == null ? String(answer.error || '') : '';
+                this.device = answer && Array.isArray(answer.device) ? answer.device : [];
+                this.loaded = true;
+            }, (err) => { this.loaded = true; this.error = message(err); });
+        },
+        readStatus() {
+            return Promise.resolve(host().packages.status()).then((device) => { this.device = Array.isArray(device) ? device : []; }, () => null);
+        },
+        // the states while a download runs, else now and then: the host's download is a task or Android's worker
+        poll() {
+            clearTimeout(this.pollTimer);
+            this.pollTimer = setTimeout(() => {
+                const before = this.downloading;
+                this.readStatus().then(() => {
+                    if (before && !this.downloading) this.readList();
+                    this.poll();
+                });
+            }, this.downloading ? 1500 : 10000);
+        },
+        act(work) {
+            this.error = '';
+            return Promise.resolve().then(work).then(() => this.readStatus(), (err) => { this.error = message(err); });
+        },
+        download(row) { return this.act(() => host().packages.download(row.packageId, row.serverRevision, this.phone && this.wifiOnly)).then(() => this.poll()); },
+        cancel(row) { return this.act(() => host().packages.cancel(row.packageId)); },
+        remove(row) {
+            this.$q.dialog({ title: t('Delete from this device'), message: fill(t('Delete the offline map {name} from this device? It stays on the server.'), { name: row.name || row.packageId }),
+                cancel: { label: t('Keep it'), flat: true, noCaps: true }, ok: { label: t('Delete'), color: 'negative', noCaps: true } })
+                .onOk(() => this.act(() => host().packages.remove(row.packageId)));
+        },
+        // Maps' Browse, the server's page (an app window; on the phone the same webview)
+        openBrowse() { host().openRemote('/qapps/maps/Browse').catch((err) => { this.error = message(err); }); },
+        // ---- a package opened ----
+        open(row) {
+            const base = baseOf(row.packageId);
+            if (!base) return;
+            this.error = '';
+            const account = moqui.storageScope || '';
+            // the map's code (moqui.map's helpers, the sources' text) loads as m-map loads it
+            const mapCode = moqui.loadScript('/js/WebrootMap.js', null, () => !!(moqui.map && moqui.map.components)).catch(() => null);
+            Promise.all([readMember(base + 'manifest.json').then((text) => JSON.parse(text)), mapCode]).then(([manifest]) => {
+                this.opened = row;
+                this.manifest = manifest;
+                // what is read of its files is this account's and this revision's only
+                this.kept = { account, packageId: row.packageId, revision: row.revision, base, members: {} };
+                this.mapConfig = { packageBase: base, manifest };
+                this.results = [];
+                this.searched = false;
+                this.picked = null;
+                this.center = null;
+                this.addressNote = '';
+                this.readOutbox();
+            }, (err) => { this.error = t('This offline map could not be opened') + ': ' + message(err); });
+        },
+        close() { this.opened = null; this.manifest = null; this.mapConfig = null; this.kept = null; this.readList(); },
+        // a JSON member of the opened package, read once for its account and revision; null when it has none
+        member(path) {
+            const kept = this.kept;
+            const listed = this.manifest && Array.isArray(this.manifest.members) && this.manifest.members.some((member) => member && member.path === path);
+            const installed = this.device.find((row) => String(row.packageId) === String(kept && kept.packageId) && row.installed);
+            if (!kept || !listed || kept.account !== (moqui.storageScope || '') || (installed && Number(installed.revision) !== Number(kept.revision)))
+                return Promise.resolve(null);
+            if (!kept.members[path]) kept.members[path] = readMember(kept.base + path).then((text) => JSON.parse(text), (err) => {
+                delete kept.members[path];
+                throw err;
+            });
+            return kept.members[path];
+        },
+        search() {
+            const words = fold(this.query).split(/\s+/).filter((word) => word);
+            if (!words.length || !this.opened) { this.results = []; this.searched = false; return; }
+            const bbox = this.manifest && this.manifest.package && this.manifest.package.bbox;
+            this.searching = true;
+            this.error = '';
+            const found = { address: [], place: [], postal: [], overture: [] };
+            const add = (item) => {
+                const list = found[item.key.split(':')[0]];
+                if (list && list.length < PER_SOURCE && inBox(bbox, item.lon, item.lat)) list.push(item);
+            };
+            const places = this.member('places.geojson').then((json) => {
+                (json && Array.isArray(json.features) ? json.features : []).forEach((feature, index) => {
+                    const props = feature && feature.properties || {};
+                    const label = moqui.map.plainText(props.label || props.name, 200);
+                    const point = feature && feature.geometry && feature.geometry.type === 'Point' ? feature.geometry.coordinates : null;
+                    if (point && matches(words, label)) add({ key: 'place:' + index, icon: 'sym_o_bookmark', label, caption: t('Your saved place'), lon: Number(point[0]), lat: Number(point[1]) });
+                });
+            });
+            const postal = this.member('postal.json').then((json) => {
+                (json && Array.isArray(json.rows) ? json.rows : []).forEach((row, index) => {
+                    const names = (Array.isArray(row.places) ? row.places : []).map((place) => [place.name, place.adminName1].filter((part) => part).join(', '));
+                    if (matches(words, row.code, row.displayCode, names.join(' '))) add({ key: 'postal:' + index, icon: 'sym_o_markunread_mailbox',
+                        label: String(row.displayCode || row.code), caption: [names[0], row.country].filter((part) => part).join(' · '), lon: Number(row.lon), lat: Number(row.lat) });
+                });
+            });
+            const overture = this.member('overture-places.json').then((json) => {
+                (json && Array.isArray(json.rows) ? json.rows : []).forEach((row, index) => {
+                    if (matches(words, row.placeName, row.brandName, row.basicCategory, row.locality)) add({ key: 'overture:' + index, icon: 'sym_o_storefront',
+                        label: String(row.placeName || row.brandName || ''), caption: [row.basicCategory, row.addressText || row.locality].filter((part) => part).join(' · '),
+                        lon: Number(row.longitude), lat: Number(row.latitude) });
+                });
+            });
+            // the package's Overture addresses: the server's address matching, in the host (packages.addresses)
+            const hasAddresses = this.manifest && Array.isArray(this.manifest.members) && this.manifest.members.some((member) => member && member.path === 'overture-addresses.json');
+            const addresses = !hasAddresses ? Promise.resolve() : typeof host().packages.addresses !== 'function'
+                ? Promise.resolve().then(() => { this.addressNote = t('Addresses are not searched by this version of the app.'); })
+                : Promise.resolve(host().packages.addresses(this.opened.packageId, this.query, { near: this.center ? [this.center.lon, this.center.lat] : null, limit: 10 }))
+                    .then((answer) => {
+                        this.addressNote = '';
+                        ((answer && answer.candidates) || []).forEach((candidate, index) => add({ key: 'address:' + index, icon: 'sym_o_home_pin', label: String(candidate.label || ''),
+                            caption: (candidate.precisionEnumId === 'GPP_ADDRESS_MATCH' ? t('Address') : t('Estimate')) + (candidate.sourceLicenses ? ' · ' + candidate.sourceLicenses : ''),
+                            lon: Number(candidate.lon), lat: Number(candidate.lat) }));
+                    });
+            const each = [addresses, places, postal, overture].map((work) => work.catch((err) => { console.warn('MapsOffline: a search did not finish', err); this.error = message(err); }));
+            return Promise.all(each).then(() => {
+                this.results = found.address.concat(found.place, found.postal, found.overture);
+                this.searched = true;
+                this.searching = false;
+            });
+        },
+        show(result) {
+            this.picked = { lon: result.lon, lat: result.lat, label: result.label };
+            if (!this.placeName) this.placeName = result.label;
+            if (this.$refs.map && this.$refs.map.showPlace) this.$refs.map.showPlace(result);
+        },
+        viewChanged(event) { if (event && Array.isArray(event.center)) this.center = { lon: event.center[0], lat: event.center[1] }; },
+        selected(event) { if (event && Number.isFinite(event.lon)) this.picked = { lon: event.lon, lat: event.lat, label: event.label || '' }; },
+        // ---- saving a place: an outbox item the host sends when the server answers ----
+        readOutbox() {
+            const outbox = host() && host().outbox;
+            if (!outbox || typeof outbox.list !== 'function') return Promise.resolve();
+            const kinds = typeof outbox.kinds === 'function' ? Promise.resolve(outbox.kinds()).catch(() => null) : Promise.resolve(null);
+            return Promise.all([Promise.resolve(outbox.list()).catch(() => []), kinds]).then(([ops, taken]) => {
+                this.outboxOps = (Array.isArray(ops) ? ops : []).map((op) => {
+                    let payload = op.payload;
+                    if (typeof payload === 'string') { try { payload = JSON.parse(payload); } catch (err) { payload = {}; } }
+                    return Object.assign({}, op, { payload: payload || {} });
+                });
+                this.placeKinds = !!(taken && Array.isArray(taken.kinds) && taken.kinds.includes('map-place'));
+            });
+        },
+        savePlace() {
+            const point = this.pointToSave;
+            const label = this.placeName.trim();
+            const outbox = host() && host().outbox;
+            // only an account with the Maps app saves a place, queued or not
+            if (!point || !label || !this.mapsAccess) return;
+            this.error = '';
+            const saved = () => { this.placeName = ''; this.$q.notify({ type: 'positive', message: fill(t('{name} is saved to your places when the server answers'), { name: label }) }); };
+            if (outbox && this.placeKinds) {
+                const clientRef = 'pl' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+                return Promise.resolve(outbox.add('map-place', { clientRef, label, longitude: point.lon, latitude: point.lat }))
+                    .then(() => { saved(); return this.readOutbox(); }, (err) => { this.error = message(err); });
+            }
+            // a server that takes no place by its clientRef: saved now, or not at all offline
+            if (this.offline) { this.error = t('Saving a place needs a connection to this server'); return; }
+            return moqui.request('/apps/maps/Browse/savePlace', { method: 'POST', params: { label, longitude: point.lon, latitude: point.lat } }).then((result) => {
+                const json = result.json || {};
+                if (json.applied) { this.placeName = ''; this.$q.notify({ type: 'positive', message: fill(t('{name} is saved to your places'), { name: label }) }); }
+                else this.error = String(json.reason || json.errors || t('The place was not saved'));
+            }, (err) => { this.error = message(err && err.json && err.json.errors ? err.json.errors : err); });
+        },
+        retryPlace(op) { return Promise.resolve(host().outbox.retry(op.id)).then(() => this.readOutbox(), (err) => { this.error = message(err); }); },
+        discardPlace(op) { return Promise.resolve(host().outbox.discard(op.id)).then(() => this.readOutbox(), (err) => { this.error = message(err); }); }
+    },
+    mounted() {
+        if (!this.supported) return;
+        this.readList().then(() => this.poll());
+        const outbox = host().outbox;
+        if (outbox && typeof outbox.on === 'function') this.outboxOff = outbox.on(() => { if (this.opened) this.readOutbox(); });
+    },
+    unmounted() {
+        clearTimeout(this.pollTimer);
+        if (this.outboxOff) this.outboxOff();
+    }
+};
+        })(module.exports);
+        const component = Object.assign({}, returned !== undefined ? returned : module.exports);
+        {
+            const target = component;
+            target.render = (function () {
+                const { toDisplayString: _toDisplayString, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, createElementVNode: _createElementVNode, createTextVNode: _createTextVNode, resolveComponent: _resolveComponent, withCtx: _withCtx, createBlock: _createBlock, renderList: _renderList, Fragment: _Fragment, createVNode: _createVNode, normalizeClass: _normalizeClass } = Vue
+
+                return function render(_ctx, _cache) {
+                  const _component_q_chip = _resolveComponent("q-chip")
+                  const _component_q_btn = _resolveComponent("q-btn")
+                  const _component_q_checkbox = _resolveComponent("q-checkbox")
+                  const _component_q_icon = _resolveComponent("q-icon")
+                  const _component_q_item_section = _resolveComponent("q-item-section")
+                  const _component_q_item_label = _resolveComponent("q-item-label")
+                  const _component_q_linear_progress = _resolveComponent("q-linear-progress")
+                  const _component_q_item = _resolveComponent("q-item")
+                  const _component_q_list = _resolveComponent("q-list")
+                  const _component_q_input = _resolveComponent("q-input")
+                  const _component_q_form = _resolveComponent("q-form")
+                  const _component_m_map = _resolveComponent("m-map")
+
+                  return (_openBlock(), _createElementBlock("div", { class: "m-maps-offline" }, [
+                    (!_ctx.supported)
+                      ? (_openBlock(), _createElementBlock("div", {
+                          key: 0,
+                          class: "q-pa-md m-muted"
+                        }, _toDisplayString(_ctx.t('This app cannot keep offline maps.')), 1))
+                      : (!_ctx.opened)
+                        ? (_openBlock(), _createElementBlock(_Fragment, { key: 1 }, [
+                            _createElementVNode("div", { class: "q-pa-md column q-gutter-y-sm" }, [
+                              _createElementVNode("div", { class: "row items-center q-gutter-sm" }, [
+                                _createElementVNode("div", { class: "text-h6 col" }, _toDisplayString(_ctx.t('Offline maps')), 1),
+                                (_ctx.offline)
+                                  ? (_openBlock(), _createBlock(_component_q_chip, {
+                                      key: 0,
+                                      dense: "",
+                                      square: "",
+                                      color: "warning",
+                                      "text-color": "black",
+                                      icon: "sym_o_cloud_off",
+                                      class: "m-maps-offline-chip"
+                                    }, {
+                                      default: _withCtx(() => [
+                                        _createTextVNode(_toDisplayString(_ctx.t('Offline: the maps on this device')), 1)
+                                      ]),
+                                      _: 1
+                                    }))
+                                  : (_openBlock(), _createBlock(_component_q_btn, {
+                                      key: 1,
+                                      flat: "",
+                                      dense: "",
+                                      "no-caps": "",
+                                      color: "primary",
+                                      icon: "sym_o_map",
+                                      label: _ctx.t('Open Maps'),
+                                      class: "m-maps-offline-browse",
+                                      onClick: _ctx.openBrowse
+                                    }, null, 8, ["label", "onClick"]))
+                              ]),
+                              _createElementVNode("div", { class: "text-body2 m-muted" }, _toDisplayString(_ctx.t('A package holds what you could read when it was built, and stays readable on this device until you delete it here. Record layers are not included.')), 1),
+                              (_ctx.serverError && !_ctx.offline)
+                                ? (_openBlock(), _createElementBlock("div", {
+                                    key: 0,
+                                    role: "status",
+                                    class: "text-body2 text-warning m-maps-offline-server"
+                                  }, _toDisplayString(_ctx.t('The server\'s list did not load: only the maps on this device are listed.')), 1))
+                                : _createCommentVNode("", true),
+                              (_ctx.phone)
+                                ? (_openBlock(), _createBlock(_component_q_checkbox, {
+                                    key: 1,
+                                    modelValue: _ctx.wifiOnly,
+                                    "onUpdate:modelValue": $event => ((_ctx.wifiOnly) = $event),
+                                    dense: "",
+                                    class: "m-maps-offline-wifi",
+                                    label: _ctx.t('Download only on Wi-Fi')
+                                  }, null, 8, ["modelValue", "onUpdate:modelValue", "label"]))
+                                : _createCommentVNode("", true),
+                              (_ctx.error)
+                                ? (_openBlock(), _createElementBlock("div", {
+                                    key: 2,
+                                    role: "alert",
+                                    class: "text-negative"
+                                  }, _toDisplayString(_ctx.error), 1))
+                                : _createCommentVNode("", true)
+                            ]),
+                            _createVNode(_component_q_list, {
+                              separator: "",
+                              class: "m-maps-offline-list"
+                            }, {
+                              default: _withCtx(() => [
+                                (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.rows, (row) => {
+                                  return (_openBlock(), _createBlock(_component_q_item, {
+                                    key: row.packageId,
+                                    class: "m-maps-offline-row",
+                                    "data-package": row.packageId
+                                  }, {
+                                    default: _withCtx(() => [
+                                      _createVNode(_component_q_item_section, { avatar: "" }, {
+                                        default: _withCtx(() => [
+                                          _createVNode(_component_q_icon, {
+                                            name: row.installed ? 'sym_o_offline_pin' : 'sym_o_cloud_download',
+                                            color: row.installed ? 'positive' : 'grey-7'
+                                          }, null, 8, ["name", "color"])
+                                        ]),
+                                        _: 2
+                                      }, 1024),
+                                      _createVNode(_component_q_item_section, null, {
+                                        default: _withCtx(() => [
+                                          _createVNode(_component_q_item_label, null, {
+                                            default: _withCtx(() => [
+                                              _createTextVNode(_toDisplayString(row.name || row.packageId), 1)
+                                            ]),
+                                            _: 2
+                                          }, 1024),
+                                          _createVNode(_component_q_item_label, { caption: "" }, {
+                                            default: _withCtx(() => [
+                                              _createTextVNode(_toDisplayString(row.caption), 1)
+                                            ]),
+                                            _: 2
+                                          }, 1024),
+                                          (row.stateText)
+                                            ? (_openBlock(), _createBlock(_component_q_item_label, {
+                                                key: 0,
+                                                caption: "",
+                                                class: _normalizeClass(["m-maps-offline-state", row.failed ? 'text-negative' : ''])
+                                              }, {
+                                                default: _withCtx(() => [
+                                                  _createTextVNode(_toDisplayString(row.stateText), 1)
+                                                ]),
+                                                _: 2
+                                              }, 1032, ["class"]))
+                                            : _createCommentVNode("", true),
+                                          (row.progress !== null)
+                                            ? (_openBlock(), _createBlock(_component_q_linear_progress, {
+                                                key: 1,
+                                                value: row.progress,
+                                                class: "q-mt-xs"
+                                              }, null, 8, ["value"]))
+                                            : _createCommentVNode("", true)
+                                        ]),
+                                        _: 2
+                                      }, 1024),
+                                      _createVNode(_component_q_item_section, {
+                                        side: "",
+                                        class: "row no-wrap items-center q-gutter-x-xs"
+                                      }, {
+                                        default: _withCtx(() => [
+                                          (row.installed)
+                                            ? (_openBlock(), _createBlock(_component_q_btn, {
+                                                key: 0,
+                                                flat: "",
+                                                dense: "",
+                                                "no-caps": "",
+                                                color: "primary",
+                                                label: _ctx.t('Open'),
+                                                class: "m-maps-offline-open",
+                                                onClick: $event => (_ctx.open(row))
+                                              }, null, 8, ["label", "onClick"]))
+                                            : _createCommentVNode("", true),
+                                          (row.canDownload)
+                                            ? (_openBlock(), _createBlock(_component_q_btn, {
+                                                key: 1,
+                                                flat: "",
+                                                dense: "",
+                                                "no-caps": "",
+                                                color: "primary",
+                                                label: row.installed ? _ctx.t('Update') : _ctx.t('Download'),
+                                                class: "m-maps-offline-download",
+                                                disable: _ctx.offline,
+                                                onClick: $event => (_ctx.download(row))
+                                              }, null, 8, ["label", "disable", "onClick"]))
+                                            : _createCommentVNode("", true),
+                                          (row.busy)
+                                            ? (_openBlock(), _createBlock(_component_q_btn, {
+                                                key: 2,
+                                                flat: "",
+                                                dense: "",
+                                                "no-caps": "",
+                                                label: _ctx.t('Cancel'),
+                                                class: "m-maps-offline-cancel",
+                                                onClick: $event => (_ctx.cancel(row))
+                                              }, null, 8, ["label", "onClick"]))
+                                            : _createCommentVNode("", true),
+                                          (row.installed && !row.busy)
+                                            ? (_openBlock(), _createBlock(_component_q_btn, {
+                                                key: 3,
+                                                flat: "",
+                                                dense: "",
+                                                round: "",
+                                                icon: "sym_o_delete",
+                                                color: "negative",
+                                                "aria-label": _ctx.t('Delete from this device'),
+                                                class: "m-maps-offline-delete",
+                                                onClick: $event => (_ctx.remove(row))
+                                              }, null, 8, ["aria-label", "onClick"]))
+                                            : _createCommentVNode("", true)
+                                        ]),
+                                        _: 2
+                                      }, 1024)
+                                    ]),
+                                    _: 2
+                                  }, 1032, ["data-package"]))
+                                }), 128)),
+                                (_ctx.loaded && !_ctx.rows.length)
+                                  ? (_openBlock(), _createBlock(_component_q_item, { key: 0 }, {
+                                      default: _withCtx(() => [
+                                        _createVNode(_component_q_item_section, { class: "m-muted" }, {
+                                          default: _withCtx(() => [
+                                            _createTextVNode(_toDisplayString(_ctx.offline
+                                ? _ctx.t('No offline maps on this device. Download one when the server can be reached.')
+                                : _ctx.t('No offline maps yet. Make one in Maps, Offline maps, then download it here.')), 1)
+                                          ]),
+                                          _: 1
+                                        })
+                                      ]),
+                                      _: 1
+                                    }))
+                                  : _createCommentVNode("", true)
+                              ]),
+                              _: 1
+                            })
+                          ], 64))
+                        : (_openBlock(), _createElementBlock(_Fragment, { key: 2 }, [
+                            _createElementVNode("div", { class: "q-pa-sm row items-center q-gutter-sm m-maps-offline-head" }, [
+                              _createVNode(_component_q_btn, {
+                                flat: "",
+                                dense: "",
+                                "no-caps": "",
+                                icon: "sym_o_arrow_back",
+                                label: _ctx.t('All offline maps'),
+                                onClick: _ctx.close
+                              }, null, 8, ["label", "onClick"]),
+                              _createElementVNode("div", { class: "text-subtitle1 col ellipsis" }, _toDisplayString(_ctx.opened.name || _ctx.opened.packageId), 1),
+                              _createVNode(_component_q_chip, {
+                                dense: "",
+                                square: "",
+                                color: _ctx.offline ? 'warning' : 'grey-3',
+                                "text-color": "black",
+                                icon: _ctx.offline ? 'sym_o_cloud_off' : 'sym_o_offline_pin',
+                                class: "m-maps-offline-mode"
+                              }, {
+                                default: _withCtx(() => [
+                                  _createTextVNode(_toDisplayString(_ctx.offline ? _ctx.t('Offline') : _ctx.t('On this device')), 1)
+                                ]),
+                                _: 1
+                              }, 8, ["color", "icon"])
+                            ]),
+                            _createElementVNode("div", { class: "q-px-md text-caption m-muted m-maps-offline-built" }, _toDisplayString(_ctx.builtText), 1),
+                            (_ctx.error)
+                              ? (_openBlock(), _createElementBlock("div", {
+                                  key: 0,
+                                  role: "alert",
+                                  class: "q-px-md text-negative"
+                                }, _toDisplayString(_ctx.error), 1))
+                              : _createCommentVNode("", true),
+                            _createVNode(_component_q_form, {
+                              class: "q-px-md q-pt-sm row items-center q-gutter-sm m-maps-offline-search",
+                              onSubmit: _ctx.search
+                            }, {
+                              default: _withCtx(() => [
+                                _createVNode(_component_q_input, {
+                                  modelValue: _ctx.query,
+                                  "onUpdate:modelValue": $event => ((_ctx.query) = $event),
+                                  dense: "",
+                                  outlined: "",
+                                  clearable: "",
+                                  class: "col",
+                                  label: _ctx.t('Search this map'),
+                                  autocomplete: "off"
+                                }, null, 8, ["modelValue", "onUpdate:modelValue", "label"]),
+                                _createVNode(_component_q_btn, {
+                                  type: "submit",
+                                  flat: "",
+                                  dense: "",
+                                  "no-caps": "",
+                                  color: "primary",
+                                  icon: "sym_o_search",
+                                  label: _ctx.t('Search'),
+                                  loading: _ctx.searching
+                                }, null, 8, ["label", "loading"])
+                              ]),
+                              _: 1
+                            }, 8, ["onSubmit"]),
+                            (_ctx.addressNote)
+                              ? (_openBlock(), _createElementBlock("div", {
+                                  key: 1,
+                                  class: "q-px-md text-caption m-muted m-maps-offline-address-note"
+                                }, _toDisplayString(_ctx.addressNote), 1))
+                              : _createCommentVNode("", true),
+                            (_ctx.results.length || _ctx.searched)
+                              ? (_openBlock(), _createBlock(_component_q_list, {
+                                  key: 2,
+                                  dense: "",
+                                  separator: "",
+                                  class: "q-mx-md q-mt-xs m-maps-offline-results"
+                                }, {
+                                  default: _withCtx(() => [
+                                    (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.results, (result) => {
+                                      return (_openBlock(), _createBlock(_component_q_item, {
+                                        key: result.key,
+                                        clickable: "",
+                                        class: "m-maps-offline-result",
+                                        onClick: $event => (_ctx.show(result))
+                                      }, {
+                                        default: _withCtx(() => [
+                                          _createVNode(_component_q_item_section, { avatar: "" }, {
+                                            default: _withCtx(() => [
+                                              _createVNode(_component_q_icon, {
+                                                name: result.icon,
+                                                size: "20px"
+                                              }, null, 8, ["name"])
+                                            ]),
+                                            _: 2
+                                          }, 1024),
+                                          _createVNode(_component_q_item_section, null, {
+                                            default: _withCtx(() => [
+                                              _createVNode(_component_q_item_label, null, {
+                                                default: _withCtx(() => [
+                                                  _createTextVNode(_toDisplayString(result.label), 1)
+                                                ]),
+                                                _: 2
+                                              }, 1024),
+                                              _createVNode(_component_q_item_label, { caption: "" }, {
+                                                default: _withCtx(() => [
+                                                  _createTextVNode(_toDisplayString(result.caption), 1)
+                                                ]),
+                                                _: 2
+                                              }, 1024)
+                                            ]),
+                                            _: 2
+                                          }, 1024)
+                                        ]),
+                                        _: 2
+                                      }, 1032, ["onClick"]))
+                                    }), 128)),
+                                    (_ctx.searched && !_ctx.results.length)
+                                      ? (_openBlock(), _createBlock(_component_q_item, { key: 0 }, {
+                                          default: _withCtx(() => [
+                                            _createVNode(_component_q_item_section, { class: "m-muted" }, {
+                                              default: _withCtx(() => [
+                                                _createTextVNode(_toDisplayString(_ctx.t('Nothing in this map matches')), 1)
+                                              ]),
+                                              _: 1
+                                            })
+                                          ]),
+                                          _: 1
+                                        }))
+                                      : _createCommentVNode("", true)
+                                  ]),
+                                  _: 1
+                                }))
+                              : _createCommentVNode("", true),
+                            _createElementVNode("div", { class: "q-pa-md" }, [
+                              (_ctx.mapConfig)
+                                ? (_openBlock(), _createBlock(_component_m_map, {
+                                    key: 0,
+                                    ref: "map",
+                                    id: "MapsOfflineMap",
+                                    config: _ctx.mapConfig,
+                                    height: "60vh",
+                                    onViewChange: _ctx.viewChanged,
+                                    onSelect: _ctx.selected
+                                  }, null, 8, ["config", "onViewChange", "onSelect"]))
+                                : _createCommentVNode("", true)
+                            ]),
+                            (_ctx.mapsAccess)
+                              ? (_openBlock(), _createBlock(_component_q_form, {
+                                  key: 3,
+                                  class: "q-px-md row items-center q-gutter-sm m-maps-offline-save",
+                                  onSubmit: _ctx.savePlace
+                                }, {
+                                  default: _withCtx(() => [
+                                    _createVNode(_component_q_input, {
+                                      modelValue: _ctx.placeName,
+                                      "onUpdate:modelValue": $event => ((_ctx.placeName) = $event),
+                                      dense: "",
+                                      outlined: "",
+                                      class: "col",
+                                      label: _ctx.t('Save a place: its name'),
+                                      maxlength: "200",
+                                      autocomplete: "off"
+                                    }, null, 8, ["modelValue", "onUpdate:modelValue", "label"]),
+                                    _createVNode(_component_q_btn, {
+                                      type: "submit",
+                                      flat: "",
+                                      dense: "",
+                                      "no-caps": "",
+                                      color: "primary",
+                                      icon: "sym_o_add_location_alt",
+                                      label: _ctx.pointToSave && _ctx.pointToSave.label ? _ctx.t('Save this place') : _ctx.t('Save the map\'s center'),
+                                      disable: !_ctx.placeName.trim() || !_ctx.pointToSave
+                                    }, null, 8, ["label", "disable"])
+                                  ]),
+                                  _: 1
+                                }, 8, ["onSubmit"]))
+                              : _createCommentVNode("", true),
+                            (_ctx.queuedPlaces.length)
+                              ? (_openBlock(), _createBlock(_component_q_list, {
+                                  key: 4,
+                                  dense: "",
+                                  class: "q-mx-md m-maps-offline-queued"
+                                }, {
+                                  default: _withCtx(() => [
+                                    (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.queuedPlaces, (op) => {
+                                      return (_openBlock(), _createBlock(_component_q_item, {
+                                        key: op.id
+                                      }, {
+                                        default: _withCtx(() => [
+                                          _createVNode(_component_q_item_section, { avatar: "" }, {
+                                            default: _withCtx(() => [
+                                              _createVNode(_component_q_icon, {
+                                                name: "sym_o_schedule_send",
+                                                size: "20px"
+                                              })
+                                            ]),
+                                            _: 1
+                                          }),
+                                          _createVNode(_component_q_item_section, null, {
+                                            default: _withCtx(() => [
+                                              _createVNode(_component_q_item_label, null, {
+                                                default: _withCtx(() => [
+                                                  _createTextVNode(_toDisplayString(op.label), 1)
+                                                ]),
+                                                _: 2
+                                              }, 1024),
+                                              _createVNode(_component_q_item_label, {
+                                                caption: "",
+                                                class: _normalizeClass(op.failed ? 'text-negative' : '')
+                                              }, {
+                                                default: _withCtx(() => [
+                                                  _createTextVNode(_toDisplayString(op.stateText), 1)
+                                                ]),
+                                                _: 2
+                                              }, 1032, ["class"])
+                                            ]),
+                                            _: 2
+                                          }, 1024),
+                                          (op.failed || op.held)
+                                            ? (_openBlock(), _createBlock(_component_q_item_section, {
+                                                key: 0,
+                                                side: "",
+                                                class: "row no-wrap"
+                                              }, {
+                                                default: _withCtx(() => [
+                                                  (op.failed)
+                                                    ? (_openBlock(), _createBlock(_component_q_btn, {
+                                                        key: 0,
+                                                        flat: "",
+                                                        dense: "",
+                                                        "no-caps": "",
+                                                        label: _ctx.t('Retry'),
+                                                        onClick: $event => (_ctx.retryPlace(op))
+                                                      }, null, 8, ["label", "onClick"]))
+                                                    : _createCommentVNode("", true),
+                                                  _createVNode(_component_q_btn, {
+                                                    flat: "",
+                                                    dense: "",
+                                                    "no-caps": "",
+                                                    label: _ctx.t('Discard'),
+                                                    class: "m-maps-offline-discard",
+                                                    onClick: $event => (_ctx.discardPlace(op))
+                                                  }, null, 8, ["label", "onClick"])
+                                                ]),
+                                                _: 2
+                                              }, 1024))
+                                            : _createCommentVNode("", true)
+                                        ]),
+                                        _: 2
+                                      }, 1024))
+                                    }), 128))
+                                  ]),
+                                  _: 1
+                                }))
+                              : _createCommentVNode("", true),
+                            _createElementVNode("div", { class: "q-pa-md text-caption m-maps-offline-sources" }, [
+                              _createElementVNode("div", { class: "text-weight-medium" }, _toDisplayString(_ctx.t('Sources')), 1),
+                              (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.sources, (source, index) => {
+                                return (_openBlock(), _createElementBlock("div", {
+                                  key: index,
+                                  class: "m-maps-offline-source"
+                                }, [
+                                  _createElementVNode("span", null, _toDisplayString(source.text), 1),
+                                  (source.licenses)
+                                    ? (_openBlock(), _createElementBlock("span", {
+                                        key: 0,
+                                        class: "m-muted"
+                                      }, " · " + _toDisplayString(source.licenses), 1))
+                                    : _createCommentVNode("", true)
+                                ]))
+                              }), 128)),
+                              _createElementVNode("div", { class: "m-muted q-mt-xs" }, _toDisplayString(_ctx.notice), 1)
+                            ])
+                          ], 64))
                   ]))
                 }
             })();

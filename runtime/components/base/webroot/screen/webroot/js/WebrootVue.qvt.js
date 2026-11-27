@@ -8280,10 +8280,11 @@
     // by its definition (as m-diagram-zoom draws m-pan-zoom). The bundle failing is passed on as library-error, so m-map-view lists the places in its place; until the file
     // has loaded, and when it cannot, the places are listed here, so a record's actions stay usable. config is the map's
     // configuration (an object or its JSON; the shape is in js/WebrootMap.js), config-url a transition answering the effective
-    // one. Emits pick ({lon, lat}), select, view-change and edit-change; a live-change listener (the live layer's shares,
-    // plans/Location-Sharing.md §3.3) is passed on to m-map-view with the other attributes it does not declare, and
-    // m-map-view emits it. editCommand(name, value) is m-map-view's (the editing of an overlay, js/WebrootMap.js),
-    // answering null until the map has loaded.
+    // one (or, in the apps' shell, an offline package's manifest: package mode, js/WebrootMap.js). Emits pick ({lon, lat}),
+    // select, view-change and edit-change; a live-change listener (the live layer's shares, plans/Location-Sharing.md §3.3)
+    // is passed on to m-map-view with the other attributes it does not declare, and m-map-view emits it.
+    // editCommand(name, value) is m-map-view's (the editing of an overlay, js/WebrootMap.js), answering null until the map
+    // has loaded, and showPlace(place) marks a place found.
     let mapLoad = null;
     // The bundle is imported by js/WebrootMap.js's map.loadOpenLayers (its entries by the hashed names ol-map.json gives); a
     // library that did not load is not kept, so the next map tries again.
@@ -8297,7 +8298,9 @@
         emits: ["pick", "select", "view-change", "edit-change"],
         data() { return { view: null, libraryError: "", failed: "" }; },
         methods: {
-            editCommand(name, value) { return this.$refs.view && this.$refs.view.editCommand ? this.$refs.view.editCommand(name, value) : null; }
+            editCommand(name, value) { return this.$refs.view && this.$refs.view.editCommand ? this.$refs.view.editCommand(name, value) : null; },
+            // a place a page found (the offline Maps screen's search, plans/Maps-Offline.md §2.5) marked and shown
+            showPlace(place) { if (this.$refs.view && this.$refs.view.showPlace) this.$refs.view.showPlace(place); }
         },
         computed: {
             // the places given, for the list shown while the map loads or when it cannot

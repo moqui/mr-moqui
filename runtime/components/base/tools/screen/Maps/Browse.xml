@@ -370,13 +370,65 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
-    <!-- Save place: a named point to the user's places file (store#Place); remove one (delete#Place) -->
+    <!-- Save place: a named point to the user's places file (store#Place); remove one (delete#Place). A clientRef (a
+        place the apps' offline Maps screen saved, sent by the outbox: plans/Maps-Offline.md §2.5; clientConfig's
+        features.placeRef) makes it once: a save is kept by its ref (ClientSyncServices claim#ClientRequest and
+        store#ClientRequest, in one transaction), and sent again it answers the first save with duplicate true. A
+        refusal (too many places, an unreadable places file) keeps no ref, so a retry of it may be saved, and is answered
+        as one ({applied: false, reasonCode, reason}). Both services are called with throwOnError, so a failure throws
+        and rolls the transaction back, its claim with it (MapOverlays.js placeAfterFailure): when the ref's row is there
+        then (two sends of one ref overlapping), the duplicate of the send that holds it; else a claim's or store#Place's
+        own refusal of its input (a ref that is not one, no user, a parameter not valid: the Unprocessable kind) as
+        {errors} with its message, which will not pass; and any other failure (a lock wait, a deadlock, a timeout, a lost
+        connection, the other send not committed yet) a 500 the outbox tries again, its text only logged. -->
     <transition name="savePlace">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.maps.MapServices.store#Place').requireNewTransaction(true)
-                .parameters({label: label || '', longitude: longitude ?? '', latitude: latitude ?? ''}).call()
+            const parameters = {label: label || '', longitude: longitude ?? '', latitude: latitude ?? ''}
+            const SERVICE = 'org.moqui.maps.MapServices.store#Place'
+            const ref = String(clientRef ?? '')
+            let out = {}
+            let duplicate = false
+            // the claim of a ref that saved no place (a refusal) goes in the transaction that made it
+            const dropClaim = () => ec.entity.find('moqui.basic.client.ClientRequestRef').condition({userId: ec.user.userId,
+                serviceName: SERVICE, clientRef: ref}).disableAuthz().deleteAll()
+            if (!ref) out = ec.service.sync().name(SERVICE).requireNewTransaction(true).parameters(parameters).call() || {}
+            else try {
+                ec.transaction.runRequireNew(60, 'Error saving a place by its clientRef', () => {
+                    // throwOnError: a failure of either throws (its kind marked), so the transaction and the claim roll back
+                    const claim = ec.service.sync().throwOnError(true).name('org.moqui.edge.ClientSyncServices.claim#ClientRequest')
+                        .parameters({clientRef: ref, serviceName: SERVICE}).call()
+                    if (claim.duplicate) { duplicate = true; out = claim.result || {}; return }
+                    out = ec.service.sync().throwOnError(true).name(SERVICE).parameters(parameters).call() || {}
+                    // only a place saved keeps its ref: a refusal's claim goes too, so its retry may be saved
+                    if (out.applied) ec.service.sync().throwOnError(true).name('org.moqui.edge.ClientSyncServices.store#ClientRequest')
+                        .parameters({clientRef: ref, serviceName: SERVICE, result: out}).call()
+                    else dropClaim()
+                })
+            } catch (err) {
+                // The transaction failed and rolled back, its claim with it. Two sends of one ref can overlap (the outbox
+                // sends again after a lost answer): this one's claim missed the other's uncommitted row, then its insert met
+                // the row's key. So the ref is read again, committed now (placeAfterFailure, in a transaction of its own):
+                // there, this is the other's duplicate. Else a service's own refusal of its input (the Unprocessable kind
+                // throwOnError marks: a ref that is not one, no user, a parameter not valid) is answered as {errors} with its
+                // message, which is the service's, for the client; and any other failure (a lock wait, a deadlock, a
+                // timeout, a lost connection, the other send not committed yet) is thrown again, a 500 the outbox tries
+                // again, its text (database or constraint detail) only logged.
+                ec.logger.warn('Map place by clientRef ' + ref + ' not saved: ' + (err && err.message ? err.message : err))
+                const unprocessable = !!err && err.moquiErrorKind === 'Unprocessable'
+                const reason = unprocessable ? String(err.message || '') : ''
+                ec.message.clearErrors()
+                let after = null
+                ec.transaction.runRequireNew(30, 'Error reading a place\'s clientRef', () => {
+                    after = ec.resource.script('component://framework/service/org/moqui/maps/MapOverlays.js')
+                        .execute('placeAfterFailure', {clientRef: ref, unprocessable})
+                })
+                if (after && after.outcome === 'duplicate') { duplicate = true; out = after.result || {} }
+                else if (after && after.outcome === 'errors') { ec.message.addError(reason || ec.l10n.localize('The place was not saved')); out = {} }
+                else throw err
+            }
             if (ec.message.hasError()) { const errors = ec.message.getErrorsString(); ec.message.clearErrors(); ec.web.sendJsonResponse({errors}) }
-            else ec.web.sendJsonResponse({applied: out.applied, reason: out.reason, placeId: out.placeId, overlayId: out.overlayId})
+            else ec.web.sendJsonResponse({applied: out.applied, reasonCode: out.reasonCode, reason: out.reason, placeId: out.placeId,
+                overlayId: out.overlayId, duplicate})
         ]]></script></actions>
         <default-response type="none"/>
     </transition>

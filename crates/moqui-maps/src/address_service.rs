@@ -40,9 +40,8 @@ pub const THEME_ID: &str = "ADDRESSES";
 /// The most points read for one number of one street, and for one street.
 const NUMBER_ROWS: i64 = 200;
 const STREET_ROWS: i64 = 500;
-/// The most street keys tried for a text of one part, countries for a text with none, and indexed queries a search sends
-/// in all.
-const MAX_STREETS: usize = 8;
+/// The most countries tried for a text with none, and indexed queries a search sends in all (the street keys tried are
+/// `address::MAX_STREETS`).
 const MAX_COUNTRIES: usize = 6;
 const MAX_QUERIES: usize = 24;
 /// An address whose point moved farther than this between two releases counts as moved.
@@ -473,7 +472,8 @@ fn rows(
         .collect())
 }
 
-/// The best of the tiers found for one country's reading of the text.
+/// The best of the tiers found for one country's reading of the text (`address::search_tiers`, the walk the apps'
+/// offline search shares), over the active runs' rows within the search's query budget.
 fn search_country(
     budget: &mut usize,
     facade: &EntityFacade,
@@ -483,69 +483,9 @@ fn search_country(
     country: &str,
     near: Option<(f64, f64)>,
 ) -> Result<Option<(Tier, Ranked)>, Error> {
-    let number = query
-        .number
-        .as_deref()
-        .map(address::number_key)
-        .filter(|key| !key.is_empty());
-    for (street, locality) in query.streets(country).into_iter().take(MAX_STREETS) {
-        if *budget == 0 {
-            break;
-        }
-        let locality = locality.as_deref().map(address::fold);
-        if let Some(number) = number.as_deref() {
-            let found = rows(budget, facade, imports, country, &street, Some(number), releases)?;
-            if !found.is_empty() {
-                return Ok(Some((
-                    Tier::Address,
-                    address::rank(query, locality.as_deref(), Tier::Address, found, near),
-                )));
-            }
-            if let Some(base) = address::number_base(number) {
-                let found = rows(budget, facade, imports, country, &street, Some(&base), releases)?;
-                // a letter after the number that the source keeps as the unit (Italy's `12/A`: number 12, unit A) is the
-                // address; any other number found without its suffix is an estimate
-                let suffix = number
-                    .get(base.len()..)
-                    .unwrap_or_default()
-                    .trim_matches(['/', '-'])
-                    .to_string();
-                if query.unit.is_none() && !suffix.is_empty() && found.iter().any(|point| point.unit_key == suffix) {
-                    let as_unit = Query {
-                        unit: Some(suffix.clone()),
-                        ..query.clone()
-                    };
-                    let units: Vec<Point> = found.into_iter().filter(|point| point.unit_key == suffix).collect();
-                    return Ok(Some((
-                        Tier::Address,
-                        address::rank(&as_unit, locality.as_deref(), Tier::Address, units, near),
-                    )));
-                }
-                if !found.is_empty() {
-                    return Ok(Some((
-                        Tier::NumberBase,
-                        address::rank(query, locality.as_deref(), Tier::NumberBase, found, near),
-                    )));
-                }
-            }
-        }
-        let found = rows(budget, facade, imports, country, &street, None, releases)?;
-        if !found.is_empty() {
-            return Ok(Some((
-                Tier::Street,
-                address::rank(query, locality.as_deref(), Tier::Street, found, near),
-            )));
-        }
-    }
-    Ok(None)
-}
-
-fn tier_order(tier: Tier) -> u8 {
-    match tier {
-        Tier::Address => 0,
-        Tier::NumberBase => 1,
-        Tier::Street => 2,
-    }
+    address::search_tiers(query, country, near, &mut |street, number| {
+        rows(budget, facade, imports, country, street, number, releases)
+    })
 }
 
 fn agrees(value: Option<bool>) -> Value {
@@ -698,16 +638,7 @@ pub(crate) fn search_overture_addresses(
         };
         read_any.get_or_insert_with(|| query.clone());
         if let Some((tier, ranked)) = search_country(&mut budget, facade, &imports, &releases, &query, country, near)? {
-            let better = match &best {
-                None => true,
-                Some((best_tier, best_ranked, _)) => {
-                    tier_order(tier) < tier_order(*best_tier)
-                        || tier == *best_tier
-                            && ranked.candidates.first().map_or(i32::MIN, |c| c.score)
-                                > best_ranked.candidates.first().map_or(i32::MIN, |c| c.score)
-                }
-            };
-            if better {
+            if address::better(tier, &ranked, best.as_ref().map(|(tier, ranked, _)| (*tier, ranked))) {
                 best = Some((tier, ranked, query));
             }
         }

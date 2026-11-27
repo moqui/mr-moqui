@@ -264,6 +264,12 @@ pub fn answer(
     if vault_module_path(&bare) {
         return plain(StatusCode::FORBIDDEN, "The app runs its own vault module");
     }
+    // The offline map packages (plans/Maps-Offline.md §2.4): the current account's, from the device, to the shell only,
+    // whose pages are the app's own code (OF3's offline Maps screen is a bundled one). Every account's server pages
+    // share the app origin and run the server's code, so it answers them nothing; never forwarded.
+    if bare.starts_with(moqui_client::packages::PATH_PREFIX) {
+        return package_file(state, label, &request, &bare, origin);
+    }
     // The shell's own paths (its page, `/shell/`, `/js/`, `/libs/`, `/css/`) are its staged files or nothing: never
     // forwarded, so no script of the server's comes to the shell's origin by a path its CSP allows (a library not staged).
     if origin == SHELL_ORIGIN && state.files.is_static(&bare) {
@@ -440,6 +446,47 @@ pub fn answer(
         .body(body)
         .unwrap_or_else(|_| plain(StatusCode::BAD_GATEWAY, "The server's answer could not be passed on"));
     hooks.adapt(document, response)
+}
+
+/// A file of an offline map package on the device for the shell's page `label` (`moqui_client::packages::serve`): one
+/// range as a 206 slice read from the file, never the whole file in memory. Only the shell's own page asks: 404 on the
+/// app origin, and on the shell's origin for a webview that shows a server page (every webview has the schemes, so a
+/// server page could embed a shell-origin URL as an image or a font) or a request that says it is another origin's
+/// (`Origin`, `Sec-Fetch-Site`), whatever the URL says.
+pub fn package_file(
+    state: &ClientState,
+    label: &str,
+    request: &tauri::http::Request<Vec<u8>>,
+    bare: &str,
+    origin: &str,
+) -> Response<Vec<u8>> {
+    let text = |name: &str| request.headers().get(name).and_then(|value| value.to_str().ok());
+    let other_origin = text("origin").is_some_and(|sent| !sent.trim().eq_ignore_ascii_case(SHELL_ORIGIN));
+    let other_site = text("sec-fetch-site").is_some_and(|site| {
+        let site = site.trim();
+        !site.eq_ignore_ascii_case("same-origin") && !site.eq_ignore_ascii_case("none")
+    });
+    if origin != SHELL_ORIGIN || !state.host.is_shell(label) || other_origin || other_site {
+        return plain(StatusCode::NOT_FOUND, "Not found");
+    }
+    let Some((account, _)) = state.account_of(label) else {
+        return plain(StatusCode::NOT_FOUND, "No account is signed in");
+    };
+    let served = moqui_client::packages::serve(
+        state.core.packages(),
+        &account.id,
+        request.method().as_str(),
+        bare,
+        text("range"),
+        text("if-range"),
+    );
+    let mut response = Response::builder().status(served.status);
+    for (name, value) in &served.headers {
+        response = response.header(*name, value.as_str());
+    }
+    response
+        .body(served.body)
+        .unwrap_or_else(|_| plain(StatusCode::INTERNAL_SERVER_ERROR, "Not answered"))
 }
 
 /// A 401 to a request with the account's key: check that the key still signs in (the server says 401 also when it

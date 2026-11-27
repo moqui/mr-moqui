@@ -20,8 +20,10 @@ along with this software (see the LICENSE.md file). If not, see
     screens under its root (calls.appRoot), so their transitions go to the server, and to the account's store offline; and
     the calls of the account (WebrootCall.js: the ring bar, the LiveCall window and the call's audio, m-call-dock), whose
     encrypted ones this window takes, as it holds the crypto device; the palette (m-shell-palette, Search and Mod+K, with the
-    keys of moqui.keymap), whose Chat rooms come first, the comms app being the current one here (Comms-Messaging §3). Any other screen, and those not bundled, open in an
-    app window. The root of its Vue app, so it is the $root the client's components and those
+    keys of moqui.keymap), whose Chat rooms come first, the comms app being the current one here (Comms-Messaging §3); and
+    Maps (plans/Maps-Offline.md §2.5): Maps' Browse in an app window when the server answers, the bundled offline Maps
+    screen (Shell/MapsOffline, the device's packages) when it does not, and that screen from Offline maps always. Any
+    other screen, and those not bundled, open in an app window. The root of its Vue app, so it is the $root the client's components and those
     screens ask for: basePath, linkBasePath, currentPathList, currentParameters, setUrl, setParameters, the containers,
     userId and the notification client, as m-qapps-root has them, with a history of its own (the shell's page stays /).
     Bundled, precompiled (bundled-screens.txt). -->
@@ -107,8 +109,22 @@ along with this software (see the LICENSE.md file). If not, see
                 </q-item>
                 <q-separator spaced></q-separator>
             </template>
+            <!-- Maps (plans/Maps-Offline.md §2.5): Browse when the server answers, the offline screen when it does not -->
+            <template v-if="mapsOn">
+                <q-item-label header>{{t('Maps')}}</q-item-label>
+                <q-item clickable class="m-shell-maps" @click="openMaps">
+                    <q-item-section avatar><q-icon name="sym_o_map"></q-icon></q-item-section>
+                    <q-item-section>{{t('Maps')}}</q-item-section>
+                    <q-item-section side><q-icon :name="isOffline ? 'sym_o_cloud_off' : 'sym_o_open_in_new'" size="xs"></q-icon></q-item-section>
+                </q-item>
+                <q-item clickable :active="view === 'maps'" class="m-shell-maps-offline" @click="setUrl('/qapps/maps/Offline')">
+                    <q-item-section avatar><q-icon name="sym_o_offline_pin"></q-icon></q-item-section>
+                    <q-item-section>{{t('Offline maps')}}</q-item-section>
+                </q-item>
+                <q-separator spaced></q-separator>
+            </template>
             <q-item-label header>{{t('Applications')}}</q-item-label>
-            <q-item v-for="app in apps" :key="app.name" clickable @click="setUrl(app.path)">
+            <q-item v-for="app in apps" :key="app.name" clickable @click="openApp(app)">
                 <q-item-section avatar>
                     <m-menu-icon v-if="app.imageType === 'icon' && app.image" :name="app.image"></m-menu-icon>
                     <q-icon v-else name="sym_o_apps"></q-icon>
@@ -243,7 +259,13 @@ const SHELL_ROUTES = { 'Chat': 'chat', 'Inbox': 'mail', 'Inbox/Mail': 'mail', 'I
     'Settings/Devices': 'devices' };
 const VIEW_PATHS = { chat: ['Chat'], mail: ['Inbox', 'Mail'], compose: ['Inbox', 'Compose'], call: ['Calls', 'Call'], dialer: ['Calls', 'Dialer'],
     devices: ['Settings', 'Devices'] };
-const VIEW_TITLES = { chat: 'Chat', mail: 'Mail', compose: 'New message', call: 'Call', dialer: 'Dialer', devices: 'My devices' };
+const VIEW_TITLES = { chat: 'Chat', mail: 'Mail', compose: 'New message', call: 'Call', dialer: 'Dialer', devices: 'My devices', maps: 'Offline maps' };
+// The offline Maps screen (plans/Maps-Offline.md §2.5): bundled as the shell's own, shown at Maps' Offline path; Maps'
+// other screens are the server's, in an app window
+const MAPS_OFFLINE = 'Shell/MapsOffline';
+const MAPS_OFFLINE_PATH = 'maps/Offline';
+const MAPS_BROWSE = '/qapps/maps/Browse';
+const isMapsApp = (app) => /^\/(?:qapps|apps)\/maps(?:\/|$)/.test(String((app && app.path) || ''));
 // what waits unsent, as the sign-out lists it (moquiDesktop.outbox.unsent: the outbox's operations and the drafts)
 const unsentItems = (found) => {
     const ops = (found && Array.isArray(found.operations)) ? found.operations : [];
@@ -255,6 +277,7 @@ const unsentItems = (found) => {
         if (op.kind === 'mail-send') return { key: op.id, icon: 'sym_o_mail', label: fields.subject || t('(no subject)'), caption: t('Mail') };
         if (op.kind === 'chat-read') return { key: op.id, icon: 'sym_o_done_all', label: t('A room marked read'), caption: '' };
         if (op.kind === 'mail-state') return { key: op.id, icon: 'sym_o_inbox', label: t('A change to mail threads'), caption: String(payload.action || '') };
+        if (op.kind === 'map-place') return { key: op.id, icon: 'sym_o_add_location_alt', label: payload.label || t('A saved place'), caption: t('Maps') };
         return { key: op.id, icon: 'sym_o_outbox', label: String(op.kind || ''), caption: '' };
     });
     const drafts = (found && Array.isArray(found.drafts)) ? found.drafts.length : 0;
@@ -381,6 +404,11 @@ module.exports = {
         viewTitle() { return this.view ? t(VIEW_TITLES[this.view]) : ''; },
         // the server holds calls (its clientConfig's calls) and the call store is here, as m-qapps-root has them
         callsOn() { return !!(moqui.call && this.userId && this.config && this.config.calls); },
+        // the offline map packages of this app (moquiDesktop.packages, plans/Maps-Offline.md §2.5), for an account with the
+        // server's Maps app (its shellData's apps, which the store keeps for offline use): one without it sees no Maps
+        // entry, and the offline screen saves no place for it
+        mapsOn() { return !!(host() && host().packages && this.componentOf('maps') && this.mapsApp); },
+        mapsApp() { return this.apps.find(isMapsApp) || null; },
         // the comms screens this shell shows itself, in the drawer
         commsItems() {
             return [{ key: 'chat', view: 'chat', icon: 'sym_o_chat', label: t('Chat'), link: this.commsLink + '/Chat' },
@@ -487,13 +515,19 @@ module.exports = {
         failed(err) { this.$q.notify({ type: 'negative', message: String((err && err.message) || err) }); },
         // ---- the screens shown here, and the rest in app windows ----
         // the bundled comms screen of a view, under the paths shell.js named it
-        componentOf(view) { return VIEW_PATHS[view] ? moqui.bundledComponent(this.basePath + '/' + this.commsRel + '/' + VIEW_PATHS[view].join('/')) : null; },
+        componentOf(view) {
+            if (view === 'maps') return moqui.bundledComponent(MAPS_OFFLINE);
+            return VIEW_PATHS[view] ? moqui.bundledComponent(this.basePath + '/' + this.commsRel + '/' + VIEW_PATHS[view].join('/')) : null;
+        },
         // where a link goes: {view, pathList, parameters} for a comms screen this shell shows, else null (an app window)
         route(url) {
             const text = String(url || '');
             const quest = text.indexOf('?');
             const path = (quest >= 0 ? text.slice(0, quest) : text).replace(/\.(qvt|qvue|qjs)$/, '').replace(/\/+$/, '');
             const match = /^\/(?:qapps|apps)\/(.+)$/.exec(path);
+            // Maps' Offline screen: the bundled offline Maps screen (the device's packages), online or not
+            if (match && match[1] === MAPS_OFFLINE_PATH && this.componentOf('maps'))
+                return { view: 'maps', pathList: MAPS_OFFLINE_PATH.split('/'), parameters: moqui.searchToObj(quest >= 0 ? text.slice(quest + 1) : '') };
             const comms = this.commsRel;
             if (!match || match[1].indexOf(comms + '/') !== 0) return null;
             const view = SHELL_ROUTES[match[1].slice(comms.length + 1)];
@@ -519,6 +553,18 @@ module.exports = {
                 params: this.bodyParameters || {}, fullPath: this.currentLinkUrl, meta: {}, hash: '', matched: [{ path: this.currentPath }] });
         },
         openPalette() { this.paletteOpen = true; },
+        // Maps (plans/Maps-Offline.md §2.5): Browse, the server's page, when the server answers; the offline screen with the
+        // device's packages when it does not (moqui.connection: the host's unreachable answer, or none)
+        openMaps() {
+            if (!this.mapsApp) return;
+            if (this.isOffline) { this.setUrl('/qapps/maps/Offline'); return; }
+            host().openRemote(MAPS_BROWSE).catch((err) => this.failed(err));
+        },
+        // an app of the drawer: its page in an app window; Maps offline is the offline screen
+        openApp(app) {
+            if (isMapsApp(app) && this.isOffline && this.mapsOn) { this.setUrl('/qapps/maps/Offline'); return; }
+            this.setUrl(app.path);
+        },
         // the palette's Ctrl+Enter (a new tab on the web): the server's page in an app window
         openNewTab(url) { host().openRemote(this.getLinkPath(String(url || ''))).catch((err) => this.failed(err)); },
         // the link of a dm or record room in place of the link itself (Chat.qvue replaceRoom)

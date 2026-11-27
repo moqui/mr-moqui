@@ -91,6 +91,17 @@ fn the_native_vault_is_an_app_windows_command() {
     }
 }
 
+/// plans/Maps-Offline.md §2.4: the offline map packages are the shell's, whose pages are the app's own code; an app
+/// window's server page has none of their commands.
+#[test]
+fn the_map_packages_commands_are_the_shells_only() {
+    for command in ["list", "download", "cancel", "delete", "status"] {
+        let permission = format!("allow-packages-{command}");
+        assert!(SHELL_PERMISSIONS.contains(&permission.as_str()), "{permission}");
+        assert!(!APP_PERMISSIONS.contains(&permission.as_str()), "{permission}");
+    }
+}
+
 #[test]
 fn the_comms_screens_the_shell_bundles_are_shown_there_and_the_rest_in_an_app_window() {
     for path in [
