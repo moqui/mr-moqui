@@ -908,9 +908,12 @@ installation has room: at most `maps@package-concurrent-builds` packages are bui
 with the scheduled jobs), another waits, pending ("Waiting for its turn"), and starts when one ends (the hourly clean
 starts any whose turn was missed); a user has at most one package pending or building (`PACKAGE_BUSY`). One scheduler
 runs at a time (`schedule#PackageBuilds`, after the commit of the request that asked), and it first ends any build whose
-run is gone or silent for an hour, so a dead run never holds the queue. The run is signed in as the package's owner,
-whoever's request or build's end started it, and cuts only what the owner may see; an owner who cannot be signed in (a
-disabled account), or a run that throws, ends the package failed. The owner alone is told when it ends (topic
+run is gone, ended, or (once started) silent for an hour. A lost run (a full worker queue when its request committed, a
+run-as user the job runner refused, a restart mid-build) so holds its turn for up to an hour or two, until a scheduler
+pass or the hourly clean ends it. The run is signed in as the package's owner, whoever's request or build's end started
+it, and cuts only what the owner may see; an owner whose account is closed (disabled for good, or past its terminate
+date) or whose password must change, or a run that throws, ends the package failed. An owner locked out for a few
+minutes after failed sign-ins (someone else's, it may be) puts the build back to wait until the lock ends. The owner alone is told when it ends (topic
 `MapPackageBuild`, sent to them directly). The run holds no transaction while it cuts,
 each write its own, and writes only while the package still holds its build key; its files are named by the key, so
 two runs never share one. It cuts each archive (`build#PackageExtract`): for each zoom in turn the tiles of the region

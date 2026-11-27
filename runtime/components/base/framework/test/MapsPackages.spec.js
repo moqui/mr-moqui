@@ -21,6 +21,8 @@ const PROFILE = "MAPS_PKG_PROFILE"
 const SECRET = "MAPS_PKG_SPEC_SECRET"
 const FAKE_RUN = "MAPS_PKG_FAKE_RUN"
 const DISABLED = "MAPS_PKG_DISABLED"
+// locked out for a few minutes after failed sign-ins: a tarpit lock, not a closed account
+const LOCKED = "MAPS_PKG_LOCKED"
 // a group whose members hold the hidden layer's permission: the other user's
 const SECRET_GROUP = "MAPS_PKG_SECRET_GROUP"
 const DIR = "runtime://maps/maps-packages-spec"
@@ -159,9 +161,10 @@ spec({
     setupSpec() {
         ec.user.internalLoginUser("john.doe")
         ec.artifactExecution.disableAuthz()
-        for (const userId of [OWNER, OTHER, DISABLED]) {
+        for (const userId of [OWNER, OTHER, DISABLED, LOCKED]) {
             make("moqui.security.UserAccount", {userId, username: usernameOf(userId), userFullName: "Maps packages " + userId,
-                disabled: userId === DISABLED ? "Y" : "N"})
+                disabled: userId === DISABLED || userId === LOCKED ? "Y" : "N",
+                disabledDateTime: userId === LOCKED ? ec.user.nowTimestamp : null})
             make("moqui.security.UserGroupMember", {userGroupId: "MAPS_USERS", userId, fromDate: ec.user.nowTimestamp})
         }
         make("moqui.security.UserPermission", {userPermissionId: SECRET, description: "Maps packages spec"})
@@ -192,7 +195,7 @@ spec({
         ec.message.clearErrors()
         ec.user.internalLoginUser("john.doe")
         ec.artifactExecution.disableAuthz()
-        const rows = Array.from(ec.entity.find("moqui.maps.MapPackage").condition("ownerUserId", "in", [OWNER, OTHER, DISABLED]).list())
+        const rows = Array.from(ec.entity.find("moqui.maps.MapPackage").condition("ownerUserId", "in", [OWNER, OTHER, DISABLED, LOCKED]).list())
         for (const row of rows) {
             for (const name of buildFiles(String(row.packageId)))
                 try {
@@ -203,7 +206,7 @@ spec({
             ec.entity.find("moqui.maps.MapPackageDownload").condition("packageId", row.packageId).deleteAll()
         }
         const del = (entity, field, values) => ec.entity.find(entity).condition(field, "in", values).deleteAll()
-        del("moqui.maps.MapPackage", "ownerUserId", [OWNER, OTHER, DISABLED])
+        del("moqui.maps.MapPackage", "ownerUserId", [OWNER, OTHER, DISABLED, LOCKED])
         // the overlay feature's rows, should it stop part way
         del("moqui.resource.ResourceShare", "shareId", ["MAPS_PKG_SHARE_OVERLAY", "MAPS_PKG_SHARE_PLACES"])
         del("moqui.maps.MapOverlay", "ownerUserId", [OWNER, OTHER])
@@ -217,15 +220,15 @@ spec({
             } catch (e) {
                 ec.logger.warn("MapsPackages cleanup: " + location + " not deleted")
             }
-        del("moqui.security.UserGroupMember", "userId", [OWNER, OTHER, DISABLED])
+        del("moqui.security.UserGroupMember", "userId", [OWNER, OTHER, DISABLED, LOCKED])
         del("moqui.security.UserGroupPermission", "userGroupId", [SECRET_GROUP])
         del("moqui.security.UserGroup", "userGroupId", [SECRET_GROUP])
         del("moqui.security.UserPermission", "userPermissionId", [SECRET])
-        const notices = Array.from(ec.entity.find("moqui.security.user.NotificationMessageUser").condition("userId", "in", [OWNER, OTHER, DISABLED]).list())
+        const notices = Array.from(ec.entity.find("moqui.security.user.NotificationMessageUser").condition("userId", "in", [OWNER, OTHER, DISABLED, LOCKED]).list())
             .map(row => row.notificationMessageId)
-        del("moqui.security.user.NotificationMessageUser", "userId", [OWNER, OTHER, DISABLED])
+        del("moqui.security.user.NotificationMessageUser", "userId", [OWNER, OTHER, DISABLED, LOCKED])
         if (notices.length) del("moqui.security.user.NotificationMessage", "notificationMessageId", notices)
-        del("moqui.security.UserAccount", "userId", [OWNER, OTHER, DISABLED])
+        del("moqui.security.UserAccount", "userId", [OWNER, OTHER, DISABLED, LOCKED])
         ec.message.clearErrors()
     }
 })
@@ -290,7 +293,7 @@ feature("a package is cut from what its owner may see, its manifest lists every 
         out.estimate.estimate.tileCount > 0 && out.estimate.estimate.bytes > 0
         // the layer the owner may not see is left out, as one that is not there
         out.estimate.estimate.omitted.some(entry => entry.id == HIDDEN && entry.kind == "basemap")
-        out.created.applied == true && out.created.started == true
+        out.created.applied == true
         out.row.statusId == "MapPkgReady" && out.row.revision == 1 && out.row.sha256.length == 64
         out.row.location.startsWith(ROOT + "/" + out.created.packageId + "-1-") && out.row.location.endsWith(".zip")
         out.zipSha == out.row.sha256
@@ -369,10 +372,14 @@ feature("one build at a time: a user's second refused, another user's waits its 
         out.run = asSignedIn(OWNER, () => invoke(S + "build#Package", {packageId: "MAPS_PKG_CANCEL", buildKey: "SPECKEY"}))
         out.cancelled = packageRow("MAPS_PKG_CANCEL").statusId
         out.cancelledFiles = buildFiles("MAPS_PKG_CANCEL")
-        // the build's end gave the waiting one its turn
+        // the build's end gave the waiting one its turn: wait for that run to end whole (its row is Ready before it tells
+        // the owner and gives the next its turn)
+        const waitedRunEnded = () =>
+            Array.from(ec.entity.find("moqui.service.job.ServiceJobRun").condition("jobName", "MapPackageBuild").disableAuthz().list()).some(
+                run => run.endTime && String(run.parameters || "").includes('"' + out.waiting.packageId + '"')
+            )
         const deadline = Date.now() + 10000
-        while (Date.now() < deadline && ["MapPkgPending", "MapPkgBuilding"].includes(String(packageRow(out.waiting.packageId)?.statusId)))
-            sleep(50)
+        while (Date.now() < deadline && !waitedRunEnded()) sleep(50)
         out.waitedStatus = packageRow(out.waiting.packageId)?.statusId
         ec.artifactExecution.disableAuthz()
         const waited = packageRow(out.waiting.packageId)
@@ -387,8 +394,8 @@ feature("one build at a time: a user's second refused, another user's waits its 
         out.toldOwner = told(OTHER)
         out.toldStarter = told(OWNER)
         // asked for when the archive had another revision: it was registered again since; a run with a key the package
-        // does not hold writes nothing
-        packageOf("MAPS_PKG_REPLACED", {sourceRevisions: JSON.stringify({[VISIBLE]: "an-earlier-revision"})})
+        // does not hold writes nothing. Its jobRunId is the live fake run, so no scheduler starts it beside these calls
+        packageOf("MAPS_PKG_REPLACED", {jobRunId: FAKE_RUN, sourceRevisions: JSON.stringify({[VISIBLE]: "an-earlier-revision"})})
         out.strayRun = asSignedIn(OWNER, () => invoke(S + "build#Package", {packageId: "MAPS_PKG_REPLACED", buildKey: "ANOTHERKEY"}))
         out.strayStatus = packageRow("MAPS_PKG_REPLACED").statusId
         out.replacedRun = asSignedIn(OWNER, () => invoke(S + "build#Package", {packageId: "MAPS_PKG_REPLACED", buildKey: "SPECKEY"}))
@@ -526,12 +533,13 @@ feature("a package holds the owner's places and the overlays they read now, neve
     }
 })
 
-feature("a dead build and a disabled owner's build never hold the queue", {
+feature("a dead build and a closed account's build end failed, a locked-out owner's waits, and the next build runs", {
     when() {
         ec.artifactExecution.disableAuthz()
         // a build left building by a run that is gone (a restart mid-build), and a disabled user's build waiting, older
         packageOf("MAPS_PKG_DEAD", {ownerUserId: OTHER, statusId: "MapPkgBuilding", jobRunId: "MAPS_PKG_GONE_RUN", buildKey: "DEADKEY"})
         packageOf("MAPS_PKG_DISABLED", {ownerUserId: DISABLED, createdDate: new Date(Date.now() - 60000)})
+        packageOf("MAPS_PKG_LOCKED", {ownerUserId: LOCKED, createdDate: new Date(Date.now() - 120000)})
         const asked = Object.assign({name: "Spec after the dead", profileId: PROFILE, basemapLayerIds: [VISIBLE], includePostal: "N"}, REGION)
         const created = as(OWNER, () => invoke(S + "create#Package", asked))
         const deadline = Date.now() + 10000
@@ -542,12 +550,15 @@ feature("a dead build and a disabled owner's build never hold the queue", {
             created,
             status: packageRow(created.packageId)?.statusId,
             dead: {statusId: dead.statusId, buildKey: dead.buildKey || null},
-            disabled: {statusId: disabled.statusId, statusNote: String(disabled.statusNote || "")}
+            disabled: {statusId: disabled.statusId, statusNote: String(disabled.statusNote || "")},
+            locked: {statusId: packageRow("MAPS_PKG_LOCKED").statusId, jobRunId: packageRow("MAPS_PKG_LOCKED").jobRunId || null}
         }
     },
     then(out) {
         out.created.applied == true && out.status == "MapPkgReady"
         out.dead.statusId == "MapPkgFailed" && out.dead.buildKey == null
         out.disabled.statusId == "MapPkgFailed" && out.disabled.statusNote.includes("could not be signed in")
+        // the locked owner's older build was passed by, still waiting
+        out.locked.statusId == "MapPkgPending" && out.locked.jobRunId == null
     }
 })

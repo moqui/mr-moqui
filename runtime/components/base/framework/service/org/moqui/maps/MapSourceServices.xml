@@ -583,14 +583,13 @@ along with this software (see the LICENSE.md file). If not, see
             (maps@package-concurrent-builds, 1: it waits pending until then; schedule#PackageBuilds once this commits). The
             run is signed in as the package's owner whoever's request or build's end started it, and tells them alone when it
             ends. The estimate is read before the user's row is locked, and the counts and the user's bytes checked again
-            under the lock. Out: packageId, started (the build asked for), estimate. MAPS_APP_SERVICES.</description>
+            under the lock. Out: packageId, estimate. MAPS_APP_SERVICES.</description>
         <implements service="org.moqui.maps.MapSourceServices.define#PackageRequest"/>
         <out-parameters>
             <parameter name="applied" type="Boolean"/>
             <parameter name="reasonCode"/>
             <parameter name="reason"/>
             <parameter name="packageId"/>
-            <parameter name="started" type="Boolean"/>
             <parameter name="estimate" type="Map"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapPackages.js').execute('createPackage', context))</script></actions>
@@ -608,7 +607,6 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="reasonCode"/>
             <parameter name="reason"/>
             <parameter name="packageId"/>
-            <parameter name="started" type="Boolean"/>
             <parameter name="estimate" type="Map"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapPackages.js').execute('updatePackage', context))</script></actions>
@@ -651,15 +649,17 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="build" noun="Package" allow-remote="false" transaction="ignore">
-        <description>The MapPackageBuild ServiceJob's run (started as the user when its turn comes, scheduled by
-            create#Package and update#Package and by each build's end): the user's own package packageId, pending or
+        <description>The MapPackageBuild ServiceJob's run (started when its turn comes by schedule#PackageBuilds, after
+            create#Package, update#Package, a cancel or delete, each build's end and the hourly clean): the user's own package packageId, pending or
             building, built as a new revision, while the package holds the run's buildKey (a run it no longer holds, one ended
             as stale and asked for again, writes nothing; its files are named by its key, so two runs never share one).
             transaction ignore: it holds no transaction while it cuts, each write its own, so its cancel and the sources'
             revisions are read as committed. Each extract has what is left of maps@package-max-bytes, and the zip past it
             fails the build. The run signs in as the package's owner (whoever's request, build's end or clean started it) and
-            stays so to its end, its context being the job's own; an owner who cannot be signed in, or a run that throws,
-            ends the package failed, so the run never ends in error and holds no turn of the queue. A call in a web request
+            stays so to its end, its context being the job's own. An owner whose account is closed (disabled for good, or
+            past its terminateDate) or whose password must change, or a run that throws, ends the package failed, so the run
+            never ends in error; an owner locked out for a few minutes after failed sign-ins (login@disable-minutes) puts the
+            build back to wait, and the scheduler passes it by until the lock ends. A call in a web request
             never changes who is signed in. A source registered again since the
             build was asked fails it (checked when it starts and again when the cuts end). Each basemap archive the
             profile offers the user now is cut to the region and zooms (build#PackageExtract), with its style made

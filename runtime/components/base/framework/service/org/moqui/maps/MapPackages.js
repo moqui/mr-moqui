@@ -14,9 +14,10 @@
 // again before or while it is cut fails the build (its recorded revision is checked when the build starts and when the
 // cuts end, and the cut checks its tag when it starts and ends). Record layers (an app's records) and a provider's remote
 // tiles are never packaged: a record's access is read at each request, and a provider's terms allow a limited offline
-// download, not a mirror. The run's progress and its cancel are on the row; a run that stopped with no word for an hour
-// is ended when its owner next updates, cancels or deletes it. Update builds the package again as a new revision, and
-// the old file is removed once the new one is ready.
+// download, not a mirror. The run's progress and its cancel are on the row; a run gone, ended or stalled (no word for an
+// hour once it started) is ended by the next scheduler pass (a build asked for or ending, the hourly clean) or when its
+// owner next updates, cancels or deletes it. Update builds the package again as a new revision, and the old file is
+// removed once the new one is ready.
 //
 // The Offline screen's package transition sends the zip by ec.web.sendPinnedResourceResponse, its SHA-256 the strong tag,
 // by range, checking the owner on every request (packageAccess); a revision that is no longer the package's is 409, and
@@ -32,7 +33,8 @@ const ROOT = "runtime://tmp/map-packages"
 const PACKAGE_PATH = "/apps/maps/Offline/package"
 const SCHEMA_VERSION = 1
 const BUSY = ["MapPkgPending", "MapPkgBuilding"]
-// a run with no word for this long has stopped (its row's progress is written at least once a minute while it cuts)
+// a started run with no word for this long has stalled: its row is written when its progress percent changes (at most once
+// a second), and when each member is done
 const STALE_MS = 60 * 60 * 1000
 const MAX_PACKAGES = 50
 const MAX_ZOOM = 16
@@ -473,7 +475,9 @@ function startBuild(row) {
 // in one of its own, and after the commit of a create, update, cancel or delete (scheduleAfterCommit).
 function scheduleBuilds() {
     try {
-        find("moqui.service.job.ServiceJob", {jobName: BUILD_JOB}).forUpdate(true).one()
+        // the mutex; on SQLite, whose one writer at a time serializes the schedulers anyway, the lock is a no-op
+        if (!find("moqui.service.job.ServiceJob", {jobName: BUILD_JOB}).forUpdate(true).one())
+            ec.logger.error("Map packages: the " + BUILD_JOB + " ServiceJob is missing: the schedulers are not serialized")
         const locked = Array.from(
             ec.entity
                 .find(PACKAGE)
@@ -485,9 +489,16 @@ function scheduleBuilds() {
         )
         const busy = locked.filter(row => !(text(row.jobRunId) && endStale(row)))
         let running = busy.filter(row => text(row.jobRunId)).length
+        const owners = new Map()
+        const ownerLocked = userId => {
+            if (!owners.has(userId)) owners.set(userId, accountLocked(one("moqui.security.UserAccount", {userId})))
+            return owners.get(userId)
+        }
         for (const row of busy) {
             if (running >= concurrentBuilds()) break
             if (text(row.jobRunId) || !text(row.buildKey)) continue
+            // an owner locked out for a few minutes after failed logins: their build waits for a later pass
+            if (ownerLocked(text(row.ownerUserId))) continue
             if (startBuild(row)) running++
         }
     } catch (err) {
@@ -509,6 +520,23 @@ function schedulePackageBuilds() {
     return {}
 }
 
+// An account closed as the framework reads it (login.rs account_closed): disabled for good (no disabledDateTime) or past
+// its terminateDate. A tarpit lock after failed logins (disabled with a disabledDateTime) is not: it ends after
+// login@disable-minutes, and its builds wait, never fail
+const millisNow = () => Date.now()
+function accountClosed(account) {
+    if (!account) return true
+    if (account.disabled === "Y" && millisOf(account.disabledDateTime) === null) return true
+    const terminate = millisOf(account.terminateDate)
+    return terminate !== null && millisNow() > terminate
+}
+function accountLocked(account) {
+    const at = account ? millisOf(account.disabledDateTime) : null
+    if (!account || account.disabled !== "Y" || at === null) return false
+    const minutes = Number(conf("login@disable-minutes")) > 0 ? Number(conf("login@disable-minutes")) : 5
+    return at + minutes * 60000 > millisNow()
+}
+
 // The signed-in user's account row, locked: what serializes their creates and updates, so their counts hold
 const lockUser = () => find("moqui.security.UserAccount", {userId: ec.user.userId}).forUpdate(true).one()
 // A refusal when the user has a package pending or building (one at a time), but the one given; the rows read locked,
@@ -519,6 +547,7 @@ function userBusy(exceptPackageId) {
             .find(PACKAGE)
             .condition("ownerUserId", ec.user.userId)
             .condition("statusId", "in", BUSY)
+            .orderBy("createdDate,packageId")
             .forUpdate(true)
             .disableAuthz()
             .list()
@@ -539,12 +568,12 @@ function createPackage(p) {
     // then under the lock the counts that must hold whatever the user's other requests did meanwhile
     lockUser()
     const busy = userBusy(null)
-    if (busy) return busy
+    if (busy) return afterStale(busy)
     const count = Number(find(PACKAGE, {ownerUserId: ec.user.userId}).count())
     if (count >= MAX_PACKAGES)
-        return refused("TOO_MANY_PACKAGES", say("You have ${count} offline maps: delete one first", {count}))
+        return afterStale(refused("TOO_MANY_PACKAGES", say("You have ${count} offline maps: delete one first", {count})))
     const overUser = userCap(found.estimate.bytes, null, found.estimate)
-    if (overUser) return overUser
+    if (overUser) return afterStale(overUser)
     const row = ec.entity.makeValue(PACKAGE)
     row.setSequencedIdPrimary()
     row.setAll(
@@ -562,7 +591,7 @@ function createPackage(p) {
     )
     writeRow(row, true)
     scheduleAfterCommit()
-    return {applied: true, reasonCode: null, reason: null, packageId: String(row.packageId), started: true, estimate: found.estimate}
+    return {applied: true, reasonCode: null, reason: null, packageId: String(row.packageId), estimate: found.estimate}
 }
 
 // The user's own package (locked with forUpdate), or null
@@ -573,14 +602,16 @@ function ownPackage(packageId, forUpdate) {
 }
 const notThere = () => refused("RECORD_UNAVAILABLE", L("The offline map is not available"))
 
-// Whether a busy package's run has ended without saying so: its ServiceJobRun gone or ended, or no word from it (its
-// row's last write) for STALE_MS. A pending package not yet handed to the job waits its turn: it has not ended; a
-// building one with no run has.
+// Whether a busy package's run has ended without saying so: its ServiceJobRun gone or ended, or, once it started, no
+// word from it (its row's last write) for STALE_MS. A run still waiting for a worker (no startTime) is judged by gone or
+// ended only. A pending package not yet handed to the job waits its turn: it has not ended; a building one with no run
+// has.
 function runEnded(row) {
     const jobRunId = text(row.jobRunId)
     if (!jobRunId) return text(row.statusId) !== "MapPkgPending"
     const run = one("moqui.service.job.ServiceJobRun", {jobRunId})
     if (!run || run.endTime) return true
+    if (millisOf(run.startTime) === null) return false
     const since = millisOf(row.lastUpdatedStamp) ?? millisOf(run.startTime)
     return since !== null && Date.now() - since > STALE_MS
 }
@@ -598,7 +629,14 @@ function endStale(row) {
     })
     writeRow(row, false)
     notifyOwner(row, text(row.statusId), text(row.statusNote))
+    staleEnded = true
     return true
+}
+// Whether this run ended a stale build: a turn of the queue freed, which a request that then refuses still gives on
+let staleEnded = false
+const afterStale = refusal => {
+    if (staleEnded) scheduleAfterCommit()
+    return refusal
 }
 
 function updatePackage(p) {
@@ -617,9 +655,9 @@ function updatePackage(p) {
     if (!row) return notThere()
     if (BUSY.includes(text(row.statusId)) && !endStale(row)) return busyRefusal()
     const busy = userBusy(row.packageId)
-    if (busy) return busy
+    if (busy) return afterStale(busy)
     const overUser = userCap(found.estimate.bytes, row.packageId, found.estimate)
-    if (overUser) return overUser
+    if (overUser) return afterStale(overUser)
     row.setAll({
         statusId: "MapPkgPending",
         statusNote: null,
@@ -633,7 +671,7 @@ function updatePackage(p) {
     })
     writeRow(row, false)
     scheduleAfterCommit()
-    return {applied: true, reasonCode: null, reason: null, packageId: String(row.packageId), started: true, estimate: found.estimate}
+    return {applied: true, reasonCode: null, reason: null, packageId: String(row.packageId), estimate: found.estimate}
 }
 
 // ===== cancel#Package, delete#Package, find#Packages =====
@@ -963,6 +1001,28 @@ function failBuild(packageId, buildKey, note) {
     return {name: text(current?.name) || null, statusId: current ? "MapPkgFailed" : null, reason: note}
 }
 
+// A build whose owner is locked out for now waits again, pending with no run, the scheduler passing it by until the lock
+// ends; the next waiting build has its turn
+function waitBuild(packageId, buildKey) {
+    let current = null
+    try {
+        ec.transaction.runRequireNew(60, "Error writing a map package's state", () => {
+            current = find(PACKAGE, {packageId}).forUpdate(true).one()
+            if (!current || text(current.buildKey) !== buildKey) {
+                current = null
+                return
+            }
+            current.setAll({statusId: "MapPkgPending", jobRunId: null,
+                statusNote: L("Waiting: its owner's account is locked for a few minutes after failed sign-ins")})
+            writeRow(current, false)
+        })
+        ec.transaction.runRequireNew(60, "Error starting the next map package build", scheduleBuilds)
+    } catch (err) {
+        ec.logger.error("Map package " + packageId + ": its build was not put back to wait: " + (err?.message ?? err))
+    }
+    return {name: text(current?.name) || null, statusId: current ? "MapPkgPending" : null, reason: null}
+}
+
 // The run as the package's owner. A run is started by whichever request, build's end or clean found the installation
 // room for it (scheduleBuilds), so it signs in as the owner, whose build key the row holds (their own create or update
 // asked for this build), and reads and cuts only what the owner may see. A job's run has a context of its own, so it
@@ -981,12 +1041,15 @@ function buildPackage(p) {
         const account = one("moqui.security.UserAccount", {userId: row.ownerUserId})
         let signedIn = false
         try {
-            signedIn = !!account && account.disabled !== "Y" && !!quietly(() => ec.user.internalLoginUser(text(account.username)))
+            signedIn = !!account && !!quietly(() => ec.user.internalLoginUser(text(account.username)))
         } catch (err) {
             signedIn = false
         }
         ec.message.clearErrors()
         if (!signedIn || text(ec.user.userId) !== text(row.ownerUserId)) {
+            // locked for a few minutes after failed logins (someone else's, it may be): the build waits its turn again
+            if (!accountClosed(account) && account.requirePasswordChange !== "Y" && accountLocked(account))
+                return waitBuild(packageId, buildKey)
             ec.logger.error("Map package " + packageId + ": its owner could not be signed in for its build")
             return failBuild(packageId, buildKey, L("The offline map's owner could not be signed in for its build"))
         }
@@ -1420,6 +1483,11 @@ function recordDownload(row) {
 function cleanPackages() {
     let removedCount = 0
     const cutoff = Date.now() - keepDays() * 86400000
+    // the folder listed first, then the rows read: a build started between the two is in the rows, so keeps its files
+    const entries = quietly(() => {
+        const ref = ec.resource.getLocationReference(ROOT)
+        return ref.getExists() && ref.isDirectory() ? Array.from(ref.getDirectoryEntries() || []) : []
+    })
     const rows = Array.from(
         find(PACKAGE, {}).selectField("packageId,statusId,location,builtDate,lastDownloadDate,revision,buildKey").list()
     )
@@ -1446,10 +1514,6 @@ function cleanPackages() {
     }
     // what no package names: a deleted package's file, an old revision, a build that stopped (a busy package's own build
     // is left alone)
-    const entries = quietly(() => {
-        const ref = ec.resource.getLocationReference(ROOT)
-        return ref.getExists() && ref.isDirectory() ? Array.from(ref.getDirectoryEntries() || []) : []
-    })
     for (const entry of entries) {
         // {packageId}-{revision}-{buildKey}, a folder or a zip
         const match = /^(.+)-(\d+)-([A-Za-z0-9]+)(\.zip)?$/.exec(text(entry.fileName))
