@@ -108,7 +108,7 @@
             android:showWhenLocked="true"
             android:turnScreenOn="true"
             android:launchMode="singleTop"
-            android:taskAffinity="org.moqui.mobile.ring"
+            android:taskAffinity="${applicationId}.ring"
             android:excludeFromRecents="true"
             android:theme="@android:style/Theme.DeviceDefault.NoActionBar" />
         <!-- The self-managed calls, and the calling account the phone's dialer hands numbers to (DialAccount.kt), bound

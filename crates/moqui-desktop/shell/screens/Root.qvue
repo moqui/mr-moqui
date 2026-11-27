@@ -240,6 +240,8 @@ along with this software (see the LICENSE.md file). If not, see
                 <component v-if="chatPanel" :is="chatPanel" home @room="homeRoom = $event"></component>
                 <div v-else class="q-pa-md m-muted">{{t('Chat is not available on this server.')}}</div>
             </div>
+            <!-- a start screen that is the server's page, held back while the server is out of reach -->
+            <div v-else-if="startWaiting" class="q-pa-md m-muted m-shell-start-waiting">{{t('The app opens once the server can be reached.')}}</div>
         </q-page>
     </q-page-container>
 </q-layout></template>
@@ -318,6 +320,9 @@ module.exports = {
             // the comms screen shown (chat, mail, compose; null for the panel), its path under basePath and its query, and the
             // shell's own history of them
             view: null, currentPathList: [], extraPathList: [], currentParameters: {}, bodyParameters: null, backStack: [], activeContainers: {},
+            // the start screen (state.startPath): the link a replaceUrl put in its place (a dm's room), which is the start too;
+            // and whether the server's start page waits for the server (offline, goHome)
+            startReplaced: null, startWaiting: false,
             // what the client's screens ask of m-qapps-root's: the quick-create dialog (here its screen opens in an app window)
             quickCreateShow: false, quickCreateUrl: '', quickCreateTitle: '', trayOpen: false,
             // the palette (m-shell-palette reads these of its $root, as of m-qapps-root's)
@@ -411,10 +416,13 @@ module.exports = {
         // the comms app's path under basePath (BasicComms, or an app's own Comms)
         // the build's start screen (<client-conf start-path>): the home in place of the chat panel and the apps
         startPath() { return String((this.state && this.state.startPath) || ''); },
-        // the start screen is shown here (a bundled one) with nothing before it: Back leaves the app
+        // the start screen is shown here (a bundled one, its query too) with nothing before it: Back leaves the app. What a
+        // replaceUrl put in its place (a dm link's room) is the start too, so Back there does not open the link again.
         atStart() {
-            const start = this.startPath && !this.backStack.length ? this.route(this.startPath) : null;
-            return !!(start && this.view === start.view);
+            const start = this.view && this.startPath && !this.backStack.length ? this.route(this.startPath) : null;
+            if (!start) return false;
+            if (this.startReplaced && this.currentLinkUrl === this.startReplaced) return true;
+            return this.view === start.view && moqui.objToSearch(start.parameters || {}) === this.currentSearch;
         },
         commsRel() { return String(this.commsPath || '/apps/BasicComms').replace(/^\/apps\/?/, ''); },
         commsLink() { return this.linkBasePath + '/' + this.commsRel; },
@@ -523,6 +531,8 @@ module.exports = {
         // the socket back after an offline start: the shell opens again, with what the server has now (the panel; a comms
         // screen shown reads again itself)
         socketState(state) { if (state === 'open' && this.offline && !this.view) location.reload(); },
+        // the server answers again after a start of the shell that was not offline: the server's start page held back opens
+        isOffline(now) { if (!now && this.startWaiting && !this.offline && !this.view) this.goHome(); },
         // a screen's quick create (a task from a chat message, a contact from mail): its screen in an app window
         quickCreateShow(shown) {
             if (!shown) return;
@@ -590,7 +600,11 @@ module.exports = {
         // the palette's Ctrl+Enter (a new tab on the web): the server's page in an app window
         openNewTab(url) { host().openRemote(this.getLinkPath(String(url || ''))).catch((err) => this.failed(err)); },
         // the link of a dm or record room in place of the link itself (Chat.qvue replaceRoom)
-        replaceUrl(url) { this.setUrl(url, null, null, false); },
+        replaceUrl(url) {
+            const atStart = this.atStart;
+            this.setUrl(url, null, null, false);
+            if (atStart) this.startReplaced = this.currentLinkUrl;
+        },
         setParameters(parameters) {
             if (parameters) {
                 const before = this.view ? this.currentLinkUrl : null;
@@ -624,10 +638,14 @@ module.exports = {
             if (previous && this.route(previous)) this.setUrl(previous, null, null, false);
             else this.goHome();
         },
-        // the home: the chat panel, or the build's start screen, in place or as the server's page
+        // the home: the chat panel, or the build's start screen, in place or as the server's page. The server's page waits
+        // while the server is out of reach (its load would fail, with no way back to the shell): the shell says so, and
+        // opens it when the server answers again (the isOffline watch, or the reload of an offline start).
         goHome() {
             this.view = null; this.currentPathList = []; this.currentParameters = {}; this.backStack = []; this.activeContainers = {};
-            if (this.startPath) this.setUrl(this.startPath, null, null, false);
+            this.startReplaced = null;
+            this.startWaiting = !!this.startPath && !this.route(this.startPath) && this.isOffline;
+            if (this.startPath && !this.startWaiting) this.setUrl(this.startPath, null, null, false);
         },
         goPreviousScreen() { this.historyBack(); },
         // a path of the screens (/apps/...) as the server's page (/qapps/...)
@@ -643,7 +661,8 @@ module.exports = {
         // With a bundled start screen and nothing shown yet (a cold start from a link), the start screen goes under the
         // link, so Back goes to it and then leaves the app.
         openPathFromHost(path) {
-            if (this.startPath && !this.view && path !== this.startPath && this.route(this.startPath)) this.backStack = [this.startPath];
+            const link = (text) => this.getLinkPath(String(text || '')).replace(/\/+(\?|$)/, '$1');
+            if (this.startPath && !this.view && link(path) !== link(this.startPath) && this.route(this.startPath)) this.backStack = [this.startPath];
             this.setUrl(path);
         },
         // the call this window is in (moqui.call): an account switch, an added account or a sign-out loads the shell again,

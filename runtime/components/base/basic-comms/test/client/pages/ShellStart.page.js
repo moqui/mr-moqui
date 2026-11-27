@@ -134,9 +134,60 @@ test("a start screen the shell does not bundle opens as the server's page, as /q
         // the shell itself showing (offline, the server down, before the page loads): Back leaves the app, and opens nothing
         assert.equal(moqui.back.pop(), false, "Back with the shell showing and no view leaves the app");
         assert.deepEqual(host.remotes, ["/qapps/feed"], "no server page opened again");
+        // offline: the server's start page waits on the shell, which says so, and opens once the server answers
+        host.remotes.length = 0;
+        moqui.connection.offline = true;
+        await Vue.nextTick();
+        root.goHome();
+        await until(() => document.querySelector(".m-shell-start-waiting"), "the notice that the app waits for the server");
+        assert.deepEqual(host.remotes, [], "no page that would fail to load");
+        assert.equal(moqui.back.pop(), false, "Back on the waiting shell leaves the app");
+        moqui.connection.offline = false;
+        await until(() => host.remotes.length, "the start page once the server answers");
+        assert.deepEqual(host.remotes, ["/qapps/feed"]);
     } finally {
+        moqui.connection.offline = false;
         shellState.startPath = "/qapps/BasicComms/Chat";
         host.remotes.length = 0;
+    }
+});
+
+test("a cold start's link to the start screen, as /apps or /qapps, has nothing under it", async () => {
+    await mount();
+    shellState.startPath = "/apps/BasicComms/Chat";
+    try {
+        await Vue.nextTick();
+        root.goHome();
+        await until(() => root.atStart, "the start screen");
+        root.view = null;
+        root.openPathFromHost("/qapps/BasicComms/Chat");
+        await until(() => root.view === "chat", "the link");
+        assert.deepEqual(root.backStack, [], "not the start screen under itself");
+        assert.ok(root.atStart);
+    } finally {
+        shellState.startPath = "/qapps/BasicComms/Chat";
+    }
+});
+
+test("a start screen with a query is the start only with that query, or what took its place", async () => {
+    await mount();
+    shellState.startPath = "/qapps/BasicComms/Chat?chatRoomId=R1";
+    try {
+        await Vue.nextTick();
+        root.goHome();
+        await until(() => root.atStart && root.currentParameters.chatRoomId === "R1", "the start room");
+        // the same view with another room and nothing before it (a history cut short) is not the start: Back goes to it
+        root.setUrl("/qapps/BasicComms/Chat?chatRoomId=R2", null, null, false);
+        await until(() => root.currentParameters.chatRoomId === "R2", "another room");
+        assert.ok(!root.atStart, "another room is not the start");
+        assert.ok(moqui.back.pop(), "Back goes to the start room");
+        await until(() => root.atStart && root.currentParameters.chatRoomId === "R1", "the start room again");
+        // the room a dm link of the start resolves to takes its place (replaceUrl), so Back there leaves the app
+        root.replaceUrl("/qapps/BasicComms/Chat?chatRoomId=R2");
+        assert.ok(root.atStart, "what replaced the start screen is the start");
+        assert.equal(moqui.back.pop(), false);
+    } finally {
+        shellState.startPath = "/qapps/BasicComms/Chat";
     }
 });
 })();

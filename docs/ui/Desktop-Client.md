@@ -98,16 +98,18 @@ conf, merged as the framework would); the server does not read it.
 | `prefetch-rooms` | 20 | how many of the latest rooms a shared device reads ahead (each room's latest page); 0 for none |
 | `prefetch-mail` | 100 | how many of the inbox's latest threads a shared device reads ahead; 0 for none |
 | `store-max-mb` | 512 | the size cap of an account's store; past it the least recently read cached data goes, never unsent items or drafts |
-| `start-path` | none | the screen the shell opens after the sign-in, as the app's home (a server path such as `/apps/feed`) |
+| `start-path` | empty | the mobile app only: the screen the shell opens after the sign-in, as the app's home (a server path such as `/apps/feed`); empty for none |
 | `packages-max-mb` | 4096 | the size cap of an account's [offline map packages](#offline-map-packages), outside the store's; a download past it is refused |
 
 A bad value is logged and its default used; a runtime with no framework conf, or one that does not parse, gives the
 defaults. The element is in `mr-moqui-conf.xsd`; the parsing is `moqui_client::conf`.
 
-With `start-path`, the start screen is the home. The shell shows no chat panel, no list of apps and no ⌂ button on the
-server's pages. Back goes back one page, and at the start screen it leaves the app; so it does on the shell's own page
-(a start screen that is the server's page and has not loaded: offline, the server down). The mobile app can build a
-second app this way ([moqui-mobile](../../crates/moqui-mobile/README.md#another-app)).
+`start-path` is the mobile app's: one build of it opens one app as its home, and the mobile app can build a second
+app this way ([moqui-mobile](../../crates/moqui-mobile/README.md#another-app)). The desktop app ignores it, and its
+shell stays the home. With `start-path`, the start screen is the home. The shell shows no chat panel, no list of apps
+and no ⌂ button on the server's pages. Back goes back one page, and at the start screen it leaves the app. A start
+screen that is the server's page waits while the server is out of reach: the shell stays, says the app opens once the
+server can be reached, and opens it when the server answers. Back on the shell then leaves the app.
 
 - **Kept with the account.** The mode is set when the account is created here, from the build's mode or the sign-in's
   choice (password and SSO alike). An account already personal stays personal when shared is chosen: nothing is

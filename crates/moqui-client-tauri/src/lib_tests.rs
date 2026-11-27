@@ -36,6 +36,8 @@ pub(crate) struct TestHost {
     pub(crate) signed_out: Mutex<Vec<String>>,
     /// How many times the host was told to clear the server pages' storage.
     pub(crate) storage_cleared: Mutex<usize>,
+    /// Whether the host opens the build's start screen (the mobile app's) or ignores it (the desktop's).
+    pub(crate) start_screen: Mutex<bool>,
 }
 
 impl ClientHost for TestHost {
@@ -98,6 +100,10 @@ impl ShellHost for TestHost {
     fn clear_page_storage(&self) {
         *moqui_lib::sync::lock(&self.storage_cleared) += 1;
     }
+
+    fn opens_start_path(&self) -> bool {
+        *moqui_lib::sync::lock(&self.start_screen)
+    }
 }
 
 pub(crate) struct Fixture {
@@ -146,6 +152,7 @@ pub(crate) fn fixture_with(name: &str, signed_in: bool, conf: fn() -> ClientConf
         secure: Mutex::new(None),
         signed_out: Mutex::new(Vec::new()),
         storage_cleared: Mutex::new(0),
+        start_screen: Mutex::new(false),
     });
     let files = Assets::new(dir.join("shell"), dir.join("webroot"));
     let state = ClientState::new(client, host.clone(), host.clone(), Box::new(files));
@@ -304,13 +311,19 @@ fn a_sign_out_tells_the_host_even_with_no_network() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// `<client-conf start-path>`: the shell is told it, to open it as its home; without it, none.
+/// `<client-conf start-path>`: the mobile app's shell is told it, to open it as its home; without it, none. The desktop
+/// ignores it: its shell is told none.
 #[test]
 fn the_shell_is_told_the_start_path() {
-    let Fixture { state, dir, .. } = fixture_with("start-path", true, || ClientConf {
+    let Fixture { state, dir, host, .. } = fixture_with("start-path", true, || ClientConf {
         start_path: Some("/apps/feed".to_string()),
         ..ClientConf::default()
     });
+    assert!(
+        crate::commands::state_json(&state)["startPath"].is_null(),
+        "the desktop's"
+    );
+    *moqui_lib::sync::lock(&host.start_screen) = true;
     assert_eq!(crate::commands::state_json(&state)["startPath"], "/apps/feed");
     let _ = std::fs::remove_dir_all(&dir);
     let Fixture { state, dir, .. } = fixture("no-start-path", true);

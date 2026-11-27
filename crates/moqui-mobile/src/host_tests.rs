@@ -202,32 +202,43 @@ fn the_document_of_a_server_page_opened_is_asked_for_with_its_account() {
     assert_eq!(page.account(Some("a1")), None);
 }
 
-/// A fresh navigation's first page load on its origin clears the history, once; a later navigation that adds to the
-/// history cancels it.
+/// A fresh navigation clears the history once, at the load of the page it went to (or of the page a redirect there goes
+/// on to); a load of the page before it, or of another page, does not; a later navigation, or a page of another origin
+/// started in its place, takes it back.
 #[test]
-fn a_fresh_navigation_clears_the_history_once_at_its_first_load() {
+fn a_fresh_navigation_clears_the_history_once_at_its_own_page() {
     let fresh = FreshLoad::default();
     let start = url(&format!("{APP}/qapps/feed"));
     let home = url(&format!("{APP}/qapps/feed/Home"));
+    let shell = url(&format!("{SHELL}/"));
     assert!(!fresh.loaded(&start));
     fresh.navigating(Some(&start));
-    // the shell going is not the start page coming
-    assert!(!fresh.loaded(&url(&format!("{SHELL}/"))));
-    // a redirect's page, or the page it goes to: the first one
-    assert!(fresh.loaded(&home));
+    // the shell going: its late events are not the start page coming, and do not take the navigation back
+    fresh.started(&shell);
+    assert!(!fresh.loaded(&shell));
+    // nor is another page of the app origin before the start page's own start
+    fresh.started(&home);
     assert!(!fresh.loaded(&home));
-    fresh.navigating(Some(&start));
-    fresh.navigating(None);
-    assert!(!fresh.loaded(&start));
-    // a page of another origin started in its place: the fresh one never came, and a later page of its origin adds to the
-    // history; a page of its own origin starting (a redirect's) keeps it
-    fresh.navigating(Some(&start));
-    fresh.started(&url(&format!("{SHELL}/")));
-    assert!(!fresh.loaded(&home));
+    fresh.started(&start);
+    assert!(fresh.loaded(&start));
+    assert!(!fresh.loaded(&start), "once");
+    // a redirect's page that goes on before it finished: the page it goes to
     fresh.navigating(Some(&start));
     fresh.started(&start);
     fresh.started(&url("about:blank"));
+    fresh.started(&home);
+    assert!(!fresh.loaded(&start));
     assert!(fresh.loaded(&home));
+    // a page of another origin started in its place: the start page never came, and a later one adds to the history
+    fresh.navigating(Some(&start));
+    fresh.started(&start);
+    fresh.started(&shell);
+    assert!(!fresh.loaded(&start));
+    // a navigation of the host's that adds to the history replaces it
+    fresh.navigating(Some(&start));
+    fresh.navigating(None);
+    fresh.started(&start);
+    assert!(!fresh.loaded(&start));
 }
 
 #[test]
