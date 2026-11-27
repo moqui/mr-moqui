@@ -759,6 +759,24 @@ pub(crate) fn clip(text: &str, max: usize) -> String {
         .to_string()
 }
 
+/// A server page's request to the web (`moquiDesktop.webRequest`): see the module's text. The main webview's server
+/// pages only (`moqui-app`), not the shell and not a frame (the host takes no IPC from frames).
+#[tauri::command(async)]
+pub(crate) fn web_request(
+    webview: tauri::Webview,
+    method: Option<String>,
+    url: String,
+    headers: Option<Vec<(String, String)>>,
+    body: Option<String>,
+    hosts: Vec<String>,
+) -> Result<crate::web::WebAnswer, String> {
+    let page = webview.url().map_err(|err| err.to_string())?;
+    if webview.label() != crate::host::MAIN || page.origin().ascii_serialization() != moqui_client_tauri::APP_ORIGIN {
+        return Err("Not a server page".to_string());
+    }
+    crate::web::request(method.as_deref().unwrap_or("GET"), &url, &headers.unwrap_or_default(), body.as_deref(), &hosts)
+}
+
 /// The shell's page, or an error: the screen share is the call's, which the shell owns.
 fn require_shell(app: &AppHandle, webview: &tauri::Webview, nonce: Option<&str>) -> Result<(), String> {
     let host = host(app)?;

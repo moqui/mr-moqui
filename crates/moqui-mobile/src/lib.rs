@@ -45,6 +45,7 @@ mod native;
 mod push;
 mod scheme;
 mod screen;
+mod web;
 
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -162,7 +163,8 @@ pub fn run() {
             commands::location_allow,
             commands::location_share_start,
             commands::location_share_stop,
-            commands::location_share_status
+            commands::location_share_status,
+            commands::web_request
         ])
         .setup(move |app| {
             let embedded = files.take().ok_or("the app was set up twice")?;

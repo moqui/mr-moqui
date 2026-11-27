@@ -3049,6 +3049,7 @@ dependencies = [
  "moqui-rtc",
  "ndk-context",
  "p256",
+ "reqwest",
  "rustls-platform-verifier",
  "serde",
  "serde_json",

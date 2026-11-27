@@ -95,6 +95,7 @@ const COMMANDS: &[&str] = &[
     "location_share_start",
     "location_share_stop",
     "location_share_status",
+    "web_request",
 ];
 
 fn main() {

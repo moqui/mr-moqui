@@ -333,6 +333,14 @@
             storageScope: String(page.storageScope || ""),
             openInShell: (path) => ask("open_in_shell", { path: String(path || "") }),
             openExternal: (url) => invoke("open_external", { url: String(url || "") }),
+            // a request to the web through the app (src/web.rs): https to the hosts named only, no cookies, no CORS;
+            // {status, headers: [[name, value]], body (text), url}. For a page that relays a sandboxed script's requests.
+            webRequest: (given) => {
+                const req = given || {};
+                const headers = Object.entries(req.headers || {}).map(([name, value]) => [String(name), String(value)]);
+                return ask("web_request", { method: String(req.method || "GET"), url: String(req.url || ""), headers,
+                    body: req.body == null ? null : String(req.body), hosts: (Array.isArray(req.hosts) ? req.hosts : []).map(String) });
+            },
             backToShell });
         // the way back to the shell: a small button over the server's page, but in a build with a start screen (its home)
         const addButton = () => {
