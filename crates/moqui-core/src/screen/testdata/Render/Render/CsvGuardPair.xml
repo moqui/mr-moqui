@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- A form-list field with two widgets, the second over outside text, for the csv render mode's guard of a whole cell
+    (SEC-SCR-88). -->
+<screen require-authentication="false" default-menu-title="CSV Guard Pair">
+    <actions>
+        <set field="rowList" from="[{code: 'A12', name: 'x,=1+cmd|\' /C calc\'!A0,y'}, {code: '=B1', name: 'plain'}]"/>
+    </actions>
+    <widgets>
+        <form-list name="PairList" list="rowList">
+            <field name="code"><default-field><display text="${code}"/><display text="${name}"/></default-field></field>
+            <field name="after"><default-field><display text="after"/></default-field></field>
+        </form-list>
+    </widgets>
+</screen>

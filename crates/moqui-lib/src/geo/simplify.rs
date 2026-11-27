@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Line and ring generalization for drawing a large overlay at a zoom (plans/Maps.md §7 "Geometry/import jobs"): the
+//! Line and ring generalization for drawing a large overlay at a zoom (plans/archive/Maps.md §7 "Geometry/import jobs"): the
 //! Douglas–Peucker simplification of a line or a ring within a tolerance, and the clipping of a ring (Sutherland–Hodgman)
 //! or a line (Liang–Barsky, split where it leaves) to a tile's rectangle. Plane coordinates, the caller's units (the
 //! tiler's are Web Mercator's unit square). Enough for display: a simplified ring may touch itself, and a clipped ring

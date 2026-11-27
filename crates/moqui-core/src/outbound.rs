@@ -139,9 +139,25 @@ pub fn send(mut request: Request) -> Result<Response, Error> {
     let result = send_inner(request);
     match &result {
         Ok(response) => call.status(response.status),
-        Err(error) => call.error(error.message()),
+        // the whole chain, the transport's reason with it (a certificate refused, a connection refused) (SEC-OUT-92)
+        Err(error) => call.error(&error_chain(error)),
     }
     result
+}
+
+/// An error's text and each of its causes', joined by `: `, as the log and the span record a failed call.
+fn error_chain(error: &(dyn std::error::Error + 'static)) -> String {
+    let mut text = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        let cause_text = cause.to_string();
+        if !text.contains(&cause_text) {
+            text.push_str(": ");
+            text.push_str(&cause_text);
+        }
+        source = cause.source();
+    }
+    text
 }
 
 /// The CLIENT span and W3C trace headers of one outbound call, for a caller that sends on a client of its own (one that
@@ -812,5 +828,17 @@ pub mod trace_tests {
         let head = requests.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
         assert_client_span(&root, &spans, &head, "POST", &format!("{address}/hook"));
         assert!(!format!("{spans:?}").contains("s3cr3t"), "{spans:?}");
+    }
+}
+
+#[cfg(test)]
+mod error_chain_tests {
+    /// SEC-OUT-92: a failed call's log and span text has the transport's reason, not only that the request failed.
+    #[test]
+    fn a_failed_calls_text_has_its_cause() {
+        let cause = std::io::Error::other("invalid peer certificate: UnknownIssuer");
+        let error = moqui_lib::error::Error::new("HTTP POST https://remote.example/x failed").with_source(cause);
+        let text = super::error_chain(&error);
+        assert!(text.contains("failed") && text.contains("UnknownIssuer"), "{text}");
     }
 }

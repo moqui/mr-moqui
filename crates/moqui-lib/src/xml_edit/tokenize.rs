@@ -153,6 +153,9 @@ pub(crate) fn position(text: &str, at: usize) -> (usize, usize) {
     (line, column)
 }
 
+/// The deepest an element may be nested, as `crate::node` takes it.
+pub(crate) const MAX_DEPTH: usize = 256;
+
 struct Scanner<'a> {
     text: &'a str,
     bytes: &'a [u8],
@@ -185,6 +188,9 @@ impl<'a> Scanner<'a> {
 
     fn run(mut self) -> Result<Doc<'a>, Error> {
         let mut open = 0; // the element (or the document) whose content is being read
+                          // how many elements are open: past MAX_DEPTH the text is refused, as `node` refuses it, since the outline and the
+                          // layout walk a level at a time by recursion (SEC-SCR-86)
+        let mut depth = 0_usize;
         while self.at < self.bytes.len() {
             let start = self.at;
             if self.bytes[start] != b'<' {
@@ -234,10 +240,15 @@ impl<'a> Scanner<'a> {
                 node.end_tag = start..close + 1;
                 node.span = node.start_tag.start..close + 1;
                 open = node.parent.unwrap_or(0);
+                depth = depth.saturating_sub(1);
                 self.at = close + 1;
             } else {
                 let index = self.start_tag(start, open)?;
                 if !self.nodes[index].self_closing {
+                    depth += 1;
+                    if depth > MAX_DEPTH {
+                        return Err(self.error(start, &format!("elements are nested more than {MAX_DEPTH} deep")));
+                    }
                     open = index;
                 }
             }
@@ -355,6 +366,17 @@ impl<'a> Scanner<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// SEC-SCR-86: a text nested deeper than the limit is refused when it is read, so nothing walks it a level at a
+    /// time by recursion; one at the limit reads.
+    #[test]
+    fn a_text_nested_past_the_limit_is_refused() {
+        let nested = |levels: usize| format!("{}{}", "<a>".repeat(levels), "</a>".repeat(levels));
+        let refused = Doc::parse(&nested(100_000)).unwrap_err();
+        assert!(refused.to_string().contains("nested more than 256 deep"), "{refused}");
+        Doc::parse(&nested(super::MAX_DEPTH)).unwrap();
+        assert!(Doc::parse(&nested(super::MAX_DEPTH + 1)).is_err());
+    }
 
     /// Every byte belongs to one node: the document's children tile the text, and each element's children tile its
     /// content.

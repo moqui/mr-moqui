@@ -13,7 +13,7 @@
  */
 
 //! The IDs of imported Geo data, computed from the country and the source's code with no lookup, so a re-import is a
-//! create-or-update of the same rows (the comment above `GeoPostalCode` in BasicEntities.xml, plans/Maps.md §6.3). An
+//! create-or-update of the same rows (the comment above `GeoPostalCode` in BasicEntities.xml, plans/archive/Maps.md §6.3). An
 //! ID longer than [`MAX_ID`] is not made: the importer sends its row to the error file. First- and second-level
 //! divisions are found by lookup first; the forms here are for one the importer makes when nothing matches.
 

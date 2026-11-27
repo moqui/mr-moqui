@@ -38,9 +38,9 @@ pub mod step;
 pub mod stream;
 
 #[cfg(test)]
-mod tests;
-#[cfg(test)]
 pub(crate) mod test_support;
+#[cfg(test)]
+mod tests;
 #[cfg(test)]
 pub(crate) use test_support::grant_agent_use;
 
@@ -627,6 +627,7 @@ pub fn start_run(factory: &Arc<ExecutionContextFactory>, request: &StartRequest)
                     lease::lease_millis(factory),
                     mentions.as_ref(),
                     &constitution,
+                    llm.conf().limits.user_open_runs,
                 )
             })?;
             match outcome {
@@ -753,6 +754,7 @@ fn begin_run(
     lease: i64,
     mentions: Option<&crate::skills::SkillIndex>,
     constitution: &crate::constitution::snapshot::RunConstitution,
+    open_runs: u32,
 ) -> Result<Begun, Error> {
     let now = now_millis();
     let conversation_id = match &request.conversation_id {
@@ -818,6 +820,33 @@ fn begin_run(
     } else {
         RunState::Submitted
     };
+    // a user's runs that wait for or hold one of the node's agent workers: past `limits@user-open-runs` a new one is
+    // refused (429), so one user does not fill the pool everyone's steps share (SEC-AI-89); counted under the
+    // conversation's transaction, a refusal rolls back what this start wrote
+    if state == RunState::Submitted && open_runs > 0 {
+        let open = facade
+            .find(RUN)?
+            .eq("userId", Value::string(&request.user_id))
+            .condition(Condition::is_in(
+                "statusId",
+                vec![
+                    Value::string(RunState::Submitted.status_id()),
+                    Value::string(RunState::Working.status_id()),
+                ],
+            ))
+            .disable_authz()
+            .count()?;
+        if open >= i64::from(open_runs) {
+            return Err(moqui_core::context::Error::of_kind(
+                moqui_core::context::ErrorKind::Tarpit,
+                format!(
+                    "you have {open} agent runs waiting or working, the most at once; wait for one to end and try again"
+                ),
+            )
+            .with_retry_after(15)
+            .into());
+        }
+    }
     let mut run = facade.make_value(RUN)?;
     run.set_sequenced_id_primary(facade)?;
     let run_id = text_of(&run, "runId").unwrap_or_default();

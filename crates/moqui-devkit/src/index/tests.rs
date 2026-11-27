@@ -255,6 +255,9 @@ impl RowsBed {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("framework")).unwrap();
         std::fs::create_dir_all(dir.join("rows")).unwrap();
+        // the index reads a directory's files by their canonical paths: macOS's temp dir is under a symlink
+        // (/var to /private/var), so the paths the tests compare are the canonical ones too
+        let dir = std::fs::canonicalize(&dir).unwrap();
         let component = moqui_core::context::ComponentInfo {
             name: "rows".to_string(),
             version: String::new(),
@@ -525,7 +528,11 @@ fn a_batch_that_fails_is_written_again_file_by_file() {
         .filter(|path| path.starts_with(&bed.dir.display().to_string()))
         .cloned()
         .collect();
-    assert_eq!(logged, std::slice::from_ref(&bad_path), "the failing file is logged alone");
+    assert_eq!(
+        logged,
+        std::slice::from_ref(&bad_path),
+        "the failing file is logged alone"
+    );
     assert_eq!(report.read, 2, "{report:?}");
     assert!(bed.has_artifact("entity:rows.Apple"));
     assert!(bed.has_artifact("entity:rows.Cherry"));

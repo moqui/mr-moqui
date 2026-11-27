@@ -1,4 +1,4 @@
-// The map configuration of P1 (plans/Maps.md §3.2, §4.2; org.moqui.maps.MapServices, MapConfig.js and MapProviders.js): the
+// The map configuration of P1 (plans/archive/Maps.md §3.2, §4.2; org.moqui.maps.MapServices, MapConfig.js and MapProviders.js): the
 // effective configuration's precedence (the installation's default, then the user's preference, then the consumer's
 // profile, then a record's place for the viewport), its fallbacks with an explanation (a profile whose provider is
 // disabled, a disabled, removed or unpermitted layer, a stale layer of the preferences, a missing default with the

@@ -45,7 +45,7 @@ fn places_in_the_region_are_read_with_their_sources() {
         .iter()
         .map(|row| match row {
             Row::Place(place) => place,
-            Row::Building(_) => panic!("a building among places"),
+            Row::Building(_) | Row::Address(_) => panic!("not a place"),
         })
         .collect();
     let names: Vec<&str> = places.iter().map(|place| place.name.as_str()).collect();
@@ -116,6 +116,41 @@ fn buildings_are_read_as_polygons() {
     assert_eq!((cathedral.height, cathedral.num_floors), (Some(90.0), Some(3)));
     assert_eq!(cathedral.polygons[0][0].len(), 5);
     assert_eq!(cathedral.licenses, vec!["ODbL-1.0"]);
+}
+
+#[test]
+fn addresses_are_read_with_their_levels_and_sources() {
+    let bytes = testdata::spec_addresses_r1();
+    let (rows, counts) = read_all(&bytes, Theme::Addresses, &testdata::SPEC_REGION);
+    let addresses: Vec<&AddressPoint> = rows
+        .iter()
+        .map(|row| match row {
+            Row::Address(address) => address,
+            _ => panic!("not an address"),
+        })
+        .collect();
+    assert_eq!(addresses.len(), 7, "the one east of the region left out");
+    let signoria = addresses[0];
+    assert_eq!(signoria.country, "IT");
+    assert_eq!(signoria.street.as_deref(), Some("PIAZZA DELLA SIGNORIA"));
+    assert_eq!(
+        (signoria.number.as_deref(), signoria.postcode.as_deref()),
+        (Some("5"), Some("50122"))
+    );
+    assert_eq!(signoria.levels, ["Toscana", "Firenze", "Firenze"]);
+    assert_eq!(signoria.licenses, ["CC-BY-4.0"]);
+    assert_eq!(addresses[3].unit.as_deref(), Some("A"));
+    assert_eq!((counts.row_groups_read, counts.row_groups_skipped), (1, 1));
+    assert_eq!((counts.rows_kept, counts.rows_rejected), (7, 1));
+    assert!(
+        counts.rejections[0].contains("neither a street nor a number"),
+        "{:?}",
+        counts.rejections
+    );
+    assert_eq!(
+        counts.licenses.get(&("example/cc0".to_string(), "CC0-1.0".to_string())),
+        Some(&1)
+    );
 }
 
 #[test]
@@ -210,6 +245,8 @@ fn the_spec_fixtures_are_current() {
         ("places-r1.parquet", testdata::spec_places_r1()),
         ("places-r2.parquet", testdata::spec_places_r2()),
         ("buildings-r1.parquet", testdata::spec_buildings_r1()),
+        ("addresses-r1.parquet", testdata::spec_addresses_r1()),
+        ("addresses-r2.parquet", testdata::spec_addresses_r2()),
     ];
     let update = std::env::var("UPDATE_GOLDEN").is_ok_and(|value| value == "1");
     if update {

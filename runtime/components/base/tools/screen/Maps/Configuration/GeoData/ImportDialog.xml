@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- Geo data's Import dialog (GeoData.xml, a dynamic-dialog, so its form is loaded only when opened): for a data set
     downloaded whole, Start import; for a set read a country at a time, the country among those it has files for (its
     countryCodes, GeoDataServices find through GeoData.js countryOptions), or every country of them as a queue of runs, after
-    a confirmation with the estimate of GeoData.js everyCountryEstimate (plans/Maps.md §6.3); for an operator's file, the
+    a confirmation with the estimate of GeoData.js everyCountryEstimate (plans/archive/Maps.md §6.3); for an operator's file, the
     country and the file.
     startImport is org.moqui.maps.GeoDataServices.start#GeoDataImport: a run of the GeoDataImport ServiceJob (every country: the
     first run of its queue), never the import in the request. MAPS_ADMIN, as Configuration. -->

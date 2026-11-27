@@ -15,8 +15,8 @@
 //! The mail settings of `org.moqui.mail.EmailClientServices` against the scripted local servers of
 //! [`super::fake_servers`]: a separate SMTP sign-in (used, tried before it is stored, cleared), the account kind
 //! (personal and shared), a folder kind a user chose and an unsubscribed folder through the sync, the automatic reply's
-//! audience with the contact hook, a rule tried without acting, a removed account deleted by its owner, and the live
-//! progress of a sync.
+//! audience with the contact hook, a rule tried without acting, a removed account deleted by its owner, the live
+//! progress of a sync, and what basic-comms' test#MailAccount says of a refused password.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -25,7 +25,7 @@ use indexmap::IndexMap;
 use moqui_lib::object::{to_plain_string, Value};
 use moqui_lib::sync::lock;
 
-use super::fake_servers::{FakeImap, FakeSmtp};
+use super::fake_servers::{FakeImap, FakePop, FakeSmtp};
 use super::sync_tests::{
     alice, by_message_id, call, errors, field, folder_id, imap_account, login, mail, now, ok, one, out_number,
     out_text, row, rows, setup, setup_inline, setup_with, stamp, sync, text, update, user,
@@ -73,19 +73,32 @@ const STUBS: &str = r#"<services>
 
 /// The mail services and, with `stubs`, the contact hooks (test.MailStub) from a directory of the test's own.
 fn install_with(stubs: Option<&std::path::Path>) {
-    let framework = moqui_core::context::framework_dir().join("service/org/moqui");
-    let mut paths = vec![
-        framework.join("EmailServices.xml"),
-        framework.join("mail/EmailServices.xml"),
-        framework.join("mail/EmailClientServices.xml"),
-        framework.join("admin/IdentityServices.xml"),
-        framework.join("ui/ShellServices.xml"),
-    ];
+    let mut paths = mail_service_paths();
     if let Some(dir) = stubs {
         paths.push(dir.join("service/test/MailStub.xml"));
     }
     let failures = moqui_core::service::lint(&paths).unwrap();
     assert!(failures.is_empty(), "{failures:?}");
+}
+
+/// The mail services and basic-comms' mail settings, whose test#MailAccount says what to try for each failed step.
+fn install_with_comms() {
+    let mut paths = mail_service_paths();
+    let base = moqui_core::context::framework_dir().join("..");
+    paths.push(base.join("basic-comms/service/org/moqui/comms/MailSettingsServices.xml"));
+    let failures = moqui_core::service::lint(&paths).unwrap();
+    assert!(failures.is_empty(), "{failures:?}");
+}
+
+fn mail_service_paths() -> Vec<std::path::PathBuf> {
+    let framework = moqui_core::context::framework_dir().join("service/org/moqui");
+    vec![
+        framework.join("EmailServices.xml"),
+        framework.join("mail/EmailServices.xml"),
+        framework.join("mail/EmailClientServices.xml"),
+        framework.join("admin/IdentityServices.xml"),
+        framework.join("ui/ShellServices.xml"),
+    ]
 }
 
 fn stub_dir(name: &str) -> std::path::PathBuf {
@@ -321,6 +334,144 @@ fn a_separate_smtp_sign_in_is_used_tried_and_cleared() {
         &[("emailAccountId", text(&account)), ("testStore", Value::Bool(false))],
     );
     assert_eq!(auths().last().map(String::as_str), Some("PLAIN alice-smtp ok"));
+}
+
+/// COM-UI-040: a password the SMTP and POP3 servers refuse is named as the sign-in, and basic-comms' test#MailAccount
+/// says to check the user name and password; a port where nothing listens still gets the port's advice.
+#[test]
+fn a_refused_password_is_named_as_the_sign_in_with_what_to_try() {
+    let _lock = moqui_core::user::session::cookie_property_lock();
+    let (ctx, facade) = setup();
+    let _entered = ctx.enter();
+    install_with_comms();
+    alice(&facade);
+    let smtp = FakeSmtp::start("unused");
+    lock(&smtp.state).passwords = vec![("alice".to_string(), "app-password".to_string())];
+    let pop = FakePop::start();
+    let account = out_text(
+        &ok(
+            "create#EmailAccount",
+            &[
+                ("emailAddress", text("alice@example.com")),
+                ("smtpHost", text("127.0.0.1")),
+                ("smtpPort", text(&smtp.port.to_string())),
+                ("smtpStartTls", text("N")),
+                ("storeHost", text("127.0.0.1")),
+                ("storePort", text(&pop.port.to_string())),
+                ("storeProtocol", text("pop3")),
+                ("mailUsername", text("alice")),
+                ("mailPassword", text("wrong-password")),
+            ],
+        ),
+        "emailAccountId",
+    );
+    let test_account = |test_store: bool| {
+        let parameters = BTreeMap::from([
+            ("emailAccountId".to_string(), text(&account)),
+            ("testStore".to_string(), Value::Bool(test_store)),
+        ]);
+        let out =
+            moqui_core::service::sync("org.moqui.comms.MailSettingsServices.test#MailAccount", &parameters).unwrap();
+        assert_eq!(errors(), "");
+        out
+    };
+
+    let tested = test_account(true);
+    let steps = maps(tested.get("stepList"));
+    let shown: Vec<(String, String)> = steps
+        .iter()
+        .map(|step| (get(step, "step"), get(step, "message")))
+        .collect();
+    assert_eq!(
+        shown,
+        [
+            (
+                "smtp".to_string(),
+                format!("SMTP 127.0.0.1:{}: the sign-in was refused", smtp.port)
+            ),
+            (
+                "storeLogin".to_string(),
+                format!("POP3 127.0.0.1:{}: the sign-in was refused", pop.port)
+            ),
+        ],
+        "{steps:?}"
+    );
+    for step in &steps {
+        let hint = get(step, "hint");
+        assert!(hint.contains("refused the user name or password"), "{steps:?}");
+        assert!(!hint.contains("Nothing answers"), "{steps:?}");
+    }
+    assert!(
+        out_text(&tested, "adviceText").contains("Neither server took the password"),
+        "{tested:?}"
+    );
+
+    // nothing listens on the SMTP port now
+    let closed = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    ok(
+        "update#EmailAccount",
+        &[
+            ("emailAccountId", text(&account)),
+            ("smtpPort", text(&closed.to_string())),
+            ("mailPassword", text("wrong-password")),
+        ],
+    );
+    let steps = maps(test_account(false).get("stepList"));
+    assert_eq!(steps.len(), 1, "{steps:?}");
+    assert!(
+        get(&steps[0], "message").ends_with("the connection was refused"),
+        "{steps:?}"
+    );
+    assert!(
+        get(&steps[0], "hint").contains("Nothing answers on that port"),
+        "{steps:?}"
+    );
+}
+
+/// COM-UI-040 review: basic-comms' advice reads the kind of a failed step, never its host, so a host named like a sign-in
+/// (login.invalid, a name that is never found) gets the advice of a name not found, not the password's.
+#[test]
+fn a_host_named_like_a_sign_in_gets_the_advice_of_its_kind() {
+    let _lock = moqui_core::user::session::cookie_property_lock();
+    let (ctx, facade) = setup();
+    let _entered = ctx.enter();
+    install_with_comms();
+    alice(&facade);
+    let account = out_text(
+        &ok(
+            "create#EmailAccount",
+            &[
+                ("emailAddress", text("alice@example.com")),
+                ("smtpHost", text("login.invalid")),
+                ("smtpPort", text("25")),
+                ("smtpStartTls", text("N")),
+                ("mailUsername", text("alice")),
+                ("mailPassword", text("app-password")),
+            ],
+        ),
+        "emailAccountId",
+    );
+    let parameters = BTreeMap::from([
+        ("emailAccountId".to_string(), text(&account)),
+        ("testStore".to_string(), Value::Bool(false)),
+    ]);
+    let out = moqui_core::service::sync("org.moqui.comms.MailSettingsServices.test#MailAccount", &parameters).unwrap();
+    assert_eq!(errors(), "");
+    let steps = maps(out.get("stepList"));
+    assert_eq!(steps.len(), 1, "{steps:?}");
+    assert_eq!(
+        get(&steps[0], "message"),
+        "SMTP login.invalid:25: the host name was not found",
+        "{steps:?}"
+    );
+    assert!(
+        get(&steps[0], "hint").contains("server name was not found"),
+        "{steps:?}"
+    );
 }
 
 /// The endpoint-change rule of an account's own server (plans/Security-Review-Medium.md SEC-MAIL-84): a manager who points

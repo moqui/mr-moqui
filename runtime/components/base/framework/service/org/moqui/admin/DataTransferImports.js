@@ -420,7 +420,7 @@ function findImportRuns(p) {
         transferList: found.transferList.map(run =>
             Object.assign({}, run, {
                 countText: joined([
-                    run.rowCount != null ? run.rowCount + " rows" : null,
+                    run.rowCount != null ? run.rowCount + (Number(run.rowCount) === 1 ? " row" : " rows") : null,
                     run.appliedCount != null ? run.appliedCount + " applied" : null,
                     run.errorCount ? run.errorCount + " need attention" : null,
                     run.skippedCount ? run.skippedCount + " skipped" : null

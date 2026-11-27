@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The projections of the map registry (`moqui.maps.MapProjection`, plans/Maps.md §4.1, P4c): a CRS's PROJ.4 definition,
+//! The projections of the map registry (`moqui.maps.MapProjection`, plans/archive/Maps.md §4.1, P4c): a CRS's PROJ.4 definition,
 //! the same text the browser registers with proj4js, read here for the few methods a registered row may use, so a user's
 //! overlay in one of them is converted to WGS84 longitude and latitude on the server instead of refused.
 //!

@@ -35,7 +35,7 @@ pub(super) static USER: HostClass = HostClass {
         method!("ec.user", "logoutUser", [], None, logout_user),
         method!("ec.user", "logoutLocal", [], None, logout_local),
         method!("ec.user", "internalLoginUser", [Text, OptBool], None, internal_login_user),
-        method!("ec.user", "loginUserKey", [Text], None, login_user_key),
+        method!("ec.user", "loginUserKey", [Text, OptText], None, login_user_key),
         method!(
             "ec.user",
             "loginAnonymousIfNoUser",
@@ -118,6 +118,7 @@ pub(super) static USER: HostClass = HostClass {
         method!("ec.user", "username", [], None, leaf, username),
         method!("ec.user", "userId", [], None, leaf, user_id),
         method!("ec.user", "loginKeyKind", [], None, leaf, login_key_kind),
+        method!("ec.user", "loginKeyId", [], None, leaf, login_key_id),
         method!("ec.user", "loginRules", [], login_rules),
         method!("ec.user", "initialAdminLocal", [], None, leaf, initial_admin_local),
     ],
@@ -214,12 +215,17 @@ const USER_JS: &str = r#"(function (proto, hidden) {
 })"#;
 
 /// Java's `loginUserKey`: whether the login key logged its user in. A key that does not is an error message, as a
-/// failed `loginUser` is.
+/// failed `loginUser` is. With a scope (`git`), a key made for that scope logs in too, as that scope's own login takes
+/// it ([`crate::user::login_user_key_for`]); a key of another scope is refused.
 fn login_user_key(call: &mut Call<'_>) -> Result<Ret, HostError> {
     // a preview's proposed text does not change who it runs as (SEC-AI-102)
     super::refuse_locked_authz()?;
     let key = call.text_or_empty(0);
-    match crate::user::login_user_key(&key) {
+    let logged = match call.opt_text(1).filter(|scope| !scope.is_empty()) {
+        Some(scope) => crate::user::login_user_key_for(&key, &scope),
+        None => crate::user::login_user_key(&key),
+    };
+    match logged {
         Ok(()) => Ok(true.into()),
         Err(err) => {
             with_ec(|ec| ec.message().add_error(err.message().to_string()))?;
@@ -464,6 +470,13 @@ fn login_key_kind(_: &mut Call<'_>) -> Result<Ret, HostError> {
     Ok(crate::user::login_key_kind()
         .map(|kind| kind.as_str().to_string())
         .into())
+}
+
+/// `loginKeyId`: the id of the `UserLoginKey` this request's user signed in with (its stored hash, as the device list
+/// names a device; never the key itself), with `loginKeyKind`; null for any other login. A location share records the
+/// device it is sent from by it (plans/archive/Location-Sharing.md §3.1).
+fn login_key_id(_: &mut Call<'_>) -> Result<Ret, HostError> {
+    Ok(crate::user::login_key_id().into())
 }
 
 fn has_permission(call: &mut Call<'_>) -> Result<Ret, HostError> {

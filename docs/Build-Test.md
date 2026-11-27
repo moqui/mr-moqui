@@ -277,7 +277,7 @@ build, with no features of its own.
 | `git` | host (`moqui-git`) | `git://` locations, git drives, `org.moqui.git.GitServices`, the git server over HTTP and SSH, LFS | | yes | yes |
 | `image` | core | `org.moqui.impl.ImageServices` (`convert#Image`) and elFinder thumbnails | | yes | yes |
 | `xlsx` | core, moqui-report | The `xlsx` render mode, `org.moqui.resource.SpreadsheetServices` and the xlsx format of a scheduled report: calamine reads, and the IronCalc engine (`moqui_core::workbook`, a pinned git revision) writes and calculates; the host's `xlsx` also links `moqui-calc` (CalcGrid, `org.moqui.calc.CalcServices`) | | yes | yes |
-| `overture` | host (`moqui-maps`) | Optional Overture data for Maps ([Maps](tools/Maps.md#overture-places-and-buildings), [Maps-Overture](../plans/Maps-Overture.md)): our own GeoParquet reader (ZSTD on the pure-Rust `ruzstd`), the STAC catalog and the import of a region's Places and Buildings (`OvertureServices.read#OvertureTheme`); without it what was imported stays searchable and drawn, and an import says the feature is not built in | | yes | yes |
+| `overture` | host (`moqui-maps`) | Optional Overture data for Maps ([Maps](tools/Maps.md#overture-places-and-buildings), [Maps-Overture](../plans/archive/Maps-Overture.md)): our own GeoParquet reader (ZSTD on the pure-Rust `ruzstd`), the STAC catalog, the import of a region's Places, Buildings and Addresses (`OvertureServices.read#OvertureTheme`) and the local address geocoder ([Overture addresses](tools/Maps.md#overture-addresses)); without it imported places stay searchable and buildings drawn, the address geocoder is not asked, and an import says the feature is not built in | | yes | yes |
 | `llm` | host | The agents and the model providers (the `moqui-llm` crate, `org.moqui.agent.AgentAdminServices`; [LLM-A2A-Assist](../plans/LLM-A2A-Assist.md)) | yes | yes | yes |
 | `http`, `cluster-tls` | core | Remote REST, `http` locations, the OpenSearch client; the cluster certificate | yes | yes | yes |
 
@@ -611,6 +611,8 @@ sdkmanager 'platform-tools' 'emulator' 'platforms;android-37.0' 'build-tools;36.
 ./moq android build --target x86_64 --apk    # debug APK; --release for a release one; aarch64 for phones
 scripts/check-android.sh                     # clippy for both Android targets: moqui-client, moqui-client-tauri, the app
 scripts/android-smoke.sh                     # when asked, not in test-all: ready line, frame check, relaunch
+scripts/android-maps-offline.sh              # acceptance MapsOfflinePackage, when asked: offline map packages
+scripts/android-location-share.sh            # acceptance LocationShareWalk's phone half, when asked: live location
 # For debug sign-in, start this server in a separate terminal.
 moqui_conf__webapp_list__webapp__WEBROOT__http_bind=127.0.0.1 \
 moqui_conf__webapp_list__webapp__WEBROOT__https_enabled=false ./moq run --http-port 8080
@@ -673,9 +675,13 @@ In the Play Console, once:
   of the repository.
 - **The target SDK:** `targetSdk` in `gen/android/app/build.gradle.kts` (37); Play requires a recent one for new
   apps and updates each August.
-- **Declarations:** the full-screen intent (`USE_FULL_SCREEN_INTENT`, for an incoming call: a calling app), and the
+- **Declarations:** the full-screen intent (`USE_FULL_SCREEN_INTENT`, for an incoming call: a calling app), the
   foreground service of type `phoneCall` (`FOREGROUND_SERVICE_PHONE_CALL`, an ongoing call the user answered), each
-  with a short video or description of the incoming call.
+  with a short video or description of the incoming call, and the foreground service of type `location`
+  (`FOREGROUND_SERVICE_LOCATION`, `LocationShareService`): a live location share the user starts in Maps with its
+  audience and end, sent while it lasts with a notification and Stop, started only from the app in front, with a short
+  video of a share started, its notification and Stop. The app asks for no `ACCESS_BACKGROUND_LOCATION`, so Play's
+  background location declaration does not apply ([Mobile-Client, Live location](ui/Mobile-Client.md#live-location)).
 - **Privacy policy:** [docs/Privacy.md](Privacy.md), at its GitHub address, which the app's account menu and sign-in
   open (plans/Security-Review.md SEC-CLI-122).
 - **Data safety**, from the merged manifest's permissions (`app/build/intermediates/merged_manifest/release/`, which has
@@ -683,7 +689,13 @@ In the Play Console, once:
   mail (each account's store, for offline use), contacts' names in them, files attached, and a device key (a
   credential, sealed by the Android Keystore); it records audio (and video) in calls only, sent to the user's server;
   photos and videos the user takes or picks to send, and the precise or approximate location of a place the user
-  shares, go to the user's server; the device's name in the user's device list and as a chat encryption device, which
+  shares, go to the user's server; location is collected while a live share the user started is on, also with the app
+  in the background under its notification, and sent to the user's server, which shows it to the people the user chose
+  for that share until its end (shared: with them, by the user's act; not kept by the server past the share unless the
+  user keeps its trail): precise location for an exact share, approximate for an approximate share (the app asks for
+  approximate location only for it; where the user allowed precise location, for an exact share or a chat place, the
+  phone's fix is precise, and the server rounds it to about 1 km before it is stored or shown, so declare precise
+  location as collected whenever precise is asked for at all); the device's name in the user's device list and as a chat encryption device, which
   room members see, is the phone's model; the phone's contacts are read on the phone to search the dialer and never
   sent; it shows notifications; with Firebase, the FCM token goes to the user's server and Google; with a UnifiedPush
   distributor, that app gets an endpoint for each account under a random name; pushes are sealed to the account's keys.
@@ -718,7 +730,7 @@ help and their helpers, and `scripts/moq-test.sh` tests them all.
 ./moq test-apps                # the application tests: the specs of runtime/components/addon, no cargo
 ./moq test-framework           # the framework tests: cargo, moq, the specs of components/base and components/dev
 ./moq test-all                 # the whole regression suite: test-framework, then test-apps
-./moq accept mr-boss           # a component's acceptance suite (test/acceptance/), only when asked
+./moq accept mr-boss           # a component's acceptance suite (test/acceptance/), only with the user's permission
 ./moq accept-all               # every acceptance test, with the Rust opt-in and ignored tests
 sudo scripts/call-network.sh   # calls on shaped networks (tc netem in namespaces; root): docs/interfaces/WebRTC.md
 ./moq save-db before-upgrade   # and later: ./moq reload-save before-upgrade
@@ -753,7 +765,7 @@ its rows; a check named twice runs once.
 | Something a golden or generated file holds: a host member (`moqui-host.d.ts`), a proto, the bundled screens, a typegen fixture | the file rewritten by its variable and its diff read: `UPDATE_GOLDEN=1 cargo test -p moqui-devkit --lib typegen`, `MOQUI_REGENERATE_PROTO=1 cargo test -p moqui-host --lib the_checked_in_code_is_what_the_proto_generates`, `UPDATE_GOLDEN=1 cargo test -p moqui-core --lib bundled_screens_are_precompiled` |
 | The framework's components (`runtime/components/base`, `runtime/components/dev`), the conf (`MoquiDefaultConf.xml`, the XSDs, `runtime/conf/**`), `moq` or `scripts/` | `./moq test-framework` (its cargo run holds the conf tests: every runtime conf parsed, merged and checked against the XSD) |
 | An application (`runtime/components/addon/*`, `runtime/components/test`) | `./moq test-apps`; for a changed screen `moqui lint --screens` with a report file (`./moq run lint --screens <file>`), its idiom count not grown |
-| An acceptance test you added or changed | that test (`./moq accept <component> --spec Name`), then its component's acceptance suite |
+| An acceptance test you added or changed | that test alone (`./moq accept <component> --spec Name`); its component's whole acceptance suite only with the user's permission |
 | Docs only (`docs/`, `plans/`, READMEs) | no build or test; the relative links still resolve |
 
 While working, run less: the specs of what you touch (`./moq test <component> --spec ...`) and `cargo test -p <crate>`
@@ -891,7 +903,8 @@ Acceptance tests can be deleted freely, since nothing depends on them.
   regression command does.
 - **Who runs it.** `./moq accept-all` on a schedule (nightly, or weekly while it is long) and before a release, with
   `--junit` for a dated summary. An agent runs an acceptance test only when the user asks, or when it adds or changes
-  one (then that test, and its component's acceptance suite), never because code it uses changed (AGENTS.md).
+  one (then that test alone), never because code it uses changed; a component's whole acceptance suite, or
+  `./moq accept-all`, only with the user's permission (AGENTS.md).
 - **In CI.** A server that hosts the repository runs the suites as pipelines ([Pipelines](interfaces/Pipelines.md)):
   the `ci.xml` at this repository's root runs the lints and `./moq test-framework` on every push and merge request,
   `./moq test-all` on main, and `./moq accept-all --junit` nightly, in the `moqui-build` image. `#[cfg(windows)]` is

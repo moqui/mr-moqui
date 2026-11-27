@@ -568,3 +568,156 @@ fn a_mounted_dashboard_links_its_apps_screens_and_an_unreadable_panel_says_so() 
         Some("/apps/dashboards/AlertRule")
     );
 }
+#[test]
+fn a_geomap_row_opens_in_maps_where_the_dashboard_offers_it_and_the_table_keeps_its_keys() {
+    let sales = json!({"fields":[
+        {"name":"countryGeoId","type":"string","values":["USA","FRA","XYZ"],"link":"/apps/x/Country?geoId=${value}",
+            "bucket":{"datasetId":"sales","filters":[{"term":"USA"},{"term":"FRA"},{"term":"XYZ"}]}},
+        {"name":"sales","type":"number","values":[3,9,1]}
+    ]});
+    let dashboard = |links: Value, visualization: &str| {
+        json!({"dashboard":{"definitionId":"d","appLinks":links,
+            "panels":{"sales":{"title":"Sales","visualization":visualization}}},"frames":{"sales":[sales]}})
+    };
+    let shown = |props: &Value, state: &ComponentState| {
+        ReportDashboard
+            .lines(props, state, 80, false)
+            .iter()
+            .map(crate::components::line_text)
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let offered = dashboard(json!({"maps":"/apps/maps/Browse"}), "geomap");
+    let mut state = ComponentState::default();
+    let press =
+        |state: &mut ComponentState, key: Key| ReportDashboard.key(&offered, state, &KeyPress::plain(key), false);
+    assert!(
+        !shown(&offered, &state).contains("open in Maps"),
+        "the panel has no keys yet"
+    );
+    press(&mut state, Key::Char('g'));
+    assert!(shown(&offered, &state).contains("Enter opens data link, M: open in Maps)"));
+    // the first row, the United States, opens at its extent
+    assert!(
+        matches!(press(&mut state, Key::Char('M')).as_deref(), Some([Act::Follow(url)]) if url.starts_with("/apps/maps/Browse?extent=-124.6854%2C")),
+        "the first row, the United States"
+    );
+    // Down moves the table's row: France, highlighted in the list, opens at its mainland extent as the browser's page
+    // test has it
+    press(&mut state, Key::Down);
+    assert_eq!(state.local["tables"]["sales"]["row"], 1);
+    let lines = ReportDashboard.lines(&offered, &state, 80, false);
+    let selected: Vec<&Span> = lines.iter().flatten().filter(|span| span.reverse).collect();
+    assert!(
+        matches!(&selected[..], [span] if span.text.starts_with("FRA")),
+        "{selected:?}"
+    );
+    assert_eq!(
+        press(&mut state, Key::Char('M')),
+        Some(vec![Act::Follow(
+            "/apps/maps/Browse?extent=-4.5918%2C42.3433%2C8.0983%2C51.148".into()
+        )])
+    );
+    assert_eq!(
+        press(&mut state, Key::Char('o')),
+        None,
+        "o stays the shell's Open in browser"
+    );
+    // the table's data link and bucket filter still act on that row
+    assert_eq!(
+        press(&mut state, Key::Enter),
+        Some(vec![Act::Follow("/apps/x/Country?geoId=FRA".into())])
+    );
+    assert!(
+        matches!(press(&mut state, Key::Char('f')).as_deref(), Some([Act::Follow(url)]) if url.contains("filtersJson") && url.contains("FRA")),
+        "the filter of the selected row"
+    );
+    // a code with no known country is not followable
+    press(&mut state, Key::Down);
+    assert_eq!(
+        press(&mut state, Key::Char('M')),
+        Some(vec![Act::Message("This row's Maps link is unavailable".into())])
+    );
+    // a panel that is not a geomap keeps its rows, and M opens nothing
+    let table = dashboard(json!({"maps":"/apps/maps/Browse"}), "table");
+    let mut state = ComponentState::default();
+    let press = |state: &mut ComponentState, key: Key| ReportDashboard.key(&table, state, &KeyPress::plain(key), false);
+    press(&mut state, Key::Char('g'));
+    press(&mut state, Key::Down);
+    press(&mut state, Key::Down);
+    assert_eq!(state.local["tables"]["sales"]["row"], 2);
+    assert!(!shown(&table, &state).contains("open in Maps"));
+    assert_eq!(press(&mut state, Key::Char('M')), None);
+    // without the maps link nothing changes: no hint, and M opens nothing
+    let plain = dashboard(json!({"explore":"/apps/X/Explore"}), "geomap");
+    let mut state = ComponentState::default();
+    let press = |state: &mut ComponentState, key: Key| ReportDashboard.key(&plain, state, &KeyPress::plain(key), false);
+    press(&mut state, Key::Char('g'));
+    assert!(!shown(&plain, &state).contains("open in Maps"));
+    assert_eq!(press(&mut state, Key::Char('M')), None);
+}
+#[test]
+fn a_geomap_point_opens_in_maps_only_where_the_panel_offers_it() {
+    let frame = json!({"fields":[
+        {"name":"city","type":"string","values":["Paris","McMurdo"],"link":"/apps/x/City?name=${value}"},
+        {"name":"lat","type":"number","values":[48.85,-77.85]},
+        {"name":"lon","type":"number","values":[2.35,166.67]}
+    ]});
+    let props = json!({"frame":frame,"panel":{"title":"Cities","visualization":"geomap","appLinks":{"maps":"/apps/maps/Browse"}}});
+    // a row index from a refresh with more rows is brought within the rows there are now, for the whole table: the
+    // selection line, the highlighted place, the data link and Maps all take the last row
+    let stale = ComponentState {
+        at: 5,
+        ..Default::default()
+    };
+    let lines = ReportPanel.lines(&props, &stale, 80, false);
+    assert_eq!(
+        crate::components::line_text(&lines[0]),
+        "Row 2, column 1: city = McMurdo  (arrows select, s sorts, Enter opens data link, M: open in Maps)"
+    );
+    let mut state = stale.clone();
+    assert_eq!(
+        ReportPanel.key(&props, &mut state, &KeyPress::plain(Key::Enter), false),
+        Some(vec![Act::Follow("/apps/x/City?name=McMurdo".into())])
+    );
+    assert_eq!(state.at, 1);
+    // south of the drawing's edge (not drawn or listed), a row still opens in Maps
+    let mut state = stale.clone();
+    assert_eq!(
+        ReportPanel.key(&props, &mut state, &KeyPress::plain(Key::Char('M')), false),
+        Some(vec![Act::Follow(
+            "/apps/maps/Browse?longitude=166.67&latitude=-77.85".into()
+        )])
+    );
+    // the first row, Paris: highlighted in the list, and opened at its point
+    let mut state = ComponentState::default();
+    let lines = ReportPanel.lines(&props, &state, 80, false);
+    assert!(lines
+        .iter()
+        .flatten()
+        .any(|span| span.reverse && span.text.starts_with("Paris")));
+    assert_eq!(
+        ReportPanel.key(&props, &mut state, &KeyPress::plain(Key::Char('M')), false),
+        Some(vec![Act::Follow(
+            "/apps/maps/Browse?longitude=2.35&latitude=48.85".into()
+        )])
+    );
+    // a panel with no maps link, or no appLinks at all, follows nothing and shows no selection
+    for panel in [
+        json!({"title":"Cities","visualization":"geomap","appLinks":{"explore":"/apps/X/Explore"}}),
+        json!({"title":"Cities","visualization":"geomap"}),
+    ] {
+        let props = json!({"frame":frame,"panel":panel});
+        let mut state = ComponentState::default();
+        assert_eq!(
+            ReportPanel.key(&props, &mut state, &KeyPress::plain(Key::Char('M')), false),
+            None
+        );
+        let lines = ReportPanel.lines(&props, &state, 80, false);
+        assert!(!lines.iter().flatten().any(|span| span.reverse));
+        assert!(!lines
+            .iter()
+            .map(crate::components::line_text)
+            .any(|line| line.contains("open in Maps")));
+    }
+}

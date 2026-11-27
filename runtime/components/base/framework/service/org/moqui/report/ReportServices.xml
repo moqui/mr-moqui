@@ -70,6 +70,11 @@
     <service verb="get" noun="Definition" type="rust" location="moqui_core::report::get_definition">
         <in-parameters><parameter name="definitionId" required="true"/></in-parameters><out-parameters><parameter name="definition" type="Map"/></out-parameters>
     </service>
+    <!-- Whether the viewer may read a definition now, by get#Definition's rule, reading only its owner, group and
+        read-only flag: asked on each call by a holder of something opened from it (a CalcGrid room) -->
+    <service verb="check" noun="DefinitionRead" type="rust" location="moqui_core::report::check_definition_read">
+        <in-parameters><parameter name="definitionId" required="true"/></in-parameters><out-parameters><parameter name="readable" type="Boolean"/><parameter name="reason"/></out-parameters>
+    </service>
     <service verb="list" noun="Definitions" type="rust" location="moqui_core::report::list_definitions">
         <in-parameters><parameter name="definitionType"/></in-parameters><out-parameters><parameter name="definitions" type="List"/></out-parameters>
     </service>

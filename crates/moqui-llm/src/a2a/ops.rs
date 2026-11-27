@@ -382,18 +382,28 @@ pub fn tasks(
         let pauses = Pauses::load(facade, &rows.iter().collect::<Vec<_>>())?;
         let mut messages: HashMap<String, Vec<Json>> = HashMap::new();
         if history != Some(0) {
-            let message_rows = facade
-                .find(MESSAGE)?
-                .condition(Condition::is_in("runId", ids))
-                .condition(Condition::is_in(
-                    "role",
-                    vec![Value::string("user"), Value::string("assistant")],
-                ))
-                .order_by("messageSeq", false)
-                .disable_authz()
-                .list()?;
+            // each task's newest `historyLength` messages, read as that many: never every message of a page of tasks
+            // (SEC-AI-85)
+            let keep = history.unwrap_or(types::MAX_HISTORY);
+            let mut message_rows: Vec<EntityValue> = Vec::new();
+            for task in rows {
+                let mut newest = facade
+                    .find(MESSAGE)?
+                    .eq("runId", Value::string(task.id()))
+                    .condition(Condition::is_in(
+                        "role",
+                        vec![Value::string("user"), Value::string("assistant")],
+                    ))
+                    .order_by("messageSeq", true)
+                    .limit(i64::try_from(keep).unwrap_or(i64::MAX))
+                    .disable_authz()
+                    .list()?
+                    .values()
+                    .to_vec();
+                newest.reverse();
+                message_rows.extend(newest);
+            }
             let message_ids: Vec<Value> = message_rows
-                .values()
                 .iter()
                 .filter_map(|row| text_of(row, "messageId").map(Value::string))
                 .collect();
@@ -416,7 +426,7 @@ pub fn tasks(
                     .or_default()
                     .push(part);
             }
-            for row in message_rows.values() {
+            for row in &message_rows {
                 let message_id = text_of(row, "messageId").unwrap_or_default();
                 let parts = wire_parts(row, parts_of.get(&message_id).map(Vec::as_slice).unwrap_or_default());
                 if parts.is_empty() {
@@ -796,6 +806,9 @@ fn continue_task(ctx: &Ctx<'_>, task_id: &str, message: &InMessage) -> Result<Ta
                 .map_err(A2aError::invalid_params)?;
         }
     }
+    // a message to a task counts against the agent's AT_LLM tarpit as a run's start does, so a client cannot hand a
+    // working task input without end (SEC-AI-85)
+    run::count_run_hit(&task.run.agent_id).map_err(|error| Failure::of(&error, "a message to a task"))?;
     let text = model_text(message);
     let added = run::quietly(|| {
         run::in_tx(&ctx.facade, || {

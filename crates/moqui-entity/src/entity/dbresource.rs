@@ -1261,7 +1261,7 @@ fn text_of(value: Option<&Value>) -> Option<String> {
 }
 
 /// Bytes a row holds as a source tagged by their SHA-256 (`sha256-<hex>`, the form of a content blob's tag): a strong
-/// validator of a small file or version, which a pinned response compares (`plans/Maps.md` §5).
+/// validator of a small file or version, which a pinned response compares (`plans/archive/Maps.md` §5).
 fn in_memory(bytes: Vec<u8>) -> std::sync::Arc<dyn crate::resource::source::ByteSource> {
     let tag = format!("sha256-{}", crate::resource::blob::blob_id(&bytes));
     std::sync::Arc::new(crate::resource::source::MemorySource::new(bytes).with_tag(tag))

@@ -465,3 +465,174 @@ fn refuses_a_malicious_archive_s_directories() {
         .message()
         .contains("claims"));
 }
+
+/// The archive writer as it was before [`ArchiveWriter`] (the whole archive built in one `Vec`), kept here so the
+/// streaming writer is checked to give the same bytes
+fn whole_archive(tiles: &[(u64, Vec<u8>)], metadata: &[u8], options: &ArchiveOptions) -> Vec<u8> {
+    let compress = |b: &[u8]| b.to_vec();
+    let mut entries: Vec<Entry> = Vec::new();
+    let mut data: Vec<u8> = Vec::new();
+    let mut last_start = 0usize;
+    let mut addressed = 0u64;
+    for (tile_id, content) in tiles {
+        if let Some(last) = entries.last_mut() {
+            if *tile_id == last.tile_id + u64::from(last.run_length) && data[last_start..] == content[..] {
+                last.run_length += 1;
+                addressed += 1;
+                continue;
+            }
+        }
+        addressed += 1;
+        last_start = data.len();
+        entries.push(Entry {
+            tile_id: *tile_id,
+            offset: last_start as u64,
+            length: u32::try_from(content.len()).unwrap(),
+            run_length: 1,
+        });
+        data.extend_from_slice(content);
+    }
+    let (root, leaves) = directories(&entries, &compress);
+    let metadata = compress(metadata);
+    let root_offset = HEADER_LEN as u64;
+    let metadata_offset = root_offset + root.len() as u64;
+    let leaf_offset = metadata_offset + metadata.len() as u64;
+    let [west, south, east, north] = options.bounds;
+    let header = Header {
+        version: 3,
+        root_offset,
+        root_length: root.len() as u64,
+        metadata_offset,
+        metadata_length: metadata.len() as u64,
+        leaf_offset,
+        leaf_length: leaves.len() as u64,
+        tile_data_offset: leaf_offset + leaves.len() as u64,
+        tile_data_length: data.len() as u64,
+        addressed_tiles: addressed,
+        tile_entries: entries.len() as u64,
+        tile_contents: entries.len() as u64,
+        clustered: true,
+        internal_compression: options.internal_compression,
+        tile_compression: options.tile_compression,
+        tile_type: options.tile_type,
+        min_zoom: options.min_zoom,
+        max_zoom: options.max_zoom,
+        min_lon: west,
+        min_lat: south,
+        max_lon: east,
+        max_lat: north,
+        center_zoom: options.center_zoom,
+        center_lon: (west + east) / 2.0,
+        center_lat: (south + north) / 2.0,
+    };
+    let mut out = header.to_bytes().to_vec();
+    out.extend_from_slice(&root);
+    out.extend_from_slice(&metadata);
+    out.extend_from_slice(&leaves);
+    out.extend_from_slice(&data);
+    out
+}
+
+/// The archives the writer tests above write: a small one with a run, one of 40,000 tiles with leaf directories, and
+/// runs broken by gaps with a content coming back after another
+fn golden_tile_sets() -> Vec<Vec<(u64, Vec<u8>)>> {
+    vec![
+        vec![
+            (0, b"world".to_vec()),
+            (1, b"same".to_vec()),
+            (2, b"same".to_vec()),
+            (3, b"other".to_vec()),
+            (7, b"z2".to_vec()),
+        ],
+        (0..40_000u64).map(|id| (id * 2, id.to_le_bytes().to_vec())).collect(),
+        (0..3000u64)
+            .map(|id| (id + id / 7, vec![u8::try_from(id % 5 / 3).unwrap(); 40]))
+            .collect(),
+    ]
+}
+
+#[test]
+fn the_streaming_writer_gives_the_bytes_the_whole_archive_writer_gave() {
+    let metadata = br#"{"vector_layers":[{"id":"overlay"}]}"#;
+    for tiles in golden_tile_sets() {
+        let expected = whole_archive(&tiles, metadata, &options());
+        assert_eq!(
+            write_archive(tiles.clone(), metadata, &options(), &|b| b.to_vec()).unwrap(),
+            expected
+        );
+        // the tile data streamed to a file, the prefix written before it
+        let path = std::env::temp_dir().join(format!("moqui-pmtiles-{}-{}.part", std::process::id(), tiles.len()));
+        let part = std::fs::File::create(&path).unwrap();
+        let mut writer = ArchiveWriter::new(std::io::BufWriter::new(part));
+        for (tile_id, content) in &tiles {
+            writer.add_tile(*tile_id, content).unwrap();
+        }
+        assert_eq!(writer.tile_count(), tiles.len() as u64);
+        let finished = writer.finish(metadata, &options(), &|b| b.to_vec()).unwrap();
+        drop(finished.data);
+        let data = std::fs::read(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        let mut streamed = finished.prefix;
+        streamed.extend_from_slice(&data);
+        assert_eq!(streamed, expected);
+        assert_eq!(finished.header, Header::parse(&expected).unwrap());
+    }
+}
+
+#[test]
+fn keyed_tiles_share_one_stored_content() {
+    let mut writer = ArchiveWriter::new(Vec::new());
+    // the sea at the source's offset 500, apart and then as a run; land at 900
+    writer.add_keyed(0, 500, b"sea").unwrap();
+    writer.add_keyed(1, 900, b"land").unwrap();
+    writer
+        .add_keyed(2, 500, b"ignored: the key's content is stored")
+        .unwrap();
+    writer.repeat_keyed(3, 500).unwrap();
+    writer.add_tile(5, b"lake").unwrap();
+    assert!(writer.has_key(500) && !writer.has_key(1));
+    assert!(writer.repeat_keyed(6, 1).is_err());
+    assert!(writer.repeat_keyed(4, 500).is_err(), "a tile ID before the last one");
+    let finished = writer.finish(b"{}", &options(), &|b| b.to_vec()).unwrap();
+    let mut archive = finished.prefix;
+    archive.extend_from_slice(&finished.data);
+    let header = Header::parse(&archive).unwrap();
+    assert!(header.problems(archive.len() as u64).is_empty());
+    // five tiles, four entries (2 and 3 one run), three contents
+    assert_eq!(
+        (header.addressed_tiles, header.tile_entries, header.tile_contents),
+        (5, 4, 3)
+    );
+    assert_eq!(header.tile_data_length, 11);
+    assert_eq!(read(&archive, 0).unwrap(), b"sea");
+    assert_eq!(read(&archive, 1).unwrap(), b"land");
+    assert_eq!(read(&archive, 2).unwrap(), b"sea");
+    assert_eq!(read(&archive, 3).unwrap(), b"sea");
+    assert!(read(&archive, 4).is_none());
+    assert_eq!(read(&archive, 5).unwrap(), b"lake");
+    assert!(ArchiveWriter::new(Vec::new())
+        .finish(b"{}", &options(), &|b| b.to_vec())
+        .is_err());
+}
+
+#[test]
+fn the_keys_kept_are_bounded_and_a_forgotten_one_is_written_again() {
+    let mut writer = ArchiveWriter::with_keys_max(Vec::new(), 4);
+    // the sea, repeated, outlives the keys never repeated when the bound is reached
+    writer.add_keyed(0, 100, b"sea").unwrap();
+    writer.repeat_keyed(1, 100).unwrap();
+    for (id, key) in [(2, 200), (3, 300), (4, 400), (5, 500)] {
+        writer.add_keyed(id, key, format!("land {key}").as_bytes()).unwrap();
+    }
+    assert!(writer.has_key(100) && writer.has_key(500));
+    assert!(!writer.has_key(200), "a key never repeated is let go past the bound");
+    // a key let go is a new content again: written twice, read right
+    writer.add_keyed(6, 200, b"land 200").unwrap();
+    let finished = writer.finish(b"{}", &options(), &|b| b.to_vec()).unwrap();
+    let mut archive = finished.prefix;
+    archive.extend_from_slice(&finished.data);
+    assert_eq!(read(&archive, 1).unwrap(), b"sea");
+    assert_eq!(read(&archive, 6).unwrap(), b"land 200");
+    assert_eq!(read(&archive, 2).unwrap(), b"land 200");
+    assert_eq!(Header::parse(&archive).unwrap().tile_contents, 6);
+}

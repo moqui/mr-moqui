@@ -1,0 +1,238 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Offline maps (plans/archive/Maps-Offline.md §2.3; docs/tools/Maps.md "Offline packages"): the user's own map packages, each a
+    region at a zoom range built on the server from what they may see and downloaded as one file to the Android app or the
+    desktop client, over org.moqui.maps.MapSourceServices find#, estimate#, create#, update#, cancel# and delete#Package
+    (MapPackages.js), which act on the signed-in user's own only. New package takes a region (the west, south, east and
+    north parameters, else the user's map's initial view), drawn as a box on the map, the zooms and what it holds; Estimate reads its size from the archives' directories before anything is built, and Build is
+    refused past maps@package-max-bytes. The package transition sends a package's zip by range with its SHA-256 as the
+    strong tag, checking the owner on every request (get#PackageAccess); a revision that is no longer the package's is 409.
+    The terminal page is Offline.tui.json: the packages and their states, with Update, Cancel and Delete (no build from
+    the terminal). Under the Maps app (MAPS_APP, data/MapsSecurityData.xml). -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
+        default-menu-title="Offline maps" default-menu-index="4" menu-image="sym_o_download_for_offline" menu-image-type="icon">
+    <parameter name="name"/>
+    <parameter name="west"/>
+    <parameter name="south"/>
+    <parameter name="east"/>
+    <parameter name="north"/>
+    <parameter name="minZoom"/>
+    <parameter name="maxZoom"/>
+    <parameter name="profileId"/>
+
+    <!-- the basemap and layers the region's map draws (get#EffectiveConfig, as LocalMap's getConfig) -->
+    <transition name="getConfig" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.maps.MapServices.get#EffectiveConfig').requireNewTransaction(true)
+                .parameters({profileId: profileId || null, layerIds: null, recordLayers: false}).call()
+            if (ec.message.hasError()) { const errors = ec.message.getErrorsString(); ec.message.clearErrors(); ec.web.sendJsonResponse({errors}) }
+            else ec.web.sendJsonResponse(out.config || {})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+
+    <!-- The user's packages as JSON ({packageList}, find#Packages), for the apps' download (plans/archive/Maps-Offline.md §2.4):
+        each with its revision, size, strong tag and download path. -->
+    <transition name="packageList" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.maps.MapSourceServices.find#Packages').requireNewTransaction(true).call()
+            if (ec.message.hasError()) { const errors = ec.message.getErrorsString(); ec.message.clearErrors(); ec.web.sendJsonError(400, errors) }
+            else ec.web.sendJsonResponse({packageList: out?.packageList || []})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+
+    <!-- New package's Estimate and Build: the form's region, zooms and contents; an unchecked box posts nothing, so is N -->
+    <transition name="createPackage">
+        <actions>
+            <script><![CDATA[
+                const flag = value => [].concat(value ?? []).map(String).includes('Y') ? 'Y' : 'N'
+                packageRequest = {name: name || null, west, south, east, north, minZoom, maxZoom, profileId: profileId || null,
+                    basemapLayerIds: [].concat(basemapLayerIds ?? []).flatMap(value => String(value).split(',')).map(id => id.trim()).filter(id => id),
+                    includePlaces: flag(includePlaces), includeOverlays: flag(includeOverlays), includePostal: flag(includePostal),
+                    includeOverture: flag(includeOverture)}
+                const service = estimateButton ? 'estimate#Package' : 'create#Package'
+                const out = ec.service.sync().name('org.moqui.maps.MapSourceServices.' + service).parameters(packageRequest).call()
+                if (!ec.message.hasError()) {
+                    const estimate = out?.estimate || {}
+                    const size = ec.l10n.localize('about') + ' ' + (estimate.bytesText || '') + ', ' + (estimate.tileCount || 0) + ' ' + ec.l10n.localize('tiles')
+                    if (!out?.applied) ec.message.addMessage(out?.reason || ec.l10n.localize('The offline map was not made'), 'warning')
+                    else if (estimateButton) ec.message.addMessage(ec.l10n.localize('This offline map would be') + ' ' + size, 'info')
+                    else ec.message.addMessage(ec.l10n.localize('The offline map is being built') + ' (' + size + '): '
+                        + ec.l10n.localize('you are told when it is ready'), 'success')
+                }
+            ]]></script>
+        </actions>
+        <default-response url="." parameter-map="{name:name, west:west, south:south, east:east, north:north, minZoom:minZoom, maxZoom:maxZoom, profileId:profileId}"/>
+        <error-response url="." parameter-map="{name:name, west:west, south:south, east:east, north:north, minZoom:minZoom, maxZoom:maxZoom, profileId:profileId}"/>
+    </transition>
+    <transition name="updatePackage">
+        <service-call name="org.moqui.maps.MapSourceServices.update#Package" in-map="{packageId:packageId}" out-map="updated"/>
+        <actions>
+            <if condition="!ec.message.hasError()">
+                <script>ec.message.addMessage(updated.applied ? ec.l10n.localize('The offline map is being built again: its earlier file stays until the new one is ready') : updated.reason, updated.applied ? 'success' : 'warning')</script>
+            </if>
+        </actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="cancelPackage">
+        <service-call name="org.moqui.maps.MapSourceServices.cancel#Package" in-map="{packageId:packageId}" out-map="cancelled"/>
+        <actions>
+            <if condition="!ec.message.hasError()">
+                <script>ec.message.addMessage(cancelled.applied ? ec.l10n.localize('The build stops at its next batch of tiles') : cancelled.reason, cancelled.applied ? 'success' : 'warning')</script>
+            </if>
+        </actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="deletePackage">
+        <service-call name="org.moqui.maps.MapSourceServices.delete#Package" in-map="{packageId:packageId}" out-map="deleted"/>
+        <actions>
+            <if condition="!ec.message.hasError()">
+                <script>ec.message.addMessage(deleted.applied ? ec.l10n.localize('Offline map deleted: a copy on a device stays there until it is deleted there') : deleted.reason, deleted.applied ? 'success' : 'warning')</script>
+            </if>
+        </actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+
+    <!-- A package's zip (plans/archive/Maps-Offline.md §2.3), by range so a download resumes: each request (GET, HEAD, every range)
+        checks the owner again (get#PackageAccess); a revision that is no longer the package's is 409, and the download is
+        recorded with the device's UserLoginKey when the request came signed in by one. The bytes go out pinned to the
+        zip's SHA-256 (the strong ETag, If-Range answered), Cache-Control private for resource-facade@pinned-max-age.
+        method any: a HEAD is answered too, and another method is 405. Read-only: the apps ask it by GET with packageId
+        and revision in the URL, which a transition that writes is refused (its one write, the download's record, is no
+        change a forged request could want). -->
+    <transition name="package" method="any" read-only="true">
+        <actions><script><![CDATA[
+            const access = ec.service.sync().name('org.moqui.maps.MapSourceServices.get#PackageAccess')
+                .parameters({packageId: String(packageId ?? ''), revision: String(revision ?? ''),
+                    method: String(ec.web.request?.method ?? 'GET')}).call()
+            if (ec.message.hasError() || !access?.ok) {
+                const status = ec.message.hasError() ? 404 : Number(access.status) || 404
+                ec.message.clearErrors()
+                ec.web.sendJsonError(status, status === 409 ? 'The offline map was built again: download it again' : 'Offline map not available')
+            } else {
+                // the owner was checked above; the file is read as the framework
+                const wasDisabled = ec.artifactExecution.disableAuthz()
+                try { ec.web.sendPinnedResourceResponse(access.location, access.tag, access.size, false, access.fileName) }
+                finally { if (!wasDisabled) ec.artifactExecution.enableAuthz() }
+            }
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+
+    <actions>
+        <service-call name="org.moqui.maps.MapSourceServices.find#Packages" out-map="found" transaction="force-new" ignore-error="true"/>
+        <set field="available" from="!!found?.packageList"/>
+        <set field="packageRows" from="Array.from(found?.packageList || []).map(row =&gt; Object.assign({}, row,
+                {stateText: row.statusText + (row.busy &amp;&amp; row.progress != null ? ' ' + row.progress + '%' : '') + (row.statusNote ? ' · ' + row.statusNote : '')}))"/>
+        <service-call name="org.moqui.maps.MapServices.get#EffectiveConfig" out-map="effective" in-map="{profileId:(profileId || null), recordLayers:false}"
+                transaction="force-new" ignore-error="true"/>
+        <script><![CDATA[
+            const config = effective?.config || {}
+            basemapOptions = Array.from(config.profile?.basemaps || []).filter(entry => entry.kind === 'pmtiles')
+                .map(entry => ({value: entry.id, label: entry.label || entry.id}))
+            // the region: the one asked for, else the map's initial view (its extent, or a box around its center at its zoom)
+            const asked = [west, south, east, north].map(value => value === '' || value == null ? NaN : Number(value))
+            let box = asked.every(Number.isFinite) ? asked : null
+            if (!box && Array.isArray(config.extent)) box = config.extent.map(Number)
+            if (!box) {
+                const center = Array.isArray(config.center) ? config.center.map(Number) : [0, 20]
+                const half = Math.min(180, 180 / Math.pow(2, Math.max(0, Number(config.zoom ?? 2) - 1)))
+                box = [Math.max(-180, center[0] - half), Math.max(-85, center[1] - half / 2), Math.min(180, center[0] + half), Math.min(85, center[1] + half / 2)]
+            }
+            const round = value => String(Math.round(Number(value) * 10000) / 10000)
+            regionValues = {name: name || '', west: round(box[0]), south: round(box[1]), east: round(box[2]), north: round(box[3]),
+                minZoom: minZoom || '0', maxZoom: maxZoom || '14', profileId: profileId || '', basemapLayerIds: [],
+                includePlaces: 'Y', includeOverlays: 'Y', includePostal: 'Y', includeOverture: 'Y'}
+            regionExtent = [box[0], box[1], box[2], box[3]].join(',')
+            const [w, s, e, n] = box
+            regionFeatures = {type: 'FeatureCollection', features: [{type: 'Feature', id: 'region', properties: {label: ec.l10n.localize('The offline map\'s region')},
+                geometry: {type: 'Polygon', coordinates: [[[w, s], [e, s], [e, n], [w, n], [w, s]]]}}]}
+            zoomOptions = Array.from({length: 17}, (unused, zoom) => ({value: String(zoom), label: String(zoom)}))
+        ]]></script>
+    </actions>
+    <widgets>
+        <render-mode>
+            <text type="tui" location="component://tools/screen/Maps/Offline.tui.json" template="fancy"/>
+        </render-mode>
+        <section name="OfflineBrowser" condition="sri.getRenderMode() !== 'tui'">
+            <widgets>
+                <label text="Offline maps" type="h5"/>
+                <label type="p" style="text-caption m-muted"
+                        text="A region of your map, built from what you may see now, to download to the Android app or the desktop client and browse with no network: its basemap, your places and overlays, and the region's postal codes and Overture places. Record layers and a provider's own tiles are not packaged. A package on a device stays readable there until it is deleted there."/>
+                <label type="p" style="text-negative" condition="!available" text="Offline maps are not available to you."/>
+                <label type="p" style="m-muted" condition="available &amp;&amp; !packageRows.length" text="No offline map yet: choose a region below."/>
+                <section name="PackageSection" condition="packageRows.length">
+                    <widgets>
+                        <form-list name="PackageList" list="packageRows" skip-form="true" paginate="false">
+                            <field name="name"><default-field title="Offline map"><display/></default-field></field>
+                            <field name="stateText"><default-field title="State"><display/></default-field></field>
+                            <field name="zoomsText"><default-field title="Zooms"><display/></default-field></field>
+                            <field name="sizeText"><default-field title="Size"><display/></default-field></field>
+                            <field name="builtText"><default-field title="Built"><display/></default-field></field>
+                            <field name="actions">
+                                <default-field title="">
+                                    <link url="${downloadUrl}" url-type="plain" text="Download" icon="sym_o_download" link-type="anchor" condition="downloadUrl"/>
+                                    <link url="updatePackage" text="Update" icon="sym_o_refresh" link-type="hidden-form-link" condition="canUpdate"
+                                            parameter-map="{packageId:packageId}"/>
+                                    <link url="cancelPackage" text="Cancel" icon="sym_o_cancel" link-type="hidden-form-link" condition="canCancel"
+                                            parameter-map="{packageId:packageId}"/>
+                                    <link url="deletePackage" text="Delete" btn-type="danger" icon="sym_o_delete" link-type="hidden-form-link" condition="canDelete"
+                                            confirmation="Delete the offline map ${name}? A copy on a device stays there until it is deleted there."
+                                            parameter-map="{packageId:packageId}"/>
+                                </default-field>
+                            </field>
+                            <columns type="mobile">
+                                <column><field-ref name="name"/><field-ref name="stateText"/></column>
+                                <column><field-ref name="sizeText"/><field-ref name="actions"/></column>
+                            </columns>
+                        </form-list>
+                    </widgets>
+                </section>
+
+                <label text="New offline map" type="h6" style="q-mt-lg"/>
+                <map-view id="OfflineRegion" extent="${regionExtent}" features="regionFeatures" config-transition="getConfig" height="320px"/>
+                <form-single name="NewPackage" transition="createPackage" map="regionValues">
+                    <field name="name"><default-field title="Name"><text-line size="40" maxlength="100"/></default-field></field>
+                    <field name="west"><default-field title="West" tooltip="Degrees of longitude; a west east of the east crosses the antimeridian"><text-line size="12"/></default-field></field>
+                    <field name="south"><default-field title="South"><text-line size="12"/></default-field></field>
+                    <field name="east"><default-field title="East"><text-line size="12"/></default-field></field>
+                    <field name="north"><default-field title="North"><text-line size="12"/></default-field></field>
+                    <field name="minZoom">
+                        <default-field title="From zoom"><drop-down><list-options list="zoomOptions" key="${value}" text="${label}"/></drop-down></default-field>
+                    </field>
+                    <field name="maxZoom">
+                        <default-field title="To zoom" tooltip="Each zoom more is about four times the tiles"><drop-down><list-options list="zoomOptions" key="${value}" text="${label}"/></drop-down></default-field>
+                    </field>
+                    <field name="basemapLayerIds">
+                        <default-field title="Basemaps" tooltip="Empty for your map's basemap and the other styles of its archive">
+                            <drop-down allow-multiple="true" allow-empty="true"><list-options list="basemapOptions" key="${value}" text="${label}"/></drop-down>
+                        </default-field>
+                    </field>
+                    <field name="includePlaces"><default-field title="Your places"><check><option key="Y" text=" "/></check></default-field></field>
+                    <field name="includeOverlays"><default-field title="Your overlays in the region"><check><option key="Y" text=" "/></check></default-field></field>
+                    <field name="includePostal"><default-field title="Postal codes"><check><option key="Y" text=" "/></check></default-field></field>
+                    <field name="includeOverture"><default-field title="Overture places and addresses"><check><option key="Y" text=" "/></check></default-field></field>
+                    <field name="profileId"><default-field><hidden/></default-field></field>
+                    <field name="estimateButton"><default-field title="Estimate"><submit/></default-field></field>
+                    <field name="buildButton"><default-field title="Build"><submit/></default-field></field>
+                </form-single>
+            </widgets>
+        </section>
+    </widgets>
+</screen>

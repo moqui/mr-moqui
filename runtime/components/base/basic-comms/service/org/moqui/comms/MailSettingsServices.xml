@@ -877,29 +877,45 @@ along with this software (see the LICENSE.md file). If not, see
             const LABELS = {smtp: L('Sending mail (SMTP)'), store: L('Receiving mail: signing in'), storeLogin: L('Receiving mail: signing in'),
                 storeList: L('Receiving mail: the folders')}
             const appPassword = provider?.appPassword ? ec.resource.expand('${name} needs an app password here, not your normal password.', '', {name: provider.providerName}) + ' ' : ''
+            const portHint = L('Nothing answers on that port: check the port and the security. IMAP is usually 993 with SSL, SMTP 465 with SSL or 587 with STARTTLS.')
+            const timeoutHint = L('The server did not answer: check the host and the port. A firewall may block that port.')
+            const lookupHint = L('That server name was not found: check its spelling.')
+            const tlsHint = L('The secure connection did not work: the security may not match the port. Use SSL with 993 and 465, and STARTTLS with 143 and 587.')
+            const signInHint = () => isOAuth
+                    ? ec.resource.expand('${name} did not take the sign-in: sign in again, and check that IMAP and sending from mail apps are allowed for this mailbox.', '',
+                        {name: oauth?.providerLabel || L('The provider')})
+                    : appPassword + L('The server refused the user name or password: check them (copy the password again, and use your whole email address as the user name).')
             const hintFor = (step) => {
                 const text = String(step.message || '')
-                if (/sim session/i.test(text)) return L('The connection test is off in this session.')
-                if (/not built into this host/i.test(text)) return L('This server sends mail. Receiving mail is left out of this build.')
-                if (/not in email_allowed_hosts/i.test(text)) return L('This server may not connect to that host; ask your administrator to allow it (email_allowed_hosts).')
-                if (/BasicAuthBlocked|LogonDenied|basic auth/i.test(text)) return oauth?.configured
+                // the framework's kind is what follows the place (SMTP host:port: kind), with a response code after it; the host
+                // is never read as what went wrong, so a host named login.example.net or mail.authsmtp.com does not get the
+                // password's advice (COM-UI-040). Its fixed kinds are matched at the end of the whole text; the other words are
+                // read after the last ": ", so a text of this server's own with ": " in it is read from there.
+                const kind = text.includes(': ') ? text.substring(text.lastIndexOf(': ') + 2) : text
+                const fixed = (phrase) => new RegExp('(^|: )' + phrase + '( \\(\\w+\\))?$', 'i').test(text)
+                if (/sim session/i.test(kind)) return L('The connection test is off in this session.')
+                if (/not built into this host/i.test(kind)) return L('This server sends mail. Receiving mail is left out of this build.')
+                if (/allowed-hosts|email_allowed_hosts/i.test(kind)) return L('This server may not connect to that host; ask your administrator to allow it (email-client allowed-hosts).')
+                // the framework's fixed kinds first
+                if (fixed('the sign-in was refused')) return signInHint()
+                if (fixed('the connection was refused')) return portHint
+                if (fixed('the connection timed out')) return timeoutHint
+                if (fixed('the host name was not found')) return lookupHint
+                if (fixed('TLS failed')) return tlsHint
+                if (/BasicAuthBlocked|LogonDenied|basic auth/i.test(kind)) return oauth?.configured
                         ? ec.resource.expand('Microsoft no longer takes a password for this account: it needs Microsoft sign-in. Go back and choose Sign in with ${name}.', '', {name: oauth.providerLabel})
                         : L('Microsoft no longer takes a password for this account: it needs Microsoft sign-in, which an administrator can set up on this server.')
-                if (isOAuth && /auth|login|logon|credential|token|xoauth|\bNO\b|denied|rejected|535|534/i.test(text))
-                    return ec.resource.expand('${name} did not take the sign-in: sign in again, and check that IMAP and sending from mail apps are allowed for this mailbox.', '',
-                        {name: oauth?.providerLabel || L('The provider')})
-                if (/application-specific password|app password|apppassword|web login required|\bWEBALERT\b/i.test(text))
+                if (isOAuth && (/auth|login|logon|credential|token|xoauth|denied|rejected|535|534/i.test(kind) || /\bNO\b/.test(kind))) return signInHint()
+                if (/application-specific password|app password|apppassword|web login required|\bWEBALERT\b/i.test(kind))
                     return appPassword || L('The provider wants an app password (made in its account security settings), not your normal password.')
-                if (/IMAP (access )?(is )?disabled|enable IMAP|IMAP not enabled|not enabled for IMAP/i.test(text)) return L('Turn on IMAP access in the mail settings of your provider\'s web mail, then test again.')
-                if (/auth|login|logon|credential|password|username|535|534|\bNO\b|denied|rejected/i.test(text))
-                    return appPassword + L('The server refused the user name or password: check them (copy the password again, and use your whole email address as the user name).')
-                if (/timed? ?out|timeout/i.test(text)) return L('The server did not answer: check the host and the port. A firewall may block that port.')
-                if (/refused/i.test(text)) return L('Nothing answers on that port: check the port and the security. IMAP is usually 993 with SSL, SMTP 465 with SSL or 587 with STARTTLS.')
-                if (/lookup|resolve|not known|no such host|nodename|dns|getaddrinfo|no address/i.test(text)) return L('That server name was not found: check its spelling.')
-                if (/certificate|tls|ssl|handshake|wrong version|protocol version|record overflow/i.test(text))
-                    return L('The secure connection did not work: the security may not match the port. Use SSL with 993 and 465, and STARTTLS with 143 and 587.')
-                if (/closed the connection|reset|broken pipe|eof/i.test(text)) return L('The server closed the connection: check the port and the security.')
-                if (/no SMTP host|has no/i.test(text)) return L('Enter the server names under Server settings.')
+                if (/IMAP (access )?(is )?disabled|enable IMAP|IMAP not enabled|not enabled for IMAP/i.test(kind)) return L('Turn on IMAP access in the mail settings of your provider\'s web mail, then test again.')
+                if (/no SMTP host|has no/i.test(kind)) return L('Enter the server names under Server settings.')
+                if (/auth|login|logon|credential|password|username|535|534|denied|rejected/i.test(kind) || /\bNO\b/.test(kind)) return signInHint()
+                if (/timed? ?out|timeout/i.test(kind)) return timeoutHint
+                if (/refused/i.test(kind)) return portHint
+                if (/lookup|resolve|not known|not found|no such host|nodename|dns|getaddrinfo|no address/i.test(kind)) return lookupHint
+                if (/certificate|tls|ssl|handshake|wrong version|protocol version|record overflow/i.test(kind)) return tlsHint
+                if (/closed the connection|reset|broken pipe|eof/i.test(kind)) return L('The server closed the connection: check the port and the security.')
                 return L('Check the server settings and the password, and test again.')
             }
             stepList = Array.from(result?.stepList || []).map((step) => ({step: step.step, label: LABELS[step.step] || step.step, ok: step.ok === true,

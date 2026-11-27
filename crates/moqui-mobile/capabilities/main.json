@@ -32,6 +32,12 @@
     "allow-file-save",
     "allow-vault-call",
     "allow-vault-memory",
+    "allow-packages-list",
+    "allow-packages-download",
+    "allow-packages-cancel",
+    "allow-packages-delete",
+    "allow-packages-status",
+    "allow-packages-addresses",
     "allow-scheme-fetch",
     "allow-client-show-shell",
     "allow-open-in-shell",
@@ -59,6 +65,10 @@
     "allow-call-dial-choice",
     "allow-call-dial-from",
     "allow-contacts-search",
-    "allow-contact-names"
+    "allow-contact-names",
+    "allow-location-allow",
+    "allow-location-share-start",
+    "allow-location-share-stop",
+    "allow-location-share-status"
   ]
 }

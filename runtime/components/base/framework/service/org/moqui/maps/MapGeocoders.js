@@ -1,10 +1,17 @@
-// Address and place search of org.moqui.maps.MapServices.find#Places (plans/Maps.md §6.1, §6.2, §7, §8; docs/tools/Maps.md
+// Address and place search of org.moqui.maps.MapServices.find#Places (plans/archive/Maps.md §6.1, §6.2, §7, §8; docs/tools/Maps.md
 // "Address and place search"): a text to candidate places from one configured geocoder, and the geocoder's connection test.
 //
 // A geocoder is a MapProvider of a geocoder kind (MapProviderKind under MPK_GEOCODER: MPK_GEOCODER_CENSUS,
-// MPK_GEOCODER_NOMINATIM, MPK_GEOCODER_PHOTON), whose adapter here builds its request and reads its answer. A new service
-// is a new kind and an entry of ADAPTERS; the provider row holds only its endpoint, attribution and policy, never a
-// service name or code.
+// MPK_GEOCODER_NOMINATIM, MPK_GEOCODER_PHOTON, MPK_GEOCODER_OVERTURE), whose adapter here builds its request and reads its
+// answer. A new service is a new kind and an entry of ADAPTERS; the provider row holds only its endpoint, attribution and
+// policy, never a service name or code.
+//
+// A local geocoder (MPK_GEOCODER_OVERTURE, plans/archive/Maps-Overture.md §O2) is this server's: the address points of the active
+// Overture Addresses runs, searched by search#OvertureAddresses (moqui-maps) with no outside request, so it works with
+// outside requests off, has no URL, rate or day's count, and is available only while a region's addresses are active
+// (and the server has the overture feature). Its test is a fixed query made from its own data. A text it does not match
+// falls back to the local postal lookup (get#PostalLocation of the postal code read from the text: approximate) and to
+// choosing the point on the map; no outside service is asked in its place.
 //
 // Policy, each on the server:
 // - Off by default: nothing is sent while maps@external-requests is false (EXTERNAL_REQUESTS_OFF) or no geocoder is enabled
@@ -37,6 +44,8 @@ const LAST = "maps.geocoder.last"
 const MAX_BYTES = 1024 * 1024
 const MAX_LIMIT = 20
 const US_AREAS = ["USA", "PRI", "VIR", "GUM", "ASM", "MNP"]
+const OVERTURE_FIND = "org.moqui.maps.OvertureServices.search#OvertureAddresses"
+const OVERTURE_ADDRESS = "moqui.maps.OvertureAddress"
 const PRECISION = {
     GPP_ADDRESS_MATCH: "Address match",
     GPP_STREET_RANGE: "Street-range interpolation (not a rooftop position)",
@@ -140,6 +149,11 @@ const ADAPTERS = {
                 .filter(found => found)
         }
     },
+    MPK_GEOCODER_OVERTURE: {
+        // this server's index: no URL, no request
+        local: true,
+        covers: () => true
+    },
     MPK_GEOCODER_PHOTON: {
         testQuery: "Paris",
         covers: () => true,
@@ -187,6 +201,248 @@ const ADAPTERS = {
         }
     }
 }
+// ===== the local geocoder: the active Overture Addresses runs =====
+// The import IDs of the active Addresses runs
+const activeAddressRuns = () =>
+    Array.from(
+        ec.entity
+            .find("moqui.maps.OvertureRegionTheme")
+            .condition({themeId: "ADDRESSES"})
+            .condition("activeImportId", "is-not-null", null)
+            .disableAuthz()
+            .limit(100)
+            .list()
+    ).map(row => String(row.activeImportId))
+// Whether a region's addresses are active here, and this server can read them
+const overtureReady = () => !!ec.factory.hasFeature("overture") && activeAddressRuns().length > 0
+// A service of this server, its errors kept apart from the caller's: {out} or {failure}
+function callLocal(name, parameters) {
+    ec.message.pushErrors()
+    try {
+        const out = ec.service.sync().name(name).parameters(parameters).disableAuthz().call() || {}
+        if (ec.message.hasError()) return {failure: ec.message.getErrorsString()}
+        return {out}
+    } catch (error) {
+        return {failure: String(error?.message ?? error)}
+    } finally {
+        ec.message.clearErrors()
+        ec.message.popErrors()
+    }
+}
+const listOf = value => (value == null ? null : Array.from(value).map(num))
+// A candidate of the local geocoder: its precision said as plans/archive/Maps.md §6.1 asks, never exact and never a rooftop
+function overtureCandidate(found) {
+    const position = point(found.lon, found.lat)
+    if (!position) return null
+    const extent = listOf(found.extent)
+    const tier = text(found.tier)
+    const differs = [
+        found.postcodeAgrees === false ? L("postal code") : null,
+        found.localityAgrees === false ? L("locality") : null
+    ].filter(Boolean)
+    let precisionText
+    if (tier === "address" && differs.length)
+        precisionText = say("Place estimate: the number and street are found, but not with the ${parts} asked for", {
+            parts: differs.join(" " + L("and") + " ")
+        })
+    else if (tier === "address")
+        precisionText = L(
+            "Address point (Overture): the source does not say whether it is an entrance, a building or parcel centre, or a position on the road"
+        )
+    else if (tier === "numberbase")
+        precisionText = say("Place estimate: number ${found} of the street, not ${asked}", {
+            found: text(found.number),
+            asked: text(found.numberAsked)
+        })
+    else
+        precisionText = text(found.numberAsked)
+            ? say("Place estimate: the street (no address point with number ${asked})", {asked: text(found.numberAsked)})
+            : L("Place estimate: the street")
+    if (tier === "address" && found.unitAgrees === false)
+        precisionText += " · " + L("the unit asked for is not among its points: the address is shown, no unit")
+    if (Number(found.points) > 1 && tier === "address")
+        precisionText +=
+            " · " +
+            (Number(found.units) > 0
+                ? say("${count} points of this address, ${units} of them units", {
+                      count: Number(found.points),
+                      units: Number(found.units)
+                  })
+                : say("${count} points of this address (its entrances or a number given twice)", {count: Number(found.points)}))
+    const licenses = text(found.sourceLicenses)
+    const sources = text(found.sourceDatasets) + (licenses ? " (" + licenses + ")" : "")
+    return Object.assign(
+        candidate(
+            found.label,
+            position,
+            text(found.matchKind) || "address",
+            text(found.precisionEnumId) || "GPP_PLACE_ESTIMATE",
+            extent && extent.length === 4 && extent.every(value => value !== null) ? extent : null
+        ),
+        {
+            precisionText,
+            positionKind: tier === "address" ? "unstated" : null,
+            sourceText: plain(["Overture " + text(found.release), sources].filter(part => text(part)).join(": ")),
+            gersId: text(found.gersId) || null,
+            release: text(found.release) || null,
+            postcodeAgrees: found.postcodeAgrees ?? null,
+            localityAgrees: found.localityAgrees ?? null,
+            unitAgrees: found.unitAgrees ?? null
+        }
+    )
+}
+// The postal lookup of the code read from a text the index did not match: approximate, a code's places as choices
+function postalFallback(postcode, countryGeoId) {
+    if (!text(postcode) || !text(countryGeoId)) return []
+    const found = callLocal("org.moqui.maps.MapServices.get#PostalLocation", {countryGeoId, postalCode: postcode})
+    if (found.failure) return []
+    return Array.from(found.out.matches || [])
+        .map(match => {
+            const position = point(match.lon, match.lat)
+            if (!position) return null
+            const names = Array.from(match.placeNames || [])
+                .map(place => text(place.name))
+                .filter(Boolean)
+            const extent = listOf(match.extent)
+            return Object.assign(
+                candidate(
+                    text(match.displayCode) + (names.length ? " — " + names.slice(0, 4).join(", ") : ""),
+                    position,
+                    "postal",
+                    text(match.precisionEnumId) || "GPP_POSTAL_AREA",
+                    extent && extent.length === 4 ? extent : null
+                ),
+                {precisionText: text(match.precisionText) || L(PRECISION.GPP_POSTAL_AREA), sourceText: text(match.sourceText)}
+            )
+        })
+        .filter(found => found)
+}
+// A user's local searches a second: a light throttle (each server by itself, the count not atomic), as each search sends a
+// few indexed queries (at most 24)
+const LOCAL_PER_SECOND = 20
+function localThrottled() {
+    const cache = ec.cache.getCache(LAST)
+    const key = "local:" + (ec.user.userId || "-") + ":" + Math.floor(Date.now() / 1000)
+    const count = Number(cache.get(key)) || 0
+    if (count >= LOCAL_PER_SECOND) return true
+    cache.put(key, count + 1)
+    return false
+}
+function overtureSearch(provider, q, options, extra) {
+    if (localThrottled())
+        return refusal(
+            "RATE_LIMITED",
+            say("${name} takes at most ${count} searches a second from one user: search again in a moment", {
+                name: extra.providerName,
+                count: LOCAL_PER_SECOND
+            }),
+            extra
+        )
+    const found = callLocal(OVERTURE_FIND, {
+        query: q,
+        country: options.country?.alpha2 || null,
+        viewport: options.viewport,
+        limit: options.limit
+    })
+    if (found.failure) {
+        // the log names the provider and the failure, never the text
+        ec.logger.warn("Geocoder " + provider.providerId + " (local) failed a search: " + found.failure.slice(0, 200))
+        return refusal(
+            "PROVIDER_FAILED",
+            say("The address search ${name} is not available on this server: the local results are shown", {
+                name: extra.providerName
+            }),
+            extra
+        )
+    }
+    const out = found.out
+    const candidates = Array.from(out.candidates || [])
+        .map(overtureCandidate)
+        .filter(found => found && found.label)
+        .slice(0, options.limit)
+    if (candidates.length) return Object.assign({candidates, ambiguous: !!out.ambiguous, reasonCode: null, reason: null}, extra)
+    // missing: the postal area of the code the text gave, approximate (§6.1), else the point chosen on the map
+    const parsed = out.parsed || {}
+    const countries = Array.from(out.countries || []).map(text)
+    const countryGeoId = options.country?.geoId || (countries.length === 1 ? countries[0] : null)
+    const postal = postalFallback(text(parsed.postcode), countryGeoId)
+    if (postal.length)
+        return Object.assign(
+            {
+                candidates: postal.slice(0, options.limit),
+                ambiguous: postal.length > 1,
+                reasonCode: "NO_ADDRESS_MATCH",
+                reason: L(
+                    "No address point matches: the postal area is shown (approximate); choose the point on the map for a better one"
+                )
+            },
+            extra
+        )
+    return Object.assign(
+        {
+            candidates: [],
+            ambiguous: false,
+            reasonCode: "NO_MATCH",
+            reason: L("No address point matches: choose the point on the map, or search its postal code")
+        },
+        extra
+    )
+}
+// The test of the local geocoder: a fixed query made from a row of its own data (never a user's text), which must come back
+// as an address match within 30 m of that row's point
+function overtureTest() {
+    if (!ec.factory.hasFeature("overture"))
+        return [{check: "Search", ok: false, text: L("This server is built without the overture feature")}]
+    const active = activeAddressRuns()
+    if (!active.length)
+        return [
+            {
+                check: "Search",
+                ok: false,
+                text: L(
+                    "No region's Overture addresses are active: import a region's addresses first (Maps › Configuration › Overture)"
+                )
+            }
+        ]
+    const row = ec.entity
+        .find(OVERTURE_ADDRESS)
+        .condition("importId", "in", active)
+        .condition("houseNumber", "is-not-null", null)
+        .condition("streetName", "is-not-null", null)
+        .orderBy("addressId")
+        .limit(1)
+        .disableAuthz()
+        .one()
+    if (!row)
+        return [{check: "Search", ok: false, text: L("The active Overture addresses have no point with a street and a number")}]
+    const street = text(row.houseNumber) + " " + text(row.streetName) + (text(row.unitText) ? " #" + text(row.unitText) : "")
+    const place = [text(row.postcode), text(row.locality)].filter(Boolean).join(" ")
+    const found = callLocal(OVERTURE_FIND, {
+        query: place ? street + ", " + place : street,
+        country: text(row.countryCode),
+        limit: 5
+    })
+    if (found.failure) return [{check: "Search", ok: false, text: L("The local address index did not answer")}]
+    const [lon, lat] = [Number(row.longitude), Number(row.latitude)]
+    const metres = found =>
+        Math.hypot((Number(found.lon) - lon) * 111320 * Math.cos((lat * Math.PI) / 180), (Number(found.lat) - lat) * 110570)
+    const matched = Array.from(found.out.candidates || []).some(
+        found => found.precisionEnumId === "GPP_ADDRESS_MATCH" && metres(found) <= 30
+    )
+    return [
+        matched
+            ? {
+                  check: "Search",
+                  ok: true,
+                  text: say(
+                      "The local address index of ${count} active regions answered a fixed query made from its own data with an address match; nothing was sent",
+                      {count: active.length}
+                  )
+              }
+            : {check: "Search", ok: false, text: L("The local address index did not find an address of its own data")}
+    ]
+}
+
 // Its requestsPerSecond, or 1 for Nominatim and Photon when empty (the OSM Foundation's policy for its public Nominatim,
 // and a fair use of any shared server), none for the others
 const rateOf = provider =>
@@ -240,7 +496,7 @@ const operationAllowed = provider => {
         .filter(each => each)
     return !operations.length || operations.includes("geocode") || operations.includes("search")
 }
-// The public demo servers whose policies forbid an application's traffic beyond a trickle (plans/Maps.md §6.2): said by
+// The public demo servers whose policies forbid an application's traffic beyond a trickle (plans/archive/Maps.md §6.2): said by
 // the test and readiness, never refused, since an administrator may have an agreement
 const PUBLIC_HOSTS = ["nominatim.openstreetmap.org", "photon.komoot.io"]
 const publicHost = provider => {
@@ -310,12 +566,15 @@ function enabledGeocoders() {
             .list()
     ).filter(row => row.disabled !== "Y")
 }
-// Whether a search may ask a geocoder now: outside requests on and one enabled, tested geocoder; {available, providerName}
+const isLocal = provider => !!ADAPTERS[text(provider?.providerKindEnumId)]?.local
+// Whether a geocoder may be asked now: tested as it is configured; an outside one only with outside requests on, a local one
+// only while its data is active
+const usable = provider => tested(provider) && (isLocal(provider) ? overtureReady() : !offline())
+// Whether a search may ask a geocoder now: an enabled, usable geocoder; {available, providerName, local}
 function availability() {
-    if (offline()) return {available: false}
-    const provider = enabledGeocoders().find(row => tested(row))
+    const provider = enabledGeocoders().find(row => usable(row))
     return provider
-        ? {available: true, providerId: provider.providerId, providerName: providerName(provider)}
+        ? {available: true, providerId: provider.providerId, providerName: providerName(provider), local: isLocal(provider)}
         : {available: false}
 }
 function countryOf(value) {
@@ -348,19 +607,43 @@ function viewportOf(value) {
     return west >= -180 && east <= 180 && south >= -90 && north <= 90 && south <= north ? values : null
 }
 
+const localProvider = () => enabledGeocoders().find(row => isLocal(row) && usable(row)) || null
+// The local geocoder's search of an address, as find#Places answers it, for a caller who may not call find#Places (a
+// record's address in the local-map dialog, which its adapter let them read): no outside request; null when no local
+// geocoder may be asked
+function localSearch(query, countryGeoId, limit) {
+    const provider = localProvider()
+    if (!provider) return null
+    const q = plain(query, 300)
+    if (q.length < 2 || q.length > 200) return null
+    const country = text(countryGeoId) ? countryOf(countryGeoId) : null
+    const extra = {
+        providerId: provider.providerId,
+        providerName: providerName(provider),
+        attribution: text(provider.attribution),
+        termsUrl: text(provider.termsUrl) || null
+    }
+    return overtureSearch(
+        provider,
+        q,
+        {limit: Math.max(1, Math.min(MAX_LIMIT, Number(limit) || 5)), country, viewport: null},
+        extra
+    )
+}
+
 // ===== find#Places =====
 function findPlaces(p) {
     const q = plain(p.query, 300)
     if (q.length < 2 || q.length > 200) return refusal("QUERY_INVALID", L("Search for a text of 2 to 200 characters"))
-    if (offline())
+    const askedId = text(p.providerId)
+    const provider = askedId
+        ? enabledGeocoders().find(row => row.providerId === askedId && usable(row))
+        : enabledGeocoders().find(row => usable(row))
+    if (!provider && offline())
         return refusal(
             "EXTERNAL_REQUESTS_OFF",
             L("Outside requests are turned off (maps@external-requests): no address or place search is asked")
         )
-    const askedId = text(p.providerId)
-    const provider = askedId
-        ? enabledGeocoders().find(row => row.providerId === askedId && tested(row))
-        : enabledGeocoders().find(row => tested(row))
     if (!provider)
         return refusal("NO_GEOCODER", L("No address or place search is configured: an administrator enables a geocoder"))
     const adapter = ADAPTERS[text(provider.providerKindEnumId)]
@@ -382,6 +665,8 @@ function findPlaces(p) {
     if (!adapter.covers(country))
         return refusal("COUNTRY_NOT_COVERED", say("${name} searches only addresses of the United States", {name}), extra)
     const options = {limit, country, viewport: viewportOf(p.viewport)}
+    // this server's own index: no request, no rate, no cache
+    if (adapter.local) return overtureSearch(provider, q, options, extra)
     const url = adapter.url(provider, q, options)
 
     // what this server may keep (none by default; private is the browser's alone, so nothing here), by a digest of the
@@ -462,6 +747,7 @@ function test(provider, denyInternal) {
     const kind = text(provider.providerKindEnumId)
     const adapter = ADAPTERS[kind]
     if (!adapter) return [{check: "Search", ok: false, text: L("Choose the geocoder's service: its kind names it")}]
+    if (adapter.local) return overtureTest()
     const answer = fetchJson(adapter.url(provider, adapter.testQuery, {limit: 1}), denyInternal)
     if (answer.failure) return [{check: "Search", ok: false, text: say("The geocoder ${failure}", {failure: answer.failure})}]
     if (!adapter.shapeOk(answer.json))
@@ -490,6 +776,13 @@ const operations = {findPlaces}
     // for the providers (MapProviders.js) and Browse's search
     test,
     isGeocoderKind,
+    isLocal,
+    // for the providers' readiness: whether the local geocoder's data is active
+    localReady: overtureReady,
+    // for a record's address with no point (MapConfig.js): the enabled, tested local geocoder whose data is active, or null
+    localProvider,
+    // and its search, made here as the dialog's own step (the record's adapter has authorized it): find#Places' answer
+    localSearch,
     publicHost,
     publicHostText,
     availability,

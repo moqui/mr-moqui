@@ -1,4 +1,4 @@
-// OGC map services (plans/Maps.md §4.1, P4a; MapOgc.js): a WMS, WMTS or WFS provider's test reads its GetCapabilities with
+// OGC map services (plans/archive/Maps.md §4.1, P4a; MapOgc.js): a WMS, WMTS or WFS provider's test reads its GetCapabilities with
 // the framework's XML reader and records what a map draws (capabilitiesJson) and, proxied, the rules of its requests; a
 // DOCTYPE, an entity declaration or an unknown entity refuses the answer. The effective configuration draws an OGC layer
 // from what was recorded, only for a user offered its profile; the proxy forwards an OGC request only for a registered layer

@@ -1048,13 +1048,14 @@ fn the_tarpit_counts_every_request_before_anything_is_built() {
             ("tarpitDuration", "60"),
         ],
     );
-    // unknown tools and lists count as calls do: the hit past the limit sets the lock, the next is refused
-    for _ in 0..4 {
+    // unknown tools and lists count as calls do: the hit past the limit sets the lock, the next is refused; a name that
+    // changes each time is still one count (SEC-AI-99)
+    for at in 0..4 {
         let (_, unknown) = rpc(
             &bed,
             &key,
             "tools/call",
-            json!({"name": "no_such_tool", "_meta": meta(json!({}))}),
+            json!({"name": format!("no_such_tool_{at}"), "_meta": meta(json!({}))}),
         );
         assert_eq!(
             unknown["error"]["code"].as_i64(),

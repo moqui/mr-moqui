@@ -219,6 +219,9 @@ const refusedCalls = [
         ["update#UserAccount", { userId: JOHN, username: "john.doe.2" }],
         ["update#UserAccount", { userId: JOHN, disabled: "Y" }],
         ["update#UserAccount", { userId: JOHN, requirePasswordChange: "Y" }],
+        // SEC-DEV-83: any field but the name, email, locale, time zone and currency, such as an end date or an address rule
+        ["update#UserAccount", { userId: JOHN, terminateDate: "2020-01-01 00:00:00" }],
+        ["update#UserAccount", { userId: JOHN, ipAllowed: "203.0.113.9" }],
         ["disable#UserAccount", { userId: JOHN }],
         ["create#UserAuthcFactorEmail", { userId: JOHN, factorOption: "visitor@example.com" }],
         ["create#UserAuthcFactorSms", { userId: JOHN, factorOption: "+15555550100" }],

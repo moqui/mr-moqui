@@ -1,10 +1,11 @@
-// Users' overlays and saved places (plans/Maps.md §4.1, §4.2, §8; org.moqui.maps.MapServices store#Overlay, get#OverlayContent,
-// find#Overlays, store#Place; MapOverlays.js; tools screen/Maps/Browse.xml overlay): a file is read before it is kept (one
+// Users' overlays and saved places (plans/archive/Maps.md §4.1, §4.2, §8; org.moqui.maps.MapServices store#Overlay, get#OverlayContent,
+// find#Overlays, store#Place; MapOverlays.js; tools screen/Maps/Browse.xml overlay, savePlace): a file is read before it is kept (one
 // that cannot be drawn is refused with nothing written, a format that is not GeoJSON, GPX or KML, more than
 // maps@max-features features), an upload is kept in Maps/overlays of the personal drive with its bad feature counted and
 // its KML network link and script not passed on; the overlay transition answers the owner and a holder of the file's
 // share, and refuses a non-holder and the holder once the share is revoked, writing no ResourceRecent; saved places are a
-// GeoJSON file of the personal drive, found by Browse's search; a file past maps@max-features is offered simplifying on the
+// GeoJSON file of the personal drive, found by Browse's search (one the apps saved offline kept once by its clientRef); a file
+// past maps@max-features is offered simplifying on the
 // server, and with generalize is kept and cut into tiles beside it (the MapOverlayTiles job) that the tile transition
 // answers its owner and refuses a non-holder; a delimited text and a binary WKB upload are read by their own readers; and
 // an overlay edited on the map is saved by its owner only, beside a KML file as name.edited.geojson, refused for a
@@ -108,6 +109,7 @@ spec({
         del("moqui.resource.ResourceShare", "shareId", [SHARE, FILE_SHARE])
         del("moqui.service.job.ServiceJobRun", "jobRunId", [FAKE_RUN])
         del("moqui.resource.ResourceRecent", "userId", users)
+        del("moqui.basic.client.ClientRequestRef", "userId", users)
         for (const drive of Array.from(
             ec.entity.find("moqui.resource.ResourceDrive").condition("ownerUserId", "in", users).list()
         )) {
@@ -244,6 +246,97 @@ feature("saved places are a GeoJSON file of the personal drive, refused out of r
         out.found[0].precisionEnumId == "GPP_USER_CONFIRMED"
     }
 })
+
+// Browse's savePlace as the user, a POST: its JSON answer
+function savePlace(userId, params) {
+    return as(userId, () => {
+        const res = ec.screen
+            .makeTest()
+            .rootScreen("component://webroot/screen/webroot.xml")
+            .render("apps/maps/Browse/savePlace", params, "post")
+        return JSON.parse(String(res.output || "{}"))
+    })
+}
+
+feature(
+    "a place saved offline is kept once by its clientRef, and a refusal keeps no ref: its retry is saved (plans/archive/Maps-Offline.md §2.5)",
+    {
+        when() {
+            const params = {label: "Ferry dock", longitude: "-71.05", latitude: "42.36", clientRef: "maps-ovl-place-1"}
+            const out = {first: savePlace(OWNER, params), again: savePlace(OWNER, params)}
+            // refused (out of range), then sent again by the same ref once it can be saved
+            const retried = {label: "Pier", longitude: "-71.04", latitude: "91", clientRef: "maps-ovl-place-2"}
+            out.refused = savePlace(OWNER, retried)
+            out.retried = savePlace(OWNER, Object.assign({}, retried, {latitude: "42.35"}))
+            // an error (no name: the service's parameter validation), then the same ref with a name
+            const invalid = {label: "", longitude: "-71.03", latitude: "42.34", clientRef: "maps-ovl-place-3"}
+            out.invalid = savePlace(OWNER, invalid)
+            out.valid = savePlace(OWNER, Object.assign({}, invalid, {label: "Wharf"}))
+            // a ref that is not one: the claim's refusal, answered as its error (never a 500), nothing saved
+            out.badRef = savePlace(OWNER, {label: "Jetty", longitude: "-71.02", latitude: "42.33", clientRef: "not a ref!"})
+            out.file = JSON.parse(fileText(ownerDrive(), "Maps/places.geojson") || "{}")
+            return out
+        },
+        then(out) {
+            out.first.applied == true
+            out.first.duplicate == false
+            out.again.applied == true
+            out.again.duplicate == true
+            out.again.placeId == out.first.placeId
+            out.file.features.filter(feature => feature.properties.name === "Ferry dock").length == 1
+            out.refused.applied == false
+            out.refused.reasonCode == "POINT_INVALID"
+            out.retried.applied == true
+            out.retried.duplicate == false
+            out.file.features.filter(feature => feature.properties.name === "Pier").length == 1
+            out.invalid.applied != true
+            !!out.invalid.errors
+            out.valid.applied == true
+            out.valid.duplicate == false
+            out.file.features.filter(feature => feature.properties.name === "Wharf").length == 1
+            !!out.badRef.errors
+            out.badRef.applied == null
+            out.file.features.filter(feature => feature.properties.name === "Jetty").length == 0
+        }
+    }
+)
+
+// MapOverlays.js placeAfterFailure as the user: savePlace's answer after its transaction failed
+const afterFailure = (userId, params) =>
+    as(userId, () =>
+        ec.resource.script("component://framework/service/org/moqui/maps/MapOverlays.js").execute("placeAfterFailure", params)
+    )
+
+feature(
+    "a place's send that failed is the duplicate of the one that holds its ref, else its error or a retry (plans/archive/Maps-Offline.md §2.5)",
+    {
+        when() {
+            // the overlapping send of the same ref committed its claim and result first, as the race leaves it
+            make("moqui.basic.client.ClientRequestRef", {
+                userId: OWNER,
+                serviceName: "org.moqui.maps.MapServices.store#Place",
+                clientRef: "maps-ovl-place-held",
+                resultJson: JSON.stringify({applied: true, placeId: "p-held"}),
+                createdDate: ec.user.nowTimestamp
+            })
+            return {
+                held: afterFailure(OWNER, {clientRef: "maps-ovl-place-held"}),
+                heldErrored: afterFailure(OWNER, {clientRef: "maps-ovl-place-held", unprocessable: true}),
+                otherUser: afterFailure(READER, {clientRef: "maps-ovl-place-held"}),
+                none: afterFailure(OWNER, {clientRef: "maps-ovl-place-none"}),
+                refused: afterFailure(OWNER, {clientRef: "maps-ovl-place-none", unprocessable: true})
+            }
+        },
+        then(out) {
+            out.held.outcome == "duplicate"
+            out.held.result.placeId == "p-held"
+            out.heldErrored.outcome == "duplicate"
+            out.otherUser.outcome == "rethrow"
+            out.none.outcome == "rethrow"
+            out.refused.outcome == "errors"
+        }
+    }
+)
 
 // A little-endian WKB point as the characters of an uploadedFile's binary bytes
 const wkbPoint = (lon, lat) => {

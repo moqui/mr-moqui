@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.maps.MapSourceServices.generalize#Overlay` (plans/Maps.md §7 "Geometry/import jobs"; docs/tools/Maps.md
+//! `org.moqui.maps.MapSourceServices.generalize#Overlay` (plans/archive/Maps.md §7 "Geometry/import jobs"; docs/tools/Maps.md
 //! "Large overlays"): a user's overlay file too large to draw whole (past the 4 MiB of GeoJSON a map draws, or past
 //! `maps@max-features`), read and sanitized as an overlay ([`moqui_lib::geo::overlay`], with a larger feature limit),
 //! cut into simplified vector tiles for each zoom ([`moqui_lib::geo::tiles`]) and written as a PMTiles archive

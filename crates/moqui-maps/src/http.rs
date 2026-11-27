@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Overture's documents and files over HTTP (plans/Maps-Overture.md §3.2), through `moqui_core::outbound` with its
+//! Overture's documents and files over HTTP (plans/archive/Maps-Overture.md §3.2), through `moqui_core::outbound` with its
 //! internal-address guard, so a spec's `HttpFixtures` answer for them: a catalog document read whole (at most
 //! [`MAX_DOCUMENT`]), and a GeoParquet file read by `Range` ([`HttpSource`]), its end first (one request that also says
 //! its length), each later range pinned to that answer's `ETag` (or `Last-Modified`) so a file replaced while it is read

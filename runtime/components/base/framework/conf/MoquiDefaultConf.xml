@@ -151,16 +151,33 @@
         instance, max-users the most users a run may have. -->
     <load-runner targets="" max-runs="1" max-users="1000"/>
 
-    <!-- Maps (plans/Maps.md §4.2, §6.4). external-requests false stops the server's own outside requests for maps (a
+    <!-- Maps (plans/archive/Maps.md §4.2, §6.4). external-requests false stops the server's own outside requests for maps (a
         geocoder, a Geo data download) and stops it handing a browser a map profile with outside URLs; local maps and
         postal lookup still work. A fresh install makes none either way: the hosted provider is seeded disabled.
         import-max-bytes is the largest Geo data download or operator file, and the largest it may unzip to (512 MiB:
         well past every registered source, GeoNames' allCountries at 19 MB zipped, and under the 2 GiB upload).
         max-features is the most features one overlay or one viewport query of a layer adapter returns; 0 turns record
         layers off. overture-catalog is the STAC root Overture releases are found in and overture-max-area the largest
-        Overture region in km² (plans/Maps-Overture.md). -->
+        Overture region in km² (plans/archive/Maps-Overture.md). package-max-bytes is the largest offline map package a
+        user may build (2 GiB; refused at its estimate), package-user-max-bytes the most a user's packages may hold in all
+        (8 GiB), package-concurrent-builds how many packages the installation builds at once (the others wait, pending),
+        and package-keep-days how long a package's file is kept with no download before the hourly clean removes it
+        (plans/archive/Maps-Offline.md). -->
     <maps external-requests="true" import-max-bytes="536870912" max-features="5000" overlay-max-bytes="10485760"
-            overture-catalog="https://stac.overturemaps.org/catalog.json" overture-max-area="2500"/>
+            overture-catalog="https://stac.overturemaps.org/catalog.json" overture-max-area="2500"
+            package-max-bytes="2147483648" package-user-max-bytes="8589934592" package-concurrent-builds="1"
+            package-keep-days="30"/>
+
+    <!-- Shared live location (plans/archive/Location-Sharing.md §3.1; org.moqui.maps.LocationServices). max-share-hours is the
+        longest a share runs from its start or its owner's last extension (24); trail-max-days the longest a trail its owner
+        chose to keep stays after its share ends (30); min-interval-seconds the shortest time between two positions a
+        share takes (5: a sooner one is answered 429 and dropped), approximate-interval-seconds that of an approximate
+        share (60); max-active-shares the most shares one person has on at once (20); max-audience the most people (a
+        group's members counted each), XMPP contacts and links one share has (50); link-max-views-per-minute the most reads
+        a minute of a guest link's page (30); link-max-failed-tries the wrong secrets after which a guest link is refused
+        (10). -->
+    <location max-share-hours="24" trail-max-days="30" min-interval-seconds="5" approximate-interval-seconds="60"
+            max-active-shares="20" max-audience="50" link-max-views-per-minute="30" link-max-failed-tries="10"/>
 
     <!-- This server as a cluster member (plans/archive/Cluster.md). tls-cert and tls-key: the cluster TLS pair, base64 DER
         on one line each, generated together into runtime/.env (moqui_conf__cluster_member__tls_cert and _tls_key) and
@@ -907,6 +924,12 @@
         <!-- xlsx is a binary mode (the moqui-poi port): the module fills a workbook with a sheet for each form-list -->
         <screen-output type="xlsx" mime-type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 always-standalone="true" macro-template-location="framework/template/screen/ScreenXlsx.js"/>
+
+        <!-- live location's "Sharing location" chip in the shell's app bar for every share owner, whatever apps they may
+            open (plans/archive/Location-Sharing.md §3.3; LocationServices get#ShellIndicator counts the caller's own shares) -->
+        <shell-providers>
+            <shell-indicator name="framework.locationSharing" service="org.moqui.maps.LocationServices.get#ShellIndicator" sequence="10"/>
+        </shell-providers>
     </screen-facade>
 
     <!-- scheduled-job-check-time: how often (in seconds) to check for scheduled jobs to run, 0 to run none.
@@ -980,7 +1003,8 @@
         <bind feature="classify" reasoning="none"/>
         <bind feature="ai-field" reasoning="low"/>
         <limits max-concurrent-runs="8" run-queue="64" max-steps="40" max-run-seconds="900" user-daily-tokens="2000000"
-                user-daily-cost="20" approval-ttl-minutes="30" lease-seconds="60" heartbeat-seconds="15" event-text-flush-ms="300"/>
+                user-daily-cost="20" approval-ttl-minutes="30" lease-seconds="60" heartbeat-seconds="15" event-text-flush-ms="300"
+                user-open-runs="4"/><!-- user-open-runs: the most agent runs of one user waiting or working at once; 0 none -->
         <content-log enabled="false" redact="true" retention-days="14"/>
         <screen-sessions max="64" max-per-user="4" idle-minutes="30"/>
         <!-- the entities the data tool reads directly with authorization off (the agent's other reads go through screen
@@ -1521,7 +1545,8 @@
     <!-- The desktop and mobile apps as clients of a server (plans/Mobile-Desktop.md §6, MD4): what they keep of an
         account's data for offline use. A build embeds its own in its runtime conf (device-mode personal for a person's
         own device, shared for a hot desk or point of sale); choose has the sign-in ask. The server does not read it. -->
-    <client-conf device-mode="choose" mirror-days="90" prefetch-rooms="20" prefetch-mail="100" store-max-mb="512"/>
+    <client-conf device-mode="choose" mirror-days="90" prefetch-rooms="20" prefetch-mail="100" store-max-mb="512"
+        packages-max-mb="4096"/>
 
     <!-- Deploying a component on this server (docs/tools/Component-Deploy.md "The gate"), read once at start.
         attestation-secret is the secret this server issued to a source server (the token of the source's
@@ -1591,7 +1616,7 @@
             default-group-name="transactional" entity-eca-enabled="true" sequenced-id-prefix=""
             distributed-cache-invalidate="false" dci-topic-factory="" query-stats="false"
             database-locale="" database-time-zone="UTC"
-            rest-max-page-size="1000" screen-max-rows="100000"
+            rest-max-page-size="1000" screen-max-rows="100000" max-reply-bytes="1073741824"
             crypt-salt="20201202" crypt-iter="10" crypt-algo="PBEWithHmacSHA256AndAES_128"
             crypt-pass="MoquiDefaultPassword:CHANGEME" crypt-pass-old="MoquiDefaultPassword:CHANGEME"
             crypt-read-plain="false"
@@ -1762,6 +1787,7 @@
         <load-data location="component://framework/data/MapsSetupData.xml"/>
         <load-data location="component://framework/data/MapsOvertureData.xml"/>
         <load-data location="component://framework/data/MapsProjectionData.xml"/>
+        <load-data location="component://framework/data/MapsLocationData.xml"/>
     </entity-facade>
     <database-list>
         <dictionary-type type="id" java-type="String" default-sql-type="VARCHAR(40)"/>

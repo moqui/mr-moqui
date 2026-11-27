@@ -1,4 +1,4 @@
-// The map configuration of org.moqui.maps.MapServices (plans/Maps.md §3.2, §4.2): the effective configuration m-map draws
+// The map configuration of org.moqui.maps.MapServices (plans/archive/Maps.md §3.2, §4.2): the effective configuration m-map draws
 // (webroot/screen/webroot/js/WebrootMap.js documents its shape), personal preferences and saved views.
 //
 // Precedence (§4.2): the installation's policy (maps@external-requests) constrains every choice; the consumer's profile
@@ -293,14 +293,24 @@ function ogcUrls(layer, provider) {
     }
     return {url: built.url, styleUrl: "", ogc: built.ogc}
 }
+// A raster provider's endpoint that is a Cloud Optimized GeoTIFF rather than a tile template or a TileJSON: a path ending
+// in .tif or .tiff, with no placeholder (MapProviders.js tests such a provider by a range of that COG)
+const cogEndpoint = url => !/[{}]/.test(text(url)) && /\.tiff?$/i.test(text(url).split(/[?#]/)[0])
 // The URLs a layer's browser asks for: {url, styleUrl}, or a refusal.
 function layerUrls(layer, provider, kind) {
     const format = text(layer.formatEnumId)
     let url = ""
     let styleUrl = ""
     if (format === "MLF_VECTOR_STYLE") url = text(layer.styleLocation) || text(provider?.endpointUrl)
-    else if (format === "MLF_RASTER_XYZ") url = text(layer.sourceUrl) || text(provider?.endpointUrl)
-    else if (format === "MLF_ADAPTER") return {url: "", styleUrl: ""}
+    else if (format === "MLF_RASTER_XYZ") {
+        // a COG provider's URL is a GeoTIFF, never a tile template
+        if (!text(layer.sourceUrl) && cogEndpoint(provider?.endpointUrl))
+            return refusal(
+                "SOURCE_NOT_TILES",
+                L("its provider's URL is a GeoTIFF, not a tile template: give the layer its own tile URL")
+            )
+        url = text(layer.sourceUrl) || text(provider?.endpointUrl)
+    } else if (format === "MLF_ADAPTER") return {url: "", styleUrl: ""}
     else if (OGC_FORMATS.includes(format)) return ogcUrls(layer, provider)
     else {
         url = text(layer.sourceUrl)
@@ -428,6 +438,24 @@ function resolveLayer(layer, layerId, asBasemap) {
     if (kind === "features") entry.adapterKey = text(layer.adapterKey)
     const origins = [urls.url, urls.styleUrl].flatMap(originsOf)
     return {ok: true, entry, origins}
+}
+// The basemap of a page a visitor opens with no sign-in, a guest location link's (Maps/SharedLocation.xml;
+// plans/archive/Location-Sharing.md §3.7): the first enabled basemap the installation marks public (MapLayer isPublic Y) that has
+// no viewPermission, no registered resource (its map-source transition is a signed-in user's), no proxied provider
+// (the proxy is for signed-in users) and no provider on a private network (allowPrivateNetwork Y: an address inside this
+// installation's network is not a guest's to reach), resolved as for anyone (resolveLayer: outside requests and the provider's test
+// hold); else the built-in country outline. Nothing of the installation's profiles, other layers or providers is
+// answered: {basemaps: [entry], basemap, allowedOrigins}.
+function publicBasemap() {
+    for (const layer of find(LAYER, {isPublic: "Y", isBasemap: "Y"}).orderBy("layerId").limit(20).list()) {
+        if (layer.disabled === "Y" || text(layer.viewPermission) || text(layer.resourceLocation)) continue
+        const provider = text(layer.providerId) ? one(PROVIDER, {providerId: layer.providerId}) : null
+        if (provider && (provider.proxyRequests === "Y" || provider.allowPrivateNetwork === "Y")) continue
+        const resolved = resolveLayer(layer, layer.layerId, true)
+        if (!resolved.ok || resolved.entry.kind === "cog") continue
+        return {basemaps: [resolved.entry], basemap: resolved.entry.id, allowedOrigins: Array.from(new Set(resolved.origins))}
+    }
+    return {basemaps: [Object.assign({}, BUILT_IN_OUTLINE)], basemap: BUILT_IN_OUTLINE.id, allowedOrigins: []}
 }
 // ===== projections and rasters (P4c) =====
 // A projection a map may be drawn in or read a COG in: EPSG:3857 and EPSG:4326, which every map has, or an enabled row of
@@ -658,6 +686,38 @@ function postalPlace(postalCode, countryGeoId) {
     })
     const matches = found.failed ? [] : Array.from(found.out.matches || [])
     return matches.length === 1 ? matches[0] : null
+}
+
+// An address with no point, matched by the installation's local geocoder (MPK_GEOCODER_OVERTURE: this server's own index of
+// Overture address points, no outside request) when one is enabled, tested and its data active: {candidates, ambiguous} of
+// the address matches only, none whose postal code or locality differs (an estimate is no better than the postal area), or
+// null when there is no such geocoder. Searched as this read's own step (the adapter let the caller read the record), so a
+// user with no Maps app grant has it too.
+const UNIT_LINE = /^\s*(#|apt\b|apartment\b|unit\b|suite\b|ste\b|fl\b|floor\b|rm\b|room\b|int\b|interno\b|app\b)/i
+function addressMatch(out) {
+    const geocoders = ec.resource.script("component://framework/service/org/moqui/maps/MapGeocoders.js")
+    const line = [text(out.address1), UNIT_LINE.test(text(out.address2)) ? text(out.address2) : ""].filter(Boolean).join(" ")
+    const place = [text(out.postalCode), text(out.city)].filter(Boolean).join(" ")
+    let found = null
+    ec.message.pushErrors()
+    try {
+        found = geocoders.localSearch([line, place].filter(Boolean).join(", ").slice(0, 200), text(out.countryGeoId) || null, 5)
+    } catch (error) {
+        ec.logger.warn("The local address match of a record failed: " + (error?.message ?? error))
+        found = null
+    } finally {
+        ec.message.clearErrors()
+        ec.message.popErrors()
+    }
+    if (!found) return null
+    const candidates = Array.from(found.candidates || []).filter(
+        candidate =>
+            candidate.precisionEnumId === "GPP_ADDRESS_MATCH" &&
+            candidate.matchKind === "address" &&
+            candidate.postcodeAgrees !== false &&
+            candidate.localityAgrees !== false
+    )
+    return {candidates, ambiguous: candidates.length > 1, providerName: text(found.providerName)}
 }
 
 function effectiveConfig(p) {
@@ -947,10 +1007,53 @@ function effectiveConfig(p) {
                             properties: {label: record.label, precisionEnumId: record.precisionEnumId}
                         })
                         if (extent) setView({extent})
-                    } else if (text(out.postalCode)) {
-                        // an address with no point: its local postal-area position, approximate, with a broad extent
-                        // (§6.1); no outside service is asked and nothing is saved to the record
-                        const postal = postalPlace(out.postalCode, out.countryGeoId)
+                    } else if (text(out.postalCode) || text(out.address1)) {
+                        // an address with no point (§6.1): the address point the local geocoder matches, when the
+                        // installation has one (this server's index); else its local postal-area position, approximate,
+                        // with a broad extent. No outside service is asked and nothing is saved to the record: Choose
+                        // location saves through the adapter
+                        const matched = text(out.address1) ? addressMatch(out) : null
+                        const postal =
+                            matched?.candidates.length === 1 || !text(out.postalCode)
+                                ? null
+                                : postalPlace(out.postalCode, out.countryGeoId)
+                        if (matched?.candidates.length === 1) {
+                            const found = matched.candidates[0]
+                            Object.assign(record, {
+                                precisionEnumId: found.precisionEnumId,
+                                precisionText: found.precisionText,
+                                sourceText: found.sourceText,
+                                approximate: true,
+                                addressMatched: true,
+                                addressNote: say(
+                                    "Found from the record's address by ${name}, not saved to the record: Choose location saves a point",
+                                    {name: matched.providerName}
+                                )
+                            })
+                            points.push({
+                                id: "record",
+                                lon: found.lon,
+                                lat: found.lat,
+                                label: record.label || found.label,
+                                precision: found.precisionText,
+                                source: found.sourceText
+                            })
+                            setView(found.extent ? {extent: found.extent} : {center: [found.lon, found.lat], zoom: 17})
+                        } else if (matched?.candidates.length > 1) {
+                            // several address points: choices on the map, none chosen; the postal area is the view
+                            record.addressNote = L(
+                                "Several address points match the record's address: they are shown, none is chosen; Choose location saves one"
+                            )
+                            record.addressChoices = matched.candidates.map((found, index) => ({
+                                id: "address:" + index,
+                                label: found.label,
+                                lon: found.lon,
+                                lat: found.lat,
+                                precision: found.precisionText,
+                                source: found.sourceText
+                            }))
+                            points.push(...record.addressChoices)
+                        }
                         if (postal) {
                             Object.assign(record, {
                                 precisionEnumId: postal.precisionEnumId,
@@ -967,7 +1070,19 @@ function effectiveConfig(p) {
                                 source: postal.sourceText
                             })
                             setView({extent: postal.extent})
-                        } else if (extent) setView({extent})
+                        } else if (record.addressChoices) {
+                            const lons = record.addressChoices.map(choice => choice.lon)
+                            const lats = record.addressChoices.map(choice => choice.lat)
+                            const pad = 0.002
+                            setView({
+                                extent: [
+                                    Math.min(...lons) - pad,
+                                    Math.min(...lats) - pad,
+                                    Math.max(...lons) + pad,
+                                    Math.max(...lats) + pad
+                                ]
+                            })
+                        } else if (!record.addressMatched && extent) setView({extent})
                     } else if (extent) setView({extent})
                 }
             }
@@ -1068,7 +1183,132 @@ function effectiveConfig(p) {
     config.fallbacks = fallbacks
     config.layerErrors = layerErrors
     config.externalRequests = !offline()
+    if (yes(p.locationShares)) {
+        const live = liveShares()
+        config.locationShares = live.locationShares
+        // a read that failed is said for each half (the own shares, those shared with the user), so a page keeps what it had
+        if (live.mineFailed) config.locationSharesMineFailed = true
+        if (live.theirsFailed) config.locationSharesTheirsFailed = true
+    }
     return {config}
+}
+
+// ===== live location (plans/archive/Location-Sharing.md §3.3) =====
+// The viewer's own active shares and those shared with them, for m-map's live layer, Browse's panels and the terminal. Read
+// only through org.moqui.maps.LocationServices, whose reads check the caller against each share's current audience
+// (find#MyShares, find#SharedWithMe, get#Share for a kept trail): no entity of a share is read here. Nothing of it is
+// logged or cached, and a failed read leaves that part out.
+const LIVE_SERVICES = "org.moqui.maps.LocationServices."
+// the most points of a trail handed to a map, its latest ones, and the most shares whose trail is read
+const LIVE_TRAIL_POINTS = 500
+const LIVE_TRAIL_SHARES = 10
+const wholeSetting = (name, fallback) => {
+    const number = Number(text(ec.factory.getConfValue("location@" + name)))
+    return Number.isInteger(number) && number >= 0 ? number : fallback
+}
+function livePosition(row) {
+    if (!row || row.latitude == null || row.longitude == null) return null
+    return {
+        latitude: Number(row.latitude),
+        longitude: Number(row.longitude),
+        accuracy: row.accuracy == null ? null : Number(row.accuracy),
+        heading: row.heading == null ? null : Number(row.heading),
+        speed: row.speed == null ? null : Number(row.speed),
+        observedDate: row.observedDate == null ? null : Number(row.observedDate),
+        ageSeconds: row.ageSeconds == null ? null : Number(row.ageSeconds)
+    }
+}
+// a share's kept trail as [longitude, latitude] pairs, its latest LIVE_TRAIL_POINTS in time order (get#Share's pages)
+function liveTrail(shareId, knownCount) {
+    const page = (index, size) => {
+        const found = probe(LIVE_SERVICES + "get#Share", {shareId, trailPageIndex: index, trailPageSize: size})
+        return found.failed || found.out.reasonCode ? null : found.out
+    }
+    let count = knownCount
+    if (count == null) {
+        const head = page(0, 1)
+        if (!head) return []
+        count = Number(head.trailCount) || 0
+    }
+    if (!count) return []
+    let rows = []
+    if (count <= LIVE_TRAIL_POINTS) rows = Array.from(page(0, LIVE_TRAIL_POINTS)?.trailList || [])
+    else {
+        const last = Math.floor((count - 1) / LIVE_TRAIL_POINTS)
+        for (const index of [last - 1, last]) rows = rows.concat(Array.from(page(index, LIVE_TRAIL_POINTS)?.trailList || []))
+        rows = rows.slice(-LIVE_TRAIL_POINTS)
+    }
+    return rows
+        .map(livePosition)
+        .filter(point => point)
+        .map(point => [point.longitude, point.latitude])
+}
+// who an own share is with, as names: its entries that are not revoked
+function audienceNames(list) {
+    return Array.from(list || [])
+        .filter(row => row && !row.revoked)
+        .map(row => ({
+            audienceSeqId: row.audienceSeqId,
+            audienceTypeEnumId: row.audienceTypeEnumId,
+            userGroupId: row.userGroupId || null,
+            name:
+                row.audienceTypeEnumId === "LsaLink"
+                    ? L("A guest link")
+                    : text(row.userName || row.groupName || row.jid || row.userId || row.userGroupId)
+        }))
+}
+function liveShares() {
+    if (!ec.user.userId) return {locationShares: []}
+    const minimum = wholeSetting("min-interval-seconds", 5)
+    const approximate = Math.max(minimum, wholeSetting("approximate-interval-seconds", 60))
+    const shares = []
+    const mine = probe(LIVE_SERVICES + "find#MyShares", {})
+    for (const share of mine.failed ? [] : Array.from(mine.out.shareList || []))
+        shares.push({
+            shareId: share.shareId,
+            role: "owner",
+            label: text(share.label),
+            purposeText: share.purposeText || null,
+            fromDate: share.fromDate,
+            thruDate: share.thruDate,
+            approximate: share.approximate === true,
+            keepTrail: share.keepTrail === true,
+            trailKeepDays: share.trailKeepDays ?? null,
+            trailCount: Number(share.trailCount) || 0,
+            audience: audienceNames(share.audienceList),
+            reportIntervalSeconds: share.approximate === true ? approximate : minimum,
+            // where it is sent from (plans/archive/Location-Sharing.md §3.4): a device of the owner's by its name, and whether
+            // that is this request's (the app's Send from this device), or a browser page
+            sentFromDevice: share.sentFromDevice === true,
+            deviceName: share.deviceName || null,
+            fromThisDevice: share.fromThisDevice === true,
+            audienceVersion: Number(share.audienceVersion) || 0,
+            // the owner's XMPP app feeds it too (to its XMPP contacts only), the age of its last position from there, and
+            // where the last position came from (plans/archive/Location-Sharing.md §3.6)
+            takeXmppLocation: share.takeXmppLocation === true,
+            xmppAgeSeconds: share.xmppAgeSeconds ?? null,
+            lastSource: share.lastSource || null,
+            latest: livePosition(share.latest)
+        })
+    const theirs = probe(LIVE_SERVICES + "find#SharedWithMe", {})
+    // a read that failed is said, so a page does not take its empty list for the user's having no share
+    const failed = mine.failed || theirs.failed
+    for (const share of theirs.failed ? [] : Array.from(theirs.out.shareList || []))
+        shares.push({
+            shareId: share.shareId,
+            role: "viewer",
+            label: text(share.label) || text(share.ownerName),
+            ownerName: text(share.ownerName),
+            purposeText: share.purposeText || null,
+            fromDate: share.fromDate,
+            thruDate: share.thruDate,
+            approximate: share.approximate === true,
+            keepTrail: share.keepTrail === true,
+            latest: livePosition(share.latest)
+        })
+    for (const share of shares.filter(one => one.keepTrail).slice(0, LIVE_TRAIL_SHARES))
+        share.trail = liveTrail(share.shareId, share.role === "owner" ? share.trailCount : null)
+    return {locationShares: shares, failed, mineFailed: mine.failed, theirsFailed: theirs.failed}
 }
 
 // ===== get#Preferences and store#Preferences =====
@@ -1817,6 +2057,7 @@ const operations = {
     ogcLayerOptions,
     storeOgcLayer,
     effectiveConfig,
+    liveShares,
     getPreferences,
     storePreferences,
     storeSavedView,
@@ -1835,8 +2076,11 @@ const operations = {
     // for the readiness checks and the provider kind (MapProviders.js)
     resolveProfile,
     resolveLayer,
+    // a guest location link's page (LocationShares.js linkRead)
+    publicBasemap,
     installationProfileId,
     originOf,
     templateUrls,
+    cogEndpoint,
     OUTLINE_ID
 })

@@ -48,10 +48,11 @@ pub mod tables;
 pub mod etl;
 pub mod files;
 
-// ---------- The Geo data importer (plans/Maps.md §6.4) ----------
+// ---------- The Geo data importer (plans/archive/Maps.md §6.4) ----------
 pub mod geo;
-// ---------- Map archives (plans/Maps.md §5) ----------
+// ---------- Map archives (plans/archive/Maps.md §5) ----------
 pub mod maps_archive;
+pub mod maps_extract;
 pub mod maps_ogc;
 pub mod maps_overlay;
 pub mod maps_simplify;
@@ -69,6 +70,7 @@ fn register_schema_and_jobs(
     etl::service::register(map)?;
     geo::service::register(map)?;
     maps_archive::register(map)?;
+    maps_extract::register(map)?;
     maps_ogc::register(map)?;
     maps_overlay::register(map)?;
     maps_simplify::register(map)?;

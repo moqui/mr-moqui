@@ -1,5 +1,5 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
-// MapsFrameworkOnly (plans/Maps.md §1, §9 acceptance): an installation of the framework and tools components alone (this
+// MapsFrameworkOnly (plans/archive/Maps.md §1, §9 acceptance): an installation of the framework and tools components alone (this
 // suite's server: no Mantle, BOSS, HOME or PASS), where the Maps app, its Configuration with Archives, a registered local
 // archive and the local-map dialog with the framework's test adapter (MapsWalkFixtures, MapsLocalFixtures) all work.
 // Run: ./moq accept tools --spec MapsFrameworkOnly

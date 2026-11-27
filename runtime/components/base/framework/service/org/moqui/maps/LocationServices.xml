@@ -1,0 +1,453 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Shared live location (plans/archive/Location-Sharing.md §1, §3.2): a person shares where they are, until a time they
+    choose, with people they choose. Only the owner starts, changes, stops and reports a share; only the owner and the
+    share's current audience read it (a user whose entry is not revoked; a member of a group whose entry is not revoked
+    who is in the snapshot of members the owner's adding of the group reached, LocationShareAudienceMember, while the
+    membership row it names is current, so that whoever runs a group's membership gives nobody new a share; only a
+    snapshot member's own row, ended and reopened or deleted and made again with the same fromDate, which an
+    administrator can do in System › Access, lets that same person back), and every read checks that again; another
+    person's share, an ADMIN's request included, answers as not found. The model is entity/MapLocationEntities.xml, the
+    logic LocationShares.js beside this file, the settings the conf's location element, the grants
+    data/MapsLocationData.xml (LocationShareServices, every signed-in user).
+
+    Positions are never logged, audited, cached or put in an error message: the position parameters are plain text read
+    by LocationShares.js (so no conversion error repeats a value), report#Position remembers no parameters, and a
+    refusal names its reason only. A position is pushed on the topic locationShare:<shareId> to the audience's current
+    users only (directOnly), and to its XMPP contacts' users on locationShareXmpp:<shareId>, which the XMPP server sends
+    as geoloc events (plans/archive/Location-Sharing.md §3.6), never saved as a notification or pushed to a phone
+    (persistOnSend false); an approximate
+    share's is its cell of about 1 km on one fixed grid, kept until a fix is well inside another cell, before it is
+    stored or sent. Start, extension, stop and an audience added or revoked are in the entity audit log (LocationShare
+    thruDate and revokedDate, the audience's fields), never a position. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
+
+    <service verb="create" noun="Share">
+        <description>Start sharing the current user's location, the owner, until thruDate (after now, at most
+            location@max-share-hours from now), exact or approximate (precisionEnumId LspExact, the default, or
+            LspApproximate), with a trail kept only when keepTrail is true (for trailKeepDays after the share ends, at
+            most and by default location@trail-max-days). audienceList holds at least one entry, each
+            {audienceTypeEnumId, userId, userGroupId, jid}: LsaUser a user the owner may message (the chat directory's
+            rule, ChatServices.get#RefusedUsers with blocks; a user it refuses answers as one that does not exist),
+            LsaUserGroup a group the owner is in now (never ALL_USERS or a group of external users), read by the members
+            it has now (a snapshot, less every one the chat directory refuses the owner at this act: its hooks, the
+            external-caller rule and blocks) while their membership row stays current, LsaXmpp a contact of the owner's
+            XMPP roster (username@xmpp-server@domain, XmppServices.get#Roster, a user of this server; its positions go to
+            that user's XMPP sessions, and it is told by the LocationSharedXmpp notification),
+            LsaLink a guest link (one a share), whose token is returned here once and kept only as its digest. Each
+            audience user is told who shares with them and until when (the LocationShared notification). At most
+            location@max-active-shares active shares an owner and location@max-audience people (the members its groups
+            reach, counted each), contacts and links a share; a group with more than four times location@max-audience
+            current membership rows is refused before its members are written. Refused with a reasonCode: BAD_UNTIL,
+            TOO_LONG, BAD_PRECISION, BAD_TRAIL_DAYS, AUDIENCE_EMPTY, BAD_AUDIENCE, USER_NOT_FOUND, GROUP_NOT_ALLOWED,
+            XMPP_OFF, XMPP_NOT_CONTACT, ONE_LINK, AUDIENCE_TOO_LARGE, TOO_MANY_SHARES, GROUP_CHECK_FAILED,
+            SHARE_LOCK_FAILED (the owner's lock row could not be made or locked). The share is sent from the device whose
+            key signed this request in (userLoginKeyId, ec.user.loginKeyId: the Android app's), or from no device (a
+            browser page, which sends while it is open); a share with a device takes that device's reports only, and one
+            with none takes no device's (plans/archive/Location-Sharing.md §3.4). takeXmppLocation true lets the owner's XMPP
+            app's location (report#XmppPosition) feed it too, to its XMPP contacts only (§3.6): refused XMPP_NO_CONTACT
+            without an XMPP contact in the audience.</description>
+        <in-parameters>
+            <parameter name="audienceList" type="List" required="true"/>
+            <parameter name="thruDate" type="Timestamp" required="true"/>
+            <parameter name="precisionEnumId" default-value="LspExact"/>
+            <parameter name="keepTrail" type="Boolean" default="false"/>
+            <parameter name="trailKeepDays" type="Integer"/>
+            <parameter name="label"/>
+            <parameter name="purposeText"/>
+            <parameter name="takeXmppLocation" type="Boolean" default="false"><description>Also use the owner's XMPP app's
+                location, sent to the share's XMPP contacts only (plans/archive/Location-Sharing.md §3.6)</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="shareId"/>
+            <parameter name="thruDate" type="Timestamp"/>
+            <parameter name="linkToken"><description>The guest link's token, returned this once: its selector, a dot and
+                its secret</description></parameter>
+            <parameter name="linkPath"><description>The guest page's link, returned this once: /location/selector#secret,
+                the secret in the fragment only (plans/archive/Location-Sharing.md §3.7); the caller puts its site root before
+                it</description></parameter>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('create', context))</script></actions>
+    </service>
+
+    <service verb="update" noun="Share">
+        <description>Change an active share of the current user's own: extend or shorten it (thruDate, after now and at
+            most location@max-share-hours from now: extending is the owner's act again), add to its audience
+            (addAudienceList, entries as create#Share's; one already there is passed over, but a group already there is
+            stamped again, in the audit log, with a new snapshot of its members, which lets in those who joined since),
+            and change its label or
+            purpose (a share for a record, store#ShareRecord, is extended no later than the record's end:
+            AFTER_RECORD_END); with sendFromHere true it is sent from this request's device from now on (the app's Send from this
+            device), or from no device (a browser's Send from here), and the device that sent it is refused as another's
+            (409 OTHER_DEVICE), which stops it. The owner's other devices and the audience are told on locationShare:shareId, each user the share
+            newly reaches gets the LocationShared notification, and addedUserList (and the owner's push) names them; a
+            link added returns its token once; an XMPP contact it newly reaches gets LocationSharedXmpp. takeXmppLocation
+            true or false turns the owner's XMPP app's location for it on or off (to its XMPP contacts only, audited);
+            turned on, it raises audienceVersion, so a phone that sends the share pauses until its person confirms the
+            words get#AppShare gives; turned off, it leaves the version and deletes the XMPP app's last position
+            (LocationXmppLatest); true for a share with no XMPP contact (its adds counted) is refused XMPP_NO_CONTACT.
+            Refused: SHARE_NOT_FOUND (not the caller's), SHARE_ENDED, and create#Share's reasons.</description>
+        <in-parameters>
+            <parameter name="shareId" required="true"/>
+            <parameter name="thruDate" type="Timestamp"/>
+            <parameter name="addAudienceList" type="List"/>
+            <parameter name="label"/>
+            <parameter name="purposeText"/>
+            <parameter name="sendFromHere" type="Boolean" default="false"/>
+            <parameter name="takeXmppLocation"><description>true or false: the owner's XMPP app's location fed to the share's
+                XMPP contacts or not; empty leaves it as it is</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="thruDate" type="Timestamp"/>
+            <parameter name="linkToken"/>
+            <parameter name="linkPath"/>
+            <parameter name="addedUserList" type="List"><description>The users the change lets in, each {userId,
+                userName}</description></parameter>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('update', context))</script></actions>
+    </service>
+
+    <service verb="stop" noun="Share">
+        <description>Stop a share of the current user's own at once: its latest position is deleted, its audience and
+            the owner's other devices are told on locationShare:shareId, and a device still sending gets 410. A kept
+            trail stays for its trailKeepDays, or until delete#Trail. A share already ended is left as it is. Refused:
+            SHARE_NOT_FOUND (not the caller's).</description>
+        <in-parameters><parameter name="shareId" required="true"/></in-parameters>
+        <out-parameters><parameter name="reasonCode"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('stop', context))</script></actions>
+    </service>
+
+    <service verb="revoke" noun="Audience">
+        <description>Take one entry of a share of the current user's own out of its audience (a person, a group, an XMPP
+            contact or the link): it reads nothing from now on, and its users are told on locationShare:shareId (an XMPP
+            contact by an empty geoloc item). A revoke that takes out its last XMPP contact turns takeXmppLocation off
+            with it (the audit row's reason "last XMPP contact revoked") and deletes the XMPP app's last position; one of
+            a person, group or link leaves it. Refused: SHARE_NOT_FOUND (not the caller's), AUDIENCE_NOT_FOUND.</description>
+        <in-parameters>
+            <parameter name="shareId" required="true"/>
+            <parameter name="audienceSeqId" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="reasonCode"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('revoke', context))</script></actions>
+    </service>
+
+    <service verb="report" noun="Position" no-remember-parameters="true">
+        <description>A position of an active share, from its owner only: latitude and longitude (degrees, in range),
+            accuracy (metres, optional), heading (degrees from north) and speed (metres a second), observedDate (when
+            the device took it: not before the share began, later than the latest one; now when not given). At most one
+            a location@min-interval-seconds a share (location@approximate-interval-seconds for an approximate one): a
+            sooner one is dropped with statusCode 429 (RATE_LIMITED, retryAfterSeconds). An approximate share's position
+            is the centre of its cell of about 1 km on one fixed grid, the last cell kept until a fix is more than a
+            quarter of a cell inside another (which stops jitter flipping cells; a change of cell still shows a line
+            crossed 0.75 cell from the old centre, within what the person moves in an interval), an accuracy of 1000 or
+            the device's rounded up to the next 1000, no heading or speed, made here before it is stored or sent; its
+            stored and answered observedDate is rounded down to the minute, though the push goes out when the report
+            comes. It replaces the share's LocationLatest, adds a trail point when the share keeps a trail, and is sent
+            on locationShare:shareId to the audience's current users. statusCode 200; 410 (SHARE_ENDED) for a share
+            ended or stopped, which stops the device; 404 (SHARE_NOT_FOUND) for one that is not the caller's; 409
+            OTHER_DEVICE when this request is not from the device the share is sent from (another device key, or none: a
+            browser), or is from a device while the share is sent from a browser page, which stops it (update#Share
+            sendFromHere moves it); 400 for a
+            value out of range (BAD_POSITION, BAD_ACCURACY, BAD_HEADING, BAD_SPEED) or a time before the share began
+            (BEFORE_SHARE); 409 for one not later than the latest (STALE) or more than a minute ahead of the server's
+            clock (CLOCK_AHEAD, the device's clock is ahead). A refusal names no value.</description>
+        <in-parameters>
+            <parameter name="shareId" required="true"/>
+            <!-- plain text, read and checked by LocationShares.js, so that no conversion error repeats a position -->
+            <parameter name="latitude"/>
+            <parameter name="longitude"/>
+            <parameter name="accuracy"/>
+            <parameter name="heading"/>
+            <parameter name="speed"/>
+            <parameter name="observedDate" type="Timestamp"/>
+            <parameter name="audienceVersion"><description>The audience version the device's person confirmed: required for
+                a share sent from a device, which refuses another or none with 409 AUDIENCE_CHANGED before anything is
+                written or pushed</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="statusCode" type="Integer"/>
+            <parameter name="reasonCode"/>
+            <parameter name="retryAfterSeconds" type="Integer"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('report', context))</script></actions>
+    </service>
+
+    <service verb="report" noun="XmppPosition" no-remember-parameters="true" allow-remote="false">
+        <description>A user location publish (XEP-0080) from the current user's own XMPP client, which the XMPP server
+            (moqui-xmpp session/geoloc.rs) calls with the fields it read and checked (plans/archive/Location-Sharing.md §3.6,
+            LL5): taken by each of the user's active shares whose owner turned on takeXmppLocation (create#Share,
+            update#Share) and that has an XMPP contact in its audience (an LsaXmpp entry not revoked), whatever it is
+            sent from. Such a position goes to the share's XMPP contacts only: kept as its LocationXmppLatest, never as
+            its LocationLatest or trail, never pushed to its users, groups, link or the owner's web. The share's rules
+            hold against that XMPP latest: the rate, the values, staleness, approximate rounding. The first one a share
+            takes tells the owner's XMPP sessions (a headline: whom with, until when). A time more than a minute ahead
+            is taken as now, as a browser page does. No such share: statusCode 403, NO_XMPP_SHARE, so a client's setting
+            never starts a share or feeds one the owner did not choose. Else the best outcome of the shares: 200, else
+            429 (RATE_LIMITED, retryAfterSeconds), else 409 STALE, else the first refusal (400 BAD_POSITION,
+            BAD_ACCURACY, BEFORE_SHARE; 410 SHARE_ENDED or 404 SHARE_NOT_FOUND for a share that ended or went meanwhile).
+            The session answers 200, 429 and STALE as taken (nothing new kept for the last two), 400 bad-request, and
+            NO_XMPP_SHARE, 410 and 404 not-allowed. A refusal names no value, and adds no error.</description>
+        <in-parameters>
+            <!-- plain text, read and checked by LocationShares.js, so that no conversion error repeats a position -->
+            <parameter name="latitude"/>
+            <parameter name="longitude"/>
+            <parameter name="accuracy"/>
+            <parameter name="observedMillis" type="Long"><description>XEP-0080's timestamp, epoch milliseconds; now when
+                not given</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="statusCode" type="Integer"/>
+            <parameter name="reasonCode"/>
+            <parameter name="retryAfterSeconds" type="Integer"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('xmppReport', context))</script></actions>
+    </service>
+
+    <service verb="get" noun="AppShare">
+        <description>An active share of the current user's own as the Android app confirms it in its own dialog and names
+            it in its notification before it sends it from the phone (plans/archive/Location-Sharing.md §3.4): share {shareId,
+            thruDate (epoch millis), untilText (the end in the caller's zone, with the weekday when not today),
+            approximate, intervalSeconds (the share's report interval), audienceText (whom with, in words the owner can
+            check: names with usernames, a group with its member count, a JID, anyone with the guest link, and while the
+            owner's XMPP app's location feeds it and it has an XMPP contact "(your XMPP app's location also goes to your
+            XMPP contacts)", a parenthetical, since the dialog and the notification put these words mid-sentence),
+            audienceVersion
+            (what the device sends with its reports once the person confirmed these words), fromThisDevice (this request's device key is the one it is sent
+            from)}. The words are the
+            server's, never a page's. Refused: SHARE_NOT_FOUND (not the caller's), SHARE_ENDED.</description>
+        <in-parameters><parameter name="shareId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="share" type="Map"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('appShare', context))</script></actions>
+    </service>
+
+    <service verb="stop" noun="DeviceShares" authenticate="anonymous-all" allow-remote="false" transaction="force-new">
+        <description>A device key revoked (its owner's sign-out, or the device signed out from the device list; called by
+            the framework with the key's stored hash, user/login.rs): every active share sent from it
+            (LocationShare.userLoginKeyId) is stopped as stop#Share does, its audience told, so none stays on with nothing
+            sending it, also when the device could not tell the server (plans/archive/Location-Sharing.md §3.4). In a transaction
+            of its own (force-new), each share in one of its own too, so nothing here touches the revoke's: a share
+            not of the key's user is refused by name and left, and the rest go on. Called also when an administrator
+            ends a user's keys (Identity.js endCredential).</description>
+        <in-parameters>
+            <parameter name="userLoginKeyId" required="true"/>
+            <parameter name="ownerUserId" required="true"><description>The key's user, as the revoke knows it: the key's
+                row, which the revoke writes, is never read here</description></parameter>
+        </in-parameters>
+        <out-parameters><parameter name="stoppedCount" type="Integer"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('deviceShares', context))</script></actions>
+    </service>
+
+    <service verb="find" noun="MyShares">
+        <description>The current user's own shares: the active ones, and with includeEnded those ended too (for their
+            kept trails), the newest first, at most 200. Each with its audience (every entry, revoked ones marked: a
+            person's or group's name, a JID, and for the link only that there is one and when it was last viewed, never
+            its token or digest), its end, its latest position while it is active, its trail's size, and where it is sent
+            from (sentFromDevice, the device's deviceName, and fromThisDevice when this request's device key is
+            it; never the key's id).</description>
+        <in-parameters><parameter name="includeEnded" type="Boolean" default="false"/></in-parameters>
+        <out-parameters><parameter name="shareList" type="List"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('findMine', context))</script></actions>
+    </service>
+
+    <service verb="find" noun="SharedWithMe">
+        <description>The active shares of other people whose current audience holds the current user (as a user whose
+            entry is not revoked, or as a member of a group whose entry is not revoked, held in that entry's snapshot by
+            a membership row that is still current), soonest to end first, at most 200: the owner's name, the label and
+            purpose, the end, whether it is approximate, and the latest position with its age. The audience is checked
+            at this read, so a person taken out of a group sees nothing of it.</description>
+        <out-parameters><parameter name="shareList" type="List"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('findShared', context))</script></actions>
+    </service>
+
+    <service verb="get" noun="Share">
+        <description>One share for its owner (with its audience as find#MyShares has it), or for a member of its current
+            audience while it is active: the share, its latest position (while active) and, when it keeps a trail, a
+            page of the trail in time order (trailPageIndex, trailPageSize up to 1000) with its count. A share that is
+            not the caller's and whose current audience does not hold the caller, or that has ended for a viewer,
+            answers SHARE_NOT_FOUND.</description>
+        <in-parameters>
+            <parameter name="shareId" required="true"/>
+            <parameter name="trailPageIndex" type="Integer" default="0"/>
+            <parameter name="trailPageSize" type="Integer" default="500"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="share" type="Map"/>
+            <parameter name="latest" type="Map"/>
+            <parameter name="trailList" type="List"/>
+            <parameter name="trailCount" type="Integer"/>
+            <parameter name="trailPageIndex" type="Integer"/>
+            <parameter name="trailPageSize" type="Integer"/>
+            <parameter name="trailPageMaxIndex" type="Integer"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('get', context))</script></actions>
+    </service>
+
+    <service verb="get" noun="ShareStatus" allow-remote="false">
+        <description>Internal, for Chat's live location card (plans/archive/Location-Sharing.md §3.5; ChatLocation.js): whether the
+            share shareId of ownerUserId (the author of the message that carries it) is active now, and that it exists;
+            nothing else of it, no audience or position. A share of another owner answers found false. The caller (Chat)
+            has checked that the current user reads the message; get#Share stays the only read of a share's position.</description>
+        <in-parameters>
+            <parameter name="shareId" required="true"/>
+            <parameter name="ownerUserId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="found" type="Boolean"/>
+            <parameter name="active" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('status', context))</script></actions>
+    </service>
+
+    <service verb="revoke" noun="ChatAudience" allow-remote="false" transaction="force-new">
+        <description>Internal, for Chat's live location (plans/archive/Location-Sharing.md §3.5): userId's own entry (LsaUser) taken
+            out of each active share of shareList [{shareId, ownerUserId}] (the share of that owner only), as revoke#Audience
+            takes one out (its users and the owner told on
+            locationShare:shareId), whoever the caller is: Chat calls it when a member is taken out of a room by another
+            (remove#Member) or blocked by a share's owner (ChatBlocks.js), for that room's live shares
+            (moqui.chat.ChatLiveShare). It only narrows who sees a share, never the owner's own. In a transaction of its own,
+            each share in one of its own: one that fails is logged by its id and the rest go on. Out: revokedCount.</description>
+        <in-parameters>
+            <parameter name="shareList" type="List" required="true"/>
+            <parameter name="userId" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="revokedCount" type="Integer"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('chatAudience', context))</script></actions>
+    </service>
+
+    <service verb="delete" noun="Trail">
+        <description>Delete the whole kept trail of a share of the current user's own, now, whether the share is active
+            or ended; an active share goes on keeping the positions it gets from now on. Refused:
+            SHARE_NOT_FOUND.</description>
+        <in-parameters><parameter name="shareId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="deletedCount" type="Integer"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('deleteTrail', context))</script></actions>
+    </service>
+
+    <service verb="get" noun="ShellIndicator">
+        <description>The framework's shell-indicator provider, for every signed-in user (MoquiDefaultConf.xml screen-facade
+            shell-providers; plans/archive/Location-Sharing.md §3.3): while the
+            current user has any active share of their own, one indicator, "Sharing location" (with the count when more than
+            one), to Maps › My location shares (MyShares.xml, which every signed-in user opens), asked again at the soonest end (refreshInSeconds) and on the user's own
+            pushes of a share's start, change or end (refreshOn); none otherwise. It counts the user's own shares and reads
+            no audience or position.</description>
+        <out-parameters>
+            <parameter name="indicators" type="List"/>
+            <parameter name="refreshOn" type="List"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('indicator', context))</script></actions>
+    </service>
+
+    <service verb="clean" noun="LocationShares" authenticate="anonymous-all" allow-remote="false" transaction="ignore">
+        <description>The hourly job (clean_LocationShares_hourly): ends the shares past their thruDate, oldest first
+            (endedDate set, the latest position deleted, the audience told), deletes the trail points of each ended
+            share whose trailPurgeDate has come (its end and trailKeepDays, at most location@trail-max-days), and
+            removes the shares ended more than location@trail-max-days ago with no trail left, with their audience (the
+            audit log keeps who shared with whom and when). Each share is on its own, in its own transaction: one that
+            fails is logged by its id and the rest go on. Each stage takes batches until one comes back short, for at
+            most two minutes a run. Out: endedCount, trailDeletedCount (points), removedCount,
+            failedCount.</description>
+        <out-parameters>
+            <parameter name="endedCount" type="Integer"/>
+            <parameter name="trailDeletedCount" type="Integer"/>
+            <parameter name="removedCount" type="Integer"/>
+            <parameter name="failedCount" type="Integer"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('clean', context))</script></actions>
+    </service>
+
+    <!-- Guest links (plans/archive/Location-Sharing.md §3.7): the public page Maps/SharedLocation.xml, at /location/<selector> by
+        the token-route location of tools MoquiConf.xml, the link's secret in its fragment (/location/selector#secret),
+        posted by the page so that no request line, log or Referer holds it. -->
+    <service verb="check" noun="LinkKey" authenticate="anonymous-all" allow-remote="false">
+        <description>The token check of the /location/&lt;selector&gt; route: valid when the selector (the route's token,
+            the first part of a guest link's token) names a guest link that is there, whether its share is on or not, so
+            that the page can say it has ended. routeContext is empty: nothing of the share is read for the route. A
+            selector that names no link is refused, which the route counts against the client.</description>
+        <in-parameters>
+            <parameter name="token" required="true"/>
+            <parameter name="routeName"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="valid" type="Boolean"/>
+            <parameter name="routeContext" type="Map"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('linkCheck', context))</script></actions>
+    </service>
+
+    <service verb="get" noun="LinkShare" authenticate="anonymous-all" allow-remote="false" no-remember-parameters="true">
+        <description>The guest page's read of a share by its link, with no sign-in: linkKey (the selector, the page's
+            path) and linkSecret (the fragment the page posts). Answers statusCode 200 with share {label, purposeText,
+            approximate}, latest {latitude, longitude, accuracy, ageSeconds} (none before a position the server received
+            after the link was added; an approximate share's is its cell, as stored) and map (the outline, or the one
+            basemap the installation marks public: MapLayer isPublic), and nothing else; 404 LINK_NOT_FOUND for a selector
+            that names no link or a wrong secret (counted on the link, failedTries, and against the client); 403
+            LINK_LOCKED from location@link-max-failed-tries wrong secrets on; 410 SHARE_ENDED once the share has ended or
+            the link was taken out; 429 RATE_LIMITED (retryAfterSeconds) past location@link-max-views-per-minute reads of
+            the link in a minute. A refusal adds no error, so its counts are kept, and names no value.</description>
+        <in-parameters>
+            <parameter name="linkKey" required="true"/>
+            <parameter name="linkSecret"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="statusCode" type="Integer"/>
+            <parameter name="reasonCode"/>
+            <parameter name="retryAfterSeconds" type="Integer"/>
+            <parameter name="share" type="Map"/>
+            <parameter name="latest" type="Map"/>
+            <parameter name="map" type="Map"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('linkRead', context))</script></actions>
+    </service>
+
+    <service verb="store" noun="ShareRecord" allow-remote="false">
+        <description>The record a guest share is for, as MapAdapter names records (recordAdapterKey, recordKey), on an
+            active or ended share of the caller's own. Only for a service that has checked the caller may act on that
+            record (Mantle's mantle.other.LocationShareServices.create#RecordGuestShare), which calls it with
+            authorization off: no group is granted it. The record's end (recordThruDate) is kept on the share: its end
+            is no later, now and when update#Share extends it. Refused: SHARE_NOT_FOUND (not the caller's), BAD_RECORD,
+            AFTER_RECORD_END.</description>
+        <in-parameters>
+            <parameter name="shareId" required="true"/>
+            <parameter name="recordAdapterKey" required="true"/>
+            <parameter name="recordKey" required="true"/>
+            <parameter name="recordThruDate" type="Timestamp" required="true"><description>The record's end (its planned end):
+                the share ends no later, and update#Share refuses an extension past it (AFTER_RECORD_END)</description></parameter>
+        </in-parameters>
+        <out-parameters><parameter name="reasonCode"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('shareRecord', context))</script></actions>
+    </service>
+
+    <service verb="stop" noun="RecordShares" authenticate="anonymous-all" allow-remote="false" transaction="ignore">
+        <description>A record completed or cancelled (Mantle's EECA, plans/archive/Location-Sharing.md §3.7): every share still on
+            for it (recordAdapterKey, recordKey) is stopped as stop#Share does, its audience told, each in a transaction of
+            its own (one that fails is logged by its id and the rest go on), whoever's it is. No group is granted it: only
+            the framework and a component's own services call it. Out: stoppedCount.</description>
+        <in-parameters>
+            <parameter name="recordAdapterKey" required="true"/>
+            <parameter name="recordKey" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="stoppedCount" type="Integer"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/LocationShares.js').execute('recordShares', context))</script></actions>
+    </service>
+</services>

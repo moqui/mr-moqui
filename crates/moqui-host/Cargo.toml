@@ -84,7 +84,7 @@ web-push = ["moqui-core/web-push"]
 # The encrypted S3 mirror of the embedded database backup, in every package.
 backup-s3 = ["moqui-core/backup-s3"]
 xlsx = ["moqui-core/xlsx", "moqui-report/xlsx", "dep:moqui-calc"]
-# Optional Overture data for Maps (crates/moqui-maps, plans/Maps-Overture.md): the GeoParquet reader and the import of a
+# Optional Overture data for Maps (crates/moqui-maps, plans/archive/Maps-Overture.md): the GeoParquet reader and the import of a
 # region's Places and Buildings. In Maximal and Enterprise; not Lite.
 overture = ["dep:moqui-maps"]
 # The agents and the model providers (crates/moqui-llm).

@@ -435,8 +435,10 @@ fn merge_config_nodes(base: &MNode, over: &MNode) {
         "client-sync",
         // load runs from Tools (plans/archive/LoadRunner.md §10)
         "load-runner",
-        // maps: the outside-request switch and the import and feature limits (plans/Maps.md §4.2)
+        // maps: the outside-request switch and the import and feature limits (plans/archive/Maps.md §4.2)
         "maps",
+        // shared live location: the longest share and trail, the report interval (plans/archive/Location-Sharing.md §3.1)
+        "location",
         // this server as a cluster member (plans/archive/Cluster.md)
         "cluster-member",
         // voicemail (docs/interfaces/Voicemail.md)

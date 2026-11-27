@@ -577,3 +577,225 @@ pub fn spec_buildings_r1() -> Vec<u8> {
         &Writer::default(),
     )
 }
+
+/// An address point of a fixture.
+#[derive(Clone, Debug)]
+pub struct FixtureAddress {
+    pub id: &'static str,
+    pub lon: f64,
+    pub lat: f64,
+    pub street: Option<&'static str>,
+    pub number: Option<&'static str>,
+    pub unit: Option<&'static str>,
+    pub postcode: Option<&'static str>,
+    pub sources: Vec<(&'static str, &'static str)>,
+}
+
+impl FixtureAddress {
+    /// A Florence address of the Italian countrywide source (CC BY 4.0).
+    #[must_use]
+    pub fn new(id: &'static str, street: &'static str, number: &'static str, lon: f64, lat: f64) -> Self {
+        Self {
+            id,
+            lon,
+            lat,
+            street: Some(street),
+            number: Some(number),
+            unit: None,
+            postcode: None,
+            sources: vec![("it/countrywide", "CC-BY-4.0")],
+        }
+    }
+}
+
+/// Overture addresses' schema 2.x, the columns the fixtures have.
+pub const ADDRESSES_SCHEMA: &str = "message schema {
+  OPTIONAL BYTE_ARRAY id (STRING);
+  OPTIONAL BYTE_ARRAY geometry;
+  OPTIONAL group bbox { OPTIONAL DOUBLE xmin; OPTIONAL DOUBLE xmax; OPTIONAL DOUBLE ymin; OPTIONAL DOUBLE ymax; }
+  OPTIONAL BYTE_ARRAY country (STRING);
+  OPTIONAL BYTE_ARRAY postcode (STRING);
+  OPTIONAL BYTE_ARRAY street (STRING);
+  OPTIONAL BYTE_ARRAY number (STRING);
+  OPTIONAL BYTE_ARRAY unit (STRING);
+  OPTIONAL group address_levels (LIST) { REPEATED group list { OPTIONAL group element {
+    OPTIONAL BYTE_ARRAY value (STRING); } } }
+  OPTIONAL BYTE_ARRAY postal_city (STRING);
+  OPTIONAL INT32 version;
+  OPTIONAL group sources (LIST) { REPEATED group list { OPTIONAL group element {
+    OPTIONAL BYTE_ARRAY dataset (STRING); OPTIONAL BYTE_ARRAY license (STRING); } } }
+}";
+
+/// A row group of address points in [`ADDRESSES_SCHEMA`]'s leaf order, each of Italy with Florence's three levels.
+#[must_use]
+pub fn address_leaves(addresses: &[FixtureAddress]) -> Vec<Leaf> {
+    let text = |get: &dyn Fn(&FixtureAddress) -> Option<&'static str>| -> Vec<Option<String>> {
+        addresses
+            .iter()
+            .map(|address| get(address).map(str::to_string))
+            .collect()
+    };
+    let coordinate = |get: fn(&FixtureAddress) -> f64| -> Vec<Option<f64>> {
+        addresses.iter().map(|address| Some(get(address))).collect()
+    };
+    let sources = |pick: fn(&(&'static str, &'static str)) -> &'static str| -> Vec<Vec<Option<String>>> {
+        addresses
+            .iter()
+            .map(|address| {
+                address
+                    .sources
+                    .iter()
+                    .map(|source| Some(pick(source).to_string()))
+                    .collect()
+            })
+            .collect()
+    };
+    let levels: Vec<Vec<Option<String>>> = addresses
+        .iter()
+        .map(|_| {
+            ["Toscana", "Firenze", "Firenze"]
+                .iter()
+                .map(|level| Some((*level).to_string()))
+                .collect()
+        })
+        .collect();
+    let geometry: Vec<Vec<u8>> = addresses
+        .iter()
+        .map(|address| point_wkb(address.lon, address.lat))
+        .collect();
+    vec![
+        bytes(&text(&|address| Some(address.id)), 1),
+        Leaf::Bytes(geometry, vec![1; addresses.len()], Vec::new()),
+        doubles(&coordinate(|address| address.lon), 2),
+        doubles(&coordinate(|address| address.lon), 2),
+        doubles(&coordinate(|address| address.lat), 2),
+        doubles(&coordinate(|address| address.lat), 2),
+        bytes(&vec![Some("IT".to_string()); addresses.len()], 1),
+        bytes(&text(&|address| address.postcode), 1),
+        bytes(&text(&|address| address.street), 1),
+        bytes(&text(&|address| address.number), 1),
+        bytes(&text(&|address| address.unit), 1),
+        list_bytes(&levels),
+        bytes(&vec![None; addresses.len()], 1),
+        int32s(&vec![Some(1); addresses.len()]),
+        list_bytes(&sources(|source| source.0)),
+        list_bytes(&sources(|source| source.1)),
+    ]
+}
+
+/// The spec's addresses common to both releases: an exact one with its postal code, a number written twice 100 m apart
+/// (Florence's red and black numbers), a number with its letter kept as the unit, and one of a CC0 source.
+fn spec_addresses_common() -> Vec<FixtureAddress> {
+    let mut signoria = FixtureAddress::new(
+        "a0000000-0000-4000-8000-000000000001",
+        "PIAZZA DELLA SIGNORIA",
+        "5",
+        11.2556,
+        43.7696,
+    );
+    signoria.postcode = Some("50122");
+    let mut letter = FixtureAddress::new(
+        "a0000000-0000-4000-8000-000000000004",
+        "VIA DEI FOSSI",
+        "12",
+        11.2490,
+        43.7724,
+    );
+    letter.unit = Some("A");
+    let mut frediano = FixtureAddress::new(
+        "a0000000-0000-4000-8000-000000000005",
+        "BORGO SAN FREDIANO",
+        "24",
+        11.2457,
+        43.7693,
+    );
+    frediano.sources = vec![("example/cc0", "CC0-1.0")];
+    vec![
+        signoria,
+        FixtureAddress::new(
+            "a0000000-0000-4000-8000-000000000002",
+            "VIA DEI FOSSI",
+            "51",
+            11.2487,
+            43.7721,
+        ),
+        FixtureAddress::new(
+            "a0000000-0000-4000-8000-000000000003",
+            "VIA DEI FOSSI",
+            "51",
+            11.2497,
+            43.7728,
+        ),
+        letter,
+        frediano,
+    ]
+}
+
+/// Addresses of release 1: the common ones, Via Parione 48 (moved in release 2) and Via Maggio 15 (removed in it), one
+/// outside the region, one with neither street nor number (rejected), and a far row group skipped by its statistics.
+#[must_use]
+pub fn spec_addresses_r1() -> Vec<u8> {
+    let mut rows = spec_addresses_common();
+    rows.push(FixtureAddress::new(
+        "a0000000-0000-4000-8000-000000000006",
+        "VIA PARIONE",
+        "48",
+        11.2499,
+        43.7707,
+    ));
+    rows.push(FixtureAddress::new(
+        "a0000000-0000-4000-8000-000000000007",
+        "VIA MAGGIO",
+        "15",
+        11.2495,
+        43.7677,
+    ));
+    rows.push(FixtureAddress::new(
+        "a0000000-0000-4000-8000-000000000008",
+        "VIA ROMA",
+        "1",
+        11.3100,
+        43.7700,
+    ));
+    let mut nothing = FixtureAddress::new("a0000000-0000-4000-8000-000000000009", "", "", 11.2500, 43.7700);
+    nothing.street = None;
+    nothing.number = None;
+    rows.push(nothing);
+    let far = vec![FixtureAddress::new(
+        "a0000000-0000-4000-9000-000000000001",
+        "VIA DEL CORSO",
+        "1",
+        12.4800,
+        41.9000,
+    )];
+    write(
+        ADDRESSES_SCHEMA,
+        &[address_leaves(&rows), address_leaves(&far)],
+        &Writer::default(),
+    )
+}
+
+/// Addresses of release 2: the common ones with new IDs, Via Parione 48 moved 200 m, Via Maggio 15 gone and Via Porta
+/// Rossa 10 new.
+#[must_use]
+pub fn spec_addresses_r2() -> Vec<u8> {
+    let mut rows = spec_addresses_common();
+    for (index, row) in rows.iter_mut().enumerate() {
+        row.id = Box::leak(format!("a0000000-0000-4000-8000-1000000000{index:02}").into_boxed_str());
+    }
+    rows.push(FixtureAddress::new(
+        "a0000000-0000-4000-8000-000000000016",
+        "VIA PARIONE",
+        "48",
+        11.2524,
+        43.7707,
+    ));
+    rows.push(FixtureAddress::new(
+        "a0000000-0000-4000-8000-000000000017",
+        "VIA PORTA ROSSA",
+        "10",
+        11.2530,
+        43.7701,
+    ));
+    write(ADDRESSES_SCHEMA, &[address_leaves(&rows)], &Writer::default())
+}

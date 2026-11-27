@@ -1,4 +1,4 @@
-// GeoDataImportCancel (plans/Maps.md §6.4, steps 4 and 5): a real import, a run of the GeoDataImport ServiceJob started as
+// GeoDataImportCancel (plans/archive/Maps.md §6.4, steps 4 and 5): a real import, a run of the GeoDataImport ServiceJob started as
 // Maps › Configuration › Geo data starts one (start#GeoDataImport), of an operator's file of 20,000 New Zealand codes (ten
 // batches of 2,000), cancelled while it loads. The batches it committed stay, whole batches only; nothing is retired (a code
 // of the edition in use that the new file lacks stays in date); the run ends GdiCancelled; the postal lookup cache is

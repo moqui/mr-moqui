@@ -2214,6 +2214,77 @@ fn git_eca_rules_check_pushes_and_see_their_commits_and_tags() {
     assert!(!ok && out.contains("main cannot be forced"), "{out}");
 }
 
+/// SEC-GIT-94: the events of an update run as its pusher in a context of their own, and the caller is the caller after;
+/// a pusher who may not sign in (a disabled account) has them run with no user, never as the caller.
+#[test]
+fn an_updates_events_run_as_its_pusher_or_no_one_never_as_the_caller() {
+    let fixture = fixture("eca-pusher");
+    moqui_core::service::git_eca::install(
+        fixture.context.factory(),
+        r#"<gitecas>
+            <giteca rule-name="Who" event="post-receive"><actions>
+                <entity-make-value entity-name="moqui.test.TestEntity" value-field="row"
+                    map="{testId: 'U' + updateId + '-' + (ec.user.userId || 'none')}"/>
+                <entity-create value-field="row"/></actions></giteca>
+        </gitecas>"#,
+    );
+    define(&fixture, "pushed", "db");
+    {
+        let _entered = fixture.context.enter();
+        let _authz = fixture.context.disable_authz();
+        user(&fixture.entity, "git.disabled");
+        let mut account = fixture
+            .entity
+            .find("moqui.security.UserAccount")
+            .unwrap()
+            .eq("userId", Value::string("git.disabled"))
+            .one()
+            .unwrap()
+            .unwrap();
+        account.set("disabled", Value::string("Y"));
+        account.update(&fixture.entity).unwrap();
+        // and one whose account is gone (a deleted user): no user, never the caller
+        for (id, pusher) in [
+            ("BY_READER", READER),
+            ("BY_DISABLED", "git.disabled"),
+            ("BY_GONE", "git.no.such.user"),
+        ] {
+            let mut update = EntityValue::make(&fixture.entity, crate::events::GIT_UPDATE).unwrap();
+            for (name, value) in [
+                ("updateId", id),
+                ("repositoryId", "pushed"),
+                ("source", "push"),
+                ("ecaStatus", "pending"),
+                ("userId", pusher),
+            ] {
+                update.set(name, Value::string(value));
+            }
+            update.create(&fixture.entity).unwrap();
+        }
+    }
+    let _entered = fixture.context.enter();
+    moqui_core::user::internal_login_user(WRITER).unwrap();
+    let provider = crate::provider(fixture.context.factory()).unwrap();
+    for id in ["BY_READER", "BY_DISABLED", "BY_GONE"] {
+        provider.process_update(id).unwrap();
+        assert_eq!(
+            moqui_core::user::current_user_id().unwrap().as_deref(),
+            Some(WRITER),
+            "the caller after {id}"
+        );
+    }
+    drop(_entered);
+    let rows = test_rows(&fixture);
+    assert!(rows.contains_key(&format!("UBY_READER-{READER}")), "{:?}", rows.keys());
+    assert!(rows.contains_key("UBY_DISABLED-none"), "{:?}", rows.keys());
+    assert!(rows.contains_key("UBY_GONE-none"), "{:?}", rows.keys());
+    assert!(
+        !rows.keys().any(|key| key.ends_with(&format!("-{WRITER}"))),
+        "{:?}",
+        rows.keys()
+    );
+}
+
 #[test]
 fn a_tag_that_cannot_be_read_fails_alone_and_the_other_events_run() {
     let fixture = fixture("eca-tolerant");

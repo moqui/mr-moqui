@@ -2,7 +2,9 @@
 # the measured ./moq test-all of Nov 4, 2026 (on 4 workers). Raise it only with the user's agreement.
 # Nov 14, 2026: raised to the final suites of the Dogfood build (DG0 to DG10, Dev AIDE P11 to P13) with the Sales and
 # Marketing apps merged, with the user's agreement: 8.5 s measured, rounded up. A review of regression vs acceptance follows.
-server = 9
+# Nov 26, 2026: raised with the user's agreement (the measured share, rounded up) for the Maps build (plans/archive/Maps.md P0 to P4,
+# O1, O2) with the merged upstream work of the same days: server 10.2 s measured, set to 11.
+server = 11
 # Nov 5, 2026: client raised with the user's agreement to the measured 6.6 s of the UI refinement's chat checks.
 # Nov 16, 2026: client raised with the user's agreement to 9 s: 8.2 s measured with CryptoFlow's emoji verification of
 # two devices (COM-UI-012).

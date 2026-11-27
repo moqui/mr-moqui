@@ -636,37 +636,40 @@ impl GitProvider {
         if !claimed {
             return Ok(text(update.get("ecaStatus")).unwrap_or_default());
         }
-        // the events run as the user who made the change; a caller's own user (a screen's Run again, a test) is put back
-        // after, so the rest of its request is not that user's
-        let user_id = text(update.get("userId"));
-        let mut caller: Option<Option<String>> = None;
-        if let Some(user_id) = &user_id {
-            if moqui_core::user::current_user_id().ok().flatten().as_deref() != Some(user_id.as_str()) {
-                if let Some(username) = username_of(entity, user_id) {
-                    caller = Some(moqui_core::user::current_username().ok().flatten());
-                    if let Err(err) = moqui_core::user::internal_login_user(&username) {
-                        tracing::warn!(update = update_id, "git update events run without their user: {err}");
-                    }
-                }
-            }
-        }
-        let errors = match self.run_post_events(&update, &refs) {
+        // the events run as the user who made the change, in a context of their own entered on this thread: it shares
+        // the caller's transaction, and the caller's own context (a screen's Run again, a test) comes back when it is
+        // dropped, a panic in a rule included, so the rest of the caller's request is never the pusher's; a pusher who
+        // may not sign in, one whose account is gone, and an update with no user have the events run with no user,
+        // never as the caller (SEC-GIT-94)
+        let run = || match self.run_post_events(&update, &refs) {
             Ok(errors) => errors,
             Err(err) => vec![err.message().to_string()],
         };
-        match caller {
-            Some(Some(username)) => {
-                if let Err(err) = moqui_core::user::internal_login_user(&username) {
-                    tracing::error!(
-                        update = update_id,
-                        "the caller's user {username} was not put back after the git update events: {err}"
-                    );
-                    moqui_core::user::session::clear_login();
+        let pusher = text(update.get("userId"));
+        let caller = moqui_core::user::current_user_id().ok().flatten();
+        let factory = moqui_core::context::ExecutionContext::with_current(|ec| std::sync::Arc::clone(ec.factory()));
+        let errors = match factory {
+            Some(factory) if pusher.is_none() || pusher != caller => {
+                let context = factory.new_context();
+                let _entered = context.enter();
+                match pusher.as_deref().map(|user_id| (user_id, username_of(entity, user_id))) {
+                    Some((_, Some(username))) => {
+                        if let Err(err) = moqui_core::user::internal_login_user(&username) {
+                            tracing::warn!(update = update_id, "git update events run with no user: {err}");
+                        }
+                    }
+                    Some((user_id, None)) => {
+                        tracing::warn!(
+                            update = update_id,
+                            "git update events run with no user: no account {user_id}"
+                        );
+                    }
+                    None => {}
                 }
+                run()
             }
-            Some(None) => moqui_core::user::session::clear_login(),
-            None => {}
-        }
+            _ => run(),
+        };
         let status = if errors.is_empty() { "done" } else { "failed" };
         let _rows = rows_guard();
         let mut fields = vec![

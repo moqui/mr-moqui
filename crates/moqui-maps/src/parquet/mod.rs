@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A Parquet reader of the subset GeoParquet writers use (plans/Maps-Overture.md §1), over a [`RangeSource`] that reads
+//! A Parquet reader of the subset GeoParquet writers use (plans/archive/Maps-Overture.md §1), over a [`RangeSource`] that reads
 //! a part of a file at a time (an HTTP range, a resource's `read_at`): the footer ([`meta`], in the Thrift compact
 //! protocol, [`thrift`]) with only the column chunks asked for, then one column chunk of one row group at a time, its
 //! pages decompressed and decoded ([`decode`]) into the column's levels and values ([`ColumnData`]). Data pages v1 and

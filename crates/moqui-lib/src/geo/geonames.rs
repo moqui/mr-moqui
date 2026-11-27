@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The GeoNames files (plans/Maps.md §6.2, §6.4): the postal codes of a country (download.geonames.org/export/zip,
+//! The GeoNames files (plans/archive/Maps.md §6.2, §6.4): the postal codes of a country (download.geonames.org/export/zip,
 //! twelve columns) and the gazetteer's countryInfo (`#` comment lines, nineteen columns), admin1CodesASCII,
 //! admin2Codes and cities15000 (nineteen columns) from download.geonames.org/export/dump. All are UTF-8, tab-delimited,
 //! with no header and no quoting: a `"` in a name is part of it. A first-level code is the source's own (FIPS for most

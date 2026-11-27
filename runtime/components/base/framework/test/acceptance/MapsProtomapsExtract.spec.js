@@ -1,4 +1,4 @@
-// MapsProtomapsExtract (plans/Maps.md §4.1, §5, §9 acceptance): a real Protomaps basemap, a small extract of a recent daily
+// MapsProtomapsExtract (plans/archive/Maps.md §4.1, §5, §9 acceptance): a real Protomaps basemap, a small extract of a recent daily
 // planet build (https://build.protomaps.com/<date>.pmtiles, the newest of the last two weeks that answers), read by HTTP
 // ranges as pmtiles reads an archive: its header, its root directory and the leaf directories the extract's tiles are in
 // (gzipped, unpacked with ec.resource.gunzip), and the tiles of a small box over central Florence from zoom 0 to 14,

@@ -1,7 +1,7 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
 /*
- * The map widget (plans/Maps.md §3.2), on the vendored OpenLayers bundle (libs/openlayers, an ES module build whose files
+ * The map widget (plans/archive/Maps.md §3.2), on the vendored OpenLayers bundle (libs/openlayers, an ES module build whose files
  * are named by their hash: map.loadOpenLayers reads ol-map.json for its entries, imports the main one and sets it as the
  * global MoquiOl, with ol-mapbox-style and the PMTiles sources). m-map of WebrootVue.qvt.js loads this
  * file, the bundle and ol.css when the first map mounts and draws m-map-view by its definition; the map-view XML element
@@ -63,9 +63,20 @@
  *     layerErrors: [{id, label, reasonCode, message}]  what the server did not resolve (id "record": the record's place),
  *                  each named under the map, with Retry (the configuration asked again) when it came from config-url,
  *     featuresTruncated: true when a record layer had more features than were sent, units: "metric" | "imperial" (the
- *                  scale line's)
+ *                  scale line's),
+ *     locationShares: [{shareId, role, label, ownerName, thruDate, approximate, keepTrail, latest {latitude, longitude,
+ *                  accuracy, ageSeconds}, trail [[lon, lat]]}]  the live layer's shares (get#EffectiveConfig with
+ *                  locationShares, as Maps › Browse asks for it; map.normalizeLiveShares)
  *   }
- * The network contracts of the bundle (build/libs/refresh.mjs, OPENLAYERS_HOSTS; plans/Maps.md §3.2): a mapbox:// URL is
+ * The live layer (plans/archive/Location-Sharing.md §3.3): each share with a position is a marker labelled with its label and the
+ * position's age (canvas text, never markup), its accuracy a ring and a kept trail a line; one with no report for
+ * map.LIVE_STALE_SECONDS is drawn grey and dashed, and listed as stale under the map with the rest (label, age, latitude,
+ * longitude, approximate). The map follows each share it shows on the topic locationShare:<shareId> of the shell's
+ * notification socket (registerListener), from when it is listed until it is no longer listed, ends or is revoked for this
+ * viewer, or the map unmounts: a position push moves its marker, ring and trail; changed takes a new end; ended (and a
+ * viewer's revoked) takes it off for as long as the map is mounted. A configuration whose shares alone changed changes the
+ * layer without drawing the map again; a position newer than the read's is kept (map.mergeLiveShares).
+ * The network contracts of the bundle (build/libs/refresh.mjs, OPENLAYERS_HOSTS; plans/archive/Maps.md §3.2): a mapbox:// URL is
  * refused before it reaches the library; a style is loaded here, checked, its sources' attributions escaped, and its
  * metadata['ol:webfonts'] replaced with the local fonts' absolute template (map.webfonts), which is also the webfonts option;
  * a TileJSON is fetched here and handed on with its attribution escaped; KML is read with an iconUrlFunction answering a blank
@@ -75,7 +86,7 @@
  * not is asked as a plain image, which a fetched WFS cannot be). Locate me asks the browser for the position only when
  * pressed, and the position is neither kept nor sent.
  *
- * Editing (plans/Maps.md §4.1, P4b; Browse's own overlays): editCommand(name, value) of the component (m-map passes it on)
+ * Editing (plans/archive/Maps.md §4.1, P4b; Browse's own overlays): editCommand(name, value) of the component (m-map passes it on)
  * edits a FeatureCollection in a layer of its own over the map while the overlay it came from is hidden: start {layerId,
  * collection (GeoJSON, WGS84), pointsOnly}, draw ("Point", "LineString", "Polygon" or "" for none: OpenLayers' Draw), with
  * the selected feature's vertices moved by Modify and snapped to the others' (Snap); from the keyboard Enter adds a vertex at
@@ -85,10 +96,24 @@
  * editing. It emits edit-change ({count, dirty, selected: {id, label, description} or null, sketch, drawType}). The map drawn
  * again (another configuration) keeps the editing, its changes and all.
  *
+ * Package mode (plans/archive/Maps-Offline.md §2.5): an offline map package on the device, which the desktop and mobile apps serve
+ * to their shell at /__moqui-app/maps/<packageId>/<path> (moqui_client::packages::serve). The configuration is then
+ *   {packageBase: "/__moqui-app/maps/<packageId>/", manifest: (the package's manifest.json), and the view or places of the
+ *    page's own, which win}
+ * and map.fromManifest makes it of the manifest's frozen configuration: each URL in it package-relative, resolved against
+ * packageBase (one that is absolute, rooted or leaves the package is dropped, and its layer fails by name); the allowed
+ * origin is the package path alone (urlAllowed takes packageBase: the page's own origin outside it is refused too); the
+ * label fonts (ol:webfonts) and a style's sprite are the package's (packageFonts, packageStyle); a PMTiles archive is read
+ * by range from the package; the outline is its outline.json; and a basemap's attribution is the manifest's, with the
+ * source's own notice (an archive's metadata, often HTML) as plain text, never markup. No outside request is ever made.
+ * Everything else (Locate me, places, overlays, selection) is as above; showPlace(place) marks a place a page found.
+ *
  * Events: pick ({lon, lat}, also the DOM event m-map-pick with that detail, which bubbles), select (a place or a feature:
  * {id, lon, lat, label}, with layerId for a record layer's feature; an overlay layer's feature is kind "overlay" with its
  * layerId, layerLabel and description, label and description plain text (map.plainText), shown as text, never as markup)
- * and view-change ({center, zoom, extent}). A feature is selected by a click, or from the keyboard by Enter on the map,
+ * and view-change ({center, zoom, extent}), and live-change ({shares, removed}: the live shares, as held, after each change, and the share an ended or a viewer's revoked
+ * push took off; a live
+ * share selected is a select of kind liveShare with its shareId). A feature is selected by a click, or from the keyboard by Enter on the map,
  * which selects the feature at its center (map.nearestFeature, 12 pixels; a map that asks for a choice takes the center
  * instead); the selection is announced. Each place listed has Copy, which puts its latitude, longitude on the clipboard.
  */
@@ -426,6 +451,111 @@
     // of the page) for a provider whose test saw CORS, and none for one that did not, whose images then load as plain images
     map.ogcCrossOrigin = (url, ogc, pageOrigin) => (map.sameOrigin(url, pageOrigin) || !ogc || ogc.cors === false ? undefined : "anonymous");
 
+    // ---- offline packages (plans/archive/Maps-Offline.md §2.5) ----
+
+    // The path a package's files are read at on the shell's origin, and its check: one package id, a plain name
+    const PACKAGE_BASE = /^\/__moqui-app\/maps\/[A-Za-z0-9_.:-]{1,64}\/$/;
+    map.isPackageBase = (base) => PACKAGE_BASE.test(text(base)) && !/\/\.+\/$/.test(text(base));
+    map.packageBase = (packageId) => {
+        const base = "/__moqui-app/maps/" + text(packageId) + "/";
+        return map.isPackageBase(base) ? base : "";
+    };
+    // A package-relative path made the URL of its file (base + path), or "" for one that is not a plain path inside the
+    // package: absolute, rooted, with a scheme, a query, a backslash, a percent sign, or a "." or ".." segment
+    map.packageUrl = (path, base) => {
+        const value = text(path);
+        if (!value || !map.isPackageBase(base) || /^[a-z][a-z0-9+.-]*:/i.test(value) || /[\\?#%\u0000-\u001f]/.test(value) ||
+            value.split("/").some((part) => !part || part === "." || part === "..")) return "";
+        return base + value;
+    };
+    // The label fonts of a package (its fonts/ member, as OF1's MapPackages.js writes the style's ol:webfonts)
+    const PACKAGE_FONTS = "fonts/{font-family}/{fontweight}{-fontstyle}.css";
+    map.packageFonts = (pageOrigin, base) => pageOrigin + base + PACKAGE_FONTS;
+    // A package's style with its sprite made the package's own absolute URL (the manifest writes it package-relative,
+    // which a library would resolve against the style's folder): one that is not a plain package path is dropped
+    map.packageStyle = (style, pageOrigin, base) => {
+        if (!style || typeof style !== "object") return style;
+        const out = Object.assign({}, style);
+        const of = (url) => { const made = map.packageUrl(url, base); return made ? pageOrigin + made : ""; };
+        if (typeof out.sprite === "string") {
+            const sprite = of(out.sprite);
+            if (sprite) out.sprite = sprite;
+            else delete out.sprite;
+        } else if (Array.isArray(out.sprite)) {
+            out.sprite = out.sprite.map((entry) => Object.assign({}, entry, { url: of(entry && entry.url) })).filter((entry) => entry.url);
+        }
+        return out;
+    };
+    // The configuration a map draws of a package's manifest (its configuration, frozen when it was built): every URL the
+    // package's, no allowed origin, no link of the notice, the view its region, and each basemap's attribution with the
+    // notice of the data it was cut from (the manifest's sources: an archive's metadata, often HTML) read as plain text
+    map.fromManifest = (manifest, base) => {
+        const given = manifest && typeof manifest === "object" && manifest.configuration && typeof manifest.configuration === "object" ?
+            JSON.parse(JSON.stringify(manifest.configuration)) : {};
+        const sources = Array.isArray(manifest && manifest.sources) ? manifest.sources : [];
+        const profile = given.profile && typeof given.profile === "object" ? given.profile : {};
+        const notice = (member) => {
+            const source = sources.find((one) => one && text(one.member) === member);
+            return source ? map.attributionText(map.plainText(source.sourceAttribution, 300)) : "";
+        };
+        profile.basemaps = (Array.isArray(profile.basemaps) ? profile.basemaps : []).filter((basemap) => basemap && typeof basemap === "object").map((basemap) => {
+            const own = notice(text(basemap.url));
+            const lines = text(basemap.attribution).split("\n").map((line) => line.trim()).filter((line) => line);
+            return Object.assign({}, basemap, { url: map.packageUrl(basemap.url, base), styleUrl: basemap.styleUrl ? map.packageUrl(basemap.styleUrl, base) : "",
+                attribution: lines.concat(own && !lines.includes(own) ? [own] : []).join("\n") });
+        });
+        profile.allowedOrigins = [];
+        if (profile.notice && typeof profile.notice === "object") profile.notice = { text: text(profile.notice.text) };
+        given.profile = profile;
+        given.layers = (Array.isArray(given.layers) ? given.layers : []).filter((layer) => layer && typeof layer === "object")
+            .map((layer) => Object.assign({}, layer, { url: map.packageUrl(layer.url, base), styleUrl: layer.styleUrl ? map.packageUrl(layer.styleUrl, base) : "" }));
+        // what a page of the server's would ask again or send: nothing of it offline
+        ["recordLayers", "features", "points", "record", "adapter", "recordKey", "layerErrors", "projections"].forEach((key) => { delete given[key]; });
+        given.projection = "EPSG:3857";
+        given.packageBase = map.isPackageBase(base) ? base : "";
+        return given;
+    };
+    // A package's file read whole: the apps' scheme answers a file past 16 MiB only by range (moqui_client::packages::serve),
+    // so it is asked in slices of that, each with no HTTP cache (a package's URL carries no account), and joined
+    const PACKAGE_SLICE = 16 * 1024 * 1024;
+    map.readPackageFile = (url) => {
+        const parts = [];
+        const next = (at) => root.fetch(url, { cache: "no-store", credentials: "same-origin", headers: { Range: "bytes=" + at + "-" + (at + PACKAGE_SLICE - 1) } })
+            .then((response) => {
+                if (response.status === 200) return response.text().then((whole) => ({ whole }));
+                if (response.status !== 206) throw new Error("HTTP " + response.status);
+                // a slice that does not say the whole file's length cannot be joined: an error, never a file cut short
+                const range = /^bytes \d+-\d+\/(\d+)$/.exec(String(response.headers.get("Content-Range") || "").trim());
+                if (!range) throw new Error("A slice of " + url + " without its Content-Range");
+                const total = Number(range[1]);
+                return response.arrayBuffer().then((buffer) => {
+                    const bytes = new Uint8Array(buffer);
+                    parts.push(bytes);
+                    return bytes.length && at + bytes.length < total ? next(at + bytes.length) : {};
+                });
+            });
+        return next(0).then((done) => {
+            if (done && done.whole !== undefined) return done.whole;
+            const joined = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
+            let offset = 0;
+            parts.forEach((part) => { joined.set(part, offset); offset += part.length; });
+            return new root.TextDecoder().decode(joined);
+        });
+    };
+    // What a package was built from, for the offline screen: each source's attribution and licenses as plain text (an
+    // archive's own notice is often HTML, never shown as markup)
+    map.packageSources = (manifest) => (Array.isArray(manifest && manifest.sources) ? manifest.sources : []).filter((source) => source && typeof source === "object").map((source) => {
+        const plain = (value) => (value && typeof value === "object" ? "" : map.attributionText(map.plainText(value, 300)));
+        const named = (license) => (license && typeof license === "object" ? license.name || license.license || license.licenseName || license.text || license.attribution : license);
+        const licenses = []
+            .concat(source.license ? [source.license] : [])
+            .concat((Array.isArray(source.licenses) ? source.licenses : []).map(named))
+            .concat((Array.isArray(source.imports) ? source.imports : []).flatMap((one) => (Array.isArray(one && one.licenses) ? one.licenses : []).map(named)))
+            .map(plain).filter((line, index, all) => line && all.indexOf(line) === index);
+        return { kind: text(source.kind), member: text(source.member), attribution: plain(source.attribution),
+            sourceAttribution: plain(source.sourceAttribution), licenses };
+    }).filter((source) => source.kind);
+
     // The configuration as m-map-view draws it (the shape at the top of this file), from a server's answer, a map-view's
     // attributes bound in a static template (texts) or a JSON text: numbers parsed, a point, center or extent that is not WGS84
     // degrees left out, layers as objects, and the outline profile when no basemap is given (outline true then).
@@ -435,15 +565,24 @@
             try { given = JSON.parse(given); } catch (err) { given = {}; }
         }
         if (!given || typeof given !== "object") given = {};
+        // a package's manifest (package mode): its configuration, the page's own view and places winning
+        if (given.manifest && typeof given.manifest === "object") {
+            const own = {};
+            ["center", "zoom", "extent", "points", "pick", "pickForm", "units"].forEach((key) => { if (!blank(given[key])) own[key] = given[key]; });
+            given = Object.assign(map.fromManifest(given.manifest, text(given.packageBase)), own);
+        }
+        const packageBase = map.isPackageBase(given.packageBase) ? text(given.packageBase) : "";
         const profileIn = given.profile && typeof given.profile === "object" ? given.profile : {};
         const basemaps = (Array.isArray(profileIn.basemaps) ? profileIn.basemaps : []).map(normalizeBasemap).filter((basemap) => basemap);
         const outline = !basemaps.length;
+        // a package draws its own outline when it has no basemap
+        const outlines = packageBase ? OUTLINE.basemaps.map((basemap) => Object.assign({}, basemap, { url: packageBase + "outline.json" })) : OUTLINE.basemaps;
         const profile = {
             profileId: text(profileIn.profileId) || (outline ? OUTLINE.profileId : text(given.profileId)),
             profileName: text(profileIn.profileName) || (outline ? OUTLINE.profileName : ""),
-            basemaps: outline ? OUTLINE.basemaps.map(normalizeBasemap) : basemaps,
+            basemaps: outline ? outlines.map(normalizeBasemap) : basemaps,
             basemap: text(profileIn.basemap),
-            allowedOrigins: (Array.isArray(profileIn.allowedOrigins) ? profileIn.allowedOrigins : []).map(text).filter((origin) => origin),
+            allowedOrigins: packageBase ? [] : (Array.isArray(profileIn.allowedOrigins) ? profileIn.allowedOrigins : []).map(text).filter((origin) => origin),
             notice: profileIn.notice && typeof profileIn.notice === "object" && text(profileIn.notice.text) ?
                 { text: text(profileIn.notice.text), href: map.safeHref(profileIn.notice.href), linkText: text(profileIn.notice.linkText) } : null
         };
@@ -454,7 +593,7 @@
         const projections = map.normalizeProjections(given.projections);
         return {
             profileId: text(given.profileId) || text(profileIn.profileId),
-            profile, outline,
+            profile, outline, packageBase,
             layers: idList(given.layers).map(normalizeLayer).filter((layer) => layer),
             center: center && lonOk(center[0]) && latOk(center[1]) ? center : null,
             zoom: zoom !== null && zoom >= 0 && zoom <= 22 ? zoom : null,
@@ -469,7 +608,9 @@
             addressPurpose: text(given.addressPurpose),
             layerErrors: map.normalizeLayerErrors(given.layerErrors),
             featuresTruncated: given.featuresTruncated === true || given.featuresTruncated === "true",
-            units: text(given.units).toLowerCase() === "imperial" ? "imperial" : text(given.units).toLowerCase() === "metric" ? "metric" : ""
+            units: text(given.units).toLowerCase() === "imperial" ? "imperial" : text(given.units).toLowerCase() === "metric" ? "metric" : "",
+            // the live layer's shares (plans/archive/Location-Sharing.md §3.3), held apart from the drawing: see map.normalizeLiveShares
+            locationShares: map.normalizeLiveShares(given.locationShares)
         };
     };
     // What the server did not resolve, each {id, label, reasonCode, message} as text; one without an id is left out.
@@ -495,6 +636,7 @@
         out.points = map.normalizePoints(server.points.concat(local.points));
         const knownLayers = new Set(server.layers.map((layer) => layer.id));
         out.layers = server.layers.concat(local.layers.filter((layer) => !knownLayers.has(layer.id)));
+        if (!server.locationShares.length) out.locationShares = local.locationShares;
         return out;
     };
 
@@ -518,6 +660,8 @@
     // The origins a map may ask: the page's, those of the URLs its profile and layers name, and the profile's allowedOrigins.
     map.allowedOrigins = (config, pageOrigin) => {
         const origins = new Set([pageOrigin]);
+        // a package's map asks its package's path of the page's origin, nothing else (urlAllowed with its base)
+        if (config.packageBase) return origins;
         const add = (url) => {
             if (!url || !/^https?:\/\//i.test(url)) return;
             const origin = originOf(url.replace(/\{[^}]*\}/g, "0"));
@@ -529,13 +673,15 @@
         return origins;
     };
     // Whether a URL may be asked: http or https (a relative URL is the page's), of an allowed origin. A mapbox:// URL, or a
-    // data:, blob:, file: or javascript: one, is refused, and so is a host the profile does not name.
-    map.urlAllowed = (url, origins, pageOrigin) => {
+    // data:, blob:, file: or javascript: one, is refused, and so is a host the profile does not name. With a package's
+    // base (package mode), only a URL of the page's origin under that path, with no query.
+    map.urlAllowed = (url, origins, pageOrigin, packageBase) => {
         const value = text(url);
         if (!value || /^mapbox:/i.test(value)) return false;
         let parsed;
         try { parsed = new URL(value.replace(/\{[^}]*\}/g, "0"), pageOrigin + "/"); } catch (err) { return false; }
         if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return false;
+        if (packageBase) return parsed.origin === pageOrigin && parsed.pathname.startsWith(packageBase) && !parsed.search;
         return origins.has(parsed.origin);
     };
     // A PMTiles source of this server's archive at url (pmtiles' FetchSource, the session's cookies), whose 409 calls
@@ -556,15 +702,17 @@
     // The URLs a style document names that may not be asked (its sources' url, tiles and GeoJSON data, and its sprite), each
     // resolved against the style's own URL. ol-mapbox-style does not read glyphs (it uses web fonts), so they are not asked.
     // bound: the IDs of sources m-map binds itself (a PMTiles archive's, whose url is pmtiles://), not asked by the library.
-    map.refusedStyleUrls = (style, styleUrl, origins, pageOrigin, bound) => {
+    // packageBase: a package's style, whose relative URLs are the package's (resolved against its root), each under it.
+    map.refusedStyleUrls = (style, styleUrl, origins, pageOrigin, bound, packageBase) => {
         const refused = [];
         const check = (url) => {
             if (typeof url !== "string" || !url) return;
             let resolved = url;
             if (!/^[a-z][a-z0-9+.-]*:/i.test(url)) {
-                try { resolved = new URL(url.replace(/\{[^}]*\}/g, (m) => "__" + m.slice(1, -1) + "__"), new URL(styleUrl, pageOrigin + "/")).href; } catch (err) { resolved = url; }
+                const against = packageBase ? pageOrigin + packageBase : new URL(styleUrl, pageOrigin + "/");
+                try { resolved = new URL(url.replace(/\{[^}]*\}/g, (m) => "__" + m.slice(1, -1) + "__"), against).href; } catch (err) { resolved = url; }
             }
-            if (!map.urlAllowed(resolved, origins, pageOrigin)) refused.push(url);
+            if (!map.urlAllowed(resolved, origins, pageOrigin, packageBase)) refused.push(url);
         };
         const sources = style && style.sources && typeof style.sources === "object" ? style.sources : {};
         Object.keys(sources).forEach((id) => {
@@ -593,7 +741,9 @@
         Object.assign({}, source, { attribution: map.escapeHtml(map.attributionText(source.attribution)) }) : source);
 
     // The attribution control's HTML for a text of lines and their links (attributionUrls, in order): each line escaped, a
-    // link only for an http(s) URL, opening in a new tab.
+    // link only for an http(s) URL, opening in a new tab. OpenLayers' attribution control sets what it is given as HTML, so
+    // everything handed to it is made escaped text here, a package's own source notice too (plans/archive/Maps-Offline.md §2.5:
+    // an archive's attribution, often HTML, is shown as text, never as markup).
     map.attributionHtml = (attribution, urls) => text(attribution).split("\n").map((line) => line.trim()).filter((line) => line).map((line, index) => {
         const url = (urls || [])[index];
         return url && /^https?:\/\//i.test(url) ? '<a href="' + map.escapeHtml(url) + '" target="_blank" rel="noopener noreferrer">' + map.escapeHtml(line) + "</a>" :
@@ -735,6 +885,103 @@
         return true;
     };
 
+    // ---- live location (plans/archive/Location-Sharing.md §3.3) ----
+
+    // The shares a map shows live: the effective configuration's locationShares (the viewer's own active shares and those
+    // shared with them, which the server checked against each share's current audience), at most LIVE_MAX. Each, checked:
+    // {shareId, role (owner or viewer), label (plain text, shown as text), ownerName, thruDate (epoch millis), approximate,
+    // keepTrail, latest {lon, lat, accuracy, observedDate} or null, seenAt (this page's clock when that position was taken:
+    // latest.seenAt as the parent stamped it at its read, else the read's ageSeconds before now, or a push's arrival), trail [[lon, lat]] (at most LIVE_TRAIL_MAX, the latest)}.
+    const LIVE_MAX = 100;
+    const LIVE_TRAIL_MAX = 500;
+    // a share with no report for this long is drawn stale: its owner's page closed, or the device lost its fix
+    map.LIVE_STALE_SECONDS = 300;
+    const livePoint = (value) => {
+        if (!value || typeof value !== "object") return null;
+        const lon = num(first(value, "longitude", "lon")), lat = num(first(value, "latitude", "lat"));
+        if (!lonOk(lon) || !latOk(lat)) return null;
+        const accuracy = num(value.accuracy);
+        return { lon, lat, accuracy: accuracy !== null && accuracy >= 0 && accuracy <= 1e7 ? accuracy : null, observedDate: num(value.observedDate) };
+    };
+    const liveTrail = (trail) => (Array.isArray(trail) ? trail : []).map((pair) => (Array.isArray(pair) ? [num(pair[0]), num(pair[1])] : [null, null]))
+        .filter((pair) => lonOk(pair[0]) && latOk(pair[1])).slice(-LIVE_TRAIL_MAX);
+    map.normalizeLiveShare = (row, now) => {
+        if (!row || typeof row !== "object") return null;
+        const shareId = shortText(row.shareId, 60);
+        if (!shareId) return null;
+        const latest = livePoint(row.latest);
+        const age = latest ? num(row.latest.ageSeconds) : null;
+        // the page's clock at its read, when the parent stamped it (Maps › Browse does, once a read): a configuration
+        // normalized again later keeps it, so a share that stopped reporting goes stale
+        const stamped = latest ? num(row.latest.seenAt) : null;
+        return { shareId, role: row.role === "owner" ? "owner" : "viewer", label: map.plainText(row.label, 100) || map.plainText(row.ownerName, 100) || L("Shared location"),
+            ownerName: map.plainText(row.ownerName, 100), thruDate: num(row.thruDate), approximate: row.approximate === true, keepTrail: row.keepTrail === true,
+            latest, seenAt: !latest ? null : stamped !== null ? stamped : now - Math.max(0, age === null ? 0 : age) * 1000, trail: row.keepTrail === true ? liveTrail(row.trail) : [] };
+    };
+    map.normalizeLiveShares = (list, now) => {
+        const at = now === undefined ? Date.now() : now;
+        const seen = new Set();
+        return (Array.isArray(list) ? list : []).map((row) => map.normalizeLiveShare(row, at)).filter((share) => share && !seen.has(share.shareId) && seen.add(share.shareId))
+            .slice(0, LIVE_MAX);
+    };
+    // The seconds since a share's position was taken, null with none; stale past LIVE_STALE_SECONDS.
+    map.liveAgeSeconds = (share, now) => (share && share.seenAt !== null && share.seenAt !== undefined ? Math.max(0, Math.round((now - share.seenAt) / 1000)) : null);
+    map.liveStale = (share, now) => { const age = map.liveAgeSeconds(share, now); return age !== null && age > map.LIVE_STALE_SECONDS; };
+    // The age as words ("just now", "4 min ago"); an approximate share's by the minute, as its time is kept.
+    map.liveAgeText = (seconds) => (seconds === null || seconds === undefined ? L("No position yet") : seconds < 60 ? L("just now")
+        : seconds < 3600 ? Math.floor(seconds / 60) + " " + L("min ago") : seconds < 86400 ? Math.floor(seconds / 3600) + " " + L("h ago")
+        : Math.floor(seconds / 86400) + " " + L("d ago"));
+    // The message of a push on a share's topic (locationShare:<shareId>: the NotificationMessage's message, an object or its
+    // JSON), or null.
+    map.liveMessage = (jsonObj) => {
+        let message = jsonObj && typeof jsonObj === "object" ? jsonObj.message : null;
+        if (typeof message === "string") { try { message = JSON.parse(message); } catch (err) { message = null; } }
+        return message && typeof message === "object" && text(message.shareId) ? message : null;
+    };
+    // A push applied to the shares (LocationShares.js push): position moves the share's marker, its accuracy and its trail
+    // (when kept) and makes it fresh; changed takes a new end; ended, and revoked for a viewer (who is out of its audience),
+    // takes it off (a revoke the owner is told of ends an entry, not the share). {shares (a new list when changed),
+    // changed, removed (the shareId taken off, or null)}.
+    map.applyLiveMessage = (shares, message, now) => {
+        const index = message ? shares.findIndex((share) => share.shareId === text(message.shareId)) : -1;
+        if (index < 0) return { shares, changed: false, removed: null };
+        const share = shares[index];
+        const event = text(message.event);
+        if (event === "ended" || (event === "revoked" && share.role === "viewer"))
+            return { shares: shares.filter((one, at) => at !== index), changed: true, removed: share.shareId };
+        let next = null;
+        if (event === "position") {
+            const latest = livePoint(message);
+            if (!latest) return { shares, changed: false, removed: null };
+            const trail = share.keepTrail ? share.trail.concat([[latest.lon, latest.lat]]).slice(-LIVE_TRAIL_MAX) : share.trail;
+            next = Object.assign({}, share, { latest, seenAt: now, trail, approximate: message.approximate === true ? true : share.approximate });
+        } else if (event === "changed" && num(message.thruDate) !== null) next = Object.assign({}, share, { thruDate: num(message.thruDate) });
+        if (!next) return { shares, changed: false, removed: null };
+        return { shares: shares.map((one, at) => (at === index ? next : one)), changed: true, removed: null };
+    };
+    // A configuration's shares over those held: a share the read no longer lists is gone; one taken off by a push (gone)
+    // stays off; the held position is kept when the read's is the same one (its time when it was first seen stays, so a
+    // configuration read or normalized again never makes an old position fresh) or older (a push came since).
+    const samePosition = (a, b) => !!a && !!b && a.lon === b.lon && a.lat === b.lat && a.observedDate === b.observedDate;
+    map.mergeLiveShares = (held, given, gone) => given.filter((share) => !(gone && gone.has(share.shareId))).map((share) => {
+        const before = held.find((one) => one.shareId === share.shareId);
+        const keep = before && before.seenAt !== null && (samePosition(before.latest, share.latest) || share.seenAt === null || before.seenAt > share.seenAt);
+        return keep ? Object.assign({}, share, { latest: before.latest, seenAt: before.seenAt, trail: before.trail.length > share.trail.length ? before.trail : share.trail }) : share;
+    });
+    // The ring of a position's accuracy: count points metres around it, in WGS84 degrees (closed), for a polygon in any
+    // view's projection.
+    map.accuracyRing = (lon, lat, metres, count) => {
+        const steps = count || 48;
+        const north = metres / 111320;
+        const east = metres / (111320 * Math.max(Math.cos((lat * Math.PI) / 180), 1e-6));
+        const ring = [];
+        for (let i = 0; i <= steps; i++) {
+            const angle = (2 * Math.PI * (i % steps)) / steps;
+            ring.push([lon + east * Math.cos(angle), Math.max(-90, Math.min(90, lat + north * Math.sin(angle)))]);
+        }
+        return ring;
+    };
+
     // ---- the component ----
 
     const h = (...args) => root.Vue.h(...args);
@@ -749,10 +996,11 @@
     const mapView = {
         name: "mMapView",
         props: { id: String, config: [Object, String], configUrl: String, height: String, pick: Boolean, libraryError: String },
-        emits: ["pick", "select", "view-change", "edit-change"],
+        emits: ["pick", "select", "view-change", "edit-change", "live-change"],
         data() {
             return { effective: null, loadError: "", fallback: "", drawn: false, layerStatus: [], readout: "", picked: null, pickText: "", pickError: "",
-                locating: false, located: "", basemapId: "", selectedId: "", announced: "", focused: false, editing: false, projectionNote: "" };
+                locating: false, located: "", basemapId: "", selectedId: "", announced: "", focused: false, editing: false, projectionNote: "",
+                liveShares: [], liveNow: Date.now() };
         },
         computed: {
             local() {
@@ -767,19 +1015,32 @@
             failedLayers() { return this.layerStatus.filter((status) => status.state === "failed"); }
         },
         watch: {
-            // a parent's render makes its bound object again: only a configuration that changed draws the map again
-            config(value, before) { if (JSON.stringify(value) !== JSON.stringify(before)) this.load(); }
+            // a parent's render makes its bound object again: only a configuration that changed draws the map again, and one
+            // whose live shares alone changed (a parent's read of them again) changes the live layer without drawing it again
+            config(value, before) {
+                if (JSON.stringify(value) === JSON.stringify(before)) return;
+                const others = (config) => {
+                    let given = config;
+                    if (typeof given === "string") { try { given = JSON.parse(given); } catch (err) { given = {}; } }
+                    return JSON.stringify(Object.assign({}, given || {}, { locationShares: null }));
+                };
+                if (others(value) === others(before)) this.setLiveShares(this.local.locationShares);
+                else this.load();
+            }
         },
         mounted() { this.load(); },
         beforeUnmount() {
             this.editSnapshot = null;
             this.editor = null;
             if (this.decoderListener) decoderListeners.delete(this.decoderListener);
+            this.stopLive();
             this.teardown();
         },
         methods: {
             pageOrigin() { return root.location.origin; },
-            webfonts() { return map.webfonts(this.pageOrigin()); },
+            // a package's path in package mode (plans/archive/Maps-Offline.md §2.5), else ""
+            packageBase() { return this.shown.packageBase || ""; },
+            webfonts() { return this.packageBase() ? map.packageFonts(this.pageOrigin(), this.packageBase()) : map.webfonts(this.pageOrigin()); },
             load() {
                 const local = this.local;
                 // an answer for an earlier configuration, come after a later one, is not drawn
@@ -799,6 +1060,8 @@
             start(config) {
                 this.teardown();
                 this.effective = config;
+                // the live shares are listed, and followed on their topics, whether or not the map can be drawn
+                this.setLiveShares(config.locationShares);
                 this.basemapId = config.profile.basemap && config.profile.basemaps.some((b) => b.id === config.profile.basemap) ? config.profile.basemap :
                     (config.profile.basemaps[0] || {}).id || "";
                 const O = root.MoquiOl;
@@ -835,6 +1098,7 @@
                 // the map drawn again keeps what is being edited (build starts it again)
                 if (this.editor) { this.editSnapshot = this.editSnapshotOf(); this.editor = null; }
                 if (this.olMap) { this.olMap.setTarget(null); this.olMap.dispose(); this.olMap = null; }
+                this.liveSource = null;
                 this.drawn = false;
                 this.layerStatus = [];
             },
@@ -870,6 +1134,10 @@
                 olMap.addLayer(this.overlayGroup);
                 this.markerSource = new O.VectorSource();
                 olMap.addLayer(new O.VectorLayer({ source: this.markerSource, style: (feature) => this.markerStyle(O, feature), zIndex: 10 }));
+                // the live layer, over the places (plans/archive/Location-Sharing.md §3.3)
+                this.liveSource = new O.VectorSource();
+                olMap.addLayer(new O.VectorLayer({ source: this.liveSource, style: (feature) => this.liveStyle(O, feature), zIndex: 11 }));
+                this.drawLive(O);
                 this.drawBasemap(O);
                 config.layers.forEach((layer) => this.drawLayer(O, layer));
                 this.drawPlaces(O, config);
@@ -895,8 +1163,9 @@
                     if (this.editor) return;
                     // a place, a record's or a record layer's feature, or a feature of an overlay layer (not the basemap's)
                     const hit = olMap.forEachFeatureAtPixel(event.pixel, (found, layer) => (found.get("place") || found.get("recordFeature") ||
-                        (layer && layer.get("overlayLayerId")) ? { feature: found, layer } : null), { hitTolerance: 4 });
-                    if (hit && hit.feature.get("place")) this.select(hit.feature.get("place"));
+                        found.get("liveMarker") || (layer && layer.get("overlayLayerId")) ? { feature: found, layer } : null), { hitTolerance: 4 });
+                    if (hit && hit.feature.get("liveMarker")) this.selectLive(hit.feature.get("shareId"));
+                    else if (hit && hit.feature.get("place")) this.select(hit.feature.get("place"));
                     else if (hit) this.selectFeature(hit.feature, hit.layer, this.toLonLat(event.coordinate));
                     else if (this.shown.pick) this.choose(this.toLonLat(event.coordinate));
                 });
@@ -942,6 +1211,8 @@
                 } catch (err) { fail(err); }
             },
             checkUrl(url, what) {
+                if (this.packageBase() && !map.urlAllowed(url, this.origins, this.pageOrigin(), this.packageBase()))
+                    throw new Error(what + " " + (url || "(none)") + " " + L("is not a file of this offline map"));
                 if (!map.urlAllowed(url, this.origins, this.pageOrigin())) throw new Error(what + " " + (url || "(none)") + " " + L("is not a host of the map's profile"));
             },
             watchSource(source, entry, kind) {
@@ -960,11 +1231,14 @@
                 const dark = root.document && root.document.body && root.document.body.classList.contains("body--dark");
                 // read here, not by url: each ring is made continuous across the antimeridian before it is projected
                 const url = new URL(basemap.url, this.pageOrigin() + "/").href;
-                const source = new O.VectorSource({ attributions, overlaps: false, loader: (extent, resolution, projection, success, failure) => {
+                // a package's by range, past 16 MiB as the app's scheme answers it
+                const read = () => (this.packageBase() ? map.readPackageFile(url).then((body) => JSON.parse(body)) :
                     root.fetch(url, { credentials: "same-origin" }).then((response) => {
                         if (!response.ok) throw new Error("HTTP " + response.status);
                         return response.json();
-                    }).then((topology) => {
+                    }));
+                const source = new O.VectorSource({ attributions, overlaps: false, loader: (extent, resolution, projection, success, failure) => {
+                    read().then((topology) => {
                         const features = new O.TopoJSON({ layers: ["countries"] }).readFeatures(topology);
                         features.forEach((feature) => {
                             const geometry = feature.getGeometry();
@@ -1106,9 +1380,9 @@
             // A TileJSON ("Source") is fetched here and answered with its attribution escaped, since the attribution control sets it
             // as HTML before m-map can replace it.
             transformRequest() {
-                const origins = this.origins, page = this.pageOrigin();
+                const origins = this.origins, page = this.pageOrigin(), base = this.packageBase();
                 return (url, resourceType) => {
-                    if (!map.urlAllowed(url, origins, page)) return refusal(url);
+                    if (!map.urlAllowed(url, origins, page, base)) return refusal(url);
                     if (resourceType !== "Source") return undefined;
                     return root.fetch(url, { credentials: map.sameOrigin(url, page) ? "same-origin" : "omit", headers: { Accept: "application/json" } })
                         .then((response) => (!response.ok ? response : response.json().then((tileJson) =>
@@ -1124,10 +1398,13 @@
                     .then((response) => {
                         if (!response.ok) throw new Error(L("The style did not load") + ": HTTP " + response.status);
                         return response.json();
-                    }).then((style) => {
+                    }).then((given) => {
+                        // a package's style: its sprite the package's own (its fonts are, through webfonts)
+                        const base = this.packageBase();
+                        const style = base ? map.packageStyle(given, this.pageOrigin(), base) : given;
                         const sources = style && style.sources && typeof style.sources === "object" ? style.sources : {};
                         const sourceId = bindVector ? Object.keys(sources).find((id) => (sources[id] || {}).type === "vector") : null;
-                        const refused = map.refusedStyleUrls(style, url, this.origins, this.pageOrigin(), sourceId ? [sourceId] : null);
+                        const refused = map.refusedStyleUrls(style, url, this.origins, this.pageOrigin(), sourceId ? [sourceId] : null, base);
                         if (refused.length) throw new Error(L("The style names a host outside the map's profile") + ": " + refused[0]);
                         return { style: map.localStyle(style, this.webfonts()), sourceId };
                     });
@@ -1143,6 +1420,9 @@
             },
             pmtilesLayer(O, group, entry, attributions) {
                 if (!map.sameOrigin(entry.url, this.pageOrigin())) return Promise.reject(new Error(L("A PMTiles archive must be of this server") + ": " + entry.url));
+                // a package's archive, read by range from the package (206 slices of the file; a package's file never
+                // changes, so no 409)
+                try { if (this.packageBase()) this.checkUrl(entry.url, L("The archive")); } catch (err) { return Promise.reject(err); }
                 const url = new URL(entry.url, this.pageOrigin() + "/").href;
                 // the archive's header first: one that cannot be read by range fails here, by name, not tile by tile in silence.
                 // Its URL names a registered revision (the map-source transition): a 409 says the archive has another now,
@@ -1231,7 +1511,15 @@
                         this.checkUrl(layer.url, L("The layer"));
                         const format = layer.kind === "gpx" ? new O.GPX() : layer.kind === "kml" ? new O.KML(map.kmlOptions()) :
                             layer.kind === "topojson" ? new O.TopoJSON() : new O.GeoJSON();
-                        const source = new O.VectorSource({ url: layer.url, format, attributions });
+                        // a package's file read here, by range past 16 MiB as the app's scheme answers it; else by url
+                        const url = new URL(layer.url, this.pageOrigin() + "/").href;
+                        const source = this.packageBase() ? new O.VectorSource({ format, attributions, loader: (extent, resolution, projection, success, failure) => {
+                            map.readPackageFile(url).then((body) => {
+                                const features = format.readFeatures(body, { featureProjection: projection });
+                                source.addFeatures(features);
+                                success(features);
+                            }).catch((err) => { console.warn("m-map: the layer " + layer.id + " did not load", err); failure(); });
+                        } }) : new O.VectorSource({ url: layer.url, format, attributions });
                         this.watchSource(source, layer, "vector");
                         // its features are selected (a click, or Enter at the center): the layer says whose they are
                         const vector = new O.VectorLayer({ source, style: (feature) => this.featureStyle(O, feature) });
@@ -1280,8 +1568,9 @@
             },
             markerStyle(O, feature) {
                 const kind = feature.get("kind");
-                const color = kind === "picked" ? "#c62828" : kind === "located" ? "#2e7d32" : feature.get("place") && feature.get("place").id === this.selectedId ? "#ef6c00" : "#1976d2";
-                const label = kind === "place" ? text(feature.get("place").label) : "";
+                const color = kind === "picked" ? "#c62828" : kind === "located" ? "#2e7d32" : kind === "found" ? "#6a1b9a" :
+                    feature.get("place") && feature.get("place").id === this.selectedId ? "#ef6c00" : "#1976d2";
+                const label = kind === "place" ? text(feature.get("place").label) : kind === "found" ? text(feature.get("label")) : "";
                 return new O.Style({
                     image: new O.CircleStyle({ radius: kind === "place" ? 7 : 6, fill: new O.Fill({ color }), stroke: new O.Stroke({ color: "#fff", width: 2 }) }),
                     text: label ? this.labelText(O, label) : undefined
@@ -1400,11 +1689,22 @@
                 this.choose(point);
                 if (this.olMap) this.olMap.getView().animate({ center: this.toMap(point.lon, point.lat), duration: 250 });
             },
-            mark(kind, point) {
+            mark(kind, point, label) {
                 const O = root.MoquiOl;
                 if (!O || !this.markerSource) return;
                 this.markerSource.getFeatures().filter((feature) => feature.get("kind") === kind).forEach((feature) => this.markerSource.removeFeature(feature));
-                this.markerSource.addFeature(new O.Feature({ geometry: new O.Point(this.toMap(point.lon, point.lat)), kind }));
+                this.markerSource.addFeature(new O.Feature({ geometry: new O.Point(this.toMap(point.lon, point.lat)), kind, label: label || "" }));
+            },
+            // A place found by a page's own search (the offline screen's, plans/archive/Maps-Offline.md §2.5): marked and shown,
+            // its label drawn on the canvas as text; nothing is kept or sent
+            showPlace(place) {
+                const lon = num(place && place.lon), lat = num(place && place.lat);
+                if (!lonOk(lon) || !latOk(lat)) return;
+                const label = map.plainText(place.label, 200);
+                this.mark("found", { lon, lat }, label);
+                this.announced = (label || L("Place")) + ": " + map.formatCoordinates(lon, lat);
+                const view = this.olMap && this.olMap.getView();
+                if (view) view.animate({ center: this.toMap(lon, lat), zoom: Math.max(view.getZoom() || 0, num(place.zoom) || 15), duration: 250 });
             },
             // Locate me: the browser's position once, when asked; shown, never kept or sent
             locate() {
@@ -1422,6 +1722,108 @@
                     this.locating = false;
                     this.located = L("Your location is not available") + (error && error.message ? ": " + error.message : "");
                 }, { enableHighAccuracy: false, timeout: 15000, maximumAge: 60000 });
+            },
+            // ---- live location (plans/archive/Location-Sharing.md §3.3) ----
+            // The page's one notification socket (the shell root's notificationClient), or null without one.
+            liveClient() {
+                const shell = this.$root && this.$root.notificationClient ? this.$root : moqui.webrootVue;
+                return shell && shell.notificationClient ? shell.notificationClient : null;
+            },
+            // The shares of a configuration over those held (map.mergeLiveShares), each followed on its topic while shown.
+            setLiveShares(given) {
+                this.liveGone = this.liveGone || new Set();
+                this.liveShares = map.mergeLiveShares(this.liveShares, Array.isArray(given) ? given : [], this.liveGone);
+                this.liveChanged();
+            },
+            // After a change of the shares: the topics followed, the layer drawn, the ticking of ages, and live-change emitted.
+            liveChanged(removed) {
+                this.syncLiveTopics();
+                if (root.MoquiOl && this.liveSource) this.drawLive(root.MoquiOl);
+                if (this.liveShares.length && !this.liveTimer) {
+                    // the ages and the stale style move on with the clock, twice a minute
+                    this.liveTimer = setInterval(() => { this.liveNow = Date.now(); if (this.liveSource) this.liveSource.changed(); }, 30000);
+                } else if (!this.liveShares.length && this.liveTimer) { clearInterval(this.liveTimer); this.liveTimer = null; }
+                this.liveNow = Date.now();
+                this.$emit("live-change", { shares: this.liveShares.map((share) => Object.assign({}, share)), removed: removed ? [removed] : [] });
+            },
+            // Subscribes to locationShare:<shareId> of each share shown, and unsubscribes from a share no longer shown.
+            syncLiveTopics() {
+                const client = this.liveClient();
+                const held = this.liveTopics = this.liveTopics || {};
+                const wanted = new Set(this.liveShares.map((share) => "locationShare:" + share.shareId));
+                Object.keys(held).filter((topic) => !wanted.has(topic)).forEach((topic) => { held[topic](); delete held[topic]; });
+                if (!client) return;
+                wanted.forEach((topic) => {
+                    if (held[topic]) return;
+                    const listener = (jsonObj) => this.onLivePush(topic.slice("locationShare:".length), jsonObj);
+                    const stop = client.registerListener(topic, listener);
+                    held[topic] = typeof stop === "function" ? stop : () => client.unregisterListener(topic, listener);
+                });
+            },
+            // A push on a share's topic: its message must name that share
+            onLivePush(shareId, jsonObj) {
+                const message = map.liveMessage(jsonObj);
+                if (!message || text(message.shareId) !== shareId) return;
+                const applied = map.applyLiveMessage(this.liveShares, message, Date.now());
+                if (!applied.changed) return;
+                if (applied.removed) this.liveGone = (this.liveGone || new Set()).add(applied.removed);
+                this.liveShares = applied.shares;
+                this.liveChanged(applied.removed);
+            },
+            stopLive() {
+                if (this.liveTimer) { clearInterval(this.liveTimer); this.liveTimer = null; }
+                const held = this.liveTopics || {};
+                Object.keys(held).forEach((topic) => { held[topic](); delete held[topic]; });
+            },
+            // The layer's features: each share with a position as a marker (its label and age drawn as canvas text), its
+            // accuracy as a ring and its kept trail as a line, all in the map's projection.
+            drawLive(O) {
+                const source = this.liveSource;
+                if (!source) return;
+                source.clear();
+                const format = new O.GeoJSON();
+                const geometry = (value) => format.readGeometry(value, { dataProjection: "EPSG:4326", featureProjection: this.projection() });
+                this.liveShares.forEach((share) => {
+                    if (!share.latest) return;
+                    const { lon, lat, accuracy } = share.latest;
+                    if (share.trail.length > 1) source.addFeature(new O.Feature({ geometry: geometry({ type: "LineString", coordinates: share.trail }), shareId: share.shareId, liveKind: "trail" }));
+                    if (accuracy) source.addFeature(new O.Feature({ geometry: geometry({ type: "Polygon", coordinates: [map.accuracyRing(lon, lat, accuracy)] }),
+                        shareId: share.shareId, liveKind: "accuracy" }));
+                    const marker = new O.Feature({ geometry: new O.Point(this.toMap(lon, lat)), shareId: share.shareId, liveKind: "marker", liveMarker: true });
+                    marker.setId("live:" + share.shareId);
+                    source.addFeature(marker);
+                });
+            },
+            liveShare(shareId) { return this.liveShares.find((share) => share.shareId === shareId) || null; },
+            // A share's look: teal for one shared with the viewer, green for the viewer's own, grey and dashed once stale; the
+            // label and the age are drawn on the canvas, so no markup in a label is read.
+            liveStyle(O, feature) {
+                const share = this.liveShare(feature.get("shareId"));
+                if (!share) return null;
+                const stale = map.liveStale(share, Date.now());
+                const rgb = stale ? "117,117,117" : share.role === "owner" ? "46,125,50" : "0,121,107";
+                const kind = feature.get("liveKind");
+                if (kind === "trail") return new O.Style({ stroke: new O.Stroke({ color: "rgba(" + rgb + ",0.7)", width: 3, lineDash: stale ? [6, 6] : undefined }) });
+                if (kind === "accuracy") return new O.Style({ fill: new O.Fill({ color: "rgba(" + rgb + ",0.12)" }), stroke: new O.Stroke({ color: "rgba(" + rgb + ",0.5)", width: 1 }) });
+                const label = share.label + " · " + map.liveAgeText(map.liveAgeSeconds(share, Date.now()));
+                return new O.Style({
+                    image: new O.CircleStyle({ radius: 8, fill: new O.Fill({ color: "rgba(" + rgb + "," + (stale ? "0.6" : "1") + ")" }),
+                        stroke: new O.Stroke({ color: "#fff", width: 2, lineDash: stale ? [3, 3] : undefined }) }),
+                    text: this.labelText(O, label)
+                });
+            },
+            goToLive(share) {
+                if (!share.latest) return;
+                this.selectedId = "";
+                if (this.olMap) this.olMap.getView().animate({ center: this.toMap(share.latest.lon, share.latest.lat), zoom: Math.max(this.olMap.getView().getZoom() || 0, 14), duration: 250 });
+            },
+            // A share chosen on the map or in the list: emitted as select with kind liveShare and its shareId.
+            selectLive(shareId) {
+                const share = this.liveShare(shareId);
+                if (!share || !share.latest) return;
+                this.highlight(null);
+                this.announced = L("Selected") + ": " + share.label + ", " + map.liveAgeText(map.liveAgeSeconds(share, Date.now()));
+                this.$emit("select", { id: "live:" + share.shareId, kind: "liveShare", shareId: share.shareId, lon: share.latest.lon, lat: share.latest.lat, label: share.label });
             },
             onCanvasKey(event) {
                 // only on the map itself: Enter on one of OpenLayers' controls inside it is that control's. Enter chooses the
@@ -1644,6 +2046,19 @@
                     (this.drawn ? [h("button", { type: "button", class: "m-map-place-button", title: L("Show on the map"),
                         onClick: () => { this.goTo(place); this.select(place); } }, body)] : body).concat([" ", copy]));
             },
+            // A live share in the list under the map: its label, the age of its position (stale marked), where it is and whether
+            // it is approximate, all as text; on a drawn map a button that goes to it
+            liveItem(share) {
+                const age = map.liveAgeSeconds(share, this.liveNow);
+                const stale = map.liveStale(share, this.liveNow);
+                const body = [h("span", { class: "m-map-live-label" }, share.label), " ",
+                    h("span", { class: "m-map-live-age" }, map.liveAgeText(age) + (stale ? " (" + L("stale") + ")" : "")),
+                    share.latest ? [" ", h("span", { class: "m-map-live-coordinates" }, map.formatCoordinates(share.latest.lon, share.latest.lat))] : null,
+                    share.approximate ? [" ", h("span", { class: "m-map-live-details" }, L("approximate, about 1 km"))] : null];
+                return h("li", { key: share.shareId, class: { "m-map-live-share": true, "m-map-live-stale": stale }, "data-share-id": share.shareId },
+                    this.drawn && share.latest ? [h("button", { type: "button", class: "m-map-live-button", title: L("Show on the map"),
+                        onClick: () => { this.goToLive(share); this.selectLive(share.shareId); } }, body)] : body);
+            },
             toolbar() {
                 const button = root.Vue.resolveComponent("q-btn");
                 const items = [h(button, { dense: true, flat: true, noCaps: true, size: "sm", icon: "my_location", label: L("Locate me"), loading: this.locating,
@@ -1700,6 +2115,7 @@
                 this.located ? h("div", { class: "m-map-located", "aria-live": "polite" }, this.located) : null,
                 shown.pick ? this.pickForm() : null,
                 this.picked ? h("div", { class: "m-map-picked", "aria-live": "polite" }, L("Chosen") + ": " + map.formatCoordinates(this.picked.lon, this.picked.lat)) : null,
+                this.liveShares.length ? h("ul", { class: "m-map-live", "aria-label": L("Live location") }, this.liveShares.map((share) => this.liveItem(share))) : null,
                 this.points.length ? h("ul", { class: "m-map-places", "aria-label": L("Places") }, this.points.map((place) => this.placeItem(place))) : null,
                 this.fallback && !this.points.length && shown.center ? h("div", { class: "m-map-center" }, L("Center") + ": " + map.formatCoordinates(shown.center[0], shown.center[1])) : null
             ]);

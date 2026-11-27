@@ -1,4 +1,4 @@
-// MapsArchiveBackends (plans/Maps.md §5, §9 acceptance): one PMTiles archive (zoom 0 to 5, every tile ASCII text naming it,
+// MapsArchiveBackends (plans/archive/Maps.md §5, §9 acceptance): one PMTiles archive (zoom 0 to 5, every tile ASCII text naming it,
 // made by MapsArchiveLib) registered from each of the four backends (a plain file, a DbResource file in a drive, a git
 // repository on Postgres and one on the filesystem, each as a Git LFS object), and the same viewport's tile ranges read
 // through the map-source transition from each, compared with the tiles, with each backend's time logged; then a replacement:

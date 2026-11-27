@@ -9,6 +9,7 @@
 const TARGET = "SPEC_DLS_TARGET"
 const LOADED = "SPEC_DLS_LOADED"
 const UPDATER = "SPEC_DLS_UPDATER"
+const ENUMS = ["SPEC_DLS_E1", "SPEC_DLS_E2"]
 const rowOp = (row) => StringUtilities.base64UrlEncode(JSON.stringify(row))
 const account = () => ec.entity.find("moqui.security.UserAccount").condition("userId", TARGET).disableAuthz().one()
 const count = (entityName, field, value) => ec.entity.find(entityName).condition(field, value).disableAuthz().count()
@@ -53,6 +54,7 @@ spec({
     cleanupSpec() {
         ec.artifactExecution.disableAuthz()
         for (const userId of [TARGET, LOADED]) ec.entity.find("moqui.security.UserAccount").condition("userId", userId).deleteAll()
+        for (const enumId of ENUMS) ec.entity.find("moqui.basic.Enumeration").condition("enumId", enumId).deleteAll()
         ec.artifactExecution.enableAuthz()
     },
 })
@@ -179,5 +181,66 @@ feature("Load's load refuses a record that sets an account's password or changes
         userFullName == "Spec Loaded"
         created.errors == ""
         loadedEmail == "loaded@spec.invalid"
+    },
+})
+
+// before, the screen's transaction cache held the text's writes, and the database refused the unknown type only at the
+// screen's commit: an HTTP 500 reading "commit failed", naming no record (TOOL-UI-005)
+feature("Load's load names the record the database refuses, stores none of that text, and loads the corrected one", {
+    when() {
+        const xmlText = (type) => `<entity-facade-xml>
+            <moqui.basic.Enumeration enumId="${ENUMS[0]}" enumTypeId="ComparisonOperator" description="Spec DLS one"/>
+            <moqui.basic.Enumeration enumId="${ENUMS[1]}" enumTypeId="${type}" description="Spec DLS two"/></entity-facade-xml>`
+        const stored = () => ENUMS.filter(enumId => count("moqui.basic.Enumeration", "enumId", enumId) > 0).length
+        const refused = post("john.doe", "Data/Load/load", { xmlText: xmlText("SPEC_DLS_NO_TYPE") })
+        const refusedStored = stored()
+        const corrected = post("john.doe", "Data/Load/load", { xmlText: xmlText("ComparisonOperator") })
+        return { refused, refusedStored, corrected, correctedStored: stored() }
+    },
+    then({ refused, refusedStored, corrected, correctedStored }) {
+        refused.errors.includes("Nothing was loaded from [XML Text Box]")
+        refused.errors.includes("Could not store moqui.basic.Enumeration [enumId=SPEC_DLS_E2]")
+        refused.errors.includes("SPEC_DLS_NO_TYPE")
+        !refused.errors.includes("commit failed")
+        refusedStored == 0
+        corrected.errors == ""
+        corrected.messages.includes("Loaded 2 records from [XML Text Box]")
+        correctedStored == 2
+    },
+})
+
+// before, with the foreign-key worker chosen, the data was read for its entities outside the load's error handling: a
+// value its field's type does not take was an HTTP 500 that replaced the form, and a location not there read as "The
+// data names no entity to load" (TOOL-UI-007)
+feature("Load with the foreign keys dropped names a value that does not read and a missing location, keeps the form and starts no job", {
+    when() {
+        const jobs = () => ec.entity.find("moqui.database.DatabaseJob").disableAuthz().count()
+        const before = jobs()
+        const typed = post("john.doe", "Data/Load/load", { wrapForeignKeys: "true",
+            xmlText: `<entity-facade-xml><moqui.test.TestEntity testId="SPEC_DLS_TYPED" testNumberInteger="not-an-integer"/></entity-facade-xml>` })
+        const missing = post("john.doe", "Data/Load/load", { wrapForeignKeys: "true", location: "component://tools/data/NoSuchSpecDataLoad.xml" })
+        return { typed, missing, started: jobs() - before }
+    },
+    then({ typed, missing, started }) {
+        typed.errors.includes("Nothing was loaded and no job was started")
+        typed.errors.includes("not-an-integer")
+        typed.errors.includes("testNumberInteger")
+        missing.errors.includes("Nothing was loaded and no job was started")
+        missing.errors.includes("component://tools/data/NoSuchSpecDataLoad.xml")
+        !missing.errors.includes("The data names no entity to load")
+        started == 0
+    },
+})
+
+// before, a file that failed was only logged: the page said "Loaded 0 records" for a location not there, and only the
+// count of the files that loaded for a batch with one bad file (TOOL-UI-006)
+feature("Load names a location it could not load as a form error, beside the count of what loaded", {
+    when() {
+        return post("john.doe", "Data/Load/load", { location: "component://tools/data/NoSuchSpecDataLoad.xml" })
+    },
+    then({ errors, messages }) {
+        errors.includes("Could not load [component://tools/data/NoSuchSpecDataLoad.xml]")
+        errors.includes("No such file")
+        messages.includes("Loaded 0 records from [component://tools/data/NoSuchSpecDataLoad.xml]")
     },
 })

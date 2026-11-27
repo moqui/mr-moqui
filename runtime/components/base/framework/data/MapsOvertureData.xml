@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Optional Overture data for Maps (plans/Maps-Overture.md; OvertureServices.xml): the themes O1 imports with their
+<!-- Optional Overture data for Maps (plans/archive/Maps-Overture.md; OvertureServices.xml): the themes O1 and O2 import with their
     licenses by source (https://docs.overturemaps.org/attribution/, read November 26, 2026), the import's job and
     notification, and the maps.overture readiness provider. Nothing is imported until an administrator acknowledges a
     theme's license and starts a run. -->
@@ -31,6 +31,18 @@ along with this software (see the LICENSE.md file). If not, see
             attribution="© OpenStreetMap contributors, Overture Maps Foundation; Esri Community Maps contributors and Google Open Buildings (CC BY 4.0)"
             licenses="ODbL-1.0,CC-BY-4.0"
             obligations="The layer's archive is a Derivative Database of ODbL data. Drawing it on a map is a Produced Work, which shows the attribution. Giving the archive or its tiles to anyone outside this installation is a public use of the Derivative Database, which must then be offered under the ODbL (or with its source data and the means to make it). The layer is read only by the users a map offers it to; keep it so unless that is meant."/>
+    <!-- O2: address points for the local geocoder (MPK_GEOCODER_OVERTURE). Its sources' licenses vary by country and dataset
+        (the evaluation of release 2026-11-18.0 found CC-BY-4.0 for Italy, CC0-1.0 for the Dutch BAG, LicenseRef-Public-Domain-US
+        for the US National Address Database and LicenseRef-Proprietary for Massachusetts' statewide points), so the
+        acknowledgement covers none of them at first (no licenses here, so a reload of this data keeps those acknowledged): a
+        region's first run waits for review with the licenses its sources name, and each is acknowledged by an administrator
+        who has read its terms. -->
+    <moqui.maps.OvertureTheme themeId="ADDRESSES" themeName="Overture addresses" overtureTheme="addresses" overtureType="address"
+            description="Address points of a region (street, number, unit, postal code, locality) for the local address search: a geocoder of this server that asks no outside service. Alpha data of partial coverage: a region may have none or some of its addresses, many without a postal code, and a point may be an entrance, a building or parcel centre or a position on the road, which the data does not say. Not a postal-code directory."
+            licenseName="By source, varying by country and dataset (open data licenses such as CC0 1.0 and CC BY 4.0, national public domain, and sources Overture marks proprietary): each is reviewed when a run first finds it"
+            licenseUrl="https://docs.overturemaps.org/attribution/#addresses"
+            attribution="Overture Maps Foundation (overturemaps.org): addresses from the sources each result names, under their own licenses"
+            obligations="Each address found names its source dataset and license. CC BY sources ask for their attribution where the data is shown or shared; read the terms of a source marked proprietary (LicenseRef-Proprietary) before acknowledging it. The index is used on this server; giving its rows to others is a distribution under each source's license."/>
 
     <!-- The import's job (OvertureServices.xml run#OvertureImport): one run a Maps › Configuration › Overture Import
         started, as the administrator who started it, who is told when it ends -->
@@ -42,7 +54,7 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.service.job.ServiceJob jobName="OvertureImport" description="Import a theme of a region from an Overture release"
             serviceName="org.moqui.maps.OvertureServices.run#OvertureImport" topic="OvertureImport" transactionTimeout="86400" noTimeLimit="Y"/>
 
-    <!-- Maps' Overture data (plans/Maps-Overture.md), OvertureServices.check#OvertureReadiness (OvertureData.js; its grant is
+    <!-- Maps' Overture data (plans/archive/Maps-Overture.md), OvertureServices.check#OvertureReadiness (OvertureData.js; its grant is
         tools data/MapsSecurityData.xml MAPS_READINESS) -->
     <moqui.server.ReadinessProvider providerKey="maps.overture" version="1" ownerApp="Maps" title="Overture data"
             description="No Overture run waits for license review, the last import of each region theme did not fail, and regions are not set up on a server built without the overture feature"

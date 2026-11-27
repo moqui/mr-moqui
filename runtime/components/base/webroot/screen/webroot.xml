@@ -150,6 +150,29 @@ along with this software (see the LICENSE.md file). If not, see
             ]]></script></actions>
         <default-response type="none"/>
     </transition>
+    <!-- The app bar's indicators of the server (moqui.shellIndicators; docs/ui/Qvt-Client.md, Shell indicators): what
+        org.moqui.ui.ShellServices.get#ShellIndicators answers for the current user, the shell-indicator providers of the apps
+        they may open, each as its app: {indicators: [{key, label, icon, tone, title, url, refreshInSeconds, sourceId}], refreshOn:
+        [{topicPrefix, events}]}; none when it fails. 401 without a user. -->
+    <transition name="shellIndicators" read-only="true" begin-transaction="false">
+        <actions><script><![CDATA[
+            if (!ec.user.userId) {
+                ec.web.sendJsonError(401, ec.l10n.localize('Authentication required'))
+            } else {
+                let out = {}
+                ec.message.pushErrors()
+                try {
+                    out = ec.service.sync().name('org.moqui.ui.ShellServices.get#ShellIndicators').call() || {}
+                    if (ec.message.hasError()) { ec.logger.warn('The shell indicators were not read: ' + ec.message.getErrorsString()); out = {} }
+                } catch (err) {
+                    ec.logger.warn('The shell indicators were not read: ' + (err?.message ?? err))
+                    out = {}
+                } finally { ec.message.clearErrors(); ec.message.popErrors() }
+                ec.web.sendJsonResponse({indicators: Array.from(out.indicators || []), refreshOn: Array.from(out.refreshOn || [])})
+            }
+            ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
     <!-- The badge counts alone, for the shell's poll while the notification socket is down: {counts}, what
         org.moqui.ui.ShellServices.get#ShellCounts answers for the current user (null without a counts service). 401
         without a user. -->

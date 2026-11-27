@@ -12,8 +12,8 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Optional Overture data for Maps (plans/Maps-Overture.md, stage O1 of plans/Maps.md §4.3): a region's Places and
-//! Buildings from a pinned Overture release.
+//! Optional Overture data for Maps (plans/archive/Maps-Overture.md, stages O1 and O2 of plans/archive/Maps.md §4.3): a region's Places,
+//! Buildings and Addresses from a pinned Overture release, and the local address matching over its Addresses.
 //!
 //! - [`parquet`]: our own reader of the GeoParquet subset Overture writes, a part of a file at a time, with ZSTD on
 //!   `ruzstd` (no C library).
@@ -21,12 +21,19 @@
 //! - [`http`]: catalog documents and files by range through `moqui_core::outbound`.
 //! - [`wkb`]: the points and polygons of the `geometry` column.
 //! - [`overture`]: the schema 2.x columns of each theme and a region read from one file.
+//! - [`address`]: O2's address matching: a text read into its parts, the keys points and texts are compared by, and the
+//!   ranking of the points found (plans/archive/Maps-Overture.md §O2); `moqui_lib::geo::address`, re-exported.
+//! - [`address_service`]: the address index (`OvertureAddress` rows), a refresh's changes, and `search#OvertureAddresses`,
+//!   the local geocoder's search.
 //! - [`service`]: `org.moqui.maps.OvertureServices`' Rust services; the rest of the import (preflight, validation,
 //!   activation, rollback) is OvertureData.js.
 //!
 //! This crate is on moqui-core, which reaches it through the [`moqui_core::extension`] entry below. moqui-host links it
 //! under its `overture` feature; a build without it reports that `overture` is not built in.
 
+// the address matching is moqui-lib's (the apps' offline search uses it too: plans/archive/Maps-Offline.md §2.5)
+pub use moqui_lib::geo::address;
+pub mod address_service;
 pub mod http;
 pub mod overture;
 pub mod parquet;

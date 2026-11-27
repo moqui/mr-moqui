@@ -1,9 +1,13 @@
-# Maps: Overture Places and Buildings (O1)
+# Maps: Overture Places, Buildings and Addresses (O1, O2)
+
+> Archived 2026-11-26 with [Maps](Maps.md): O1 and O2 built. Open testing is in
+> [Testing-Needed](../Testing-Needed.md#maps); guide [Maps › Overture](../../docs/tools/Maps.md#overture-places-and-buildings).
 
 November 26, 2026 — the crate plan [Maps §7](Maps.md#7-useful-rust-server-work) asks for when Overture's Parquet
-dependency arrives, and the design of stage O1 ([Maps §4.3](Maps.md#43-optional-overture-data),
-[§9](Maps.md#9-delivery-and-acceptance)). O2, regional address lookup, builds on it and is not planned here. The
-guide is [Maps › Overture](../docs/tools/Maps.md#overture-places-and-buildings).
+dependency arrives, the design of stage O1 ([Maps §4.3](Maps.md#43-optional-overture-data),
+[§9](Maps.md#9-delivery-and-acceptance)), and stage O2, regional address lookup, with its evaluation ([§8](#8-o2-regional-addresses)).
+The guides are [Maps › Overture](../../docs/tools/Maps.md#overture-places-and-buildings) and
+[Maps › Overture addresses](../../docs/tools/Maps.md#overture-addresses).
 
 ## 1. Why a crate, and which Parquet reader
 
@@ -23,7 +27,7 @@ the stripped release binary against a 0.36 MB one that only reads a file):
 | Candidate | Clean build | Binary | Crates | Verdict |
 |---|---|---|---|---|
 | `parquet` 60.2.0, no default features | 23 s (the crate alone 9 s) | +0.78 MB | 30 (all but `parquet` already in the lock) | Reads no ZSTD: its codecs are closed (`Codec` is public only under `experimental`, `PageHeader` is `pub(crate)`), so no pure-Rust decoder can be plugged in |
-| `parquet` 60.2.0 with `zstd` | 29 s | +1.26 MB | 33 | `zstd-sys` compiles the C zstd library: refused by [Build-Test, Native code](../docs/Build-Test.md#native-code-and-c-libraries) ("No C libraries in new dependencies") |
+| `parquet` 60.2.0 with `zstd` | 29 s | +1.26 MB | 33 | `zstd-sys` compiles the C zstd library: refused by [Build-Test, Native code](../../docs/Build-Test.md#native-code-and-c-libraries) ("No C libraries in new dependencies") |
 | `ruzstd` 0.9.1 (MIT, pure Rust) | 1 s | +0.12 MB | 2 | Taken, with our own Parquet reader |
 
 **Decision.** Our own Parquet reader of the subset GeoParquet writers use, on `ruzstd` for ZSTD (Snappy our own, a page;
@@ -49,8 +53,8 @@ Maps §7 gave it, an extension crate above core as `moqui-calc` is: services thr
   crate's registry with the locations the service files name (as `moqui-calc`'s).
 - `scripts/moq/build.sh` `write_app_crate`'s opt-level list; `scripts/check-packages.sh` runs the crate alone
   (`-p moqui-maps --all-targets`), since the host feature sets above do not build its tests without the host.
-- Docs: the Features table of [Build-Test](../docs/Build-Test.md), the crate table of
-  [Practices-Rust §1](../docs/dev/Practices-Rust.md#1-crates-and-where-code-goes), [Maps](../docs/tools/Maps.md).
+- Docs: the Features table of [Build-Test](../../docs/Build-Test.md), the crate table of
+  [Practices-Rust §1](../../docs/dev/Practices-Rust.md#1-crates-and-where-code-goes), [Maps](../../docs/tools/Maps.md).
 - License: `ruzstd` MIT; `parquet` Apache-2.0 (dev only). No new C, no `unsafe` of ours.
 
 ## 3. Data flow
@@ -162,3 +166,125 @@ A license found that the acknowledgement does not cover is held for review (§3.
 
 The reader and the STAC client, the run, staging, activation and rollback, the license review and the readiness rows.
 O2 adds the `addresses` theme's columns, its own table and the matching through the geocoder interface (Maps §6).
+
+## 8. O2: regional addresses
+
+### 8.1 Evaluation
+
+Measured on 2026-11-26 against release 2026-11-18.0 (schema 2.0.0) with this crate's reader, a dev build on macOS, for a
+small box of a US metro and of a European city (and two more for coverage). The `addresses` collection is 64 files of
+about 7.4 million rows and 256 row groups each, 475,239,461 rows in all; its columns are `id`, `street`, `number`,
+`unit`, `postcode`, `postal_city`, `address_levels` (a list of `{value}`, the most general first), `country`, `geometry`
+(a point), `sources`, `version` and `bbox`. **Nothing says what a point stands for**: the schema has no position kind (an
+entrance, a building or parcel centre, a position on the road).
+
+| Box (west, south, east, north) | Read | Points | street / number / unit / postcode | Levels | Source and license |
+|---|---|---|---|---|---|
+| Boston Back Bay (-71.09, 42.345, -71.065, 42.36), about 3.4 km² | 1 file, 4 of 256 row groups, 4.3 MB, 8 s | 29,925 | 100 % / 99.997 % / 84.5 % / 99.98 % | 2 (state, city) | `us/ma/statewide`, `LicenseRef-Proprietary` |
+| Florence centre (11.24, 43.76, 11.27, 43.78), about 5.3 km² | 1 file, 4 of 256, 6.4 MB, 8 s | 21,481 | 100 % / 100 % / 7.4 % / **0 %** | 3 (region, province, comune) | `it/countrywide`, `CC-BY-4.0` |
+| Austin downtown (-97.755, 30.26, -97.735, 30.275), about 3.2 km² | 1 file, 2 of 256, 3.8 MB, 4 s | 2,455 | 100 % / 100 % / 0 % / 100 % (and `postal_city`) | 2 | `National Address Database`, `LicenseRef-Public-Domain-US` |
+| Amsterdam centre (4.88, 52.365, 4.905, 52.38), about 2.8 km² | 1 file, 3 of 256, 4.0 MB, 6 s | 28,822 | 100 % / 100 % / 74 % / 98.8 % | 1 | `BAG Light`, `CC0-1.0` |
+
+What the points of one street and number are:
+
+- **Boston**: 4,778 street-and-number pairs, 2,651 with several points, nearly all a point per unit (a unit's numbers,
+  `3F`, `B`): spread median 0 m, 90th percentile 4.8 m, 99th 30 m (14 pairs over 50 m). Every number has its ZIP code.
+- **Florence**: 14,040 pairs, 6,160 with several points and nothing to tell them apart (the units are 1,581 letters, the
+  Italian *esponente* `12/A`; Florence's red business numbers are not marked): spread median 39 m, 90th percentile 148 m,
+  2,650 pairs over 50 m. No point has a postal code.
+- **Austin**: one point a number, about 760 a km², a tenth of Boston's: coverage there is partial or by structure only, which
+  the data alone cannot tell.
+- **Amsterdam**: points per unit (`A`, `B`, `H`), same-number spread 99th percentile 28 m.
+
+**What O2 can promise.** For a region whose source the release has, a number and a street matched to the source's own
+points: an **address match** (`GPP_ADDRESS_MATCH`) whose position kind is said to be not stated, with its source dataset,
+license, GERS ID and release; the postal code agreeing where both have one; several points of one number offered as
+choices; a street without the number, and a number found only without its suffix, as estimates. Matching is local:
+nothing is sent at query time.
+
+**What it cannot.** Completeness (Austin; Overture calls the theme alpha with partial coverage, the US included); a postal
+code where the source has none (Italy), and so no postal-code directory from these points (Maps §4.3: the postal lookup
+stays the fallback); a rooftop or entrance position (not stated); interpolation along a street (not done: a number not in
+the data is the street's estimate); stable IDs (a refresh is compared by address, never by GERS ID); and one license (one
+source is marked proprietary: each source's license is reviewed before its first run is active).
+
+### 8.2 Design
+
+- **Import** is O1's run for the theme `ADDRESSES` (`addresses`/`address`): the same discovery, ranged reading, staging,
+  checks, license review, activation and rollback. Its rows are `moqui.maps.OvertureAddress` (internal `addressId`
+  `<importId>-<n>`; `gersId` and the run's release an external reference only; the country; street, number, unit and
+  postal code as written and as keys; postal city, locality (the last level), region (the first) and every level; the
+  point; `positionKind`, empty while the schema says none; source datasets and licenses), written 2,000 a transaction,
+  at most 1,000,000 a run (`TOO_MANY_ROWS`; about 115 km² at Boston's density of 8,800 a km²), indexed on `(importId, streetNorm,
+  numberNorm)`. The run records its countries (`countryCodes`). A row with no ISO country, or with neither a street nor a
+  number, is rejected. The theme's acknowledgement covers no source license at first (`MapsOvertureData.xml`), so a
+  region's first run waits for review with what its sources name. Memory: O1's reader bounds, the batch, and the
+  refresh comparison's two sets of addresses (a 64-bit digest and a mean point each: a hash table of about 50 MB at the
+  cap, so about 100 MB for both, and for a moment half as much again while a set grows).
+- **Refresh reconciliation.** Activation is O1's one transaction, so the index changes as a whole; the run before is kept
+  for rollback. The run records what changed against the run active when it was read, by address (country, street,
+  number, unit and postal code keys, each cut to the length its row keeps), never by ID: added, removed, moved more than
+  25 m, unchanged (`changesJson`, shown in Configuration's runs). A change of the normalization tables between two runs
+  changes keys, and shows as addresses removed and added. Nothing outside these rows is touched: a record's point, a user-confirmed point and
+  Mantle are never read or written by an import, and a match is computed when asked, so a refresh needs no fix-up.
+- **Matching** (`moqui-maps` `address.rs`, `address_service.rs`; `search#OvertureAddresses`):
+  - *Parse*: parts by comma; the postal code by the country's shape (the last one, never the house number of a street
+    written number-last); a unit after a unit word or `#` when a unit's name follows (a digit, or one or two characters;
+    never `Ste` where French is written); the number first in a number-first country (US, CA, GB, IE, AU, NZ, FR and a
+    few more), else after the street (with a letter or `bis`, `r`), and where a comma ends the street only the number that
+    ends it (`Via 4 Novembre 12`, `Piazza 1 Maggio`); an ordinal (`5th`) is never a number; the first later part that is
+    not a two-letter region or a country is the locality. A text of one part tries the longest street first.
+  - *Normalize*: case and diacritics folded, dots dropped, the street words of the country's languages to one spelling
+    (English with directionals, Italian, French, German, Spanish, Portuguese, Dutch; the shared forms `ave`, `blvd`,
+    `st`, `pl`), German and Dutch `-straße`/`-straat`/`-platz` endings shortened, Romance, German and Dutch particles left
+    out of a street of more words; numbers without spaces or a `/` before a letter; units without their designator; postal
+    codes by the country's rules (`moqui_lib::geo::postal`).
+  - *Retrieve*: the rows of the active runs by street key and number key (at most 200), then by the number's digits
+    (`12` for `12/A` or `51r`), then the street (at most 500), in each country of the runs (or the country given); at most
+    24 indexed queries a search, and 20 searches a second from one user (each server by itself).
+  - *Rank*: number and street matched (100); postal code agreeing +20, differing −40; locality agreeing +10, differing −20;
+    unit +5 or −3, a unit-less point before its units. Points of one address within 30 m are one candidate (Boston's 99th
+    percentile), named without a unit or GERS ID unless it is the unit asked for (a unit asked for that is not there is
+    not named), its sources those of all its points; candidates within 15 of the best are choices (`ambiguous`), the
+    nearest the view's middle first. A number's letter the source keeps as the unit (Italy's `12/A`) is an address match;
+    a number found only without its suffix is an estimate offered as a choice; a street is an estimate at its point
+    nearest the middle of its points, with their extent, one per locality.
+  - *Precision* (Maps §6.1): an address match is `GPP_ADDRESS_MATCH`, said as an address point whose kind the source
+    does not state, only when the postal code and the locality asked for do not differ from the point's; a number and
+    street whose postal code or locality differs is an estimate offered as a choice; the others `GPP_PLACE_ESTIMATE`;
+    nothing is called exact.
+- **The provider.** `MPK_GEOCODER_OVERTURE`, seeded disabled as `OVERTURE_ADDRESSES`: no URL, tested by a fixed query made
+  from a row of its own data (an address match within 30 m of that row), testable and usable with outside requests off,
+  asked only while a region's addresses are active and the server has the `overture` feature. find#Places asks it as any
+  geocoder (one provider; its failure says so); a text it does not match is the postal area of the code read from it
+  (`NO_ADDRESS_MATCH`, approximate) or nothing (`NO_MATCH`: choose the point). Browse asks it third, as any geocoder,
+  each candidate with its own source.
+- **Records.** A record whose adapter answers an address with no point (`address1`, `address2` when it names a unit, `city`,
+  `postalCode`, `countryGeoId`) is matched by the local geocoder when one is enabled, as the dialog's own read (not
+  `find#Places`, the Maps app's): one address match whose postal code and locality agree is the point shown
+  (said to be found from the address and not saved), several are choices on the map with the postal area as the view,
+  none is the postal area. Saving stays the adapter's `store#RecordLocation`: the record point, then the address match,
+  then the postal area, then the point a user chooses.
+
+### 8.3 Tests
+
+- **Rust**: `address_tests.rs` (street keys across case, diacritics, abbreviations and particles in each language; number,
+  unit and postal-code keys; US, Italian, Dutch and French texts read; one-part texts; units of one address as one
+  candidate; two far points as choices; a unit asked for; a street estimate; a number without its suffix never an
+  address match), `address_service_tests.rs` (the index over the in-memory facade: exact, ambiguous, `12/A`, estimated,
+  missing and no data; a refresh compared by address with every ID changed), `overture_tests.rs` (the addresses reader on
+  fixtures the `parquet` crate writes; the spec's fixtures `addresses-r1.parquet`, `addresses-r2.parquet` are goldens).
+- **Regression** `framework/test/MapsOvertureAddresses.spec.js` (above, with `HttpFixtures`).
+- **Acceptance** `framework/test/acceptance/OvertureAddressLookup.spec.js`: the latest real release for central Florence
+  and Boston's Back Bay, recording time, bytes, rows and sample lookups with their precision. Run once, November 26, 2026,
+  on release 2026-11-18.0 (schema 2.0.0), the release binary on macOS: Florence (11.245, 43.765, 11.265, 43.78) 6.7 s, one
+  file, 3 row groups read and 253 skipped, 4.6 MB, 80,209 rows read and 15,336 kept, none rejected, held for `CC-BY-4.0`
+  and activated once acknowledged; Boston (-71.09, 42.345, -71.075, 42.355) 5.9 s, 3 and 253 row groups, 3.4 MB, 93,977
+  read and 15,880 kept, held for `LicenseRef-Proprietary`. The geocoder's test passed; lookups took 0 to 5 ms: `52
+  Hemenway St, Boston, MA 02115`, `373 Commonwealth Ave Apt 503, …` and `250 Newbury Street #3F, Boston` one address match
+  each (the unit's point); `Via dei Fossi 51, Firenze` one address match; `Via Maggio 15, Firenze` two address matches 110 m
+  apart, ambiguous; `Via Por Santa Maria 53r` number 53 as an estimate; `Via dei Fossi 999` and `999 Hemenway Street` the
+  street's estimate; `Via Inesistente 1, 50123 Firenze` and `1 Nowhere Street, Boston, MA 02116` nothing (`NO_MATCH`: the
+  test database has no Italian or matching postal data for the fallback). Process memory is reported only on Linux, so it
+  was not recorded here. Run again after the review's fixes (a differing postal code or locality an estimate, units, the
+  street's point): the same answers, the street estimates now at one of the street's own points.

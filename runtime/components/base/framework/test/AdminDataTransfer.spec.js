@@ -181,7 +181,8 @@ feature("an import is dispatched only by a registration, as the caller, and a fi
                 mappingRevision: out.run.staged.mappingRevision,
                 mapping: {}
             }),
-            list: invoke(T + "find#Transfers", {targetId: TARGET})
+            list: invoke(T + "find#Transfers", {targetId: TARGET}),
+            runs: invoke(T + "find#ImportRuns", {targetId: TARGET})
         }))
         // another holder of every permission reads it, and applies nothing of it: each row is its importer's own
         out.other = as(users.other, () => ({
@@ -252,6 +253,8 @@ feature("an import is dispatched only by a registration, as the caller, and a fi
         other.read.canEdit == false
         has(other.validate.error, /not available/)
         Array.from(view.list.transferList).some(found => found.runId === run.staged.operationKey && found.detail === true)
+        // a one-row import's count is "1 row" (SYS-UI-003)
+        Array.from(view.runs.transferList).find(found => found.runId === run.staged.operationKey).countText.split(" · ")[0] == "1 row"
         has(none.targets.error, /ADMIN_TRANSFER_VIEW is required/)
         has(none.list.error, /ADMIN_TRANSFER_VIEW is required/)
         has(none.read.error, /not available/)
@@ -546,5 +549,26 @@ feature("a restricted column is shown only to a holder of its permission and cle
         Array.from(out.viewer.read.columns).find(column => column.name === "localized").restricted == true
         !out.viewer.report.reportCsv.includes("secreta")
         out.viewer.report.reportCsv.includes("Spec restricted bad")
+    }
+})
+
+// SEC-ADM-86: a translation with markup is refused by the import's row services as store#LocalizedMessage refuses it,
+// though their rowValues map is not looked inside by the parameter check
+feature("a translation with markup is refused by the import's row services", {
+    when() {
+        const rowValues = {original: "Spec transfer markup", locale: "es", localized: "<img src=x onerror=alert(1)>"}
+        const prefix = "org.moqui.admin.ConfigurationServices."
+        return {
+            validated: invoke(prefix + "validate#MessageTranslationRow", {targetId: "messageTranslations", rowValues}),
+            applied: invoke(prefix + "apply#MessageTranslationRow", {
+                targetId: "messageTranslations", rowValues, operationKey: "spec-markup-1"
+            })
+        }
+    },
+    then({validated, applied}) {
+        validated.valid == false
+        has(Array.from(validated.errors || []).join(" "), /markup/)
+        applied.applied == false
+        translation("Spec transfer markup", "es") == null
     }
 })

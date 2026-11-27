@@ -235,7 +235,7 @@ impl State {
             }
             ("a", false) => {
                 if let Some((text, url)) = self.link.take() {
-                    if !url.is_empty() && !url.starts_with('#') && !url.starts_with("javascript:") {
+                    if listed_link(&url) {
                         self.out.links.push(LinkRef {
                             text: collapse(&text),
                             url: strip_controls(&url),
@@ -327,6 +327,23 @@ fn collapse(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// Whether a link's URL goes to the terminal's link list: an `http:`, `https:` or `mailto:` URL, or a path of this site
+/// (`/x`, `x`, `?x`), in any case and after white space; never a fragment, `javascript:`, `data:`, `file:` or any other
+/// scheme (SEC-SCR-93).
+fn listed_link(url: &str) -> bool {
+    let url = url.trim();
+    if url.is_empty() || url.starts_with('#') || url.starts_with("//") {
+        return false;
+    }
+    let lower = url.to_ascii_lowercase();
+    if lower.starts_with("http://") || lower.starts_with("https://") || lower.starts_with("mailto:") {
+        return true;
+    }
+    // a scheme is the letters before the first ':' that comes before any '/', '?' or '#'
+    let before = url.split(['/', '?', '#']).next().unwrap_or("");
+    !before.contains(':')
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -369,5 +386,38 @@ mod tests {
                 url: "https://example.com/a".to_string()
             }]
         );
+    }
+
+    /// SEC-SCR-93: only an http, https or mailto URL or a path of this site goes to the link list, whatever the case or
+    /// white space before it; `JavaScript:`, `data:` and `file:` do not.
+    #[test]
+    fn only_safe_links_go_to_the_list() {
+        for listed in [
+            "https://example.com/a",
+            "HTTP://x",
+            "mailto:a@example.com",
+            "/apps/x",
+            "Things?x=1",
+            "?page=2",
+        ] {
+            assert!(listed_link(listed), "{listed}");
+        }
+        for refused in [
+            " JavaScript:alert(1)",
+            "javascript:x",
+            "data:text/html,x",
+            "file:///etc/passwd",
+            "#top",
+            "//evil.example/x",
+            "vbscript:x",
+            "",
+        ] {
+            assert!(!listed_link(refused), "{refused}");
+        }
+        let out = html_text(
+            r#"<p><a href=" JavaScript:alert(1)">x</a> <a href="data:text/html,hi">y</a> <a href="/apps/z">z</a></p>"#,
+        );
+        assert_eq!(out.links.len(), 1, "{:?}", out.links);
+        assert_eq!(out.links[0].url, "/apps/z");
     }
 }

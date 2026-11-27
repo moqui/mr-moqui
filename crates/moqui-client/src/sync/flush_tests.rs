@@ -695,6 +695,7 @@ fn md5(internal: bool) -> ServerSync {
         client_api: 4,
         internal_send_ref: internal,
         mail_uncovered: Vec::new(),
+        place_ref: true,
     }
 }
 
@@ -1176,5 +1177,117 @@ fn an_internal_message_is_queued_where_the_server_takes_its_send_once() {
             .len(),
         4
     );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// plans/archive/Maps-Offline.md §2.5: a place saved on the offline Maps screen waits only for a server that takes it once by
+/// its `clientRef` (`features.placeRef`) and goes to Maps' `savePlace`, in the order they were saved: a lost answer is
+/// tried again with the same ref; a refusal fails with the server's reason, and its retry may be saved, the server
+/// having kept no ref for it.
+#[test]
+fn a_place_saved_offline_goes_once_by_its_ref_and_a_refusal_says_why_and_may_be_retried() {
+    let (store, dir) = store("map-place");
+    let place = json!({ "clientRef": "pl1", "label": "Trailhead", "longitude": -122.25, "latitude": "37.75" });
+    assert!(
+        check(outbox::MAP_PLACE, &place, &[], NOW).is_err(),
+        "not queued for a server of MD4"
+    );
+    let no_ref = ServerSync {
+        client_api: 4,
+        ..ServerSync::default()
+    };
+    assert!(
+        outbox::check_with(outbox::MAP_PLACE, &place, &[], NOW, &no_ref).is_err(),
+        "nor for one at clientApi 4 that does not say it takes a place once"
+    );
+    assert!(!outbox::kinds_json(&no_ref)["kinds"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|kind| kind == "map-place"));
+    for bad in [
+        json!({ "clientRef": "pl9", "label": " ", "longitude": 0, "latitude": 0 }),
+        json!({ "clientRef": "pl9", "label": "Far", "longitude": 181, "latitude": 0 }),
+        json!({ "clientRef": "bad ref", "label": "Ref", "longitude": 0, "latitude": 0 }),
+    ] {
+        assert!(
+            outbox::check_with(outbox::MAP_PLACE, &bad, &[], NOW, &md5(false)).is_err(),
+            "{bad}"
+        );
+    }
+    queue_md5(&store, outbox::MAP_PLACE, place, &[], NOW, false);
+    let refused = json!({ "clientRef": "pl2", "label": "Second", "longitude": 1, "latitude": 2 });
+    queue_md5(&store, outbox::MAP_PLACE, refused, &[], NOW + 1, false);
+    let server = Server::default();
+    let path = "/apps/maps/Browse/savePlace";
+    server.answer(path, Sent::Offline);
+    run_md5(&server, &store, NOW + 2);
+    let asked = server.take();
+    assert_eq!(asked.len(), 1, "the second waits behind the first");
+    assert!(asked[0].1.contains("clientRef=pl1") && asked[0].1.contains("label=Trailhead"));
+    assert!(asked[0].1.contains("longitude=-122.25") && asked[0].1.contains("latitude=37.75"));
+    forget(&server, path);
+    server.answer(path, ok(json!({ "applied": true, "placeId": "p1", "duplicate": true })));
+    server.answer(
+        path,
+        ok(json!({ "applied": false, "reason": "You have 1000 saved places: remove one first" })),
+    );
+    run_md5(&server, &store, LATER);
+    let asked = server.take();
+    assert_eq!(
+        asked.iter().filter(|(_, body)| body.contains("clientRef=pl1")).count(),
+        1,
+        "the same ref again"
+    );
+    assert_eq!(state(&store, "pl1"), None, "done");
+    assert_eq!(state(&store, "pl2"), Some(OutboxState::Failed));
+    let failed = store.lock().unwrap().outbox_get("pl2").unwrap();
+    assert!(
+        failed.error.as_deref().unwrap_or("").contains("1000 saved places"),
+        "{:?}",
+        failed.error
+    );
+    // the user removed a place and retries: the same ref, saved now
+    forget(&server, path);
+    server.answer(path, ok(json!({ "applied": true, "placeId": "p2" })));
+    outbox::retry(&store.lock().unwrap(), "pl2", LATER + 1).unwrap();
+    run_md5(&server, &store, LATER + 2);
+    assert!(server.take().iter().any(|(_, body)| body.contains("clientRef=pl2")));
+    assert_eq!(state(&store, "pl2"), None, "saved on its retry");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// plans/archive/Maps-Offline.md §2.5: a user the server does not let save places (its JSON 403) is told why and the place
+/// fails, holding up no later one; a 403 with no JSON (a key not taken) waits for a sign-in, as every operation does.
+#[test]
+fn a_place_refused_by_a_403_fails_with_its_reason_and_a_bare_403_is_held() {
+    let (store, dir) = store("map-place-403");
+    let path = "/apps/maps/Browse/savePlace";
+    let place = |id: &str| json!({ "clientRef": id, "label": id, "longitude": 1, "latitude": 2 });
+    queue_md5(&store, outbox::MAP_PLACE, place("f1"), &[], NOW, false);
+    queue_md5(&store, outbox::MAP_PLACE, place("f2"), &[], NOW + 1, false);
+    let server = Server::default();
+    server.answer(
+        path,
+        Sent::Answer(
+            403,
+            br#"{"errors":"User ann is not authorized for View on Screen Maps"}"#.to_vec(),
+        ),
+    );
+    server.answer(path, ok(json!({ "applied": true, "placeId": "p2" })));
+    run_md5(&server, &store, NOW + 2);
+    assert_eq!(state(&store, "f1"), Some(OutboxState::Failed));
+    let failed = store.lock().unwrap().outbox_get("f1").unwrap();
+    assert!(
+        failed.error.as_deref().unwrap_or("").contains("not authorized"),
+        "{:?}",
+        failed.error
+    );
+    assert_eq!(state(&store, "f2"), None, "the next place is not held up");
+    queue_md5(&store, outbox::MAP_PLACE, place("h1"), &[], NOW + 3, false);
+    forget(&server, path);
+    server.answer(path, Sent::Answer(403, b"Forbidden".to_vec()));
+    run_md5(&server, &store, NOW + 4);
+    assert_eq!(state(&store, "h1"), Some(OutboxState::Held));
     let _ = std::fs::remove_dir_all(&dir);
 }

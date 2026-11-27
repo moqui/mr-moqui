@@ -1,5 +1,7 @@
 # MR Moqui — UI review: Shared shell and Gallery
 
+**Current review · November 27.** [Coordinated framework pass](#november-27-coordinated-framework-pass). The November 25 and 26 queues and their results remain below.
+
 **Review update — 2026-11-25.** SH-B04 records the latest live evidence. The activity ledger identifies the branches still open.
 
 **Status — 2026-11-25.** [SH-B03](#sh-b03--post-cleanup-recheck-2026-11-25) rechecked all seven historical findings. Six passed their live checks. The export link and bytes passed, while in-browser download activation remains unverified in this curl-transfer workflow. The activity ledger records the scope of each walk.
@@ -8,6 +10,190 @@ Contents: [scope](#1-purpose-scope-and-sources) · [method](#2-review-method-and
 [inventory](#3-screen-and-surface-inventory) · [activities](#4-end-to-end-activities) ·
 [verification](#5-existing-checks-and-future-verification) · [record](#6-coverage-findings-and-running-record) ·
 [decisions](#7-decisions).
+
+## November 27 coordinated framework pass
+
+The three reviewers used checkout `23204bf61b5c6aeffc424523a8f8d59d1b5fdbb8`. The queue contains 147 original activities and 16 additions. Of the original activities, 79 entered with older evidence and 68 had already been revisited. Reviewer A owned System, Monitor, Tools and Dashboards (29 of the 79), B owned shell, Gallery, Workspace, Authoring and established Maps (20), and C owned AI, integrations and BasicComms (30). Location-Sharing and Maps-Offline were excluded from this pass. BasicComms desktop recovery, established Maps sharing and archive sources remained in scope. [Starting activity queue](ui-refinement-evidence/pass-2320/starting-queue.json) · [Build, components, asset hashes and port allocations](ui-refinement-evidence/pass-2320/manifest.json)
+
+### Results across the ten ledgers
+
+**15 activities are complete, 140 are partial, six have a current failed branch and two are blocked.** All 163 have a disposition. On this build, 154 gained a new observation. That includes 77 of the 79 older originals, 62 of the 68 previously revisited originals, and 15 of the 16 additions. A successful branch or test feature contributes evidence to its activity. Whole-activity completion also requires the remaining applicable steps, recovery and offered modes. The 15 complete activities use current and dated evidence as identified by their owner. [All 163 dispositions and receipts](ui-refinement-evidence/pass-2320/dispositions.json)
+
+| Area | Activities | Older with new evidence | Complete | Partial | Failed | Blocked | Deferred | Prior evidence only¹ |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| [Shared shell and Gallery](ui-review-shared-gallery.md) | 18 | 13 / 13 | 1 | 16 | 1 | 0 | 0 | 0 |
+| [System](ui-review-system.md) | 20 | 7 / 7 | 0 | 20 | 0 | 0 | 0 | 2 |
+| [Monitor](ui-review-system-monitoring.md) | 12 | 6 / 6 | 0 | 11 | 1 | 0 | 0 | 1 |
+| [Tools](ui-review-tools.md) | 17 | 9 / 9 | 0 | 16 | 1 | 0 | 0 | 1 |
+| [Dashboards](ui-review-dashboards.md) | 13 | 7 / 7 | 0 | 13 | 0 | 0 | 0 | 0 |
+| [Dev AIDE Workspace](ui-review-dev-aide-workspace.md) | 18 | 3 / 3 | 5 | 13 | 0 | 0 | 0 | 3 |
+| [Dev AIDE Authoring](ui-review-dev-aide-authoring.md) | 17 | 4 / 4 | 2 | 14 | 1 | 0 | 0 | 0 |
+| [Maps](ui-review-maps.md) | 8 | 0 / 0 | 7 | 0 | 1 | 0 | 0 | 0 |
+| [AI and integrations](ui-review-system-ai-integrations.md) | 22 | 17 / 18 | 0 | 21 | 0 | 1 | 0 | 1 |
+| [BasicComms](ui-review-basic-comms.md) | 18 | 11 / 12 | 0 | 16 | 1 | 1 | 0 | 1 |
+| **Total** | 163 | 77 / 79 | 15 | 140 | 6 | 2 | 0 | 9 |
+
+¹ Prior evidence only is a subset of the activity dispositions. The nine are AI-19, COM-17, DEVW-10, DEVW-11, DEVW-16, MON-11, SYS-18, SYS-19 and TOOL-11. DEVW-16 retains the earlier host-local and job-image comparison, log, rerun and unchanged worktree receipts. AI-19 and COM-17 were the two older activities that gained no new behavioral evidence. The status of the four previously closed findings is unchanged. The mounted CalcGrid range cleared again. [Workspace evidence](ui-review-dev-aide-workspace.md) · [Dashboard revocation](ui-review-dashboards.md) · [Earlier fix results](#november-26-revocation-and-load-rechecks)
+
+### Findings and next checks
+
+All six findings are P2. This order puts content disclosure and misleading operational success first.
+
+**All six were fixed on 2026-11-27 and await a live recheck.** Each owning ledger records the cause, the change and
+the regression tests: SH-UI-009 below, [TOOL-UI-008](ui-review-tools.md), [MON-UI-003](ui-review-system-monitoring.md),
+[DEVA-UI-003](ui-review-dev-aide-authoring.md), [COM-UI-040](ui-review-basic-comms.md) and
+[MAP-UI-001](ui-review-maps.md). The next verification below still applies to each.
+
+| Finding | What the user observed | Next verification |
+|---|---|---|
+| SH-UI-009 · Commons Chatter → notification inbox | Joe received the request ID and note excerpt before he could open the request. | Compare the delivered notification text and record link before and after granting participation. [Inbox and destination](ui-refinement-evidence/pass-2320/record-return.json) |
+| TOOL-UI-008 · Snapshots → System Job Runs | Two corrupt ZIPs produced parse errors in the loader log, but both jobs finished with “Error recorded: No” and zero rows. A valid ZIP imported its row. | Repeat both corrupt inputs and the valid control. Inspect job status, error details and the target row. [Job comparison](ui-refinement-evidence/pass-2320/A/confirmation.json) |
+| MON-UI-003 · Native telemetry → Trace Detail | Full traces retained 511 successful siblings and omitted both the late failed service and its parent. The short control retained both ERROR spans. | Compare a short and full trace after repair, correlating stored spans with the same error log. [Trace counts](ui-refinement-evidence/pass-2320/A/tail-counts.json) |
+| DEVA-UI-003 · Dev AIDE schema authoring | The Table dialog offered the column, then failed to plan the PostgreSQL type change with “no SQL type for text-short on postgres”. | Plan the change, inspect its SQL and read the resulting column and fixture row. [Dialog result](ui-refinement-evidence/pass-2320/B/type-ui.json) |
+| COM-UI-040 · BasicComms Connect | Working POP and SMTP peers refused the password over TLS. Connect reported an unreachable port. Correct credentials reached the same peers. | Compare wrong password, stopped listener and successful sign-in on both protocols. [Mail fixture](ui-refinement-evidence/pass-2320/C/external-mail.json) |
+| MAP-UI-001 · Dashboard geomap → Maps → return | Fiji opened at the same extent in both clients. Back returned the browser focus to BODY and F3 lost the terminal’s selected cell. | Return to the focused Fiji link and selected terminal cell and activate each again by keyboard. [Browser](ui-refinement-evidence/pass-2320/B/fiji-keyboard.json) · [Terminal](ui-refinement-evidence/pass-2320/B/terminal-fiji.txt) |
+
+Two activities require distinct environment work. **AI-19** needs a local edge identity whose certificate chains to a CA trusted by its receiving consumer. Verify a paired heartbeat, permission change and revocation there. **COM-17** needs two installed desktop clients with independent native stores. Disconnect one store, make a queued change, reconnect and compare replay, duplicate count and state on both. Browser media and terminal evidence remain attributed to their own branches. [Prerequisite checks](ui-refinement-evidence/pass-2320/C/prerequisites.txt)
+
+For the 140 partial activities, the owner matrices name the next observation. Among the historical-only branches, the next fixtures are two attached management terminals (SYS-18), a renewable test certificate (SYS-19), an approved recovery adapter and target symptom (MON-11), a controlled database/schema mismatch seen through Tools (TOOL-11), and two repository collaborators with distinct discussion and rerun permissions (DEVW-10/11). [A activity queue](ui-refinement-evidence/pass-2320/A/accounting.json) · [B activity queue](ui-refinement-evidence/pass-2320/B/accounting.json) · [C activity queue](ui-refinement-evidence/pass-2320/C/accounting.json)
+
+The first combined Maps fixture run recorded eight failures and ten skipped checks with outside requests disabled. The focused configured provider rerun passed 19/19. Two Dev AIDE browser assertions initially lacked shared vector files and both affected specs passed on rerun (25/25). The combined C service run passed 190/191 and the default-protocol recheck passed 4/4. These counts describe individual harness runs. [Maps runs](ui-refinement-evidence/pass-2320/B/providers.txt) · [Dev AIDE rerun](ui-refinement-evidence/pass-2320/B/editor-vectors.txt) · [Protocol rerun](ui-refinement-evidence/pass-2320/C/protocol-default.txt)
+
+The bounded public Florence fixture used Overture release `2026-11-18.0`. It matched 10,264 places, 4,837 buildings and 15,336 addresses, showed an attributed place in Browse and was removed. The ordinary local-only Maps runtime retained its default setting. The Dev AIDE browser’s served TypeScript worker reported the deliberate typo on line 2 and cleared it on correction. [Public Browse](ui-refinement-evidence/pass-2320/B/public-browse.json) · [Region removal](ui-refinement-evidence/pass-2320/B/public-address-cleanup.json) · [Editor diagnostic](ui-refinement-evidence/pass-2320/B/live-worker.json)
+
+All four reviewers closed at the pinned SHA. The wire capture, local peers, private PostgreSQL container and review runtimes were stopped. The owners recorded setting and grant restoration, paused schedules and discarded fixture databases. A final check found no TCP listeners or UDP sockets on ports 20110–20183. The raw evidence directory is local and gitignored under the repository’s existing convention. The owning Markdown ledgers preserve the observations and next checks. [Final cleanup](ui-refinement-evidence/pass-2320/cleanup.json) · [A](ui-refinement-evidence/pass-2320/A/cleanup.json) · [B](ui-refinement-evidence/pass-2320/B/cleanup.json) · [C](ui-refinement-evidence/pass-2320/C/cleanup.json)
+
+### Shared receiving-side checks
+
+- **SH-11, file history.** In the Material Commons request detail John Doe uploaded `pass-2320.txt` to `BOSS_DEMO_REQUEST`, replaced its 21 original bytes with 24 different bytes and read version 01 independently. Restoring 01 returned the original 21 bytes on the current download. Removing the attachment removed it from the list. On a second attachment, the owner and a newly added request participant both downloaded the same 210 bytes. Removing participation made the file list disappear on the same reader’s next visit. [Two-user file readback](ui-refinement-evidence/pass-2320/record-share.json). The mounted Mantle/BOSS record-file provider unblocked this branch. [File receipts](ui-refinement-evidence/pass-2320/record-files.json) · [Provider screen check](ui-refinement-evidence/pass-2320/provider.txt)
+- **SH-11, mention and return.** John posted a note mentioning Joe Developer and replied in its thread. Joe received the mention in his own inbox. Activating it reached the originating request ID and showed the record refusal. Adding Joe as a request participant made that same destination display “Set up the shared team calendar”. The reviewer removed the temporary participation. [Mention and reply](ui-refinement-evidence/pass-2320/record-mention.json) · [Destination before access](ui-refinement-evidence/pass-2320/record-return.json) · [Permitted comparison](ui-refinement-evidence/pass-2320/record-permitted.json)
+- **SH-UI-009 · P2 · Chatter mention preview. Fixed 2026-11-27.** Before Joe had participation, the Commons notification displayed the request ID and the text “Review handoff for @Joe Developer”. The target refused him the record. This fails SH-11’s inaccessible-mention expectation for the notification preview. The producing layer is BOSS Chatter and the affected consumer is the Commons notification inbox. Recheck the delivered preview and destination before and after granting the recipient access. [Inbox](ui-refinement-evidence/pass-2320/record-mention.json) · [Request refusal](ui-refinement-evidence/pass-2320/record-return.json)
+  Cause: mr-mantle `notify#RecordMention` and `notify#RecordFollowers` checked no recipient's access. `make#RecordNotificationMessage` put the record ID and the start of the text in every recipient's title, which is stored at send time and emailed. Change: both send through the new `send#RecordNotices`. Its `filter#RecordVisibleUsers` checks each recipient, and each subscriber to every message of the topic, as themselves. It signs in as the user in a scope of their own, picks the first of the writer's screens their own grants allow (from the authorization rows, so nothing is recorded as a failure), and runs `get#RecordLinkInfo` checkOnly under that grant. The writer's grants never count, and any failure counts as not shown. Mail sent from a record is filed after the send on a worker with no screen, so `send#EmailDraft` keeps the writer's screens on its `EmailMessageRecord` and the filing passes them on. The full notice goes directly to those found, and is not sent or kept when none is. Anyone else named gets a notice on the new topics `ChatterMentionHidden` ("John Doe mentioned you on a record") or `RecordFollowHidden` ("John Doe added to a record you follow"), with no record, text or link, and no claim of why. The services return `withheldUserIds`. BOSS Chatter's Log note, Send message, Reply and Edit report them ("Note logged; 1 mentioned (1 not shown the record)"), and Commons declares the two topics. Known limit: a recipient who may open the record only in another app, through a screen the writer did not use, gets the withheld notice. Tests: mr-mantle RecordNotes checks Mia's withheld notice before access, which fails on the old code, and the full notice with link after a RequestParty grant. It also checks that a subscriber is told only of what they may open and that an employment notice nobody may open is not kept. RecordLinks checks a mentioned user without access and a follower with it. mr-boss Chatter checks the demo request mention of joe.developer, who may not open it, and the full notice on the shared request he is on, with no authorization failure recorded against him. Compose checks that a follower on the record is told in full of an email filed on it; that fails on the code before the screens were kept. QuickCreate and CallTarget count the withheld notice. Not rechecked live.
+- **DEVW-14.** The installed Projects app linked `ur-project-review` to `BOSS_DEMO_PROJECT`. The Dev AIDE links opened the “Plan the office move” task and “Office move” project that lists it. Workspace owns activity credit. [Link destinations](ui-refinement-evidence/pass-2320/linked-project.json) · [Stored project association](ui-refinement-evidence/pass-2320/record-files.json)
+- **DASH-09 and DASH-10.** Standard’s Send now produced two separate SMTP messages. Both contained the 58-byte `Records.csv` shown in the owner's preview. Each recipient reopened their own file and a third user received “Delivery not available”. The business alert went Firing at north = 2, then Normal after the owner raised the threshold from 1 to 100 and evaluated it again after the interval. The loopback SMTP sink received one message per state for each of four eligible users. The schedule and rule were paused and the alert mail template restored. Dashboards owns these activities. C’s transport checks use their own mailbox fixture. [Schedule](ui-refinement-evidence/pass-2320/report-detail.json) · [Recipient downloads](ui-refinement-evidence/pass-2320/report-consumers.json) · [Received MIME](ui-refinement-evidence/pass-2320/report-mail.jsonl) · [Rule recovery](ui-refinement-evidence/pass-2320/alert-normal.json) · [Delivered link](ui-refinement-evidence/pass-2320/alert-landing.json)
+
+### SH-B07 · November 27, 2026 · Shared shell and Gallery
+
+John Doe, SEC_NONE_GROUP, the registration fixture and an anonymous browser used the private runtime. Two independent John sessions observed the demo board and calendar. The display expiration used the second isolated database. Chrome and the native terminal ran in addition to focused screen checks. Build `23204bf61`. Chrome measured Material light and dark at 1920×1080, 1280×720 and 390×844 while sampling layout. [Viewport receipts](ui-refinement-evidence/pass-2320/B/layout.json) · [Build receipt](ui-refinement-evidence/pass-2320/binary.sha256).
+
+| Activity | Disposition | Last observed result or applicable prior evidence | Remaining prerequisite and next check | Receipt |
+|---|---|---|---|---|
+| SH-01 | partial | MFA sign-in succeeded. Known and unknown reset requests gave the same public response. | Recover the original deep link from capture mail, then retry an expired MFA/password challenge and real SSO against a disposable identity provider. | [login.txt](ui-refinement-evidence/pass-2320/B/login.txt) · [reset.txt](ui-refinement-evidence/pass-2320/B/reset.txt) |
+| SH-02 | partial | John and SEC_NONE_GROUP reopened the same Gallery URL in Material and Standard. A nonexistent sibling and Back returned each user to their own prior result. | Expire an active session and remove a previously mounted fixture route before reopening its saved tab. | [shell.json](ui-refinement-evidence/pass-2320/B/shell.json) |
+| SH-03 | partial | Gallery and shell theme checks ran in light and dark. At 1280×720 invalid Customer retained focus in the required field. | Measure disabled and error text at enlarged zoom on the narrowed form. | [terminal-theme.txt](ui-refinement-evidence/pass-2320/B/terminal-theme.txt) · [shell.json](ui-refinement-evidence/pass-2320/B/shell.json) |
+| SH-04 | partial | Material saved-find delete cancel/confirm ran. CSV download preserved the ComparisonOperator filter and URL. | Reopen a shared saved find in a second Gallery-granted account after the owner's permission change. | [gallery.txt](ui-refinement-evidence/pass-2320/B/gallery.txt) · [output.json](ui-refinement-evidence/pass-2320/B/output.json) |
+| SH-05 | partial | Detail and Record360 rendered for the Gallery holder. The independent no-grant account was refused the Gallery route in shell.json. | Grant record read separately from write and retry the owner's edit under those rights in EditExample. | [gallery.txt](ui-refinement-evidence/pass-2320/B/gallery.txt) |
+| SH-06 | partial | Gallery’s dialog submitted the comparison type key. Customer validation stayed on the step and focused its field at 1280px. | Repeat invalid-field cancel/recovery in Standard or its terminal form and compare persisted settings after reopening. | [gallery.txt](ui-refinement-evidence/pass-2320/B/gallery.txt) · [shell.json](ui-refinement-evidence/pass-2320/B/shell.json) |
+| SH-07 | partial | After saving the Customer step, John left Options for List and reopened the same session's draft with B saved customer. Invalid input stayed on Customer. | Repeat Finish after success and check expired-session/canceled and invalid-Options paths in alternate mode. | [shell.json](ui-refinement-evidence/pass-2320/B/shell.json) · [gallery.txt](ui-refinement-evidence/pass-2320/B/gallery.txt) · [rules.txt](ui-refinement-evidence/pass-2320/B/rules.txt) |
+| SH-08 | partial | Two browser sessions read OPP-1001 at qualify after the demo move. The calendar create acknowledged no storage. Neither session gained an event. | Use a **persistent** board/calendar consumer to move a stale item and inspect the stored result. Gallery deliberately restores demo rows. | [gallery-more.json](ui-refinement-evidence/pass-2320/B/gallery-more.json) · [gallery.txt](ui-refinement-evidence/pass-2320/B/gallery.txt) |
+| SH-09 | partial | At 390×844 the primary and bin scan inputs offered typed entry. The rendered Handheld page had no camera-labelled control. | Use a scan-capable client with camera permission and a barcoded item for deny, retry, duplicate and quantity outcomes. | [gallery-more.json](ui-refinement-evidence/pass-2320/B/gallery-more.json) |
+| SH-10 | partial | Gallery Editor saved, canceled and confirmed publication, inspected history/comparison, and recovered from an unavailable comparison. | The ordinary reader and publisher read Review One at git://example-wiki/EXGIT/Welcome.md, commit 3c5d43f8. The remaining check is a competing revision arriving while another editor has an unsaved change. | [gallery.txt](ui-refinement-evidence/pass-2320/B/gallery.txt) · [gallery-wiki.json](ui-refinement-evidence/pass-2320/gallery-wiki.json) · [wiki-published.json](ui-refinement-evidence/pass-2320/wiki-published.json) |
+| SH-11 | failed | The coordinator uploaded versions, checked readbacks and revocation. An inbox mention disclosed note text to Joe before he could open the request. See SH-UI-009. | Retest mention preview before record access and after granting access to the same request. | [record-files.json](ui-refinement-evidence/pass-2320/record-files.json) |
+| SH-12 | partial | The Material Create control opened with an unsaved customer value. Escape preserved the field's contents. The quick-create rule checked conditional offers. | Activate Create and the communications tray entirely by keyboard, then verify focus and draft through success and cancellation. | [shell.json](ui-refinement-evidence/pass-2320/B/shell.json) · [rules.txt](ui-refinement-evidence/pass-2320/B/rules.txt) |
+| SH-13 | partial | Chromium checked drawer, tab, failed-send and approval state. The live AI fixture recorded refusal and the permitted approval. | Use a disposable approval-required tool proposed from the open Gallery context. Refuse once, then observe the successful approved action in that same shell. | [assist.log](ui-refinement-evidence/pass-2320/assist.log) · [decisions.json](ui-refinement-evidence/pass-2320/C/decisions.json) |
+| SH-14 | partial | An actual shell floated into a second app, reloaded, docked again, accepted more input and closed. | Drop transport while its shell stays alive and attempt reattach as both the owner and a distinct terminal-enabled person. | [terminal-theme.txt](ui-refinement-evidence/pass-2320/B/terminal-theme.txt) |
+| SH-15 | partial | Clicking the filtered Gallery CSV produced the downloaded bytes. Chromium printed Gallery Report as a two-page PDF. Back returned to the filtered URL. | Use a selected report row and a configured rendered-email recipient, then compare attachment contents and origin selection. | [output.json](ui-refinement-evidence/pass-2320/B/output.json) |
+| SH-16 | complete | A single-use registration admitted the first browser, refused reuse and set the device cookie. Wrong and expired codes returned to Device without a device cookie. The registered browser identified Security test wall. After revocation the same display URL gave a registration-revoked message and cleared its cookie. | — | [display-life.json](ui-refinement-evidence/pass-2320/B/display-life.json) · [display.txt](ui-refinement-evidence/pass-2320/B/display.txt) · [display-expiry.json](ui-refinement-evidence/pass-2320/B/display-expiry.json) |
+| SH-17 | partial | Standard/Material were exercised with both roles. Native Dashboard → Maps → Dashboard preserved the origin route. | Check scoped helpers after grant loss in a second eligible app and its alternate renderer. | [shell.json](ui-refinement-evidence/pass-2320/B/shell.json) · [terminal-fiji.txt](ui-refinement-evidence/pass-2320/B/terminal-fiji.txt) |
+| SH-18 | partial | Personal skill 100031 produced site draft 100032 through Share. Its author retired the original. A second session opened the shared ID in System Skills. | Start from a completed harmless Assist run and confirm its learned skill is the one the administrator approves. | [personal-skill.json](ui-refinement-evidence/pass-2320/B/personal-skill.json) · [skill-admin.json](ui-refinement-evidence/pass-2320/B/skill-admin.json) · [rules.txt](ui-refinement-evidence/pass-2320/B/rules.txt) |
+
+## November 26 change-led review
+
+The November 25 nine-plan execution queue is superseded. Its 147 rows, counts and findings describe that build and remain available below. This pass selected changed behavior, new surfaces, landed fixes and consequential evidence gaps. Unselected rows carry their dated evidence forward. The new queue includes ten owning ledgers.
+
+| Owner | Selection and execution batch |
+|---|---|
+| Shared shell and Gallery | SH-03/13/17, changed Assist, shared Vue/Markdown, editor, map and whiteboard assets. The browser exercised Assist and Whiteboard, plus Maps as a shared widget consumer. The responsive and theme evidence belongs to MAP-01. Gallery gained no changed screen definition in the comparison. |
+| Maps | New standalone app, embedded dialog, terminal map, configuration, Geo data, Overture and dashboard handoff. See [MAP-B01](ui-review-maps.md). |
+| Dev AIDE Workspace | Hosted roots, issue/task integration, shared editing, keymaps, browser worker, Checks and local runner. See DEVW-14–18 in [Workspace](ui-review-dev-aide-workspace.md). |
+| Dev AIDE Authoring | Three-way load, Try over an unsaved service, trace marks, ECA fixtures, index and screen-builder consumers. See DEVA-15–17 in [Authoring](ui-review-dev-aide-authoring.md). |
+| Dashboards | Definition history fix and Maps drill links. See DASH-B03. |
+| System | Fleet last-deploy time change. See SYS-B04. |
+| Monitor | Log Context and Releases time fixes, Recovery form parameters and diagnostic handoffs. See MON-B04. |
+| AI and integrations | Consecutive Entity Sync windows, independent receipt and the Detail form fix. See AI-B03. |
+| Tools | Standalone Maps moves to its own ledger. Grid verifies the source and receiver. See TOOL-B04. |
+| BasicComms | Mention and ring transaction fix, including recipient events. See COM-B12. |
+
+### November 26 revocation and Load rechecks
+
+**All four findings from this follow-up have now passed their live rechecks.** Three passed on `c89d193f6`. DASH-UI-008’s remaining mounted-range branch passed on `0b75ac2e2`.
+
+| Finding | Live outcome |
+|---|---|
+| DASH-UI-008 · P1 · Passed | On c89d193f6 the editor cleared, but the mounted range retained its values for 31 seconds. On 0b75ac2e2 the same open dashboard followed the owner’s edit and cleared the header and value on revocation without a refresh. The owner retained the edited cell. [DASH-B07](ui-review-dashboards.md#dash-b07--november-26-live-revocation-recheck), [DASH-B09](ui-review-dashboards.md#dash-b09--november-26-mounted-range-recheck) |
+| TOOL-UI-006 · P2 · Passed | The form named the rejected file alongside the successful count. Grid confirmed partial success and the corrected retry. A missing file produced a named error. [TOOL-B09](ui-review-tools.md#tool-b09--november-26-live-load-error-rechecks) |
+| TOOL-UI-007 · P2 · Passed | Invalid worker input stayed on the form with the field, value and no-job explanation. Independent reads confirmed zero jobs and no new row. [TOOL-B09](ui-review-tools.md#tool-b09--november-26-live-load-error-rechecks) |
+| DASH-UI-007 · P2 · Passed | The same bookmark gave the former reader a clear unavailable message and still opened the dashboard for its owner. [DASH-B08](ui-review-dashboards.md#dash-b08--november-26-revoked-bookmark) |
+
+These rechecks revisit existing activities. The cumulative count remains **68 of 147 original activities revisited**, with 79 carrying earlier evidence. [Build and cleanup record](ui-refinement-evidence/recheck-c89/manifest.json).
+
+### November 26 Tools, System, Dashboards and calls follow-up
+
+On `8eaf230b3`, ten original activities received new branch evidence. SYS-03, DASH-06 and DASH-08 were additional selections. The cumulative count is **68 of 147 original activities revisited**, with **79** carrying earlier evidence. All ten still have partial activity status. The separate count for the 16 added Maps and Dev AIDE activities is unchanged.
+
+| Priority | Finding | Next observation |
+|---|---|---|
+| P1 · DASH-UI-008 | A former workbook collaborator’s active editor could change the owner’s workbook after sharing ended. A fresh open was refused. | Verify active editor and range-consumer access follows the current share, and compare the owner’s cell after a refused edit. [DASH-B06](ui-review-dashboards.md#dash-b06--shared-panel-workbook-editors-and-range-consumer) |
+| P2 · TOOL-UI-006 | Standard Data Load reported an ordinary row count when one file failed or a named file was missing. | Submit mixed files and confirm the operator can identify every failed input and its reason. [TOOL-B07](ui-review-tools.md#tool-b07--independent-files-create-only-and-cancellation) |
+| P2 · TOOL-UI-007 | A typed-value error during foreign-key worker preparation replaced the Load form with HTTP 500. | Keep the invalid value on the form with a field-level explanation and job status. [TOOL-B08](ui-review-tools.md#tool-b08--selected-differences-worker-results-and-recovery) |
+| P2 · DASH-UI-007 | A reader revisiting an unshared dashboard saw a renderer exception and stack. | Return an understandable unavailable state and verify the owner can still open the dashboard. [DASH-B05](ui-review-dashboards.md#dash-b05--concurrent-editors-shared-reader-and-restoration) |
+
+Tools exercised selected differences, import modes and formats, refusal, and foreign-key worker recovery. System followed a registered row rule and a time-limited membership through the other user’s actual Grid access. Dashboards covered library revisions, stale dashboard saves, restoration, workbook undo and a shared range. BasicComms followed both phone transfers to the recipient, a queue timeout to the same caller’s voicemail, and a host’s recording to playback. The media and phone peers were local. [System](ui-review-system.md#sys-b07--two-user-row-scope), [BasicComms](ui-review-basic-comms.md#com-b14--phone-transfers-queue-history-and-retained-playback), [local evidence and cleanup](ui-refinement-evidence/next-8eaf/manifest.json).
+
+### November 26 inspection follow-up
+
+Both original P2 rechecks passed on `fa75eceb6`. The review revisited all 30 original activities that had carried inspection-only evidence, starting with System and Tools. On that build, twenty-eight had a successful action or consumer check and open branches. The Tools Load walk exposed a failure, and Gallery’s versioned attachment walk still needs a record-file provider. The native and service checks below cover only their named branches.
+
+| Owner | Activities revisited | Outcome |
+|---|---:|---|
+| [System](ui-review-system.md#sys-b05--november-26-inspection-follow-up) | 11 | Selected browser and terminal sessions ended independently. The requested backup produced two readable catalogs. Import, export, audit and grant comparisons reached their readers. The one-row import summary exposed SYS-UI-003, verified below. |
+| [Tools](ui-review-tools.md#tool-b05--november-26-inspection-follow-up) | 7 | Six advanced through stored data, a reader or a local peer. One failed on invalid XML row content in Data Load. |
+| [Monitor](ui-review-system-monitoring.md#mon-b05--november-26-inspection-follow-up) | 3 | A 4,000 ms request reached Trace Detail. Authenticated replay and alternate-mount access were exercised on separate fixtures. |
+| [AI and integrations](ui-review-system-ai-integrations.md#ai-b05--november-26-inspection-follow-up) | 3 | A controlled 503 reached the failed-call detail. Tool policy and edge routing have scoped, partial evidence. |
+| [Shared shell and Gallery](#sh-b06--november-26-inspection-follow-up) | 2 | A record edit survived reopening. The shipped record-files demonstration names the record and has no upload control. |
+| [BasicComms](ui-review-basic-comms.md#com-b13--november-26-inspection-follow-up) | 4 | Transfer, routing, queue and recording outcomes were exercised using service, SIP and media fixtures. The corresponding end-user History and playback branches remain open. |
+
+The change-led pass has now revisited **65 of 147 original IDs**. The other **82** retain earlier evidence. Of the 16 added Maps and Dev AIDE activities, **14 demonstrated their selected local outcomes** after the geomap recheck. MAP-07 still depends on a current public Overture edition and DEVW-14 on the installed issue-tracker UI. No original activity was promoted to complete in this batch. Physical notification display remains conditional on a registered device.
+
+**Findings from this batch and their live rechecks**
+
+- **P2 · TOOL-UI-005.** Standard Tools Data Load returned HTTP 500 with “commit failed” for a two-row XML submission containing one bad foreign key. Neither row persisted. The page omitted the failing row and field. Correcting the value stored both rows. [Tools finding and receipt](ui-review-tools.md#tool-b05--november-26-inspection-follow-up). **Verified on 8eaf230b3.** [TOOL-B06](ui-review-tools.md#tool-b06--november-26-live-fix-verification).
+- **P3 · SYS-UI-003.** Standard System Import Detail showed “1 rows” for a successfully applied single row. The stored translation and the counts were correct. [System finding and receipt](ui-review-system.md#sys-b05--november-26-inspection-follow-up). **Verified on 8eaf230b3.** [SYS-B06](ui-review-system.md#sys-b06--november-26-live-fix-verification).
+
+Both findings passed their original Standard UI rechecks. Of the 30 formerly inspection-only activities, 29 now have successful branch evidence and SH-11 still needs a versioned record-file provider. The rechecks cover two previously revisited IDs, so the total remains 65 of 147.
+
+John Doe and independent scoped browser sessions exercised Standard and Material. Access Review had measured 1920×1080 light and dark, 1280×900 light and 390×844 dark samples with keyboard focus. The terminal walk used 120×40. The frame and mode checks apply to their named screens. The existing suites returned 125 passing component/browser features and 17 passing native cases. Download checks, database reads and listener cleanup are recorded in the [local evidence manifest](ui-refinement-evidence/inspection-fa75/manifest.json).
+
+### November 26 findings and live rechecks
+
+| Priority | Observed failure | Owner and next observation |
+|---|---|---|
+| P2 · AI-UI-006 | Changing only the delay in Standard Entity Sync Detail submitted the untouched split as `60,000`. The commit failed. Reopening showed the old delay. Entering unformatted digits in both fields saved the change. | **Live pass on fa75eceb6.** [AI-B04](ui-review-system-ai-integrations.md#ai-b04--standard-one-field-update). |
+| P2 · DASH-UI-006 | A newly opened dashboard geomap had zero country links after the local outline downloaded. Opening the panel menu drew 174 country paths. France then opened the correct Maps extent. | **Live pass on fa75eceb6.** [DASH-B04](ui-review-dashboards.md#dash-b04--saved-geomap-on-entry-and-return). |
+
+The following table records the initial change-led batch on `719e1ddf9`. The follow-up totals above include the later inspection walks. A passing branch does not close every step of its older activity. New Maps and Dev AIDE IDs are additional. The dated November 25 findings and dispositions below retain their original wording.
+
+| Owner | Original IDs selected | Earlier IDs carried forward without a new selection | New IDs | Current outcome |
+|---|---|---:|---:|---|
+| Shared shell/Gallery | SH-03, 13, 17 | 15 | 0 | Assist and Whiteboard component checks passed. The shared Maps widget drew at the measured widths and in both themes. |
+| Dashboards | DASH-03, 05, 12, 13 | 9 | 0 | Definition time passed in two zones. The geomap drill opened the expected extent after the P2 loading failure. |
+| System | SYS-08 | 19 | 0 | Fleet passed in two viewer zones. |
+| Monitor | MON-02, 09, 11 | 9 | 0 | Both time surfaces passed. A stored Recovery adapter reopened. The separate incident fixture waited for approval, executed through its adapters and verified the outcome. |
+| Tools | TOOL-17 | 16 | 0 | Two independent Grid reads verified the receiver before and after the qualifying sync. |
+| AI/integrations | AI-21 | 21 | 0 | Both consecutive intervals agreed with the receiver. The original primary-key fix passed and normal form submission exposed AI-UI-006. |
+| BasicComms | COM-07, 11 | 16 | 0 | Mention and ring commit/rollback checks passed with recipient and controlled delivery evidence. Physical delivery needs a registered handset. |
+| Dev AIDE Workspace | DEVW-01–04, 08–13 | 3 | 5 | Hosted Git, two-user editing, conflict resolution, the Checks source and retry, and both local execution modes produced evidence. The installed issue-tracker UI remains an addon dependency. |
+| Dev AIDE Authoring | DEVA-01, 04, 07–14 | 4 | 3 | The three-way load, traced Try, saved rule fixture/spec and entity reload reached their consumers. |
+| Maps | First standalone review | 0 | 8 | All eight activities were exercised. The reference raster and post-interruption archive passed. The dashboard handoff exposed DASH-UI-006. The graphical overlay recovered after a stale save. Comparison against a current public edition requires an enabled provider and a bounded region. |
+| **Total** | **35 of 147** | **112** | **16** | **Two new product findings.** The 112 carried-forward IDs retain dated outcomes, including any existing open branches. |
+
+On that initial build, of the 16 new IDs, 13 demonstrated their selected local outcomes. Two have conditional external branches (MAP-07 and DEVW-14), and MAP-08 recorded the dashboard rendering failure alongside its successful record handoff. Physical notification display under COM-07/11 remains blocked on a registered device. These are branch results for this pass.
+
+The [evidence manifest](ui-refinement-evidence/fresh-719e/manifest.json) pins the executable, component trees, actors, fixtures, browser assets and listener cleanup. The [inventory](ui-refinement-evidence/fresh-719e/inventory.json) groups the current screen files and companions by owner and indexes changed paths. The [comparison](ui-refinement-evidence/fresh-719e/changes.tsv) preserves the complete source delta. Evidence files follow the repository’s local, Git-ignored review convention. Focused reruns overlap; the manifest records their results individually.
+
+The execution checkout was `719e1ddf9665`, compared with `d10e22fde7b0`. The same-revision maximal release executable had SHA-256 `7e6551a29f72cf006cbde36e7e7b9c22c2b7e9f23d85185684e86df091689fe0` and included Overture, DevTools, collaboration, Git and TUI. The six loaded components were framework, webroot, tools, basic-comms, dev-aide and example. The browser used rebuilt webroot assets. Material was measured at 1920×1080 in light and dark, with 1280×800 and 390×844 samples. Terminal evidence used 120×40. Provider scenarios used recorded responses. An initial rules run with outside requests disabled failed provider prerequisites. The manifest identifies the focused reruns and their scope.
+
+Cleanup verified that ports 19874–19878 had no remaining listeners. The registered jobs ended, the review containers were removed, and the scratch databases, editor checkout, credentials and browser profiles were removed. The test settings and grants were confined to those databases.
 
 ## 1. Purpose, scope and sources
 
@@ -42,7 +228,7 @@ surfaces and reuse the owning app's planned branch when a suitable local host is
 
 ### Common review protocol
 
-This protocol applies to all nine companion plans. The [UI review guide](../docs/dev/UI-Review.md) supplies the
+This protocol applies to the shared review and its nine companion plans. The [UI review guide](../docs/dev/UI-Review.md) supplies the
 activity/evidence method; [application practices](../docs/dev/Practices-App-Dev.md), the
 [building skill](../.agents/skills/building/SKILL.md) and [testing skill](../.agents/skills/testing/SKILL.md) govern later
 changes. Preparing or auditing these plans starts no runtime, writes no fixture, executes no activity, runs no
@@ -96,7 +282,8 @@ framework-code commit use `./moq test-framework`. There is no addon application 
 
 Complete journeys, access/phone walks and screen sweeps belong in acceptance, at most one sweep per app per mode;
 retain the existing single golden-path regression walk where present. Run acceptance only when requested, or when
-adding/changing an acceptance test (that test and its component's acceptance suite). Never add a full regression
+adding/changing an acceptance test (that test alone; a component's whole acceptance suite only with the user's
+permission). Never add a full regression
 screen walk or run `accept-all` merely to finish a review. Reuse existing assertions, respect budgets and use the
 existing binary unless a changed embedded generator or Rust implementation requires rebuilding. Lint changed screens
 with a report output path, never a screen path as the lint argument. Documentation-only validation does not need a
@@ -598,13 +785,13 @@ execution records it; “exercised” never implies that all modes and recovery 
 | SH-02 — Find work and keep a reliable navigation history | exercised — partial | Launcher, desktop/narrow menus, filtered list/detail and Back/Forward exercised. SH-B03 confirmed Site Map navigation in both shells. Restricted users, new tab, missing/deleted routes, expired session and TUI remain pending. | SH-B01; SH-UI-004/005; `12-list-back.txt`; see SH-B03 for the current recheck. |
 | SH-03 — Choose an appearance and read every state | exercised — partial | Earlier appearance checks are in SH-B01/B03. The current Gallery Task sample measured dark desktop and phone, then light phone and 1280px. ThemeLayout exercised selected and feedback text in both themes. | SH-B01; SH-B03; SH-B04 |
 | SH-04 — Find a record, save the view and resume it | exercised — partial | Landing count → filtered List → Detail → Back, Find Options/Escape, no-match search and reset exercised. SH-B02 exercised Saved Find create/default/update/reload/clear/delete-cancel/delete, keyboard Columns reorder/hide/save/reload/reset and descending sort/page. SH-B03 confirmed exported IDs, State and sort order; direct browser download activation remains unverified this round. Edit dialogs, invalid filters, expired choices, 390 and other modes pending. Native Chrome download and filtered bytes passed. | SH-B01/B02; SH-UI-006/007; batch-02 evidence `01`–`05`; SH-B03; SH-B04 |
-| SH-05 — Understand and act on a record | inspected — partial | Opened STRT_APPEARANCE_POLICY Detail and checked identity/context at 1280. Actions, editing, related records, 360/Contact, history, refusal and all other modes pending. In the live TUI, Find RDR_E2 and Right opened that record with its ID, type, code and sequence. | SH-B01; `13-detail-1280.jpg`; SH-B04 |
+| SH-05 — Understand and act on a record | exercised — partial | Earlier walk. Opened STRT_APPEARANCE_POLICY Detail and checked identity/context at 1280. Actions, editing, related records, 360/Contact, history, refusal and all other modes pending. In the live TUI, Find RDR_E2 and Right opened that record with its ID, type, code and sequence. | SH-B06 (current). SH-B01; `13-detail-1280.jpg`; SH-B04 |
 | SH-06 — Complete and recover shared forms | exercised — partial | Widgets Equipment required-Serial refusal and corrected demo submit, Part conditional field change, server-search selection and Markdown preview exercised. All other control families, settings persistence, nested dialogs, cancellation/refusal, dark/narrow/TUI/Standard remain pending. | SH-B02; evidence `06`–`07` |
 | SH-07 — Leave and resume a multi-step task | exercised — partial | Empty-name validation, Back draft retention, normal finish/reset and skipped-Options deep link exercised; SH-B03 confirmed refusal with the incomplete draft and successful recovery. Cancel/navigation-away, invalid Options, stale/repeated finish, dark/narrow and other modes pending. | SH-B01; SH-UI-001; evidence `04`–`06`; see SH-B03 for the current recheck. |
 | SH-08 — Move work across boards, calendars and trees | exercised — partial | Calendar month rendering, quick-create demo, invalid month and Today recovery, 390 layout exercised. Views/Board/tree, persistence, drag/keyboard moves, date-range validation, day/week fallback and other modes pending. | SH-B01; SH-UI-002; `07-calendar-invalid-month.jpg`, `08-calendar-390.jpg`; see SH-B03 for the current recheck. |
 | SH-09 — Finish a scan-driven task | exercised — partial | At 390: unmatched scan, ambiguous chooser cancellation, single match, put-away confirmation, Task Enter-confirm and Skip through final boundary exercised. Choosing among matches, GS1, duplicate/error/quantity branches, Short, dark, desktop and TUI pending. No business persistence exists in these demos. | SH-B01; SH-UI-003; evidence `09`–`11`; see SH-B03 for the current recheck. |
 | SH-10 — Edit content and inspect its retained versions | exercised — partial | Saved versions One and Two, compared their content and restored One as version 03. Publish, second-session consumption and failure recovery remain open. | SH-B04 |
-| SH-11 — Attach evidence and discuss it in context | inspected — partial | Opened the Gallery RecordFiles stand-in without a record key. No file contents or sharing result observed. | SH-B04 |
+| SH-11 — Attach evidence and discuss it in context | blocked — record-file provider | Earlier walk. Opened the Gallery RecordFiles stand-in without a record key. No file contents or sharing result observed. | SH-B06 (current). SH-B04 |
 | SH-12 — Use shell shortcuts without losing the task | exercised — partial | Entered a QuickNote in the live TUI and received its demo-only Save acknowledgement. | SH-B04 |
 | SH-13 — Ask for help, inspect a proposed action and recover | inspected — partial | Opened Assist on Gallery Task. No model response or approval decision was observed. | SH-B04 |
 | SH-14 — Keep a terminal task alive across navigation | exercised — partial | Floated a live shell, navigated, reloaded, redocked, typed again and closed it. Scoped restrictions and interrupted-session recovery remain open. | SH-B04 |
@@ -843,6 +1030,8 @@ Local evidence is under `plans/ui-refinement-evidence/closeout-d10e22f/`.
 
 #### Nine-plan result on the disposable runtime
 
+Historical November 25 accounting. The [November 26 queue](#november-26-change-led-review) supersedes the remaining-branch list from this run.
+
 All 147 activities have an owning ledger row, a last observed result, and a next check. None has evidence for every planned branch. The count below groups activities by their strongest ledger disposition. A partially exercised activity can contain both passing checks and deferred branches.
 
 | Area | Partial | Inspection only | Blocked | Failed | Deferred | Total |
@@ -897,6 +1086,10 @@ The ledger records the strongest observed outcome. The remaining steps, recovery
 | SH-17 | Carry the same scoped context through a second app and its offered alternate mode. |
 | SH-18 | Use a completed harmless run and a skill author to share a personal skill for review and verify the administrator's copy. |
 
+### SH-B05 · November 26 change-led review
+
+Shared Assist, Markdown, editor and Whiteboard browser checks used local fixtures (editor.txt, extra-editor.txt and keymaps.txt). The Maps and Workspace screenshots record the Material desktop light/dark, 1280px and 390px observations. In the Maps consumer, Back restored the selected record and its permitted Gallery link. The reader saw the source place, had no Gallery link and was refused direct entry. See record-link.json and MAP-08.
+
 ## 7. Decisions
 
 - Nine companion files are indexed in [plans](README.md); this one owns common methodology and shared behavior.
@@ -910,3 +1103,12 @@ The ledger records the strongest observed outcome. The remaining steps, recovery
   are not inherited. Preserve routes, stored preferences and public contracts in any later refinement.
 - Finish a review with explicit branch outcomes and a candid unresolved ledger; missing prerequisites do not become
   passes. Building absent features is outside this review.
+
+### SH-B06 · November 26 inspection follow-up
+
+Build `fa75eceb6`. These entries update the activity ledger above. The earlier batches retain the original observations. Local receipts are under `plans/ui-refinement-evidence/inspection-fa75/`.
+
+| Activity | Current evidence | Remaining observation | Receipt |
+|---|---|---|---|
+| SH-05 | John Doe edited EX_100 in Gallery EditExample, reopened the changed warehouse name and restored the original. An account with Tools/System grants was refused that Gallery screen. | Use a Gallery record reader who can open the record and check the write separately. | `controls.json` |
+| SH-11 | Opened Gallery RecordFiles with the persisted Enumeration key UI_FA75_LOAD. The panel named that record and offered zero upload inputs. BasicComms separately copied real file bytes to a draft and refused another user’s file. | A mounted record-file provider with versioned storage and a second recipient is required for upload, replacement, revocation and a second-user byte comparison. Gallery supplies the demonstration panel. | `finalwalk.json`, `audience.txt` |

@@ -1221,7 +1221,8 @@ fn head_sent(web: &WebSlot, name: &str) -> bool {
 ///
 /// As Java's `sendJsonResponseInternal`: a string is JSON text already and is sent as it is. Otherwise the messages
 /// are added as `messages` (or make the whole response when there is none), the errors as `errors` unless the map
-/// has its own or is a JSON-RPC answer, and any error makes the status 500.
+/// has its own or is a JSON-RPC answer, and any error makes the status 500, except that errors which are all validation
+/// errors (a service's or a form's checks of the client's input) are 400, the client's mistake (SEC-RTE-90).
 pub(crate) fn send_json_response(value: Value) {
     if let Value::String(text) = value {
         send_bytes(200, "application/json", text.into_bytes());
@@ -1257,7 +1258,11 @@ pub(crate) fn send_json_response(value: Value) {
                 errors.join("; ")
             ),
         }
-        500
+        if only_validation_errors() {
+            400
+        } else {
+            500
+        }
     };
     if value.is_null() {
         send_bytes(status, "application/json", Vec::new());
@@ -2212,6 +2217,16 @@ pub fn take_output() -> (u16, Vec<(String, String)>, Vec<u8>, bool) {
             })
             .unwrap_or((200, Vec::new(), Vec::new(), false))
     })
+}
+
+/// Whether the message facade's errors are all validation errors: each one a validation error added (which adds its
+/// message to the errors too), none added on its own.
+fn only_validation_errors() -> bool {
+    ExecutionContext::with_current(|ec| {
+        let message = ec.message();
+        !message.validation_errors().is_empty() && message.errors().len() == message.validation_errors().len()
+    })
+    .unwrap_or(false)
 }
 
 fn message_errors() -> Vec<String> {

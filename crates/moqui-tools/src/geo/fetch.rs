@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Bringing a Geo data file to `runtime/tmp/geo-import` (plans/Maps.md §6.4, step 2): a registered data set's URL
+//! Bringing a Geo data file to `runtime/tmp/geo-import` (plans/archive/Maps.md §6.4, step 2): a registered data set's URL
 //! downloaded through `moqui_core::outbound` with its internal-address guard, conditionally (the ETag and
 //! Last-Modified of the edition in use, so an unchanged source ends the run as current), written as it arrives and
 //! stopped at `maps@import-max-bytes`; or an operator's file copied from an allowed resource location, a window at a

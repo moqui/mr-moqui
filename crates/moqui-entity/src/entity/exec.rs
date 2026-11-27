@@ -374,7 +374,9 @@ fn trace<T>(sql: &str, body: impl FnOnce() -> Result<T, Error>) -> Result<T, Err
     result
 }
 
-/// Literal values are never exported, including SQL outside the parameterized entity paths. At most about 4 KiB.
+/// Literal values are never exported, including SQL outside the parameterized entity paths. Each run of more than
+/// [`RUN_SHOWN`] like items of a list is shortened to the first and a count, so a bulk insert's
+/// `VALUES (?, … 14 more), … 499 more` or a long `IN (?, … 999 more)` is one line. At most about 4 KiB.
 pub fn redact_sql(sql: &str) -> String {
     thread_local! {
         /// This thread's redactions by SQL text: a statement traced again is not scanned again. Cleared past 1,024.
@@ -385,7 +387,7 @@ pub fn redact_sql(sql: &str) -> String {
         if let Some(redacted) = kept.borrow().get(sql) {
             return redacted.to_string();
         }
-        let redacted = redact_sql_to(sql, 4096);
+        let redacted = shortened_redaction(sql);
         let mut kept = kept.borrow_mut();
         if kept.len() >= 1024 {
             kept.clear();
@@ -393,6 +395,85 @@ pub fn redact_sql(sql: &str) -> String {
         kept.insert(sql.into(), redacted.as_str().into());
         redacted
     })
+}
+
+/// [`redact_sql`] without its cache: the whole text redacted, its lists compacted, then cut to about 4 KiB.
+fn shortened_redaction(sql: &str) -> String {
+    let mut text = compact_lists(&redact_sql_uncapped(sql));
+    if text.len() > 4096 {
+        let end = (0..=4096)
+            .rev()
+            .find(|&index| text.is_char_boundary(index))
+            .unwrap_or(0);
+        text.truncate(end);
+        text.push('\u{2026}');
+    }
+    text
+}
+
+/// The most like items of a list [`compact_lists`] leaves as they are.
+const RUN_SHOWN: usize = 4;
+
+/// `sql` with each run of more than [`RUN_SHOWN`] like items (`?`, or the same parenthesized group) separated by commas
+/// written as the first of them and `, … N more`; inside a group too.
+fn compact_lists(sql: &str) -> String {
+    let mut output = String::with_capacity(sql.len().min(4096));
+    let mut rest = sql;
+    while let Some(ch) = rest.chars().next() {
+        let Some(item_len) = list_item_len(rest) else {
+            output.push(ch);
+            rest = &rest[ch.len_utf8()..];
+            continue;
+        };
+        let item = &rest[..item_len];
+        let mut count = 1;
+        let mut after = &rest[item_len..];
+        while let Some(next) = after.trim_start().strip_prefix(',').map(str::trim_start) {
+            if !next.starts_with(item) {
+                break;
+            }
+            after = &next[item_len..];
+            count += 1;
+        }
+        if item.starts_with('(') {
+            output.push('(');
+            output.push_str(&compact_lists(&item[1..item_len - 1]));
+            output.push(')');
+        } else {
+            output.push_str(item);
+        }
+        if count > RUN_SHOWN {
+            output.push_str(&format!(", \u{2026} {} more", count - 1));
+            rest = after;
+        } else {
+            rest = &rest[item_len..];
+        }
+    }
+    output
+}
+
+/// The length of the list item `text` starts with: a `?`, or a group to its matching `)`.
+fn list_item_len(text: &str) -> Option<usize> {
+    if text.starts_with('?') {
+        return Some(1);
+    }
+    if !text.starts_with('(') {
+        return None;
+    }
+    let mut depth = 0usize;
+    for (index, ch) in text.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(index + 1);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// [`redact_sql`] of the whole text: the key of the query stats (`query_stats::statement_key`).
@@ -501,8 +582,32 @@ fn redact_sql_to(sql: &str, cap: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::already_exists;
+    use super::{already_exists, redact_sql};
     use moqui_lib::error::Error;
+
+    #[test]
+    fn a_redacted_statement_shortens_long_lists() {
+        let row = format!("({})", vec!["?"; 15].join(", "));
+        let insert = format!("INSERT INTO \"t\" (\"a\", \"b\") VALUES {}", vec![row; 500].join(", "));
+        assert_eq!(
+            redact_sql(&insert),
+            "INSERT INTO \"t\" (\"a\", \"b\") VALUES (?, \u{2026} 14 more), \u{2026} 499 more"
+        );
+        let find = format!(
+            "SELECT * FROM t WHERE id IN ({}) AND name = 'secret'",
+            vec!["?"; 1000].join(",")
+        );
+        assert_eq!(
+            redact_sql(&find),
+            "SELECT * FROM t WHERE id IN (?, \u{2026} 999 more) AND name = ?"
+        );
+        let short = "UPDATE t SET a = ?, b = ? WHERE (c, d) IN ((?, ?), (?, ?)) AND e = 12";
+        assert_eq!(
+            redact_sql(short),
+            "UPDATE t SET a = ?, b = ? WHERE (c, d) IN ((?, ?), (?, ?)) AND e = ?"
+        );
+        assert!(redact_sql(&format!("SELECT {}", "a, ".repeat(3000))).len() <= 4096 + 3);
+    }
 
     #[test]
     fn an_existing_object_is_not_duplicate_data() {

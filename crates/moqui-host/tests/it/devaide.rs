@@ -3530,6 +3530,31 @@ fn tasks_from_mantle_and_rest() {
         .to_string()
         .contains(&token));
 
+    // SEC-DEV-87: a source moved to another address keeps no token not given again, and sends none in the clear to
+    // another machine
+    let moved = call(
+        &factory,
+        "john.doe",
+        &format!("{TASKS}store#TaskSource"),
+        &[
+            ("taskSourceId", &source),
+            ("baseUrl", "http://127.0.0.1:9"),
+            ("username", "john.doe"),
+        ],
+    );
+    assert!(moved.is_err(), "{moved:?}");
+    let plain = call(
+        &factory,
+        "john.doe",
+        &format!("{TASKS}store#TaskSource"),
+        &[
+            ("taskSourceId", &source),
+            ("baseUrl", "http://tasks.example.net"),
+            ("username", "john.doe"),
+            ("token", &token),
+        ],
+    );
+    assert!(plain.is_err(), "{plain:?}");
     // a source that cannot be reached: its error, no tasks
     call(
         &factory,
@@ -3539,6 +3564,7 @@ fn tasks_from_mantle_and_rest() {
             ("taskSourceId", &source),
             ("baseUrl", "http://127.0.0.1:9"),
             ("username", "john.doe"),
+            ("token", &token),
         ],
     )
     .unwrap();

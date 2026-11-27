@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! WKT (OGC simple features, with EWKT's `SRID=n;` prefix) and delimited text as overlays (plans/Maps.md §4.1).
+//! WKT (OGC simple features, with EWKT's `SRID=n;` prefix) and delimited text as overlays (plans/archive/Maps.md §4.1).
 //!
 //! - A `.wkt` file is one geometry a line (a line that is empty or starts with `#` is passed over), each a feature with no
 //!   label: POINT, LINESTRING, POLYGON, their MULTI forms and GEOMETRYCOLLECTION, with Z, M or ZM ordinates (dropped).

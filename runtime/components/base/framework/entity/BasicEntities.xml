@@ -283,7 +283,7 @@ along with this software (see the LICENSE.md file). If not, see
         <master><detail relationship="type"/><detail relationship="dataSource"/><detail relationship="elevationUom"/></master>
     </entity>
 
-    <!-- Geo IDs of imported Geo data (plans/Maps.md §6.3).
+    <!-- Geo IDs of imported Geo data (plans/archive/Maps.md §6.3).
         - Computed, with no lookup, from the country and the source's code, so a re-import is a create-or-update of the
           same rows:
           - a postal code: {country}_Z_{code}, the code normalized (upper case, spaces and hyphens taken out, leading zeros
@@ -300,7 +300,7 @@ along with this software (see the LICENSE.md file). If not, see
           a crosswalk to ISO 3166-2 where the country's are FIPS), and only when nothing matches makes
           {country}_A1_{source code} or {country}_A2_{admin1}_{admin2}. -->
     <entity entity-name="GeoPostalCode" package="moqui.basic" use="configuration" cache="never">
-        <description>The postal-code companion of a Geo of type GEOT_POSTAL_CODE (plans/Maps.md §6.3), found by country and
+        <description>The postal-code companion of a Geo of type GEOT_POSTAL_CODE (plans/archive/Maps.md §6.3), found by country and
             normalized code: the code is never squeezed into the Geo's alpha-2 or alpha-3 fields nor identified by its number
             alone. displayCode keeps the source's spelling (spaces where they mean something, leading zeros). A prefix code
             (granularity GPG_PREFIX) is a declared lower precision, never the result of cutting another country's codes.
@@ -331,7 +331,7 @@ along with this software (see the LICENSE.md file). If not, see
         </seed-data>
     </entity>
     <entity entity-name="GeoPostalCodePlace" package="moqui.basic" use="configuration" cache="never">
-        <description>A place name of a postal code, from one source (plans/Maps.md §6.3). A source with one row a code and place
+        <description>A place name of a postal code, from one source (plans/archive/Maps.md §6.3). A source with one row a code and place
             (GeoNames postal) gives a code several names, each a row here, in the order of the file; none is chosen over the
             others as the code's name. The code's one representative point from that source (GeoPointAssoc, role
             GPR_REPRESENTATIVE) is the point of its row with the highest accuracy (GeoNames: 6, then 4, then 1; empty lowest),
@@ -351,7 +351,7 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="one" related="moqui.basic.GeoPoint" short-alias="point"/>
     </entity>
     <entity entity-name="GeoPointAssoc" package="moqui.basic" use="configuration" cache="never">
-        <description>A point of a Geo (plans/Maps.md §6.3): its role, its precision, the data set and edition that last wrote it,
+        <description>A point of a Geo (plans/archive/Maps.md §6.3): its role, its precision, the data set and edition that last wrote it,
             and its priority among the Geo's points from other sources. The active representative point is the in-date row of
             role GPR_REPRESENTATIVE with the lowest priority; candidates of unrelated sources are never averaged. Keyed by Geo
             and point, both computed IDs, so a re-import writes the same row. A Census point keeps its ZCTA basis (its data
