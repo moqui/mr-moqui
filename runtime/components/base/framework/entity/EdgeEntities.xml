@@ -243,12 +243,17 @@ along with this software (see the LICENSE.md file). If not, see
             (bouncedCount refused for good, or not delivered within mail-delivery@days). sentCount and refusedText (each
             refused address with the answer) are what the report says; reportPending is Y while the report (the
             mailStatus back) is not queued yet, which each round tries again without delivering again. lastReplyText is
-            the last answer of the MX, or why it was not reached.</description>
+            the last answer of the MX, or why it was not reached. envelopeJson is every recipient of the row as recorded, which
+            does not change, and failedJson those a later delivery status notification to its VERP address reported
+            failed (SEC-MAIL-91); the relay (the MTA beside moqui) records one finished row of domain "(relay)" for its
+            recipients.</description>
         <field name="mailDeliveryId" type="id" is-pk="true"/>
         <field name="pairedNodeId" type="id" not-null="true"/>
         <field name="queueItemId" type="id" not-null="true"/>
         <field name="domain" type="text-medium" not-null="true"/>
         <field name="recipientsJson" type="text-very-long"/>
+        <field name="envelopeJson" type="text-very-long"/>
+        <field name="failedJson" type="text-very-long"/>
         <field name="mailFrom" type="text-medium"/>
         <field name="contentLocation" type="text-medium"/>
         <field name="statusEnumId" type="id" not-null="true"/>

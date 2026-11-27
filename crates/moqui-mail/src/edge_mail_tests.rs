@@ -398,35 +398,162 @@ fn a_delivery_status_notification_to_a_verp_address_names_its_item_and_failure()
         domain: "example.net".to_string(),
         recipients: recipients.iter().map(ToString::to_string).collect(),
     };
-    let item = dsn_status_item(&scope(&["Nobody@example.net", "later@example.net"]), &report).unwrap();
+    let item = dsn_status_item(&scope(&["Nobody@example.net", "later@example.net"]), &report, false).unwrap();
     assert_eq!(item.kind, KIND_STATUS);
     let payload: serde_json::Value = serde_json::from_str(item.payload.as_deref().unwrap()).unwrap();
     assert_eq!(payload["queueItemId"], "k1234abcd");
-    assert_eq!(payload["status"], "partial", "never the message's bounce");
-    assert!(
-        payload["reply"]
-            .as_str()
-            .unwrap()
-            .starts_with("rfc822; nobody@example.net; 5.1.1"),
-        "{payload}"
-    );
-    assert!(!payload["reply"].as_str().unwrap().contains("later@"), "{payload}");
+    assert_eq!(payload["status"], "partial", "not every recipient failed");
     assert_eq!(
-        dsn_status_item(&scope(&["nobody@example.net"]), &report)
+        payload["reply"], "Nobody@example.net (5.1.1)",
+        "the recorded address and the status code, none of the report's text"
+    );
+    assert_eq!(
+        dsn_status_item(&scope(&["nobody@example.net"]), &report, false)
             .unwrap()
             .idempotency_key,
-        item.idempotency_key
+        dsn_status_item(&scope(&["nobody@example.net"]), &report, false)
+            .unwrap()
+            .idempotency_key
+    );
+    let bounced = dsn_status_item(&scope(&["nobody@example.net"]), &report, true).unwrap();
+    let payload: serde_json::Value = serde_json::from_str(bounced.payload.as_deref().unwrap()).unwrap();
+    assert_eq!(
+        (payload["status"].as_str(), payload["late"].as_bool()),
+        (Some("bounced"), Some(true))
     );
     // a failure of a recipient the address was not for is not taken; the delay of one that was is logged only
-    let delayed = dsn_status_item(&scope(&["later@example.net"]), &report).unwrap();
+    let delayed = dsn_status_item(&scope(&["later@example.net"]), &report, false).unwrap();
     let payload: serde_json::Value = serde_json::from_str(delayed.payload.as_deref().unwrap()).unwrap();
     assert_eq!(payload["status"], "delayed");
-    assert_eq!(dsn_status_item(&scope(&["else@example.net"]), &report), None);
-    // the relay's address: the recipients are not known, any counts
-    assert!(dsn_status_item(&scope(&[]), &report).is_some());
+    assert_eq!(dsn_status_item(&scope(&["else@example.net"]), &report, false), None);
+    // no recorded recipients: no report counts
+    assert_eq!(dsn_status_item(&scope(&[]), &report, false), None);
+    // an Original-Recipient that was recorded counts, under a Final-Recipient the remote side rewrote
+    let forwarded = DSN.replace(
+        "Final-Recipient: rfc822; nobody@example.net\r\n",
+        "Final-Recipient: rfc822; nobody@inner.example.net\r\nOriginal-Recipient: rfc822; nobody@example.net\r\n",
+    );
+    let report = parse_dsn(forwarded.as_bytes()).unwrap();
+    assert_eq!(
+        reported_recipients(&scope(&["nobody@example.net"]), &report, "failed"),
+        vec![("nobody@example.net".to_string(), "5.1.1".to_string())]
+    );
     let relayed = DSN.replace("Action: failed", "Action: relayed");
     assert_eq!(parse_dsn(relayed.as_bytes()).unwrap().action, "delayed");
     assert_eq!(parse_dsn(b"Subject: Out of office\r\n\r\nAway\r\n"), None);
+}
+
+/// The `mailStatus` payload of a delivery status notification `raw` to an address of `scope`, if any.
+#[cfg(feature = "imap")]
+fn reported(facade: &EntityFacade, scope: &BounceScope, raw: &str) -> Option<serde_json::Value> {
+    dsn_status(facade, scope, raw.as_bytes())
+        .unwrap()
+        .map(|item| serde_json::from_str(item.payload.as_deref().unwrap()).unwrap())
+}
+
+/// A report of `address` failed with status 5.1.1.
+#[cfg(feature = "imap")]
+fn failure_of(address: &str) -> String {
+    DSN.replace("nobody@example.net", address)
+}
+
+/// SEC-MAIL-91: through the relay the recipients are recorded too, and a later report counts only for them: a forged
+/// report naming another address is dropped; a report for one of two recipients is partial, and once the other has
+/// failed as well the message is bounced. Each failure is marked on the delivery row.
+#[cfg(feature = "imap")]
+#[test]
+fn a_later_report_counts_for_the_recorded_recipients_and_bounces_when_all_failed() {
+    let (ctx, facade) = setup();
+    let _entered = ctx.enter();
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let to = vec!["ann@example.net".to_string(), "bob@example.org".to_string()];
+    crate::mx::record_relayed(&facade, "local-a", "item1", "bounce+item1.x@bounce.example.com", &to).unwrap();
+    let scope = bounce_scope_of_relay(&facade, "item1");
+    assert_eq!(
+        scope.recipients, to,
+        "the relay's address is for every recipient recorded"
+    );
+
+    assert_eq!(
+        reported(&facade, &scope, &failure_of("mallory@example.com")),
+        None,
+        "not a recipient"
+    );
+    let first = reported(&facade, &scope, &failure_of("ANN@example.net")).unwrap();
+    assert_eq!(first["status"], "partial");
+    assert_eq!(first["reply"], "ann@example.net (5.1.1)");
+    // the same report again changes nothing
+    assert_eq!(
+        reported(&facade, &scope, &failure_of("ann@example.net")).unwrap()["status"],
+        "partial"
+    );
+    let last = reported(&facade, &scope, &failure_of("bob@example.org")).unwrap();
+    assert_eq!(
+        (last["status"].as_str(), last["late"].as_bool()),
+        (Some("bounced"), Some(true))
+    );
+    let row = facade
+        .find(crate::mx::DELIVERY)
+        .unwrap()
+        .eq("queueItemId", Value::string("item1"))
+        .one()
+        .unwrap()
+        .unwrap();
+    let failed: Vec<String> = serde_json::from_str(&field(&row, "failedJson")).unwrap();
+    assert_eq!(failed, to);
+
+    // with the MTA in moqui a domain's address counts for that domain's recipients only, whatever the row still holds
+    // to deliver
+    let mut rows = Vec::new();
+    for (domain, recipients) in [
+        ("example.net", vec!["cy@example.net", "di@example.net"]),
+        ("example.org", vec!["ed@example.org"]),
+    ] {
+        let mut row = facade.make_value(crate::mx::DELIVERY).unwrap();
+        row.set("mailDeliveryId", Value::string(format!("d-{domain}")));
+        row.set("pairedNodeId", Value::string("local-a"));
+        row.set("queueItemId", Value::string("item2"));
+        row.set("domain", Value::string(domain));
+        row.set("recipientsJson", Value::string("[]"));
+        row.set("envelopeJson", Value::string(serde_json::json!(recipients).to_string()));
+        row.set("statusEnumId", Value::string("EmdSent"));
+        row.create(&facade).unwrap();
+        rows.push(row);
+    }
+    let net = BounceScope {
+        item: "item2".to_string(),
+        domain: "example.net".to_string(),
+        recipients: vec!["cy@example.net".to_string(), "di@example.net".to_string()],
+    };
+    assert_eq!(
+        reported(&facade, &net, &failure_of("ed@example.org")),
+        None,
+        "another domain's recipient"
+    );
+    assert_eq!(
+        reported(&facade, &net, &failure_of("cy@example.net")).unwrap()["status"],
+        "partial"
+    );
+    assert_eq!(
+        reported(&facade, &net, &failure_of("di@example.net")).unwrap()["status"],
+        "partial",
+        "ed@example.org has not failed"
+    );
+}
+
+/// The scope of the relay's VERP address of `item`, as the listener reads it with the right tag.
+#[cfg(feature = "imap")]
+fn bounce_scope_of_relay(facade: &EntityFacade, item: &str) -> BounceScope {
+    let _lock = moqui_core::user::session::cookie_property_lock();
+    moqui_lib::env::set_property(
+        "moqui_conf__webapp_list__webapp__WEBROOT__session_config__cookie_key",
+        "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+    );
+    let address = BounceAddress {
+        item: item.to_string(),
+        tag: bounce_tag(item, "").unwrap(),
+    };
+    bounce_scope(facade, &address).unwrap().unwrap()
 }
 
 #[cfg(feature = "imap")]

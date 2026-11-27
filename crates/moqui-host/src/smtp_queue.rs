@@ -437,7 +437,14 @@ fn deliver_queued(
     // a bounce is the status of the message it is for, not mail for an account
     for (account, node, scope) in bounces {
         let item = scope.item.as_str();
-        let status = edge_mail::parse_dsn(raw).and_then(|report| edge_mail::dsn_status_item(&scope, &report));
+        let status = match edge_mail::dsn_status(facade, &scope, raw) {
+            Ok(status) => status,
+            Err(err) => {
+                tracing::error!("SMTP listener (edge mode): the report for item {item} was not read: {err}");
+                accounts.push((account, AccountResult::Failed));
+                continue;
+            }
+        };
         let Some(status) = status else {
             tracing::info!(
                 "SMTP listener (edge mode): mail to the bounce address of item {item} is not a failure report for \

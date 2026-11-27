@@ -644,9 +644,10 @@ fn mail_crosses_the_edge_node_both_ways_and_waits_while_the_link_is_down() {
     assert_eq!(first.get("statusId").map(String::as_str), Some("ES_SENT"));
     assert_eq!(relay.taken.lock().unwrap().len(), 1, "the bounce was not relayed");
 
-    // a remote MX's bounce later, a delivery status notification to the VERP address: the message stays Sent, the
-    // recipient named not delivered (SEC-MAIL-91); the bounce address of an item the edge node never relayed, or of
-    // this item with a tag this node did not make, is refused
+    // a remote MX's bounce later, a delivery status notification to the VERP address: it counts only for a recipient
+    // the relay was given, and its only recipient failed, so the message is bounced where it is (SEC-MAIL-91); the
+    // bounce address of an item the edge node never relayed, or of this item with a tag this node did not make, is
+    // refused
     let (rcpt, _) = lmtp(
         lmtp_address,
         &["bounce+k0000.0123456789abcdef0123@bounce.test"],
@@ -659,23 +660,31 @@ fn mail_crosses_the_edge_node_both_ways_and_waits_while_the_link_is_down() {
         "Subject: x\r\n\r\nx\r\n",
     );
     assert!(rcpt[0].starts_with("550 5.1.1"), "{rcpt:?}");
-    let dsn = format!(
-        "From: MAILER-DAEMON@mx.example.net\r\nTo: {verp_1}\r\nSubject: Undelivered Mail\r\n\
-         MIME-Version: 1.0\r\nContent-Type: multipart/report; report-type=delivery-status; boundary=\"b1\"\r\n\r\n\
-         --b1\r\nContent-Type: text/plain\r\n\r\nNot delivered.\r\n--b1\r\nContent-Type: message/delivery-status\r\n\r\n\
-         Reporting-MTA: dns; mx.example.net\r\n\r\nFinal-Recipient: rfc822; ok@example.net\r\nAction: failed\r\n\
-         Status: 5.1.1\r\nDiagnostic-Code: smtp; 550 5.1.1 User unknown\r\n\r\n--b1--\r\n"
-    );
-    let (rcpt, after) = lmtp(lmtp_address, &[&verp_1], &dsn);
+    let dsn = |recipient: &str| {
+        format!(
+            "From: MAILER-DAEMON@mx.example.net\r\nTo: {verp_1}\r\nSubject: Undelivered Mail\r\n\
+             MIME-Version: 1.0\r\nContent-Type: multipart/report; report-type=delivery-status; boundary=\"b1\"\r\n\r\n\
+             --b1\r\nContent-Type: text/plain\r\n\r\nNot delivered.\r\n--b1\r\nContent-Type: message/delivery-status\r\n\r\n\
+             Reporting-MTA: dns; mx.example.net\r\n\r\nFinal-Recipient: rfc822; {recipient}\r\nAction: failed\r\n\
+             Status: 5.1.1\r\nDiagnostic-Code: smtp; 550 5.1.1 User unknown\r\n\r\n--b1--\r\n"
+        )
+    };
+    // a report naming an address the relay was not given is dropped
+    let (rcpt, after) = lmtp(lmtp_address, &[&verp_1], &dsn("mallory@example.com"));
     assert_eq!(rcpt, ["250 2.1.5 Ok"]);
     assert!(after[0].starts_with("250 2.1.5"), "{after:?}");
-    wait_until(Duration::from_secs(10), "the later bounce noted on the message", || {
-        let row = &rows(&local, MESSAGE, &[("emailMessageId", "EDGE_OUT_1")])[0];
-        row.get("statusId").map(String::as_str) == Some("ES_SENT")
-            && row
-                .get("sendError")
-                .is_some_and(|error| error.starts_with("Not delivered to: ") && error.contains("ok@example.net; 5.1.1"))
-    });
+    let (rcpt, after) = lmtp(lmtp_address, &[&verp_1], &dsn("ok@example.net"));
+    assert_eq!(rcpt, ["250 2.1.5 Ok"]);
+    assert!(after[0].starts_with("250 2.1.5"), "{after:?}");
+    wait_until(
+        Duration::from_secs(10),
+        "the later bounce of its only recipient",
+        || {
+            let row = &rows(&local, MESSAGE, &[("emailMessageId", "EDGE_OUT_1")])[0];
+            row.get("statusId").map(String::as_str) == Some("ES_BOUNCED")
+                && row.get("sendError").map(String::as_str) == Some("Bounced: ok@example.net (5.1.1)")
+        },
+    );
     dialer.stop();
 }
 

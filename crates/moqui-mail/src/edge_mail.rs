@@ -162,7 +162,7 @@ pub fn bounce_item_id(address: &str, domain: &str) -> Option<BounceAddress> {
 }
 
 /// What a VERP address with a right tag is for: its item, the recipient domain it was made for (empty: every
-/// recipient, the relay's), and that domain's recipients as recorded for delivery (empty: not known, any).
+/// recipient, the relay's), and that domain's recipients as recorded for delivery (empty: none, so no report counts).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct BounceScope {
     pub item: String,
@@ -189,8 +189,7 @@ pub fn bounce_scope(facade: &EntityFacade, address: &BounceAddress) -> Result<Op
         .list()?;
     let mut domains: Vec<(String, Vec<String>)> = Vec::new();
     for row in rows.values() {
-        let recipients: Vec<String> = serde_json::from_str(&field_text(row, "recipientsJson")).unwrap_or_default();
-        domains.push((field_text(row, "domain"), recipients));
+        domains.push((field_text(row, "domain"), super::mx::envelope_of(row)));
     }
     if matches("") {
         return Ok(Some(BounceScope {
@@ -225,7 +224,12 @@ pub struct DsnReport {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct DsnRecipient {
     pub action: String,
+    /// The `Final-Recipient` address.
     pub address: String,
+    /// The `Original-Recipient` address, when the report has one.
+    pub original: String,
+    /// The `Status` code (`5.1.1`), digits and dots only.
+    pub status: String,
     pub detail: String,
 }
 
@@ -264,17 +268,26 @@ pub fn parse_dsn(raw: &[u8]) -> Option<DsnReport> {
             .filter(|part| !part.is_empty())
             .collect::<Vec<_>>()
             .join("; ");
-        let address = final_recipient
-            .rsplit_once(';')
-            .map_or(final_recipient.as_str(), |(_, address)| address)
-            .trim()
-            .trim_start_matches('<')
-            .trim_end_matches('>')
-            .to_string();
+        let bare = |typed: &str| {
+            typed
+                .rsplit_once(';')
+                .map_or(typed, |(_, address)| address)
+                .trim()
+                .trim_start_matches('<')
+                .trim_end_matches('>')
+                .to_string()
+        };
+        let status: String = field("status")
+            .chars()
+            .take_while(|ch| ch.is_ascii_digit() || *ch == '.')
+            .take(12)
+            .collect();
         details.push(detail.clone());
         report.recipients.push(DsnRecipient {
             action,
-            address,
+            address: bare(&final_recipient),
+            original: bare(&field("original-recipient")),
+            status,
             detail,
         });
     }
@@ -282,38 +295,57 @@ pub fn parse_dsn(raw: &[u8]) -> Option<DsnReport> {
     Some(report)
 }
 
-/// The `mailStatus` item for the local node's `mailOut` item of `scope`, from a delivery status notification to its
-/// VERP address, or none when it reports no failed or delayed recipient the address was for. Anyone the message
-/// reached holds the address (SEC-MAIL-91), so the report counts only for the recipients of `scope` (any, when they are
-/// not known) and is never the message's bounce: `partial` naming the failed ones, which leaves the message Sent with
-/// them in its send error, else `delayed`, which is logged. Keyed by the item and the report, so the MTA's retry of the
-/// same notification is one item.
+/// The recipients of `scope` that `report` says failed (`action` `failed`) or were delayed, each as recorded, with its
+/// status code: a report counts only for a `Final-Recipient` or `Original-Recipient` the address was recorded for
+/// (SEC-MAIL-91), never one it names alone.
 #[must_use]
-pub fn dsn_status_item(scope: &BounceScope, report: &DsnReport) -> Option<NewItem> {
-    let ours = |entry: &&DsnRecipient| {
-        scope.recipients.is_empty()
-            || scope
-                .recipients
-                .iter()
-                .any(|recipient| recipient.trim().eq_ignore_ascii_case(&entry.address))
+pub fn reported_recipients(scope: &BounceScope, report: &DsnReport, action: &str) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    for entry in report.recipients.iter().filter(|entry| entry.action == action) {
+        let recorded = scope
+            .recipients
+            .iter()
+            .map(|recipient| recipient.trim())
+            .find(|recipient| {
+                recipient.eq_ignore_ascii_case(&entry.address)
+                    || (!entry.original.is_empty() && recipient.eq_ignore_ascii_case(&entry.original))
+            });
+        if let Some(recorded) = recorded {
+            if !out.iter().any(|(seen, _)| seen.eq_ignore_ascii_case(recorded)) {
+                out.push((recorded.to_string(), entry.status.clone()));
+            }
+        }
+    }
+    out
+}
+
+/// The `mailStatus` item for the local node's `mailOut` item of `scope`, from a delivery status notification to its
+/// VERP address, or none when it reports no failed or delayed recipient the address was recorded for
+/// ([`reported_recipients`]). `all_failed`: every recipient recorded for the item has now been reported failed
+/// ([`dsn_status`]), and the item is `bounced` (`late`, which marks the message `ES_BOUNCED`); else the failed are
+/// `partial`, which leaves the message Sent with them in its send error, and the delayed `delayed`, which is logged.
+/// The reply names each recorded address with its status code, nothing of the report's own text. Keyed by the item
+/// and the reply, so the MTA's retry of the same notification is one item.
+#[must_use]
+pub fn dsn_status_item(scope: &BounceScope, report: &DsnReport, all_failed: bool) -> Option<NewItem> {
+    let named = |list: Vec<(String, String)>| {
+        list.into_iter()
+            .map(|(address, status)| {
+                if status.is_empty() {
+                    address
+                } else {
+                    format!("{address} ({status})")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
     };
-    let failed: Vec<&str> = report
-        .recipients
-        .iter()
-        .filter(ours)
-        .filter(|entry| entry.action == "failed")
-        .map(|entry| entry.detail.as_str())
-        .collect();
-    let delayed: Vec<&str> = report
-        .recipients
-        .iter()
-        .filter(ours)
-        .filter(|entry| entry.action == "delayed")
-        .map(|entry| entry.detail.as_str())
-        .collect();
+    let failed = reported_recipients(scope, report, "failed");
+    let delayed = reported_recipients(scope, report, "delayed");
     let (status, detail) = match (failed.is_empty(), delayed.is_empty()) {
-        (false, _) => ("partial", failed.join(" | ")),
-        (true, false) => ("delayed", delayed.join(" | ")),
+        (false, _) if all_failed => ("bounced", named(failed)),
+        (false, _) => ("partial", named(failed)),
+        (true, false) => ("delayed", named(delayed)),
         (true, true) => return None,
     };
     let mail_out_id = scope.item.as_str();
@@ -322,10 +354,34 @@ pub fn dsn_status_item(scope: &BounceScope, report: &DsnReport) -> Option<NewIte
         kind: KIND_STATUS.to_string(),
         conversation_key: format!("mailStatus:{mail_out_id}"),
         idempotency_key: format!("dsn:{key}"),
-        payload: Some(serde_json::json!({"queueItemId": mail_out_id, "status": status, "reply": detail}).to_string()),
+        payload: Some(
+            serde_json::json!({"queueItemId": mail_out_id, "status": status, "reply": detail, "late": true})
+                .to_string(),
+        ),
         content: None,
         content_location: None,
     })
+}
+
+/// The `mailStatus` item of a delivery status notification `raw` to a VERP address of `scope` ([`dsn_status_item`]):
+/// its failed recipients are marked on the item's delivery rows first, so a report that makes every recorded
+/// recipient failed, with the ones before, bounces the message. None for mail that is no such report. In the caller's
+/// transaction.
+///
+/// # Errors
+///
+/// Returns why when the delivery rows could not be read or written.
+#[cfg(feature = "imap")]
+pub fn dsn_status(facade: &EntityFacade, scope: &BounceScope, raw: &[u8]) -> Result<Option<NewItem>, LibError> {
+    let Some(report) = parse_dsn(raw) else {
+        return Ok(None);
+    };
+    let failed: Vec<String> = reported_recipients(scope, &report, "failed")
+        .into_iter()
+        .map(|(address, _)| address)
+        .collect();
+    let all_failed = !failed.is_empty() && super::mx::note_failed(facade, &scope.item, &failed)?;
+    Ok(dsn_status_item(scope, &report, all_failed))
 }
 
 /// Whether an `EmailServer`'s `smtpHost` sends through the edge node.
@@ -855,9 +911,15 @@ pub(super) fn deliver_edge_outbound_mail(
         content_location: None,
     };
     // its own transaction, committed now: the relay took it, so whatever happens to this apply it is not relayed again
+    let paired_node = node.clone();
     let node = Some(node.as_str()).filter(|node| !node.is_empty());
     let queued = facade.transactions_for(queue::QUEUE_ITEM).and_then(|tx| {
         tx.run(moqui_core::transaction::TransactionAttribute::ForceNew, None, || {
+            // the recipients a later report to the VERP address may name (SEC-MAIL-91)
+            #[cfg(feature = "imap")]
+            if status == "accepted" && sender != from {
+                super::mx::record_relayed(facade, &paired_node, &item, &sender, &to)?;
+            }
             queue::enqueue(&factory, facade, node, &back)
         })
     });
@@ -1243,13 +1305,15 @@ fn outbound_message(facade: &EntityFacade, item: &str) -> Result<Option<(String,
 }
 
 /// Put message `email_message_id` back where a failed send leaves it, with `error`: a mail client's message in its
-/// account's Outbox (`ES_READY` with `sendError`, no folder), another `ES_BOUNCED` with `sendError`. Only while it is
+/// account's Outbox (`ES_READY` with `sendError`, no folder), another `ES_BOUNCED` with `sendError`; with
+/// `bounced_late` (a later report that every recipient failed), any message `ES_BOUNCED` where it is. Only while it is
 /// still as the send left it (Sent, with Message-ID `message_id`), so a message sent again or cancelled since is left.
 fn back_to_outbox(
     facade: &EntityFacade,
     email_message_id: &str,
     message_id: &str,
     error: &str,
+    bounced_late: bool,
 ) -> Result<(), LibError> {
     let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
     let Some(message) = find_one(facade, MESSAGE, "emailMessageId", email_message_id)? else {
@@ -1271,7 +1335,7 @@ fn back_to_outbox(
     let mut row = facade.make_value(MESSAGE)?;
     row.set("emailMessageId", Value::string(email_message_id));
     row.set("sendError", Value::string(error.chars().take(4000).collect::<String>()));
-    if client {
+    if client && !bounced_late {
         // the Outbox: ready with an error and no folder (EmailClientServices record#SendResult)
         row.set("statusId", Value::string("ES_READY"));
         row.set("emailFolderId", Value::Null);
@@ -1350,7 +1414,15 @@ pub(super) fn note_edge_mail_status(
         );
         return Ok(BTreeMap::new());
     }
-    back_to_outbox(facade, &email_message_id, &message_id, &format!("Bounced: {reply}"))?;
+    // a later report that every recipient failed (SEC-MAIL-91): bounced where it is, not back in the Outbox
+    let late = payload["late"].as_bool().unwrap_or(false);
+    back_to_outbox(
+        facade,
+        &email_message_id,
+        &message_id,
+        &format!("Bounced: {reply}"),
+        late,
+    )?;
     Ok(BTreeMap::new())
 }
 
@@ -1376,6 +1448,7 @@ pub(super) fn fail_edge_outbound_mail(
         &email_message_id,
         &json_text(&payload, "messageId"),
         &format!("Not sent through the edge node: {}", param_text(parameters, "error")),
+        false,
     )?;
     Ok(BTreeMap::new())
 }
