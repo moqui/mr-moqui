@@ -1986,9 +1986,11 @@ along with this software (see the LICENSE.md file). If not, see
             // who took them out: such a person comes back by an invite link only through a request (ChatInvites.js)
             row.set('removedByUserId', self ? null : me)
             row.update()
-            // taken out by another: out of the room's live locations too, in a transaction of its own, never failing this
-            // (plans/Location-Sharing.md §3.5); one who leaves by themselves keeps them until the owner takes them out
-            if (!self && userId) ec.resource.script('component://framework/service/org/moqui/chat/ChatLocation.js').execute('revokeLive', {chatRoomId: chatRoomId, userId: userId})
+            // taken out by another: out of the room's live locations too once this removal commits (a removal rolled back
+            // takes nobody out), never failing it (plans/Location-Sharing.md §3.5); one who leaves by themselves keeps them
+            // until the owner takes them out
+            if (!self && userId) ec.service.special().name('org.moqui.chat.ChatLocationServices.revoke#LiveAudience')
+                    .parameters({chatRoomId: chatRoomId, userId: userId}).registerOnCommit()
             // the room's calls' boards are no longer theirs (MeetingBoardAccess.js); their sockets are told after the commit
             if (userId && ec.factory.hasFeature('collab')) ec.service.sync().name('org.moqui.resource.CollabServices.recheck#MeetingBoards').parameter('chatRoomId', chatRoomId)
                 .disableAuthz().call()
@@ -3812,6 +3814,9 @@ along with this software (see the LICENSE.md file). If not, see
             for (let start = 0; start < all.length; start += 500) {
                 // the activity of the edits and reactions that go (a message's own went with clear#MessageContent)
                 ec.entity.find('moqui.chat.ChatUserActivity').condition('chatRoomId', chatRoomId)
+                        .condition('eventSeq', 'in', all.slice(start, start + 500)).deleteAll()
+                // a live location message's link to its share (plans/Location-Sharing.md §3.5) goes with it
+                ec.entity.find('moqui.chat.ChatLiveShare').condition('chatRoomId', chatRoomId)
                         .condition('eventSeq', 'in', all.slice(start, start + 500)).deleteAll()
                 deletedCount += ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId)
                         .condition('eventSeq', 'in', all.slice(start, start + 500)).deleteAll()

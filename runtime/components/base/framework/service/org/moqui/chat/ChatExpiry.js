@@ -454,6 +454,8 @@ function expireRoom(p) {
     // a reminder of what went is not sent (phase 15's ChatMessageReminder: dropped, as for a message deleted)
     find(REMINDER).condition('chatRoomId', chatRoomId).condition('eventSeq', 'in', chunk).condition('statusEnumId', 'CrmPending')
       .updateAll({ statusEnumId: 'CrmDropped', reasonCode: 'messageGone' })
+    // a live location message's link to its share (plans/Location-Sharing.md §3.5) goes with it
+    find('moqui.chat.ChatLiveShare').condition('chatRoomId', chatRoomId).condition('eventSeq', 'in', chunk).deleteAll()
     deletedCount += find(EVENT).condition('chatRoomId', chatRoomId).condition('eventSeq', 'in', chunk).deleteAll()
   }
   // the thread roots that stand: their count and last reply

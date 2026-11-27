@@ -250,7 +250,7 @@ function sendLive(p) {
   const approximate = p.precisionEnumId === 'LspApproximate'
   const share = ec.service.sync().name(LIVE + 'create#Share').parameters({
     audienceList: audience.map((userId) => ({ audienceTypeEnumId: 'LsaUser', userId })), thruDate: p.thruDate,
-    precisionEnumId: approximate ? 'LspApproximate' : 'LspExact', keepTrail: false, label: given || (owner && owner.userFullName) || null,
+    precisionEnumId: approximate ? 'LspApproximate' : 'LspExact', keepTrail: false, label: name,
     purposeText: room.roomName ? expand('In chat: ${name}', { name: words(room.roomName).slice(0, 100) }) : localize('In a chat')
   }).call() || {}
   if (ec.message.hasError()) return Object.assign(out, { eventSeq: null, event: null, reasonCode: share.reasonCode || null })
@@ -278,9 +278,16 @@ function revokeLive(p) {
     let rows = ec.entity.find('moqui.chat.ChatLiveShare').disableAuthz()
     if (!blank(p.chatRoomId)) rows = rows.condition('chatRoomId', p.chatRoomId)
     if (!blank(p.ownerUserId)) rows = rows.condition('ownerUserId', p.ownerUserId)
-    const shareIdList = Array.from(new Set(Array.from(rows.selectField('shareId').list()).map((row) => row.shareId).filter((id) => id)))
-    if (!shareIdList.length) return { revokedCount: 0 }
-    const done = ec.service.sync().name(LIVE + 'revoke#ChatAudience').parameters({ shareIdList, userId }).disableAuthz().call() || {}
+    const linked = Array.from(rows.selectField('shareId,ownerUserId').list()).filter((row) => row.shareId && row.ownerUserId)
+    if (!linked.length) return { revokedCount: 0 }
+    // only the shares still on (an ended one's row is deleted with it; one past its end waits for the hourly clean)
+    const now = ec.user.nowTimestamp
+    const active = new Set(Array.from(ec.entity.find('moqui.maps.LocationShare').condition('shareId', 'in', linked.map((row) => row.shareId))
+      .condition('endedDate', null).condition('revokedDate', null).condition('thruDate', 'greater', now).selectField('shareId').disableAuthz().list())
+      .map((row) => row.shareId))
+    const shareList = linked.filter((row) => active.has(row.shareId)).map((row) => ({ shareId: row.shareId, ownerUserId: row.ownerUserId }))
+    if (!shareList.length) return { revokedCount: 0 }
+    const done = ec.service.sync().name(LIVE + 'revoke#ChatAudience').parameters({ shareList, userId }).disableAuthz().call() || {}
     if (ec.message.hasError()) ec.logger.error(`A person was not taken out of the live locations of ${p.chatRoomId || 'the rooms of ' + p.ownerUserId}: ${ec.message.getErrorsString()}`)
     return { revokedCount: Number(done.revokedCount) || 0 }
   } catch (err) {

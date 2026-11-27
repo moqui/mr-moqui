@@ -71,8 +71,8 @@ spec({
     },
     cleanupSpec() {
         // a live share a failed run left on is stopped, so the spec runs again on --db existing
-        for (const share of sys(() => Array.from(ec.entity.find("moqui.maps.LocationShare").condition("ownerUserId", A).condition("endedDate", null).list())))
-            as(A, MAPS + "stop#Share", {shareId: share.shareId})
+        for (const share of sys(() => Array.from(ec.entity.find("moqui.maps.LocationShare").condition("ownerUserId", "in", [A, B]).condition("endedDate", null).list())))
+            as(share.ownerUserId, MAPS + "stop#Share", {shareId: share.shareId})
         // the blocks and the disabled account of the exclusions, so the spec runs again
         sys(() => {
             ec.entity.find("moqui.chat.ChatUserBlock").condition("userId", "in", USERS).deleteAll()
@@ -254,19 +254,30 @@ feature("live location's audience: those left out when it starts; one taken out 
             .condition("revokedDate", null).list()).map((one) => one.userId).sort())
         const started = audience()
         const linked = row("moqui.chat.ChatLiveShare", {chatRoomId: crowd, eventSeq: sent.eventSeq})
+        // B's own live location in the room: A's block of J leaves it alone
+        const other = as(B, LOC + "send#LiveLocation", {chatRoomId: crowd, thruDate: new Date(Date.now() + 3600000)})
         // I taken out by A (the room's owner), J blocked by A, B leaves by themselves
         const removed = as(A, CHAT + "remove#Member", {chatRoomId: crowd, userId: I})
         const blocked = as(A, "org.moqui.chat.ChatBlockServices.block#ChatUser", {blockedUserId: J})
         const left = as(B, CHAT + "remove#Member", {chatRoomId: crowd})
-        const after = audience()
+        // the revokes run once the removal and the block commit, on another thread (registerOnCommit)
+        let after = audience()
+        for (let tries = 0; tries < 100 && after.length > 1; tries++) {
+            sleep(20)
+            after = audience()
+        }
         const removedSees = as(I, MAPS + "get#Share", {shareId: sent.shareId}).reasonCode
         const blockedSees = as(J, MAPS + "get#Share", {shareId: sent.shareId}).reasonCode
         const leftSees = as(B, MAPS + "get#Share", {shareId: sent.shareId})
+        const blockedSeesOther = as(J, MAPS + "get#Share", {shareId: other.shareId})
         const ownerCard = as(A, LOC + "get#LiveLocation", {chatRoomId: crowd, eventSeq: sent.eventSeq})
         as(A, MAPS + "stop#Share", {shareId: sent.shareId})
-        return {sent, started, linked, removed, blocked, left, after, removedSees, blockedSees, leftSees, ownerCard}
+        as(B, MAPS + "stop#Share", {shareId: other.shareId})
+        // an ended share's link to its room goes with it
+        const linkAfterStop = row("moqui.chat.ChatLiveShare", {chatRoomId: crowd, eventSeq: sent.eventSeq})
+        return {sent, started, linked, other, removed, blocked, left, after, removedSees, blockedSees, leftSees, blockedSeesOther, ownerCard, linkAfterStop}
     },
-    then({sent, started, linked, removed, blocked, left, after, removedSees, blockedSees, leftSees, ownerCard}) {
+    then({sent, started, linked, other, removed, blocked, left, after, removedSees, blockedSees, leftSees, blockedSeesOther, ownerCard, linkAfterStop}) {
         sent.errors == ""
         started == [B, I, J]
         linked.shareId == sent.shareId
@@ -281,5 +292,11 @@ feature("live location's audience: those left out when it starts; one taken out 
         ownerCard.share.audienceCount == 1
         ownerCard.share.leftRoomNames == ["Loc B"]
         ownerCard.share.intervalSeconds == 5
+        // the card and the notice show the message's name, never a username
+        ownerCard.share.label == "Loc A"
+        // A's block of J takes J out of A's live locations only
+        other.errors == ""
+        blockedSeesOther.errors == ""
+        linkAfterStop == null
     }
 })

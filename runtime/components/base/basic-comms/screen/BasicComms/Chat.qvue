@@ -4569,7 +4569,7 @@ const chatRoom = {
                     options: { type: 'checkbox', model: ['stop'], items: [{ label: t('Also stop sharing my live location'), value: 'stop' }] },
                     ok: { label: t('Delete'), color: 'negative', unelevated: true, noCaps: true }, cancel: { label: t('Cancel'), flat: true, noCaps: true } })
                     .onOk((chosen) => {
-                        if (Array.isArray(chosen) && chosen.includes('stop')) this.stopLive(liveShareId);
+                        if (Array.isArray(chosen) && chosen.includes('stop')) this.stopLive(liveShareId).catch(() => {});
                         remove();
                     });
                 return;

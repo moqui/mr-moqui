@@ -1788,6 +1788,7 @@ test("live location (plans/Location-Sharing.md §3.5): a push moves a card's vie
         notify: (words) => notes.push(words)
     });
     const notes = [];
+    const hooksBefore = new Set(moqui.beforeLogoutHooks || []);
     const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
     const fix = async (at, latitude) => { clock = at; watch.fn({ coords: { latitude, longitude: 2, accuracy: 10 }, timestamp: at }); await settle(); };
     assert.equal(sender.start("S1", { url: "/r", intervalSeconds: 5 }), false, "nothing is sent while no chat view holds the sender");
@@ -1851,13 +1852,28 @@ test("live location (plans/Location-Sharing.md §3.5): a push moves a card's vie
     const count = posts.length;
     await fix(70000, 20);
     assert.equal(posts.length, count, "nothing posted after a lost sign-in");
+    // a 403 alone (the sign-in refused) stops it as a lost sign-in does
+    sender.start("S9", { url: "/r", intervalSeconds: 5, thruDate: 999999 });
+    replies.push({ rejected: { status: 403 } });
+    await fix(72000, 23);
+    assert.equal(sender.sending("S9"), false, "403 stops it");
+    assert.ok(notes.pop().includes("sign in again"));
+    // a sign-out (the shell's beforeLogoutHooks, which the sender added at its first start) stops what it sends
+    const hook = Array.from(moqui.beforeLogoutHooks).find((one) => !hooksBefore.has(one));
+    assert.equal(typeof hook, "function", "a before-logout hook added");
+    sender.start("S10", { url: "/r", intervalSeconds: 5, thruDate: 999999 });
+    hook();
+    assert.equal(sender.sending("S10"), false, "a sign-out stops it");
+    const counted = posts.length;
+    await fix(74000, 24);
+    assert.equal(posts.length, counted);
     // a network failure is tried again at the next interval
     sender.start("S8", { url: "/r", intervalSeconds: 5, thruDate: 999999 });
     replies.push({ rejected: { status: 0 } });
     await fix(80000, 21);
     assert.equal(sender.sending("S8"), true);
     await fix(85500, 22);
-    assert.equal(posts.length, count + 2, "tried again");
+    assert.equal(posts.length, counted + 2, "tried again");
     sender.stop("S8");
     // the last chat view let go: after a moment (not a room changed for another) the page sends nothing more
     sender.start("S2", { url: "/r", intervalSeconds: 5, thruDate: 999999 });

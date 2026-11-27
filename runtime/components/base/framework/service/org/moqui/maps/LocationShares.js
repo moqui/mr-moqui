@@ -621,6 +621,9 @@ function endShare(share, now) {
     }
     share.update()
     find(LATEST).condition("shareId", share.shareId).deleteAll()
+    // a chat room's link to it (moqui.chat.ChatLiveShare, plans/Location-Sharing.md §3.5) goes with it: an ended share
+    // has nobody to take out
+    find("moqui.chat.ChatLiveShare").condition("shareId", share.shareId).deleteAll()
     push(share, userIds.concat([share.ownerUserId]), {event: "ended"})
 }
 
@@ -667,11 +670,17 @@ function revokeChatAudience(p) {
     const userId = text(p.userId)
     let revokedCount = 0
     if (!userId) return {revokedCount}
-    for (const shareId of Array.from(new Set(Array.from(p.shareIdList || []).map(text).filter(Boolean)))) {
+    const seen = new Set()
+    for (const given of Array.from(p.shareList || [])) {
+        const shareId = text(given && given.shareId)
+        const ownerUserId = text(given && given.ownerUserId)
+        if (!shareId || !ownerUserId || seen.has(shareId)) continue
+        seen.add(shareId)
         try {
             const count = ec.transaction.runRequireNew(30, "Could not take a person out of location share " + shareId, () => {
                 const now = nowMillis()
-                const share = shareOf(shareId, true)
+                // the share of the owner the chat row names, only: a row that names another owner takes nobody out
+                const share = shareOf(shareId, true, ownerUserId)
                 if (!isActive(share, now) || share.ownerUserId === userId) return 0
                 const rows = activeAudience(share.shareId).filter(row => row.audienceTypeEnumId === "LsaUser" && row.userId === userId)
                 if (rows.length) revokeRows(share, rows, now)

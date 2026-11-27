@@ -263,13 +263,14 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="revoke" noun="ChatAudience" allow-remote="false" transaction="force-new">
         <description>Internal, for Chat's live location (plans/Location-Sharing.md §3.5): userId's own entry (LsaUser) taken
-            out of each active share of shareIdList, as revoke#Audience takes one out (its users and the owner told on
+            out of each active share of shareList [{shareId, ownerUserId}] (the share of that owner only), as revoke#Audience
+            takes one out (its users and the owner told on
             locationShare:shareId), whoever the caller is: Chat calls it when a member is taken out of a room by another
             (remove#Member) or blocked by a share's owner (ChatBlocks.js), for that room's live shares
             (moqui.chat.ChatLiveShare). It only narrows who sees a share, never the owner's own. In a transaction of its own,
             each share in one of its own: one that fails is logged by its id and the rest go on. Out: revokedCount.</description>
         <in-parameters>
-            <parameter name="shareIdList" type="List" required="true"/>
+            <parameter name="shareList" type="List" required="true"/>
             <parameter name="userId" required="true"/>
         </in-parameters>
         <out-parameters><parameter name="revokedCount" type="Integer"/></out-parameters>

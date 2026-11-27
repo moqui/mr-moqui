@@ -404,7 +404,7 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   **Membership changes and the share** (the decisions of LL4): a new member is never added (to share with them, share
   again); a person who leaves the room by themselves stays in its audience until you take them out in Who sees my
   location (Maps, or My location shares); a person a moderator takes out of the room (`remove#Member`), or whom you block
-  after it started (`block#ChatUser`), is taken out of that room's live shares at once (`LocationServices.revoke#ChatAudience`,
+  after it started (`block#ChatUser`), is taken out of that room's live shares once that commits (`revoke#LiveAudience`, `LocationServices.revoke#ChatAudience`,
   in a transaction of its own, logged and never failing the removal or the block). The owner's card says so ("Shared
   with the members of the room when you started it"), names those no longer in the room who still see it, says where it
   is sent from, and has Send from here (Send from this device in the app), Stop and Who sees my location. Deleting the
