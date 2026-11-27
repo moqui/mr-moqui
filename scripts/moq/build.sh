@@ -414,7 +414,9 @@ write_if_changed() {
 # plans/archive/Security-Review.md SEC-CLI-126).
 root_patch_table() {
     [ -f "$ROOT/Cargo.toml" ] || return 0
-    awk -v root="$ROOT" '
+    local root
+    root=$(toml_path "$ROOT")
+    awk -v root="$root" '
         /^\[/ { patches = ($0 == "[patch.crates-io]") }
         patches {
             gsub(/path = "/, "path = \"" root "/")
@@ -427,8 +429,9 @@ root_patch_table() {
 # are optional dependencies that the devtools feature turns on. Its Cargo.lock starts from the repository's, so the
 # reviewed versions stay and only the component crates' own dependencies are added.
 write_app_crate() {
-    local app=$1 dir package deps="" uses="" unoptimized="" crate tui_features= devtools_features=
+    local app=$1 dir package deps="" uses="" unoptimized="" crate tui_features= devtools_features= dir_toml root_toml
     shift
+    root_toml=$(toml_path "$ROOT")
     local -a dirs
     while IFS= read -r dir; do dirs+=("$dir"); done < <(component_crate_dirs "$ROOT/runtime/$BASE_SET")
     while IFS= read -r dir; do
@@ -439,14 +442,15 @@ write_app_crate() {
         package=$(crate_package_name "$dir")
         [ -n "$package" ] || die "$(rel "$dir")/Cargo.toml has no [package] name"
         unoptimized+=$'\n'"[profile.dev.package.$package]"$'\n'"opt-level = 0"$'\n'"debug = true"$'\n'
+        dir_toml=$(toml_path "$dir")
         case $dir in
             "$ROOT/runtime/$DEV_SET/"*)
-                deps+="$package = { path = \"$dir\", optional = true }"$'\n'
+                deps+="$package = { path = \"$dir_toml\", optional = true }"$'\n'
                 devtools_features+=", \"dep:$package\""
                 uses+="#[cfg(feature = \"devtools\")]"$'\n'"use ${package//-/_} as _;"$'\n'
                 ;;
             *)
-                deps+="$package = { path = \"$dir\" }"$'\n'
+                deps+="$package = { path = \"$dir_toml\" }"$'\n'
                 uses+="use ${package//-/_} as _;"$'\n'
                 ;;
         esac
@@ -498,8 +502,8 @@ tui = [\"moqui-host/tui\"${tui_features}]
 devtools = [\"moqui-host/devtools\"${devtools_features}]
 
 [dependencies]
-moqui-host = { path = \"$ROOT/crates/moqui-host\", default-features = false }
-moqui-core = { path = \"$ROOT/crates/moqui-core\", default-features = false }
+moqui-host = { path = \"$root_toml/crates/moqui-host\", default-features = false }
+moqui-core = { path = \"$root_toml/crates/moqui-core\", default-features = false }
 ${deps}
 # The global allocator, as crates/moqui has it (src/main.rs); not on MSVC.
 [target.'cfg(not(target_env = \"msvc\"))'.dependencies]

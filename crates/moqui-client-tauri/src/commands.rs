@@ -80,7 +80,8 @@ fn online_state<'a>(
 
 /// The accounts (each with its device mode), the current one, whether it is signed in, the key store (`os` or `file`),
 /// whether the device has a secure lock screen (null where the app cannot tell), the newest `clientApi` this app knows
-/// and the build's device mode (`choose` has the sign-in ask). No key.
+/// the build's device mode (`choose` has the sign-in ask) and its start screen (`startPath`, null for none and on a host
+/// that ignores it: [`crate::ShellHost::opens_start_path`]). No key.
 pub fn state_json(state: &ClientState) -> Value {
     // the accounts as they are now, read without holding them while the keys are looked up
     let (current, accounts) = {
@@ -113,6 +114,7 @@ pub fn state_json(state: &ClientState) -> Value {
         "deviceSecure": state.shell.device_secure(),
         "clientApi": moqui_client::login::CLIENT_API,
         "deviceMode": state.core.conf().device_mode.as_str(),
+        "startPath": state.shell.opens_start_path().then(|| state.core.conf().start_path.clone()).flatten(),
     })
 }
 

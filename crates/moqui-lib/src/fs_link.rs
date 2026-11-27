@@ -16,9 +16,7 @@
 //! tool that builds one runtime from another uses to reach the real files without copying them.
 
 use std::io;
-use std::path::Path;
-#[cfg(windows)]
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Link `to` to `from`. On Unix a symbolic link. On Windows a directory becomes a junction and a file a hard link,
 /// which need no extra privilege (a symbolic link needs Developer Mode or one); a hard link cannot cross volumes, so a
@@ -54,9 +52,23 @@ pub fn link(from: &Path, to: &Path) -> io::Result<()> {
     }
 }
 
-/// `canonicalize` prefixes `\\?\`. A junction stores an NT path, and a second prefix is a link that does not open.
+/// `path` without the verbatim prefix (`\\?\`) that `canonicalize` gives it on Windows; elsewhere `path` itself. A
+/// junction stores an NT path, and a second prefix is a link that does not open; Git for Windows refuses a verbatim
+/// working directory or `GIT_DIR` ("Invalid argument").
+#[must_use]
+pub fn plain_path(path: &Path) -> PathBuf {
+    #[cfg(not(windows))]
+    {
+        path.to_path_buf()
+    }
+    #[cfg(windows)]
+    {
+        plain_windows_path(path)
+    }
+}
+
 #[cfg(windows)]
-fn plain_path(path: &Path) -> PathBuf {
+fn plain_windows_path(path: &Path) -> PathBuf {
     let text = path.to_string_lossy();
     if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
         PathBuf::from(format!(r"\\{rest}"))

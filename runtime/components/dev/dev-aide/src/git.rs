@@ -200,7 +200,8 @@ impl Git {
         command
             .args(["-c", "core.quotepath=off", "-c", "color.ui=false"])
             .args(args)
-            .current_dir(repo)
+            // a canonical root on Windows is verbatim (`\\?\C:\...`), which Git for Windows refuses as its directory
+            .current_dir(moqui_lib::fs_link::plain_path(repo))
             .env("LC_ALL", "C")
             .env("GIT_TERMINAL_PROMPT", "0")
             // a path the page names is that file, never a pattern (`a[1].xml`, `*`)

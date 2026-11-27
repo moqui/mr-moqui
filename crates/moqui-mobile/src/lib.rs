@@ -58,8 +58,9 @@ use tauri::{AppHandle, Manager, RunEvent, Url, WebviewUrl, WebviewWindowBuilder,
 
 use crate::host::{goes, Goes, MobileHost, MAIN};
 
-/// The client's settings of this build: `<client-conf>`, read at build time.
-const CLIENT_CONF: &str = include_str!("../client-conf.xml");
+/// The client's settings of this build: `<client-conf>`, read at build time (`client-conf.xml`, or the file
+/// `MOQUI_CLIENT_CONF` names: build.rs).
+const CLIENT_CONF: &str = include_str!(env!("MOQUI_CLIENT_CONF_FILE"));
 
 /// The libraries the shell may load (the desktop's `shell/libs.txt`, staged with it).
 const SHELL_LIBS: &str = include_str!("../../moqui-desktop/shell/libs.txt");
@@ -294,12 +295,15 @@ fn shell_webview(app: &AppHandle, host: &Arc<MobileHost>) -> tauri::Result<()> {
     .title("MR Moqui")
     .initialization_script(script)
     .on_navigation(move |url| navigation(&navigation_host, url))
-    .on_page_load(move |_window, payload| match payload.event() {
+    .on_page_load(move |window, payload| match payload.event() {
         PageLoadEvent::Started => {
             // any new document (a reload, the webview's own Back, a renderer gone and loaded again, not a pushState or
             // a hash): the calls the page joined end with it
             load_host.page_gone(None);
             load_host.page.started(payload.url());
+            if load_host.fresh.started(payload.url()) {
+                clear_history(&window);
+            }
             if let Some(core) = moqui_lib::sync::lock(&load_host.client).clone() {
                 core.sockets().close_for(MAIN);
             }
@@ -313,6 +317,31 @@ fn shell_webview(app: &AppHandle, host: &Arc<MobileHost>) -> tauri::Result<()> {
     })
     .build()?;
     Ok(())
+}
+
+/// The webview's history before its page goes (`WebView.clearHistory`), so Back at the page leaves the app
+/// ([`host::FreshLoad`]).
+fn clear_history(window: &tauri::WebviewWindow) {
+    #[cfg(target_os = "android")]
+    let cleared = window.with_webview(|webview| {
+        let Some(webview) = webview.downcast_ref::<tauri_runtime_wry::Webview>() else {
+            log::warn!("The webview's history was not cleared: not a wry webview");
+            return;
+        };
+        webview.jni_handle().exec(|env, _activity, webview| {
+            if let Err(err) = env.call_method(webview, "clearHistory", "()V", &[]) {
+                log::warn!("The webview's history was not cleared: {err}");
+            }
+        });
+    });
+    #[cfg(not(target_os = "android"))]
+    let cleared: tauri::Result<()> = {
+        let _ = window;
+        Ok(())
+    };
+    if let Err(err) = cleared {
+        log::warn!("The webview's history was not cleared: {err}");
+    }
 }
 
 /// A navigation the page starts (a link, `location`): the shell's page and the server's pages stay in the webview, a

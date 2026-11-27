@@ -51,12 +51,17 @@
 
     // A comms screen the host keeps for the shell (an OS mailto: link, a notification's link: src/client/windows.rs
     // open_page), taken by Shell/Root as it mounts and when the host pokes it; until then (a sign-in, a load) the host keeps it.
+    // As it mounts with no such screen, a build with a start screen (state.startPath) opens that, its home.
     let rootVm = null;
-    const takeOpen = () => {
+    const takeOpen = (mounting) => {
         if (!rootVm || !host || typeof host.takeOpen !== "function") return;
-        host.takeOpen().then((path) => { if (path && rootVm) rootVm.openPathFromHost(String(path)); }, (err) => console.info("No link taken from the app", err));
+        const home = () => { if (mounting === true && rootVm && rootVm.startPath) rootVm.goHome(); };
+        host.takeOpen().then((path) => {
+            if (path && rootVm) rootVm.openPathFromHost(String(path));
+            else home();
+        }, (err) => { console.info("No link taken from the app", err); home(); });
     };
-    window.moquiShell = Object.freeze({ poke: takeOpen });
+    window.moquiShell = Object.freeze({ poke: () => takeOpen(false) });
 
     // A Vue app of a bundled screen, with Quasar and the client's components, mounted on #shell (the one mounted before
     // is unmounted first).
@@ -161,8 +166,8 @@
                         chatPath: commsApp(config) + "/Panel/Chat",
                         commsPath: commsApp(config)
                     }, config);
-                    // a link the host kept for the shell (opened while it signed in or loaded)
-                    takeOpen();
+                    // a link the host kept for the shell (opened while it signed in or loaded), else the start screen
+                    takeOpen(true);
                 });
             });
         }).catch((err) => {

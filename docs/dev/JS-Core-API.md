@@ -159,7 +159,7 @@ the user services call.
 | `getClientIp()` | The request's client address; empty outside a request |
 | `loginUser(username, password)` | Whether the user is logged in. A failure adds its message to `ec.message` and returns false; false with no message when a second factor is still needed |
 | `internalLoginUser(username, secondFactorVerified)` | Logs the user in without a password; a failure is a message and false. A job's login borrows the account: it leaves `UserAccount.hasLoggedOut` as it is (a person's sign-in, a second factor's code, clears it). `secondFactorVerified` true, from a screen that has just verified the second factor's code of a sign-in whose password this session checked, makes it a strong sign-in (the vault's wrapped key needs one) |
-| `loginUserKey(loginKey)` | Whether the login key logged its user in; a key that does not adds an error message |
+| `loginUserKey(loginKey, scope)` | Whether the login key logged its user in; a key that does not adds an error message. With `scope` (`git`), a key made for that scope logs in too, as that scope's own login takes it, and a key of another scope does not: Smithy's Forgejo API signs in its access tokens so |
 | `loginAnonymousIfNoUser()` | With nobody logged in the session becomes anonymous; whether this call did that |
 | `logoutUser()` | Logs out; true unless it failed. It marks the account `hasLoggedOut`, which ends its sessions in every browser |
 | `logoutLocal()` | Ends this context's login only (Java's `logoutLocal`), writing nothing to the account: the end of a job's `internalLoginUser`, so the person's own sessions go on; true unless it failed |
@@ -1284,13 +1284,14 @@ ec.makeNotificationMessage().topic("OrderApproved").userIds([salesRepUserId])
 
 Model calls of app code. `ec.llm` is there only in a build with the `llm` feature (`ec.factory.hasFeature("llm")`).
 A model call is refused while a transaction is open, unless its options give `allowInTransaction: true` (`complete`,
-`summarize`, `classify` and `extract` take it), which suspends the transaction for the call and cuts the call to the
-time the transaction has left.
+`summarize`, `classify`, `extract` and `embed` take it), which suspends the transaction for the call and cuts the
+call to the time the transaction has left.
 
 | Member | |
 |---|---|
 | `isEnabled()` | Whether model calls are enabled |
 | `complete(options)` | One completion: `{prompt, system, messages, model, feature, tier, schema, schemaName, reasoning, maxOutput, timeoutSeconds, allowInTransaction}` gives `{text, json, modelId, finish, inputTokens, cachedInputTokens, outputTokens, cost, callIds}`. The model is `model`, else the binding of `feature`, else a model of `tier`. With `schema` (a JSON schema) the reply is parsed and checked into `json`. A call that ends without an answer throws |
+| `embed(texts, options)` | One vector per text, in the order of `texts` (a list, or one string), from the model's `/v1/embeddings`: `{model, feature, allowInTransaction}` gives `{vectors, dimension, modelId, modelName}`. The model is `model`, else the binding of `feature`. A text that is blank, or not a string or a number, throws, naming its index. An empty list returns no vectors and does not call the model. A call that cannot embed throws |
 | `summarize(text, options)` | A summary; `options` `{maxWords, allowInTransaction}` |
 | `classify(text, labels, options)` | One of the labels; `options` `{allowInTransaction}` |
 | `extract(text, fields, options)` | A value for each field of `{name: description}`; `options` `{allowInTransaction}` |

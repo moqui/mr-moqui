@@ -536,16 +536,23 @@ Prerequisites, beyond those of the server build:
 
 - **Tauri CLI**, the version `./moq desktop` checks for (`TAURI_CLI_VERSION` in `moq`), from cargo, so no Node:
   `cargo install tauri-cli --version 3.0.0-alpha.6 --locked`.
-- **CMake, Ninja and a C++ compiler**, which build CEF's C++ wrapper (cef-dll-sys uses the Ninja generator).
+- **CMake, Ninja and a C++ compiler on Windows and macOS**, which build CEF's C++ wrapper there (cef-dll-sys uses the
+  Ninja generator; on Linux it only links `libcef.so`, so the Linux build needs neither tool). On Windows,
+  `./moq desktop` downloads CMake 4.4.4 and Ninja 1.13.2 into `%USERPROFILE%\.moqui` when they are not on
+  `PATH` (`MOQUI_CMAKE` or `MOQUI_NINJA` is a directory that contains the executable, or the executable itself, and
+  nothing is downloaded). The C++ compiler stays the Visual Studio Build Tools workload ([Windows](#windows)).
 - **Linux:** the GTK 4 development packages and pkg-config (gtk4-sys); `patchelf` for the AppImage; and `cc`, which
   quick-sharun and `./moq` use while bundling.
 - **Network on the first build and for each AppImage:** the first build downloads the CEF binary distribution, about
-  1 GB, into the `tauri-cef` cache (`~/.cache/tauri-cef` on Linux, `~/Library/Caches/tauri-cef` on macOS; `CEF_PATH`
-  for another). The AppImage step downloads quick-sharun.sh, sharun and appimagetool each time.
+  1 GB, into the `tauri-cef` cache (`~/.cache/tauri-cef` on Linux, `~/Library/Caches/tauri-cef` on macOS,
+  `%LOCALAPPDATA%\tauri-cef` on Windows; `CEF_PATH` for another). The AppImage step downloads quick-sharun.sh, sharun
+  and appimagetool each time. Under Cargo 1.100's build directory layout cef-dll-sys 154 copies the CEF runtime files
+  into `target/<profile>/build/`; the desktop crate's build script copies them from the distribution beside the
+  executable instead (`libcef.dll` on Windows, `libcef.so` on Linux, and `locales/`).
 
 ```sh
 # Ubuntu 26.04
-sudo apt install build-essential pkg-config cmake ninja-build libgtk-4-dev patchelf
+sudo apt install build-essential pkg-config libgtk-4-dev patchelf
 # macOS (with the Xcode command line tools)
 brew install cmake ninja
 cargo install tauri-cli --version 3.0.0-alpha.6 --locked

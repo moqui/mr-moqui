@@ -18,6 +18,7 @@
 //! ec.llm.complete({prompt, system, messages, model, feature, tier, schema, schemaName, reasoning, maxOutput,
 //!         timeoutSeconds, allowInTransaction})
 //!     -> {text, json, modelId, finish, inputTokens, cachedInputTokens, outputTokens, cost, callIds}
+//! ec.llm.embed(texts, {model, feature, allowInTransaction}) -> {vectors, dimension, modelId, modelName}
 //! ec.llm.isEnabled() -> boolean
 //! ec.llm.summarize(text, {maxWords, allowInTransaction}) -> string
 //! ec.llm.classify(text, labels, {allowInTransaction}) -> label
@@ -30,7 +31,7 @@
 //!
 //! A model call is refused while a transaction is open (plans/archive/High-Level-Review.md HL-041, [`crate::provider::call`]):
 //! call these from code with none open, or pass `allowInTransaction: true` in the options of `complete`, `summarize`,
-//! `classify` or `extract`, which suspends the transaction for the call and cuts the call to the time it has left.
+//! `classify`, `extract` or `embed`, which suspends the transaction for the call and cuts the call to the time it has left.
 //!
 //! `messages` are earlier turns, each `{role: "user" | "assistant", text}`; `schema` is a JSON schema (a map or its
 //! text), and with it `json` is the reply parsed and checked. The model is `model`, else the binding of `feature`, else
@@ -51,6 +52,7 @@ static LLM: HostClass = HostClass {
     name: "host:Llm",
     methods: &[
         host_method!("ec.llm", "complete", [Value], None, complete),
+        host_method!("ec.llm", "embed", [Value, OptValue], None, embed),
         host_method!("ec.llm", "isEnabled", [], is_enabled),
         host_method!("ec.llm", "summarize", [Text, OptValue], None, summarize),
         host_method!("ec.llm", "classify", [Text, Value, OptValue], None, classify),
@@ -70,6 +72,86 @@ fn factory() -> Result<std::sync::Arc<moqui_core::context::ExecutionContextFacto
 /// The entity facade of the entered context; the error the facades throw when there is none.
 fn entity() -> Result<moqui_core::entity::EntityFacade, HostError> {
     with_ec(|ec| ec.factory().entity())?.ok_or_else(|| HostError::message("no entity facade is installed"))
+}
+
+/// `ec.llm.embed(texts, {feature|model, allowInTransaction})`. One vector per text, from the model's `/v1/embeddings`
+/// ([`crate::embed`]); `texts` may be one string. A text that is blank, or not a string or a number, is refused,
+/// naming its index, so the vectors stay one per text in the caller's order. An open transaction is refused unless
+/// `allowInTransaction` is set, and then it is suspended for the call, which is cut to the time it has left
+/// ([`crate::provider::outside_transaction`]). An empty list returns no vectors and does not call the model.
+fn embed(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let items = match call.value_or_null(0) {
+        Value::List(items) => items,
+        text @ Value::String(_) => vec![text],
+        _ => return Err(HostError::message("ec.llm.embed takes a list of texts")),
+    };
+    let mut texts = Vec::with_capacity(items.len());
+    for (index, item) in items.iter().enumerate() {
+        let text = match item {
+            Value::String(_) | Value::I32(_) | Value::I64(_) | Value::F64(_) | Value::Decimal(_) => {
+                moqui_lib::object::to_plain_string(item)
+            }
+            _ => {
+                return Err(HostError::message(format!(
+                    "ec.llm.embed text {index} is not a string or a number"
+                )))
+            }
+        };
+        if text.trim().is_empty() {
+            return Err(HostError::message(format!(
+                "ec.llm.embed text {index} is blank; every text gets a vector in its place, so pass none blank"
+            )));
+        }
+        texts.push(text);
+    }
+    let options = call.value(1);
+    let (model, feature, allow) = match options {
+        Some(Value::Map(map)) => (
+            text_option(map, "model"),
+            text_option(map, "feature"),
+            allows_transaction(options),
+        ),
+        _ => (None, None, false),
+    };
+    if model.is_none() && feature.is_none() {
+        return Err(HostError::message("ec.llm.embed needs a feature or a model"));
+    }
+    let (factory, facade) = (factory()?, entity()?);
+    let llm = crate::facade(&factory);
+    let target = llm
+        .resolve(
+            &facade,
+            &crate::registry::Want {
+                model: model.as_deref(),
+                feature: feature.as_deref(),
+                ..crate::registry::Want::default()
+            },
+        )
+        .map_err(HostError::Lib)?;
+    if let Some(refusal) = crate::provider::transaction_refusal(&target.model.id, allow) {
+        return Err(HostError::message(refusal));
+    }
+    let vectors = crate::provider::outside_transaction(Some(&facade), &target.model.id, |ends| {
+        llm.embed(&facade, &target, &texts, ends)
+    })
+    .and_then(|embedded| embedded)
+    .map_err(HostError::Lib)?;
+    let dimension = vectors.first().map_or(0, Vec::len);
+    let mut rows = Vec::with_capacity(vectors.len());
+    for vector in vectors {
+        rows.push(Value::List(
+            vector.into_iter().map(|value| Value::F64(f64::from(value))).collect(),
+        ));
+    }
+    let mut out = indexmap::IndexMap::default();
+    out.insert("vectors".to_string(), Value::List(rows));
+    out.insert(
+        "dimension".to_string(),
+        Value::I64(i64::try_from(dimension).unwrap_or(0)),
+    );
+    out.insert("modelId".to_string(), Value::String(target.model.id.clone()));
+    out.insert("modelName".to_string(), Value::String(target.model.name.clone()));
+    Ok(Ret::Value(Value::Map(out)))
 }
 
 fn is_enabled(_: &mut Call<'_>) -> Result<Ret, HostError> {
@@ -229,93 +311,5 @@ fn complete(call: &mut Call<'_>) -> Result<Ret, HostError> {
 }
 
 #[cfg(test)]
-mod tests {
-    use moqui_core::context::ExecutionContextFactory;
-    use moqui_core::script::{clear_context_stack, eval_condition, run_script};
-
-    const CONF: &str = r#"<moqui-conf><llm-facade>
-        <endpoint id="script-fake" protocol="fake"/>
-        <model id="script-model" endpoint="script-fake" name="fake-1"/>
-        <bind feature="classify" model="script-model" reasoning="none"/>
-        <bind feature="summarize" model="script-model" reasoning="none"/>
-        <bind feature="extract" model="script-model" reasoning="none"/>
-    </llm-facade></moqui-conf>"#;
-
-    #[test]
-    fn ec_llm_complete_answers_with_the_checked_json_of_a_schema() {
-        clear_context_stack();
-        let context = ExecutionContextFactory::test_context_with_conf(CONF);
-        context.factory().set_entity(moqui_core::testing::open());
-        let _entered = context.enter();
-        crate::provider::fake::clear("script-fake");
-        let holds = |expression: &str| assert!(eval_condition(expression).unwrap(), "{expression}");
-        holds("ec.llm.isEnabled() === true");
-        holds(
-            r#"(function () {
-                const answer = ec.llm.complete({feature: "classify", prompt: "Invoice #12",
-                    schema: {type: "object", required: ["label"], properties: {label: {enum: ["invoice", "other"]}}}});
-                return answer.json.label === "invoice" && answer.modelId === "script-model" && answer.finish === "stop"
-                    && answer.callIds.length === 1 && answer.inputTokens > 0;
-            })()"#,
-        );
-        holds(r#"ec.llm.complete({model: "script-model", prompt: "Say hi"}).text === "Fake reply to: Say hi""#);
-        // the typed AI tasks: their schemas give the fake's answers
-        holds(r#"ec.llm.classify("Invoice #12", ["invoice", "other"]) === "invoice""#);
-        holds(r#"typeof ec.llm.summarize("A long text.", {maxWords: 20}) === "string""#);
-        holds(
-            r#"(function () { const values = ec.llm.extract("Ship to Acme", {customer: "The customer"}); return "customer" in values; })()"#,
-        );
-        for (script, expected) in [
-            (
-                r#"ec.llm.complete({model: "script-model"})"#,
-                "needs a prompt or messages",
-            ),
-            (r#"ec.llm.complete({tier: "huge", prompt: "x"})"#, "tier huge"),
-            (
-                r#"ec.llm.complete({model: "nope", prompt: "x"})"#,
-                "model nope is not configured",
-            ),
-        ] {
-            let error = run_script(script).unwrap_err().to_string();
-            assert!(error.contains(expected), "{script}: {error}");
-        }
-    }
-
-    /// A typed AI task inside a transaction is refused as `complete` is, and its options' `allowInTransaction` lets it
-    /// run (plans/archive/High-Level-Review.md HL-041).
-    #[test]
-    fn ec_llm_tasks_in_a_transaction_are_refused_unless_they_opt_in() {
-        clear_context_stack();
-        let context = ExecutionContextFactory::test_context_with_conf(&CONF.replace("script-fake", "task-tx-fake"));
-        let facade = moqui_core::testing::open();
-        context.factory().set_entity(facade.clone());
-        let _entered = context.enter();
-        crate::provider::fake::clear("task-tx-fake");
-        let transactions = facade.transactions_for("moqui.basic.Enumeration").unwrap();
-        let in_transaction = |expression: &str| {
-            transactions.run(moqui_core::transaction::TransactionAttribute::UseOrBegin, None, || {
-                Ok(eval_condition(expression)?)
-            })
-        };
-        for script in [
-            r#"ec.llm.classify("Invoice #12", ["invoice", "other"]) !== null"#,
-            r#"ec.llm.summarize("A long text.", {maxWords: 20}) !== null"#,
-            r#"ec.llm.extract("Ship to Acme", {customer: "The customer"}) !== null"#,
-        ] {
-            let error = in_transaction(script).unwrap_err().to_string();
-            assert!(error.contains(crate::provider::IN_TRANSACTION), "{script}: {error}");
-        }
-        assert!(
-            crate::provider::fake::requests("task-tx-fake").is_empty(),
-            "nothing was sent"
-        );
-        for expression in [
-            r#"ec.llm.classify("Invoice #12", ["invoice", "other"], {allowInTransaction: true}) === "invoice""#,
-            r#"typeof ec.llm.summarize("A long text.", {allowInTransaction: true}) === "string""#,
-            r#""customer" in ec.llm.extract("Ship to Acme", {customer: "The customer"}, {allowInTransaction: "Y"})"#,
-        ] {
-            assert!(in_transaction(expression).unwrap(), "{expression}");
-        }
-        assert_eq!(crate::provider::fake::requests("task-tx-fake").len(), 3);
-    }
-}
+#[path = "script_tests.rs"]
+mod tests;

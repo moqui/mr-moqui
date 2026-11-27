@@ -169,11 +169,14 @@ fn html_attribute(text: &str) -> String {
 }
 
 /// What a server page is told at its start: the current account's storage scope (MoquiLib `scopedKey`) and the scopes
-/// of accounts deleted since a server page last asked, which it clears once.
+/// of accounts deleted since a server page last asked, which it clears once; and whether it shows its way back to the
+/// shell (`home`: not in a build with a start screen, `<client-conf start-path>`).
 pub(crate) fn page_info(state: &ClientState) -> Value {
     let scope = state.account_of(crate::host::MAIN).map(|(account, _)| account.id);
     let cleared = std::mem::take(&mut moqui_lib::sync::lock(&state.cleared).app);
-    json!({ "storageScope": scope.unwrap_or_default(), "clearScopes": cleared })
+    // a build with a start screen has no way back to the shell's home: the start screen is the app's
+    let home = state.core.conf().start_path.is_none();
+    json!({ "storageScope": scope.unwrap_or_default(), "clearScopes": cleared, "home": home })
 }
 
 /// The answer of the app's schemes to a request of the page `label` on `origin`.
