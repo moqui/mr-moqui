@@ -198,7 +198,11 @@ pub const PROVIDER_HOOKS: [&str; 16] = [
 /// (`screen-facade/shell-providers`, [`conf_providers`]): checks the framework makes for whoever acts, the system with
 /// no user included, so a component with no screen (Mantle's consent records) can answer them (docs/tools/Comms.md
 /// "Provider hooks"; mr-boss plan/impl-marketing.md P22, F72).
-pub const CONF_PROVIDER_HOOKS: [&str; 1] = ["sms-consent"];
+///
+/// `shell-indicator` too, so an indicator is the same for every signed-in user whatever apps they may open: the
+/// framework's conf answers live location's "Sharing location" (plans/Location-Sharing.md §3.3), a provider that reads
+/// only the caller's own rows, as a conf's provider must, since it runs with authorization disabled.
+pub const CONF_PROVIDER_HOOKS: [&str; 2] = ["sms-consent", "shell-indicator"];
 
 /// A provider of one of the [`PROVIDER_HOOKS`].
 #[derive(Clone, Debug, Default)]

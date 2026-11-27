@@ -17,6 +17,7 @@ searches.
 | Browse (`Maps/Browse.xml`, `Browse.qvue`, `Browse.tui.json`) | The map filling the page, with optional browser full screen. One panel at a time beside it, a bottom sheet on a phone: Search (saved views and places, the permitted records of the record layers shown, postal codes and, when one is enabled, the geocoder's addresses), Layers (the basemap, overlays and record layers, and the user's own and shared overlays with Add overlay and, on one's own, Edit ([below](#overlays-and-places)); a layer that is not shown is named with Retry; a record layer cut to `maps@max-features` says so), Saved views (and Save view, which keeps where the map is, its basemap and its layers) and the selected feature's details: a place's, a record's (with its [links](#record-links)) or an overlay's feature, selected by a click or by Enter on the map for the feature at its center, with its label and description as plain text, its overlay and its coordinates (Save place; Remove place on one of one's own places). Live location: the shares of the user's own and those shared with them on the map, the Live location panel and Share my location ([below](#live-location)). The scale, attribution, coordinate readout and Locate me are the map's. A qvue screen: under `/apps` it opens at the same path under `/qapps`. In the terminal, the `map` component over `terminalMap`: a postal search's places (`s`: a code and its country, the local Geo data's approximate place), the saved places (own and, read-only, shared), the saved views' and the records' places as a list over the braille land mask, then the overlays, own and shared, the notices and the attribution, and under it the live location shares with Stop |
 | Saved views (`Maps/Views.xml`) | The user's saved views and those others shared, each with its place, owner and whether its layers are all available; Share, Stop sharing and Delete for one's own, View map for any. Below them the user's overlays and saved places and, read-only, those shared with them, with Remove for one's own |
 | Offline maps (`Maps/Offline.xml`, `Offline.tui.json`) | The user's offline map packages for the Android app and the desktop client, with Download, Update, Cancel and Delete, and New offline map: a region on the map, its zooms and contents, Estimate and Build ([below](#offline-packages)) |
+| My location shares (`Maps/MyShares.xml`) | The user's own active location shares, for every signed-in user (`MAPS_SHARES`): who sees each, its end and its last position's age, Stop, An hour more and, for a Maps user, Open in Maps. Where the app bar's "Sharing location" chip goes ([Live location](#live-location)). A plain XML screen, the same in every client |
 | Preferences (`Maps/Preferences.xml`) | The user's map profile, basemap, initial area, units, the layers shown and Restore my last view. Only what an administrator enabled is offered, and a profile's `allowedOverrides` decide what a preference changes. No location is asked for unless Locate me is pressed, and the last view is kept only while its restoring is on |
 | Configuration (`Maps/Configuration.xml`, route key `mapsConfiguration`) | For `MAPS_ADMIN`: readiness, the outside-request policy and limits (read from the conf), map providers (connections of the `mapProvider` kind: a provider's page is `Configuration/ConnectionDetail` over `tools/template/ConnectionParts.xml`), profiles (enable, disable, make the installation default, the view projection) and layers; Archives (`Configuration/Archives.xml`, [below](#archives), PMTiles and COG layers); Projections (`Configuration/Projections.xml`, [below](#projections)); Geo data (`Configuration/GeoData.xml`, [below](#geo-data)); and Overture (`Configuration/Overture.xml`, [below](#overture-places-and-buildings)). Its settings index entry is `maps.configuration` |
 | Local map (`Maps/LocalMap.xml`) | The dialog below |
@@ -1001,7 +1002,7 @@ and the guest page for a link are still to come.
   not the transition's JSON) stops sending. The watch asks for high accuracy while an exact share is sent (started again
   when that changes); a new share waits for a fix taken after it began (one is asked for at once), and with no fix for
   three intervals (a still device) one is asked for again. The shares a tab sends are kept in its session storage under
-  the account (`moqui.scopedKey`), so a reload goes on sending them, pruned to the user's active shares and forgotten at
+  the account (`moqui.scopedKey`) with the session it was kept in, so a reload goes on sending them and a sign-in anew does not, pruned to the user's active shares and forgotten at
   a sign-out (`moqui.beforeLogoutHooks`); Send from here takes over one started elsewhere. When the page closes the
   share stays active and goes stale; its audience sees the age. A banner above the map names every active share of the
   user's own and every share the page sends (with whom, until when, whether this page sends it, or the device that does)
@@ -1039,12 +1040,17 @@ and the guest page for a link are still to come.
   position comes is the platform's (see [Desktop-Client](../ui/Desktop-Client.md)).
 - **The app bar's chip.** While the user has any active share of their own, the shell shows "Sharing location" (with the
   count when there are more than one) in the app bar on every screen, a shell indicator ([Qvt-Client, Shell
-  indicators](../ui/Qvt-Client.md)) that Maps' `shell-indicator` provider answers (`LocationServices.get#ShellIndicator`,
-  a count of the user's own shares, no audience or position read; `Maps.xml`). The shell reads it once with its shell data
-  and again on the user's own pushes of a share's start, change or end (which every device of the owner gets, so a share
-  started on another device shows too) and at the soonest end. It opens Browse's Who sees my location
-  (`Browse?panel=live`), where Stop is; a page that sends a share adds "· sending here". With Browse's banner, and the
-  Android notification (LL3), it is how the owner sees every active share wherever they are.
+  indicators](../ui/Qvt-Client.md)) that the framework's `shell-indicator` provider answers for every signed-in user,
+  whatever apps they may open (`LocationServices.get#ShellIndicator`, a count of the user's own shares, no audience or
+  position read; registered in `MoquiDefaultConf.xml`'s `screen-facade` `shell-providers`, since sharing is for every
+  user, not only Maps users). The shell reads it once with its shell data, when its notification socket opens again,
+  and on the user's own pushes of a share's start, change or end (which every device of the owner gets, so a share
+  started on another device shows too) and at the soonest end. It opens My location shares (`Maps/MyShares.xml`), which
+  every signed-in user may open, Maps user or not (`MAPS_SHARES`, as `MAPS_DIALOG` opens LocalMap): the user's own
+  active shares with who sees each, its end and its last position's age, Stop, An hour more (the end alone, within
+  `location@max-share-hours`) and, for a user who may open the Maps app, Open in Maps (Who sees my location). A Browse page that
+  sends a share adds "· sending here" to the chip. With Browse's banner, and the Android notification (LL3), it is how
+  the owner sees every active share wherever they are.
 - **The terminal.** Browse's twin lists, under its map, the user's own shares (with whom, until, the last position's age
   and coordinates, Stop) and those shared with them (`Maps/LocationSharesTui.xml`).
 

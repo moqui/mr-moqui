@@ -667,9 +667,10 @@ along with this software (see the LICENSE.md file). If not, see
         user's answer itself. With no provider a chat event is offered as an .ics file.</xs:documentation></xs:annotation></xs:element>
     <xs:element name="shell-indicator" type="provider-type"><xs:annotation><xs:documentation>The status chips of the shell's
         app bar for the current user, on every screen (the /shellIndicators transition, asked when the page starts and again
-        when a push its answer names comes or at its refreshAt): called with no parameters, it answers indicators, each
-        {key, label, icon, tone, url, title, refreshAt (epoch millis)}, an empty list when there is nothing to show, and
-        refreshOn [{topicPrefix, events}], the pushes on which the shell asks again (Maps' live location: "Sharing location" while the user shares theirs).</xs:documentation></xs:annotation></xs:element>
+        when a push its answer names comes or after its refreshInSeconds): called with no parameters, it answers indicators, each
+        {key, label, icon, tone, url, title, refreshInSeconds (from now)}, an empty list when there is nothing to show, and
+        refreshOn [{topicPrefix, events}], the pushes on which the shell asks again. A component's conf may answer it too,
+        for every signed-in user (mr-moqui-conf.xsd screen-facade shell-providers: the framework's live location).</xs:documentation></xs:annotation></xs:element>
 
     <!-- ================ Declared actions and panels ================ -->
     <xs:attributeGroup name="ext-item-attributes">

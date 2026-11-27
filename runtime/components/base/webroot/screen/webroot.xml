@@ -152,7 +152,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <!-- The app bar's indicators of the server (moqui.shellIndicators; docs/ui/Qvt-Client.md, Shell indicators): what
         org.moqui.ui.ShellServices.get#ShellIndicators answers for the current user, the shell-indicator providers of the apps
-        they may open, each as its app: {indicators: [{key, label, icon, tone, title, url, refreshAt, sourceId}], refreshOn:
+        they may open, each as its app: {indicators: [{key, label, icon, tone, title, url, refreshInSeconds, sourceId}], refreshOn:
         [{topicPrefix, events}]}; none when it fails. 401 without a user. -->
     <transition name="shellIndicators" read-only="true" begin-transaction="false">
         <actions><script><![CDATA[

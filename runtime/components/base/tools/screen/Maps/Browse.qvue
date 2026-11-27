@@ -42,13 +42,14 @@ along with this software (see the LICENSE.md file). If not, see
     watchPosition through reportPosition, at most one a share's reportIntervalSeconds, and handles its statuses (429 waits,
     410 and 404 stop sending, 409 STALE is passed over and CLOCK_AHEAD sends with the server's time); the page closed, the
     share stays active and its audience sees its position age. On every screen the app bar's "Sharing location" chip (a
-    shell indicator of Maps' shell-indicator provider) opens this screen's Live location panel (panel=live); while this page
-    sends, it notes "sending here" on that chip. In the Android app (plans/Location-Sharing.md §3.4, LL3; moquiDesktop.location)
-    Share asks for the location permission first, with the app's reason, and the app's foreground service sends the share
-    from the phone, also with the app in the background, under its notification (this page sends it only when the app
-    could not start that); a share is sent from one device or page at a time, and Send from here (Send from this device in
-    the app) takes it over on the server (sendFromHere), the one that sent it being refused as another device's (409
-    OTHER_DEVICE) and stopping. -->
+    shell indicator of the framework's live-location provider) opens My location shares (MyShares.xml), whose Open in
+    Maps opens this screen's Live location panel (panel=live); while this page sends, it notes "sending here" on that
+    chip. In the Android app (plans/Location-Sharing.md §3.4, LL3; moquiDesktop.location) Share asks for the location
+    permission first, with the app's reason, and the app's foreground service sends the share from the phone, also with
+    the app in the background, under its notification (this page sends it only when the app could not start that); a
+    share is sent from one device or page at a time, and Send from here (Send from this device in the app) takes it over
+    on the server (sendFromHere), the one that sent it being refused as another device's (409 OTHER_DEVICE) and
+    stopping. -->
 <template><div ref="frame" class="m-maps-browse column no-wrap" :class="fullscreen ? ($q.dark.isActive ? 'bg-dark' : 'bg-white') : ''">
     <div class="row items-center no-wrap q-gutter-x-xs q-px-sm q-py-xs">
         <div class="col" style="max-width:420px">
@@ -97,6 +98,7 @@ along with this software (see the LICENSE.md file). If not, see
     </div>
     <div v-if="geoError && sending.length" class="text-warning text-caption q-px-sm" role="alert">{{geoError}}</div>
     <div v-if="sendError" class="text-warning text-caption q-px-sm" role="alert">{{sendError}}</div>
+    <div v-if="sharesNotice" class="text-warning text-caption q-px-sm" role="alert" id="MapsSharesNotice">{{sharesNotice}}</div>
 
     <div class="row no-wrap">
         <component :is="phone ? 'q-card' : 'div'" v-if="panel" :flat="phone ? true : undefined" :bordered="phone ? true : undefined"
@@ -488,7 +490,17 @@ const OVERLAY_ACCEPT = '.geojson,.json,.topojson,.esrijson,.gpx,.kml,.gml,.wkt,.
 // the shares of the user's own that this tab sends while their page is open (a per-tab convenience: the share itself is
 // the server's), in session storage under a key of the account (moqui.scopedKey: the desktop client's account too)
 const SENDING_PREFIX = 'moqui.maps.sendingShares.';
-// the key of Maps' indicator in the shell's app bar (LocationShares.js indicator)
+// the session the stored list belongs to: the page's session token, which a sign-in anew changes
+// stored as its SHA-256 (crypto.subtle; none in an insecure context, where nothing is stored), never the token itself
+const sessionToken = () => String((moqui.webrootVue && moqui.webrootVue.moquiSessionToken) || moqui.sessionToken || '');
+const sessionDigest = () => {
+    const subtle = window.crypto && window.crypto.subtle;
+    const token = sessionToken();
+    if (!subtle || !token || !window.TextEncoder) return Promise.resolve(null);
+    return subtle.digest('SHA-256', new TextEncoder().encode(token)).then((bytes) => Array.from(new Uint8Array(bytes))
+        .map((byte) => byte.toString(16).padStart(2, '0')).join(''), () => null);
+};
+// the key of the live-location indicator in the shell's app bar (LocationShares.js indicator, the framework's provider)
 const INDICATOR_KEY = 'locationSharing';
 const sendingKey = () => {
     const userId = moqui.webrootVue && moqui.webrootVue.userId;
@@ -518,7 +530,7 @@ module.exports = {
             picker: { drives: [], driveId: null, crumbs: [], rows: [], loading: false, text: '', searching: false },
             // live location (plans/Location-Sharing.md §3.3): m-map's shares as it holds them (live-change), the page's clock for
             // ages, the shares this page sends and the newest position the browser gave
-            live: null, liveGone: [], liveSelected: '', now: Date.now(), sending: [], sendInfo: {}, sendNotes: {}, geoError: '', sendError: '',
+            live: null, liveGone: [], liveSelected: '', sharesNotice: '', sessionHash: null, now: Date.now(), sending: [], sendInfo: {}, sendNotes: {}, geoError: '', sendError: '',
             // the shares the Android app's location service sends from this phone (plans/Location-Sharing.md §3.4)
             nativeSending: [],
             shareShown: false, shareSaving: false, shareError: '', shareMade: null, shareUserOptions: [],
@@ -577,7 +589,8 @@ module.exports = {
             return !!(desktop && typeof desktop.openExternal === 'function' && (typeof desktop.dialAccount === 'function' || !!desktop.location));
         },
         // OpenStreetMap is offered only while this server lets a page reach outside hosts (maps@external-requests)
-        directionsShown() { return this.phoneApp || !(this.effective && this.effective.externalRequests === false); },
+        outsideAllowed() { return !(this.effective && this.effective.externalRequests === false); },
+        directionsShown() { return this.phoneApp || this.outsideAllowed; },
         sharedWithMe() { return this.locationShares.filter((share) => share.role !== 'owner'); },
         // the ends offered, within location@max-share-hours
         untilOptions() {
@@ -636,6 +649,7 @@ module.exports = {
         // above the map change its height
         banners(value, before) { if (value.length !== (before || []).length) this.$nextTick(() => this.measure()); },
         myShares(value, before) {
+            if (this.mineReadFailed) return;
             const ids = value.map((share) => share.shareId);
             const had = (before || []).map((share) => share.shareId);
             this.sending.filter((id) => had.includes(id) && !ids.includes(id)).forEach((id) => this.stopSending(id));
@@ -745,12 +759,22 @@ module.exports = {
             const asked = typeof extraLayerId === 'string' ? extraLayerId : '';
             const readAt = Date.now();
             return this.request('getConfig', { params: this.configParameters(asked) }).then((config) => {
-                config.locationShares = this.stampShares(config.locationShares, Date.now());
+                if (this.closed) return;
+                const mineFailed = config.locationSharesMineFailed === true;
+                this.sharesReadFailed(mineFailed);
+                config.locationShares = this.mergeRead(this.stampShares(config.locationShares, Date.now()), mineFailed, config.locationSharesTheirsFailed === true);
+                this.mineReadFailed = mineFailed;
                 this.effective = config;
-                if (!config.locationSharesFailed) this.pruneSending(config.locationShares, readAt);
-                this.restoreSending();
-                // panel=live (the app bar's "Sharing location" chip): Who sees my location
-                if (this.parameters.panel === 'live') this.panel = 'live';
+                // a failed read of the user's own shares neither stops nor resumes sending: the next good read decides
+                if (!mineFailed) {
+                    this.pruneSending(config.locationShares, readAt);
+                    this.restoreSending();
+                }
+                // panel=live (the app bar's "Sharing location" chip): Who sees my location, once for each time it is asked
+                if (this.parameters.panel !== this.panelAsked) {
+                    this.panelAsked = this.parameters.panel;
+                    if (this.parameters.panel === 'live') this.panel = 'live';
+                }
                 this.watchTiles();
                 const p = this.parameters;
                 const lon = Number(p.longitude), lat = Number(p.latitude);
@@ -1105,12 +1129,11 @@ module.exports = {
                 (err) => console.warn('Maps: the coordinates were not copied', err));
         },
         // ---- live location (plans/Location-Sharing.md §3.3; the transitions are Browse.xml's, over LocationServices) ----
-        // m-map's shares after a change: one it held before and holds no more (ended, revoked for this viewer, or no longer read)
-        // is gone from the panels too
+        // m-map's shares after a change: one an ended push (or a revoked one, to a viewer) took off is gone from the panels
+        // too, for as long as the page is open; one a read no longer lists comes back with the next read that does
         onLiveChange(change) {
             const shares = change && Array.isArray(change.shares) ? change.shares : [];
-            const ids = new Set(shares.map((share) => share.shareId));
-            const gone = (this.live || []).map((share) => share.shareId).filter((id) => !ids.has(id) && !this.liveGone.includes(id));
+            const gone = (change && Array.isArray(change.removed) ? change.removed : []).filter((id) => !this.liveGone.includes(id));
             if (gone.length) this.liveGone = this.liveGone.concat(gone);
             this.live = shares;
         },
@@ -1118,11 +1141,34 @@ module.exports = {
         refreshShares() {
             const readAt = Date.now();
             return this.request('locationShares').then((json) => {
-                if (!this.effective) return;
-                const shares = this.stampShares(json.locationShares, Date.now());
+                if (!this.effective || this.closed) return;
+                const mineFailed = json.mineFailed === true;
+                this.sharesReadFailed(mineFailed);
+                const shares = this.mergeRead(this.stampShares(json.locationShares, Date.now()), mineFailed, json.theirsFailed === true);
+                this.mineReadFailed = mineFailed;
                 this.effective = Object.assign({}, this.effective, { locationShares: shares });
-                if (!json.failed) this.pruneSending(shares, readAt);
-            }, (err) => console.warn('Maps: the location shares were not read again', err));
+                if (!mineFailed) this.pruneSending(shares, readAt);
+            }, (err) => {
+                console.warn('Maps: the location shares were not read again', err);
+                // a read that did not answer is said as a failed one: read once more, then the notice to reload
+                if (!this.closed) this.sharesReadFailed(true);
+            });
+        },
+        // a failed read of the user's own shares said above the map, and read again once after 5 s; a good read clears it
+        sharesReadFailed(failed) {
+            if (!failed) { this.sharesNotice = ''; return; }
+            if (this.sharesRetried) { this.sharesNotice = t('Your location shares could not be read: reload the page to see them'); return; }
+            this.sharesRetried = true;
+            this.sharesNotice = t('Your location shares were not read: trying again');
+            clearTimeout(this.sharesRetryTimer);
+            this.sharesRetryTimer = setTimeout(() => { if (!this.closed) this.refreshShares(); }, 5000);
+        },
+        // a read's shares, with the rows the page had for a half whose read failed (the user's own, those shared with them),
+        // so a failed read hides nothing
+        mergeRead(list, mineFailed, theirsFailed) {
+            const before = this.effective ? this.effective.locationShares || [] : [];
+            const own = (share) => share && share.role === 'owner';
+            return (mineFailed ? before.filter(own) : list.filter(own)).concat(theirsFailed ? before.filter((share) => !own(share)) : list.filter((share) => !own(share)));
         },
         // each latest position given this page's clock at the read (seenAt: when the server's ageSeconds says it was taken),
         // once: a configuration drawn or normalized again later keeps it, so a share that stopped reporting goes stale
@@ -1186,7 +1232,11 @@ module.exports = {
         directions(share) {
             if (!share.position) return;
             const desktop = window.moquiDesktop;
-            if (this.phoneApp) { Promise.resolve(desktop.openExternal(this.geoUri(share))).catch(() => window.open(this.osmUrl(share), '_blank', 'noopener')); return; }
+            if (this.phoneApp) {
+                // the phone's maps app; OpenStreetMap only as its fallback and only while outside requests are on
+                Promise.resolve(desktop.openExternal(this.geoUri(share))).catch(() => { if (this.outsideAllowed) window.open(this.osmUrl(share), '_blank', 'noopener'); });
+                return;
+            }
             if (!this.directionsShown) return;
             if (desktop && typeof desktop.openExternal === 'function') { Promise.resolve(desktop.openExternal(this.osmUrl(share))).catch(() => {}); return; }
             window.open(this.osmUrl(share), '_blank', 'noopener');
@@ -1325,21 +1375,29 @@ module.exports = {
         // send) is active and the page is open; the page closed, the share stays active and goes stale. The shares sent are
         // kept in this tab's session storage, by account (sendingKey), so a reload of the page goes on sending them; a
         // sign-out forgets them (forgetSending, a before-logout hook of the shell). ----
+        // the list as stored with the session it was stored in (the hash of its session token, sessionDigest): one of another
+        // session (a sign-in again in this tab) is not resumed
         storedSending() {
             const key = sendingKey();
             if (!key) return [];
-            try { const value = JSON.parse(window.sessionStorage.getItem(key) || '[]'); return Array.isArray(value) ? value.map(String) : []; } catch (err) { return []; }
+            try {
+                const value = JSON.parse(window.sessionStorage.getItem(key) || 'null');
+                return this.sessionHash && value && value.session === this.sessionHash && Array.isArray(value.shareIds) ? value.shareIds.map(String) : [];
+            } catch (err) { return []; }
         },
         storeSending() {
             const key = sendingKey();
             if (!key) return;
             try {
-                if (this.sending.length) window.sessionStorage.setItem(key, JSON.stringify(this.sending));
+                if (this.sending.length && this.sessionHash) window.sessionStorage.setItem(key, JSON.stringify({ session: this.sessionHash, shareIds: this.sending }));
                 else window.sessionStorage.removeItem(key);
             } catch (err) { /* sending goes on for this page alone */ }
         },
         // the shares this tab sent before a reload, those still the user's own and active; the rest are dropped from storage
         restoreSending() {
+            if (this.closed) return;
+            // the session's hash first: a restore asked before it is made waits for it
+            if (!this.sessionHash) { if (this.hashing) this.hashing.then(() => { if (this.sessionHash) this.restoreSending(); }); return; }
             const mine = this.myShares;
             const stored = this.storedSending();
             const kept = stored.filter((id) => mine.some((share) => share.shareId === id));
@@ -1375,6 +1433,7 @@ module.exports = {
         // info: approximate, intervalSeconds (the share's report interval), thruDate and whomText (for its banner before the
         // share is read), fresh (a share just started: no fix taken before it is sent), restored (after a reload)
         startSending(shareId, info) {
+            if (this.closed) return;
             const given = info || {};
             if (!this.sending.includes(shareId)) this.sending = this.sending.concat([shareId]);
             this.sendInfo = Object.assign({}, this.sendInfo, { [shareId]: { approximate: !!given.approximate, intervalSeconds: Number(given.intervalSeconds) || 0,
@@ -1401,10 +1460,10 @@ module.exports = {
             else this.watchFixes();
             this.noteSending();
         },
-        // the app bar's "Sharing location" chip (the shell's indicator of Maps' shell-indicator provider) says "sending here"
+        // the app bar's "Sharing location" chip (the shell's indicator of the framework's live-location shell-indicator provider) says "sending here"
         // while this page sends a share
         noteSending(off) {
-            if (moqui.shellIndicators) moqui.shellIndicators.note(INDICATOR_KEY, !off && (this.sending.length || this.nativeSending.length) ? t('sending here') : null);
+            if (moqui.shellIndicators) moqui.shellIndicators.note(INDICATOR_KEY, !off && !this.closed && (this.sending.length || this.nativeSending.length) ? t('sending here') : null);
         },
         note(shareId, text) { this.sendNotes = Object.assign({}, this.sendNotes, { [shareId]: text }); },
         // a share's report interval in milliseconds: its own, else the listed share's, else location@min-interval-seconds' default
@@ -1422,6 +1481,7 @@ module.exports = {
             });
         },
         onFix(position) {
+            if (this.closed) return;
             this.geoError = '';
             const c = position.coords;
             this.fix = { latitude: c.latitude, longitude: c.longitude, accuracy: c.accuracy, heading: c.heading, speed: c.speed, timestamp: position.timestamp || Date.now() };
@@ -1433,6 +1493,7 @@ module.exports = {
         },
         // the watch, at the accuracy the shares sent need (started again when that changes), and the pump that sends
         watchFixes() {
+            if (this.closed) return;
             const geo = navigator.geolocation;
             if (!geo) { this.geoError = t('This browser cannot give its location, so nothing is sent from here'); return; }
             const exact = this.exactNeeded();
@@ -1445,11 +1506,16 @@ module.exports = {
             if (!this.pumpTimer) this.pumpTimer = setInterval(() => this.pumpReports(), 1000);
         },
         // a fix taken now (a share just started; and as a keep-alive, since a watch gives nothing while the device is still)
+        // an answer that comes after the fixes were let go (the page closed, nothing sent any more) is dropped: its generation
+        // is not the current one
         freshFix() {
             const geo = navigator.geolocation;
-            if (!geo || this.fixAsked) return;
-            this.fixAsked = Date.now();
-            geo.getCurrentPosition((position) => { this.fixAsked = 0; this.onFix(position); }, (error) => { this.fixAsked = 0; this.onFixError(error); },
+            if (!geo || this.closed || this.fixAsked) return;
+            const generation = this.fixGeneration || 0;
+            this.fixAsked = this.lastFixAsk = Date.now();
+            const current = () => !this.closed && generation === (this.fixGeneration || 0);
+            geo.getCurrentPosition((position) => { if (current()) { this.fixAsked = 0; this.onFix(position); } },
+                (error) => { if (current()) { this.fixAsked = 0; this.onFixError(error); } },
                 { enableHighAccuracy: this.exactNeeded(), maximumAge: 0, timeout: 30000 });
         },
         unwatchFixes() {
@@ -1458,14 +1524,18 @@ module.exports = {
             clearInterval(this.pumpTimer);
             this.pumpTimer = null;
             this.fix = null;
+            this.fixAsked = 0;
+            this.fixGeneration = (this.fixGeneration || 0) + 1;
         },
         // the newest fix to each share sent, at most one a share's interval, none taken before a new share began; with no fix
-        // for three of the shortest intervals (at least 15 s), one is asked for, at most one a 30 s
+        // for three of the shortest intervals (at least 15 s), one is asked for, at most one a 30 s (lastFixAsk) and never
+        // while one is asked
         pumpReports() {
+            if (this.closed) return;
             const now = Date.now();
             if (this.sending.length) {
                 const shortest = Math.min(...this.sending.map((id) => this.intervalOf(id)));
-                if (now - (this.fixAt || 0) > Math.max(15000, 3 * shortest) && now - (this.fixAsked || 0) > 30000) { this.fixAsked = 0; this.freshFix(); }
+                if (now - (this.fixAt || 0) > Math.max(15000, 3 * shortest) && now - (this.lastFixAsk || 0) > 30000) this.freshFix();
             }
             const fix = this.fix;
             if (!fix) return;
@@ -1481,6 +1551,7 @@ module.exports = {
         // time; another 400 a value refused, passed over. A sign-in lost (401, 403) or an answer that is not this
         // transition's JSON (a login page) stops sending; a network failure tries again at the next interval.
         report(shareId, state, fix) {
+            if (this.closed) return;
             const interval = this.intervalOf(shareId);
             const num = (value) => (value === null || value === undefined || !Number.isFinite(Number(value)) ? '' : String(value));
             const params = { shareId, latitude: num(fix.latitude), longitude: num(fix.longitude), accuracy: num(fix.accuracy), heading: num(fix.heading), speed: num(fix.speed),
@@ -1555,13 +1626,25 @@ module.exports = {
         this.load();
         this.loadViews();
         this.loadPreferences();
-        // a sign-out forgets the shares this tab sends (forgetSending)
+        // a sign-out forgets the shares this tab sends (forgetSending); the session they are kept with, as its hash
         if (moqui.beforeLogoutHooks) moqui.beforeLogoutHooks.add(forgetSending);
+        this.hashing = sessionDigest().then((hash) => { this.sessionHash = hash; });
+        // a sign-in again in this page is a new session: its hash made again, and what this page sends kept under it
+        this.$watch(() => this.$root && this.$root.moquiSessionToken, () => {
+            this.hashing = sessionDigest().then((hash) => {
+                if (this.closed) return;
+                this.sessionHash = hash;
+                this.storeSending();
+            });
+        });
         // the ages of the live shares move on with the clock
         this.nowTimer = setInterval(() => { this.now = Date.now(); }, 30000);
     },
     beforeUnmount() {
-        // the page closing stops what it sends; its shares stay active and go stale
+        // the page closing stops what it sends, and drops a position asked for and not yet given; its shares stay active
+        // and go stale
+        this.closed = true;
+        clearTimeout(this.sharesRetryTimer);
         this.unwatchFixes();
         this.noteSending(true);
         clearInterval(this.nowTimer);

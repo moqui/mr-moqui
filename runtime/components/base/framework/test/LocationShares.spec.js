@@ -49,8 +49,9 @@ function sys(run) {
     }
 }
 const username = userId => (userId === "EX_JOHN_DOE" ? "john.doe" : userId.toLowerCase().replace(/_/g, "."))
-// a call as the user, with authorization on: its results, and its errors as text
-function as(userId, verbNoun, parameters) {
+// a call as the user, with authorization on: its results, and its errors as text; a service of LocationServices unless
+// another prefix is given
+function as(userId, verbNoun, parameters, prefix) {
     ec.user.internalLoginUser(username(userId))
     ec.artifactExecution.enableAuthz()
     let out = {}
@@ -59,7 +60,7 @@ function as(userId, verbNoun, parameters) {
         out =
             ec.service
                 .sync()
-                .name(S + verbNoun)
+                .name((prefix || S) + verbNoun)
                 .parameters(parameters || {})
                 .call() || {}
     } catch (err) {
@@ -846,7 +847,7 @@ feature(
             const out = {owner: live(A), viewer: live(B), other: live(C), admin: live("EX_JOHN_DOE")}
             out.carried = (config(true).locationShares || []).some(row => row.shareId === shareId)
             out.notAsked = config(false).locationShares === undefined
-            // the app bar's chip (get#ShellIndicator, Maps' shell-indicator provider): the owner's, the count of their own
+            // the app bar's chip (get#ShellIndicator, the framework's live-location shell-indicator provider): the owner's, the count of their own
             // shares; none for a viewer who shares nothing, who is still told which pushes to read it again on
             out.indicator = as(A, "get#ShellIndicator")
             out.noIndicator = as(J, "get#ShellIndicator")
@@ -858,8 +859,8 @@ feature(
             indicator.indicators.length == 1
             indicator.indicators[0].key == "locationSharing"
             indicator.indicators[0].label.startsWith("Sharing location")
-            indicator.indicators[0].url == "/qapps/maps/Browse?panel=live"
-            indicator.indicators[0].refreshAt > shared.now
+            indicator.indicators[0].url == "/qapps/maps/MyShares"
+            indicator.indicators[0].refreshInSeconds > 0
             indicator.refreshOn[0].topicPrefix == "locationShare:"
             noIndicator.indicators.length == 0
             noIndicator.refreshOn.length == 1
@@ -884,6 +885,43 @@ feature(
             carried == true
             notAsked == true
             afterStop == null
+        }
+    }
+)
+
+feature(
+    "the app bar's chip reaches every share owner, whatever apps they may open, through call#Providers with authorization on; the grant reaches only get#ShellIndicators",
+    {
+        when() {
+            later(6000)
+            // A's earlier shares stopped, so the chip says this one alone and goes with its stop
+            for (const share of Array.from(as(A, "find#MyShares").shareList || [])) as(A, "stop#Share", {shareId: share.shareId})
+            const shareId = as(A, "create#Share", {audienceList: [toUser(B)], thruDate: new Date(shared.now + HOUR)}).shareId
+            // org.moqui.ui.ShellServices as the user (who has ALL_USERS alone, no Maps), authorization on
+            const shell = (userId, verbNoun, parameters) => as(userId, verbNoun, parameters, "org.moqui.ui.ShellServices.")
+            const out = {
+                owner: shell(A, "get#ShellIndicators"),
+                none: shell(J, "get#ShellIndicators"),
+                direct: shell(J, "call#Providers", {hook: "shell-indicator"})
+            }
+            as(A, "stop#Share", {shareId})
+            out.stopped = shell(A, "get#ShellIndicators")
+            return out
+        },
+        then({owner, none, direct, stopped}) {
+            owner.errors == ""
+            owner.indicators.some(
+                row =>
+                    row.key == "locationSharing" && row.sourceId == "framework.locationSharing" && row.label == "Sharing location"
+            )
+            owner.indicators[0].url == "/qapps/maps/MyShares"
+            none.errors == ""
+            none.indicators.length == 0
+            none.refreshOn.some(rule => rule.topicPrefix == "locationShare:")
+            direct.errors.includes("not authorized")
+            Array.from(direct.results || []).length == 0
+            stopped.errors == ""
+            stopped.indicators.length == 0
         }
     }
 )

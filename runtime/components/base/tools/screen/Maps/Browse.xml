@@ -87,7 +87,8 @@ along with this software (see the LICENSE.md file). If not, see
             ec.message.pushErrors()
             try {
                 const out = ec.resource.script('component://framework/service/org/moqui/maps/MapConfig.js').execute('liveShares', {})
-                ec.web.sendJsonResponse({locationShares: Array.from(out.locationShares || []), failed: out.failed === true})
+                ec.web.sendJsonResponse({locationShares: Array.from(out.locationShares || []), failed: out.failed === true,
+                    mineFailed: out.mineFailed === true, theirsFailed: out.theirsFailed === true})
             } catch (err) {
                 ec.logger.warn('Maps Browse: the location shares were not read: ' + (err?.message ?? err))
                 ec.web.sendJsonResponse({errors: ec.l10n.localize('The location shares were not read')})
