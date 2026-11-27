@@ -674,3 +674,36 @@ fn a_pairings_leg_is_never_an_xmpp_users_own() {
     assert!(net.turn.peer_allowed(public, false, Some("xmpp.ann")));
     assert!(!net.turn.peer_allowed(public, false, Some("xmpp.ann@local-1")));
 }
+
+/// SEC-COM-18: an IPv6 address of this host stands for its /64, whose other addresses the host may also hold; the
+/// addresses are set again as the host's interfaces change.
+#[test]
+fn an_xmpp_users_credential_reaches_no_address_in_the_64_of_the_hosts_own() {
+    let listen: SocketAddr = "0.0.0.0:3478".parse().unwrap();
+    let config = TurnConfig {
+        secret: SECRET.to_vec(),
+        own_addresses: vec!["2a00:1450:1:2::10".parse().unwrap()],
+        ..TurnConfig::default()
+    };
+    let mut turn = Turn::new(config, &[(Proto::Udp, listen)]);
+    let xmpp = Some("xmpp.U1");
+    let peer = |text: &str| -> SocketAddr { text.parse().unwrap() };
+    assert!(!turn.peer_allowed(peer("[2a00:1450:1:2::10]:5060"), false, xmpp));
+    assert!(
+        !turn.peer_allowed(peer("[2a00:1450:1:2:abcd::99]:5060"), false, xmpp),
+        "the same /64"
+    );
+    assert!(
+        turn.peer_allowed(peer("[2a00:1450:1:3::10]:5060"), false, xmpp),
+        "another /64"
+    );
+    turn.set_own_addresses(vec!["2a00:1450:1:3::1".parse().unwrap()]);
+    assert!(
+        !turn.peer_allowed(peer("[2a00:1450:1:3::10]:5060"), false, xmpp),
+        "the new prefix"
+    );
+    assert!(
+        turn.peer_allowed(peer("[2a00:1450:1:2::10]:5060"), false, xmpp),
+        "the old one is not the host's now"
+    );
+}

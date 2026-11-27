@@ -103,7 +103,13 @@ pub(crate) struct TurnSettings {
     pub relay_ports: (u16, u16),
     pub config: TurnConfig,
     pub limits: StreamLimits,
+    /// This host's own addresses from the settings, to which the interfaces' are added again every
+    /// [`OWN_ADDRESSES_EVERY`] (SEC-COM-18).
+    pub own_configured: Vec<IpAddr>,
 }
+
+/// How often the TURN server reads the host's interface addresses again (SEC-COM-18).
+const OWN_ADDRESSES_EVERY: Duration = Duration::from_secs(5 * 60);
 
 fn port(text: &str, name: &str) -> Result<Option<u16>, String> {
     let text = text.trim();
@@ -115,17 +121,23 @@ fn port(text: &str, name: &str) -> Result<Option<u16>, String> {
         .map_err(|_| format!("{name} {text} is not a port"))
 }
 
-/// The TURN settings, None while neither `media-server/turn-server@port` nor `media-server/turn-server@tls-port` nor `media-server/turn-server@tls443-host` is set.
-/// This host's own addresses, which an XMPP user's TURN credential never relays to (SEC-COM-18): `known` (the TURN
-/// and media public addresses), the SIP and the webroot's public addresses when they are addresses, and every address
-/// of the host's interfaces as they are at start; the unspecified ones left out.
-fn own_addresses(property: &dyn Fn(&str) -> String, known: &[IpAddr]) -> Vec<IpAddr> {
+/// This host's own addresses from the settings, which an XMPP user's TURN credential never relays to (SEC-COM-18):
+/// `known` (the TURN and media public addresses), and the SIP and the webroot's public addresses when they are
+/// addresses. [`with_interfaces`] adds the host's interfaces'.
+fn configured_addresses(property: &dyn Fn(&str) -> String, known: &[IpAddr]) -> Vec<IpAddr> {
     let mut own: Vec<IpAddr> = known.to_vec();
     for name in ["sip-server@public-address", "webapp-list/webapp[webroot]@http-host"] {
         if let Ok(ip) = property(name).trim().parse::<IpAddr>() {
             own.push(ip);
         }
     }
+    own
+}
+
+/// `configured` and every address of the host's interfaces as they are now, the unspecified ones left out. The TURN
+/// server refuses the /64 of each IPv6 one ([`moqui_rtc::turn::TurnConfig::own_addresses`]).
+fn with_interfaces(configured: &[IpAddr]) -> Vec<IpAddr> {
+    let mut own = configured.to_vec();
     match if_addrs::get_if_addrs() {
         Ok(interfaces) => own.extend(interfaces.iter().map(if_addrs::Interface::ip)),
         Err(err) => tracing::warn!("TURN: the host's interface addresses were not read: {err}"),
@@ -136,6 +148,7 @@ fn own_addresses(property: &dyn Fn(&str) -> String, known: &[IpAddr]) -> Vec<IpA
     own
 }
 
+/// The TURN settings, None while neither `media-server/turn-server@port` nor `media-server/turn-server@tls-port` nor `media-server/turn-server@tls443-host` is set.
 pub(crate) fn settings(
     property: &dyn Fn(&str) -> String,
     media_bind: SocketAddr,
@@ -238,6 +251,7 @@ pub(crate) fn settings(
             .ok_or_else(|| format!("media-server/turn-server@allowed-peers {extra} is not an address"))?;
         allowed_peers.push(peer);
     }
+    let own_configured = configured_addresses(property, &[public_ip, media_public.ip(), media_bind.ip()]);
     let config = TurnConfig {
         realm: public_host.clone(),
         secret: secret.trim().as_bytes().to_vec(),
@@ -247,7 +261,7 @@ pub(crate) fn settings(
         max_kbps: number("media-server/turn-server@max-kbps", 4_000),
         // a node that takes links: its paired nodes' usernames name their pairings (E16)
         pairings: moqui_core::edge::NodeRole::parse(&property(moqui_core::edge::NODE_ROLE)).takes_links(),
-        own_addresses: own_addresses(property, &[public_ip, media_public.ip(), media_bind.ip()]),
+        own_addresses: with_interfaces(&own_configured),
     };
     Ok(Some(TurnSettings {
         bind,
@@ -259,6 +273,7 @@ pub(crate) fn settings(
         relay_ports,
         config,
         limits: StreamLimits::default(),
+        own_configured,
     }))
 }
 
@@ -430,10 +445,11 @@ pub(crate) fn start(runtime_dir: &Path, s: &TurnSettings) -> Result<TurnNode, St
         accepts.push(runtime.spawn(accept(listener, tls, streams)));
     }
     let (bind, public_ip, range) = (s.bind, s.public_ip, s.relay_ports);
+    let own_configured = s.own_configured.clone();
     let stop_main = Arc::clone(&stop);
     let thread = std::thread::Builder::new()
         .name("moqui-turn".to_string())
-        .spawn(move || run(turn, udp, rx, bind, public_ip, range, &stop_main))
+        .spawn(move || run(turn, udp, rx, bind, public_ip, range, &own_configured, &stop_main))
         .map_err(|e| e.to_string());
     let thread = match thread {
         Ok(thread) => thread,
@@ -460,6 +476,7 @@ fn run(
     bind: IpAddr,
     public_ip: IpAddr,
     range: (u16, u16),
+    own_configured: &[IpAddr],
     stop: &AtomicBool,
 ) {
     let listen_udp = udp.as_ref().and_then(|u| u.local_addr().ok());
@@ -469,6 +486,8 @@ fn run(
     let mut cursor = range.0;
     let mut buf = vec![0u8; 2_048];
     let mut next = Instant::now();
+    // the host's addresses change (a new IPv6 prefix, DHCP): read them again now and then (SEC-COM-18)
+    let mut next_own = Instant::now() + OWN_ADDRESSES_EVERY;
     // a message the wait below took
     let mut waited: Option<In> = None;
     while !stop.load(Ordering::Acquire) {
@@ -509,6 +528,10 @@ fn run(
                     Err(_) => break,
                 }
             }
+        }
+        if now >= next_own {
+            turn.set_own_addresses(with_interfaces(own_configured));
+            next_own = now + OWN_ADDRESSES_EVERY;
         }
         if now >= next {
             turn.handle_timeout(now);
