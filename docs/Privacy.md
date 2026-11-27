@@ -51,8 +51,8 @@ their own.
   ends (`location@trail-max-days`) or until you delete it. No one else on the server reads your shares: not an
   administrator, a household's organizer or a group's owner. The server's operator is not kept out, though: an
   administrator who signs in as you, a holder of the Tools SQL runner, a holder of the permission to run server scripts
-  (`GROOVY_SHELL_WEB`) or any server script (which can read the location tables), any server script that turns on the
-  `NotificationCapture` tool (which sees the live positions as they are sent), the database's own tools and its backups
+  (`GROOVY_SHELL_WEB`), any server script (which can read the location tables, and which can turn on the
+  `NotificationCapture` tool to see the live positions as they are sent), the database's own tools and its backups
   can see what the server holds, and its audit history keeps who you shared with and until when, never where you were.
 - **Photos and videos.** Only those you take or pick to send, sent to your server; a photo or video taken in the app
   is kept in the app's cache, not in your gallery, and cleared at its next start.
