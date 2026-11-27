@@ -221,9 +221,9 @@ MOQUI_DESKTOP_NODE=client ./moq desktop    # a client of a remote server: sign i
 ```
 
 - **Prerequisites:** on Windows and macOS CMake and Ninja, which build CEF's C++ wrapper there (the Linux build has
-  none), and on Linux the GTK 4 development packages and `patchelf`; the list, the bundle's sidecar, signing and the Linux bundling workarounds are in
-  [Build-Test](../../docs/Build-Test.md#desktop-app). On Windows, `./moq desktop` downloads them when they are not on
-  `PATH`.
+  none), and on Linux the GTK 4 development packages and `patchelf`; the list, the bundle's sidecar, signing and the
+  Linux bundling workarounds are in [Build-Test](../../docs/Build-Test.md#desktop-app). On Windows, `./moq desktop`
+  downloads them when they are not on `PATH`.
 - **CEF download:** the first build fetches the CEF binary distribution, about 1 GB, into the `tauri-cef` cache
   (`~/Library/Caches/tauri-cef` on macOS, `~/.cache/tauri-cef` on Linux, `%LOCALAPPDATA%\tauri-cef` on Windows). Set
   `CEF_PATH` to use another. Where Cargo's build directory layout makes cef-dll-sys copy the runtime files into

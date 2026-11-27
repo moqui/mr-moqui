@@ -105,5 +105,5 @@ win_tool_install() {
     mkdir -p "$(dirname "$dest")"
     cp -Rp "$src" "$tmp"
     rm -rf "$dest"
-    mv "$tmp" "$dest"
+    mv -T "$tmp" "$dest"
 }

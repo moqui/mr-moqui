@@ -552,7 +552,7 @@ Prerequisites, beyond those of the server build:
 
 ```sh
 # Ubuntu 26.04
-sudo apt install build-essential pkg-config cmake ninja-build libgtk-4-dev patchelf
+sudo apt install build-essential pkg-config libgtk-4-dev patchelf
 # macOS (with the Xcode command line tools)
 brew install cmake ninja
 cargo install tauri-cli --version 3.0.0-alpha.6 --locked
