@@ -129,6 +129,7 @@ and Windows.
 | A manager behind a firewall | A managed instance's link to a manager reached through the manager's edge node, by a passthrough host name, on deployed nodes; covered by a unit test of the passthrough here | `edge_link/down.rs`, [Run-Deploy, The manager link](../docs/Run-Deploy.md#the-manager-link) |
 | Hosts | Managed instances on a second machine's Docker or Podman over HTTPS with a client key, and over SSH; here only this machine's sockets were used | [Run-Deploy, Managed instances](../docs/Run-Deploy.md#managed-instances) |
 | Ubuntu 26.04 hosts | Rootless Podman cannot stop a network's pasta process (its AppArmor profile for pasta refuses Podman's signal), so every container removal there answers 500; the driver takes a removal as done when the container is gone, but the pasta processes may stay. Check that a profile allowing `signal (receive) peer=podman` ends them, and file it upstream | [Build-Test](../docs/Build-Test.md) |
+- Live location on a real Android phone: the confirmation, Not now, the notification's Stop, a removed location permission, sign-out while sharing, Android 14's dismissed notification, and the XMPP opt-in with a real XMPP client (the emulator walk covers the start, the notification and Stop only).
 
 ## Tests to write
 
