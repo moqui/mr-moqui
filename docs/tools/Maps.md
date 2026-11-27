@@ -550,10 +550,11 @@ Browse centered on the country's largest land area (`extent=west,south,east,nort
 widen it) or on the point (`longitude`, `latitude`), and nothing else of the panel's rows. It is offered only to a viewer
 whose own grants open the Maps app (`Dashboard.xml` sets `appLinks.maps` by `isPermittedOwn` of `Maps.xml`; an app's
 grant on the screen that shows the dashboard does not count); without it the geomap is as it was. The terminal's geomap
-does the same where the link is offered: in a dashboard's table mode (`g`) or on a report panel of its own, Up and Down
-select one of its listed places, and Enter or
-`l` opens it in Maps with the same extent or point (the countries' extents are a table built from the same outline,
-`COUNTRY_EXTENTS` in `crates/moqui-tui/src/components/world.rs`).
+does the same where the link is offered: in a dashboard's table mode (`g`) or on a report panel of its own, `o` opens
+the table's current row in Maps (its country or its latitude and longitude, the fields the geomap reads) with the same
+extent or point, and the listed place of that row is highlighted; the table's own keys (rows, data links, filters) are
+unchanged. The countries' extents are a table built from the same outline (`COUNTRY_EXTENTS` in
+`crates/moqui-tui/src/components/world.rs`).
 
 ### Under an app's route
 

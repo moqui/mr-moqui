@@ -642,8 +642,8 @@ fn annotation_time(time: Option<&Value>) -> String {
 
 /// A panel's lines. A chart replaces the table unless `table` (a single panel, or a dashboard panel in table mode,
 /// whose cells take the arrows, links and filters); a chart that does not fit or has nothing to draw is the table.
-/// `annotations_open` lists the annotations under their folded line; `place` is a geomap's selected place, where the
-/// panel's keys open it in Maps (`maps_key`).
+/// `annotations_open` lists the annotations under their folded line; `place` is the table's current row on a geomap
+/// that opens it in Maps (`maps_key`), whose listed place is highlighted.
 fn panel_view(
     frame: &Value,
     panel: &Value,
@@ -766,9 +766,10 @@ impl Component for ReportPanel {
             width,
             true,
             state.closed.contains("__report_annotations"),
-            maps_place(&props["panel"], &props["panel"], state),
+            maps_row(&props["panel"], &props["panel"], &frame, state),
         );
-        lines.insert(0, selection_line(&frame, &props["panel"], state));
+        let maps = maps_row(&props["panel"], &props["panel"], &frame, state).is_some();
+        lines.insert(0, selection_line(&frame, &props["panel"], state, maps));
         if state.closed.contains("__report_inspector") {
             lines.extend(
                 serde_json::to_string_pretty(data)
@@ -824,6 +825,7 @@ impl Component for ReportPanel {
             ("s", "Sort selected column"),
             ("Enter", "Open selected data link"),
             ("f", "Filter by selected dimension bucket"),
+            ("o", "Open the selected row's place in Maps (a geomap, where offered)"),
         ]
     }
 }
@@ -1072,19 +1074,21 @@ fn table_key(
     }
     Some(Vec::new())
 }
-fn selection_line(frame: &Value, panel: &Value, state: &ComponentState) -> Line {
+/// The table's selected cell and its keys; `maps` adds `o` (a geomap whose owner offers Maps, `maps_key`).
+fn selection_line(frame: &Value, panel: &Value, state: &ComponentState, maps: bool) -> Line {
     let fields = configured_fields(frame, panel);
     let at = state.choosing.unwrap_or(0).min(fields.len().saturating_sub(1));
     vec![Span::new(
         format!(
-            "Row {}, column {}: {} = {}  (arrows select, s sorts, Enter opens data link)",
+            "Row {}, column {}: {} = {}  (arrows select, s sorts, Enter opens data link{})",
             state.at + 1,
             at + 1,
             fields.get(at).and_then(|field| field["name"].as_str()).unwrap_or(""),
             fields
                 .get(at)
                 .map(|field| formatted(&field["values"][state.at], field))
-                .unwrap_or_default()
+                .unwrap_or_default(),
+            if maps { ", o: open in Maps" } else { "" }
         ),
         Role::Muted,
     )]
@@ -1277,16 +1281,27 @@ fn maps_link(owner: &Value) -> Option<String> {
     app_link(owner, "maps", "")
 }
 
-/// A geomap panel's selected place (`place` in its table state) where its owner (the dashboard, or a standalone panel)
-/// offers Maps; None otherwise, and the geomap is drawn with no selection.
-fn maps_place(owner: &Value, panel: &Value, state: &ComponentState) -> Option<usize> {
-    (panel["visualization"] == "geomap" && maps_link(owner).is_some())
-        .then(|| state.local["place"].as_u64().unwrap_or(0) as usize)
+/// The table's current row of a geomap panel whose owner (the dashboard, or a standalone panel) offers Maps, within the
+/// rows of `frame` (a refresh may bring fewer); None otherwise, and the geomap is drawn with nothing highlighted.
+fn maps_row(owner: &Value, panel: &Value, frame: &Value, state: &ComponentState) -> Option<usize> {
+    if panel["visualization"] != "geomap" || maps_link(owner).is_none() {
+        return None;
+    }
+    Some(state.at.min(row_count(frame, panel).checked_sub(1)?))
 }
 
-/// A geomap panel's keys where its owner offers Maps (`maps`): Up and Down move over the places it lists, as a table's
-/// rows, and Enter or `l` opens the selected one in Maps, as the browser's geomap does on a click. None for another key
-/// or a panel with no places, which the table keys then take.
+/// The rows of a panel's table.
+fn row_count(frame: &Value, panel: &Value) -> usize {
+    configured_fields(frame, panel)
+        .iter()
+        .map(|field| field["values"].as_array().map_or(0, Vec::len))
+        .max()
+        .unwrap_or(0)
+}
+
+/// `o` on a geomap panel whose owner offers Maps (`maps`): Maps at the place of the table's current row (its country's
+/// extent, or its point), as the browser's geomap opens a country or a point on a click. The table keeps its own keys
+/// (rows, data links, filters); None for another key, which they then take.
 fn maps_key(
     frame: &Value,
     panel: &Value,
@@ -1294,24 +1309,16 @@ fn maps_key(
     state: &mut ComponentState,
     press: &KeyPress,
 ) -> Option<Vec<Act>> {
-    if !press.is_plain() || panel["visualization"] != "geomap" {
+    if !press.is_plain() || press.key != Key::Char('o') || panel["visualization"] != "geomap" {
         return None;
     }
-    let targets = graph::geomap_targets(&table_frame(frame, state), panel);
-    let last = targets.len().checked_sub(1)?;
-    let at = (state.local["place"].as_u64().unwrap_or(0) as usize).min(last);
-    match press.key {
-        Key::Up => state.local["place"] = Value::from(at.saturating_sub(1)),
-        Key::Down => state.local["place"] = Value::from((at + 1).min(last)),
-        Key::Enter | Key::Char('l') => {
-            return Some(vec![match targets.get(at).copied().flatten() {
-                Some(place) => Act::Follow(graph::maps_url(maps, place)),
-                None => Act::Message("This country's Maps link is unavailable".into()),
-            }]);
-        }
-        _ => return None,
-    }
-    Some(Vec::new())
+    let frame = table_frame(frame, state);
+    let row = state.at.min(row_count(&frame, panel).saturating_sub(1));
+    state.at = row;
+    Some(vec![match graph::row_place(&frame, panel, row) {
+        Some(place) => Act::Follow(graph::maps_url(maps, place)),
+        None => Act::Message("This row's Maps link is unavailable".into()),
+    }])
 }
 
 /// Explore over the panel's first query, with its filters and the dashboard's filters on the same dataset, and the range.
@@ -1554,17 +1561,11 @@ impl Component for ReportDashboard {
             };
             let frame = table_frame(frame, &table);
             let keyed = at == state.at && state.closed.contains("__table_mode");
+            let maps = maps_row(&data["dashboard"], panel, &frame, &table).filter(|_| keyed);
             if keyed {
-                lines.push(selection_line(&frame, panel, &table));
+                lines.push(selection_line(&frame, panel, &table, maps.is_some()));
             }
-            lines.extend(panel_view(
-                &frame,
-                panel,
-                width,
-                keyed,
-                false,
-                maps_place(&data["dashboard"], panel, &table).filter(|_| keyed),
-            ));
+            lines.extend(panel_view(&frame, panel, width, keyed, false, maps));
             if at == state.at && state.closed.contains("__report_inspector") {
                 lines.push(vec![Span::new("Inspector: authorized query requests and per-step input/output snapshots (native view capped at 1,200 lines; server sampling/truncation flags included)",Role::Muted)]);
                 let inspected = &state.local["inspection"]["dashboard"]["panels"][id];
@@ -1888,6 +1889,10 @@ impl Component for ReportDashboard {
             ("Esc", "Leave kiosk; close inspector; all panels"),
             ("d k", "Kiosk mode (also Alt+K)"),
             ("e", "Edit definition"),
+            (
+                "o",
+                "In table mode, open the row's place in Maps (a geomap, where offered)",
+            ),
             ("c/x", "Export CSV/XLSX"),
             ("t-", "Zoom out"),
             ("t←/t→", "Shift time range"),
