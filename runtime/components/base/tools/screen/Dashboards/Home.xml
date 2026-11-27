@@ -11,12 +11,16 @@
     <parameter name="definitionType"/><parameter name="folder"/><parameter name="tag"/><parameter name="starredOnly"/>
     <transition name="dashboard" method="post" authz-action="view">
         <actions><script><![CDATA[
-            const definition=ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId}).call().definition
-            if (definition.type!=='dashboard') throw new Error('Choose a dashboard')
-            let recent=[];try {recent=JSON.parse(ec.user.getPreference('REPORT_RECENT') || '[]')}catch(_){}
-            recent=Array.isArray(recent)?recent:[]
-            ec.user.setPreference('REPORT_RECENT',JSON.stringify([definitionId,...recent.filter(id=>id!==definitionId)].slice(0,20)))
-        ]]></script></actions><default-response url="${ec.resource.script('component://tools/template/ReportMount.js').url('dashboard', '../Dashboard')}"><parameter name="definitionId"/></default-response>
+            // a dashboard the viewer may not read (another's unshared one, or none): a form error, not a failure
+            const definition=ec.resource.script('component://tools/template/ReportDelivery.js').ask('get#Definition',{definitionId:String(definitionId || '')}).out?.definition
+            if (!definition) ec.message.addError(ec.l10n.localize('This dashboard does not exist or is not shared with you'))
+            else {
+                if (definition.type!=='dashboard') throw new Error('Choose a dashboard')
+                let recent=[];try {recent=JSON.parse(ec.user.getPreference('REPORT_RECENT') || '[]')}catch(_){}
+                recent=Array.isArray(recent)?recent:[]
+                ec.user.setPreference('REPORT_RECENT',JSON.stringify([definitionId,...recent.filter(id=>id!==definitionId)].slice(0,20)))
+            }
+        ]]></script></actions><default-response url="${ec.resource.script('component://tools/template/ReportMount.js').url('dashboard', '../Dashboard')}"><parameter name="definitionId"/></default-response><error-response url="."/>
     </transition>
     <transition name="edit"><default-response url="${ec.resource.script('component://tools/template/ReportMount.js').url(definitionType === 'panel' ? 'panel' : 'definition')}"/></transition>
     <transition name="new"><default-response url="${ec.resource.script('component://tools/template/ReportMount.js').url(definitionType === 'panel' ? 'panel' : 'definition')}"/></transition>
