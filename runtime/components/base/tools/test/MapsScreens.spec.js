@@ -1,5 +1,6 @@
-// The Maps app's screens (plans/Maps.md §3.1, §3.2; docs/tools/Maps.md): Browse's two templates (Browse.qvue, its terminal twin
-// Browse.tui.json over terminalMap) for a Maps user, and the app refused to a user with ALL_USERS alone; the local-map dialog,
+// The Maps app's screens (plans/Maps.md §3.1, §3.2; docs/tools/Maps.md): Browse's terminal template (Browse.tui.json over
+// terminalMap; Browse.qvue's one render is in a browser, test/client/MapsBrowseExtent) for a Maps user, and the app
+// refused to a user with ALL_USERS alone; the local-map dialog,
 // a plain XML screen rendered once in qvt and once in html: for a Maps user the adapter lets write, the record's place,
 // precision and source from the adapter's answer, Choose location and Open in Maps; for a user with ALL_USERS alone (no
 // MAPS_APP, no System), who opens it, a record the adapter refuses them (DENIED) not available, with nothing of it, no Save
@@ -124,10 +125,9 @@ spec({
     }
 })
 
-feature("Browse renders its qvue and its terminal twin for a Maps user, and the app is refused to a user with ALL_USERS alone", {
+feature("Browse renders its terminal twin for a Maps user, and the app is refused to a user with ALL_USERS alone", {
     when() {
         return {
-            qvue: as(WRITER, "apps/maps/Browse", {}, null, "qvue"),
             tui: as(WRITER, "apps/maps/Browse", {}, null, "tui"),
             terminal: as(
                 WRITER,
@@ -144,11 +144,7 @@ feature("Browse renders its qvue and its terminal twin for a Maps user, and the 
             plainConfig: as(PLAIN, "apps/maps/Browse/getConfig", {}, "get")
         }
     },
-    then({qvue, tui, terminal, point, around, russia, plainConfig}) {
-        // Browse.qvue: the component file the shell compiles
-        qvue.status == 200
-        qvue.output.includes("name: 'MapsBrowse'")
-        qvue.output.includes("<m-map")
+    then({tui, terminal, point, around, russia, plainConfig}) {
         // Browse.tui.json: the map component over terminalMap, whose places carry their precision as words
         tui.status == 200
         tui.errors == ""

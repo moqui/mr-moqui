@@ -865,9 +865,11 @@ fallback), and a refresh is compared by address, not by ID.
 
 ## Tests
 
-The regression spec is `tools/test/MapsScreens.spec.js` (Browse in qvue and tui, its terminal's overlays and postal search; LocalMap, a plain XML screen, once in
-qvt for a writer and once in html for a user it refuses the record; the access rules, Save location, the profile
-rules); the configuration services' rules are `framework/test/MapsConfig.spec.js` (with a record link resolved to the host
+The regression spec is `tools/test/MapsScreens.spec.js` (Browse in tui, its terminal's overlays, postal search and the
+view it is opened on; LocalMap, a plain XML screen, once in qvt for a writer and once in html for a user it refuses the
+record; the access rules, Save location, the profile rules), with Browse's one qvue render in a browser in the client
+spec `tools/test/client/MapsBrowseExtent.spec.js` (the MapsBrowse component and its map, opened on an extent across the
+antimeridian at the first load, and the extent check's refusals); the configuration services' rules are `framework/test/MapsConfig.spec.js` (with a record link resolved to the host
 app's route, else one of no app, and left out for a non-holder, and a profile's view projection: a registered one handed
 to the map with its definition, refused for a vector-style basemap and for an unknown code), and the archives'
 (registering, the map-source transition's access, ranges, revocation and stale revisions, and the tile transition's tile,
