@@ -2402,6 +2402,12 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="overture-max-area" type="xs:string" default="2500"><xs:annotation><xs:documentation>
                 The largest Overture region, in km² (a box's area near enough): a region of a few cities, not a country,
                 so an import reads a few row groups of a few files.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="package-max-bytes" type="non-neg-int-expandable" default="2147483648"><xs:annotation><xs:documentation>
+                The largest offline map package a user may build, in bytes (2 GiB): a package whose estimate passes it is
+                refused before anything is cut (plans/Maps-Offline.md).</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="package-keep-days" type="non-neg-int-expandable" default="30"><xs:annotation><xs:documentation>
+                How many days an offline map package's file is kept with no download (from when it was built, or last
+                downloaded) before the hourly clean removes it; Update builds it again.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
     <xs:element name="cluster-member">

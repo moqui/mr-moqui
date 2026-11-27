@@ -158,9 +158,12 @@
         well past every registered source, GeoNames' allCountries at 19 MB zipped, and under the 2 GiB upload).
         max-features is the most features one overlay or one viewport query of a layer adapter returns; 0 turns record
         layers off. overture-catalog is the STAC root Overture releases are found in and overture-max-area the largest
-        Overture region in km² (plans/Maps-Overture.md). -->
+        Overture region in km² (plans/Maps-Overture.md). package-max-bytes is the largest offline map package a user
+        may build (2 GiB; refused at its estimate), and package-keep-days how long a package's file is kept with no
+        download before the hourly clean removes it (plans/Maps-Offline.md). -->
     <maps external-requests="true" import-max-bytes="536870912" max-features="5000" overlay-max-bytes="10485760"
-            overture-catalog="https://stac.overturemaps.org/catalog.json" overture-max-area="2500"/>
+            overture-catalog="https://stac.overturemaps.org/catalog.json" overture-max-area="2500"
+            package-max-bytes="2147483648" package-keep-days="30"/>
 
     <!-- This server as a cluster member (plans/archive/Cluster.md). tls-cert and tls-key: the cluster TLS pair, base64 DER
         on one line each, generated together into runtime/.env (moqui_conf__cluster_member__tls_cert and _tls_key) and

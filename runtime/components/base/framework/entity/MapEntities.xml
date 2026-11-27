@@ -12,7 +12,8 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Maps (plans/Maps.md): the providers, layers and profiles a map is drawn from, saved views, users' overlays, the
+<!-- Maps (plans/Maps.md): the providers, layers and profiles a map is drawn from, saved views, users' overlays and
+    offline packages (plans/Maps-Offline.md), the
     registry of record and layer adapters, and the registry and runs of the Geo data importer. The Geo extensions (GeoPostalCode, GeoPointAssoc)
     are in BasicEntities.xml; the services in service/org/moqui/maps/. The settings are the conf's maps element. -->
 <entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-entity-definition.xsd">
@@ -350,6 +351,92 @@ along with this software (see the LICENSE.md file). If not, see
         <index name="MAPS_OVERLAY_FILE" unique="true"><index-field name="ownerUserId"/><index-field name="driveId"/>
             <index-field name="path"/></index>
         <index name="MAPS_OVERLAY_DRIVE"><index-field name="driveId"/></index>
+    </entity>
+
+    <!-- An offline map package (plans/Maps-Offline.md §2.1; docs/tools/Maps.md "Offline packages"): one region at a zoom
+        range, built on the server (the MapPackageBuild ServiceJob, MapPackages.js) from what its owner may see when it is
+        built, and downloaded as one zip file by the Offline screen's package transition. A package is its owner's alone:
+        it is never shared, and every request for it checks the owner. Update builds it again as a new revision; the old
+        file is removed once the new one is ready. -->
+    <entity entity-name="MapPackage" package="moqui.maps" use="transactional" cache="never">
+        <field name="packageId" type="id" is-pk="true"/>
+        <field name="ownerUserId" type="id"/>
+        <field name="name" type="text-medium"/>
+        <field name="west" type="number-float"><description>The box, WGS84 degrees; a west east of its east crosses
+            the antimeridian</description></field>
+        <field name="south" type="number-float"/>
+        <field name="east" type="number-float"/>
+        <field name="north" type="number-float"/>
+        <field name="minZoom" type="number-integer"/>
+        <field name="maxZoom" type="number-integer"/>
+        <field name="profileId" type="id"><description>The map profile its basemaps and configuration are read
+            through, as the owner's map would read it; empty for the owner's own</description></field>
+        <field name="basemapLayerIds" type="text-medium"><description>The basemap layers asked for, comma separated
+            (registered PMTiles archives); empty for every archive basemap the profile offers the owner</description></field>
+        <field name="includePlaces" type="text-indicator"/>
+        <field name="includeOverlays" type="text-indicator"/>
+        <field name="includePostal" type="text-indicator"/>
+        <field name="includeOverture" type="text-indicator"/>
+        <field name="statusId" type="id"/>
+        <field name="statusNote" type="text-medium"><description>Why it failed, or what it holds</description></field>
+        <field name="progress" type="number-integer"><description>Percent of the build done</description></field>
+        <field name="cancelRequested" type="text-indicator"><description>Y: the build stops between its batches of
+            tiles</description></field>
+        <field name="jobRunId" type="id"><description>The MapPackageBuild run building it</description></field>
+        <field name="revision" type="number-integer"><description>The build: 1, then one more for each Update. The
+            download URL names it, and a request for another is 409</description></field>
+        <field name="estimatedSize" type="number-integer"><description>The estimate's bytes when it was asked</description></field>
+        <field name="tileCount" type="number-integer"/>
+        <field name="location" type="text-medium"><description>The built zip:
+            runtime://tmp/map-packages/{packageId}-{revision}.zip</description></field>
+        <field name="size" type="number-integer"/>
+        <field name="sha256" type="text-medium"><description>The zip's SHA-256 (hex): its strong ETag is
+            sha256-{sha256}</description></field>
+        <field name="builtDate" type="date-time"/>
+        <field name="sourceRevisions" type="text-long"><description>What it was cut from, as JSON: each basemap layer's
+            and tiled overlay's registered revision when the build was asked ({layerId: revision}); a source registered
+            again before or while it is cut fails the build</description></field>
+        <field name="lastDownloadDate" type="date-time"><description>The last download's first request; with builtDate
+            what maps@package-keep-days counts from</description></field>
+        <field name="createdDate" type="date-time"/>
+        <relationship type="one" title="Owner" related="moqui.security.UserAccount">
+            <key-map field-name="ownerUserId" related="userId"/></relationship>
+        <relationship type="one" title="MapPackage" related="moqui.basic.StatusItem" short-alias="status"/>
+        <relationship type="one-nofk" related="moqui.maps.MapProfile" short-alias="profile"/>
+        <relationship type="one-nofk" related="moqui.service.job.ServiceJobRun" short-alias="jobRun">
+            <key-map field-name="jobRunId"/></relationship>
+        <index name="MAPS_PACKAGE_OWNER"><index-field name="ownerUserId"/></index>
+        <seed-data>
+            <moqui.basic.StatusType description="Map Package" statusTypeId="MapPackage"/>
+            <moqui.basic.StatusItem description="Pending" sequenceNum="1" statusId="MapPkgPending" statusTypeId="MapPackage"/>
+            <moqui.basic.StatusItem description="Building" sequenceNum="2" statusId="MapPkgBuilding" statusTypeId="MapPackage"/>
+            <moqui.basic.StatusItem description="Ready" sequenceNum="3" statusId="MapPkgReady" statusTypeId="MapPackage"/>
+            <moqui.basic.StatusItem description="Failed" sequenceNum="4" statusId="MapPkgFailed" statusTypeId="MapPackage"/>
+            <moqui.basic.StatusItem description="Cancelled" sequenceNum="5" statusId="MapPkgCancelled" statusTypeId="MapPackage"/>
+            <moqui.basic.StatusItem description="Expired (its file removed after maps@package-keep-days with no download)"
+                    sequenceNum="6" statusId="MapPkgExpired" statusTypeId="MapPackage"/>
+        </seed-data>
+    </entity>
+
+    <!-- A download of a map package (plans/Maps-Offline.md §4): the package, the revision and the device (its
+        UserLoginKey, the stored hash get#UserDeviceKeys names a device by) of a request that came signed in by a device's
+        key, else none; one row a package, revision and device, its lastRequestDate written at most once an hour, so an
+        owner sees which device holds which package. -->
+    <entity entity-name="MapPackageDownload" package="moqui.maps" use="transactional" cache="never">
+        <field name="downloadId" type="id" is-pk="true"/>
+        <field name="packageId" type="id"/>
+        <field name="revision" type="number-integer"/>
+        <field name="userId" type="id"/>
+        <field name="userLoginKey" type="text-medium"><description>The device's UserLoginKey (its stored hash); empty
+            for a request signed in otherwise</description></field>
+        <field name="deviceName" type="text-medium"/>
+        <field name="firstRequestDate" type="date-time"/>
+        <field name="lastRequestDate" type="date-time"/>
+        <relationship type="one" related="moqui.maps.MapPackage" short-alias="package"/>
+        <relationship type="one" related="moqui.security.UserAccount"/>
+        <relationship type="one-nofk" related="moqui.security.UserLoginKey">
+            <key-map field-name="userLoginKey" related="loginKey"/></relationship>
+        <index name="MAPS_PACKAGE_DOWNLOAD"><index-field name="packageId"/><index-field name="revision"/></index>
     </entity>
 
     <!-- A registered record or layer adapter (§3.2), as ConnectionAdapter and TransferTarget register theirs: seed data of the

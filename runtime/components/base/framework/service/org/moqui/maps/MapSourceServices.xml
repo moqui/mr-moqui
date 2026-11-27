@@ -25,7 +25,11 @@ along with this software (see the LICENSE.md file). If not, see
     calls it after its own check), the rest MAPS_ADMIN's; read#ArchiveHeader and convert#Overlay are not remote, since each
     reads whatever location it is given. get#ArchiveTile is MAPS_DIALOG's (it checks the layer or overlay itself); read#ArchiveTile is no
     group's and not remote; generalize#Overlay and build#OverlayTiles are no group's (the job runs as the user and checks the
-    overlay's owner), cancel#OverlayTiles MAPS_APP_SERVICES'. No Java counterpart. -->
+    overlay's owner), cancel#OverlayTiles MAPS_APP_SERVICES'. Offline map packages (plans/Maps-Offline.md, MapPackages.js): a
+    region of the archives a user may read cut for a device (estimate#PackageExtract and build#PackageExtract in Rust, moqui-tools
+    maps_extract.rs, no group's and not remote), the user's own packages (estimate#, create#, update#, cancel#, delete#Package,
+    find#Packages, get#PackageAccess: MAPS_APP_SERVICES, each acting on the signed-in user's own), the MapPackageBuild job's run
+    (build#Package) and the hourly clean (clean#MapPackages), no group's. No Java counterpart. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
     <service verb="read" noun="ArchiveHeader" type="rust" location="moqui_tools::maps_archive::read_archive_header" allow-remote="false">
@@ -454,7 +458,7 @@ along with this software (see the LICENSE.md file). If not, see
             archive replaced meanwhile is SOURCE_CHANGED and nothing is kept. With packageId its progress, from
             progressFrom to progressTo percent, is written to that MapPackage's row in a transaction of its own between
             batches (at most once a second), and the row's cancelRequested read then (CANCELLED, cancelled true). Out: size,
-            sha256 (hex), tileCount, contentCount, minZoom, maxZoom, reads; refused as the estimate is, and NO_TILES. A
+            sha256 (hex), tileCount, contentCount, minZoom, maxZoom, reads, and the attribution and license the source's metadata names; refused as the estimate is, and NO_TILES. A
             refused or failed cut leaves no file. It reads whatever location it is given, so no group is granted it and it
             is not remote: MapPackages.js calls it in the MapPackageBuild job after its check of the owner.</description>
         <in-parameters>
@@ -487,6 +491,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="minZoom" type="Integer"/>
             <parameter name="maxZoom" type="Integer"/>
             <parameter name="reads" type="Long"/>
+            <parameter name="attribution"><description>The source's metadata's attribution, its notice</description></parameter>
+            <parameter name="license"><description>The source's metadata's license, when it names one</description></parameter>
         </out-parameters>
     </service>
 
@@ -516,5 +522,179 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters><parameter name="providerKey" required="true"/></in-parameters>
         <out-parameters><parameter name="checks" type="List"/></out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapSources.js').execute('readiness', context))</script></actions>
+    </service>
+
+    <!-- ===== Offline map packages (plans/Maps-Offline.md §2; docs/tools/Maps.md "Offline packages"; MapPackages.js) ===== -->
+
+    <service verb="define" noun="PackageRequest" type="interface">
+        <description>What an offline map package asks: its name, region (west, south, east, north in WGS84 degrees; west
+            east of east crosses the antimeridian), zooms (0 to 16), the map profile it is read through (the user's own
+            when empty), the basemap layers (registered PMTiles archives the profile offers the user; empty for the
+            profile's basemap and the other styles of its archive), and what else it holds (each Y unless N).</description>
+        <in-parameters>
+            <parameter name="name"/>
+            <parameter name="west" type="Double" required="true"/>
+            <parameter name="south" type="Double" required="true"/>
+            <parameter name="east" type="Double" required="true"/>
+            <parameter name="north" type="Double" required="true"/>
+            <parameter name="minZoom" type="Integer" default="0"/>
+            <parameter name="maxZoom" type="Integer" default="14"/>
+            <parameter name="profileId"/>
+            <parameter name="basemapLayerIds" type="List"/>
+            <parameter name="includePlaces"/>
+            <parameter name="includeOverlays"/>
+            <parameter name="includePostal"/>
+            <parameter name="includeOverture"/>
+        </in-parameters>
+    </service>
+
+    <service verb="estimate" noun="Package">
+        <description>What an offline map package of the signed-in user's would hold, before anything is built: for each
+            basemap archive the profile offers them now (and each of their overlays simplified into tiles that meets the
+            region) the tiles of the region and zooms and their bytes, read from the archive's directories
+            (estimate#PackageExtract); the rest near enough; and what is left out and why (omitted: a layer not offered,
+            a provider's remote tiles, record layers, a profile's overlay layers). Refused (applied false, reasonCode,
+            reason): BBOX_INVALID, ZOOMS_INVALID, CONFIG_UNAVAILABLE, TOO_MANY_TILES, TOO_LARGE (past
+            maps@package-max-bytes, 2 GiB, with the estimate). Changes nothing. MAPS_APP_SERVICES.</description>
+        <implements service="org.moqui.maps.MapSourceServices.define#PackageRequest"/>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="estimate" type="Map"><description>bytes, bytesText, tileCount, maxBytes, layers [{id, label,
+                bytes, tileCount, minZoom, maxZoom}], omitted [{id, kind, reason}]</description></parameter>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapPackages.js').execute('estimatePackage', context))</script></actions>
+    </service>
+
+    <service verb="create" noun="Package">
+        <description>A new offline map package of the signed-in user's, estimated as estimate#Package does it and refused
+            as it refuses (and TOO_MANY_PACKAGES past 50), its sources' registered revisions recorded, built by a run of the
+            MapPackageBuild ServiceJob as the user (build#Package), which notifies them when it ends. Out: packageId,
+            started (false when the job did not start: the package is failed), estimate. MAPS_APP_SERVICES.</description>
+        <implements service="org.moqui.maps.MapSourceServices.define#PackageRequest"/>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="packageId"/>
+            <parameter name="started" type="Boolean"/>
+            <parameter name="estimate" type="Map"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapPackages.js').execute('createPackage', context))</script></actions>
+    </service>
+
+    <service verb="update" noun="Package">
+        <description>Build one of the signed-in user's offline map packages again (a new revision), from what they may see
+            now and the archives as registered now, estimated and refused as create#Package is; the package's earlier
+            revision stays downloadable until the new one is ready, and its file is removed then. A package being built
+            is PACKAGE_BUSY (a run that ended without saying so is ended first); another user's, or none,
+            RECORD_UNAVAILABLE. MAPS_APP_SERVICES.</description>
+        <in-parameters><parameter name="packageId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="packageId"/>
+            <parameter name="started" type="Boolean"/>
+            <parameter name="estimate" type="Map"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapPackages.js').execute('updatePackage', context))</script></actions>
+    </service>
+
+    <service verb="cancel" noun="Package">
+        <description>Stop the build of one of the signed-in user's offline map packages (pending or building): its run
+            stops at its next batch of tiles and ends cancelled; a run that ended without saying so (its ServiceJobRun gone
+            or ended, or no word from it for an hour) is ended at once. Another user's, one not there and one not being
+            built are RECORD_UNAVAILABLE. MAPS_APP_SERVICES.</description>
+        <in-parameters><parameter name="packageId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapPackages.js').execute('cancelPackage', context))</script></actions>
+    </service>
+
+    <service verb="delete" noun="Package">
+        <description>Delete one of the signed-in user's offline map packages: its row, its download records and its file
+            (a copy already on a device stays there until it is deleted there). One being built is PACKAGE_BUSY (cancel it
+            first); another user's, or none, RECORD_UNAVAILABLE. MAPS_APP_SERVICES.</description>
+        <in-parameters><parameter name="packageId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapPackages.js').execute('deletePackage', context))</script></actions>
+    </service>
+
+    <service verb="find" noun="Packages">
+        <description>The signed-in user's offline map packages, newest first (at most 50), each with its region, zooms,
+            state and its words (statusText, statusNote), progress, revision, size (sizeText the estimate's while it has
+            no file), built date (builtText in the user's zone), the download URL of its revision and its strong tag when
+            it has a file, and which of Update, Cancel and Delete it takes. Changes nothing. MAPS_APP_SERVICES.</description>
+        <out-parameters><parameter name="packageList" type="List"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapPackages.js').execute('findPackages', context))</script></actions>
+    </service>
+
+    <service verb="build" noun="Package" allow-remote="false">
+        <description>The MapPackageBuild ServiceJob's run (create#Package and update#Package start it, as the user): the
+            user's own package packageId, pending or building, built as a new revision. A source registered again since the
+            build was asked fails it (checked when it starts and again when the cuts end). Each basemap archive the
+            profile offers the user now is cut to the region and zooms (build#PackageExtract), with its style made
+            package-relative, its sprites and the map fonts; then the outline, and as asked the user's places and the
+            overlays they read now that meet the region (a tiled one as its tiles' extract), the postal codes whose point is
+            in it and the active Overture imports' places and addresses in it, each with its licenses; then manifest.json
+            (the package, the frozen effective configuration with every URL package-relative, the sources, each member's
+            path, size and SHA-256, what was left out and what failed) and the zip (ec.resource.writeZip, the archives,
+            sprites and fonts stored as they are) at runtime://tmp/map-packages/{packageId}-{revision}.zip, its size and
+            SHA-256 recorded. A member that cannot be read is logged and named in the manifest's failures, and the rest
+            goes on. Progress and the cancel are on the row; the outcome is written in a transaction of its own, and a
+            failed or cancelled build leaves no file of its own (an earlier revision stays). Another user's package changes
+            nothing. Out: name, statusId and reason, for the job's notification.</description>
+        <in-parameters><parameter name="packageId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="name"/>
+            <parameter name="statusId"/>
+            <parameter name="reason"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapPackages.js').execute('buildPackage', context))</script></actions>
+    </service>
+
+    <service verb="get" noun="PackageAccess">
+        <description>Whether the signed-in user may download one of their offline map packages at a revision, for the
+            Offline screen's package transition on every request (GET, HEAD, each range): their own package with a file
+            (PACKAGE_MISSING, 404, for another user's, one not built, or a file gone); a revision that is no longer the
+            package's is REVISION_CHANGED (409). A GET records the download (MapPackageDownload: the package, the
+            revision and, when the request came signed in by a device's key, that UserLoginKey and its device name; touched
+            at most once an hour, with the package's lastDownloadDate). When ok: the location, its strong tag
+            (sha256-{sha256}), size and file name, for ec.web.sendPinnedResourceResponse. MAPS_APP_SERVICES.</description>
+        <in-parameters>
+            <parameter name="packageId" required="true"/>
+            <parameter name="revision" required="true"/>
+            <parameter name="method"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="ok" type="Boolean"/>
+            <parameter name="status" type="Integer"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="location"/>
+            <parameter name="tag"/>
+            <parameter name="size" type="Long"/>
+            <parameter name="fileName"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapPackages.js').execute('packageAccess', context))</script></actions>
+    </service>
+
+    <service verb="clean" noun="MapPackages" allow-remote="false">
+        <description>The hourly clean of offline map packages (the clean_MapPackages_hourly ServiceJob): the file of a
+            package not downloaded for maps@package-keep-days (30) since it was built or last downloaded is removed, the
+            package left Expired (Update builds it again); the files under runtime://tmp/map-packages that no package names
+            (a deleted package's, an earlier revision's, a build that stopped) are removed, a busy package's own build left
+            alone. Each that cannot be removed is logged and the others go on. No group's.</description>
+        <out-parameters><parameter name="removedCount" type="Integer"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/maps/MapPackages.js').execute('cleanPackages', context))</script></actions>
     </service>
 </services>

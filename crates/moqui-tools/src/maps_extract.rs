@@ -375,6 +375,9 @@ pub(crate) struct Extracted {
     pub max_zoom: u8,
     /// The ranges read for the tiles (each batch one)
     pub reads: u64,
+    /// What the source's metadata says of its data: its attribution and license (empty when it says none)
+    pub attribution: String,
+    pub license: String,
 }
 
 /// Files that go when dropped unless kept: the part files of a cut that did not end.
@@ -493,6 +496,15 @@ pub(crate) fn extract(
         METADATA_MAX,
         "metadata",
     )?;
+    let notice = serde_json::from_slice::<serde_json::Value>(&metadata).unwrap_or_default();
+    let said = |key: &str| {
+        notice
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_string()
+    };
 
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent).map_err(|err| io(&err))?;
@@ -604,6 +616,8 @@ pub(crate) fn extract(
         min_zoom: zooms.0,
         max_zoom: zooms.1,
         reads,
+        attribution: said("attribution"),
+        license: said("license"),
     }))
 }
 
@@ -884,6 +898,8 @@ pub(crate) fn build_package_extract(
     out.insert("minZoom".to_string(), Value::I64(i64::from(extracted.min_zoom)));
     out.insert("maxZoom".to_string(), Value::I64(i64::from(extracted.max_zoom)));
     out.insert("reads".to_string(), count(extracted.reads));
+    out.insert("attribution".to_string(), Value::string(extracted.attribution));
+    out.insert("license".to_string(), Value::string(extracted.license));
     Ok(out)
 }
 

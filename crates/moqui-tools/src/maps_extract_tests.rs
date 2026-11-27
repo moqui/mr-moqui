@@ -200,6 +200,7 @@ fn an_extract_holds_the_tiles_of_its_box_and_zooms_and_no_others() {
     // the source's metadata copied whole, what the parsed subset leaves out too
     let source_metadata: serde_json::Value = serde_json::from_slice(&metadata).unwrap();
     assert_eq!(source_metadata["extra"]["kept"], serde_json::Value::Bool(true));
+    assert_eq!((made.attribution.as_str(), made.license.as_str()), ("Spec data", ""));
     let mut expected: Vec<u64> = (1..=3).flat_map(|z| bbox_tile_ids(&bbox, z).unwrap()).collect();
     expected.sort_unstable();
     assert_eq!(tiles.keys().copied().collect::<Vec<_>>(), expected);

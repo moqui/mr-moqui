@@ -349,6 +349,29 @@ function servedUrl(layer) {
     return out.ok ? {ok: true, url: out.url} : refusal(out.reasonCode, out.reason, out.status)
 }
 
+// For MapPackages.js (an offline package, plans/Maps-Offline.md §2.2): a registered archive layer the current user may read
+// now, as the map-source transition decides it, with what an extract pins it by: its location, tag and size, its
+// registered revision and, for a file on disk, its modification time; or the refusal
+function packageSource(layerId) {
+    const layer = text(layerId) ? one(LAYER, {layerId: text(layerId)}) : null
+    if (layer && text(layer.formatEnumId) === COG) return refusal("NOT_TILED", L("A GeoTIFF is not packaged"), 404)
+    const out = check(layer, text(layerId) || "(none)", null)
+    if (!out.ok) return out
+    return Object.assign(out, {
+        revision: text(layer.sourceRevision),
+        modifiedMillis: text(layer.sourceAddressKind) === "file" ? millis(layer.sourceModifiedDate) : null,
+        raster: text(layer.formatEnumId) === "MLF_PMTILES_RASTER"
+    })
+}
+// For MapPackages.js: a user's overlay generalized into tiles, read by the current user now, pinned as packageSource is
+function packageOverlayArchive(overlayId) {
+    const row = text(overlayId) ? ec.entity.find(OVERLAY).condition({overlayId: text(overlayId)}).disableAuthz().one() : null
+    if (!row) return refusal("OVERLAY_MISSING", L("The overlay is not available"), 404)
+    const out = overlayArchive(text(overlayId), text(row.tilesRevision))
+    if (!out.ok) return out
+    return Object.assign(out, {revision: text(row.tilesRevision), modifiedMillis: millis(row.tilesModifiedDate)})
+}
+
 // ===== registering =====
 const LIMITS = () => ({
     maxUpload: Number(conf("webapp-list/webapp[webroot]/web-protection/requests@max-upload")) || null,
@@ -1021,5 +1044,8 @@ const operations = {sourceAccess, archiveTile, register, findArchives, readiness
     // for the effective configuration (MapConfig.js)
     servedUrl,
     tileUrl,
-    SOURCE_PATH
+    SOURCE_PATH,
+    // for offline packages (MapPackages.js)
+    packageSource,
+    packageOverlayArchive
 })
