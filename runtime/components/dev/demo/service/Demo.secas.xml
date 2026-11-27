@@ -25,7 +25,7 @@ along with this software (see the LICENSE.md file). If not, see
     </seca>
     <seca id="DemoSharedAccount" service="org.moqui.impl.UserServices.update#UserAccount" when="pre-service">
         <actions><service-call name="demo.DemoServices.refuse#SharedAccountChange"
-                in-map="Object.assign({}, context, {accountUpdate: true})"/></actions>
+                in-map="Object.assign({}, context, {accountUpdate: true, changes: Object.assign({}, context)})"/></actions>
     </seca>
     <seca id="DemoSharedDisable" service="org.moqui.impl.UserServices.disable#UserAccount" when="pre-service">
         <actions><service-call name="demo.DemoServices.refuse#SharedAccountChange" in-map="context"/></actions>

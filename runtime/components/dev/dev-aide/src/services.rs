@@ -639,6 +639,11 @@ fn try_service(
             "this server has no sim (it needs embedded Postgres): run it for real",
         ));
     }
+    // what the sim cannot hold (the Terminal's services, Dev AIDE's own writes, the framework's development tools that
+    // write the server's files or restart it) is refused here as the agent's try_service refuses it (SEC-DEV-81)
+    if let Some(why) = crate::try_overlay::over(overlay.clone(), || crate::agent::try_service::sim_refusal(&name)) {
+        return Err(LibError::new(why));
+    }
     let called = name.clone();
     let shown = overlay.as_deref().map(crate::try_overlay::overlay_json);
     let over = Over {

@@ -291,3 +291,27 @@ feature("a SECA rule's trigger is not one of Dev AIDE's own writes", {
         refusal.includes("the sim cannot hold that")
     },
 })
+
+// SEC-DEV-81: a development tool that writes the server's files or restarts it never runs in the sim, where no fence
+// would hold it; its reads still do
+feature("a framework development tool that writes or restarts is refused in the sim", {
+    when() {
+        const ask = (serviceName) => {
+            try {
+                const answer = svc("try#Service", { serviceName, parameters: "{}" })
+                return { result: answer?.result, refusal: String(ec.message.getErrorsString() || "") }
+            } catch (error) {
+                return { refusal: String(error) }
+            } finally {
+                ec.message.clearAll()
+            }
+        }
+        return { restart: ask("org.moqui.dev.DevToolsServices.restart#Server"), save: ask("org.moqui.dev.ComponentServices.save#ConfFile") }
+    },
+    then({ restart, save }) {
+        restart.result == null
+        restart.refusal.includes("the sim cannot hold that")
+        save.result == null
+    },
+})
+

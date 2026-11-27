@@ -196,6 +196,8 @@ fn rest_get(row: &moqui_core::entity::EntityValue, path: &str) -> Result<Json, L
             "a task source's base URL starts with https:// or http://",
         ));
     }
+    // a source stored before the rule above sends its token in the clear to no other machine (SEC-DEV-87)
+    crate::hosting::client::normalize_base(&base)?;
     let token = field(row, "token");
     let request = moqui_core::outbound::Request {
         method: moqui_core::outbound::Method::Get,
@@ -565,6 +567,8 @@ fn store_task_source(
     if !(base.starts_with("https://") || base.starts_with("http://")) {
         return Err(LibError::new("the base URL starts with https:// or http://"));
     }
+    // the token goes in a header: https, or http only to a loopback IP literal, as a group server's (SEC-DEV-87)
+    crate::hosting::client::normalize_base(&base)?;
     let id = text(parameters, "taskSourceId");
     let mut row = if id.is_empty() {
         let mut row = context.facade.make_value(SOURCE)?;
@@ -586,6 +590,17 @@ fn store_task_source(
                 "this source read with the group server's token; at another address it needs a token of its own",
             ));
         }
+    }
+    // a typed token belongs to the address it was given for: a source moved to another address keeps none not given
+    // again, or the next read would send it there (SEC-DEV-87)
+    if !id.is_empty()
+        && field(&row, "serverId").is_empty()
+        && field(&row, "baseUrl").trim_end_matches('/') != base.trim_end_matches('/')
+        && text(parameters, "token").trim().is_empty()
+    {
+        return Err(LibError::new(
+            "the source moves to another address: give its token again, as the stored one is not sent there",
+        ));
     }
     row.set("label", Value::string(text(parameters, "label").trim()));
     row.set("baseUrl", Value::string(&base));
