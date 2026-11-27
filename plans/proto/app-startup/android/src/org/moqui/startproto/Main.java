@@ -29,7 +29,7 @@ public class Main extends Activity {
         String mode = getIntent().getStringExtra("mode");
         if (mode == null) mode = "s7";
         String url = getIntent().getStringExtra("url");
-        if (url == null) url = "http://localhost:18777/b.html";
+        if (url == null) url = "http://localhost:18777/b/";
         root = new FrameLayout(this);
         root.setBackgroundColor(BG);
         if (mode.equals("native")) {

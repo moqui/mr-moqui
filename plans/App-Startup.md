@@ -166,7 +166,9 @@ document is the same for two users.
 - The inline script draws the kept data as text: it builds the rows with `createElement` and sets `textContent`, or
   goes through the page's own render path, never `innerHTML` or another HTML sink. What is kept came from the server
   and from other users (a subject, a name), so drawing it as HTML would run whatever markup it holds before any of
-  the page's escaping. The prototype's `site/b.html` and `site/f.html` use `innerHTML` for the measurement only.
+  the page's escaping. The prototype builds HTML from the data throughout, for the measurement only: the inline
+  scripts of `site/b.html` and `site/f.html` and `render` in `site/app.js` set `innerHTML`, and variants d and e
+  write the rows as an HTML string into the cached page. None of that is the pattern to build.
 - This is private data on the device, which SEC-CLI-02 does not allow now. Decision D1, proposed, would allow it;
   S3 waits for that decision and its security cost (SEC-CLI-128).
 
@@ -225,8 +227,8 @@ no flash.
 ## Decisions
 
 Proposed 2026-11-27, not decided. D1 and D3 are decided before S3 and S4 are built, with their security cost
-weighed; each has an open item in the security review's [Clients](Security-Review.md#clients) register, next to
-SEC-CLI-02. D2 has no security cost.
+weighed; each has an item with the status `proposed` in the security review's [Clients](Security-Review.md#clients)
+register (SEC-CLI-128 and SEC-CLI-129, which refer to SEC-CLI-02). D2 has no security cost.
 
 | ID | Question | Proposal | Why | Security cost | Status |
 |---|---|---|---|---|---|

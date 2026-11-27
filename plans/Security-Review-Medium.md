@@ -2297,16 +2297,6 @@ Medium; reported (to check); fixed.
 - **Not confirmed:** whether a Host allow-list exists elsewhere in the listener; whether a desktop node ever runs with no user account; the rebinding path was not tested. The node in process with ports off has no listener and is not affected.
 - **Suggested fix:** Refuse a request on the desktop node's listener whose `Host` is not `127.0.0.1:<port>` or `localhost:<port>`, and have the app create the first administrator (or hold a one-time setup secret) so the form is never open on the port.
 
-#### SEC-CLI-129. A device key per installed app would turn one script injection into a persistent account takeover
-
-Medium; reported (proposed design); open.
-
-- **Where:** `plans/App-Startup.md` S4 and decision D3 ([App-Startup](App-Startup.md#decisions)), proposed and to be decided before S4 is built. D1's data on the device is SEC-CLI-128.
-- **Reached by:** any script injection on a page of the origin, once; or whoever copies the browser profile.
-- **What happens:** D3 gives each installed PWA a device login key, as the mobile app's device keys, so that a page signs in again after a server restart or an expired session with no user step. In the mobile app the key stays on the native side and no command returns it ([Attack-Surface-Clients](../docs/security/Attack-Surface-Clients.md)); in a browser the page's own script has to read it from `localStorage` or IndexedDB to send it. A script injection that runs once reads the key and sends it away, and the key then signs in as the user from anywhere, renewed every six hours, until the user finds the device in the list and revokes it, long after the page and the session are gone. Today an injection acts only while the session lasts, and the session cookie is `HttpOnly`.
-- **Not confirmed:** not built. Whether a session that survives a server restart (S4's first step) makes the key unneeded was not measured.
-- **Suggested fix (for the decision):** first make the session survive a restart and a long idle phone; if a key is still needed, keep it out of script (an `HttpOnly` cookie on the app's path) or bind it to a non-extractable WebCrypto key with DPoP, give it a scope of its own (master holds one scope per login key, `UserLoginKey.scope`) and a short idle life, and show it in the user's devices.
-
 #### SEC-CLI-81. Every server's pages in the apps share the origin `http://moqui-app.localhost`, so one server's page queues a chat send that another account's page then sends as that user, and may register a service worker there
 
 Medium; likely (lead); fixed in part.
@@ -2378,6 +2368,16 @@ Medium; confirmed (lead); fixed.
 - **What happens:** Cargo takes `[patch.crates-io]` only from the root manifest of the workspace it builds. The desktop app, and the crate `./moq build` generates when an add-on component has a Rust crate, are each a workspace of its own, so each resolved yrs 0.28.1 and stun-proto and stun-types 2.0.5 from crates.io. yrs without SEC-TLS-95's depth limit lets a co-editing update nested deep enough overflow the stack, which ends the process: on the desktop, the whole app with the node in it. The fork's TURN nonce change was missing too.
 - **Evidence:** `crates/moqui-desktop/Cargo.lock` before the fix: `name = "yrs"` `version = "0.28.1"` `source = "registry+https://github.com/rust-lang/crates.io-index"`, and stun-proto and stun-types from the registry; `cargo tree --manifest-path target/moqui-app/Cargo.toml -i yrs` re-resolved it: `Adding yrs v0.28.1`.
 - **Not confirmed:** a crash of the desktop's node by a nested update was not run; it follows from SEC-TLS-95, whose test runs in the root workspace only.
+
+#### SEC-CLI-129. A device key per installed app would turn one script injection into a persistent account takeover
+
+Medium; proposed.
+
+- **Where:** `plans/App-Startup.md` S4 and decision D3 ([App-Startup](App-Startup.md#decisions)), proposed and to be decided before S4 is built. D1's data on the device is SEC-CLI-128; both weigh against SEC-CLI-02's rule, under which the device keeps nothing per user today.
+- **Reached by:** any script injection on a page of the origin, once; or whoever copies the browser profile.
+- **What happens:** D3 gives each installed PWA a device login key, as the mobile app's device keys, so that a page signs in again after a server restart or an expired session with no user step. In the mobile app the key stays on the native side and no command returns it ([Attack-Surface-Clients](../docs/security/Attack-Surface-Clients.md)); in a browser the page's own script has to read it from `localStorage` or IndexedDB to send it. A script injection that runs once reads the key and sends it away, and the key then signs in as the user from anywhere, renewed every six hours, until the user finds the device in the list and revokes it, long after the page and the session are gone. Today an injection acts only while the session lasts, and the session cookie is `HttpOnly`.
+- **Not confirmed:** not built. Whether a session that survives a server restart (S4's first step) makes the key unneeded was not measured.
+- **Suggested fix (for the decision):** first make the session survive a restart and a long idle phone; if a key is still needed, keep it out of script (an `HttpOnly` cookie on the app's path) or bind it to a non-extractable WebCrypto key with DPoP, give it a scope of its own (master holds one scope per login key, `UserLoginKey.scope`) and a short idle life, and show it in the user's devices.
 
 ## Script engine, templates and parsers
 

@@ -15,8 +15,12 @@ class H(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         p = self.path.split('?')[0]
         if p.startswith('/libs/'):
-            ct = 'text/css' if p.endswith('.css') else 'text/javascript'
-            return self.send(open(SITE + p, 'rb').read(), ct, 'public, max-age=31536000, immutable')
+            # resolved, and only a file inside site/libs: '/libs/../..' or a link out is refused
+            libs = os.path.realpath(os.path.join(SITE, 'libs'))
+            f = os.path.realpath(os.path.join(libs, p[len('/libs/'):]))
+            if os.path.commonpath([libs, f]) != libs or not os.path.isfile(f): return self.send_error(404)
+            ct = 'text/css' if f.endswith('.css') else 'text/javascript'
+            with open(f, 'rb') as fh: return self.send(fh.read(), ct, 'public, max-age=31536000, immutable')
         parts = p.split('/'); v = parts[1] if len(parts) > 2 else ''
         if v not in DOC_CACHE: return self.send_error(404)
         rest = p[len(v) + 2:]

@@ -81,6 +81,8 @@ Status values:
 - **accepted**: read in code and found to hold, but no change is worth making (an Info finding whose risk is
   understood, or a behaviour kept on purpose); the entry gives the reason.
 - **kept by decision**, **deferred**: the owner's call, recorded in the entry.
+- **proposed**: the security cost of a design a plan proposes and has neither decided nor built; the entry names the
+  decision and what it weighs. It becomes an ordinary finding when the design is built, or goes with the proposal.
 - **moved**: carried to [Remaining-Work](Remaining-Work.md), [Testing-Needed](Testing-Needed.md) or
   [Future-Plans](Future-Plans.md), which link back to the entry (what needs a device, a toolchain or a design of its
   own).
@@ -1318,8 +1320,6 @@ Map file: [Attack-Surface-Clients.md](../docs/security/Attack-Surface-Clients.md
 | --- | --- | --- | --- | --- |
 | SEC-CLI-01 | crates/moqui-desktop/src/node/mod.rs:271, crates/moqui-core/src/web/origin.rs:127, runtime/components/base/webroot/screen/webroot/Login.xml:116 | The sidecar's loopback web listener is open to every local user and has no Host check seen | Medium | fixed |
 | SEC-CLI-02 | runtime/components/base/webroot/screen/webroot/sw.js:28 | The service worker keeps any same-origin GET that has a `v` parameter, cache first, with no expiry | Low | fixed |
-| SEC-CLI-128 | `plans/App-Startup.md` D1, S3, S7 (proposed, not built) | Proposed: a page keeps the user's last data on the device in `localStorage`, which every app on the origin and any XSS reads, after the session too | Low | open |
-| SEC-CLI-129 | `plans/App-Startup.md` D3, S4 (proposed, not built) | Proposed: a device key per installed app, held where the page's script reads it, turns one XSS into a persistent account takeover | Medium | open |
 | SEC-CLI-03 | crates/moqui-desktop/src/lib.rs:234 | The main window's navigation check in node modes passes every scheme but five | Low | fixed |
 | SEC-CLI-04 | crates/moqui-client-tauri/src/scheme.rs:319, crates/moqui-desktop/src/node/scheme.rs:195, crates/moqui-core/src/context/factory.rs:93 | In the apps the server's default CSP is dropped whole, `form-action` and `frame-ancestors` with it | Low | fixed |
 | SEC-CLI-05 | crates/moqui-desktop/src/bridge.rs:288, crates/moqui-desktop/src/os/mod.rs:214 | A node page can set where OS mail and call links open, and it is kept across runs | Low | fixed |
@@ -1374,6 +1374,8 @@ Map file: [Attack-Surface-Clients.md](../docs/security/Attack-Surface-Clients.md
 | SEC-CLI-125 | `UnifiedPushes.kt:99-121`; `crates/moqui-client/src/account.rs:215-232` | Each account's UnifiedPush instance is its account id, a host and an unsalted hash of the server and username, given to the distributor app | Info | fixed |
 | SEC-CLI-126 | `crates/moqui-desktop/Cargo.toml`; `scripts/moq/build.sh` `write_app_crate`; `Cargo.toml:435-440` | The desktop app's node, and a server built with an add-on component crate, built crates.io's yrs and stun-proto, not the repository's patched ones, so SEC-TLS-95's fix and the TURN nonce change were not in them | Medium | fixed |
 | SEC-CLI-127 | `crates/moqui-mobile/gen/android/app/proguard-rules.pro`; `crates/moqui-mobile/src/android.rs:209-245` | The phone's release build kept no R8 rule for `ScreenSecurity` and `CalendarIntent`, which Rust calls by name, so screen security could fail there | Low | fixed |
+| SEC-CLI-128 | `plans/App-Startup.md` D1, S3, S7 (not built) | A page would keep the user's last data on the device in `localStorage`, which every app on the origin and any XSS reads, after the session too; it relaxes SEC-CLI-02's rule | Low | proposed |
+| SEC-CLI-129 | `plans/App-Startup.md` D3, S4 (not built) | A device key per installed app, held where the page's script reads it, would turn one XSS into a persistent account takeover | Medium | proposed |
 
 ### Script engine, templates and parsers
 
