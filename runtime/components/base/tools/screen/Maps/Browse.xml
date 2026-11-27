@@ -382,20 +382,32 @@ along with this software (see the LICENSE.md file). If not, see
             const ref = String(clientRef ?? '')
             let out = {}
             let duplicate = false
+            // the claim of a ref that saved no place goes in the transaction that made it
+            const dropClaim = () => ec.entity.find('moqui.basic.client.ClientRequestRef').condition({userId: ec.user.userId,
+                serviceName: SERVICE, clientRef: ref}).disableAuthz().deleteAll()
             if (!ref) out = ec.service.sync().name(SERVICE).requireNewTransaction(true).parameters(parameters).call() || {}
-            else ec.transaction.runRequireNew(60, 'Error saving a place by its clientRef', () => {
-                const claim = ec.service.sync().name('org.moqui.edge.ClientSyncServices.claim#ClientRequest')
-                    .parameters({clientRef: ref, serviceName: SERVICE}).call()
-                if (ec.message.hasError()) return
-                if (claim.duplicate) { duplicate = true; out = claim.result || {}; return }
-                out = ec.service.sync().name(SERVICE).parameters(parameters).call() || {}
-                if (ec.message.hasError()) return
-                // only a place saved keeps its ref: a refusal's claim goes in this transaction
-                if (out.applied) ec.service.sync().name('org.moqui.edge.ClientSyncServices.store#ClientRequest')
-                    .parameters({clientRef: ref, serviceName: SERVICE, result: out}).call()
-                else ec.entity.find('moqui.basic.client.ClientRequestRef').condition({userId: ec.user.userId, serviceName: SERVICE,
-                    clientRef: ref}).disableAuthz().deleteAll()
-            })
+            else try {
+                ec.transaction.runRequireNew(60, 'Error saving a place by its clientRef', () => {
+                    const claim = ec.service.sync().name('org.moqui.edge.ClientSyncServices.claim#ClientRequest')
+                        .parameters({clientRef: ref, serviceName: SERVICE}).call()
+                    if (ec.message.hasError()) return
+                    if (claim.duplicate) { duplicate = true; out = claim.result || {}; return }
+                    out = ec.service.sync().name(SERVICE).parameters(parameters).call() || {}
+                    // an error (a parameter not valid) keeps no ref, so the same ref may be sent again
+                    if (ec.message.hasError()) { dropClaim(); return }
+                    // only a place saved keeps its ref: a refusal's claim goes too
+                    if (out.applied) ec.service.sync().name('org.moqui.edge.ClientSyncServices.store#ClientRequest')
+                        .parameters({clientRef: ref, serviceName: SERVICE, result: out}).call()
+                    else dropClaim()
+                })
+            } catch (err) {
+                // a failure that rolled the transaction back, its claim with it: answered with its reason, never a 500
+                const why = err && err.message ? err.message : String(err)
+                ec.logger.warn('Map place by clientRef ' + ref + ' not saved: ' + why)
+                if (!ec.message.hasError()) ec.message.addError(ec.l10n.localize('The place was not saved') + ': ' + why)
+                duplicate = false
+                out = {}
+            }
             if (ec.message.hasError()) { const errors = ec.message.getErrorsString(); ec.message.clearErrors(); ec.web.sendJsonResponse({errors}) }
             else ec.web.sendJsonResponse({applied: out.applied, reasonCode: out.reasonCode, reason: out.reason, placeId: out.placeId,
                 overlayId: out.overlayId, duplicate})

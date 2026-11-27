@@ -524,8 +524,10 @@
             .then((response) => {
                 if (response.status === 200) return response.text().then((whole) => ({ whole }));
                 if (response.status !== 206) throw new Error("HTTP " + response.status);
-                const range = /\/(\d+)$/.exec(response.headers.get("Content-Range") || "");
-                const total = range ? Number(range[1]) : 0;
+                // a slice that does not say the whole file's length cannot be joined: an error, never a file cut short
+                const range = /^bytes \d+-\d+\/(\d+)$/.exec(String(response.headers.get("Content-Range") || "").trim());
+                if (!range) throw new Error("A slice of " + url + " without its Content-Range");
+                const total = Number(range[1]);
                 return response.arrayBuffer().then((buffer) => {
                     const bytes = new Uint8Array(buffer);
                     parts.push(bytes);

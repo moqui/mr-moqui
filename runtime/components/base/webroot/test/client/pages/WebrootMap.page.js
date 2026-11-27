@@ -857,3 +857,13 @@ test("a package's map is drawn from its files alone: no outside request, its att
         sheet.remove();
     }
 });
+
+test("a package file's slice that does not say the whole length is an error, never a file cut short", async () => {
+    const realFetch = window.fetch;
+    window.fetch = () => Promise.resolve(new Response('{"rows":', { status: 206 }));
+    try {
+        await assert.rejects(map.readPackageFile(page + PACKAGE + "postal.json"), /Content-Range/);
+    } finally {
+        window.fetch = realFetch;
+    }
+});

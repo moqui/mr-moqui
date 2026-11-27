@@ -3365,8 +3365,10 @@ const readMember = async (url) => {
         const response = await fetch(url, { cache: 'no-store', headers: { Range: 'bytes=' + at + '-' + (at + SLICE - 1) } });
         if (response.status === 200) return response.text();
         if (response.status !== 206) throw new Error(t('Not read from this device') + ': HTTP ' + response.status);
-        const range = /\/(\d+)$/.exec(response.headers.get('Content-Range') || '');
-        total = range ? Number(range[1]) : 0;
+        // a slice that does not say the whole file's length cannot be joined: an error, never a file cut short
+        const range = /^bytes \d+-\d+\/(\d+)$/.exec(String(response.headers.get('Content-Range') || '').trim());
+        if (!range) throw new Error(t('Not read from this device') + ': ' + t('a slice without its Content-Range'));
+        total = Number(range[1]);
         const bytes = new Uint8Array(await response.arrayBuffer());
         if (!bytes.length) break;
         parts.push(bytes);
@@ -3489,11 +3491,14 @@ module.exports = {
         }
     },
     watch: {
-        // a new revision installed while a package is open: opened again, what was read of the old one dropped
+        // a new revision installed while a package is open: opened again once (not at every poll, nor again after a
+        // failed open), what was read of the old one dropped
         rows(rows) {
             if (!this.opened || !this.kept) return;
             const row = rows.find((one) => one.packageId === this.kept.packageId);
-            if (row && row.installed && row.revision !== this.kept.revision) this.open(row);
+            if (!row || !row.installed || row.revision === this.kept.revision || this.reopened === row.packageId + ':' + row.revision) return;
+            this.reopened = row.packageId + ':' + row.revision;
+            this.open(row);
         }
     },
     methods: {
@@ -3646,7 +3651,8 @@ module.exports = {
             const point = this.pointToSave;
             const label = this.placeName.trim();
             const outbox = host() && host().outbox;
-            if (!point || !label) return;
+            // only an account with the Maps app saves a place, queued or not
+            if (!point || !label || !this.mapsAccess) return;
             this.error = '';
             const saved = () => { this.placeName = ''; this.$q.notify({ type: 'positive', message: fill(t('{name} is saved to your places when the server answers'), { name: label }) }); };
             if (outbox && this.placeKinds) {
@@ -3656,7 +3662,6 @@ module.exports = {
             }
             // a server that takes no place by its clientRef: saved now, or not at all offline
             if (this.offline) { this.error = t('Saving a place needs a connection to this server'); return; }
-            if (!this.mapsAccess) return;
             return moqui.request('/apps/maps/Browse/savePlace', { method: 'POST', params: { label, longitude: point.lon, latitude: point.lat } }).then((result) => {
                 const json = result.json || {};
                 if (json.applied) { this.placeName = ''; this.$q.notify({ type: 'positive', message: fill(t('{name} is saved to your places'), { name: label }) }); }

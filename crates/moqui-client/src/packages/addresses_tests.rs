@@ -35,6 +35,9 @@ fn rows() -> Vec<Value> {
         json!({ "countryCode": "US", "streetName": "Text Street", "streetNorm": address::street_key("Text Street", "US"),
             "houseNumber": 7, "numberNorm": "7", "latitude": "42.3", "longitude": "-71.1" }),
         json!({ "countryCode": ["US"], "streetName": {"a": 1}, "streetNorm": true, "latitude": 1, "longitude": 1 }),
+        // not a row at all: left out, the rest read
+        json!("not a row"),
+        json!(["not", "a", "row"]),
     ]
 }
 
@@ -66,6 +69,10 @@ fn a_packages_addresses_are_matched_as_the_server_matches_them() {
     assert_eq!(search(&rows, "", "")["reasonCode"], "QUERY_UNREAD");
     assert_eq!(search(&[], "12 Hemenway St", "")["valid"], false);
     assert!(search_rows("not json", "12 Hemenway St", "", None, 5).is_err());
+    // a field past its length is cut
+    let long = json!({ "countryCode": "US", "streetName": "x".repeat(1000), "streetNorm": "long st", "latitude": 1, "longitude": 1 });
+    let member: Member = serde_json::from_str(&json!({ "rows": [long] }).to_string()).unwrap();
+    assert_eq!(member.rows[0].street_name.chars().count(), FIELD_CHARS);
 }
 
 /// A package installed with its addresses member, as a download leaves it.
@@ -109,6 +116,20 @@ fn a_packages_address_index_is_kept_for_its_revision_and_dropped_on_a_switch_or_
     );
     packages.drop_address_index(None);
     assert!(!packages.address_index_kept());
+    // a member that cannot be read is said once for its revision, not read again on every search
+    packages.drop_address_index(None);
+    std::fs::write(first.join(ADDRESSES_MEMBER), "not json").unwrap();
+    assert_eq!(
+        packages.search_addresses("a", "P1", "12 Hemenway St", "", None, 5)["reasonCode"],
+        "NO_DATA"
+    );
+    std::fs::write(first.join(ADDRESSES_MEMBER), json!({ "rows": rows() }).to_string()).unwrap();
+    assert_eq!(
+        packages.search_addresses("a", "P1", "12 Hemenway St", "", None, 5)["reasonCode"],
+        "NO_DATA",
+        "remembered for the revision"
+    );
+    packages.drop_address_index(None);
     // a new revision installed is read as it is
     install(&dir, 4, &rows()[2..3]);
     assert_eq!(

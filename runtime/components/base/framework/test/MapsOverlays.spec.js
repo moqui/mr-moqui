@@ -268,6 +268,10 @@ feature(
             const retried = {label: "Pier", longitude: "-71.04", latitude: "91", clientRef: "maps-ovl-place-2"}
             out.refused = savePlace(OWNER, retried)
             out.retried = savePlace(OWNER, Object.assign({}, retried, {latitude: "42.35"}))
+            // an error (no name: the service's parameter validation), then the same ref with a name
+            const invalid = {label: "", longitude: "-71.03", latitude: "42.34", clientRef: "maps-ovl-place-3"}
+            out.invalid = savePlace(OWNER, invalid)
+            out.valid = savePlace(OWNER, Object.assign({}, invalid, {label: "Wharf"}))
             out.file = JSON.parse(fileText(ownerDrive(), "Maps/places.geojson") || "{}")
             return out
         },
@@ -283,6 +287,10 @@ feature(
             out.retried.applied == true
             out.retried.duplicate == false
             out.file.features.filter(feature => feature.properties.name === "Pier").length == 1
+            out.invalid.applied != true
+            out.valid.applied == true
+            out.valid.duplicate == false
+            out.file.features.filter(feature => feature.properties.name === "Wharf").length == 1
         }
     }
 )

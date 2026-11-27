@@ -41,15 +41,54 @@ const MAX_COUNTRIES: usize = 6;
 /// The most points of one number of a street, and of one street, as the server reads them.
 const NUMBER_ROWS: usize = 200;
 const STREET_ROWS: usize = 500;
+/// The most rows of a member read (the server writes at most 200,000), and the longest text of a field kept.
+const MAX_ROWS: usize = 200_000;
+const FIELD_CHARS: usize = 256;
 
 /// A text field of a row: a string, a number written as text, or nothing (read as one value at a time, so a number keeps
 /// its digits whatever serde_json's number features).
 fn text<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
     Ok(match Value::deserialize(deserializer)? {
-        Value::String(text) => text.trim().to_string(),
+        Value::String(text) => text.trim().chars().take(FIELD_CHARS).collect(),
         Value::Number(n) => n.to_string(),
         _ => String::new(),
     })
+}
+
+/// A member's rows, at most [`MAX_ROWS`]: each read as one value and then as a row, so one that is not a row (not an
+/// object, a field of no kind a row has) is logged and skipped and the rest are read (AGENTS.md, failure tolerance).
+fn rows<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<Row>, D::Error> {
+    struct Rows;
+    impl<'de> serde::de::Visitor<'de> for Rows {
+        type Value = Vec<Row>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a list of address rows")
+        }
+
+        fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Vec<Row>, A::Error> {
+            let mut out = Vec::new();
+            let (mut skipped, mut past) = (0usize, 0usize);
+            while let Some(value) = seq.next_element::<Value>()? {
+                if out.len() >= MAX_ROWS {
+                    past += 1;
+                    continue;
+                }
+                match Row::deserialize(value) {
+                    Ok(row) => out.push(row),
+                    Err(_) => skipped += 1,
+                }
+            }
+            if skipped > 0 {
+                tracing::warn!("{skipped} rows of an offline map's addresses are not rows, and were left out");
+            }
+            if past > 0 {
+                tracing::warn!("{past} rows of an offline map's addresses past {MAX_ROWS} were left out");
+            }
+            Ok(out)
+        }
+    }
+    deserializer.deserialize_seq(Rows)
 }
 
 /// A degree of a row: a number, or a number written as text.
@@ -104,6 +143,7 @@ pub(crate) struct Row {
 #[derive(Deserialize, Default)]
 #[serde(default)]
 struct Member {
+    #[serde(deserialize_with = "rows")]
     rows: Vec<Row>,
 }
 
@@ -273,8 +313,9 @@ pub fn search_rows(
     Ok(search_index(&Index::of(member.rows), text, country, near, limit))
 }
 
-/// The one index the device keeps: the revision directory and the member's SHA-256 it was read from.
-pub(crate) type Cached = Option<(PathBuf, String, Arc<Index>)>;
+/// The one index the device keeps: the revision directory and the member's SHA-256 it was read from, and the index, or
+/// none when that member could not be read (not read again for the same revision on every search).
+pub(crate) type Cached = Option<(PathBuf, String, Option<Arc<Index>>)>;
 
 impl Packages {
     /// Search the installed revision of an account's package for an address ([`search_index`] over its
@@ -302,23 +343,23 @@ impl Packages {
         let kept = moqui_lib::sync::lock(&self.addresses)
             .as_ref()
             .filter(|(at, sha, _)| *at == dir && *sha == member.sha256)
-            .map(|(_, _, index)| Arc::clone(index));
+            .map(|(_, _, index)| index.clone());
         let index = match kept {
-            Some(index) => index,
+            Some(Some(index)) => index,
+            // its read failed before: said once, then NO_DATA until another revision
+            Some(None) => return no_data(),
             None => {
                 // the one kept goes first, so two are never held at once
                 *moqui_lib::sync::lock(&self.addresses) = None;
-                match Index::read(&dir.join(ADDRESSES_MEMBER)) {
-                    Ok(index) => {
-                        let index = Arc::new(index);
-                        *moqui_lib::sync::lock(&self.addresses) =
-                            Some((dir.clone(), member.sha256.clone(), Arc::clone(&index)));
-                        index
-                    }
-                    Err(err) => {
-                        tracing::error!("The addresses of the offline map {package_id} were not read: {err}");
-                        return no_data();
-                    }
+                let read = Index::read(&dir.join(ADDRESSES_MEMBER)).map(Arc::new);
+                if let Err(err) = &read {
+                    tracing::error!("The addresses of the offline map {package_id} were not read: {err}");
+                }
+                let index = read.ok();
+                *moqui_lib::sync::lock(&self.addresses) = Some((dir.clone(), member.sha256.clone(), index.clone()));
+                match index {
+                    Some(index) => index,
+                    None => return no_data(),
                 }
             }
         };
