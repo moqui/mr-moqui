@@ -170,11 +170,37 @@ object LocationRules {
     /** How long the confirmation's Send stays disabled after the dialog has the window's focus (tapjacking). */
     const val SEND_DELAY_MS = 1_000L
 
-    /** Whom the confirmation names: the server's words, or null for none (the dialog then says "the people you chose"). */
-    fun confirmWhom(audience: String): String? = audience.trim().ifEmpty { null }
+    /** The longest audience the confirmation names, in characters; more is cut with an ellipsis. */
+    const val WHOM_MAX = 400
 
-    /** Whether a touch on Send is refused: one that came through another app's window, wholly or in part. */
-    fun obscured(partially: Boolean, wholly: Boolean): Boolean = partially || wholly
+    /**
+     * Whom the confirmation names: the server's words on one line (control characters and line breaks as spaces, runs
+     * of spaces as one), at most [WHOM_MAX] characters, or null for none (the dialog then says "the people you chose").
+     */
+    fun confirmWhom(audience: String): String? {
+        val line = audience.map { if (it.isISOControl() || it.isWhitespace()) ' ' else it }.joinToString("")
+            .replace(Regex(" +"), " ").trim()
+        if (line.isEmpty()) return null
+        return if (line.length <= WHOM_MAX) line else line.take(WHOM_MAX - 1).trimEnd() + "…"
+    }
+
+    /**
+     * Whether a touch on Send is refused: one whose `flags` say it came through another app's window, wholly
+     * (`FLAG_WINDOW_IS_OBSCURED`) or in part (`FLAG_WINDOW_IS_PARTIALLY_OBSCURED`); other flags do not matter.
+     */
+    fun obscured(flags: Int): Boolean =
+        flags and (android.view.MotionEvent.FLAG_WINDOW_IS_OBSCURED or android.view.MotionEvent.FLAG_WINDOW_IS_PARTIALLY_OBSCURED) != 0
+
+    /**
+     * What a paused share's read again comes to (`Native.readLocationShare`'s `state`): `ok` with the share, `gone`
+     * (the server has it no longer as this device's, or the account is signed out: let go), else `retry` (kept paused:
+     * no network, no client, no answer, or an answer with no share).
+     */
+    fun readOutcome(state: String, hasShare: Boolean): String = when {
+        state == "ok" && hasShare -> "ok"
+        state == "gone" -> "gone"
+        else -> "retry"
+    }
 
     /**
      * The end as the phone words it when the server gave none: "15:30" today, "Fri 09:00" another day (the server's

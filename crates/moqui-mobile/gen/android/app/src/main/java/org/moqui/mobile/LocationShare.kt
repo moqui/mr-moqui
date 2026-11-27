@@ -133,6 +133,19 @@ object LocationShare {
     @JvmStatic
     fun sending(account: String): String = JSONArray(sent().filter { it.account == account }.map { it.shareId }).toString()
 
+    /** The confirmations of paused shares, one at a time, waiting for the person: apart from the reports' thread. */
+    private val confirmer = Executors.newSingleThreadExecutor { task -> Thread(task, "moqui-location-confirm") }
+
+    private fun confirming(task: () -> Unit) {
+        confirmer.execute {
+            try {
+                task()
+            } catch (err: Throwable) {
+                Log.e(TAG, "A paused share's confirmation failed", err)
+            }
+        }
+    }
+
     /** `task` on the location thread; a failure is logged. */
     internal fun work(task: () -> Unit) {
         worker.execute {
@@ -268,7 +281,7 @@ object LocationShare {
                     .setPositiveButton(R.string.location_confirm_send) { _, _ -> send = true }
                     .setNegativeButton(R.string.ask_not_now, null)
                     .setOnDismissListener { waiting.countDown() }
-            )
+            ) { created -> guardWindow(created) }
             shown = dialog
             guardSend(dialog)
         }
@@ -287,26 +300,31 @@ object LocationShare {
      * window's focus, and the dialog's text kept from accessibility services that are not tools for the person (Android
      * 14+).
      */
+    /** The dialog's window before it shows: other apps' overlays hidden (12+), its text accessibility-sensitive (14+). */
+    private fun guardWindow(dialog: android.app.AlertDialog) {
+        val window = dialog.window ?: return
+        if (Build.VERSION.SDK_INT >= 31) window.setHideOverlayWindows(true)
+        if (Build.VERSION.SDK_INT >= 34) window.decorView.setAccessibilityDataSensitive(View.ACCESSIBILITY_DATA_SENSITIVE_YES)
+    }
+
+    /**
+     * The shown dialog's Send: touches through another window refused, and enabled only [LocationRules.SEND_DELAY_MS]
+     * after each time the dialog gains the window's focus, disabled again as soon as it loses it (another window over
+     * it, a notification shade), so a tap meant for what was over it never lands on Send.
+     */
     private fun guardSend(dialog: android.app.AlertDialog) {
-        val window = dialog.window
-        if (Build.VERSION.SDK_INT >= 31) window?.setHideOverlayWindows(true)
-        if (Build.VERSION.SDK_INT >= 34) window?.decorView?.setAccessibilityDataSensitive(View.ACCESSIBILITY_DATA_SENSITIVE_YES)
         val send = dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE) ?: return
         send.isEnabled = false
-        send.setOnTouchListener { _, event -> LocationRules.obscured(event.flags and MotionEvent.FLAG_WINDOW_IS_PARTIALLY_OBSCURED != 0, event.flags and MotionEvent.FLAG_WINDOW_IS_OBSCURED != 0) }
+        send.setOnTouchListener { _, event -> LocationRules.obscured(event.flags) }
         val enable = Runnable { if (dialog.isShowing) send.isEnabled = true }
-        val decor = window?.decorView
-        if (decor == null || decor.hasWindowFocus()) {
-            send.postDelayed(enable, LocationRules.SEND_DELAY_MS)
-        } else {
-            decor.viewTreeObserver.addOnWindowFocusChangeListener(object : ViewTreeObserver.OnWindowFocusChangeListener {
-                override fun onWindowFocusChanged(hasFocus: Boolean) {
-                    if (!hasFocus) return
-                    decor.viewTreeObserver.removeOnWindowFocusChangeListener(this)
-                    send.postDelayed(enable, LocationRules.SEND_DELAY_MS)
-                }
-            })
+        val decor = dialog.window?.decorView
+        val focus = { hasFocus: Boolean ->
+            send.removeCallbacks(enable)
+            send.isEnabled = false
+            if (hasFocus) send.postDelayed(enable, LocationRules.SEND_DELAY_MS)
         }
+        decor?.viewTreeObserver?.addOnWindowFocusChangeListener(ViewTreeObserver.OnWindowFocusChangeListener { focus(it) })
+        focus(decor == null || decor.hasWindowFocus())
     }
 
     /**
@@ -334,32 +352,46 @@ object LocationShare {
         } catch (err: SecurityException) {
             Log.i(TAG, "The paused share's notice is not shown: ${err.message}")
         }
+        // the app in front: asked at once, not at its next resume
+        if (foreground) confirmPaused(context)
     }
 
     /**
      * The app in front ([MainActivity.onResume]) with shares paused for a grown audience: each read again from its
      * server (`Native.readLocationShare`) and asked again in the same native dialog with the server's words; Send sends
      * it again (`Native.beginLocation`, the new audience confirmed), Not now stops it on the server. A share the server no
-     * longer has as this device's is let go. On the location thread.
+     * longer has as this device's is let go; one not read (no network, no answer) stays paused for the next resume. On a
+     * thread of its own, never the reports' location thread.
      */
     fun confirmPaused(context: Context) {
         val app = context.applicationContext
         if (synchronized(this) { paused.isEmpty() }) return
-        work {
+        // on a thread of its own, which waits for the person's answer: never the location thread the reports use
+        confirming {
             val dir = Native.dataDir(app)
             val keys = synchronized(this) { paused.keys.toList() }
             for (key in keys) {
                 val was = synchronized(this) { paused.remove(key) } ?: continue
-                val json = try {
-                    Native.readLocationShare(dir, was.account, was.shareId)
+                val read = try {
+                    JSONObject(Native.readLocationShare(dir, was.account, was.shareId) ?: "{}")
                 } catch (err: Throwable) {
-                    null
+                    JSONObject()
                 }
+                val json = read.optJSONObject("share")?.toString()
                 val share = json?.let { Sent.of(it) }
-                if (share == null) {
-                    Log.i(TAG, "Share ${was.shareId} is no longer this device's to send: let go")
-                    continue
+                when (LocationRules.readOutcome(read.optString("state"), share != null)) {
+                    "gone" -> {
+                        Log.i(TAG, "Share ${was.shareId} is no longer this device's to send: let go")
+                        continue
+                    }
+                    "retry" -> {
+                        // no network, no client or no answer: kept, asked again at the next resume
+                        Log.i(TAG, "Share ${was.shareId} was not read again: kept paused")
+                        synchronized(this) { paused.putIfAbsent(key, was) }
+                        continue
+                    }
                 }
+                if (share == null) continue
                 if (!notificationsShown(app) || !permitted(app) || !confirm(app, share)) {
                     Log.i(TAG, "Share ${share.shareId}'s new audience was not confirmed: it stops")
                     LocationStops.add(app, share.account, share.shareId, share.thruMs)
@@ -379,7 +411,7 @@ object LocationShare {
                     remove(share.key)
                 }
             }
-            app.getSystemService(NotificationManager::class.java)?.cancel(PAUSED_ID)
+            if (synchronized(this) { paused.isEmpty() }) app.getSystemService(NotificationManager::class.java)?.cancel(PAUSED_ID)
         }
     }
 

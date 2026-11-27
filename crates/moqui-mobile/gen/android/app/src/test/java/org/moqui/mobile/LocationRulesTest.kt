@@ -147,14 +147,29 @@ class LocationRulesTest {
         assertTrue(LocationRules.confirmed(true, true))
         assertFalse(LocationRules.confirmed(false, true))
         assertFalse(LocationRules.confirmed(true, false))
-        // the server's words, or none
-        assertEquals("Sam Smith (sam) and Family (4 members)", LocationRules.confirmWhom(" Sam Smith (sam) and Family (4 members) "))
-        assertNull(LocationRules.confirmWhom("  "))
-        // a touch through another window, wholly or in part, never presses Send; it waits a second after focus
-        assertTrue(LocationRules.obscured(true, false))
-        assertTrue(LocationRules.obscured(false, true))
-        assertFalse(LocationRules.obscured(false, false))
+        // the server's words on one line, bounded: a name others chose cannot push the end off the dialog
+        assertEquals("Sam Smith (sam) and Family (4 members)", LocationRules.confirmWhom(" Sam Smith (sam)\n\tand  Family (4 members) "))
+        assertEquals("Sam (sam) and Pat (pat)", LocationRules.confirmWhom("Sam (sam)\u0000and\u202FPat (pat)"))
+        assertNull(LocationRules.confirmWhom(" \n "))
+        val long = LocationRules.confirmWhom("Sam ".repeat(200))!!
+        assertEquals(LocationRules.WHOM_MAX, long.length)
+        assertTrue(long.endsWith("…"))
+        // a touch through another window, wholly or in part, never presses Send, whatever other flags it has; it waits a
+        // second after each focus
+        val obscured = android.view.MotionEvent.FLAG_WINDOW_IS_OBSCURED
+        val partially = android.view.MotionEvent.FLAG_WINDOW_IS_PARTIALLY_OBSCURED
+        assertTrue(LocationRules.obscured(obscured))
+        assertTrue(LocationRules.obscured(partially))
+        assertTrue(LocationRules.obscured(partially or 0x100))
+        assertFalse(LocationRules.obscured(0))
+        assertFalse(LocationRules.obscured(0x100))
         assertTrue(LocationRules.SEND_DELAY_MS >= 1_000L)
+        // a paused share read again: confirmed only with its share, let go only when the server says so
+        assertEquals("ok", LocationRules.readOutcome("ok", true))
+        assertEquals("retry", LocationRules.readOutcome("ok", false))
+        assertEquals("gone", LocationRules.readOutcome("gone", false))
+        assertEquals("retry", LocationRules.readOutcome("retry", false))
+        assertEquals("retry", LocationRules.readOutcome("", false))
     }
 
     @Test

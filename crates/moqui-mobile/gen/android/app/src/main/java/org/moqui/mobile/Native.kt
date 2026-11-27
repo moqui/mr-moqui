@@ -59,9 +59,9 @@ object Native {
      */
     @JvmStatic external fun stopLocation(dataDir: String, account: String, shareId: String): String?
     /**
-     * A share read again from its server with the account's device key (`get#AppShare`), to confirm its grown audience:
-     * its JSON as `LocationShare.Sent.of` reads it, all of it the server's, or null when the server has it no longer as
-     * this device's. Not on the main thread.
+     * A share read again from its server with the account's device key (`get#AppShare`), to confirm its changed
+     * audience: `{state: ok, share}` (the share as `LocationShare.Sent.of` reads it, all of it the server's), `{state:
+     * gone}` (let go) or `{state: retry}` (kept paused). Not on the main thread.
      */
     @JvmStatic external fun readLocationShare(dataDir: String, account: String, shareId: String): String?
     /** A share confirmed again (its JSON from [readLocationShare]): Rust reports it with that audience as the confirmed one. */

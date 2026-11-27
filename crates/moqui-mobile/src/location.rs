@@ -53,43 +53,28 @@ pub(crate) struct ShareAsk {
     pub(crate) audience: String,
     /// The end in the owner's zone, as the server words it ("15:30", "Fri 09:00").
     pub(crate) until_text: String,
-    /// The audience's revision the person confirms ([`AudienceRevision`]).
-    pub(crate) audience_seq: i64,
-    pub(crate) audience_reach: i64,
+    /// The audience version the person confirms with these words (`get#AppShare`), sent with each report: the server
+    /// refuses another (409 `AUDIENCE_CHANGED`) before it writes or pushes anything.
+    pub(crate) audience_version: i64,
 }
 
-/// A share's audience as the server counts it (`report#Position`, `get#AppShare`): the newest entry's sequence and the
-/// people, contacts and link its current entries reach. The phone sends only to an audience the person confirmed in the
-/// app's own dialog; one that grew since (a script or another device adding people or a group after their Send) pauses
-/// the share until they confirm it again.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct AudienceRevision {
-    pub(crate) seq: i64,
-    pub(crate) reach: i64,
+/// Why a share was not read from its server for the app's confirmation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ReadRefused {
+    /// The server has it no longer as this device's to send (`SHARE_NOT_FOUND`, `SHARE_ENDED`, another device, the
+    /// account signed out): let go.
+    Gone(String),
+    /// No answer, or one that says nothing of the share: asked again later.
+    Retry(String),
 }
 
-impl AudienceRevision {
-    /// The revision in a server's answer, when it has one.
-    pub(crate) fn of(json: &Value) -> Option<Self> {
-        Some(Self {
-            seq: json.get("audienceSeq")?.as_i64()?,
-            reach: json.get("audienceReach")?.as_i64()?,
-        })
+impl ReadRefused {
+    /// The reason in words.
+    pub(crate) fn reason(&self) -> &str {
+        match self {
+            Self::Gone(reason) | Self::Retry(reason) => reason,
+        }
     }
-
-    /// Whether `now` reaches more than this, the confirmed one: a new entry, or more people.
-    pub(crate) fn grown_in(self, now: Self) -> bool {
-        now.seq > self.seq || now.reach > self.reach
-    }
-}
-
-/// The audience each share's person confirmed, by account and share.
-static CONFIRMED: Mutex<Option<HashMap<(String, String), AudienceRevision>>> = Mutex::new(None);
-
-fn confirmed_of(account: &str, share_id: &str) -> Option<AudienceRevision> {
-    moqui_lib::sync::lock(&CONFIRMED)
-        .as_ref()
-        .and_then(|held| held.get(&(account.to_string(), share_id.to_string())).copied())
 }
 
 impl ShareAsk {
@@ -123,8 +108,7 @@ impl ShareAsk {
             "intervalSeconds": self.interval_seconds,
             "audience": self.audience,
             "untilText": self.until_text,
-            "audienceSeq": self.audience_seq,
-            "audienceReach": self.audience_reach,
+            "audienceVersion": self.audience_version,
         })
         .to_string()
     }
@@ -146,16 +130,18 @@ fn with_reporters<T>(work: impl FnOnce(&mut HashMap<(String, String), Reporter>)
 /// The share `share_id` of `account` is sent from here from now on, at most once an `interval_ms`, to the audience the
 /// person confirmed (`revision`): a reporter for it, a new one when it was stopped (a Send from this device after
 /// another device had it, an audience confirmed again).
-pub(crate) fn begin(account: &str, share_id: &str, interval_ms: i64, revision: AudienceRevision) {
-    moqui_lib::sync::lock(&CONFIRMED)
-        .get_or_insert_with(HashMap::new)
-        .insert((account.to_string(), share_id.to_string()), revision);
+pub(crate) fn begin(account: &str, share_id: &str, interval_ms: i64, audience_version: i64) {
     with_reporters(|reporters| {
         let key = (account.to_string(), share_id.to_string());
         match reporters.get_mut(&key) {
-            Some(reporter) if reporter.stopped().is_none() => reporter.set_interval(interval_ms),
+            Some(reporter) if reporter.stopped().is_none() => {
+                reporter.set_interval(interval_ms);
+                reporter.set_audience_version(audience_version);
+            }
             _ => {
-                reporters.insert(key, Reporter::new(share_id, interval_ms));
+                let mut reporter = Reporter::new(share_id, interval_ms);
+                reporter.set_audience_version(audience_version);
+                reporters.insert(key, reporter);
             }
         }
     });
@@ -210,19 +196,8 @@ pub(crate) fn report_location(
                 // the share and the failure only: never the position
                 log::info!("Location: a report of share {share_id} did not reach {account}: {err}");
             }
-            // an audience grown since the person's Send: no more reports until they confirm it again
-            let grown = match (&answer, confirmed_of(account, share_id)) {
-                (Ok((_, json)), Some(confirmed)) => {
-                    AudienceRevision::of(json).is_some_and(|now| confirmed.grown_in(now))
-                }
-                _ => false,
-            };
             let key_changed = key_now().is_some_and(|now| now != key);
             with_reporters(|reporters| match reporters.get_mut(&entry) {
-                Some(reporter) if grown => {
-                    reporter.answered_after(sent, answer, now_ms, key_changed);
-                    reporter.stop(Stopped::AudienceChanged)
-                }
                 Some(reporter) => reporter.answered_after(sent, answer, now_ms, key_changed),
                 None => Outcome::Stopped(Stopped::SignedOut),
             })
@@ -334,30 +309,51 @@ pub(crate) fn stop_account_on_server(
 pub(crate) const SHARE_PATH: &str = "/qapps/clientLocationShare";
 
 /// The share `share_id` of the account as its server says it is, for the native confirmation and the notification
-/// (plans/Location-Sharing.md §3.4): whom with, until when, exact or approximate and its interval, all from the server
-/// with the account's device key, never from the page that asked. Refused when the server does not have it as an active
-/// share of the account's, or this device does not send it (Send from this device first).
+/// (plans/Location-Sharing.md §3.4): whom with, until when, exact or approximate, its interval and its audience version,
+/// all from the server with the account's device key, never from the page that asked. Refused as [`ReadRefused::Gone`]
+/// when the server does not have it as an active share of the account's, or this device does not send it (Send from
+/// this device first), or the account is signed out; as [`ReadRefused::Retry`] with no answer. An answer with no
+/// audience version is refused: the phone never sends to an audience it cannot hold to the person's confirmation.
 pub(crate) fn read_share(
     share_id: &str,
     signed_in: (&Account, &str),
     poster: &dyn Poster,
     now_ms: i64,
-) -> Result<ShareAsk, String> {
+) -> Result<ShareAsk, ReadRefused> {
     let (server, key) = signed_in;
-    let (status, json) = poster.post(server, key, SHARE_PATH, &[("shareId", share_id)])?;
-    if status >= 400 || json.get("found").and_then(Value::as_bool) != Some(true) {
-        return Err(json.get("reason").and_then(Value::as_str).map_or_else(
-            || format!("The server has no such share (HTTP {status})"),
-            str::to_string,
-        ));
+    let (status, json) = poster
+        .post(server, key, SHARE_PATH, &[("shareId", share_id)])
+        .map_err(ReadRefused::Retry)?;
+    if status == 401 || status == 403 || (status < 400 && json.is_null()) {
+        return Err(ReadRefused::Gone("signedOut".to_string()));
+    }
+    if status >= 400 {
+        return Err(ReadRefused::Retry(format!("HTTP {status}")));
+    }
+    if json.get("found").and_then(Value::as_bool) != Some(true) {
+        let reason = json
+            .get("reason")
+            .and_then(Value::as_str)
+            .unwrap_or("The server has no such share")
+            .to_string();
+        return Err(match json.get("reasonCode").and_then(Value::as_str) {
+            Some("SHARE_NOT_FOUND" | "SHARE_ENDED") => ReadRefused::Gone(reason),
+            _ => ReadRefused::Retry(reason),
+        });
     }
     let share = json.get("share").cloned().unwrap_or(Value::Null);
     if share.get("shareId").and_then(Value::as_str) != Some(share_id) {
-        return Err("The server answered for another share".to_string());
+        return Err(ReadRefused::Retry("The server answered for another share".to_string()));
     }
     if share.get("fromThisDevice").and_then(Value::as_bool) != Some(true) {
-        return Err("Another device sends this share: choose Send from this device".to_string());
+        return Err(ReadRefused::Gone(
+            "Another device sends this share: choose Send from this device".to_string(),
+        ));
     }
+    let audience_version = share
+        .get("audienceVersion")
+        .and_then(Value::as_i64)
+        .ok_or_else(|| ReadRefused::Retry("The server did not say which audience this is".to_string()))?;
     ShareAsk {
         share_id: share_id.to_string(),
         thru_date: share.get("thruDate").and_then(Value::as_i64).unwrap_or(0),
@@ -369,23 +365,15 @@ pub(crate) fn read_share(
             .unwrap_or("")
             .to_string(),
         until_text: share.get("untilText").and_then(Value::as_str).unwrap_or("").to_string(),
-        audience_seq: share.get("audienceSeq").and_then(Value::as_i64).unwrap_or(i64::MAX),
-        audience_reach: share.get("audienceReach").and_then(Value::as_i64).unwrap_or(i64::MAX),
+        audience_version,
     }
     .checked(now_ms)
+    .map_err(ReadRefused::Gone)
 }
 
 /// The share `share_id` of `account` is no longer sent from here, with nothing told to its server.
 pub(crate) fn forget_share(account: &str, share_id: &str) {
     with_reporters(|reporters| reporters.remove(&(account.to_string(), share_id.to_string())));
-}
-
-/// The audience the person confirmed for a share, as [`begin`] took it.
-pub(crate) fn revision_of(share: &ShareAsk) -> AudienceRevision {
-    AudienceRevision {
-        seq: share.audience_seq,
-        reach: share.audience_reach,
-    }
 }
 
 /// `account` is signed out or removed here: none of its shares is sent from here any more. The shares it had.

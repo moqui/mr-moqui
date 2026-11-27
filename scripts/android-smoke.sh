@@ -67,6 +67,7 @@ JNI_NAMES=(
     org/moqui/mobile/LocationShare#allow org/moqui/mobile/LocationShare#start org/moqui/mobile/LocationShare#stop
     org/moqui/mobile/LocationShare#forgetAccount org/moqui/mobile/LocationShare#sending org/moqui/mobile/Native#reportLocation
     org/moqui/mobile/Native#stopLocation org/moqui/mobile/Native#forgetLocation
+    org/moqui/mobile/Native#readLocationShare org/moqui/mobile/Native#beginLocation
     org/moqui/mobile/LocationStops#pendingFor org/moqui/mobile/LocationStops#settledFor
     org/moqui/mobile/PackageDownloadWorker#start org/moqui/mobile/PackageDownloadWorker#cancel
     org/moqui/mobile/PackageDownloadWorker#cancelAccount org/moqui/mobile/Native#packageDownload

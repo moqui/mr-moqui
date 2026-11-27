@@ -408,3 +408,29 @@ fn a_report_whose_answer_stalls_after_its_headers_gives_up_at_its_timeout() {
     );
     server.join().unwrap();
 }
+
+#[test]
+fn each_report_carries_the_confirmed_audience_version_and_a_changed_audience_stops_it() {
+    let server = Server::new();
+    let mut reporter = Reporter::new("100", INTERVAL);
+    reporter.set_audience_version(4);
+    assert_eq!(
+        reporter.report(Some(fix(40.1, 1_000)), 1_000, server.answer(200, ok())),
+        Outcome::Sent
+    );
+    assert_eq!(server.field(0, "audienceVersion").as_deref(), Some("4"));
+    let changed = json!({ "statusCode": 409, "reasonCode": "AUDIENCE_CHANGED" });
+    assert_eq!(
+        reporter.report(Some(fix(40.2, 7_000)), 7_000, server.answer(200, changed)),
+        Outcome::Stopped(Stopped::AudienceChanged)
+    );
+    assert_eq!(
+        Outcome::Stopped(Stopped::AudienceChanged).to_json()["reason"],
+        "audienceChanged"
+    );
+    // with no version set none is sent (a browser's share, never the app's)
+    let plain = Server::new();
+    let mut browser = Reporter::new("101", INTERVAL);
+    browser.report(Some(fix(40.1, 1_000)), 1_000, plain.answer(200, ok()));
+    assert_eq!(plain.field(0, "audienceVersion"), None);
+}

@@ -91,8 +91,8 @@ pub enum Stopped {
     OtherDevice,
     /// 401, 403, or an answer that is not the transition's JSON: the account is signed out.
     SignedOut,
-    /// The share's audience grew after the person confirmed whom the phone sends to (the host compares the report's
-    /// audience revision with the confirmed one): not sent until they confirm it again.
+    /// 409 `AUDIENCE_CHANGED`: the share's audience changed after the person confirmed whom the phone sends to (its
+    /// version): not sent until they confirm it again.
     AudienceChanged,
 }
 
@@ -162,6 +162,9 @@ pub struct Reporter {
     last_ms: Option<i64>,
     next_at_ms: i64,
     server_time: bool,
+    /// The audience version the person confirmed (the app's own dialog), sent with each report: the server refuses a
+    /// report of another version (409 `AUDIENCE_CHANGED`) before it writes or pushes anything.
+    audience_version: Option<i64>,
     in_flight: bool,
     stopped: Option<Stopped>,
     /// An `OTHER_DEVICE` across a renewal of the device key was tried again once.
@@ -179,6 +182,7 @@ impl Reporter {
             last_ms: None,
             next_at_ms: 0,
             server_time: false,
+            audience_version: None,
             in_flight: false,
             stopped: None,
             renewal_retried: false,
@@ -193,6 +197,12 @@ impl Reporter {
     /// Why it is no longer sent, once it is not.
     pub fn stopped(&self) -> Option<Stopped> {
         self.stopped
+    }
+
+    /// The interval changed (the share became approximate, the server's setting): from the next send on.
+    /// The audience version the person confirmed for this share, sent from now on.
+    pub fn set_audience_version(&mut self, version: i64) {
+        self.audience_version = Some(version);
     }
 
     /// The interval changed (the share became approximate, the server's setting): from the next send on.
@@ -248,6 +258,9 @@ impl Reporter {
             if let Some(value) = value {
                 form.push((name.to_string(), value.to_string()));
             }
+        }
+        if let Some(version) = self.audience_version {
+            form.push(("audienceVersion".to_string(), version.to_string()));
         }
         if !self.server_time {
             form.push(("observedDate".to_string(), fix.observed_ms.to_string()));
@@ -324,6 +337,8 @@ impl Reporter {
                 self.again(sent, now_ms, 0)
             }
             (409, "OTHER_DEVICE") => self.stop(Stopped::OtherDevice),
+            // the audience is not the one the person confirmed: nothing was written or pushed, and nothing more goes
+            (409, "AUDIENCE_CHANGED") => self.stop(Stopped::AudienceChanged),
             (409, "CLOCK_AHEAD") | (400, "BEFORE_SHARE") => {
                 // the device's clock is off from the server's: the server's time from now on, this point again now
                 self.server_time = true;

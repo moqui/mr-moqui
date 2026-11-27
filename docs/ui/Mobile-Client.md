@@ -574,7 +574,7 @@ emulator yet (LL7's walk).
   approximate (about 3 km² on Android 12+) before the server rounds them. Not now, or the dialog dismissed, answers no
   and no share is started. Once the share is made, `start` names it (its id alone): the host reads it from the server
   with the account's device key (`/qapps/clientLocationShare`, `get#AppShare`: whom with, until when, exact or
-  approximate, its interval, its audience's revision, and that this device sends it), and the app asks in its own
+  approximate, its interval, its audience version, and that this device sends it), and the app asks in its own
   dialog: "Send your location from this phone to Sam Smith (sam) and Family (4 members) until Fri 09:00? It goes on while
   the app is in the background, with a notification and Stop.", Send or Not now. The words are the server's: each person
   by name and unique username, a group with the members it reaches, "anyone with the guest link", and the end with its
@@ -583,12 +583,20 @@ emulator yet (LL7's walk).
   `HIDE_OVERLAY_WINDOWS`), keeps Send disabled for a second after it has the window's focus, marks its text sensitive
   for accessibility services (Android 14+), and goes with no answer after a minute. **That native dialog is the
   control**, and it guards two things: the start of sending from this phone, and the audience it sends to. A server
-  page's script can reach the app's IPC and ask for a start, but nothing is sent from the phone without the person's
-  Send there; and each report's answer carries the audience's revision (`audienceSeq`, `audienceReach`), so when the
-  audience grows after the Send (people or a group added, a group added again that reaches more, by a script or another
-  device) the phone stops sending that share and a notification asks the person to open the app, where the same dialog
-  asks again with the server's words (Send sends it again to that audience; Not now stops the share on the server). It
-  does not guard what the server does with the reports it gets, nor the shares a browser or another device sends. Send starts `LocationShareService`, a foreground service of type `location`
+  page's script can reach the app's IPC and ask for a start, but nothing is sent from the phone in the background
+  without the person's Send there. The share has an audience version (`LocationShare.audienceVersion`) that every
+  change of its audience that can reach someone new raises (an entry added, a group added again, whose snapshot is
+  written again; a revoke does not); the phone sends the version the person confirmed with each report, and the server
+  refuses a report of another version, or of none from a share sent from a device, with 409 `AUDIENCE_CHANGED` before
+  it writes or pushes anything. So no position reaches an audience the person did not confirm: the phone pauses that
+  share and a notification asks the person to open the app (at once when it is in front), where the same dialog asks
+  again with the server's words (Send sends it to that version; Not now stops the share on the server; a share not
+  read for want of a network stays paused for the next time). It does not guard what the server does with the reports
+  it gets, nor the shares a browser or another device sends. Nor does it guard a page in front: with the location
+  permission given, a server page the app shows gets the WebView's geolocation with no prompt (`RustWebChromeClient`
+  answers for the app's own origins), as any browser page with the permission does, so a page in front can read the
+  position and send it itself while it is open (the `unavailable` path's own sending; its reports carry the version
+  the page read). Send starts `LocationShareService`, a foreground service of type `location`
   (`FOREGROUND_SERVICE_LOCATION`), only while the app is in front (`LocationShare.foreground`), with the permission and
   notifications allowed (`LocationRules.mayStart`); `start` answers `started`, `declined` (Not now: a share just made
   is stopped, and the page sends nothing) or `unavailable` (the page sends while it is open, as a browser does). So the

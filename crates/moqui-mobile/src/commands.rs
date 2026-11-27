@@ -918,13 +918,14 @@ pub(crate) fn location_share_start(
         (&signed_in.account, signed_in.key.as_str()),
         &crate::native::LocationPoster(&state.core),
         crate::native::now_ms(),
-    )?;
+    )
+    .map_err(|refused| refused.reason().to_string())?;
     // a share already sent from here goes on as it was when the person says Not now (or the service cannot take it);
     // a new one is begun before the service may report it, and let go again unless it starts
     let was = crate::location::sending(&account).contains(&share.share_id);
-    let revision = crate::location::revision_of(&share);
+    let version = share.audience_version;
     if !was {
-        crate::location::begin(&account, &share.share_id, share.interval_seconds * 1000, revision);
+        crate::location::begin(&account, &share.share_id, share.interval_seconds * 1000, version);
     }
     #[cfg(target_os = "android")]
     let answer = crate::android::location_start(&share.to_json(&account))?;
@@ -934,8 +935,8 @@ pub(crate) fn location_share_start(
         "unavailable".to_string()
     };
     if answer == "started" {
-        // the audience the person just confirmed, also for one sent already
-        crate::location::begin(&account, &share.share_id, share.interval_seconds * 1000, revision);
+        // the audience version the person just confirmed, also for one sent already
+        crate::location::begin(&account, &share.share_id, share.interval_seconds * 1000, version);
     } else if !was {
         crate::location::forget_share(&account, &share.share_id);
     }
