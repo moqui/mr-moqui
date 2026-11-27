@@ -2,8 +2,9 @@
 
 // m-map's pure helpers in the page (moqui.map of /js/WebrootMap.js), and its list of places when the map cannot be drawn. The
 // OpenLayers bundle (an ES module, imported as m-map imports it) is loaded for its formats and vector sources only, and its
-// raster part for the projections and the lookup it refuses: drawing the map is a browser walk, not a regression test. The
-// page is https://moqui.test.
+// raster part for the projections and the lookup it refuses: drawing a server's map is a browser walk, not a regression
+// test. Package mode (plans/Maps-Offline.md §2.5) is checked here, its one map drawn from a package's files that the test
+// answers as the apps' scheme does. The page is https://moqui.test.
 "use strict";
 
 const map = moqui.map;
@@ -380,8 +381,8 @@ test("m-map builds its WMS, WMTS and WFS layers only for the URL it was given, w
         { id: "X", kind: "wms", url: "https://elsewhere.example/wms", ogc: { params: { LAYERS: "roads" } } }] });
     const statuses = [];
     // a stand-in for the component: its own methods, the profile's origins, no map drawn
-    const self = { origins: map.allowedOrigins(config, page), pageOrigin: () => page, status: (...args) => statuses.push(args), watchSource: () => {},
-        featureStyle: () => null };
+    const self = { origins: map.allowedOrigins(config, page), pageOrigin: () => page, packageBase: () => "", status: (...args) => statuses.push(args),
+        watchSource: () => {}, featureStyle: () => null };
     for (const name of ["checkUrl", "ogcOf", "ogcCrossOrigin", "wmsLayer", "wmtsLayer", "wfsLayer"]) self[name] = methods[name].bind(self);
     self.origins.delete("https://elsewhere.example");
     const built = {};
@@ -525,5 +526,157 @@ test("the build's files are named by their hash, and its decoder worker inflates
         assert.deepEqual(Array.from(new Uint8Array(answer.decoded)), Array.from(pixels));
     } finally {
         worker.terminate();
+    }
+});
+
+// ---- package mode (plans/Maps-Offline.md §2.5): an offline map package on the device, at its path on the shell's origin ----
+
+const PACKAGE = "/__moqui-app/maps/P7/";
+// a manifest as OF1's MapPackages.js writes it: the frozen configuration with package-relative URLs, the sources with an
+// archive's own notice (HTML), and a notice
+const packageManifest = () => ({
+    schemaVersion: 1,
+    package: { packageId: "P7", name: "Harbor", bbox: [-71.2, 42.2, -70.9, 42.5], minZoom: 0, maxZoom: 14, revision: 3, builtDate: "2026-11-27T10:00:00.000Z" },
+    configuration: {
+        profileId: "LOCAL_PROTOMAPS",
+        profile: { profileId: "LOCAL_PROTOMAPS", basemap: "LIGHT", allowedOrigins: ["https://tiles.example.org"],
+            notice: { text: "Offline", href: "/qapps/maps/Configuration", linkText: "Configure" },
+            basemaps: [
+                { id: "LIGHT", label: "Light", kind: "pmtiles", url: "basemap/LIGHT.pmtiles", styleUrl: "style/light.json",
+                    attribution: "Protomaps\n© OpenStreetMap", attributionUrls: ["https://protomaps.com", "https://www.openstreetmap.org/copyright"] },
+                { id: "OUTLINE_NE110", label: "Country outlines", kind: "outline", url: "outline.json", attribution: "Natural Earth",
+                    attributionUrls: ["https://www.naturalearthdata.com/"] }] },
+        layers: [{ id: "places", label: "My places", kind: "geojson", url: "places.geojson", visible: true },
+            { id: "out", label: "Out", kind: "geojson", url: "../P8/places.geojson" },
+            { id: "abs", label: "Abs", kind: "geojson", url: "https://evil.example/x.json" },
+            { id: "rooted", label: "Rooted", kind: "geojson", url: "/libs/naturalearth/countries-110m.json" }],
+        externalRequests: false, extent: [-71.2, 42.2, -70.9, 42.5], recordKey: { partyId: "P1" }, adapter: "party"
+    },
+    sources: [{ kind: "basemap", member: "basemap/LIGHT.pmtiles", attribution: "Protomaps",
+        sourceAttribution: '<a href="https://www.openstreetmap.org/copyright" target="_blank">&copy; OpenStreetMap</a> <img src=x onerror="window.packageAttack=1">',
+        license: "ODbL-1.0" },
+    { kind: "postal", member: "postal.json", licenses: [{ dataSetId: "GEONAMES", license: "CC-BY-4.0" }] },
+    { kind: "overture", member: "overture-places.json", imports: [{ importId: "I1", licenses: [{ name: "CDLA-Permissive-2.0" }, "<b>ODbL</b>"] }] }],
+    members: [{ path: "basemap/LIGHT.pmtiles", size: 10, sha256: "a" }, { path: "outline.json", size: 10, sha256: "b" }],
+    notice: "This package holds what its owner could read when it was built."
+});
+
+test("a package's manifest is its map's configuration: every URL the package's, its path the only one asked, its attribution text", () => {
+    assert.equal(map.packageBase("P7"), PACKAGE);
+    for (const bad of ["", "..", "a/b", "a b", "x".repeat(65)]) assert.equal(map.packageBase(bad), "", bad);
+    const config = map.normalizeConfig({ packageBase: PACKAGE, manifest: packageManifest(), zoom: 12 });
+    assert.equal(config.packageBase, PACKAGE);
+    assert.deepEqual(config.profile.basemaps.map((basemap) => [basemap.url, basemap.styleUrl]),
+        [[PACKAGE + "basemap/LIGHT.pmtiles", PACKAGE + "style/light.json"], [PACKAGE + "outline.json", ""]]);
+    assert.deepEqual(config.layers.map((layer) => [layer.id, layer.url]),
+        [["places", PACKAGE + "places.geojson"], ["out", ""], ["abs", ""], ["rooted", ""]], "a URL that is not a plain path of the package is dropped");
+    assert.deepEqual(config.profile.allowedOrigins, [], "no host the profile named");
+    assert.equal(config.profile.notice.href, "", "no link of the server's");
+    assert.deepEqual(config.extent, [-71.2, 42.2, -70.9, 42.5], "the view is the package's region");
+    assert.equal(config.zoom, 12, "the page's own view wins");
+    assert.equal(config.adapter, "", "no record of the server's");
+    // the archive's own notice, HTML in its metadata, joins the attribution as plain text
+    const light = config.profile.basemaps[0];
+    assert.equal(light.attribution, "Protomaps\n© OpenStreetMap", "a notice already named is not added twice");
+    const html = map.attributionHtml(light.attribution, light.attributionUrls);
+    assert.ok(!/<img|onerror/.test(html), html);
+    const other = map.normalizeConfig({ packageBase: PACKAGE, manifest: Object.assign(packageManifest(), { sources: [{ kind: "basemap", member: "outline.json",
+        sourceAttribution: "<b>Made</b> with <script>x()</script>Natural Earth data" }] }) });
+    assert.equal(other.profile.basemaps[1].attribution, "Natural Earth\nMade with Natural Earth data");
+    // the one origin, and on it the package's path only
+    const origins = map.allowedOrigins(config, page);
+    assert.deepEqual([...origins], [page]);
+    const allowed = (url) => map.urlAllowed(url, origins, page, PACKAGE);
+    assert.ok(allowed(PACKAGE + "basemap/LIGHT.pmtiles"));
+    assert.ok(allowed(page + PACKAGE + "fonts/noto-sans/400.css"));
+    for (const url of ["/libs/naturalearth/countries-110m.json", "/__moqui-app/maps/P8/outline.json", PACKAGE + "../P8/outline.json",
+        PACKAGE + "x.json?a=1", "https://tiles.example.org" + PACKAGE + "a", "mapbox://styles/x"]) assert.ok(!allowed(url), url);
+    // a manifest with no usable base asks nothing
+    assert.equal(map.normalizeConfig({ packageBase: "/elsewhere/", manifest: packageManifest() }).profile.basemaps[0].url, "");
+    // no basemap at all: the package's own outline
+    assert.equal(map.normalizeConfig({ packageBase: PACKAGE, manifest: { configuration: {} } }).profile.basemaps[0].url, PACKAGE + "outline.json");
+});
+
+test("a package's style takes its sprite and fonts from the package, and names no other host", () => {
+    const style = map.packageStyle({ version: 8, sprite: "sprites/light", sources: { protomaps: { type: "vector", url: "pmtiles://basemap/LIGHT.pmtiles" } } }, page, PACKAGE);
+    assert.equal(style.sprite, page + PACKAGE + "sprites/light");
+    const origins = map.allowedOrigins(map.normalizeConfig({ packageBase: PACKAGE, manifest: packageManifest() }), page);
+    assert.deepEqual(map.refusedStyleUrls(style, PACKAGE + "style/light.json", origins, page, ["protomaps"], PACKAGE), []);
+    assert.deepEqual(map.refusedStyleUrls({ sprite: "https://cdn.example/sprite", sources: { s: { type: "geojson", data: "data/x.json" } } },
+        PACKAGE + "style/light.json", origins, page, null, PACKAGE), ["https://cdn.example/sprite"], "a relative URL is the package's, resolved from its root");
+    assert.equal(map.packageStyle({ sprite: "../../sprite" }, page, PACKAGE).sprite, undefined, "a sprite outside the package is dropped");
+    assert.deepEqual(map.packageStyle({ sprite: [{ id: "a", url: "sprites/a" }, { id: "b", url: "https://cdn.example/b" }] }, page, PACKAGE).sprite,
+        [{ id: "a", url: page + PACKAGE + "sprites/a" }]);
+    assert.equal(map.packageFonts(page, PACKAGE), page + PACKAGE + "fonts/{font-family}/{fontweight}{-fontstyle}.css");
+    // the sources the offline screen lists: text only, an archive's notice and the licenses
+    const sources = map.packageSources(packageManifest());
+    assert.deepEqual(sources.map((source) => source.kind), ["basemap", "postal", "overture"]);
+    assert.equal(sources[0].sourceAttribution, "© OpenStreetMap");
+    assert.deepEqual(sources[0].licenses, ["ODbL-1.0"]);
+    assert.deepEqual(sources[1].licenses, ["CC-BY-4.0"]);
+    assert.deepEqual(sources[2].licenses, ["CDLA-Permissive-2.0", "ODbL"]);
+});
+
+test("a package's map is drawn from its files alone: no outside request, its attribution shown as text", async () => {
+    await olLoad;
+    // the package's files, answered here as the app's scheme answers them; every request the page makes is noted
+    const topology = { type: "Topology", arcs: [[[-71.2, 42.2], [-70.9, 42.2], [-70.9, 42.5], [-71.2, 42.5], [-71.2, 42.2]]],
+        objects: { countries: { type: "GeometryCollection", geometries: [{ type: "Polygon", arcs: [[0]], properties: { name: "Harbor" } }] } } };
+    const files = { "outline.json": JSON.stringify(topology) };
+    const asked = [];
+    const realFetch = window.fetch;
+    window.fetch = (input, init) => {
+        const url = new URL(typeof input === "string" ? input : input.url, location.href);
+        asked.push(url.href);
+        if (url.origin === page && url.pathname.startsWith(PACKAGE) && files[url.pathname.slice(PACKAGE.length)] !== undefined)
+            return Promise.resolve(new Response(files[url.pathname.slice(PACKAGE.length)], { status: 200, headers: { "Content-Type": "application/json" } }));
+        if (url.origin === page && url.pathname.startsWith(PACKAGE)) return Promise.resolve(new Response("Not in this offline map", { status: 404 }));
+        return realFetch(input, init);
+    };
+    const before = performance.getEntriesByType("resource").length;
+    const manifest = packageManifest();
+    // the outline alone, with its source's notice HTML: drawn and attributed as text
+    manifest.configuration.profile.basemaps = manifest.configuration.profile.basemaps.slice(1);
+    manifest.configuration.profile.basemap = "OUTLINE_NE110";
+    manifest.configuration.layers = [];
+    manifest.sources = [{ kind: "basemap", member: "outline.json", sourceAttribution: '<b>Natural Earth</b> data <img src=x onerror="window.packageAttack=1">' }];
+    const holder = document.createElement("div");
+    holder.style.width = "480px";
+    // the map's canvas fills its frame (WebrootVue.qvt.css, not loaded here)
+    const sheet = document.createElement("style");
+    sheet.textContent = ".m-map-frame { position: relative; } .m-map-canvas { position: absolute; inset: 0; }";
+    document.head.appendChild(sheet);
+    document.body.appendChild(holder);
+    let view = null;
+    const app = Vue.createApp({ render: () => Vue.h(map.components["m-map-view"], { id: "PackageMap", config: { packageBase: PACKAGE, manifest },
+        ref: (vm) => { view = vm; } }) });
+    try {
+        app.mount(holder);
+        const until = async (check, what) => {
+            const end = Date.now() + 8000;
+            for (;;) {
+                if (check()) return;
+                if (Date.now() > end) throw new Error("waited for " + what + ": " + JSON.stringify(view && view.layerStatus) + " " + asked.join(", ") + " " + (view && view.fallback));
+                await new Promise((resolve) => setTimeout(resolve, 20));
+            }
+        };
+        await until(() => view && view.layerStatus.some((status) => status.id === "OUTLINE_NE110" && status.state === "ready"), "the outline");
+        await until(() => holder.querySelector(".ol-attribution li"), "the attribution");
+        const attribution = holder.querySelector(".ol-attribution ul");
+        assert.ok(attribution.textContent.includes("Natural Earth data"), attribution.textContent);
+        assert.equal(attribution.querySelector("img"), null, "the notice is text, never markup");
+        assert.equal(window.packageAttack, undefined);
+        assert.ok(asked.length > 0 && asked.every((url) => url.startsWith(page + PACKAGE)), asked.join(", "));
+        // a place found by a page's search is marked and shown
+        view.showPlace({ lon: -71.05, lat: 42.36, label: "<b>Dock</b>" });
+        assert.ok(view.announced.startsWith("Dock: 42.36000"), view.announced);
+        const outside = performance.getEntriesByType("resource").slice(before).map((entry) => entry.name)
+            .filter((name) => !name.startsWith(page + PACKAGE) && !name.startsWith(page + "/libs/openlayers/"));
+        assert.deepEqual(outside, [], "no request but the package's (and the map's own library)");
+    } finally {
+        window.fetch = realFetch;
+        app.unmount();
+        holder.remove();
+        sheet.remove();
     }
 });

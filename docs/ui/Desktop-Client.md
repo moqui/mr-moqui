@@ -176,6 +176,7 @@ while the window is hidden.
 | `mail-state` | a thread's read, flag, archive, move or trash, as absolute values, in order; shown in the stored rows at once; with `seen` at `clientApi` 4 |
 | `chat-edit`, `chat-redact`, `chat-react`, `poll-vote` | a message's edit, redaction, reaction or poll vote, once by its `clientRef`, the four of one message in order (`clientApi` 4) |
 | `internal-send` | an internal message's send, once by its `clientRef`, where the server's `server.features.internalSendRef` says so (a `mail-send` of one becomes it); no files |
+| `map-place` | a place saved on the offline Maps screen (`{clientRef, label, longitude, latitude}`), sent to Maps' `savePlace` once by its `clientRef`, all in one order (`clientApi` 4; plans/Maps-Offline.md §2.5) |
 
 - **WebrootChat's rules:** no answer, 408, 429 and 5xx are tried again after 2, 5, 15 and 60 seconds; 401 and 403 hold
   until a sign-in or a renewed key, and an operation held three times in a row fails; another 4xx fails with the
@@ -205,7 +206,7 @@ The pages reach these through `moquiDesktop.outbox` and `moquiDesktop.drafts`, f
 
 A map region the user downloads to read with no network (plans/Maps-Offline.md §2.4, OF2; the server's part is
 [Maps, Offline packages](../tools/Maps.md#offline-packages)), kept by `moqui_client::packages`, the commands in
-`moqui_client_tauri::packages`. The offline Maps screen that reads them is OF3.
+`moqui_client_tauri::packages`, read by the shell's bundled offline Maps screen ([Maps, In the apps](../tools/Maps.md#in-the-apps)).
 
 - **Where:** `client/data/<account>.packages/<packageId>/<revision>/`, beside the store, owner-only as it is (folders
   0700, files 0600), outside `store-max-mb`, within `packages-max-mb` for the account's packages; a download starts
@@ -228,7 +229,17 @@ A map region the user downloads to read with no network (plans/Maps-Offline.md �
   offline, and the device's), `download(packageId, revision)` (`packages_download`), `cancel` (`packages_cancel`, its
   part goes), `remove` (`packages_delete`) and `status` (`packages_status`: each installed package's id, name, revision,
   size, region and zooms, and a download's `state`: `queued`, `downloading` with `done` and `total`, `checking`,
-  `installed`, `failed` with `code` and `retry`, `cancelled` or `stale` with the new `revision`). Never a path.
+  `installed`, `failed` with `code` and `retry`, `cancelled` or `stale` with the new `revision`), and
+  `addresses(packageId, text, {country, near, limit})` (`packages_addresses`: the package's Overture addresses matched
+  by the server's address matching, `moqui_lib::geo::address`, in the host). Never a path.
+- **The offline screen** (`Shell/MapsOffline`, plans/Maps-Offline.md §2.5): the drawer's Maps opens Maps' Browse in an
+  app window when the server answers and this screen when it does not (the shell's `isOffline`, from
+  `moqui.connection`), Offline maps opens it always. It lists, downloads, updates, cancels and deletes the packages;
+  opens one with `m-map` in package mode (its manifest's configuration, every request under the package's path), says
+  it is offline and when the package was built, shows its sources as text, searches its places, postal codes, Overture
+  places and addresses, and saves a place as a `map-place` outbox item. What it reads of a package's files is kept in
+  memory for the account and revision only: the URL carries no account, so after a switch the same URL is another
+  account's.
 
 ## The server's sync contracts
 
@@ -360,11 +371,13 @@ goes by `uploadChunk` in 1 MB chunks, its progress kept, and after a restart or 
 
 ## Bundled screens and app windows
 
-`shell/bundled-screens.txt` lists the screens bundled with the app: the shell's own Root and SignIn, and BasicComms'
+`shell/bundled-screens.txt` lists the screens bundled with the app: the shell's own Root, SignIn and MapsOffline (the
+offline Maps screen, [above](#offline-map-packages)), and BasicComms'
 chat panel, Chat, Inbox (Mail), Compose, Calls/Call, Calls/Dialer and Settings/Devices (My devices), from their `.qvue`
 files, the web's own source.
 They are precompiled into `shell/js/bundled-screens.js` with WebrootCall.js's components in `WebrootCall.render.js`,
-and the libraries they load (tiptap, the crypto library) are in `libs.txt`; a golden test checks both
+and the libraries they load (tiptap, the crypto library, OpenLayers' main part: a line `<lib> <part>` stages only the
+files the library's `parts.json` lists for the part) are in `libs.txt`; a golden test checks both
 (`UPDATE_GOLDEN=1 cargo test -p moqui-core --lib bundled_screens_are_precompiled`, `call_components_are_precompiled`).
 
 - **In the shell:** Root routes those screens with its own history under the account's comms app (`calls.appRoot` of the
@@ -549,12 +562,15 @@ All of these are framework tests in the regression suite, run while working on t
 ([the two suites](../Build-Test.md#the-two-suites)).
 
 - `cargo test -p moqui-client`: accounts, keys, sign-in, proxy, sockets, the store, the conf and the map packages
-  (`packages::tests`: ranges, resume, checksums, the manifest's bounds, the wipe, the caps, a 409);
+  (`packages::tests`: ranges, resume, checksums, the manifest's bounds, the wipe, the caps, a 409; `packages::addresses`:
+  a package's addresses matched as the server matches them), a saved place's outbox item (`sync::flush`), a library
+  staged by its part (`assets`);
   `scripts/check-android.sh` for the Android build.
 - `cd crates/moqui-desktop && cargo test`: the schemes, offline answers, pushes, the
   mirror, modes, the outbox and flusher, windows.
 - `moqui test-client webroot --offline`: MoquiLib's drafts and connection, WebrootChat's host outbox and import, its
-  notification rules and missed rooms.
+  notification rules and missed rooms; m-map's package mode (`WebrootMap`) and the offline Maps screen with the shell's
+  Maps entry (`ShellMapsOffline`).
 - `moqui test-client basic-comms --offline`: MD5's states in the shell (`ShellSync`: a lost answer then a retry, a
   duplicate push, a reconnect after a feed reset, a thread change's and a send's conflict with the copy opened, a
   refusal with Retry and Discard, a revoked key mid-queue) and the notification check's rows, fix and test time.

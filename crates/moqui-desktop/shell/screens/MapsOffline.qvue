@@ -1,0 +1,418 @@
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The offline Maps screen of the desktop and mobile apps (plans/Maps-Offline.md §2.5): the map packages of the account,
+    as the server lists them and as this device holds them (moquiDesktop.packages: list, status), each to download (on the
+    phone, only on Wi-Fi if asked), update, cancel and delete; and a package opened, drawn by m-map in package mode from
+    its manifest and its files at /__moqui-app/maps/<packageId>/ on the shell's origin (js/WebrootMap.js), never asking
+    another host. It says when it is offline and when the package was built, and shows the package's sources and licenses
+    as text. Search runs in the page over the package's places, postal codes and Overture places (bounded by its region),
+    and its Overture addresses through the host (packages.addresses: the server's address matching). A place saved here
+    is an outbox item (map-place: store#Place by its clientRef), sent when the server answers. Package files are read with
+    no HTTP cache (the host answers no-store) and kept in memory only for the account and revision they came from: the
+    same URL is another account's package after a switch. Bundled, precompiled (bundled-screens.txt). -->
+<template><div class="m-maps-offline">
+    <div v-if="!supported" class="q-pa-md m-muted">{{t('This app cannot keep offline maps.')}}</div>
+    <template v-else-if="!opened">
+        <div class="q-pa-md column q-gutter-y-sm">
+            <div class="row items-center q-gutter-sm">
+                <div class="text-h6 col">{{t('Offline maps')}}</div>
+                <q-chip v-if="offline" dense square color="warning" text-color="black" icon="sym_o_cloud_off" class="m-maps-offline-chip">{{t('Offline: the maps on this device')}}</q-chip>
+                <q-btn v-else flat dense no-caps color="primary" icon="sym_o_map" :label="t('Open Maps')" class="m-maps-offline-browse" @click="openBrowse"></q-btn>
+            </div>
+            <div class="text-body2 m-muted">{{t('A package holds what you could read when it was built, and stays readable on this device until you delete it here. Record layers are not included.')}}</div>
+            <div v-if="serverError && !offline" role="status" class="text-body2 text-warning m-maps-offline-server">{{t('The server\'s list did not load: only the maps on this device are listed.')}}</div>
+            <q-checkbox v-if="phone" v-model="wifiOnly" dense class="m-maps-offline-wifi" :label="t('Download only on Wi-Fi')"></q-checkbox>
+            <div v-if="error" role="alert" class="text-negative">{{error}}</div>
+        </div>
+        <q-list separator class="m-maps-offline-list">
+            <q-item v-for="row in rows" :key="row.packageId" class="m-maps-offline-row" :data-package="row.packageId">
+                <q-item-section avatar><q-icon :name="row.installed ? 'sym_o_offline_pin' : 'sym_o_cloud_download'" :color="row.installed ? 'positive' : 'grey-7'"></q-icon></q-item-section>
+                <q-item-section>
+                    <q-item-label>{{row.name || row.packageId}}</q-item-label>
+                    <q-item-label caption>{{row.caption}}</q-item-label>
+                    <q-item-label v-if="row.stateText" caption class="m-maps-offline-state" :class="row.failed ? 'text-negative' : ''">{{row.stateText}}</q-item-label>
+                    <q-linear-progress v-if="row.progress !== null" :value="row.progress" class="q-mt-xs"></q-linear-progress>
+                </q-item-section>
+                <q-item-section side class="row no-wrap items-center q-gutter-x-xs">
+                    <q-btn v-if="row.installed" flat dense no-caps color="primary" :label="t('Open')" class="m-maps-offline-open" @click="open(row)"></q-btn>
+                    <q-btn v-if="row.canDownload" flat dense no-caps color="primary" :label="row.installed ? t('Update') : t('Download')" class="m-maps-offline-download"
+                        :disable="offline" @click="download(row)"></q-btn>
+                    <q-btn v-if="row.busy" flat dense no-caps :label="t('Cancel')" class="m-maps-offline-cancel" @click="cancel(row)"></q-btn>
+                    <q-btn v-if="row.installed && !row.busy" flat dense round icon="sym_o_delete" color="negative" :aria-label="t('Delete from this device')"
+                        class="m-maps-offline-delete" @click="remove(row)"></q-btn>
+                </q-item-section>
+            </q-item>
+            <q-item v-if="loaded && !rows.length"><q-item-section class="m-muted">{{offline
+                ? t('No offline maps on this device. Download one when the server can be reached.')
+                : t('No offline maps yet. Make one in Maps, Offline maps, then download it here.')}}</q-item-section></q-item>
+        </q-list>
+    </template>
+    <template v-else>
+        <div class="q-pa-sm row items-center q-gutter-sm m-maps-offline-head">
+            <q-btn flat dense no-caps icon="sym_o_arrow_back" :label="t('All offline maps')" @click="close"></q-btn>
+            <div class="text-subtitle1 col ellipsis">{{opened.name || opened.packageId}}</div>
+            <q-chip dense square :color="offline ? 'warning' : 'grey-3'" text-color="black" :icon="offline ? 'sym_o_cloud_off' : 'sym_o_offline_pin'" class="m-maps-offline-mode">{{offline ? t('Offline') : t('On this device')}}</q-chip>
+        </div>
+        <div class="q-px-md text-caption m-muted m-maps-offline-built">{{builtText}}</div>
+        <div v-if="error" role="alert" class="q-px-md text-negative">{{error}}</div>
+        <q-form class="q-px-md q-pt-sm row items-center q-gutter-sm m-maps-offline-search" @submit="search">
+            <q-input v-model="query" dense outlined clearable class="col" :label="t('Search this map')" autocomplete="off"></q-input>
+            <q-btn type="submit" flat dense no-caps color="primary" icon="sym_o_search" :label="t('Search')" :loading="searching"></q-btn>
+        </q-form>
+        <div v-if="addressNote" class="q-px-md text-caption m-muted m-maps-offline-address-note">{{addressNote}}</div>
+        <q-list v-if="results.length || searched" dense separator class="q-mx-md q-mt-xs m-maps-offline-results">
+            <q-item v-for="result in results" :key="result.key" clickable class="m-maps-offline-result" @click="show(result)">
+                <q-item-section avatar><q-icon :name="result.icon" size="20px"></q-icon></q-item-section>
+                <q-item-section><q-item-label>{{result.label}}</q-item-label>
+                    <q-item-label caption>{{result.caption}}</q-item-label></q-item-section>
+            </q-item>
+            <q-item v-if="searched && !results.length"><q-item-section class="m-muted">{{t('Nothing in this map matches')}}</q-item-section></q-item>
+        </q-list>
+        <div class="q-pa-md">
+            <m-map v-if="mapConfig" ref="map" id="MapsOfflineMap" :config="mapConfig" height="60vh" @view-change="viewChanged" @select="selected"></m-map>
+        </div>
+        <q-form class="q-px-md row items-center q-gutter-sm m-maps-offline-save" @submit="savePlace">
+            <q-input v-model="placeName" dense outlined class="col" :label="t('Save a place: its name')" maxlength="200" autocomplete="off"></q-input>
+            <q-btn type="submit" flat dense no-caps color="primary" icon="sym_o_add_location_alt" :label="pointToSave && pointToSave.label ? t('Save this place') : t('Save the map\'s center')"
+                :disable="!placeName.trim() || !pointToSave"></q-btn>
+        </q-form>
+        <q-list v-if="queuedPlaces.length" dense class="q-mx-md m-maps-offline-queued">
+            <q-item v-for="op in queuedPlaces" :key="op.id">
+                <q-item-section avatar><q-icon name="sym_o_schedule_send" size="20px"></q-icon></q-item-section>
+                <q-item-section><q-item-label>{{op.label}}</q-item-label>
+                    <q-item-label caption :class="op.failed ? 'text-negative' : ''">{{op.stateText}}</q-item-label></q-item-section>
+                <q-item-section v-if="op.failed" side class="row no-wrap">
+                    <q-btn flat dense no-caps :label="t('Retry')" @click="retryPlace(op)"></q-btn>
+                    <q-btn flat dense no-caps :label="t('Discard')" @click="discardPlace(op)"></q-btn>
+                </q-item-section>
+            </q-item>
+        </q-list>
+        <div class="q-pa-md text-caption m-maps-offline-sources">
+            <div class="text-weight-medium">{{t('Sources')}}</div>
+            <div v-for="(source, index) in sources" :key="index" class="m-maps-offline-source">
+                <span>{{source.text}}</span><span v-if="source.licenses" class="m-muted"> · {{source.licenses}}</span>
+            </div>
+            <div class="m-muted q-mt-xs">{{notice}}</div>
+        </div>
+    </template>
+</div></template>
+
+<script>
+const t = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
+const host = () => window.moquiDesktop;
+const fill = (text, values) => String(text).replace(/\{(\w+)\}/g, (match, key) => (values[key] == null ? '' : String(values[key])));
+const message = (err) => String((err && (err.message || err.error)) || err || t('That did not work'));
+// a package's files on the shell's origin (moqui_client::packages::serve), the id a plain name
+const baseOf = (packageId) => (/^[A-Za-z0-9_.:-]{1,64}$/.test(String(packageId || '')) && !/^\.+$/.test(String(packageId)) ? '/__moqui-app/maps/' + packageId + '/' : '');
+// the host answers a file past 16 MiB only by range: a member is read in slices of that, joined
+const SLICE = 16 * 1024 * 1024;
+const readMember = async (url) => {
+    const parts = [];
+    let at = 0, total = null;
+    do {
+        const response = await fetch(url, { cache: 'no-store', headers: { Range: 'bytes=' + at + '-' + (at + SLICE - 1) } });
+        if (response.status === 200) return response.text();
+        if (response.status !== 206) throw new Error(t('Not read from this device') + ': HTTP ' + response.status);
+        const range = /\/(\d+)$/.exec(response.headers.get('Content-Range') || '');
+        total = range ? Number(range[1]) : 0;
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        if (!bytes.length) break;
+        parts.push(bytes);
+        at += bytes.length;
+    } while (at < total);
+    const joined = new Uint8Array(at);
+    let offset = 0;
+    parts.forEach((part) => { joined.set(part, offset); offset += part.length; });
+    return new TextDecoder().decode(joined);
+};
+// text folded for search: case and the marks of letters
+const fold = (value) => String(value == null ? '' : value).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+const matches = (words, ...fields) => { const all = fold(fields.filter((field) => field).join(' ')); return words.every((word) => all.includes(word)); };
+// a point within a package's region [west, south, east, north] (west past east crosses the antimeridian)
+const inBox = (bbox, lon, lat) => {
+    if (!Array.isArray(bbox) || bbox.length !== 4 || !Number.isFinite(lon) || !Number.isFinite(lat)) return Number.isFinite(lon) && Number.isFinite(lat);
+    const [west, south, east, north] = bbox.map(Number);
+    if (lat < south || lat > north) return false;
+    return west <= east ? lon >= west && lon <= east : lon >= west || lon <= east;
+};
+const RESULTS_MAX = 20;
+const bytesText = (size) => {
+    const n = Number(size) || 0;
+    if (n >= 1073741824) return (n / 1073741824).toFixed(1) + ' GB';
+    if (n >= 1048576) return (n / 1048576).toFixed(1) + ' MB';
+    return Math.max(1, Math.round(n / 1024)) + ' KB';
+};
+const dateText = (value) => {
+    if (value === null || value === undefined || value === '') return '';
+    const date = new Date(typeof value === 'number' || /^\d+$/.test(String(value)) ? Number(value) : String(value));
+    if (isNaN(date.getTime())) return '';
+    return moqui.chat && moqui.chat.dateTime ? moqui.chat.dateTime(date.getTime()) : date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+};
+
+module.exports = {
+    name: 'ShellMapsOffline',
+    data() {
+        return {
+            serverList: null, serverError: '', device: [], loaded: false, error: '', wifiOnly: false,
+            // the package opened: its row, its manifest and what was read of its files (account, id and revision)
+            opened: null, manifest: null, mapConfig: null, kept: null,
+            query: '', results: [], searched: false, searching: false, addressNote: '',
+            center: null, picked: null, placeName: '', outboxOps: [], placeKinds: false
+        };
+    },
+    computed: {
+        supported() { return !!(host() && host().packages && typeof host().packages.status === 'function'); },
+        // the phone (its notifications are its pushes, pushDelivers): a download may wait for Wi-Fi
+        phone() { return !!(host() && host().pushDelivers === true); },
+        offline() { return !!((moqui.connection && moqui.connection.offline) || (this.$root && this.$root.isOffline)); },
+        // the server's packages and the device's, one row each: what it holds, what the server has, a download's state
+        rows() {
+            const byId = new Map();
+            (Array.isArray(this.serverList) ? this.serverList : []).forEach((entry) => byId.set(String(entry.packageId), { server: entry, device: null }));
+            this.device.forEach((entry) => {
+                const id = String(entry.packageId);
+                const row = byId.get(id) || { server: null, device: null };
+                row.device = entry;
+                byId.set(id, row);
+            });
+            return Array.from(byId.entries()).map(([packageId, { server, device }]) => {
+                const download = device && device.download ? device.download : null;
+                const state = download ? download.state : '';
+                const busy = ['queued', 'downloading', 'checking'].includes(state);
+                const installed = !!(device && device.installed);
+                const serverRevision = server && server.downloadUrl ? Number(server.revision) : null;
+                const newer = serverRevision !== null && (!installed || serverRevision > Number(device.revision));
+                const built = installed ? dateText(device.builtDate) : (server ? server.builtText || dateText(server.builtDate) : '');
+                const size = installed ? bytesText(device.size) : (server && server.sizeText) || '';
+                const zooms = installed && device.minZoom != null ? device.minZoom + '–' + device.maxZoom : (server && server.zoomsText) || '';
+                const caption = [built ? t('Built') + ' ' + built : '', size, zooms ? t('Zooms') + ' ' + zooms : '',
+                    installed && newer ? t('A newer version is on the server') : ''].filter((part) => part).join(' · ');
+                let stateText = '';
+                let progress = null;
+                if (state === 'queued') stateText = this.phone && this.wifiOnly ? t('Waiting to download on Wi-Fi') : t('Waiting to download');
+                else if (state === 'downloading') {
+                    progress = download.total ? Math.min(1, download.done / download.total) : 0;
+                    stateText = fill(t('Downloading: {done} of {total}'), { done: bytesText(download.done), total: bytesText(download.total) });
+                } else if (state === 'checking') stateText = t('Checking the download');
+                else if (state === 'failed') stateText = t('Not downloaded') + ': ' + (download.reason || download.code || '') + (download.retry ? ' (' + t('try again') + ')' : '');
+                else if (state === 'stale') stateText = t('It was built again on the server: download the new version');
+                else if (!installed && server && !server.downloadUrl) stateText = server.statusText || t('Not ready on the server yet');
+                return { packageId, name: (device && device.name) || (server && server.name) || '', installed, busy, failed: state === 'failed',
+                    revision: installed ? Number(device.revision) : null, serverRevision, canDownload: newer && !busy, caption, stateText, progress,
+                    builtDate: installed ? device.builtDate : server && server.builtDate };
+            }).sort((a, b) => (a.name || a.packageId).localeCompare(b.name || b.packageId));
+        },
+        downloading() { return this.rows.some((row) => row.busy); },
+        builtText() {
+            const pkg = (this.manifest && this.manifest.package) || {};
+            const built = dateText(pkg.builtDate);
+            return [this.offline ? t('Offline: this map is read from this device') : t('Read from this device'),
+                built ? t('built') + ' ' + built : '', pkg.minZoom != null ? t('zooms') + ' ' + pkg.minZoom + '–' + pkg.maxZoom : ''].filter((part) => part).join(', ');
+        },
+        // the package's sources as text: an archive's own notice is often HTML, never shown as markup (map.packageSources)
+        sources() {
+            const list = moqui.map && moqui.map.packageSources ? moqui.map.packageSources(this.manifest) : [];
+            const kinds = { basemap: t('Basemap'), postal: t('Postal codes'), overture: t('Overture') };
+            return list.map((source) => ({ text: [kinds[source.kind] || source.kind, source.attribution, source.sourceAttribution].filter((part) => part).join(': '),
+                licenses: source.licenses.join(', ') }));
+        },
+        notice() { return moqui.map && moqui.map.plainText ? moqui.map.plainText(this.manifest && this.manifest.notice, 500) : ''; },
+        // the point a saved place takes: the last place found or chosen on the map, else the map's center
+        pointToSave() { return this.picked || this.center; },
+        // the places saved here that wait in the outbox (map-place), with their state
+        queuedPlaces() {
+            return this.outboxOps.filter((op) => op.kind === 'map-place').map((op) => {
+                const payload = op.payload || {};
+                const failed = op.state === 'failed' || op.state === 'conflict';
+                return { id: op.id, label: payload.label || t('A place'), failed,
+                    stateText: failed ? t('Not saved') + (op.error ? ': ' + op.error : '') : op.state === 'sending' ? t('Saving') : t('Waits for the server, then is saved to your places') };
+            });
+        }
+    },
+    methods: {
+        t,
+        readList() {
+            const packages = host().packages;
+            return Promise.resolve(packages.list()).then((answer) => {
+                this.serverList = answer && Array.isArray(answer.server) ? answer.server : null;
+                this.serverError = answer && answer.server == null ? String(answer.error || '') : '';
+                this.device = answer && Array.isArray(answer.device) ? answer.device : [];
+                this.loaded = true;
+            }, (err) => { this.loaded = true; this.error = message(err); });
+        },
+        readStatus() {
+            return Promise.resolve(host().packages.status()).then((device) => { this.device = Array.isArray(device) ? device : []; }, () => null);
+        },
+        // the states while a download runs, else now and then: the host's download is a task or Android's worker
+        poll() {
+            clearTimeout(this.pollTimer);
+            this.pollTimer = setTimeout(() => {
+                const before = this.downloading;
+                this.readStatus().then(() => {
+                    if (before && !this.downloading) this.readList();
+                    this.poll();
+                });
+            }, this.downloading ? 1500 : 10000);
+        },
+        act(work) {
+            this.error = '';
+            return Promise.resolve().then(work).then(() => this.readStatus(), (err) => { this.error = message(err); });
+        },
+        download(row) { return this.act(() => host().packages.download(row.packageId, row.serverRevision, this.phone && this.wifiOnly)).then(() => this.poll()); },
+        cancel(row) { return this.act(() => host().packages.cancel(row.packageId)); },
+        remove(row) {
+            this.$q.dialog({ title: t('Delete from this device'), message: fill(t('Delete the offline map {name} from this device? It stays on the server.'), { name: row.name || row.packageId }),
+                cancel: { label: t('Keep it'), flat: true, noCaps: true }, ok: { label: t('Delete'), color: 'negative', noCaps: true } })
+                .onOk(() => this.act(() => host().packages.remove(row.packageId)));
+        },
+        // Maps' Browse, the server's page (an app window; on the phone the same webview)
+        openBrowse() { host().openRemote('/qapps/maps/Browse').catch((err) => { this.error = message(err); }); },
+        // ---- a package opened ----
+        open(row) {
+            const base = baseOf(row.packageId);
+            if (!base) return;
+            this.error = '';
+            const account = moqui.storageScope || '';
+            // the map's code (moqui.map's helpers, the sources' text) loads as m-map loads it
+            const mapCode = moqui.loadScript('/js/WebrootMap.js', null, () => !!(moqui.map && moqui.map.components)).catch(() => null);
+            Promise.all([readMember(base + 'manifest.json').then((text) => JSON.parse(text)), mapCode]).then(([manifest]) => {
+                this.opened = row;
+                this.manifest = manifest;
+                // what is read of its files is this account's and this revision's only
+                this.kept = { account, packageId: row.packageId, revision: row.revision, base, members: {} };
+                this.mapConfig = { packageBase: base, manifest };
+                this.results = [];
+                this.searched = false;
+                this.picked = null;
+                this.center = null;
+                this.addressNote = '';
+                this.readOutbox();
+            }, (err) => { this.error = t('This offline map could not be opened') + ': ' + message(err); });
+        },
+        close() { this.opened = null; this.manifest = null; this.mapConfig = null; this.kept = null; this.readList(); },
+        // a JSON member of the opened package, read once for its account and revision; null when it has none
+        member(path) {
+            const kept = this.kept;
+            const listed = this.manifest && Array.isArray(this.manifest.members) && this.manifest.members.some((member) => member && member.path === path);
+            if (!kept || !listed || kept.account !== (moqui.storageScope || '')) return Promise.resolve(null);
+            if (!kept.members[path]) kept.members[path] = readMember(kept.base + path).then((text) => JSON.parse(text), (err) => {
+                delete kept.members[path];
+                throw err;
+            });
+            return kept.members[path];
+        },
+        search() {
+            const words = fold(this.query).split(/\s+/).filter((word) => word);
+            if (!words.length || !this.opened) { this.results = []; this.searched = false; return; }
+            const bbox = this.manifest && this.manifest.package && this.manifest.package.bbox;
+            this.searching = true;
+            this.error = '';
+            const found = [];
+            const add = (item) => { if (found.length < RESULTS_MAX * 4 && inBox(bbox, item.lon, item.lat)) found.push(item); };
+            const places = this.member('places.geojson').then((json) => {
+                (json && Array.isArray(json.features) ? json.features : []).forEach((feature, index) => {
+                    const props = feature && feature.properties || {};
+                    const label = moqui.map.plainText(props.label || props.name, 200);
+                    const point = feature && feature.geometry && feature.geometry.type === 'Point' ? feature.geometry.coordinates : null;
+                    if (point && matches(words, label)) add({ key: 'place:' + index, icon: 'sym_o_bookmark', label, caption: t('Your saved place'), lon: Number(point[0]), lat: Number(point[1]) });
+                });
+            });
+            const postal = this.member('postal.json').then((json) => {
+                (json && Array.isArray(json.rows) ? json.rows : []).forEach((row, index) => {
+                    const names = (Array.isArray(row.places) ? row.places : []).map((place) => [place.name, place.adminName1].filter((part) => part).join(', '));
+                    if (matches(words, row.code, row.displayCode, names.join(' '))) add({ key: 'postal:' + index, icon: 'sym_o_markunread_mailbox',
+                        label: String(row.displayCode || row.code), caption: [names[0], row.country].filter((part) => part).join(' · '), lon: Number(row.lon), lat: Number(row.lat) });
+                });
+            });
+            const overture = this.member('overture-places.json').then((json) => {
+                (json && Array.isArray(json.rows) ? json.rows : []).forEach((row, index) => {
+                    if (matches(words, row.placeName, row.brandName, row.basicCategory, row.locality)) add({ key: 'overture:' + index, icon: 'sym_o_storefront',
+                        label: String(row.placeName || row.brandName || ''), caption: [row.basicCategory, row.addressText || row.locality].filter((part) => part).join(' · '),
+                        lon: Number(row.longitude), lat: Number(row.latitude) });
+                });
+            });
+            // the package's Overture addresses: the server's address matching, in the host (packages.addresses)
+            const hasAddresses = this.manifest && Array.isArray(this.manifest.members) && this.manifest.members.some((member) => member && member.path === 'overture-addresses.json');
+            const addresses = !hasAddresses ? Promise.resolve() : typeof host().packages.addresses !== 'function'
+                ? Promise.resolve().then(() => { this.addressNote = t('Addresses are not searched by this version of the app.'); })
+                : Promise.resolve(host().packages.addresses(this.opened.packageId, this.query, { near: this.center ? [this.center.lon, this.center.lat] : null, limit: 10 }))
+                    .then((answer) => {
+                        this.addressNote = '';
+                        ((answer && answer.candidates) || []).forEach((candidate, index) => add({ key: 'address:' + index, icon: 'sym_o_home_pin', label: String(candidate.label || ''),
+                            caption: (candidate.precisionEnumId === 'GPP_ADDRESS_MATCH' ? t('Address') : t('Estimate')) + (candidate.sourceLicenses ? ' · ' + candidate.sourceLicenses : ''),
+                            lon: Number(candidate.lon), lat: Number(candidate.lat) }));
+                    });
+            const each = [addresses, places, postal, overture].map((work) => work.catch((err) => { console.warn('MapsOffline: a search did not finish', err); this.error = message(err); }));
+            return Promise.all(each).then(() => {
+                this.results = found.slice(0, RESULTS_MAX);
+                this.searched = true;
+                this.searching = false;
+            });
+        },
+        show(result) {
+            this.picked = { lon: result.lon, lat: result.lat, label: result.label };
+            if (!this.placeName) this.placeName = result.label;
+            if (this.$refs.map && this.$refs.map.showPlace) this.$refs.map.showPlace(result);
+        },
+        viewChanged(event) { if (event && Array.isArray(event.center)) this.center = { lon: event.center[0], lat: event.center[1] }; },
+        selected(event) { if (event && Number.isFinite(event.lon)) this.picked = { lon: event.lon, lat: event.lat, label: event.label || '' }; },
+        // ---- saving a place: an outbox item the host sends when the server answers ----
+        readOutbox() {
+            const outbox = host() && host().outbox;
+            if (!outbox || typeof outbox.list !== 'function') return Promise.resolve();
+            const kinds = typeof outbox.kinds === 'function' ? Promise.resolve(outbox.kinds()).catch(() => null) : Promise.resolve(null);
+            return Promise.all([Promise.resolve(outbox.list()).catch(() => []), kinds]).then(([ops, taken]) => {
+                this.outboxOps = (Array.isArray(ops) ? ops : []).map((op) => {
+                    let payload = op.payload;
+                    if (typeof payload === 'string') { try { payload = JSON.parse(payload); } catch (err) { payload = {}; } }
+                    return Object.assign({}, op, { payload: payload || {} });
+                });
+                this.placeKinds = !!(taken && Array.isArray(taken.kinds) && taken.kinds.includes('map-place'));
+            });
+        },
+        savePlace() {
+            const point = this.pointToSave;
+            const label = this.placeName.trim();
+            const outbox = host() && host().outbox;
+            if (!point || !label) return;
+            this.error = '';
+            const saved = () => { this.placeName = ''; this.$q.notify({ type: 'positive', message: fill(t('{name} is saved to your places when the server answers'), { name: label }) }); };
+            if (outbox && this.placeKinds) {
+                const clientRef = 'pl' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+                return Promise.resolve(outbox.add('map-place', { clientRef, label, longitude: point.lon, latitude: point.lat }))
+                    .then(() => { saved(); return this.readOutbox(); }, (err) => { this.error = message(err); });
+            }
+            // a server that takes no place by its clientRef: saved now, or not at all offline
+            if (this.offline) { this.error = t('Saving a place needs a connection to this server'); return; }
+            return moqui.request('/apps/maps/Browse/savePlace', { method: 'POST', params: { label, longitude: point.lon, latitude: point.lat } }).then((result) => {
+                const json = result.json || {};
+                if (json.applied) { this.placeName = ''; this.$q.notify({ type: 'positive', message: fill(t('{name} is saved to your places'), { name: label }) }); }
+                else this.error = String(json.reason || json.errors || t('The place was not saved'));
+            }, (err) => { this.error = message(err && err.json && err.json.errors ? err.json.errors : err); });
+        },
+        retryPlace(op) { return Promise.resolve(host().outbox.retry(op.id)).then(() => this.readOutbox(), (err) => { this.error = message(err); }); },
+        discardPlace(op) { return Promise.resolve(host().outbox.discard(op.id)).then(() => this.readOutbox(), (err) => { this.error = message(err); }); }
+    },
+    mounted() {
+        if (!this.supported) return;
+        this.readList().then(() => this.poll());
+        const outbox = host().outbox;
+        if (outbox && typeof outbox.on === 'function') this.outboxOff = outbox.on(() => { if (this.opened) this.readOutbox(); });
+    },
+    unmounted() {
+        clearTimeout(this.pollTimer);
+        if (this.outboxOff) this.outboxOff();
+    }
+};
+</script>

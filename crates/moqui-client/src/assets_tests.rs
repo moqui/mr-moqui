@@ -20,7 +20,10 @@ fn fixture(name: &str) -> (Assets, PathBuf) {
     let dir = std::env::temp_dir().join(format!("moqui-client-assets-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let files = [
-        ("shell/libs.txt", "# the libraries\nvue\n\nmatrix-sdk-crypto\n"),
+        (
+            "shell/libs.txt",
+            "# the libraries\nvue\n\nmatrix-sdk-crypto\nopenlayers main\n",
+        ),
         ("shell/index.html", "<script src=\"/shell/js/shell.js\"></script>"),
         ("shell/js/shell.js", "shell()"),
         ("webroot/js/MoquiLib.js", "lib()"),
@@ -32,6 +35,14 @@ fn fixture(name: &str) -> (Assets, PathBuf) {
         ("webroot/libs/vue/vue.js", "vue()"),
         ("webroot/libs/matrix-sdk-crypto/pkg/crypto_bg.wasm", "wasm"),
         ("webroot/libs/mermaid/mermaid.min.js", "mermaid()"),
+        (
+            "webroot/libs/openlayers/parts.json",
+            "{\"main\": [\"ol-map.json\", \"ol-map-A.min.js\", \"chunks/chunk-B.min.js\"]}",
+        ),
+        ("webroot/libs/openlayers/ol-map.json", "{}"),
+        ("webroot/libs/openlayers/ol-map-A.min.js", "main()"),
+        ("webroot/libs/openlayers/chunks/chunk-B.min.js", "chunk()"),
+        ("webroot/libs/openlayers/ol-raster-C.min.js", "raster()"),
         ("Cargo.toml", "outside"),
     ];
     for (path, text) in files {
@@ -90,6 +101,16 @@ fn the_shell_serves_its_page_scripts_and_libraries_and_nothing_else() {
         assert!(assets.file_of(path).is_none(), "{path}");
     }
     assert!(assets.read("/js/NoSuchFile.js").is_none());
+    // a library staged by its main part (plans/Maps-Offline.md §2.5): the files its parts.json lists, not the raster part
+    for path in [
+        "/libs/openlayers/ol-map.json",
+        "/libs/openlayers/ol-map-A.min.js",
+        "/libs/openlayers/chunks/chunk-B.min.js",
+    ] {
+        assert!(assets.read(path).is_some(), "{path}");
+    }
+    assert!(assets.file_of("/libs/openlayers/ol-raster-C.min.js").is_none());
+    assert!(assets.file_of("/libs/openlayers/parts.json").is_none());
     // a library libs.txt does not name is not served, though its files are there
     assert!(assets.file_of("/libs/mermaid/mermaid.min.js").is_none());
     assert!(assets.read("/libs/mermaid/mermaid.min.js").is_none());
