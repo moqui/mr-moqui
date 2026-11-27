@@ -399,7 +399,7 @@ feature("an emergency call is refused with what is missing, then routed through 
         const email = emails.length
         // its subject names the caller and the place (SEC-COM-30)
         const subject = emails.length ? String(emails[0].subject || "") : ""
-        const body = emails.length ? String(emails[0].body || "") : "
+        const body = emails.length ? String(emails[0].body || "") : ""
         policy({maxConcurrentPerUser: 2})
         return {missing, emergencyTrunk, ordinary, blocked, routed, capsBefore, capsAfter, email, subject, body, legs: legs(routed.callSessionId)}
     },

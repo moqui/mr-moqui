@@ -326,7 +326,7 @@ feature("a message the edge node queued is stored in the number's box, only from
     then({refused, onEdge, recordingOnEdge, stored, outside, row, box, audio}) {
         refused.reasonCode == "notAllowed"
         onEdge.reasonCode == "notAllowed"
-        recordingOnEdge.reasonCode == "notAllowed"
+        recordingOnEdge.errors.includes("stores no recording a paired node sends")
         stored.errors == ""
         row.fromNumber == "+15557771111"
         row.statusId == "VmsStored"
