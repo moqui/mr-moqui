@@ -38,6 +38,13 @@ pub const STOP_PATH: &str = "/qapps/stopClientLocation";
 
 /// The shortest wait after a failure with no answer, in milliseconds, so a lost network is not asked in a loop.
 const RETRY_MIN_MS: i64 = 5_000;
+/// The wait after a 429 that is not the transition's (the server's tarpit, a proxy) and names no wait of its own.
+const BUSY_WAIT_MS: i64 = 30_000;
+/// The longest a report or a stop may take, its answer included: a half-open connection gives up then, and the
+/// point waits for the next try ([`post_form`]), rather than the proxy's ten minutes for a page's request.
+pub const POST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+/// Where [`post_form`] puts the `Retry-After` of an answer that is not JSON, for [`Reporter::answered`].
+pub const RETRY_AFTER: &str = "retryAfterHeader";
 
 /// One fix of the device's location, as the phone took it.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -153,6 +160,8 @@ pub struct Reporter {
     server_time: bool,
     in_flight: bool,
     stopped: Option<Stopped>,
+    /// An `OTHER_DEVICE` across a renewal of the device key was tried again once.
+    renewal_retried: bool,
 }
 
 impl Reporter {
@@ -168,6 +177,7 @@ impl Reporter {
             server_time: false,
             in_flight: false,
             stopped: None,
+            renewal_retried: false,
         }
     }
 
@@ -244,6 +254,19 @@ impl Reporter {
     /// The server's answer to the report of `sent` (its HTTP status and JSON, or the failure of a request with no
     /// answer), at `now_ms`.
     pub fn answered(&mut self, sent: Fix, answer: Result<(u16, Value), String>, now_ms: i64) -> Outcome {
+        self.answered_after(sent, answer, now_ms, false)
+    }
+
+    /// [`Self::answered`], with `key_changed` when the account's device key changed while the report was posted (a
+    /// renewal: the server moves the device's shares to the new key before the client keeps it, so a report with the
+    /// old key may be refused as another device's). Such an `OTHER_DEVICE` is tried again at once, once.
+    pub fn answered_after(
+        &mut self,
+        sent: Fix,
+        answer: Result<(u16, Value), String>,
+        now_ms: i64,
+        key_changed: bool,
+    ) -> Outcome {
         self.in_flight = false;
         if let Some(why) = self.stopped {
             return Outcome::Stopped(why);
@@ -258,8 +281,21 @@ impl Reporter {
         if http >= 500 {
             return self.again(sent, now_ms, self.interval_ms.max(RETRY_MIN_MS));
         }
-        // an answer that is not the transition's JSON (a sign-in page): the key no longer signs in
         let Some(status) = json.get("statusCode").and_then(Value::as_i64) else {
+            // a timeout or a limit of something between (the server's tarpit, a proxy): tried again after its wait
+            if http == 408 || http == 429 {
+                let default = if http == 429 {
+                    BUSY_WAIT_MS
+                } else {
+                    self.interval_ms.max(RETRY_MIN_MS)
+                };
+                let wait = json
+                    .get(RETRY_AFTER)
+                    .and_then(Value::as_i64)
+                    .map_or(default, |seconds| seconds.clamp(1, 3600) * 1000);
+                return self.again(sent, now_ms, wait);
+            }
+            // an answer that is not the transition's JSON (a sign-in page): the key no longer signs in
             return self.stop(Stopped::SignedOut);
         };
         let reason = json.get("reasonCode").and_then(Value::as_str).unwrap_or("");
@@ -279,6 +315,10 @@ impl Reporter {
             }
             (410, _) => self.stop(Stopped::Ended),
             (404, _) => self.stop(Stopped::NotFound),
+            (409, "OTHER_DEVICE") if key_changed && !self.renewal_retried => {
+                self.renewal_retried = true;
+                self.again(sent, now_ms, 0)
+            }
             (409, "OTHER_DEVICE") => self.stop(Stopped::OtherDevice),
             (409, "CLOCK_AHEAD") | (400, "BEFORE_SHARE") => {
                 // the device's clock is off from the server's: the server's time from now on, this point again now
@@ -342,6 +382,54 @@ impl Reporter {
             None => done,
         }
     }
+}
+
+/// A form posted to `path` on the account's server at `base`, signed by its device key `key`, through `proxy` within
+/// `timeout` ([`POST_TIMEOUT`]): the answer's HTTP status and JSON (null when it is not JSON; then its `Retry-After`
+/// in seconds, if any, as [`RETRY_AFTER`]), or why there was none. The error names the server, never the form.
+///
+/// # Errors
+///
+/// When no answer came within `timeout` (or none at all).
+pub fn post_form(
+    proxy: &crate::proxy::Proxy,
+    base: &str,
+    key: &str,
+    path: &str,
+    form: &[(&str, &str)],
+    timeout: std::time::Duration,
+) -> Result<(u16, Value), String> {
+    let body = url::form_urlencoded::Serializer::new(String::new())
+        .extend_pairs(form.iter().copied())
+        .finish();
+    let request = crate::proxy::Request {
+        method: "POST".to_string(),
+        path: path.to_string(),
+        headers: vec![
+            ("Accept".to_string(), "application/json".to_string()),
+            (
+                "Content-Type".to_string(),
+                "application/x-www-form-urlencoded".to_string(),
+            ),
+            ("X-Requested-With".to_string(), "XMLHttpRequest".to_string()),
+        ],
+        body: body.into_bytes(),
+    };
+    let upstream = proxy
+        .send_within(base, Some(key), crate::SHELL_ORIGIN, request, Some(timeout))
+        .map_err(|err| err.to_string())?;
+    let status = upstream.status;
+    let retry_after = upstream
+        .headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("retry-after"))
+        .and_then(|(_, value)| value.trim().parse::<i64>().ok());
+    let bytes = upstream.body().map_err(|err| err.to_string())?;
+    let json = match serde_json::from_slice::<Value>(&bytes) {
+        Ok(json) => json,
+        Err(_) => retry_after.map_or(Value::Null, |seconds| serde_json::json!({ RETRY_AFTER: seconds })),
+    };
+    Ok((status, json))
 }
 
 #[cfg(test)]

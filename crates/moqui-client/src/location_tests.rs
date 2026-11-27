@@ -243,3 +243,130 @@ fn a_fix_is_read_from_the_native_codes_json_and_a_bad_one_is_none() {
     assert_eq!(Outcome::Stopped(Stopped::Ended).to_json()["reason"], "ended");
     assert_eq!(Outcome::Waiting(3_000).to_json()["waitMs"], 3_000);
 }
+
+#[test]
+fn a_408_or_a_429_that_is_not_the_transitions_waits_and_tries_again() {
+    let server = Server::new();
+    let mut reporter = Reporter::new("100", INTERVAL);
+    // a proxy's 429 naming its wait (Retry-After, as post_form gives it)
+    let busy = json!({ RETRY_AFTER: 7 });
+    assert_eq!(
+        reporter.report(Some(fix(40.1, 1_000)), 1_000, server.answer(429, busy)),
+        Outcome::Waiting(7_000)
+    );
+    // with no wait named: half a minute
+    assert_eq!(
+        reporter.report(None, 8_000, server.answer(429, Value::Null)),
+        Outcome::Waiting(30_000)
+    );
+    // a 408: after the interval
+    assert_eq!(
+        reporter.report(None, 38_000, server.answer(408, Value::Null)),
+        Outcome::Waiting(INTERVAL)
+    );
+    assert_eq!(reporter.report(None, 43_000, server.answer(200, ok())), Outcome::Sent);
+    assert_eq!(server.count(), 4);
+    assert_eq!(server.field(3, "latitude").as_deref(), Some("40.1"));
+    assert_eq!(reporter.stopped(), None);
+}
+
+#[test]
+fn another_device_across_a_key_renewal_is_tried_again_once() {
+    let mut reporter = Reporter::new("100", INTERVAL);
+    let other = || Ok((200, json!({ "statusCode": 409, "reasonCode": "OTHER_DEVICE" })));
+    reporter.offer(fix(40.1, 1_000));
+    let Next::Send(sent, _) = reporter.next(1_000) else {
+        panic!("nothing to send")
+    };
+    // the key changed while it was posted: once more at once, with the new key
+    assert_eq!(reporter.answered_after(sent, other(), 1_000, true), Outcome::Waiting(0));
+    let Next::Send(again, form) = reporter.next(1_000) else {
+        panic!("not sent again")
+    };
+    assert_eq!(again, sent);
+    assert!(form.iter().any(|(name, value)| name == "latitude" && value == "40.1"));
+    // refused again: another device sends it
+    assert_eq!(
+        reporter.answered_after(again, other(), 1_000, true),
+        Outcome::Stopped(Stopped::OtherDevice)
+    );
+    // with the key unchanged it stops at the first
+    let mut plain = Reporter::new("101", INTERVAL);
+    plain.offer(fix(40.1, 1_000));
+    let Next::Send(sent, _) = plain.next(1_000) else {
+        panic!("nothing to send")
+    };
+    assert_eq!(
+        plain.answered_after(sent, other(), 1_000, false),
+        Outcome::Stopped(Stopped::OtherDevice)
+    );
+}
+
+/// A server on loopback that reads a request (up to its form) and answers `reply`: its base URL, and what it read.
+fn answering(reply: &'static [u8]) -> (String, std::thread::JoinHandle<String>) {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut seen = Vec::new();
+        let mut buffer = [0_u8; 4096];
+        while !String::from_utf8_lossy(&seen).contains("latitude=") {
+            let read = stream.read(&mut buffer).unwrap();
+            if read == 0 {
+                break;
+            }
+            seen.extend_from_slice(&buffer[..read]);
+        }
+        stream.write_all(reply).unwrap();
+        String::from_utf8_lossy(&seen).to_string()
+    });
+    (base, server)
+}
+
+/// A post that gets no answer gives up within its timeout, not the proxy's ten minutes; one answered gives its JSON,
+/// and the `Retry-After` of one that is not JSON.
+#[test]
+fn a_report_gives_up_at_its_timeout_and_reads_the_answer() {
+    let proxy = crate::proxy::Proxy::new().unwrap();
+    // a server that takes the connection and never answers (half-open)
+    let silent = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", silent.local_addr().unwrap());
+    let held = std::thread::spawn(move || {
+        let (stream, _) = silent.accept().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1_500));
+        drop(stream);
+    });
+    let started = std::time::Instant::now();
+    let quick = std::time::Duration::from_millis(500);
+    let answer = post_form(&proxy, &base, "k", REPORT_PATH, &[("shareId", "100")], quick);
+    assert!(answer.is_err(), "{answer:?}");
+    assert!(
+        started.elapsed() < std::time::Duration::from_millis(1_200),
+        "{:?}",
+        started.elapsed()
+    );
+    held.join().unwrap();
+    // an answer: its JSON, and the form as posted with the key
+    let (base, server) = answering(
+        b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 18\r\nConnection: close\r\n\r\n{\"statusCode\":200}",
+    );
+    let answer = post_form(
+        &proxy,
+        &base,
+        "k",
+        REPORT_PATH,
+        &[("shareId", "100"), ("latitude", "40.5")],
+        POST_TIMEOUT,
+    );
+    let seen = server.join().unwrap();
+    assert_eq!(answer.unwrap(), (200, json!({ "statusCode": 200 })));
+    assert!(seen.starts_with("POST /qapps/reportClientLocation"), "{seen}");
+    assert!(seen.to_ascii_lowercase().contains("login_key: k"), "{seen}");
+    let (base, server) = answering(
+        b"HTTP/1.1 429 Too Many Requests\r\nRetry-After: 12\r\nContent-Length: 4\r\nConnection: close\r\n\r\nbusy",
+    );
+    let answer = post_form(&proxy, &base, "k", REPORT_PATH, &[("latitude", "40.5")], POST_TIMEOUT);
+    server.join().unwrap();
+    assert_eq!(answer.unwrap(), (429, json!({ RETRY_AFTER: 12 })));
+}
