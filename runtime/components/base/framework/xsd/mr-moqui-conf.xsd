@@ -31,6 +31,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:element minOccurs="0" ref="push"/>
                 <xs:element minOccurs="0" ref="load-runner"/>
                 <xs:element minOccurs="0" ref="maps"/>
+                <xs:element minOccurs="0" ref="location"/>
                 <xs:element minOccurs="0" ref="cluster-member"/>
                 <xs:element minOccurs="0" ref="xmpp-server"/>
                 <xs:element minOccurs="0" ref="sip-server"/>
@@ -2417,6 +2418,32 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="package-keep-days" type="non-neg-int-expandable" default="30"><xs:annotation><xs:documentation>
                 How many days an offline map package's file is kept with no download (from when it was built, or last
                 downloaded) before the hourly clean removes it; Update builds it again.</xs:documentation></xs:annotation></xs:attribute>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="location">
+        <xs:annotation><xs:documentation>Shared live location (plans/Location-Sharing.md §3.1): the limits of the shares a
+            person starts (org.moqui.maps.LocationServices). The shares, their audiences, the latest positions and the kept
+            trails are entity rows, not settings.</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:attribute name="max-share-hours" type="non-neg-int-expandable" default="24"><xs:annotation><xs:documentation>
+                The longest a share runs, in hours from its start or from its owner's last extension; every share has an
+                end within it.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="trail-max-days" type="non-neg-int-expandable" default="30"><xs:annotation><xs:documentation>
+                The longest a trail stays after its share ends, in days, for a share whose owner chose to keep one; the
+                hourly clean#LocationShares deletes the points past the share's own trailKeepDays.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="min-interval-seconds" type="non-neg-int-expandable" default="5"><xs:annotation><xs:documentation>
+                The shortest time between two positions a share takes, in seconds: a sooner report is answered 429 and
+                dropped.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="approximate-interval-seconds" type="non-neg-int-expandable" default="60"><xs:annotation><xs:documentation>
+                The shortest time between two positions an approximate share takes, in seconds (at least
+                min-interval-seconds), so its cell changes tell less of a path.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="max-active-shares" type="non-neg-int-expandable" default="20"><xs:annotation><xs:documentation>
+                The most shares one person has on at once.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="max-audience" type="non-neg-int-expandable" default="50"><xs:annotation><xs:documentation>
+                The most people (a group's current members counted each), XMPP contacts and links one share
+                has.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="link-max-views-per-minute" type="non-neg-int-expandable" default="30"><xs:annotation><xs:documentation>
+                The most reads a minute of a guest link's page, for one link.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
     <xs:element name="cluster-member">

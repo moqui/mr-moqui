@@ -381,6 +381,8 @@ pub static CATALOG: &[Unit] = &[
     // how long their files are kept (package-max-bytes, package-user-max-bytes, package-concurrent-builds,
     // package-keep-days: plans/Maps-Offline.md)
     single("maps", Class::Live),
+    // shared live location (plans/Location-Sharing.md §3.1): read at each share, report and clean
+    single("location", Class::Live),
     single("media-server", LISTENER)
         .children(&[single("turn-server", LISTENER).secrets(&[("auth-secret", Secret::Generated)])]),
     single("calls", Class::Live).children(&[
