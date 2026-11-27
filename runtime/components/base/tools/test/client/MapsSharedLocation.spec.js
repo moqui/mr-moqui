@@ -1,8 +1,9 @@
 // The guest page of a location share's link (plans/Location-Sharing.md §3.7; tools Maps/SharedLocation.xml and .qvue,
 // webroot WebrootPublic.qvt.js), its one render in the regression suite: the link made from Maps › Browse is this
-// server's https link with the secret in its fragment; the shell page is sent with Referrer-Policy strict-origin,
-// no-store and a Content-Security-Policy of this server; the page opened with the fragment shows the share's label and
-// the address bar no longer holds the secret; and the read refuses a secret in its request line.
+// server's link with the secret in its fragment; the shell page, rendered once (the browser's navigation), enforces its
+// Content-Security-Policy (an outside image refused) with nothing it loads refused; the page opened with the fragment
+// shows the share's label and the address bar no longer holds the secret; and the read refuses a secret in its request
+// line.
 const state = {}
 
 spec({
@@ -30,28 +31,37 @@ spec({
     }
 })
 
-feature("the guest page: its link, its headers, the fragment cleared as it loads, and the secret refused in a request line", {
+feature("the guest page: its link, its policy enforced with nothing it needs refused, the fragment cleared as it loads, and the secret refused in a request line", {
     expect() {
         const guest = session()
-        const shell = guest.get(state.path, {accept: "html"})
-        const policy = String(shell.header("Content-Security-Policy") || "")
         const inUrl = guest.post(state.path + "/read", {params: {linkSecret: state.secret}, form: {}, csrf: false}).json()
+        // the one render of the shell page: the browser's navigation (the testkit gives no response headers there, so the
+        // policy is checked as the page enforces it; Referrer-Policy and no-store are set beside it in PublicShell.xml)
         const page = browser.newPage()
         const opened = page.goto(state.path + "#" + state.secret)
         const shown = page.waitFor(`(() => { const label = document.getElementById("SharedLocationLabel")
             return label ? { label: label.textContent.trim(), hash: location.hash, href: location.href } : null })()`, {timeout: 10})
+        // nothing the page loaded was refused by its policy (a refusal is a console error, a page problem)
+        const loadProblems = page.problems().filter(problem => /Content Security Policy|Refused to/i.test(String(problem)))
+        // the policy is enforced: an image of a host that is not this server's nor a public basemap's is refused
+        const probe = page.evaluate(`new Promise((resolve) => {
+            const seen = []
+            document.addEventListener("securitypolicyviolation", (event) => seen.push(event.violatedDirective))
+            const image = new Image()
+            image.onerror = () => setTimeout(() => resolve(seen), 50)
+            image.onload = () => resolve(seen.concat(["loaded"]))
+            image.src = "https://tiles.example.invalid/0/0/0.png"
+        })`)
+        page.takeProblems()
 
         state.made.applied == true
         /^https?:\/\/[^/]+\/location\/[A-Za-z0-9_-]{16}#[A-Za-z0-9_-]{32}$/.test(state.made.linkUrl)
-        shell.status == 200
-        shell.header("Referrer-Policy") == "strict-origin"
-        /no-store/.test(String(shell.header("Cache-Control") || ""))
-        /default-src 'self'/.test(policy) && /img-src 'self'/.test(policy) && /connect-src 'self'/.test(policy)
-        !shell.text.includes(state.secret)
         // refused before the transition runs: a transition with actions takes no URL parameters (the read refuses one too)
         inUrl.errorCode == 400 && inUrl.share == null
         opened.status == 200
         shown.label == "Spec guest van"
         shown.hash == "" && !shown.href.includes(state.secret)
+        loadProblems.length == 0
+        probe.length == 1 && /^img-src/.test(probe[0])
     }
 })

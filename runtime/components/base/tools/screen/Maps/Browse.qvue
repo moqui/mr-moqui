@@ -453,6 +453,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <div class="text-body2">{{t('Your location is shared until')}} {{untilText(shareMade.thruDate)}}. {{t('This page sends it while it is open; close it and the people you chose see how old the last position is.')}}</div>
                 <div v-if="shareMade.linkUrl" class="q-mt-sm m-tonal q-pa-sm" id="MapsShareLinkToken">
                     <div class="text-caption">{{t('The guest link, shown this once: send it now to whom it is for. Anyone with it sees where you are until the share ends.')}}</div>
+                    <div v-if="shareMade.linkPathOnly" class="text-caption text-warning">{{t('This server\'s web address is not configured: put its address before this path.')}}</div>
                     <div class="row items-center no-wrap q-mt-xs">
                         <code class="col" style="overflow-wrap:anywhere">{{shareMade.linkUrl}}</code>
                         <q-btn dense flat round icon="sym_o_content_copy" :aria-label="t('Copy')" @click="copyText(shareMade.linkUrl)"></q-btn>
@@ -1303,7 +1304,7 @@ module.exports = {
         postShare(params) {
             return this.request('createShare', { method: 'POST', params }).then((json) => {
                 if (!json.applied) { this.shareError = json.reason || t('Your location was not shared'); return null; }
-                this.shareMade = { shareId: json.shareId, thruDate: json.thruDate, linkUrl: json.linkUrl || null };
+                this.shareMade = { shareId: json.shareId, thruDate: json.thruDate, linkUrl: json.linkUrl || null, linkPathOnly: !!json.linkPathOnly };
                 // shared by this page from now on, while it is open, at the share's precision and interval
                 const approximate = params.precisionEnumId === 'LspApproximate';
                 const form = this.shareForm;

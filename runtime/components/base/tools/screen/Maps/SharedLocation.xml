@@ -16,8 +16,9 @@ along with this software (see the LICENSE.md file). If not, see
     with no account, at /location/<selector>#<secret>: the token-route "location" of tools MoquiConf.xml renders it in the
     public shell after org.moqui.maps.LocationServices.check#LinkKey accepted the selector. The selector names the link and
     is not its credential; the secret is in the URL's fragment, which no request line, server log or Referer carries: the
-    page (SharedLocation.qvue) takes it from the fragment, clears it from the address bar and posts it to the read
-    transition, in the body. It shows only the share's label, its purpose text (an ETA the sender wrote) and its latest
+    public shell takes it as WebrootPublic.qvt.js loads, before this page, and clears it from the address bar
+    (moqui.routeFragment, kept for the tab, cleared once the read answers the link ended or not found), and the page
+    (SharedLocation.qvue) posts it to the read transition, in the body. It shows only the share's label, its purpose text (an ETA the sender wrote) and its latest
     position with its age, on the country outline or the one basemap the installation marks public (MapLayer isPublic),
     and as text with no map where none draws; it answers nothing else. No session is needed. The read is
     get#LinkShare's: at most location@link-max-views-per-minute a minute, a wrong secret counted on the link and the

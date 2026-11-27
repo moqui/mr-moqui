@@ -77,6 +77,11 @@ module.exports = {
                 if (json.statusCode === 429) return;
                 this.share = null;
                 this.stop();
+                // an ended link, or one not found: its secret is not kept for the tab any more
+                if ((json.statusCode === 410 || json.statusCode === 404 || json.statusCode === 403) && typeof moqui.clearRouteFragment === 'function') {
+                    moqui.clearRouteFragment();
+                    pageSecret = null;
+                }
                 this.message = json.statusCode === 410 ? t('This location share has ended.') : t('This link has expired or was not found.');
             }, () => {});
         },

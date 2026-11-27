@@ -61,6 +61,7 @@
     // the tab (session storage) so a reload still reads it, and the page asks for it by moqui.routeFragment(). The first
     // URL may still be in the browser's history and its sync, which keep what was opened.
     let routeFragment = null;
+    let routeFragmentKey = null;
     (() => {
         const element = pageConfigElement(root.document);
         if (!element || !root.location) return;
@@ -68,6 +69,7 @@
         try { config = JSON.parse(element.textContent); } catch (err) { return; }
         if (!config || !config.route || config.route.name !== "location") return;
         const key = "moqui.routeFragment:" + config.route.basePath;
+        routeFragmentKey = key;
         const hash = String(root.location.hash || "").replace(/^#/, "");
         if (hash) {
             routeFragment = hash;
@@ -78,6 +80,11 @@
         }
     })();
     if (moqui) moqui.routeFragment = () => routeFragment;
+    // the page's "this link has ended or was not found": the secret forgotten, here and in the tab's storage
+    if (moqui) moqui.clearRouteFragment = () => {
+        routeFragment = null;
+        if (routeFragmentKey) { try { root.sessionStorage.removeItem(routeFragmentKey); } catch (err) { /* nothing kept */ } }
+    };
 
     const queryOf = (search) => {
         const out = {};
