@@ -1038,7 +1038,7 @@ function clean() {
 }
 
 /**
- * get#ShellIndicator, the shell-indicator provider of Maps (plans/Location-Sharing.md §1 "Visible to everyone it
+ * get#ShellIndicator, the shell-indicator provider the framework's conf registers for every signed-in user (plans/Location-Sharing.md §1 "Visible to everyone it
  * concerns", §3.3): while the caller has any active share of their own, the app bar's "Sharing location" chip on every
  * screen, to Maps › Browse's Who sees my location. A count of the caller's own shares, no audience or position read; asked
  * again by the shell at the soonest end and on the owner's own pushes of a share's start, change or end.
@@ -1069,7 +1069,7 @@ function indicator() {
                 tone: "positive",
                 title: ec.l10n.localize("Who sees my location"),
                 url: "/qapps/maps/Browse?panel=live",
-                refreshAt: Math.min(...ends)
+                refreshInSeconds: Math.max(0, Math.ceil((Math.min(...ends) - now) / 1000))
             }
         ],
         refreshOn

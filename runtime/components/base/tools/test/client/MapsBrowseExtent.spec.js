@@ -47,7 +47,7 @@ feature("Browse is the MapsBrowse component with its map, opened on an extent ac
         // Share my location with a guest link starts one, sent from this page (the browser's position stood in for, as
         // watchPosition gives it) through reportPosition, its banner shown and its latest drawn on m-map's live layer as the
         // audience reads it; Stop ends it and the page stops sending
-        let started, drawn, shown, chip, markup, panel, stopped
+        let started, drawn, shown, chip, markup, failedRead, panel, stopped
         try {
             started = page.evaluate(`(async () => {
                 const vm = (${browse})()
@@ -75,7 +75,7 @@ feature("Browse is the MapsBrowse component with its map, opened on an extent ac
                     feature: !!(view.liveSource && view.liveSource.getFeatureById("live:" + share.shareId)) } : null })()`, {timeout: 10})
             // the dialog shows the guest link's token this once, until Done
             shown = page.locator("#MapsShareLinkToken").text()
-            // the app bar's chip (the shell's indicator of Maps' shell-indicator provider): Sharing location, sending here;
+            // the app bar's chip (the shell's indicator of the framework's live-location shell-indicator provider): Sharing location, sending here;
             // and an indicator's label is text, whatever it holds
             chip = page.waitFor(`(() => { const chip = document.getElementById("m-indicator-locationSharing")
                 return chip && /sending here/.test(chip.textContent) ? { text: chip.textContent, aria: chip.getAttribute("aria-label") } : null })()`, {timeout: 10})
@@ -84,6 +84,18 @@ feature("Browse is the MapsBrowse component with its map, opened on an extent ac
                 const out = chip ? { text: chip.textContent, img: !!chip.querySelector("img") } : null
                 if (chip) moqui.shellIndicators.remove("specMarkup")
                 return out })()`, {timeout: 5})
+            // a read of the user's own shares that fails (mineFailed) hides nothing and stops nothing: the page keeps the
+            // share it had and goes on sending it
+            failedRead = page.evaluate(`(async () => {
+                const vm = (${browse})()
+                const request = vm.request
+                const before = vm.myShares.map((share) => share.shareId).join()
+                vm.request = (name, options) => name === "locationShares"
+                    ? Promise.resolve({ locationShares: [], failed: true, mineFailed: true, theirsFailed: false }) : request.call(vm, name, options)
+                try { await vm.refreshShares() } finally { vm.request = request }
+                await new Promise((resolve) => setTimeout(resolve, 50))
+                return { before, kept: vm.myShares.map((share) => share.shareId).join(), sending: vm.sending.join(), gone: vm.liveGone.length }
+            })()`)
             page.getByRole("button", {name: "Done"}).click()
             page.locator(".q-dialog__backdrop").waitFor({state: "detached", timeout: 5})
             // the Live location panel: Who sees my location lists it with its audience and its acts; nobody shares with this user
@@ -95,11 +107,16 @@ feature("Browse is the MapsBrowse component with its map, opened on an extent ac
                 return !document.querySelector('[data-maps-sharing="' + ${JSON.stringify(started.shareId)} + '"]') && !vm.sending.length && !document.getElementById("m-indicator-locationSharing")
                     ? { mine: vm.myShares.length, watching: vm.watchId === null } : null })()`, {timeout: 10})
         } finally {
-            // a run that failed on the way leaves no active share: the one the page started is stopped (again, harmlessly)
-            page.evaluate(`(async () => { const vm = (${browse})()
-                const id = vm && vm.shareMade && vm.shareMade.shareId
-                if (id) await vm.request("stopShare", { method: "POST", params: { shareId: id } }).catch(() => null)
-                return true })()`)
+            // a run that failed on the way leaves no active share: the one the page started is stopped (again, harmlessly);
+            // a page too broken for that does not hide the failure that broke it
+            try {
+                page.evaluate(`(async () => { const vm = (${browse})()
+                    const id = vm && vm.shareMade && vm.shareMade.shareId
+                    if (id) await vm.request("stopShare", { method: "POST", params: { shareId: id } }).catch(() => null)
+                    return true })()`)
+            } catch (err) {
+                log.warn("MapsBrowseExtent: the share was not stopped at the end: " + (err && err.message ? err.message : err))
+            }
         }
         started.configured == true
         started.shareId != null
@@ -120,5 +137,9 @@ feature("Browse is the MapsBrowse component with its map, opened on an extent ac
         chip.aria == "Sharing location · sending here"
         markup.text.includes("<img src=x>Spec")
         markup.img == false
+        failedRead.before == started.shareId
+        failedRead.kept == started.shareId
+        failedRead.sending == started.shareId
+        failedRead.gone == 0
     }
 })

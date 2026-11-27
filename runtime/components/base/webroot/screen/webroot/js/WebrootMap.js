@@ -99,7 +99,8 @@
  * Events: pick ({lon, lat}, also the DOM event m-map-pick with that detail, which bubbles), select (a place or a feature:
  * {id, lon, lat, label}, with layerId for a record layer's feature; an overlay layer's feature is kind "overlay" with its
  * layerId, layerLabel and description, label and description plain text (map.plainText), shown as text, never as markup)
- * and view-change ({center, zoom, extent}), and live-change ({shares}: the live shares, as held, after each change; a live
+ * and view-change ({center, zoom, extent}), and live-change ({shares, removed}: the live shares, as held, after each change, and the share an ended or a viewer's revoked
+ * push took off; a live
  * share selected is a select of kind liveShare with its shareId). A feature is selected by a click, or from the keyboard by Enter on the map,
  * which selects the feature at its center (map.nearestFeature, 12 pixels; a map that asks for a choice takes the center
  * instead); the selection is announced. Each place listed has Copy, which puts its latitude, longitude on the clipboard.
@@ -1568,7 +1569,7 @@
                 this.liveChanged();
             },
             // After a change of the shares: the topics followed, the layer drawn, the ticking of ages, and live-change emitted.
-            liveChanged() {
+            liveChanged(removed) {
                 this.syncLiveTopics();
                 if (root.MoquiOl && this.liveSource) this.drawLive(root.MoquiOl);
                 if (this.liveShares.length && !this.liveTimer) {
@@ -1576,7 +1577,7 @@
                     this.liveTimer = setInterval(() => { this.liveNow = Date.now(); if (this.liveSource) this.liveSource.changed(); }, 30000);
                 } else if (!this.liveShares.length && this.liveTimer) { clearInterval(this.liveTimer); this.liveTimer = null; }
                 this.liveNow = Date.now();
-                this.$emit("live-change", { shares: this.liveShares.map((share) => Object.assign({}, share)) });
+                this.$emit("live-change", { shares: this.liveShares.map((share) => Object.assign({}, share)), removed: removed ? [removed] : [] });
             },
             // Subscribes to locationShare:<shareId> of each share shown, and unsubscribes from a share no longer shown.
             syncLiveTopics() {
@@ -1600,7 +1601,7 @@
                 if (!applied.changed) return;
                 if (applied.removed) this.liveGone = (this.liveGone || new Set()).add(applied.removed);
                 this.liveShares = applied.shares;
-                this.liveChanged();
+                this.liveChanged(applied.removed);
             },
             stopLive() {
                 if (this.liveTimer) { clearInterval(this.liveTimer); this.liveTimer = null; }

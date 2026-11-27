@@ -1168,7 +1168,9 @@ function effectiveConfig(p) {
     if (yes(p.locationShares)) {
         const live = liveShares()
         config.locationShares = live.locationShares
-        if (live.failed) config.locationSharesFailed = true
+        // a read that failed is said for each half (the own shares, those shared with the user), so a page keeps what it had
+        if (live.mineFailed) config.locationSharesMineFailed = true
+        if (live.theirsFailed) config.locationSharesTheirsFailed = true
     }
     return {config}
 }
@@ -1277,7 +1279,7 @@ function liveShares() {
         })
     for (const share of shares.filter(one => one.keepTrail).slice(0, LIVE_TRAIL_SHARES))
         share.trail = liveTrail(share.shareId, share.role === "owner" ? share.trailCount : null)
-    return {locationShares: shares, failed}
+    return {locationShares: shares, failed, mineFailed: mine.failed, theirsFailed: theirs.failed}
 }
 
 // ===== get#Preferences and store#Preferences =====

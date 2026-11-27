@@ -1000,15 +1000,17 @@ app's background sharing, chat's live location, XMPP and the guest page for a li
   not the transition's JSON) stops sending. The watch asks for high accuracy while an exact share is sent (started again
   when that changes); a new share waits for a fix taken after it began (one is asked for at once), and with no fix for
   three intervals (a still device) one is asked for again. The shares a tab sends are kept in its session storage under
-  the account (`moqui.scopedKey`), so a reload goes on sending them, pruned to the user's active shares and forgotten at
+  the account (`moqui.scopedKey`) with the session it was kept in, so a reload goes on sending them and a sign-in anew does not, pruned to the user's active shares and forgotten at
   a sign-out (`moqui.beforeLogoutHooks`); Send from here takes over one started elsewhere. When the page closes the
   share stays active and goes stale; its audience sees the age. A banner above the map names every active share of the
   user's own and every share the page sends (with whom, until when, whether this page sends it) with Stop.
 - **The app bar's chip.** While the user has any active share of their own, the shell shows "Sharing location" (with the
   count when there are more than one) in the app bar on every screen, a shell indicator ([Qvt-Client, Shell
-  indicators](../ui/Qvt-Client.md)) that Maps' `shell-indicator` provider answers (`LocationServices.get#ShellIndicator`,
-  a count of the user's own shares, no audience or position read; `Maps.xml`). The shell reads it once with its shell data
-  and again on the user's own pushes of a share's start, change or end (which every device of the owner gets, so a share
+  indicators](../ui/Qvt-Client.md)) that the framework's `shell-indicator` provider answers for every signed-in user,
+  whatever apps they may open (`LocationServices.get#ShellIndicator`, a count of the user's own shares, no audience or
+  position read; registered in `MoquiDefaultConf.xml`'s `screen-facade` `shell-providers`, since sharing is for every
+  user, not only Maps users). The shell reads it once with its shell data, when its notification socket opens again,
+  and on the user's own pushes of a share's start, change or end (which every device of the owner gets, so a share
   started on another device shows too) and at the soonest end. It opens Browse's Who sees my location
   (`Browse?panel=live`), where Stop is; a page that sends a share adds "· sending here". With Browse's banner, and the
   Android notification (LL3), it is how the owner sees every active share wherever they are.

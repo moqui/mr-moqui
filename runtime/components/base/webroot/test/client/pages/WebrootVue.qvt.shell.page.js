@@ -559,7 +559,7 @@ test("the server's indicators: set from /shellIndicators, one no longer answered
     const vm = makeRoot({}, { userId: "U1" });
     const asked = [];
     let answer = { indicators: [{ key: "locationSharing", label: "Sharing location (2)", icon: "sym_o_share_location", tone: "positive",
-        url: "/qapps/maps/Browse?panel=live", refreshAt: Date.now() + 3600000 }],
+        url: "/qapps/maps/Browse?panel=live", refreshInSeconds: 3600 }],
         refreshOn: [{ topicPrefix: "locationShare:", events: ["started", "changed", "ended"] }] };
     const request = moqui.request;
     moqui.request = (url) => { asked.push(url); return Promise.resolve({ json: answer }); };
@@ -576,6 +576,16 @@ test("the server's indicators: set from /shellIndicators, one no longer answered
         await vm.loadShellIndicators();
         assert.deepEqual(indicators.list().map((one) => one.key), ["local"]);
         assert.equal(vm.indicatorRefreshFor("locationShare:S2", { message: { event: "started" } }), true, "a share started elsewhere is still heard of");
+        // an older answer that comes after a newer one is not taken
+        let release = null;
+        const older = { indicators: [{ key: "locationSharing", label: "Sharing location" }], refreshOn: [] };
+        moqui.request = () => new Promise((resolve) => { release = () => resolve({ json: older }); });
+        const first = vm.loadShellIndicators();
+        moqui.request = () => Promise.resolve({ json: { indicators: [], refreshOn: answer.refreshOn } });
+        await vm.loadShellIndicators();
+        release();
+        await first;
+        assert.deepEqual(indicators.list().map((one) => one.key), ["local"]);
     } finally {
         moqui.request = request;
         clearTimeout(vm.indicatorTimer);

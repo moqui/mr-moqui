@@ -267,7 +267,8 @@ along with this software (see the LICENSE.md file). If not, see
                 now, read only through LocationServices find#MyShares, find#SharedWithMe and get#Share, which check the
                 caller against each share's current audience: Maps › Browse's getConfig asks for them (its terminal twin reads
                 the same through MapConfig.js liveShares), a map-view's config-url and the local-map dialog do not; with
-                locationSharesFailed true when one of those reads failed</description></parameter>
+                locationSharesMineFailed or locationSharesTheirsFailed true when the read of the own shares or of those shared
+                with the caller failed</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="config" type="Map"><description>{profileId, profile: {profileId, profileName, basemaps, basemap,

@@ -21,7 +21,7 @@ along with this software (see the LICENSE.md file). If not, see
     The providers of an app root's shell-providers (inbox-source, record-link and the other hooks of
     plans/archive/Comms-Framework.md §3.3) are called through call#Providers: several apps answer one hook, each as its own app,
     and the framework stays free of what they read. A hook the framework asks for whoever acts, the system included
-    (sms-consent), may also be answered by a component's MoquiConf.xml: screen-facade/shell-providers, with no app. -->
+    (sms-consent, shell-indicator), may also be answered by a component's MoquiConf.xml: screen-facade/shell-providers, with no app. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
     <service verb="get" noun="ShellCounts" type="rust" location="moqui_core::service::shell::get_shell_counts" transaction="ignore">
         <description>The shell counts of a user: the service named by STRT_SHELL_COUNTS_SERVICE in the user's theme for
@@ -59,7 +59,7 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
     <service verb="get" noun="Providers" type="rust" location="moqui_core::service::shell::get_providers" transaction="ignore">
         <description>The providers of hook declared in the shell-providers of the app roots the current user may open, in
-            sequence order, then those a component's conf registers (screen-facade shell-providers, sms-consent only):
+            sequence order, then those a component's conf registers (screen-facade shell-providers, sms-consent and shell-indicator only):
             sourceId (the provider's name), app (null for a conf's) and service. A screen offers a feature that needs a provider
             (the Internal account, filing on a record) only when there is one.</description>
         <in-parameters><parameter name="hook" required="true"/></in-parameters>
@@ -68,7 +68,8 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="get" noun="ShellIndicators" transaction="ignore">
         <description>The app bar's indicators of the server for the current user (the /shellIndicators transition;
             docs/ui/Qvt-Client.md, Shell indicators): what the shell-indicator providers of the apps the user may open answer
-            (call#Providers, each as its app, by the user's own authorization records), at most 10 of each, each indicator
+            and those a component's conf registers for every user (the framework's live location), through call#Providers
+            (each app's as its app, by the user's own authorization records), at most 10 of each, each indicator
             with its sourceId, and their refreshOn rules [{topicPrefix, events}]. A provider that fails is left out (and logged
             by call#Providers).</description>
         <out-parameters>
@@ -99,7 +100,7 @@ along with this software (see the LICENSE.md file). If not, see
             caller's transaction and stops at the first failure, which is an error. results holds each provider's answer
             with its sourceId, in order; each source pages itself, and pages are never joined into one. unavailable is true
             when no app the user may open declares the hook and no conf registers it, which is not the same as providers
-            that answer nothing. A provider a component's conf registers (screen-facade shell-providers, sms-consent only)
+            that answer nothing. A provider a component's conf registers (screen-facade shell-providers, sms-consent and shell-indicator only)
             is asked after the apps' for every caller, the system with no user included, with authorization disabled, as
             the conf that names it is trusted; it is asked even when an app's provider has the same name.</description>
         <in-parameters>

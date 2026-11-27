@@ -10399,26 +10399,31 @@
                     this.loadShellIndicators();
                 }, moqui.handleAjaxError);
             },
-            // The indicators of the server (/shellIndicators: the apps' shell-indicator providers), set as the shell's own:
-            // asked when the shell data is, again at the soonest refreshAt they name, and on a push whose topic starts with a
-            // refreshOn topicPrefix of a provider and whose event is one of its events; one no longer answered is taken off
+            // The indicators of the server (/shellIndicators: the shell-indicator providers), set as the shell's own: asked
+            // when the shell data is, when the notification socket opens again, after the soonest refreshInSeconds they name
+            // (relative, so the server's clock and this one need not agree), and on a push whose topic starts with a refreshOn
+            // topicPrefix of a provider and whose event is one of its events; one no longer answered is taken off. Only the
+            // answer to the last ask is taken.
             loadShellIndicators() {
                 if (!this.userId) return null;
                 clearTimeout(this.indicatorTimer);
+                const ask = this.indicatorAsk = (this.indicatorAsk || 0) + 1;
                 return moqui.request(this.appRootPath + "/shellIndicators").then((result) => {
+                    if (ask !== this.indicatorAsk) return;
+                    clearTimeout(this.indicatorTimer);
                     const json = result.json && moqui.isPlainObject(result.json) ? result.json : {};
                     const keys = [];
                     let next = null;
                     (Array.isArray(json.indicators) ? json.indicators : []).forEach((given) => {
                         if (!moqui.isPlainObject(given) || !moqui.shellIndicators.set(given.key, Object.assign({}, given, { action: { url: given.url }, source: "server" }))) return;
                         keys.push(String(given.key));
-                        const at = Number(given.refreshAt);
-                        if (Number.isFinite(at) && (next === null || at < next)) next = at;
+                        const seconds = Number(given.refreshInSeconds);
+                        if (Number.isFinite(seconds) && seconds >= 0 && (next === null || seconds < next)) next = seconds;
                     });
                     moqui.shellIndicators.list().filter((item) => item.source === "server" && keys.indexOf(item.key) < 0).forEach((item) => moqui.shellIndicators.remove(item.key));
                     this.indicatorRules = (Array.isArray(json.refreshOn) ? json.refreshOn : []).filter((rule) => moqui.isPlainObject(rule) && moqui.isString(rule.topicPrefix) && rule.topicPrefix)
                         .map((rule) => ({ topicPrefix: rule.topicPrefix, events: Array.isArray(rule.events) ? rule.events.map(String) : null }));
-                    if (next !== null) this.indicatorTimer = setTimeout(() => this.loadShellIndicators(), Math.min(Math.max(next - Date.now() + 1000, 5000), 86400000));
+                    if (next !== null) this.indicatorTimer = setTimeout(() => this.loadShellIndicators(), Math.min(Math.max(next * 1000 + 1000, 5000), 86400000));
                 }, (err) => console.info("shell indicators not loaded", err && err.status));
             },
             indicatorClick(indicator) {
@@ -10673,7 +10678,9 @@
                 const href = this.shell.logoutUrl;
                 const crypto = moqui.crypto ? moqui.crypto.close().catch(() => null) : Promise.resolve();
                 const push = moqui.push ? moqui.push.beforeLogout() : Promise.resolve();
-                const forgotten = hooks.map((hook) => Promise.resolve().then(hook).catch((err) => { console.warn("A before-logout hook failed", err); }));
+                // each bounded at 2 seconds, as moqui.push.beforeLogout is: a hook that hangs never keeps the user signed in
+                const forgotten = hooks.map((hook) => Promise.race([Promise.resolve().then(hook).catch((err) => { console.warn("A before-logout hook failed", err); }),
+                    new Promise((resolve) => setTimeout(resolve, 2000))]));
                 Promise.all([crypto, push].concat(forgotten)).then(() => { root.location.href = href; });
             },
             appearanceAllowed(key) { return moqui.appearanceAllowed(key); },
@@ -11106,6 +11113,13 @@
             if (this.notificationClient) {
                 this.notificationClient.registerListener("ALL");
                 this.notificationClient.registerListener("ALL", this.onShellNotification);
+                // the socket back after a drop: what was pushed meanwhile is not heard, so the indicators are read again
+                let opened = false;
+                this.notificationClient.onState((state) => {
+                    if (state !== "open") return;
+                    if (opened) this.loadShellIndicators();
+                    opened = true;
+                });
             }
             // the chat store: presence, status, heartbeat, the chat pushes (WebrootChat.js)
             if (moqui.chat) moqui.chat.start(this);

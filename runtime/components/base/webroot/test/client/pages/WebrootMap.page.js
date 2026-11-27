@@ -636,6 +636,11 @@ test("the live layer follows each share's topic: a push moves its marker, a stal
         client.push("locationShare:S1", { shareId: "S1", event: "ended" });
         assert.equal(self.liveShare("S1"), null);
         assert.equal(self.liveSource.getFeatureById("live:S1"), null);
+        // live-change names the share an ended push took off; a read that lists fewer shares names none
+        assert.deepEqual(emitted[emitted.length - 1][1].removed, ["S1"]);
+        self.setLiveShares(self.liveShares.filter((share) => share.shareId !== "S3"));
+        assert.deepEqual(emitted[emitted.length - 1][1].removed, []);
+        self.setLiveShares(map.normalizeLiveShares(liveConfig(10)).filter((share) => share.shareId !== "S1"));
         assert.deepEqual(client.topics(), ["locationShare:S2", "locationShare:S3"], "its topic is no longer followed");
         client.push("locationShare:S3", { shareId: "S3", event: "revoked" });
         assert.deepEqual(client.topics(), ["locationShare:S2"]);
