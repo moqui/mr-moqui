@@ -14,7 +14,8 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- Shared live location (plans/Location-Sharing.md §1, §3.2): a person shares where they are, until a time they choose,
     with people they choose. Only the owner starts, changes, stops and reports a share; only the owner and the share's
-    current audience read it (a group's current members, a user whose entry is not revoked), and every read checks that
+    current audience read it (a user whose entry is not revoked; a group's members who were members when the owner added
+    the group and still are, so that whoever runs a group's membership gives nobody a share), and every read checks that
     again; another person's share, an ADMIN's request included, answers as not found. The model is
     entity/MapLocationEntities.xml, the logic LocationShares.js beside this file, the settings the conf's location element,
     the grants data/MapsLocationData.xml (LocationShareServices, every signed-in user).
@@ -23,7 +24,8 @@ along with this software (see the LICENSE.md file). If not, see
     by LocationShares.js (so no conversion error repeats a value), report#Position remembers no parameters, and a refusal
     names its reason only. A position is pushed on the topic locationShare:<shareId> to the audience's current users only
     (directOnly), never saved as a notification or pushed to a phone (persistOnSend false); an approximate share's is
-    rounded to about 1 km before it is stored or sent. Start, extension, stop and an audience added or revoked are in the
+    its cell of about 1 km on a grid with a secret offset, kept until a fix is well inside another cell, its time to the
+    minute, before it is stored or sent. Start, extension, stop and an audience added or revoked are in the
     entity audit log (LocationShare thruDate and revokedDate, the audience's fields), never a position. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
@@ -34,12 +36,15 @@ along with this software (see the LICENSE.md file). If not, see
             and by default location@trail-max-days). audienceList holds at least one entry, each {audienceTypeEnumId,
             userId, userGroupId, jid}: LsaUser a user the owner may message (the chat directory's rule,
             ChatServices.get#RefusedUsers with blocks; a user it refuses answers as one that does not exist), LsaUserGroup a
-            group the owner is in now (never ALL_USERS or a group of external users), LsaXmpp a contact of the owner's XMPP
+            group the owner is in now (never ALL_USERS or a group of external users), read by its members of that moment who
+            still are, LsaXmpp a contact of the owner's XMPP
             roster (username@xmpp-server@domain, XmppServices.get#Roster; kept for the XMPP server to deliver), LsaLink a
             guest link (one a share), whose token is returned here once and kept only as its digest. Each audience user is
-            told who shares with them and until when (the LocationShared notification). Refused with a reasonCode:
-            BAD_UNTIL, TOO_LONG, BAD_PRECISION, BAD_TRAIL_DAYS, AUDIENCE_EMPTY, BAD_AUDIENCE, USER_NOT_FOUND,
-            GROUP_NOT_ALLOWED, XMPP_OFF, XMPP_NOT_CONTACT, ONE_LINK.</description>
+            told who shares with them and until when (the LocationShared notification). At most location@max-active-shares
+            active shares an owner and location@max-audience people (a group's members counted each), contacts and links a
+            share. Refused with a reasonCode: BAD_UNTIL, TOO_LONG, BAD_PRECISION, BAD_TRAIL_DAYS, AUDIENCE_EMPTY,
+            BAD_AUDIENCE, USER_NOT_FOUND, GROUP_NOT_ALLOWED, XMPP_OFF, XMPP_NOT_CONTACT, ONE_LINK, AUDIENCE_TOO_LARGE,
+            TOO_MANY_SHARES.</description>
         <in-parameters>
             <parameter name="audienceList" type="List" required="true"/>
             <parameter name="thruDate" type="Timestamp" required="true"/>
@@ -61,8 +66,9 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="update" noun="Share">
         <description>Change an active share of the current user's own: extend or shorten it (thruDate, after now and at most
             location@max-share-hours from now: extending is the owner's act again), add to its audience (addAudienceList,
-            entries as create#Share's; one already there is passed over), and change its label or purpose. The owner's
-            other devices and the audience are told on locationShare:shareId, and each user added gets the LocationShared
+            entries as create#Share's; one already there is passed over, but a group already there is stamped again, which
+            lets in its members who joined since), and change its label or purpose. The owner's other devices and the
+            audience are told on locationShare:shareId, and each user the share newly reaches gets the LocationShared
             notification; a link added returns its token once. Refused: SHARE_NOT_FOUND (not the caller's), SHARE_ENDED,
             and create#Share's reasons.</description>
         <in-parameters>
@@ -105,14 +111,17 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="report" noun="Position" no-remember-parameters="true">
         <description>A position of an active share, from its owner only: latitude and longitude (degrees, in range),
             accuracy (metres, optional), heading (degrees from north) and speed (metres a second), observedDate (when the
-            device took it: not in the future, later than the latest one; now when not given). At most one a
-            location@min-interval-seconds a share: a sooner one is dropped with statusCode 429 (RATE_LIMITED,
-            retryAfterSeconds). An approximate share's position is rounded here to about 1 km (accuracy at least 1000, no
-            heading or speed) before it is stored or sent. It replaces the share's LocationLatest, adds a trail point when
+            device took it: not before the share began, later than the latest one; now when not given). At most one a
+            location@min-interval-seconds a share (location@approximate-interval-seconds for an approximate one): a sooner
+            one is dropped with statusCode 429 (RATE_LIMITED, retryAfterSeconds). An approximate share's position is the
+            centre of its cell of about 1 km on the share's grid, offset by a secret random amount never answered, the last
+            cell kept until a fix is more than a quarter of a cell inside another, its time rounded down to the minute, its
+            accuracy at least 1000 and no heading or speed, made here before it is stored or sent. It replaces the share's LocationLatest, adds a trail point when
             the share keeps a trail, and is sent on locationShare:shareId to the audience's current users. statusCode 200;
             410 (SHARE_ENDED) for a share ended or stopped, which stops the device; 404 (SHARE_NOT_FOUND) for one that is
-            not the caller's; 400 for a value out of range (BAD_POSITION, BAD_ACCURACY, BAD_HEADING, BAD_SPEED, BAD_DATE);
-            409 (STALE) for one not later than the latest. A refusal names no value.</description>
+            not the caller's; 400 for a value out of range (BAD_POSITION, BAD_ACCURACY, BAD_HEADING, BAD_SPEED) or a time
+            before the share began (BEFORE_SHARE); 409 for one not later than the latest (STALE) or more than a minute
+            ahead of the server's clock (CLOCK_AHEAD, the device's clock is ahead). A refusal names no value.</description>
         <in-parameters>
             <parameter name="shareId" required="true"/>
             <!-- plain text, read and checked by LocationShares.js, so that no conversion error repeats a position -->
@@ -143,7 +152,8 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="find" noun="SharedWithMe">
         <description>The active shares of other people whose current audience holds the current user (as a user whose entry
-            is not revoked, or a current member of a group whose entry is not revoked), soonest to end first, at most 200:
+            is not revoked, or a member of a group whose entry is not revoked since before the owner added the group, and
+            still), soonest to end first, at most 200:
             the owner's name, the label and purpose, the end, whether it is approximate, and the latest position with its
             age. The audience is checked at this read, so a person taken out of a group sees nothing of it.</description>
         <out-parameters><parameter name="shareList" type="List"/></out-parameters>
@@ -186,11 +196,12 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="clean" noun="LocationShares" authenticate="anonymous-all" allow-remote="false" transaction="ignore">
-        <description>The hourly job (clean_LocationShares_hourly): ends the shares past their thruDate (endedDate set, the
-            latest position deleted, the audience told), deletes the trail points of each ended share past its
-            trailKeepDays (at most location@trail-max-days), and removes the shares ended more than location@trail-max-days
+        <description>The hourly job (clean_LocationShares_hourly): ends the shares past their thruDate, oldest first
+            (endedDate set, the latest position deleted, the audience told), deletes the trail points of each ended share
+            whose trailPurgeDate has come (its end and trailKeepDays, at most location@trail-max-days), and removes the shares ended more than location@trail-max-days
             ago with no trail left, with their audience (the audit log keeps who shared with whom and when). Each share is
-            on its own, in its own transaction: one that fails is logged by its id and the rest go on. Out: endedCount,
+            on its own, in its own transaction: one that fails is logged by its id and the rest go on. Each stage takes
+            batches until one comes back short, for at most two minutes a run. Out: endedCount,
             trailDeletedCount (points), removedCount, failedCount.</description>
         <out-parameters>
             <parameter name="endedCount" type="Integer"/>

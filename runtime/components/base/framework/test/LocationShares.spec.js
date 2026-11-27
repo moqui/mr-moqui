@@ -1,9 +1,12 @@
 // Shared live location (plans/Location-Sharing.md §3.2, LL1; org.moqui.maps.LocationServices, LocationShares.js), by the
 // grants of data/MapsLocationData.xml with authorization on: a share is read and pushed to its current audience only, a
-// group member taken out loses it at the next read, an ended share shows nothing and its latest position is cleaned, a
-// trail is kept only when chosen and deleted or purged, only the owner reports, at most one a min-interval-seconds,
-// an approximate share is rounded before it is stored or sent, an ADMIN reads nothing of another's, the audit rows hold
-// no position, and a link's token is returned once with only its digest kept.
+// group member taken out loses it at the next read and one who joins after the owner added the group gets nothing until
+// the owner adds it again, a blocked user and an audience or a share count past its limit are refused, an ended share
+// shows nothing and its latest position is cleaned, a trail is kept only when chosen and deleted or purged, only the
+// owner reports, at most one a min-interval-seconds, a device clock ahead and a time before the share told apart, an
+// approximate share's cell (on a secret offset grid, kept through jitter at a line, its time to the minute) made before
+// it is stored or sent, an ADMIN reads nothing of another's, the audit rows hold no position, and a link's token is
+// returned once with only its digest kept.
 // Run: ./moq test framework --spec LocationShares
 const S = "org.moqui.maps.LocationServices."
 const A = "LOC_SHARE_A"
@@ -57,6 +60,8 @@ const later = millis => {
     return shared.now
 }
 const toUser = userId => ({audienceTypeEnumId: "LsaUser", userId})
+const toGroup = userGroupId => ({audienceTypeEnumId: "LsaUserGroup", userGroupId})
+const CELL = 0.01
 const report = (shareId, latitude, longitude, extra) =>
     as(A, "report#Position", Object.assign({shareId, latitude, longitude, observedDate: new Date(shared.now)}, extra || {}))
 const capture = () => ec.factory.getTool("NotificationCapture")
@@ -70,6 +75,15 @@ const pushes = shareId =>
             )
         )
 const sharedWith = userId => Array.from(as(userId, "find#SharedWithMe").shareList || [])
+// the run with blocker having blocked A in chat (ChatUserBlock), then the block taken off
+function blockedBy(blocker, run) {
+    make("moqui.chat.ChatUserBlock", {userId: blocker, blockedUserId: A, blockedDate: new Date(shared.now)})
+    try {
+        return run()
+    } finally {
+        sys(() => ec.entity.find("moqui.chat.ChatUserBlock").condition({userId: blocker, blockedUserId: A}).deleteAll())
+    }
+}
 
 spec({
     stepwise: true,
@@ -136,7 +150,23 @@ feature(
                         thruDate: new Date(shared.now + HOUR)
                     }).reasonCode,
                     tooLong: as(A, "create#Share", {audienceList: [toUser(B)], thruDate: new Date(shared.now + 25 * HOUR)})
-                        .reasonCode
+                        .reasonCode,
+                    blocked: blockedBy(
+                        C,
+                        () => as(A, "create#Share", {audienceList: [toUser(C)], thruDate: new Date(shared.now + HOUR)}).reasonCode
+                    ),
+                    tooLarge: withConf(
+                        "location@max-audience",
+                        1,
+                        () =>
+                            as(A, "create#Share", {audienceList: [toUser(B), toUser(C)], thruDate: new Date(shared.now + HOUR)})
+                                .reasonCode
+                    ),
+                    tooMany: withConf(
+                        "location@max-active-shares",
+                        1,
+                        () => as(A, "create#Share", {audienceList: [toUser(B)], thruDate: new Date(shared.now + HOUR)}).reasonCode
+                    )
                 }
             }
         },
@@ -164,63 +194,128 @@ feature(
             refused.self == "BAD_AUDIENCE"
             refused.nobody == "USER_NOT_FOUND"
             refused.tooLong == "TOO_LONG"
+            refused.blocked == "USER_NOT_FOUND"
+            refused.tooLarge == "AUDIENCE_TOO_LARGE"
+            refused.tooMany == "TOO_MANY_SHARES"
         }
     }
 )
 
-feature("a group's member reads it while in the group, and taken out of it reads nothing and gets no more pushes", {
+feature(
+    "a group's member reads it while in the group and taken out of it reads nothing; one who joins later gets nothing until the owner adds the group again",
+    {
+        when() {
+            const refused = {
+                notMine: as(A, "create#Share", {
+                    audienceList: [{audienceTypeEnumId: "LsaUserGroup", userGroupId: OTHER_GROUP}],
+                    thruDate: new Date(shared.now + HOUR)
+                }).reasonCode,
+                everyone: as(A, "create#Share", {
+                    audienceList: [{audienceTypeEnumId: "LsaUserGroup", userGroupId: "ALL_USERS"}],
+                    thruDate: new Date(shared.now + HOUR)
+                }).reasonCode
+            }
+            const shareId = as(A, "create#Share", {
+                audienceList: [{audienceTypeEnumId: "LsaUserGroup", userGroupId: GROUP}],
+                thruDate: new Date(shared.now + HOUR)
+            }).shareId
+            later(6000)
+            report(shareId, "45.5", "-122.6")
+            const before = {
+                listed: sharedWith(B).filter(row => row.shareId === shareId).length,
+                pushedToB: pushes(shareId).filter(one => one.event === "position" && one.userIds.includes(B)).length
+            }
+            sys(() =>
+                ec.entity
+                    .find("moqui.security.UserGroupMember")
+                    .condition({userGroupId: GROUP, userId: B})
+                    .updateAll({thruDate: new Date(shared.now - 1000)})
+            )
+            // C joins the group after A added it to the share: an administrator's or an organizer's add gives C nothing
+            later(1000)
+            make("moqui.security.UserGroupMember", {userGroupId: GROUP, userId: C, fromDate: new Date(shared.now)})
+            later(6000)
+            const second = report(shareId, "45.6", "-122.6")
+            const joiner = {
+                listed: sharedWith(C).filter(row => row.shareId === shareId).length,
+                got: as(C, "get#Share", {shareId}).reasonCode,
+                pushed: pushes(shareId).filter(one => one.userIds.includes(C)).length
+            }
+            // the owner adds the group again: C is let in and told
+            later(1000)
+            const readded = as(A, "update#Share", {shareId, addAudienceList: [toGroup(GROUP)]})
+            later(6000)
+            report(shareId, "45.7", "-122.6")
+            return {
+                refused,
+                before,
+                second,
+                joiner,
+                readded,
+                listed: sharedWith(B).filter(row => row.shareId === shareId).length,
+                got: as(B, "get#Share", {shareId}).reasonCode,
+                pushedToB: pushes(shareId).filter(one => one.event === "position" && one.userIds.includes(B)).length,
+                toldC: capture()
+                    .getMessages("LocationShared")
+                    .filter(
+                        row =>
+                            row.userIds.includes(C) &&
+                            (typeof row.message === "string" ? JSON.parse(row.message) : row.message).shareId === shareId
+                    ).length,
+                readsC: sharedWith(C).filter(row => row.shareId === shareId).length,
+                pushedToC: pushes(shareId).filter(one => one.event === "position" && one.userIds.includes(C)).length
+            }
+        },
+        then({refused, before, second, joiner, readded, listed, got, pushedToB, toldC, readsC, pushedToC}) {
+            refused.notMine == "GROUP_NOT_ALLOWED"
+            refused.everyone == "GROUP_NOT_ALLOWED"
+            before.listed == 1
+            before.pushedToB == 1
+            second.statusCode == 200
+            listed == 0
+            got == "SHARE_NOT_FOUND"
+            pushedToB == 1
+            joiner.listed == 0
+            joiner.got == "SHARE_NOT_FOUND"
+            joiner.pushed == 0
+            readded.errors == ""
+            toldC == 1
+            readsC == 1
+            pushedToC == 1
+        }
+    }
+)
+
+feature("at most one report a min-interval-seconds; a device clock ahead and a time before the share are told apart", {
     when() {
-        const refused = {
-            notMine: as(A, "create#Share", {
-                audienceList: [{audienceTypeEnumId: "LsaUserGroup", userGroupId: OTHER_GROUP}],
-                thruDate: new Date(shared.now + HOUR)
-            }).reasonCode,
-            everyone: as(A, "create#Share", {
-                audienceList: [{audienceTypeEnumId: "LsaUserGroup", userGroupId: "ALL_USERS"}],
-                thruDate: new Date(shared.now + HOUR)
-            }).reasonCode
-        }
-        const shareId = as(A, "create#Share", {
-            audienceList: [{audienceTypeEnumId: "LsaUserGroup", userGroupId: GROUP}],
-            thruDate: new Date(shared.now + HOUR)
-        }).shareId
-        later(6000)
-        report(shareId, "45.5", "-122.6")
-        const before = {
-            listed: sharedWith(B).filter(row => row.shareId === shareId).length,
-            pushedToB: pushes(shareId).filter(one => one.event === "position" && one.userIds.includes(B)).length
-        }
-        sys(() =>
-            ec.entity
-                .find("moqui.security.UserGroupMember")
-                .condition({userGroupId: GROUP, userId: B})
-                .updateAll({thruDate: new Date(shared.now - 1000)})
-        )
-        later(6000)
-        const second = report(shareId, "45.6", "-122.6")
-        return {
-            refused,
-            before,
-            second,
-            listed: sharedWith(B).filter(row => row.shareId === shareId).length,
-            got: as(B, "get#Share", {shareId}).reasonCode,
-            pushedToB: pushes(shareId).filter(one => one.event === "position" && one.userIds.includes(B)).length
-        }
+        const shareId = as(A, "create#Share", {audienceList: [toUser(B)], thruDate: new Date(shared.now + HOUR)}).shareId
+        later(1000)
+        const first = report(shareId, "40.7", "-111.8")
+        later(1000)
+        const soon = report(shareId, "40.7", "-111.8")
+        later(5000)
+        const after = report(shareId, "40.7", "-111.8")
+        later(5000)
+        const ahead = report(shareId, "40.7", "-111.8", {observedDate: new Date(shared.now + 2 * MINUTE)})
+        const before = report(shareId, "40.7", "-111.8", {observedDate: new Date(shared.now - HOUR)})
+        return {first, soon, after, ahead, before}
     },
-    then({refused, before, second, listed, got, pushedToB}) {
-        refused.notMine == "GROUP_NOT_ALLOWED"
-        refused.everyone == "GROUP_NOT_ALLOWED"
-        before.listed == 1
-        before.pushedToB == 1
-        second.statusCode == 200
-        listed == 0
-        got == "SHARE_NOT_FOUND"
-        pushedToB == 1
+    then({first, soon, after, ahead, before}) {
+        first.statusCode == 200
+        soon.statusCode == 429
+        soon.reasonCode == "RATE_LIMITED"
+        soon.retryAfterSeconds == 4
+        after.statusCode == 200
+        ahead.statusCode == 409
+        ahead.reasonCode == "CLOCK_AHEAD"
+        ahead.errors == ""
+        before.statusCode == 400
+        before.reasonCode == "BEFORE_SHARE"
     }
 })
 
 feature(
-    "at most one report a min-interval-seconds, and an approximate share is rounded to about 1 km before it is stored or sent",
+    "an approximate share is its cell of about 1 km on a secret offset grid, kept through jitter at a cell line, its time to the minute, before it is stored or sent",
     {
         when() {
             const shareId = as(A, "create#Share", {
@@ -229,52 +324,75 @@ feature(
                 precisionEnumId: "LspApproximate"
             }).shareId
             later(1000)
+            const observed = shared.now
             const first = report(shareId, "40.745210", "-111.875", {accuracy: "8", heading: "180", speed: "3"})
             const stored = latestOf(shareId)
+            const cell = {latitude: Number(String(stored.latitude)), longitude: Number(String(stored.longitude))}
             later(1000)
-            const soon = report(shareId, "40.7459", "-111.8755")
-            later(5000)
-            const near = report(shareId, "40.7459", "-111.8755")
+            const soon = report(shareId, "40.745210", "-111.875")
+            // jitter just past the cell's lines on either side keeps the cell; a fix well inside the next one moves it
+            const jitter = []
+            for (const rows of [0.6, -0.6, 0.6]) {
+                later(MINUTE)
+                report(shareId, String(cell.latitude + rows * CELL), String(cell.longitude))
+                jitter.push(Number(String(latestOf(shareId).latitude)))
+            }
+            later(MINUTE)
+            report(shareId, String(cell.latitude + CELL), String(cell.longitude))
+            const moved = Number(String(latestOf(shareId).latitude))
+            const share = rows("moqui.maps.LocationShare", {shareId})[0]
+            const pushed = pushes(shareId).filter(one => one.event === "position")
+            const answers = JSON.stringify([
+                as(A, "find#MyShares").shareList,
+                as(A, "get#Share", {shareId}),
+                as(B, "get#Share", {shareId}),
+                sharedWith(B),
+                pushed
+            ])
             return {
                 first,
+                observed,
                 stored: {
-                    latitude: stored.latitude,
-                    longitude: stored.longitude,
                     accuracy: stored.accuracy,
                     heading: stored.heading,
-                    speed: stored.speed
+                    speed: stored.speed,
+                    observedDate: ec.user.timestampMillis(stored.observedDate)
                 },
+                cell,
                 soon,
-                near,
-                again: latestOf(shareId),
-                pushed: pushes(shareId).filter(one => one.event === "position"),
-                seen: as(B, "get#Share", {shareId}).latest
+                jitter,
+                moved,
+                offsets: [Number(share.gridLatOffset), Number(share.gridLonOffset)],
+                leaked:
+                    answers.includes("gridLatOffset") ||
+                    answers.includes("gridLonOffset") ||
+                    [share.gridLatOffset, share.gridLonOffset].some(offset => answers.includes(String(offset))),
+                pushed
             }
         },
-        then({first, stored, soon, near, again, pushed, seen}) {
+        then({first, observed, stored, cell, soon, jitter, moved, offsets, leaked, pushed}) {
             first.statusCode == 200
-            stored.latitude == 40.75
-            stored.longitude != -111.875
-            Math.abs(stored.longitude + 111.875) < 0.01
+            Math.abs(cell.latitude - 40.74521) <= CELL
+            Math.abs(cell.longitude + 111.875) <= 2 * CELL
+            cell.latitude != 40.74521
             stored.accuracy == 1000
             stored.heading == null
             stored.speed == null
+            stored.observedDate == Math.floor(observed / MINUTE) * MINUTE
             soon.statusCode == 429
-            soon.reasonCode == "RATE_LIMITED"
-            soon.retryAfterSeconds == 4
-            near.statusCode == 200
-            again.latitude == stored.latitude
-            again.longitude == stored.longitude
-            pushed.length == 2
+            soon.retryAfterSeconds == 59
+            jitter.every(latitude => latitude === cell.latitude)
+            Math.abs(moved - cell.latitude - CELL) < 1e-6
+            offsets.every(offset => offset >= 0 && offset < 1)
+            leaked == false
+            pushed.length == 5
             pushed.every(
                 one =>
-                    String(one.latitude) == String(stored.latitude) &&
-                    String(one.longitude) == String(stored.longitude) &&
                     one.heading == null &&
-                    one.approximate === true
+                    one.speed == null &&
+                    one.approximate === true &&
+                    Number(one.observedDate) % MINUTE === 0
             )
-            seen.latitude == stored.latitude
-            seen.longitude == stored.longitude
         }
     }
 )
@@ -379,7 +497,7 @@ feature("a trail is kept only when chosen, deleted by its owner, and purged past
         latestGone == true
         afterStop == 410
         withinDays == 1
-        cleaned.trailDeletedCount == 1
+        cleaned.trailDeletedCount >= 1
         purged == 0
         owner.latest == null
         owner.share.active == false

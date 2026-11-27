@@ -24,7 +24,9 @@ along with this software (see the LICENSE.md file). If not, see
         its last extension). Ended when thruDate passes, or at once by stop#Share (revokedDate); endedDate is when the
         share's end was acted on (its latest position deleted, the audience told). Its start, extension and stop are in
         the entity audit log (thruDate, revokedDate), never a position. keepTrail Y keeps each position as a
-        LocationTrailPoint for trailKeepDays (at most location@trail-max-days) after the share ends. A guest share for a
+        LocationTrailPoint for trailKeepDays (at most location@trail-max-days) after the share ends, until trailPurgeDate. An
+        approximate share's grid is offset by a secret random amount (gridLatOffset, gridLonOffset, fractions of a cell),
+        never answered, so its cell lines say nothing of where a person is. A guest share for a
         record names it as MapAdapter does (recordAdapterKey, recordKey), set only by the service that checks the
         caller may act on the record. -->
     <entity entity-name="LocationShare" package="moqui.maps" use="transactional" cache="never">
@@ -41,6 +43,10 @@ along with this software (see the LICENSE.md file). If not, see
             1 km before it is stored or sent</description></field>
         <field name="keepTrail" type="text-indicator"/>
         <field name="trailKeepDays" type="number-integer"/>
+        <field name="trailPurgeDate" type="date-time"><description>When clean#LocationShares deletes the kept trail: its
+            end and trailKeepDays, set when the share ends</description></field>
+        <field name="gridLatOffset" type="number-float" ai-opt-out="true"/>
+        <field name="gridLonOffset" type="number-float" ai-opt-out="true"/>
         <field name="recordAdapterKey" type="id"/>
         <field name="recordKey" type="text-medium"/>
         <relationship type="one" title="Owner" related="moqui.security.UserAccount" short-alias="owner">
@@ -51,10 +57,12 @@ along with this software (see the LICENSE.md file). If not, see
             <key-map field-name="shareId"/></relationship>
         <index name="LOC_SHARE_OWNER"><index-field name="ownerUserId"/><index-field name="thruDate"/></index>
         <index name="LOC_SHARE_END"><index-field name="endedDate"/><index-field name="thruDate"/></index>
+        <index name="LOC_SHARE_PURGE"><index-field name="trailPurgeDate"/></index>
     </entity>
 
     <!-- Who a share is for: a user (LsaUser) the owner may message, a group (LsaUserGroup) the owner is in, read by its
-        current members, an XMPP contact of the owner's roster (LsaXmpp, jid; delivered by the XMPP server) or a guest link
+        members who were members when the entry was added (fromDate, stamped again when the owner adds the group again)
+        and still are, an XMPP contact of the owner's roster (LsaXmpp, jid; delivered by the XMPP server) or a guest link
         (LsaLink), whose token is shown once and kept only as its digest (tokenDigest, as ResourceShare's linkTokenHash).
         Every read rechecks the audience: a row revoked, or a group the viewer has left, reads nothing. The audience
         added and revoked is in the entity audit log. -->
@@ -91,8 +99,10 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="accuracy" type="number-float" ai-opt-out="true"/>
         <field name="heading" type="number-float" ai-opt-out="true"/>
         <field name="speed" type="number-float" ai-opt-out="true"/>
-        <field name="observedDate" type="date-time"><description>When the device took the position</description></field>
-        <field name="receivedDate" type="date-time"><description>When this server took it, for location@min-interval-seconds</description></field>
+        <field name="observedDate" type="date-time" ai-opt-out="true"><description>When the device took the position (its
+            minute for an approximate share)</description></field>
+        <field name="receivedDate" type="date-time" ai-opt-out="true"><description>When this server took it, for
+            location@min-interval-seconds</description></field>
         <relationship type="one" related="moqui.maps.LocationShare"/>
     </entity>
 
@@ -101,7 +111,7 @@ along with this software (see the LICENSE.md file). If not, see
         after it ends. Never cached, never audited, never in a log. -->
     <entity entity-name="LocationTrailPoint" package="moqui.maps" use="transactional" cache="never">
         <field name="shareId" type="id" is-pk="true"/>
-        <field name="observedDate" type="date-time" is-pk="true"/>
+        <field name="observedDate" type="date-time" is-pk="true" ai-opt-out="true"/>
         <field name="latitude" type="number-float" ai-opt-out="true"/>
         <field name="longitude" type="number-float" ai-opt-out="true"/>
         <field name="accuracy" type="number-float" ai-opt-out="true"/>

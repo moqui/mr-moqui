@@ -2421,6 +2421,14 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="min-interval-seconds" type="non-neg-int-expandable" default="5"><xs:annotation><xs:documentation>
                 The shortest time between two positions a share takes, in seconds: a sooner report is answered 429 and
                 dropped.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="approximate-interval-seconds" type="non-neg-int-expandable" default="60"><xs:annotation><xs:documentation>
+                The shortest time between two positions an approximate share takes, in seconds (at least
+                min-interval-seconds), so its cell changes tell less of a path.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="max-active-shares" type="non-neg-int-expandable" default="20"><xs:annotation><xs:documentation>
+                The most shares one person has on at once.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="max-audience" type="non-neg-int-expandable" default="50"><xs:annotation><xs:documentation>
+                The most people (a group's current members counted each), XMPP contacts and links one share
+                has.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="link-max-views-per-minute" type="non-neg-int-expandable" default="30"><xs:annotation><xs:documentation>
                 The most reads a minute of a guest link's page, for one link.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
