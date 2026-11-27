@@ -664,6 +664,21 @@ MOQUI_MOBILE_APK=crates/moqui-mobile/gen/android/app/build/outputs/apk/universal
                                # (adb uninstall org.moqui.mobile first if a debug build, signed by another key, is on it)
 ```
 
+The release toolchain (SEC-CLI-104). These are what a release of the apps is built with; a change to any of them is
+its own commit, and a release notes the ones the build machine chose (the NDK, the JDK):
+
+| Tool | Version | Pinned by |
+|---|---|---|
+| Rust | 1.100.0, targets `aarch64-linux-android` and `x86_64-linux-android` | `rust-toolchain.toml` |
+| Tauri CLI | 3.0.0-alpha.6 (`cargo install --locked`) | this section and the apps' READMEs |
+| Gradle | 9.6.1, its zip checked by SHA-256 | `gen/android/gradle/wrapper/gradle-wrapper.properties` |
+| Android Gradle plugin | 9.3.1 | `gen/android/build.gradle.kts`, `buildSrc/build.gradle.kts` |
+| Kotlin Gradle plugin | 2.2.10 | `gen/android/build.gradle.kts` |
+| Android SDK platform | compile and target 37, min 26 | `gen/android/app/build.gradle.kts` |
+| NDK | the newest under the SDK's `ndk/` (or `ANDROID_NDK_HOME`): record it | not pinned |
+| JDK | `JAVA_HOME`, else the `javac` on the PATH: record it | not pinned |
+| CEF (desktop) | the archive `tauri-runtime-cef` names, checked by SHA-256 | `crates/moqui-desktop/cef-archives.sha256` |
+
 Firebase (native push) is in a build only with `gen/android/app/google-services.json` ([moqui-mobile
 README](../crates/moqui-mobile/README.md)); a release for users wants it.
 
