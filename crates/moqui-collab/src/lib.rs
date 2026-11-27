@@ -929,12 +929,12 @@ pub fn apply(key: &str, user_id: &str, update: &[u8]) -> Result<(), Refusal> {
     }
     // its roots and nested types, before anything of it is applied, here or to the board's candidate (SEC-TLS-118)
     let shape = room.target.codec.shape();
-    {
+    let checked = {
         let Room { doc, nesting, .. } = &mut *room;
         nesting
             .check(doc, shape, update)
-            .map_err(|(status, why)| Refusal::new(status, why))?;
-    }
+            .map_err(|(status, why)| Refusal::new(status, why))?
+    };
     if matches!(room.target.codec, Codec::Board) {
         let Room {
             doc, board_candidate, ..
@@ -947,6 +947,7 @@ pub fn apply(key: &str, user_id: &str, update: &[u8]) -> Result<(), Refusal> {
         .transact_mut()
         .apply_update(update)
         .map_err(|err| Refusal::new(400, format!("the update was not applied: {err}")))?;
+    room.nesting.keep(checked);
     room.state_bytes = room.state_bytes.saturating_add(size);
     room.dirty = true;
     room.changed_at = Instant::now();
@@ -978,10 +979,25 @@ pub fn apply_remote(key: &str, update: &[u8]) {
     let Some(room) = room_of(key) else { return };
     let mut room = lock(&room);
     room.board_candidate = None;
+    // held to the same roots, kinds and depth as an editor's update, so a cluster member does not get past them
+    // (SEC-TLS-118)
+    let shape = room.target.codec.shape();
+    let checked = {
+        let Room { doc, nesting, .. } = &mut *room;
+        match nesting.check(doc, shape, update) {
+            Ok(checked) => checked,
+            Err((_, why)) => {
+                tracing::error!("co-edited {key}: an update from another server is refused: {why}");
+                return;
+            }
+        }
+    };
     match Update::decode_v1(update) {
         Ok(update) => {
-            if let Err(err) = room.doc.transact_mut().apply_update(update) {
-                tracing::warn!("co-edited {key}: an update from another server was not applied: {err}");
+            let applied = room.doc.transact_mut().apply_update(update);
+            match applied {
+                Ok(()) => room.nesting.keep(checked),
+                Err(err) => tracing::warn!("co-edited {key}: an update from another server was not applied: {err}"),
             }
         }
         Err(err) => tracing::warn!("co-edited {key}: an update from another server is not a Yjs update: {err}"),

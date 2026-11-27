@@ -457,6 +457,7 @@ pub(crate) fn apply(key: &str, user_id: &str, update: &[u8]) -> Result<(), Refus
     };
     crate::nesting::Nesting::default()
         .check(&room.doc, shape, update)
+        .map(drop)
         .map_err(|(status, why)| Refusal::new(status, why))?;
     let size = update.len();
     let update = Update::decode_v1(update).map_err(|err| Refusal::new(400, format!("not a Yjs update: {err}")))?;

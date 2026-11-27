@@ -778,7 +778,8 @@ fn an_attested_update_puts_in_place_only_the_attested_head() {
     let first = git.branch_head("site-src").unwrap().unwrap();
     repository("component-site", Some("git://site-src"));
     git.import("component-site", None).unwrap();
-    let location = dir.join("addon").join("site");
+    // a deployed component's own directory under a components directory (SEC-TLS-104)
+    let location = dir.join("components/addon/site");
     git.write_tree("component-site", Some(&first), &location).unwrap();
     deployed(
         &entity,

@@ -499,7 +499,8 @@ pub fn preview_update_at(
         .filter(|row| text(row, "source") == "git" && text(row, "status") == "deployed")
         .ok_or_else(|| format!("{name} was not deployed from git"))?;
     let storage = Storage::parse(&text(&row, "storage")).unwrap_or_default();
-    let location = PathBuf::from(text(&row, "location"));
+    // only the component's own directory (SEC-TLS-104)
+    let location = super::load::deployed_location(factory, name, &text(&row, "location"))?;
     let from = text(&row, "commitId");
     let mut preview = UpdatePreview {
         component: name.to_string(),
@@ -648,7 +649,14 @@ pub fn update_at(
         }
     };
     let storage = Storage::parse(&text(&row, "storage")).unwrap_or_default();
-    let location = PathBuf::from(text(&row, "location"));
+    // only the component's own directory (SEC-TLS-104)
+    let location = match super::load::deployed_location(factory, name, &text(&row, "location")) {
+        Ok(location) => location,
+        Err(err) => {
+            report.problems.push(err);
+            return report;
+        }
+    };
     let applied = reload::with_reload_lock(factory, || {
         update_held(
             factory,

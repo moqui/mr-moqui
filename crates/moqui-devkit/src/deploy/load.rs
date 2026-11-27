@@ -712,6 +712,32 @@ pub(crate) fn component_location(name: &str, location: &str, known: Option<&Path
     }
 }
 
+/// [`component_location`] for a deployed component, which may be in a directory of another name: where it is loaded,
+/// or found in a component directory, whatever that directory's name.
+///
+/// # Errors
+///
+/// As [`component_location`].
+pub(crate) fn deployed_location(
+    factory: &Arc<ExecutionContextFactory>,
+    name: &str,
+    location: &str,
+) -> Result<PathBuf, String> {
+    let known = factory
+        .components()
+        .iter()
+        .find(|component| component.name == name)
+        .map(|component| component.location.clone())
+        .or_else(|| {
+            moqui_core::context::discover_again(factory)
+                .ok()?
+                .into_iter()
+                .find(|component| component.name == name)
+                .map(|component| component.location)
+        });
+    component_location(name, location, known.as_deref())
+}
+
 /// What [`remove`] did.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Removed {
@@ -741,20 +767,7 @@ pub fn remove(factory: &Arc<ExecutionContextFactory>, name: &str, confirm_dirty:
     })
     .map_err(|err| err.to_string())?
     .ok_or_else(|| format!("{name} was not loaded by a deploy; take it out of its component directory instead"))?;
-    // where the component is, loaded or found in a component directory, whatever its directory's name
-    let known = factory
-        .components()
-        .iter()
-        .find(|component| component.name == name)
-        .map(|component| component.location.clone())
-        .or_else(|| {
-            moqui_core::context::discover_again(factory)
-                .ok()?
-                .into_iter()
-                .find(|component| component.name == name)
-                .map(|component| component.location)
-        });
-    let location = component_location(name, &text(&row, "location"), known.as_deref())?;
+    let location = deployed_location(factory, name, &text(&row, "location"))?;
     if text(&row, "storage") == "clone" && location.is_dir() && !confirm_dirty {
         let changes = clone_changes(&location);
         if !changes.is_empty() {
