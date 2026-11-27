@@ -23,15 +23,18 @@ the machine. MR Moqui cannot. This file lists every gate.
   (`assertSealedPermissionGrant`). `AgentCodeHost` is code execution as the server's OS user, like `TERMINAL_HOST`.
 - Agent Code also needs `AgentUse` (the agent runtime) for the native engine. A user without `AgentUse` can still use
   outside harnesses (Codex, Claude) when the admin allows it (the `AgentCodePolicy` row
-  `access.harnessWithoutAgentUse`, default false; added to the settings schema in P1, with the native engine seam).
-- One switch: the webroot's `<endpoint path="/agentws" enabled="..."/>` (`true`, `false`, or `dev`, the default: on
-  only on a dev instance), as PR #213 builds it. It turns the `/agentws` socket and the descriptor on; on a production
-  instance the admin sets it to `true`. The screens, REST and services need no switch of their own: they are gated by
-  `AgentCodeUse` and the sealed `AgentCodeHost` and `AgentCodeAdmin`. Today the route is mounted only when the switch
-  is on at listen, and `endpoint` is a restart class, so a change waits for a restart; once
-  [Runtime-Config §3.8](../Runtime-Config.md#38-services-carried-on-a-listener) is built the route stays mounted and
-  reads its switch on each request, so it turns off and on while the server runs
-  ([09 §2.1](09-Wire-API.md#21-route-and-auth)).
+  `access.harnessWithoutAgentUse`, default false; added to the `policy` section of `settings-schema.json` in P1, with
+  the native engine seam).
+- One switch: the webroot's `<endpoint path="/agentws" enabled="..."/>` (`true`, `false`, or `dev`, the default: on only
+  on a dev instance), as PR #213 builds it. It turns the `/agentws` socket and the descriptor on; on a production
+  instance the admin sets it to `true`. It is the switch for all of Agent Code, not the socket alone: the REST resources
+  (`/rest/s1/code/*`) and the MCP tools (`code_thread_send` and the others) read the same endpoint value and refuse
+  while it is off, so turning `/agentws` off stops Agent Code, and the screens show that it is off on this instance.
+  While it is on they are gated by `AgentCodeUse` and the sealed `AgentCodeHost` and `AgentCodeAdmin`. Today the route
+  is mounted only when the switch is on at listen, and `endpoint` is a restart class, so a change waits for a restart;
+  once [Runtime-Config §3.8](../Runtime-Config.md#38-services-carried-on-a-listener) is built the route stays mounted
+  and reads its switch on each request, so it turns off and on while the server runs ([09
+  §2.1](09-Wire-API.md#21-route-and-auth)).
 
 ## 2. Scopes
 
@@ -70,7 +73,7 @@ Rules (kept from T3):
 - The existing `UserLoginKey.scope` meaning stays: empty = full account. A key with any `code:*` scope is limited to
   Agent Code routes and the client sync routes. A full-account device key (empty scope) has every `code:*` scope its
   permissions allow, so the existing app keys keep working.
-- Scope table in code: `crates/moqui-code/src/ws/scopes.rs`, one entry per method, checked by a test that every
+- Scope table in code: `crates/moqui-code/src/scopes.rs`, one entry per method, checked by a test that every
   method has one.
 
 **Key scopes on master (to design P6 on).** The table above is T3's model, a list of scopes per key. MR Moqui's
@@ -133,8 +136,8 @@ is written, the `code:*` rules above are T3's and not a storage format.
   Codex or Claude login is not another user's.
 - Work roots are under the worktrees directory (the `worktreesDirectory` setting, else `<agent-code@home>/worktrees/`,
   [02 §9](02-Orchestration.md#9-worktrees)) or a project root the admin allowed (the `AgentCodePolicy` row
-  `access.projectRoots`, a list, added to the settings schema in P2). Opening a project elsewhere needs
-  `AgentCodeHost`.
+  `access.projectRoots`, a list, added to the `policy` section of `settings-schema.json` in P2). Opening a project
+  elsewhere needs `AgentCodeHost`.
 - Lower priority: `nice 10`, and on Linux a cgroup per thread (`agent-code.slice/<conversationId>`) with memory and
   CPU limits from settings when systemd is present.
 - The runtime directory (`runtime/conf`, `runtime/db`, keys, `.env`) is not readable from a work root by path rules in

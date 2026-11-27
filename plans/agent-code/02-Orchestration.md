@@ -79,7 +79,9 @@ Internal-only commands, as in T3: `run.output.submit`, `thread.guest-share.open|
 | Agent-created threads (`create_threads`, `t3_thread_launch`) | Same service, `creationSourceEnumId` AgcsMcp, recorded on the parent run. |
 
 The Agent Code home is a new conf setting, `agent-code@home` ([10 §9.5](10-Web-UI.md#95-conf-settings)): empty by
-default, which is `runtime/agent-code/` on a server and the app data directory's `agent-code/` on desktop. It holds `scratch/`, `worktrees/` (unless the `worktreesDirectory` setting names another place, §9), `projects/`, `artifacts/`, `browser/`, `voice/` and `logs/`.
+default, which is `runtime/agent-code/` on a server and the app data directory's `agent-code/` on desktop. It holds
+`scratch/`, `worktrees/` (unless the `worktreesDirectory` setting names another place, §9), `projects/`, `artifacts/`,
+`browser/`, `voice/` and `logs/`.
 
 ## 3. Settle, snooze, pin, tags, unread
 

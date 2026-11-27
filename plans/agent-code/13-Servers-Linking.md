@@ -248,8 +248,8 @@ Open decision: a hosted relay (moqui.org) for users with no edge node. Not in th
   streams forward as a channel per stream.
 - A harness process belongs to one node. When that node goes down, its runs are marked `interrupted`; resume needs
   that node back or a move of the work root ([02 §5](02-Orchestration.md#5-interrupt-stop-recovery)).
-- New projects pick the host node by the `AgentCodeSetting` row `cluster.hostNodes` (a list, added to the settings schema in P6) and free disk; the
-  user can choose.
+- New projects pick the host node by the `AgentCodeSetting` row `cluster.hostNodes` (a list, added to the `server`
+  section of `settings-schema.json` in P6) and free disk; the user can choose.
 - Effects (`AgentCodeEffect`) are leased per node; harness effects only on the work-root node.
 - Schedulers (automations, PR watch, cleanup) run on one node by the existing ServiceJob lease.
 - **Edge**: a local node behind an edge node is a normal environment at its edge host name. Through an edge node in

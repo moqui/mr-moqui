@@ -225,12 +225,12 @@ change is visible.
 ### 3.8 Services carried on a listener
 
 Routes on the HTTP and HTTPS listeners are built once, so their switches wait for a restart: `endpoint[path]@enabled`
-(`/notws`, `/termws`, and `/agentws` with the Agent Code descriptor once [Agent Code](agent-code/README.md) P0 is
-merged, whose `dev` value means on only on a dev instance), `dav-server@enabled`, the git server, `mcp@server-enabled`, `a2a@enabled`,
-`gateway@enabled`, `channels@webhooks-enabled`, `xmpp-server@websocket-enabled`, and the OTLP receiver. Each route
-stays mounted and checks its flag on each request, from state built from the conf and built again after a reload; off
-answers 404 and ends its open sockets. The phase starts with an audit of every such switch (its reader and its class)
-and ends with each `Live` and listed on Services and ports under its listener.
+(`/notws`, `/termws`, and, once [Agent Code](agent-code/README.md) P0 is merged, `/agentws` with its descriptor, whose
+`enabled` also takes `dev`: on only on a dev instance), `dav-server@enabled`, the git server, `mcp@server-enabled`,
+`a2a@enabled`, `gateway@enabled`, `channels@webhooks-enabled`, `xmpp-server@websocket-enabled`, and the OTLP receiver.
+Each route stays mounted and checks its flag on each request, from state built from the conf and built again after a
+reload; off answers 404 and ends its open sockets. The phase starts with an audit of every such switch (its reader and
+its class) and ends with each `Live` and listed on Services and ports under its listener.
 
 ### 3.9 Defaults
 
@@ -238,7 +238,7 @@ and ends with each `Live` and listed on Services and ports under its listener.
 off, the cluster port `auto`, every optional listener off. So `MoquiProductionConf.xml` needs no listener line, and a
 server is set up by turning on what it needs, in the conf beforehand or live. The services carried on a listener
 (§3.4, §3.8) keep today's defaults: DAV, `/notws`, `/termws`, SFTP and git over SSH on, each still decided per user
-by its permission; MCP, A2A, the gateway and webhooks off; `/agentws` `dev`.
+by its permission; MCP, A2A, the gateway and webhooks off; `/agentws` `dev` (once Agent Code P0 is merged).
 
 What follows the change: `MoquiDevConf.xml` drops the lines that become the default; the topology confs whose nodes
 take plain HTTP from a load balancer or front node turn it on; `podman/` publishes 8443 and 2222 and its health
