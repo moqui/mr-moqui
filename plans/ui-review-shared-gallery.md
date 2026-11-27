@@ -28,6 +28,19 @@ The November 25 nine-plan execution queue is superseded. Its 147 rows, counts an
 | Tools | Standalone Maps moves to its own ledger. Grid verifies the source and receiver. See TOOL-B04. |
 | BasicComms | Mention and ring transaction fix, including recipient events. See COM-B12. |
 
+### November 26 revocation and Load rechecks
+
+Three of the four findings from the preceding follow-up passed live on `c89d193f6`. DASH-UI-008 passed the active-editor and owner-cell checks. Its mounted dashboard range still needs a fix.
+
+| Finding | Live outcome |
+|---|---|
+| DASH-UI-008 · P1 · Partial | The editor cleared within one second, and the owner’s cells remained intact. The already-open dashboard still showed its previously rendered header and value after 31 seconds. Refresh now cleared both. Recheck automatic removal on that same mounted panel. [DASH-B07](ui-review-dashboards.md#dash-b07--november-26-live-revocation-recheck) |
+| TOOL-UI-006 · P2 · Passed | The form named the rejected file alongside the successful count. Grid confirmed partial success and the corrected retry. A missing file produced a named error. [TOOL-B09](ui-review-tools.md#tool-b09--november-26-live-load-error-rechecks) |
+| TOOL-UI-007 · P2 · Passed | Invalid worker input stayed on the form with the field, value and no-job explanation. Independent reads confirmed zero jobs and no new row. [TOOL-B09](ui-review-tools.md#tool-b09--november-26-live-load-error-rechecks) |
+| DASH-UI-007 · P2 · Passed | The same bookmark gave the former reader a clear unavailable message and still opened the dashboard for its owner. [DASH-B08](ui-review-dashboards.md#dash-b08--november-26-revoked-bookmark) |
+
+These rechecks revisit existing activities. The cumulative count remains **68 of 147 original activities revisited**, with 79 carrying earlier evidence. [Build and cleanup record](ui-refinement-evidence/recheck-c89/manifest.json).
+
 ### November 26 Tools, System, Dashboards and calls follow-up
 
 On `8eaf230b3`, ten original activities received new branch evidence. SYS-03, DASH-06 and DASH-08 were additional selections. The cumulative count is **68 of 147 original activities revisited**, with **79** carrying earlier evidence. All ten still have partial activity status. The separate count for the 16 added Maps and Dev AIDE activities is unchanged.
