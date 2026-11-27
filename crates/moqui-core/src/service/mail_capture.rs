@@ -28,7 +28,7 @@
 //! `http_fixtures::allow`, never set on a server): elsewhere `enable()` throws and `email-client@capture-sends` is ignored, with
 //! a warning at startup,
 //! so no script on a running server can hold back password reset links and sign-in codes and read them
-//! (plans/Security-Review-Medium.md SEC-DEV-05, SEC-OUT-10, SEC-MAIL-09). Each `enable()` is logged as a warning.
+//! (plans/archive/Security-Review-Medium.md SEC-DEV-05, SEC-OUT-10, SEC-MAIL-09). Each `enable()` is logged as a warning.
 
 use std::sync::{Arc, Mutex};
 

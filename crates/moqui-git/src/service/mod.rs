@@ -413,7 +413,7 @@ fn import_repository(
 /// the host's files is host access, as a terminal on the host is.
 const IMPORT_HOST_PERMISSION: &str = "TERMINAL_HOST";
 
-/// Whether the caller may import repository `id` from `source` (plans/Security-Review.md SEC-GIT-01). No source is the
+/// Whether the caller may import repository `id` from `source` (plans/archive/Security-Review.md SEC-GIT-01). No source is the
 /// repository's own `remoteUrl`, which whoever configured it chose. A URL is fetched only over https (http with
 /// `webhook-private-network`), with no credential in it, from a host whose addresses are all public unless private
 /// networks are allowed, whoever calls. With authorization on, another repository (`git://<id>`) needs the view right

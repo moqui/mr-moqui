@@ -165,7 +165,7 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="EMAIL_ACCOUNT_OWNER_CHANGE" fromDate="0"/>
     <!-- Mail: a hosted or shared account with no store server is delivered here, the inbound listener's mail to its
         address stored in it; giving one an address takes this (EmailClientServices create#EmailAccount and
-        update#EmailAccount; plans/Security-Review.md SEC-MAIL-01) -->
+        update#EmailAccount; plans/archive/Security-Review.md SEC-MAIL-01) -->
     <moqui.security.UserPermission userPermissionId="EMAIL_ACCOUNT_HOSTED" description="Mail: make or re-address an account hosted on this server"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="EMAIL_ACCOUNT_HOSTED" fromDate="0"/>
     <moqui.security.ArtifactGroup artifactGroupId="ResourceOwnerServices" description="Owned resource lookup and owner change"/>
@@ -229,7 +229,7 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.security.UserPermission userPermissionId="LOAD_RUNNER" description="Tools: Load testing (run load scripts against this or an allowed server)"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN_ADV" userPermissionId="LOAD_RUNNER" fromDate="0"/>
     <!-- System › Instances (org.moqui.dev.InstanceServices): starts containers, opens vault items under leases and makes
-        databases on the hosts the rows name. Sealed; each service asks it (plans/Security-Review.md SEC-TLS-02). -->
+        databases on the hosts the rows name. Sealed; each service asks it (plans/archive/Security-Review.md SEC-TLS-02). -->
     <moqui.security.UserPermission userPermissionId="INSTANCE_ADMIN" description="System: Hosted instances (start containers and databases on the configured hosts and run their commands)"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN_ADV" userPermissionId="INSTANCE_ADMIN" fromDate="0"/>
     <!-- Vaults (plans/archive/Vault-Instances.md §3): VAULT_ADMIN makes and deletes operational vaults and grants machine access

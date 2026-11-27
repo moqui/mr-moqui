@@ -27,7 +27,7 @@ import javax.crypto.spec.GCMParameterSpec
  *
  * The device keys' key is not tied to the lock screen: the outbox, an incoming call and a push use the keys while the
  * phone is locked. A second key, for what no background work reads (the chat store passphrases), opens only while the
- * phone is unlocked, from Android 9 (`setUnlockedDeviceRequired`; plans/Security-Review.md SEC-CLI-113): its methods
+ * phone is unlocked, from Android 9 (`setUnlockedDeviceRequired`; plans/archive/Security-Review.md SEC-CLI-113): its methods
  * are the `...Unlocked` ones, and before Android 9 `readyUnlocked` refuses, so Rust seals those by the first key.
  *
  * A third key, the vault's device memory key (`...Auth`, plans/archive/Vault-Instances.md V5), is used only after the user confirms

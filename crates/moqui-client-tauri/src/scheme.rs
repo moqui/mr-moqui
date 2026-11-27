@@ -72,7 +72,7 @@ pub trait SchemeHooks {
 
     /// The `Sec-Fetch-Site` of a page's request on `origin`, where the runtime gives the host a sign of it (on CEF,
     /// [`moqui_client::proxy::site_by_origin`]); the server then refuses a GET of a writing transition that a frame
-    /// inside the page started (plans/Security-Review.md SEC-CLI-102). None where it cannot tell (Android's WebView).
+    /// inside the page started (plans/archive/Security-Review.md SEC-CLI-102). None where it cannot tell (Android's WebView).
     fn fetch_site(&self, headers: &HeaderMap, origin: &str) -> Option<&'static str> {
         let _ = (headers, origin);
         None
@@ -150,7 +150,7 @@ pub fn has_script_policy(csp: &str) -> bool {
 
 /// The camera, microphone and location for a server's page in an app window: its own origin only. The runtimes ask the
 /// app by the window, not by the frame that asked, so without this a frame of another origin that a page embeds with
-/// `allow="camera"` got what the window may have (plans/Security-Review.md SEC-CLI-124, SEC-CLI-90). A server that
+/// `allow="camera"` got what the window may have (plans/archive/Security-Review.md SEC-CLI-124, SEC-CLI-90). A server that
 /// sends a policy of its own keeps it.
 pub const PAGE_PERMISSIONS_POLICY: &str = "camera=(self), microphone=(self), geolocation=(self)";
 
@@ -301,7 +301,7 @@ pub fn answer(
     }
     // Every account's server pages share the app's one origin (APP_ORIGIN), so a worker a page of one server started
     // there, a service worker above all, could outlive its account and answer the next account's requests, which are
-    // forwarded with that account's key: no worker of a server's runs in the apps (plans/Security-Review-Medium.md
+    // forwarded with that account's key: no worker of a server's runs in the apps (plans/archive/Security-Review-Medium.md
     // SEC-CLI-81).
     if worker_request(request.headers()) {
         return plain(StatusCode::FORBIDDEN, "A server's worker does not run in the app");
@@ -349,7 +349,7 @@ pub fn answer(
         Ok(upstream) => upstream,
         Err(err) => {
             // the server and the path's first part only: a path can hold a token (a share link), and the phone's log is
-            // logcat (plans/Security-Review.md SEC-CLI-112)
+            // logcat (plans/archive/Security-Review.md SEC-CLI-112)
             let area = bare.split('/').find(|part| !part.is_empty()).unwrap_or("");
             tracing::info!("{} /{area}: {err}", account.server);
             let offline_body = match (kept, &store_key_device) {

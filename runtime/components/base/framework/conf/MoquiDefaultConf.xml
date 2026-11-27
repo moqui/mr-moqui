@@ -504,7 +504,7 @@
          telemetry/metric name="..." attributes="..." narrows or widens one instrument's attributes. -->
     <!-- Report time rounding: week-start 1 is Monday and 0 Sunday (now/w); the fiscal year (now/fy) starts on this month and day.
         save-roots: where a scheduled report may save its file (a schedule's saveToLocation must be under one, separated by
-        commas or spaces), never through .., in a component, the conf or a .env file (plans/Security-Review-Medium.md
+        commas or spaces), never through .., in a component, the conf or a .env file (plans/archive/Security-Review-Medium.md
         SEC-TLS-06). -->
     <report week-start="1" fiscal-start-month="1" fiscal-start-day="1" save-roots="dbresource://report/"/>
     <!-- Resource watch: when a reading of the machine or the process is a warning or critical, in percent (the status

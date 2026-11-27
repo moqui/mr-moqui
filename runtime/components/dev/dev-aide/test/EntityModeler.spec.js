@@ -114,7 +114,7 @@ feature("Export writes an entity's records as a data file's elements, and Check 
     },
 })
 
-// plans/Security-Review-Medium.md SEC-DEV-01: export#Records refuses a restricted entity, a moqui.security entity, Dev
+// plans/archive/Security-Review-Medium.md SEC-DEV-01: export#Records refuses a restricted entity, a moqui.security entity, Dev
 // AIDE's credential entities and an entity with an encrypted field below the full tier with ADMIN, and its text never
 // holds a password or encrypted field.
 feature("Export refuses credential entities below ADMIN and never writes a password field", {

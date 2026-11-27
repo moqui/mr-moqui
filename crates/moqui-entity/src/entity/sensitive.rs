@@ -70,7 +70,7 @@ const IDENTITY_ADMIN_ENTITY_KEYS: &[&str] = &[
     "userpasswordhistory",
     // an account's own sign-in credentials, made through UserServices' key, app password and device services (which ask
     // whose account it is and what it holds, heldBeyond): a generic write could plant one on another account
-    // (plans/Security-Review-Medium.md SEC-ADM-81)
+    // (plans/archive/Security-Review-Medium.md SEC-ADM-81)
     "usersshkey",
     "userapppassword",
     "devicecredential",
@@ -86,7 +86,7 @@ const SECRET_CONFIG_ENTITY_KEYS: &[&str] = &["emailserver", "systemmessageremote
 /// the ETL mappings, value maps and runs (§10), whose `expression` fields run as the mapping's user, so a generic write
 /// could plant a script in another user's mapping or take it over; and the database jobs and their statements (§6), whose
 /// text `run#DatabaseJob` executes as written, so a generic write would run any SQL past the SQL runner's permission
-/// and its confirmation (plans/Security-Review-Medium.md SEC-TLS-88); and a person's shared live locations
+/// and its confirmation (plans/archive/Security-Review-Medium.md SEC-TLS-88); and a person's shared live locations
 /// (plans/archive/Location-Sharing.md §1), which no grant reads for anyone but the owner and the share's audience. No
 /// entity-auto service writes them either.
 const AUDIT_ENTITY_KEYS: &[&str] = &[
@@ -120,7 +120,7 @@ const AUDIT_ENTITY_KEYS: &[&str] = &[
 /// services that run, a kind's templates and secrets say what goes into a container and which vault items it binds,
 /// and a host, an image or a database host says where a leased login goes; so these rows are not written through the
 /// generic tools, REST or request loads, where an `ADMIN` without the sealed `INSTANCE_ADMIN` could point a holder's
-/// action at a service or a server of theirs (plans/Security-Review.md SEC-TLS-02). The environments and instances are only their services' to write
+/// action at a service or a server of theirs (plans/archive/Security-Review.md SEC-TLS-02). The environments and instances are only their services' to write
 /// ([`SERVICE_WRITTEN_ENTITY_KEYS`]).
 const HOST_CONFIG_ENTITY_KEYS: &[&str] = &[
     "instancehost",

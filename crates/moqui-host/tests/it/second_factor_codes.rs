@@ -13,7 +13,7 @@
  */
 
 //! Second factor codes sent at once, on embedded Postgres, whose row locks the unit tests' database does not have
-//! (plans/Security-Review-Medium.md SEC-WEB-87): every wrong code is counted, none lost to another's write, and of two
+//! (plans/archive/Security-Review-Medium.md SEC-WEB-87): every wrong code is counted, none lost to another's write, and of two
 //! right submissions of one single-use code only one verifies.
 
 #![cfg(all(unix, feature = "embedded-postgres", feature = "axum"))]

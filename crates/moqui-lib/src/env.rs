@@ -408,7 +408,7 @@ pub const CHILD_ENV_NAMES: &[&str] = &[
 
 /// Clear the environment `command` would inherit and pass on only [`CHILD_ENV_NAMES`] and the names in `more`, each when
 /// the server has it; a name of `more` that ends in `*` passes every variable that starts with the rest
-/// (plans/Security-Review-Low.md SEC-OUT-09). Variables the caller sets on `command` afterwards are kept.
+/// (plans/archive/Security-Review-Low.md SEC-OUT-09). Variables the caller sets on `command` afterwards are kept.
 pub fn limit_child_env(command: &mut std::process::Command, more: &[&str]) {
     command.env_clear();
     for name in CHILD_ENV_NAMES.iter().chain(more).filter(|name| !name.ends_with('*')) {

@@ -57,7 +57,7 @@ pub fn search_not_up(facade: &EntityFacade) -> bool {
 ///
 /// `given` is the fields the write's caller set, when an update filled in others from the stored row; `entityValue`
 /// answers `isFieldGiven` by it (`EntityValue::is_field_given`), so a rule tells a value given again from one the
-/// update carried over (plans/Security-Review-Low.md SEC-TLS-116). `None`: each field of `values` was given.
+/// update carried over (plans/archive/Security-Review-Low.md SEC-TLS-116). `None`: each field of `values` was given.
 #[allow(clippy::too_many_arguments)]
 pub fn run_matched_eca(
     facade: &EntityFacade,

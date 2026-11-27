@@ -102,7 +102,7 @@ along with this software (see the LICENSE.md file). If not, see
         <description>The parameters of backup#EmbeddedDatabase that say where its archives go (parameterNameList), that
             service's name and the permission that sets them (ADMIN_BACKUP_DOWNLOAD), kept once in Rust for the security
             rules on the job and remote rows (Security.eecas.xml BackupDestination*, BackupDestination.js;
-            plans/Security-Review-Medium.md SEC-TLS-83).</description>
+            plans/archive/Security-Review-Medium.md SEC-TLS-83).</description>
         <out-parameters>
             <parameter name="parameterNameList" type="List"/>
             <parameter name="serviceName"/>

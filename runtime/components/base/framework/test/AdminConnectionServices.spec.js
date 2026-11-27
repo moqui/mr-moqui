@@ -7,7 +7,7 @@
 // sent nothing and that a test sends no credentials; the others are refused before a socket (an internal address, no print
 // client) or are of a kind whose test sends nothing (the mail sign-in provider). The relay the sign-in mail goes through
 // (SYSTEM, or one a reset or code template names) is read only without ADMIN_ACCESS_MANAGE and changed only after a recent
-// sign-in (plans/Security-Review-Medium.md SEC-ADM-82), and a relay's link base URL is on one of the instance's own names
+// sign-in (plans/archive/Security-Review-Medium.md SEC-ADM-82), and a relay's link base URL is on one of the instance's own names
 // (SEC-ADM-83).
 // Run: ./moq test framework --spec AdminConnectionServices
 const C = "org.moqui.admin.ConfigurationServices."

@@ -2575,7 +2575,7 @@ load it on a running server, with its data, when it has no Rust code
 ([Component-Deploy](tools/Component-Deploy.md#loading-a-component)). A component deployed that way is updated, moved aside and removed
 only in its own directory under a directory named `components` (`runtime/components/addon/<name>` by default): a conf
 whose `component-dir` is not named `components` (Moqui Java's `runtime/component`) has its deploys and removals refused
-(plans/Security-Review-Low.md SEC-TLS-104).
+(plans/archive/Security-Review-Low.md SEC-TLS-104).
 
 ## Moving from Moqui Java
 

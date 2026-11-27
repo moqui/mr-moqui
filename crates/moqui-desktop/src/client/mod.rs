@@ -272,7 +272,7 @@ pub(crate) fn comms_root(app: &AppHandle) -> Option<String> {
 
 /// A name for this computer in the user's device list and of the shell's chat crypto device, which other users who
 /// share a room or a call are told: by its OS, not its host name, which often carries the owner's name or an asset tag
-/// (plans/Security-Review.md SEC-CLI-106). The user renames either afterwards.
+/// (plans/archive/Security-Review.md SEC-CLI-106). The user renames either afterwards.
 fn device_name() -> String {
     named_device(std::env::consts::OS)
 }

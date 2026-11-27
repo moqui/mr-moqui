@@ -36,7 +36,7 @@ impl Location {
     /// `env` is `MOQUI_RUNTIME`, `dev` whether this is a development run (`cargo tauri dev`), `resources` the app's
     /// resource directory and `app_data` its data directory. A release build looks for no runtime of its own: one in its
     /// working directory or beside it could be any account's of the computer, whose code and data the node would run
-    /// (plans/Security-Review.md SEC-CLI-91); `MOQUI_RUNTIME` names one.
+    /// (plans/archive/Security-Review.md SEC-CLI-91); `MOQUI_RUNTIME` names one.
     pub(crate) fn choose(env: Option<PathBuf>, dev: bool, resources: &Path, app_data: &Path) -> Self {
         if let Some(dir) = env.filter(|dir| !dir.as_os_str().is_empty()) {
             return Self::Existing(dir);

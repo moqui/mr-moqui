@@ -183,7 +183,7 @@ feature("runAsUser leaves the caller's authorization state as it was, whatever i
 // A snapshot restore is an administrator's whole-database operation: the wrapped import runs with authorization off, as
 // the plain ImportEntityDataSnapshot job does, so a privileged-group membership in the snapshot is restored for a
 // DATABASE_ADMIN user outside that group; the security-check rules the import's disableEntityEca keeps would refuse it
-// with authorization on and roll back the whole file (plans/Security-Review-Medium.md SEC-DAT-83)
+// with authorization on and roll back the whole file (plans/archive/Security-Review-Medium.md SEC-DAT-83)
 feature("a DATABASE_ADMIN user's wrapped snapshot import restores a privileged-group membership", {
     expect() {
         const snapUser = "SPEC_LW_SNAP"

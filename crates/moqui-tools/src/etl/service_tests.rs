@@ -108,7 +108,7 @@ fn columns_match_by_name_then_words_then_nearest() {
 
 /// An entity source reads no encrypted or password field into a row, and no source condition or lookup matches on one
 /// or answers it: the entity facade decrypts an encrypted field as it reads it, so a row, a check's sample or a lookup
-/// would answer it in clear (plans/Security-Review-Medium.md SEC-TLS-89).
+/// would answer it in clear (plans/archive/Security-Review-Medium.md SEC-TLS-89).
 #[test]
 fn an_entity_source_and_a_lookup_read_no_encrypted_or_password_field() {
     use super::Mapping;

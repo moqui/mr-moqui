@@ -259,7 +259,7 @@ along with this software (see the LICENSE.md file). If not, see
             if (ownerUserId && ownerUserId !== ec.user.userId && !authzOff) { ec.message.addError(ec.l10n.localize('An email account is made for yourself')); return }
             if (emailServerId && !authzOff) { ec.message.addError(ec.l10n.localize('An existing email server is chosen only by internal setup')); return }
             // a hosted or shared account with no store server is delivered here: the listener's mail to its address goes to
-            // it, so only a mail administrator gives one an address (plans/Security-Review.md SEC-MAIL-01)
+            // it, so only a mail administrator gives one an address (plans/archive/Security-Review.md SEC-MAIL-01)
             if (['EakHosted', 'EakShared'].includes(accountKindEnumId) && !storeHost && !authzOff
                     && !ec.user.hasPermission('EMAIL_ACCOUNT_HOSTED')) {
                 ec.message.addError(ec.l10n.localize('Only a mail administrator makes an account hosted here; ask one, or add an account of another server'))
@@ -326,7 +326,7 @@ along with this software (see the LICENSE.md file). If not, see
             password of a side that moved and is not given again in the same change, and revokes and
             clears the OAuth refresh token, so a manager who is not the mailbox's owner cannot point its server at a host of
             theirs and receive the mailbox's password or a token for it; the account is then marked EasAuthFailed until its
-            sign-in is entered again (plans/Security-Review-Medium.md SEC-MAIL-84). A server that signs in with OAuth takes
+            sign-in is entered again (plans/archive/Security-Review-Medium.md SEC-MAIL-84). A server that signs in with OAuth takes
             only the provider's own hosts (its storeHost, popHost and smtpHost) or a host under its hostSuffixes.
 
             accountKindEnumId changes the kind among hosted, external (personal) and shared: to shared at any time (the
@@ -2336,7 +2336,7 @@ along with this software (see the LICENSE.md file). If not, see
             storeHost, popHost or smtpHost, or a host under its hostSuffixes, in any case and with or without a trailing
             dot. refusedHost is the first that is not (empty when both are); with no such provider every host given is.
             update#EmailAccount asks it, and the token is refused for such a server where it is made too
-            (plans/Security-Review-Medium.md SEC-MAIL-84). Internal: callers disable authorization.</description>
+            (plans/archive/Security-Review-Medium.md SEC-MAIL-84). Internal: callers disable authorization.</description>
         <in-parameters>
             <parameter name="oauthProviderEnumId" required="true"/>
             <parameter name="storeHost"/>
@@ -5209,9 +5209,9 @@ along with this software (see the LICENSE.md file). If not, see
             this node signs mail for (a hosted or shared account's, or one of mail-delivery/dkim@domains) other than the
             account's own address, unless the user is a mail administrator (EMAIL_ACCOUNT_HOSTED) or authorization is
             disabled: mail From it gets the node's DKIM signature, which passes DMARC anywhere
-            (plans/Security-Review-Medium.md SEC-MAIL-82). For an account delivered here (emailAccountId of a hosted or
+            (plans/archive/Security-Review-Medium.md SEC-MAIL-82). For an account delivered here (emailAccountId of a hosted or
             shared account with no incoming host) any address other than the account's is refused, under the same
-            exception: the listener routes mail to an identity's address (plans/Security-Review-Low.md SEC-MAIL-68).</description>
+            exception: the listener routes mail to an identity's address (plans/archive/Security-Review-Low.md SEC-MAIL-68).</description>
         <in-parameters>
             <parameter name="emailAddress" required="true" allow-html="any"/>
             <parameter name="accountAddress" allow-html="any"/>
@@ -5255,7 +5255,7 @@ along with this software (see the LICENSE.md file). If not, see
         <description>The level at which the current user changes the identities of an account: get#EmailAccountAccess's,
             or for a mail administrator (EMAIL_ACCOUNT_HOSTED) manage on an account delivered here (hosted or shared, its
             server with no incoming host), so the administrator adds an alias of a hosted domain without reaching the
-            account's mail (plans/Security-Review-Medium.md SEC-MAIL-82). accountAddress and isInternal are the
+            account's mail (plans/archive/Security-Review-Medium.md SEC-MAIL-82). accountAddress and isInternal are the
             account's when level is 1 or more.</description>
         <in-parameters><parameter name="emailAccountId" required="true"/></in-parameters>
         <out-parameters>

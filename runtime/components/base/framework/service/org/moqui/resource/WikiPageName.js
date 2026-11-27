@@ -1,4 +1,4 @@
-// How a wiki page path and a page file name name a page (org.moqui.resource.WikiServices; plans/Security-Review-Medium.md
+// How a wiki page path and a page file name name a page (org.moqui.resource.WikiServices; plans/archive/Security-Review-Medium.md
 // SEC-BOS-85), one rule for the record lookups, the file lookup and the children list, so the record whose access rules
 // are asked and the file that is read are always the same page's:
 //   normalPath(path)           the path with no empty segment (a doubled, leading or trailing slash names the same page),

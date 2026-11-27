@@ -17,7 +17,7 @@
 //! step user the runner reads them itself: the steps ran as its own user. With one (`--step-user`, the runner root)
 //! each is done by a child of this binary running as the step user, `moqui ci-run collect` ([`run_as`],
 //! [`collect_child`]), so the runner never lists, resolves or reads the workspace the steps wrote, and a link a step
-//! made, or swapped in while the runner looked, reads only what the step could read (plans/Security-Review.md
+//! made, or swapped in while the runner looked, reads only what the step could read (plans/archive/Security-Review.md
 //! SEC-GIT-81).
 
 use std::path::{Path, PathBuf};

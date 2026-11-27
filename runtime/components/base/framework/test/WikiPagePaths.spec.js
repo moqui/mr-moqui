@@ -1,5 +1,5 @@
 // A wiki page path names one page, whatever its slashes (org.moqui.resource.WikiServices get#WikiPageId,
-// get#WikiPageReference, get#WikiPageFile, get#WikiPageAttachment, WikiPageName.js; plans/Security-Review-Medium.md
+// get#WikiPageReference, get#WikiPageFile, get#WikiPageAttachment, WikiPageName.js; plans/archive/Security-Review-Medium.md
 // SEC-BOS-85): a doubled, leading or trailing slash finds the same record as the file, so a page restricted to its members
 // is not read, nor its attachments, by a path its record is not at; a file of a two-part type (Name.md.fancy) is page Name.
 // Run: ./moq test framework --spec WikiPagePaths

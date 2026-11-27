@@ -20,7 +20,7 @@ use moqui_lib::object::Value;
 use super::{backup_dir, mirror_options, paused_for, MirrorOptions, Transport};
 use crate::context::ExecutionContextFactory;
 
-/// Where a whole-database archive goes is its download (plans/Security-Review-Medium.md SEC-TLS-83): a caller without
+/// Where a whole-database archive goes is its download (plans/archive/Security-Review-Medium.md SEC-TLS-83): a caller without
 /// ADMIN_BACKUP_DOWNLOAD who names a directory or a mirror other than a backup job's is refused before anything is
 /// dumped; the job's own destination, the default one and a call with authorization disabled pass.
 #[test]

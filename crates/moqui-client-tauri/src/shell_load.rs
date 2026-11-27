@@ -16,7 +16,7 @@
 //! makes one as the shell's own page finishes loading in its window and hands it to that document
 //! ([`nonce_script`]), and a shell command is taken only with it ([`crate::ShellHost::is_shell_page`]). Any other
 //! document the window comes to show, a `data:` or `blob:` one or a page that took the shell's place, never has it, so
-//! the window's capability is not the only line between a page and the shell's commands (plans/Security-Review.md
+//! the window's capability is not the only line between a page and the shell's commands (plans/archive/Security-Review.md
 //! SEC-CLI-07, SEC-CLI-97). The desktop's main window uses [`ShellLoad`]; the mobile app's one webview, which shows
 //! the server's pages too, keeps the same nonce in its own page state.
 

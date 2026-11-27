@@ -23,7 +23,7 @@ along with this software (see the LICENSE.md file). If not, see
             <script><![CDATA[
                 ec.web.sessionAttributes.remove('toolsServiceRunResults')
                 // generic: an entity-auto service of an entity no generic write takes is refused, as Service REST
-                // refuses it (plans/Security-Review-Medium.md SEC-TLS-85)
+                // refuses it (plans/archive/Security-Review-Medium.md SEC-TLS-85)
                 serviceResults = ec.service.sync().name(serviceName).parameters(context).generic().call()
                 if (serviceResults && !ec.message.hasError()) {
                     // the names only: a value may be a secret the service returns (SEC-TLS-09)

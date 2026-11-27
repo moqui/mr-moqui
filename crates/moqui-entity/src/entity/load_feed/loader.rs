@@ -467,7 +467,7 @@ pub(super) fn inherit_pk_fields(
 
 pub(super) fn store_record(facade: &EntityFacade, options: &LoadOptions, record: Record) -> Result<u64, Error> {
     // before a check or a list too: a check answers the stored values of the record the data names
-    // (plans/Security-Review-Medium.md SEC-TLS-84)
+    // (plans/archive/Security-Review-Medium.md SEC-TLS-84)
     if options.restrict_sensitive_entities {
         refuse_restricted(facade, &record, options)?;
     }
@@ -503,7 +503,7 @@ fn refuse_restricted(facade: &EntityFacade, record: &Record, options: &LoadOptio
         )));
     }
     // the password fields are not taken on a generic write: a load would set any user's password hash
-    // (plans/Security-Review-Low.md SEC-DAT-08, through put#EntitySyncData)
+    // (plans/archive/Security-Review-Low.md SEC-DAT-08, through put#EntitySyncData)
     if options.refuse_password_fields
         && crate::entity::sensitive::is_user_account_entity(&full_name)
         && crate::entity::sensitive::USER_ACCOUNT_SECRET_FIELDS

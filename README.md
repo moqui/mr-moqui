@@ -7,10 +7,12 @@
 >   where files are kept) are not stable. They change without migrations, and a database from an earlier build may
 >   need to be emptied and loaded again (`./moq clean-db`, `./moq load`).
 > - **Security.** Run it only on development machines, with no real business data or credentials, and do not expose
->   it to the internet. A security review is under way. Until 0.1.0 its findings, open vulnerabilities included, are
->   recorded openly in this repository ([plans/Security-Review.md](plans/Security-Review.md),
->   [docs/security/](docs/security/Attack-Surface.md)): with no production systems to protect, the repository is the
->   project's internal disclosure. From 0.1.0 the project follows Moqui Java's policy: a vulnerability is reported
+>   it to the internet. The first security review is finished (every finding fixed, accepted, refuted or carried to
+>   [plans/Remaining-Work.md](plans/Remaining-Work.md#sessions-notifications-and-security), 2026-11-27); its register
+>   is [plans/archive/Security-Review.md](plans/archive/Security-Review.md) and its map
+>   [docs/security/](docs/security/Attack-Surface.md). Until 0.1.0 findings, open vulnerabilities included, are recorded
+>   openly in this repository: with no production systems to protect, the repository is the project's internal
+>   disclosure. From 0.1.0 the project follows Moqui Java's policy: a vulnerability is reported
 >   privately to the board ([SECURITY.md](SECURITY.md)) and kept in the board's private repository until it is fixed.
 
 Moqui is a framework for building business applications. An application is a component made of artifacts written in

@@ -324,7 +324,7 @@ fn document_view(facade: &EntityFacade, id: &str) -> Result<Option<EntityDefinit
 
 /// The alias functions a view built from database rows (a `DbViewEntityAlias`, a `DataDocumentField`) may name: the
 /// `alias` `function` values of the entity definition schema. Any other name was written into the SQL as a function
-/// call, such as `pg_read_file`, run with the database user's rights (plans/Security-Review-Medium.md SEC-DAT-04).
+/// call, such as `pg_read_file`, run with the database user's rights (plans/archive/Security-Review-Medium.md SEC-DAT-04).
 pub const ROW_VIEW_FUNCTIONS: &[&str] = &["min", "max", "sum", "avg", "count", "count-distinct", "upper", "lower"];
 
 /// Refuse an alias function of a view built from rows that is not one of [`ROW_VIEW_FUNCTIONS`].

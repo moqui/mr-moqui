@@ -16,7 +16,7 @@
 //! configuration rows (environments, clusters, hosts, images, database hosts, instances made from their kind), the
 //! preview and the actions, the `docker` host type's container services, the database kinds' `create#Database` and
 //! `check#Database`, and the reconcile job. Each needs the sealed INSTANCE_ADMIN unless authorization is disabled
-//! (plans/Security-Review.md SEC-TLS-02).
+//! (plans/archive/Security-Review.md SEC-TLS-02).
 
 use std::collections::BTreeMap;
 use std::sync::Arc;

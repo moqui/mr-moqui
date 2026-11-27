@@ -53,7 +53,7 @@ pub fn secret_parameter(key: &str) -> bool {
             .any(|end| lower.ends_with(end))
 }
 
-/// Whether `System.getProperty` refuses the property `name` to a script (plans/Security-Review-Medium.md SEC-SCR-03): a
+/// Whether `System.getProperty` refuses the property `name` to a script (plans/archive/Security-Review-Medium.md SEC-SCR-03): a
 /// conf attribute's environment name (`moqui_conf__...`, in any case), a name [`secret_parameter`] calls a secret's
 /// (password, secret, token, credential, a `_key` ending), and a name that ends in `_pass` or `_pw` or holds `crypt`;
 /// each in lower case with `.` read as `_`, as the lookup reads a name both ways. A script reads the conf by selector

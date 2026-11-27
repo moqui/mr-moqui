@@ -2,7 +2,7 @@
 //! request data is JSON on stdin, never shell syntax. One invocation, no retries.
 //! The child gets only the named environment (`moqui_lib::env::limit_child_env`) and the variables that
 //! `MOQUI_EXTERNAL_AGENT_ENV` names (comma separated, such as the adapter's own API key), never the server's secrets
-//! (plans/Security-Review-Low.md SEC-AI-12). The function checks no permission: a service defined on it must say who may
+//! (plans/archive/Security-Review-Low.md SEC-AI-12). The function checks no permission: a service defined on it must say who may
 //! call it (`authenticate` and its artifact authz).
 use crate::entity::EntityFacade;
 use moqui_lib::{

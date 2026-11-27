@@ -137,7 +137,7 @@ along with this software (see the LICENSE.md file). If not, see
             <method type="get"><entity name="moqui.basic.print.NetworkPrinter" operation="list"/></method>
             <!-- a printer is started and changed through store#Connection (Admin's Connections, and System › Print's
                 forms): a new or repointed printer waits for a test print, and on production reaches no internal address;
-                not here (plans/Security-Review-Medium.md SEC-RTE-83) -->
+                not here (plans/archive/Security-Review-Medium.md SEC-RTE-83) -->
             <id name="networkPrinterId">
                 <method type="get"><entity name="moqui.basic.print.NetworkPrinter" operation="one"/></method>
 
@@ -242,7 +242,7 @@ along with this software (see the LICENSE.md file). If not, see
             <method type="get"><entity name="users" operation="one"/></method>
             <!-- the account service, not the entity update: a change of another account's sign-in fields is refused when that
                 account holds access the caller lacks, and an email or provider link change needs a recent sign-in
-                (plans/Security-Review-Medium.md SEC-ADM-81); the sign-in fields are an ADMIN's only, as Java's -->
+                (plans/archive/Security-Review-Medium.md SEC-ADM-81); the sign-in fields are an ADMIN's only, as Java's -->
             <method type="patch"><service name="org.moqui.impl.UserServices.patch#UserAccount"/></method>
 
             <resource name="password">

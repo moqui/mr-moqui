@@ -1320,7 +1320,7 @@ pub fn frame_document(origin: &str, version: &str, external: bool) -> FrameDocum
 /// frames it, and it frames [`frame_document`] at `/assist/sandbox` with the same query and fragment. Its policy lets
 /// its one frame load only `{origin}/assist/sandbox`, and a browser holds a frame's own navigations to the policy of
 /// the document that frames it, so the component cannot navigate its frame to another site with what it read
-/// (plans/Security-Review-Medium.md SEC-AI-81); the app's pages keep their own policy. Its only script is
+/// (plans/archive/Security-Review-Medium.md SEC-AI-81); the app's pages keep their own policy. Its only script is
 /// `WebrootAssistSandboxHost.js`, which makes the frame and hands it the drawer's port; no data, no session.
 pub fn host_document(origin: &str, version: &str) -> FrameDocument {
     let version: String = version

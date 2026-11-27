@@ -25,7 +25,7 @@
     <service verb="check" noun="RunReadable" allow-remote="false">
         <description>Whether the current user reads an agent run's content (its user's message, its reply, a judge's
             reasons): their own run, or another user's with AgentAudit, that read written to AgentAuditLog with reason
-            (plans/Security-Review-Medium.md SEC-AI-83).</description>
+            (plans/archive/Security-Review-Medium.md SEC-AI-83).</description>
         <in-parameters><parameter name="runId" required="true"/><parameter name="reason"/></in-parameters>
         <out-parameters><parameter name="readable" type="Boolean"/></out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/agent/AgentEval.js').execute('runReadable',context))</script></actions>
@@ -34,7 +34,7 @@
         <description>Why the current user may not make or change a scorer (op store: a service scorer of a service other
             than the evals' own needs AgentAudit) or attach one to an agent (op attach: live scoring reads every user's runs
             of the agent, so it needs AgentAudit and is written to AgentAuditLog); refusal empty when they may
-            (plans/Security-Review-Medium.md SEC-AI-83).</description>
+            (plans/archive/Security-Review-Medium.md SEC-AI-83).</description>
         <in-parameters><parameter name="op" required="true"/><parameter name="scorerTypeEnumId"/><parameter name="serviceName"/>
             <parameter name="scorerId"/><parameter name="agentId"/></in-parameters>
         <out-parameters><parameter name="refusal"/></out-parameters>

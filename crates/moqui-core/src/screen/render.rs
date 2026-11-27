@@ -558,7 +558,7 @@ pub(super) fn with_qvt_render<R>(
     body(&state)
 }
 
-/// Whether the code running now is a preview's proposed text (plans/Security-Review-Low.md SEC-AI-102): an overlay is
+/// Whether the code running now is a preview's proposed text (plans/archive/Security-Review-Low.md SEC-AI-102): an overlay is
 /// held and the screen whose code runs is one built from its text. That screen is the nearest screen frame above the
 /// last service frame, so a service the text calls runs its own code as ever, and any path that runs the screen's
 /// actions under its frame (a render, a transition, the menu data, a form or tree's data) is covered; or, with no
@@ -814,7 +814,7 @@ impl Drop for SampleFlush<'_> {
 /// plans/archive/design-dev-aide.md 13.3): under the read fence, so nothing it runs writes, and framed by the page that asked.
 /// The `Content-Security-Policy` of a preview of proposed screen text, which replaces the conf's: framed by the app
 /// only, and nothing it loads (an image, a style's `url()`, a font, a fetch or a socket) goes to another site, so what
-/// a proposed screen shows does not leave with no click (plans/Security-Review-Low.md SEC-AI-102). Scripts and styles
+/// a proposed screen shows does not leave with no click (plans/archive/Security-Review-Low.md SEC-AI-102). Scripts and styles
 /// of the page's own origin and inline ones run as on any page.
 pub(crate) const PREVIEW_POLICY: &str = "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; \
      style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; frame-ancestors 'self'; form-action 'self';";
@@ -858,7 +858,7 @@ pub(crate) fn run_job(factory: &Arc<ExecutionContextFactory>, job: &Job<'_>) -> 
     run()
 }
 
-/// A preview's response, whatever its render set (plans/Security-Review-Low.md SEC-AI-102): the preview's policy again,
+/// A preview's response, whatever its render set (plans/archive/Security-Review-Low.md SEC-AI-102): the preview's policy again,
 /// no `Refresh` header (a timed redirect the Location rule would not see), and a redirect only to this site (a relative
 /// path, or this host), else a 403 with no Location. It backs up the allow-list host, which gives the proposed text no
 /// `ec.web` member to set either. A `<meta http-equiv="refresh">` in the body would need raw output of the proposed
@@ -3005,7 +3005,7 @@ pub(super) fn is_empty(value: Option<&Value>) -> bool {
 
 /// A GET (or HEAD) of a transition that runs actions and is not read-only, started by another site
 /// ([`web::started_by_another_site`]) and carrying no session token: refused, since a GET is not token-checked and a
-/// cross-site link carries the `SameSite=Lax` cookie (plans/Security-Review.md SEC-WEB-04, SEC-TLS-04). The app's own
+/// cross-site link carries the `SameSite=Lax` cookie (plans/archive/Security-Review.md SEC-WEB-04, SEC-TLS-04). The app's own
 /// links and a typed URL still run, as does a request with no browser's headers. So is one the browser loads as a part
 /// of a page ([`web::loaded_as_subresource`]): an image of this site in a stored rich text (SEC-CLI-82).
 fn cross_site_write(job: &Job<'_>, transition: &TransitionDef) -> Result<bool, Error> {

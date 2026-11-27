@@ -202,7 +202,7 @@ pub(super) fn check_file(
 
 /// Check one record of `entity` against the database, inside a [`check_with`] or [`check_info_with`] body: an ETL
 /// check's diff (plans/archive/Tools-Database.md §10.3). Outside a check it does nothing. An ETL check is restricted,
-/// as its targets are (plans/Security-Review-Medium.md SEC-TLS-84).
+/// as its targets are (plans/archive/Security-Review-Medium.md SEC-TLS-84).
 ///
 /// # Errors
 ///
@@ -364,7 +364,7 @@ impl Findings {
 /// A check reads the stored record the data names. A restricted one (`restrictSensitiveEntities`, a Tools check or an
 /// ETL check) is generic access ([`sensitive::generic_access`]): an entity no generic read takes (identity,
 /// secret-config, audit and hosted-instance entities, and views over them) is refused, and a password or encrypted
-/// field is not compared, so no stored value of one is answered or matched (plans/Security-Review-Medium.md
+/// field is not compared, so no stored value of one is answered or matched (plans/archive/Security-Review-Medium.md
 /// SEC-TLS-84). An unrestricted one, as a load without the option (the testkit's `checkData`, a component's own
 /// check), compares every field of any entity, as Java's.
 fn check_tree(facade: &EntityFacade, record: &Record, ancestor: &FieldMap, found: &mut Findings) -> Result<u64, Error> {

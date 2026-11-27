@@ -229,7 +229,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <if condition="saveToLocation">
                     <script>
                         // the location as stored, not expanded as a template, and only under the report save roots
-                        // (plans/Security-Review-Medium.md SEC-TLS-06, SEC-SCR-06)
+                        // (plans/archive/Security-Review-Medium.md SEC-TLS-06, SEC-SCR-06)
                         const saveToLocationExp = String(saveToLocation)
                         const saveProblem = WebUtilities.reportSaveLocationProblem(saveToLocationExp)
                         if (saveProblem) ec.logger.error(`Not saving ScreenScheduled ${screenScheduledId}: ${saveProblem}`)

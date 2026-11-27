@@ -61,7 +61,7 @@ pub struct Options {
     pub env: Vec<(String, String)>,
     /// Whether a step inherits the runner's environment (a job's container, whose image sets it up). A registered
     /// runner's steps do not ([`STEP_BASE_ENV`] and [`Self::pass_env`] only): the machine's environment is not the
-    /// job's (plans/Security-Review.md SEC-GIT-02).
+    /// job's (plans/archive/Security-Review.md SEC-GIT-02).
     pub inherit_env: bool,
     /// Names of the runner's variables a step gets when it does not inherit the environment (`--pass-env`).
     pub pass_env: Vec<String>,
@@ -301,7 +301,7 @@ pub(crate) fn resolves_inside(root: &Path, path: &Path) -> bool {
 
 /// Open `path` to read when it is a regular file and not a link: `O_NOFOLLOW` refuses a link as the last name, and
 /// `O_NONBLOCK` keeps a FIFO put in its place from holding the open; what was opened is checked to be a regular file
-/// (plans/Security-Review.md SEC-GIT-81).
+/// (plans/archive/Security-Review.md SEC-GIT-81).
 ///
 /// # Errors
 ///

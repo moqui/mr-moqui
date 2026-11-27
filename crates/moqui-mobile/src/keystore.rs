@@ -24,7 +24,7 @@
 //! The device keys are used while the phone is locked (the outbox, an incoming call, a push), so their Keystore key is
 //! not tied to the lock. What no background work reads, each account's chat store passphrases (`<account>.chat-store`,
 //! asked for by the shell's page only), is sealed by a second Keystore key that opens only while the phone is
-//! unlocked, from Android 9 ([`SealedFileStore::with_unlocked`], `<entry>.unlocked`; plans/Security-Review.md
+//! unlocked, from Android 9 ([`SealedFileStore::with_unlocked`], `<entry>.unlocked`; plans/archive/Security-Review.md
 //! SEC-CLI-113). One sealed by the first key before is moved to the second as it is read.
 
 // The sealed store is used on Android only; its tests run everywhere.

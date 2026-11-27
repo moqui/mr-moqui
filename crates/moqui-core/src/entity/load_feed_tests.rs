@@ -510,7 +510,7 @@ fn csv_rows_check_their_own_key_and_create_or_update() {
 }
 
 /// The data load's CSV and JSON text is loaded from memory, never written to a file another local user could read
-/// (plans/Security-Review-Low.md SEC-OUT-89); an error names the text.
+/// (plans/archive/Security-Review-Low.md SEC-OUT-89); an error names the text.
 #[test]
 fn csv_and_json_text_load_from_memory() {
     let facade = crate::testing::open();
@@ -732,7 +732,7 @@ fn an_admin_group_member_is_not_stored_while_entity_eca_runs() {
 }
 
 // A check (Tools › Data › Load's Check Data) answers the stored value of each field the data gives that differs, so it
-// takes no entity a generic read refuses and compares no password or encrypted field (plans/Security-Review-Medium.md
+// takes no entity a generic read refuses and compares no password or encrypted field (plans/archive/Security-Review-Medium.md
 // SEC-TLS-84).
 #[test]
 fn a_check_answers_no_password_or_encrypted_value_and_refuses_the_restricted_entities() {
@@ -808,7 +808,7 @@ fn a_check_answers_no_password_or_encrypted_value_and_refuses_the_restricted_ent
 }
 
 // A load's own switch is this thread's and ends with its scope, nested or not; it leaves the security checks
-// (plans/Security-Review-Medium.md SEC-DAT-83).
+// (plans/archive/Security-Review-Medium.md SEC-DAT-83).
 #[test]
 fn a_loads_switch_is_this_threads_and_leaves_the_security_checks() {
     use crate::entity::WriteSwitches;

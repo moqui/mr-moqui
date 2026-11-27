@@ -1091,7 +1091,7 @@ fn push_parameter_attachment(
     env: &RenderEnv,
 ) -> Result<(), Error> {
     // A call's file name is taken as written, never expanded: it can come from a request (emailScreenAsync passes the
-    // request's fileName on), and `${}` runs as script (plans/Security-Review.md SEC-MAIL-61). Only an
+    // request's fileName on), and `${}` runs as script (plans/archive/Security-Review.md SEC-MAIL-61). Only an
     // EmailTemplateAttachment row's own name, configured with the template, is a template.
     let filename = map_text(map, "fileName");
     let mode = map_text(map, "screenRenderMode");
@@ -1580,7 +1580,7 @@ fn deliver(
 }
 
 /// Whether the node's DKIM signature may go on a mail client message of account `account_id` From `from`
-/// (plans/Security-Review-Medium.md SEC-MAIL-82): only when the account is delivered here (hosted or shared, its server
+/// (plans/archive/Security-Review-Medium.md SEC-MAIL-82): only when the account is delivered here (hosted or shared, its server
 /// with no incoming host, which only a mail administrator makes, SEC-MAIL-01) and `from` is its own address or the
 /// address of one of its identities (one of a hosted domain is a mail administrator's to make). An account of another
 /// server is the user's, whose From the node does not vouch for: its mail goes out unsigned. Read with authorization
@@ -1984,7 +1984,7 @@ pub(super) fn smtp_user(server: &EntityValue) -> String {
 
 /// The SMTP password: with an SMTP user of its own only `smtpPassword`, else `mailPassword`. Never the store's password
 /// for another user: `update#EmailAccount` clears `smtpPassword` when the SMTP side moves, and the store's password
-/// would otherwise go to the new SMTP host (plans/Security-Review-Medium.md SEC-MAIL-84).
+/// would otherwise go to the new SMTP host (plans/archive/Security-Review-Medium.md SEC-MAIL-84).
 pub(super) fn smtp_password(server: &EntityValue) -> String {
     if field_text(server, "smtpUsername").trim().is_empty() {
         field_text(server, "mailPassword")

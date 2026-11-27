@@ -22,7 +22,7 @@
 //!
 //! Every account's server pages are on the one `moqui-app` origin, so each account's app windows have a Chromium
 //! profile of their own ([`profile_dir`]): its storage, caches and service workers are the browser's to keep apart, and
-//! one account's pages see nothing another's kept (plans/Security-Review-Medium.md SEC-CLI-81). A removed account's
+//! one account's pages see nothing another's kept (plans/archive/Security-Review-Medium.md SEC-CLI-81). A removed account's
 //! profile is deleted at the next start ([`forget_old_profiles`]), as Chromium holds its files while it runs.
 
 use std::path::{Path, PathBuf};
@@ -214,7 +214,7 @@ pub(crate) fn notify_pages(app: &AppHandle, account: &str, event: &Value) {
 #[derive(Debug, PartialEq, Eq)]
 enum Goes {
     /// The window goes there: its own origin (a `blob:` of it too), or `about:blank`. A `data:` document, or a `blob:`
-    /// of another origin, goes nowhere (plans/Security-Review.md SEC-CLI-03).
+    /// of another origin, goes nowhere (plans/archive/Security-Review.md SEC-CLI-03).
     Here,
     /// A page of the server, from the shell: in an app window.
     AppWindow,

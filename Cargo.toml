@@ -475,6 +475,6 @@ rusqlite = { version = "0.43", features = ["bundled"] }
 stun-proto = { git = "https://github.com/moqui/stun-proto", rev = "051ca03ff92d04998cfec70a735d23369117b9c9" }
 stun-types = { git = "https://github.com/moqui/stun-proto", rev = "051ca03ff92d04998cfec70a735d23369117b9c9" }
 # yrs 0.28.2 at moqui's fork, branch moqui/0.28.2-decode-bounds (docs/Build-Test.md Forks): an update's values nest at
-# most 128 levels, which decoded by a recursion once a level with no limit (plans/Security-Review-Medium.md SEC-TLS-95),
+# most 128 levels, which decoded by a recursion once a level with no limit (plans/archive/Security-Review-Medium.md SEC-TLS-95),
 # and a length read from an update reserves at most 1024 entries up front (SEC-TLS-117)
 yrs = { git = "https://github.com/moqui/y-crdt", rev = "6ad5c94af9c4b50ac9c05dec67c3b96a8e8fd782" }

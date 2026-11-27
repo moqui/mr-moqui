@@ -545,7 +545,7 @@ feature("a disabled owner's schedule pauses until a qualified owner takes it and
         const equals = one("moqui.screen.ScreenScheduled", {reportOwnerId: "RDA_OTHER"})
         // an alert rule the board's body names, which the new owner may not read: it stays its author's, as it acts on its
         // own, and only transfer#AlertRuleOwner, which pauses it, hands it on; nor does the new owner's qualification read
-        // it (plans/Security-Review-Medium.md SEC-TLS-90)
+        // it (plans/archive/Security-Review-Medium.md SEC-TLS-90)
         const boardBody = String(one("moqui.report.Definition", {definitionId: "rda-board"}).bodyJson)
         sys(() => {
             make("moqui.report.Definition", {definitionId: "rda-alert", definitionType: "alert", title: "Audience alert",

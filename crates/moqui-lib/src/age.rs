@@ -15,7 +15,7 @@
 //! The [age](https://age-encryption.org/v1) file format for one X25519 recipient, streamed: what this writes the `age`
 //! and `rage` tools decrypt with the recipient's identity (`age -d -i key.txt`). A host that encrypts holds only the
 //! public `age1...` recipient. [`Decryptor`] reads the same format back as a stream, a database backup's included
-//! (plans/Security-Review.md SEC-CLI-114); [`decrypt`] reads a whole small file.
+//! (plans/archive/Security-Review.md SEC-CLI-114); [`decrypt`] reads a whole small file.
 
 use std::io::{self, Read, Write};
 

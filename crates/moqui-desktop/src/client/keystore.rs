@@ -212,7 +212,7 @@ impl Secrets {
 /// Move into `store` (the OS key store of this run) the keys a run with the file store left in `dir`
 /// (`<account>.key`: a development run, `MOQUI_DESKTOP_KEY_STORE=file`, a session with no Secret Service), and remove
 /// each file. Else it stays in plain text, never read again (the account shows signed out, and its sign-out and removal
-/// go to the OS store only), while the key is still good on the server (plans/Security-Review.md SEC-CLI-111). An
+/// go to the OS store only), while the key is still good on the server (plans/archive/Security-Review.md SEC-CLI-111). An
 /// account `store` already holds a key of keeps that one, and the file goes. One that does not move is kept and logged,
 /// and the rest go on, as the phone seals its plain keys (`SealedFileStore::seal_plain_keys`). How many moved.
 pub(crate) fn move_file_keys(dir: &Path, store: &dyn KeyStore) -> usize {

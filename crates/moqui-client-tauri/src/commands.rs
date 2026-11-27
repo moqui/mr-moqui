@@ -422,7 +422,7 @@ pub async fn client_send_code(
 /// Revoke `key` of `account` on its server, when the app can reach it; the key goes here all the same. One the server
 /// did not hear of (the app could not make requests, or the server did not answer) is kept, sealed as the keys are, and
 /// revoked at the outbox's next pass that reaches the server (`moqui_client::login::revoke_pending`), else it would stay
-/// good there for up to 90 days (plans/Security-Review.md SEC-CLI-108).
+/// good there for up to 90 days (plans/archive/Security-Review.md SEC-CLI-108).
 async fn revoke(state: &ClientState, account: &Account, key: String) {
     let pending = |key: &str| {
         let now = moqui_client::sync::outbox::now_ms();
@@ -462,7 +462,7 @@ async fn revoke(state: &ClientState, account: &Account, key: String) {
 
 /// Sign the current account out: its key revoked on the server (when it answers) and forgotten here; the shell then
 /// shows the sign-in. A personal account stays in the list with its data, to sign in to again, unless the user asks
-/// for its data to go too (`forget`, plans/Security-Review.md SEC-CLI-08); a shared one is removed with its data
+/// for its data to go too (`forget`, plans/archive/Security-Review.md SEC-CLI-08); a shared one is removed with its data
 /// ([`signed_out`]).
 #[tauri::command]
 pub async fn client_sign_out(

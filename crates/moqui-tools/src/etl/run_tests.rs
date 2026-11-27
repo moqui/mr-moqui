@@ -474,7 +474,7 @@ fn service_targets_that_delete_or_reach_restricted_entities_are_refused() {
 }
 
 /// A target that may update an account (a store or an update, or such an entity-auto service) does not take its
-/// identity fields, so a run does not point another account's email at its author's mailbox (plans/Security-Review.md
+/// identity fields, so a run does not point another account's email at its author's mailbox (plans/archive/Security-Review.md
 /// SEC-TLS-81); a create of new accounts may set them, and the other fields of an account stay open.
 #[test]
 fn a_target_that_may_update_accounts_refuses_their_identity_fields() {

@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
         default-menu-title="Export" default-menu-index="6">
 
     <!-- Not read-only: with output file or dir it writes on the server, and a read-only transition runs on a GET with
-        URL parameters and no session token (plans/Security-Review.md SEC-TLS-01). -->
+        URL parameters and no session token (plans/archive/Security-Review.md SEC-TLS-01). -->
     <transition name="EntityExport" begin-transaction="false" authz-action="update">
         <actions>
             <script><![CDATA[

@@ -176,7 +176,7 @@ along with this software (see the LICENSE.md file). If not, see
         </actions>
     </service>
     <service verb="get" noun="WikiPageTypes">
-        <description>The page types, a page file's extension, in one place (plans/Security-Review.md SEC-SCR-81): md, html
+        <description>The page types, a page file's extension, in one place (plans/archive/Security-Review.md SEC-SCR-81): md, html
             txt and excalidraw for anyone (plainTypeList); fancy, html.fancy, md.fancy and markdown.fancy (scriptTypeList), which the
             template renderers run as server script for whoever views the page, only for a holder of DATABASE_ADMIN, the
             permission for script stored in records. Authorization disabled does not stand in for it: a service that
@@ -566,7 +566,7 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
     <service verb="render" noun="WikiPage">
         <description>A wiki page as HTML to show, found by its space and path (or wikiPageId) under the space's root,
-            never by a location (plans/Security-Review.md SEC-SCR-81), for a user who may view it (get#WikiPageInfo).
+            never by a location (plans/archive/Security-Review.md SEC-SCR-81), for a user who may view it (get#WikiPageInfo).
             The renderer is chosen by the page's type and the space, not by the file name: an md page is markdown, an
             html page its text, both cleaned to the safe set (StringUtilities.cleanHtml) unless the space has
             allowAnyHtml Y; a script page (.fancy) runs in the trusted template renderer only in a space with
@@ -654,7 +654,7 @@ along with this software (see the LICENSE.md file). If not, see
             <service-call name="org.moqui.resource.WikiServices.get#WikiPageReference" in-map="context" out-map="context"/>
             <if condition="pageReference == null"><return/></if>
             <!-- the children of a page the user may view, and of those only the ones the user may view (get#WikiPageAccess: a
-                page's own restrictView), as get#WikiPageInfo does for the page itself (plans/Security-Review.md SEC-SCR-81) -->
+                page's own restrictView), as get#WikiPageInfo does for the page itself (plans/archive/Security-Review.md SEC-SCR-81) -->
             <service-call name="org.moqui.resource.WikiServices.get#WikiPageAccess" out-map="childrenAccess"
                     in-map="wikiPage != null ? {wikiPageId:wikiPage.wikiPageId} : {wikiSpaceId:wikiSpaceId}"/>
             <if condition="ec.message.hasError() || !childrenAccess?.canView"><return error="true" message="Page not found"/></if>

@@ -1,5 +1,12 @@
 # Security review
 
+> Archived 2026-11-27: finished. Every one of the 776 findings is fixed (724), fixed in part (15), accepted (28, all
+> Info), refuted (4), moved (4) or kept by decision (1): the last 220 were closed on 2026-11-27 in four reviewed
+> batches ([What is left](#what-is-left), item 14). What is still open, the owner's decisions and the code work, is in
+> [Remaining-Work](../Remaining-Work.md#sessions-notifications-and-security), and the device, build and tool checks in
+> [Testing-Needed](../Testing-Needed.md#security-review-remainders). A new finding goes to
+> [SECURITY.md](../../SECURITY.md)'s process; until 0.1.0 it may still be recorded openly in a plan of its own.
+
 Status 2026-11-15: first pass done, in two rounds. The attack surface map was split by area and every slice of the
 code has been read at least in part by a reviewer; the suspected weaknesses are listed here. Most are as their
 reviewer reported them and have not been read a second time; the Status column says which. The twelve High findings
@@ -14,7 +21,7 @@ findings 159 are fixed and 5 deferred, none refuted, and 51 (12 Low, 39 Info) ar
 
 A third round, 2026-11-17 and 18, read the code the first two did not reach (the "not reached" of the [coverage](#coverage) table and the map files' open questions) in 60 units, and recorded what it found without fixing it: 406 findings with ids from 81 up in each area, 12 High, 89 Medium, 224 Low and 81 Info, none Critical. The lead read the cited lines of every High (8 confirmed, 4 likely) and of 54 of the Medium (23 confirmed, 31 likely); the other 35 Medium, and every Low and Info, are as their reviewer reported them. Round 3's High findings are listed under [the findings that matter most](#round-3); all twelve were fixed on 2026-11-18, each with its regression tests and a reviewer's reading of the fix, and its **Fix** says how; the [counts](#counts) are of all three rounds. [Method](#method) step 7 says how the round was run.
 
-Writing the security proofs ([Proofs-Initial](Proofs-Initial.md), phases P4 and P5, 2026-11-18) found 15 more, each
+Writing the security proofs ([Proofs-Initial](../Proofs-Initial.md), phases P4 and P5, 2026-11-18) found 15 more, each
 read in code by a second reader and recorded with the round-3 numbering (SEC-WEB-87 to 93, SEC-RTE-89 and 90,
 SEC-MAIL-98, SEC-OUT-92 and 93, SEC-PSF-90, SEC-PFS-112, SEC-PSA-81): one Medium (SEC-WEB-87, second-factor codes sent
 at once are not bounded by the lockout), five Low and nine Info. Each entry says "Report: the security proofs". A
@@ -26,10 +33,10 @@ Moving yrs to moqui's fork (2026-11-19) found two Medium in yrs that reach co-ed
 SEC-TLS-117 (a few bytes reserve what they claim; fixed in the fork) and SEC-TLS-118 (a nested delete recurses; open).
 The counts include them.
 
-This is the findings register of the security review that the pre-0.1.0 notice in the [README](../README.md) names:
+This is the findings register of the security review that the pre-0.1.0 notice in the [README](../../README.md) names:
 until 0.1.0, findings are recorded openly in this repository. The map of what can be reached is
-[Attack-Surface](../docs/security/Attack-Surface.md) and its area files; this document holds what looks wrong with
-it. The two secrets plans, [Sealed-Secrets](Sealed-Secrets.md) and [Vault-Instances](archive/Vault-Instances.md), were
+[Attack-Surface](../../docs/security/Attack-Surface.md) and its area files; this document holds what looks wrong with
+it. The two secrets plans, [Sealed-Secrets](../Sealed-Secrets.md) and [Vault-Instances](Vault-Instances.md), were
 reviewed in the same pass and changed in place.
 
 Sections: [method](#method) · [the findings that matter most](#the-findings-that-matter-most) ·
@@ -75,14 +82,15 @@ Status values:
   to check). Not read a second time. Treat it as a lead to check, not as established.
 - **confirmed**, **likely**, **not confirmed (second check)**: a second reader's verdict after trying to refute it.
 - **confirmed**, **likely (lead)**: the lead read the lines named in the finding's Re-check.
-- **refuted**: read again and found not to hold; listed at the end.
+- **refuted**: read again and found not to hold; the entry names the guard that stops it (SEC-BOS-111, SEC-BOS-128,
+  SEC-BAP-122, SEC-BAP-130).
 - **fixed**, **fixed in part**: changed in code, the entry's **Fix** saying how, with its test; in part, the entry
   says what is left.
 - **accepted**: read in code and found to hold, but no change is worth making (an Info finding whose risk is
   understood, or a behaviour kept on purpose); the entry gives the reason.
 - **kept by decision**, **deferred**: the owner's call, recorded in the entry.
-- **moved**: carried to [Remaining-Work](Remaining-Work.md), [Testing-Needed](Testing-Needed.md) or
-  [Future-Plans](Future-Plans.md), which link back to the entry (what needs a device, a toolchain or a design of its
+- **moved**: carried to [Remaining-Work](../Remaining-Work.md), [Testing-Needed](../Testing-Needed.md) or
+  [Future-Plans](../Future-Plans.md), which link back to the entry (what needs a device, a toolchain or a design of its
   own).
 
 Severity: Critical, an unauthenticated caller gets code execution, another user's session, or bulk data. High, an
@@ -509,6 +517,54 @@ Checked by a reviewer and reported as holding (none read a second time unless a 
    TLS server-name option in the fork); a new greeting can be pruned before its fallback row replicates (SEC-CLU-90);
    the SupportPortal spec's out-of-memory failure in full mr-mantle runs did not narrow (cumulative over the run).
 
+14. **The last open findings, 2026-11-27.** The 220 findings still open (3 Medium, 90 Low, 127 Info, most with no
+   second reading) were each read in code on the current tree and closed in four batches, each made by one agent, read
+   by a reviewer and read again after its follow-ups (two or three rounds each): F1, the framework's web, routes,
+   administration, tools, AI, git, data, script, outbound and development findings (70); F2, mail, files, calls and
+   chat, cluster and the clients (53); C1, PASS and the forum (45); C2, BOSS, the business apps and SEC-DAT-86 and 88
+   (52). Of the 220: 170 fixed, 15 fixed in part, 28 accepted (every one Info), 4 refuted (SEC-BOS-111, SEC-BOS-128,
+   SEC-BAP-122, SEC-BAP-130), 4 moved (SEC-COM-84, SEC-DAT-13, SEC-PSF-07, SEC-PSA-11) and SEC-BOS-105 kept by
+   decision; no new id was filed. Every finding of the register now has one of those statuses or `fixed`.
+
+   The Medium ones: SEC-TLS-118 is fixed (moqui-collab decodes each update before it applies it and holds a page's
+   shared types to 256 levels, a cluster peer's update and a stored state included; a reviewer's forged-id bypass was
+   found and closed before the merge); SEC-DAT-82 and SEC-CLI-81 are fixed in part (Mantle's index fields for the hide
+   rules; a webview per account on the phone). The two deferred designs are built: SEC-COM-19 (a routed stanza from a
+   blocked sender is dropped before the target's queue, routed stanzas are held to a rate per sender and target, and
+   another user's routed stanzas are never kept for a detached session) and SEC-COM-26 (a stream that authenticates
+   nothing and is no trunk's is closed, with a cap per unknown source and one for all of them).
+
+   Behaviour to know: a component directory must be named `components` for its deploys and removals (SEC-TLS-104); a
+   MySQL `sslmode=require` now encrypts without verifying, and a conf connection to MySQL with no mode is `verify-full`
+   off loopback (SEC-DAT-97, Run-Deploy); an EDI order whose total is zero or less waits for a person's approval
+   (SEC-BAP-117); turning accounting self approval on takes `ACCOUNTING_SELF_APPROVAL`, ADMIN's (SEC-BOS-06); an
+   invitation's steps are POSTs (SEC-BOS-146); `MANTLE_USER_ORG` filters with no organizations match no rows, and an
+   existing deployment keeps its old maps until it reloads `OrganizationFilters.xml` (SEC-DAT-88); an editor whose
+   co-editing update skips clocks reloads, and a peer's update that arrives out of order waits for the next tick's
+   merge (SEC-TLS-118); a later bounce report counts only for a recorded recipient, and bounces the message only when
+   every recipient failed (SEC-MAIL-91); a detached XMPP session gets no other user's routed stanzas, positions or PEP
+   updates (SEC-COM-19); a forum rule is matched in linear time, so a stored rule with look-around stops matching and is
+   listed as invalid (SEC-PFS-90). New settings: `llm-facade/limits@user-open-runs`, `entity-facade@max-reply-bytes`,
+   `xmpp-server@routed-rate` and `routed-burst`, `sip-server/limits@unauthenticated-seconds`,
+   `max-connections-per-unknown-source` and `max-unknown-connections`, mr-pass's `pass@import-max-bytes` and
+   `import-max-entries`. New host members: `StringUtilities.regexTest` and `regexMask`, `System.propertyMatches`,
+   `ec.resource.writePrivateFile`, and `getServiceDefinition`'s `serviceName`, `verb` and `noun`.
+
+   Accepted with the fixes: through one VERP address, a recipient who saw every other recipient's address can still
+   report them all failed and so bounce the message (SEC-MAIL-91); a terminal ticket is reusable for its 300 seconds
+   (SEC-FIL-64). What is left (the owner's decisions, the code work, and what was found while fixing in items 3 to 13
+   and not fixed since) is in [Remaining-Work](../Remaining-Work.md#sessions-notifications-and-security), and the
+   device, build and tool checks in [Testing-Needed](../Testing-Needed.md#security-review-remainders).
+
+   Validation on master after the four merges and origin's Location-Sharing work (2026-11-27): `cargo lint`,
+   `cargo lint-min` and `scripts/check-packages.sh` pass (the last found a variable only the `imap` feature reads,
+   fixed in `3e1635465`); `./moq test-framework` passes every step on the release binary; `./moq test-apps` passes
+   5038 of 5038 server features, 48 client features and the proofs; `./moq test-clients desktop` passes. A first run
+   on a debug binary failed two specs and the time limits: PurchaseApprovals' budget override and SmithyGithubImport's
+   claim each passed alone twice on the release binary (flaky under load), and the times passed on release. Each
+   batch ran its component's acceptance suite only where it changed an acceptance test; the rule is since that the
+   changed test runs alone (AGENTS.md, `9efbf257f`).
+
 ## Counts
 
 | Area | Critical | High | Medium | Low | Info | Refuted | Total |
@@ -528,19 +584,19 @@ Checked by a reviewer and reported as holding (none read a second time unless a 
 | PASS authority and public accounts (`PSA`) | 0 | 0 | 1 | 10 | 3 | 0 | 14 |
 | PASS application services (Mantle) (`PSS`) | 0 | 0 | 8 | 26 | 9 | 0 | 43 |
 | Forum and Smithy (`PFS`) | 0 | 2 | 4 | 23 | 12 | 0 | 41 |
-| BOSS access model; Admin, Commons, People, Accounting (`BOS`) | 0 | 2 | 22 | 37 | 14 | 0 | 75 |
-| BOSS business apps and the Mantle REST root (`BAP`) | 0 | 3 | 17 | 30 | 20 | 0 | 70 |
+| BOSS access model; Admin, Commons, People, Accounting (`BOS`) | 0 | 2 | 22 | 35 | 14 | 2 | 75 |
+| BOSS business apps and the Mantle REST root (`BAP`) | 0 | 3 | 17 | 30 | 18 | 2 | 70 |
 | Clients (`CLI`) | 0 | 0 | 6 | 21 | 29 | 0 | 56 |
 | Script engine, templates and parsers (`SCR`) | 0 | 3 | 7 | 13 | 2 | 0 | 25 |
 | Outbound requests, processes and packaging (`OUT`) | 0 | 0 | 7 | 15 | 5 | 0 | 27 |
 | Development tools (`DEV`) | 0 | 0 | 3 | 7 | 5 | 0 | 15 |
-| **All** | 0 | 24 | 176 | 414 | 162 | 0 | 776 |
+| **All** | 0 | 24 | 176 | 412 | 160 | 4 | 776 |
 
 ## Findings by area
 
 ### Web authentication and controls
 
-Map file: [Attack-Surface-Web.md](../docs/security/Attack-Surface-Web.md). Reviewer report: `security-review-evidence/slice-1.md` (and `slice-1b.md` where the slice was continued).
+Map file: [Attack-Surface-Web.md](../../docs/security/Attack-Surface-Web.md). Reviewer report: `security-review-evidence/slice-1.md` (and `slice-1b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -574,7 +630,7 @@ Map file: [Attack-Surface-Web.md](../docs/security/Attack-Surface-Web.md). Revie
 
 ### Routes, screens and REST
 
-Map file: [Attack-Surface-Routes.md](../docs/security/Attack-Surface-Routes.md). Reviewer report: `security-review-evidence/slice-2.md` (and `slice-2b.md` where the slice was continued).
+Map file: [Attack-Surface-Routes.md](../../docs/security/Attack-Surface-Routes.md). Reviewer report: `security-review-evidence/slice-2.md` (and `slice-2b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -611,7 +667,7 @@ Map file: [Attack-Surface-Routes.md](../docs/security/Attack-Surface-Routes.md).
 
 ### Administration, identity and sign-in
 
-Map file: [Attack-Surface-Admin.md](../docs/security/Attack-Surface-Admin.md). Reviewer report: `security-review-evidence/slice-3.md` (and `slice-3b.md` where the slice was continued).
+Map file: [Attack-Surface-Admin.md](../../docs/security/Attack-Surface-Admin.md). Reviewer report: `security-review-evidence/slice-3.md` (and `slice-3b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -642,7 +698,7 @@ Map file: [Attack-Surface-Admin.md](../docs/security/Attack-Surface-Admin.md). R
 
 ### Tools, System, Monitor and Dashboards
 
-Map file: [Attack-Surface-Tools.md](../docs/security/Attack-Surface-Tools.md). Reviewer report: `security-review-evidence/slice-4.md` (and `slice-4b.md` where the slice was continued).
+Map file: [Attack-Surface-Tools.md](../../docs/security/Attack-Surface-Tools.md). Reviewer report: `security-review-evidence/slice-4.md` (and `slice-4b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -706,7 +762,7 @@ Map file: [Attack-Surface-Tools.md](../docs/security/Attack-Surface-Tools.md). R
 
 ### LLM, A2A, MCP and Assist
 
-Map file: [Attack-Surface-AI.md](../docs/security/Attack-Surface-AI.md). Reviewer report: `security-review-evidence/slice-5.md` (and `slice-5b.md` where the slice was continued).
+Map file: [Attack-Surface-AI.md](../../docs/security/Attack-Surface-AI.md). Reviewer report: `security-review-evidence/slice-5.md` (and `slice-5b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -748,7 +804,7 @@ Map file: [Attack-Surface-AI.md](../docs/security/Attack-Surface-AI.md). Reviewe
 
 ### Git hosting and pipelines
 
-Map file: [Attack-Surface-Git.md](../docs/security/Attack-Surface-Git.md). Reviewer report: `security-review-evidence/slice-6.md` (and `slice-6b.md` where the slice was continued).
+Map file: [Attack-Surface-Git.md](../../docs/security/Attack-Surface-Git.md). Reviewer report: `security-review-evidence/slice-6.md` (and `slice-6b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -794,7 +850,7 @@ Map file: [Attack-Surface-Git.md](../docs/security/Attack-Surface-Git.md). Revie
 
 ### Mail
 
-Map file: [Attack-Surface-Mail.md](../docs/security/Attack-Surface-Mail.md). Reviewer report: `security-review-evidence/slice-7.md` (and `slice-7b.md` where the slice was continued).
+Map file: [Attack-Surface-Mail.md](../../docs/security/Attack-Surface-Mail.md). Reviewer report: `security-review-evidence/slice-7.md` (and `slice-7b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -837,7 +893,7 @@ Map file: [Attack-Surface-Mail.md](../docs/security/Attack-Surface-Mail.md). Rev
 
 ### Files, DAV, SSH and the terminal
 
-Map file: [Attack-Surface-Files.md](../docs/security/Attack-Surface-Files.md). Reviewer report: `security-review-evidence/slice-8.md` (and `slice-8b.md` where the slice was continued).
+Map file: [Attack-Surface-Files.md](../../docs/security/Attack-Surface-Files.md). Reviewer report: `security-review-evidence/slice-8.md` (and `slice-8b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -883,7 +939,7 @@ Map file: [Attack-Surface-Files.md](../docs/security/Attack-Surface-Files.md). R
 
 ### Calls, chat and messaging
 
-Map file: [Attack-Surface-Comms.md](../docs/security/Attack-Surface-Comms.md). Reviewer report: `security-review-evidence/slice-9.md` (and `slice-9b.md` where the slice was continued).
+Map file: [Attack-Surface-Comms.md](../../docs/security/Attack-Surface-Comms.md). Reviewer report: `security-review-evidence/slice-9.md` (and `slice-9b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -941,7 +997,7 @@ Map file: [Attack-Surface-Comms.md](../docs/security/Attack-Surface-Comms.md). R
 
 ### Cluster and edge node
 
-Map file: [Attack-Surface-Cluster-Edge.md](../docs/security/Attack-Surface-Cluster-Edge.md). Reviewer report: `security-review-evidence/slice-10.md` (and `slice-10b.md` where the slice was continued).
+Map file: [Attack-Surface-Cluster-Edge.md](../../docs/security/Attack-Surface-Cluster-Edge.md). Reviewer report: `security-review-evidence/slice-10.md` (and `slice-10b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -970,7 +1026,7 @@ Map file: [Attack-Surface-Cluster-Edge.md](../docs/security/Attack-Surface-Clust
 
 ### Data layer and stored secrets
 
-Map file: [Attack-Surface-Data.md](../docs/security/Attack-Surface-Data.md). Reviewer report: `security-review-evidence/slice-12.md` (and `slice-12b.md` where the slice was continued).
+Map file: [Attack-Surface-Data.md](../../docs/security/Attack-Surface-Data.md). Reviewer report: `security-review-evidence/slice-12.md` (and `slice-12b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -1008,7 +1064,7 @@ Map file: [Attack-Surface-Data.md](../docs/security/Attack-Surface-Data.md). Rev
 
 ### PASS frontend (mr-pass)
 
-Map file: [Attack-Surface-Apps-PASS.md](../runtime/components/addon/mr-pass/docs/security/Attack-Surface-Apps-PASS.md). Reviewer report: `security-review-evidence/slice-14.md` (and `slice-14b.md` where the slice was continued).
+Map file: [Attack-Surface-Apps-PASS.md](../../runtime/components/addon/mr-pass/docs/security/Attack-Surface-Apps-PASS.md). Reviewer report: `security-review-evidence/slice-14.md` (and `slice-14b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -1034,7 +1090,7 @@ Map file: [Attack-Surface-Apps-PASS.md](../runtime/components/addon/mr-pass/docs
 
 ### PASS authority and public accounts
 
-Map file: [Attack-Surface-Apps-PASS.md](../runtime/components/addon/mr-pass/docs/security/Attack-Surface-Apps-PASS.md). Reviewer report: `security-review-evidence/slice-15.md` (and `slice-15b.md` where the slice was continued).
+Map file: [Attack-Surface-Apps-PASS.md](../../runtime/components/addon/mr-pass/docs/security/Attack-Surface-Apps-PASS.md). Reviewer report: `security-review-evidence/slice-15.md` (and `slice-15b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -1055,7 +1111,7 @@ Map file: [Attack-Surface-Apps-PASS.md](../runtime/components/addon/mr-pass/docs
 
 ### PASS application services (Mantle)
 
-Map file: [Attack-Surface-Apps-PASS-Commerce.md](../runtime/components/addon/mr-pass/docs/security/Attack-Surface-Apps-PASS-Commerce.md). Reviewer report: `security-review-evidence/slice-16.md` (and `slice-16b.md` where the slice was continued).
+Map file: [Attack-Surface-Apps-PASS-Commerce.md](../../runtime/components/addon/mr-pass/docs/security/Attack-Surface-Apps-PASS-Commerce.md). Reviewer report: `security-review-evidence/slice-16.md` (and `slice-16b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -1105,7 +1161,7 @@ Map file: [Attack-Surface-Apps-PASS-Commerce.md](../runtime/components/addon/mr-
 
 ### Forum and Smithy
 
-Map file: [Attack-Surface-Apps-PASS-Forum-Smithy.md](../runtime/components/addon/mr-pass/docs/security/Attack-Surface-Apps-PASS-Forum-Smithy.md). Reviewer report: `security-review-evidence/slice-17.md` (and `slice-17b.md` where the slice was continued).
+Map file: [Attack-Surface-Apps-PASS-Forum-Smithy.md](../../runtime/components/addon/mr-pass/docs/security/Attack-Surface-Apps-PASS-Forum-Smithy.md). Reviewer report: `security-review-evidence/slice-17.md` (and `slice-17b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -1153,7 +1209,7 @@ Map file: [Attack-Surface-Apps-PASS-Forum-Smithy.md](../runtime/components/addon
 
 ### BOSS access model; Admin, Commons, People, Accounting
 
-Map file: [Attack-Surface-Apps-BOSS.md](../runtime/components/addon/mr-boss/docs/security/Attack-Surface-Apps-BOSS.md). Reviewer report: `security-review-evidence/slice-18.md` (and `slice-18b.md` where the slice was continued).
+Map file: [Attack-Surface-Apps-BOSS.md](../../runtime/components/addon/mr-boss/docs/security/Attack-Surface-Apps-BOSS.md). Reviewer report: `security-review-evidence/slice-18.md` (and `slice-18b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -1235,7 +1291,7 @@ Map file: [Attack-Surface-Apps-BOSS.md](../runtime/components/addon/mr-boss/docs
 
 ### BOSS business apps and the Mantle REST root
 
-Map file: [Attack-Surface-Apps-BOSS.md](../runtime/components/addon/mr-boss/docs/security/Attack-Surface-Apps-BOSS.md). Reviewer report: `security-review-evidence/slice-19.md` (and `slice-19b.md` where the slice was continued).
+Map file: [Attack-Surface-Apps-BOSS.md](../../runtime/components/addon/mr-boss/docs/security/Attack-Surface-Apps-BOSS.md). Reviewer report: `security-review-evidence/slice-19.md` (and `slice-19b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -1312,7 +1368,7 @@ Map file: [Attack-Surface-Apps-BOSS.md](../runtime/components/addon/mr-boss/docs
 
 ### Clients
 
-Map file: [Attack-Surface-Clients.md](../docs/security/Attack-Surface-Clients.md). Reviewer report: `security-review-evidence/slice-11.md` (and `slice-11b.md` where the slice was continued).
+Map file: [Attack-Surface-Clients.md](../../docs/security/Attack-Surface-Clients.md). Reviewer report: `security-review-evidence/slice-11.md` (and `slice-11b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -1375,7 +1431,7 @@ Map file: [Attack-Surface-Clients.md](../docs/security/Attack-Surface-Clients.md
 
 ### Script engine, templates and parsers
 
-Map file: [Attack-Surface-Scripts.md](../docs/security/Attack-Surface-Scripts.md). Reviewer report: `security-review-evidence/slice-13.md` (and `slice-13b.md` where the slice was continued).
+Map file: [Attack-Surface-Scripts.md](../../docs/security/Attack-Surface-Scripts.md). Reviewer report: `security-review-evidence/slice-13.md` (and `slice-13b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -1407,7 +1463,7 @@ Map file: [Attack-Surface-Scripts.md](../docs/security/Attack-Surface-Scripts.md
 
 ### Outbound requests, processes and packaging
 
-Map file: [Attack-Surface-Outbound.md](../docs/security/Attack-Surface-Outbound.md). Reviewer report: `security-review-evidence/slice-21.md` (and `slice-21b.md` where the slice was continued).
+Map file: [Attack-Surface-Outbound.md](../../docs/security/Attack-Surface-Outbound.md). Reviewer report: `security-review-evidence/slice-21.md` (and `slice-21b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |
@@ -1441,7 +1497,7 @@ Map file: [Attack-Surface-Outbound.md](../docs/security/Attack-Surface-Outbound.
 
 ### Development tools
 
-Map file: [Attack-Surface-Dev.md](../docs/security/Attack-Surface-Dev.md). Reviewer report: `security-review-evidence/slice-22.md` (and `slice-22b.md` where the slice was continued).
+Map file: [Attack-Surface-Dev.md](../../docs/security/Attack-Surface-Dev.md). Reviewer report: `security-review-evidence/slice-22.md` (and `slice-22b.md` where the slice was continued).
 
 | ID | Location | Finding | Severity | Status |
 | --- | --- | --- | --- | --- |

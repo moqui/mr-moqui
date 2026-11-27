@@ -1,4 +1,4 @@
-// Where a whole-database backup goes is its download (plans/Security-Review-Medium.md SEC-TLS-83): without the sealed
+// Where a whole-database backup goes is its download (plans/archive/Security-Review-Medium.md SEC-TLS-83): without the sealed
 // ADMIN_BACKUP_DOWNLOAD a user who may write the job and remote rows (System's JobDetail and ConnectionDetail, Tools) neither
 // sets a backup job's directory or mirror nor repoints the remote it mirrors to, its message type or that type's send path
 // (Security.eecas.xml BackupDestination*, BackupDestination.js),

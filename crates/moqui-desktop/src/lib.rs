@@ -168,7 +168,7 @@ pub fn run() {
 /// windows show only its own pages (the node's, or a client's shell and server pages); the web opens in the system
 /// browser.
 ///
-/// Chromium's own requests to Google (plans/Security-Review.md SEC-CLI-123): Safe Browsing is off, as its list updates
+/// Chromium's own requests to Google (plans/archive/Security-Review.md SEC-CLI-123): Safe Browsing is off, as its list updates
 /// are a standing request for windows whose links and downloads go to the system browser and the host, which check
 /// them there. The component updater stays on: it keeps the certificate revocation set and the Certificate
 /// Transparency log list current. Spell checking stays on, which fetches a language's dictionary the first time.
@@ -253,7 +253,7 @@ fn stays_in_app(url: &Url, node: Option<&Url>) -> bool {
     }
 }
 
-/// Where a navigation of the node's window goes (plans/Security-Review.md SEC-CLI-03).
+/// Where a navigation of the node's window goes (plans/archive/Security-Review.md SEC-CLI-03).
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum NodeGoes {
     /// The app's own pages (at `app`, a development run's dev server or `tauri.localhost`), the node's origin,

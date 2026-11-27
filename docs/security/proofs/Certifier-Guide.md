@@ -10,7 +10,7 @@ auditor checking one. What the statuses mean is in the [index](README.md); how t
 - **The matrix.** Each ASVS requirement at levels 1 and 2 with mr-moqui's status: *Framework* (met by default),
   *Configuration* (met when the deployment sets something, named in the row), *Application* (the builder's to meet,
   with the framework's tool for it), *Gap* (not met today, with its entry in the security review's
-  [register](../../../plans/Security-Review.md)), *N/A*. The framework's is in this directory, one file a chapter;
+  [register](../../../plans/archive/Security-Review.md)), *N/A*. The framework's is in this directory, one file a chapter;
   PASS's, the public application, and BOSS's, the business applications, are in their own repositories
   ([mr-pass](https://github.com/moqui/mr-pass/blob/master/docs/ASVS-Matrix.md),
   [mr-boss](https://github.com/moqui/mr-boss/blob/master/docs/ASVS-Matrix.md)). An application of your

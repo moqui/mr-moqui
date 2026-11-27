@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! What `import#GitRepository` takes as a source from its caller (plans/Security-Review.md SEC-GIT-01): another
+//! What `import#GitRepository` takes as a source from its caller (plans/archive/Security-Review.md SEC-GIT-01): another
 //! repository only with the view right on it, a server directory or another scheme only with `TERMINAL_HOST` or with
 //! authorization disabled, and a URL only over https to a public address, whoever calls.
 

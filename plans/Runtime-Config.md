@@ -164,7 +164,7 @@ never (for `transport="ssh"` or `notify`).
 check treats the cluster port as optional under `auto` (a busy port when it opens later is a Failed row on Home and a
 Needs attention item). The startup report says "off: no other member" for a lone member. A forged `ClusterMember` row
 with copied fingerprints can make a member open the port; what it exposes is the mTLS handshake pinned to the shared
-certificate, as today (SEC-CLU-89 in [Security-Review-Low](Security-Review-Low.md)).
+certificate, as today (SEC-CLU-89 in [Security-Review-Low](archive/Security-Review-Low.md)).
 
 ### 3.6 Services, authorization and the ways back
 

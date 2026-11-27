@@ -1084,7 +1084,7 @@ fn override_for(domain: &str) -> Option<(String, u16)> {
 }
 
 /// `mail-delivery@mx-require-tls`: whether mail to `domain` goes only over TLS with a certificate valid for the MX host, whatever
-/// MTA-STS says (plans/Security-Review-Medium.md SEC-MAIL-66): the recipient domains listed, comma-separated, `*` for
+/// MTA-STS says (plans/archive/Security-Review-Medium.md SEC-MAIL-66): the recipient domains listed, comma-separated, `*` for
 /// every one. Empty (the default) leaves the opportunistic STARTTLS of other domains as it is.
 fn tls_required(domain: &str) -> bool {
     moqui_core::context::conf_env::setting("mail-delivery@mx-require-tls")

@@ -601,7 +601,7 @@ fn is_agent_render(_: &mut Call<'_>) -> Result<Ret, HostError> {
 
 /// `sri.isOverlaid()`: whether the screen rendering now stands at proposed text (a preview's overlay: a dev-aide change
 /// set or a screen-xml canvas, its own file or a screen-extend of it): its client text is then a placeholder
-/// (plans/Security-Review-Medium.md SEC-AI-82).
+/// (plans/archive/Security-Review-Medium.md SEC-AI-82).
 fn is_overlaid(_: &mut Call<'_>) -> Result<Ret, HostError> {
     read_render(logic::active_overlaid).map(Ret::from)
 }

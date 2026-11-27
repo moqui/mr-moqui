@@ -1018,7 +1018,7 @@ impl SectionDef {
 }
 
 /// The names of a `client-context` attribute, comma or space separated: the context names a server-static screen's
-/// actions package sends whether or not its template reads them (plans/Security-Review-Medium.md SEC-RTE-02).
+/// actions package sends whether or not its template reads them (plans/archive/Security-Review-Medium.md SEC-RTE-02).
 pub fn client_context_names(text: &str) -> Vec<String> {
     text.split(|ch: char| ch == ',' || ch.is_whitespace())
         .filter(|name| !name.is_empty())
@@ -1164,7 +1164,7 @@ pub struct ScreenDef {
     pub sources: Vec<Source>,
     /// The screen, or a screen-extend of it, stands at a preview's proposed text ([`super::overlay`]): while it renders
     /// (its actions, widgets, forms, trees and transitions) authorization is required and no script disables it
-    /// ([`super::proposed_running`], plans/Security-Review-Low.md SEC-AI-102). A definition built under an overlay is
+    /// ([`super::proposed_running`], plans/archive/Security-Review-Low.md SEC-AI-102). A definition built under an overlay is
     /// never cached, so it reaches no other render.
     pub proposed: bool,
     /// When the sources were last found current, in epoch milliseconds.

@@ -281,7 +281,7 @@ fn store_subscription(
 /// A registration stored again by its user keeps its failures in a row, so storing an endpoint again does not undo the
 /// late or failed answers that count toward its disabling, and one disabled for [`MAX_FAILURES`] stays disabled; only a
 /// delivery that was not slow resets the count (`chat_push::device_result`). A new row, or one another user had, starts
-/// with none (plans/Security-Review-Medium.md SEC-COM-81).
+/// with none (plans/archive/Security-Review-Medium.md SEC-COM-81).
 fn keep_failures(row: &mut EntityValue, existing: Option<&EntityValue>, user_id: &str) {
     let failures = existing
         .filter(|kept| field(kept, "userId") == user_id)
@@ -303,7 +303,7 @@ fn max_subscriptions() -> usize {
 /// Disable `user_id`'s active Web Push subscriptions past [`max_subscriptions`], the longest unregistered first, and
 /// forget their queued pushes: a user's endpoints, which may be any https host, do not fill the push worker's rounds or
 /// have the server post to a host of the user's choice once for each of them on every message without bound
-/// (plans/Security-Review-Medium.md SEC-COM-81).
+/// (plans/archive/Security-Review-Medium.md SEC-COM-81).
 fn cap_subscriptions(facade: &EntityFacade, user_id: &str) -> Result<(), LibError> {
     let max = max_subscriptions();
     if max == 0 {

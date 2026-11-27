@@ -36,7 +36,7 @@ pub const SHARED_NEEDS_LOCK: &str = "A shared device needs a screen lock: set a 
 /// Whether a sign-in that asks for `wanted` may go on, on a device whose host says whether it has a secure lock screen
 /// (`device_secure`; none where it cannot tell, the desktop): a shared one is refused where there is none, since the
 /// next person to pick the device up would open the account in the app, its keys not tied to the lock
-/// (plans/Security-Review.md SEC-CLI-113).
+/// (plans/archive/Security-Review.md SEC-CLI-113).
 ///
 /// # Errors
 ///

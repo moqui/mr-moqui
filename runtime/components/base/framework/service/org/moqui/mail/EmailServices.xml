@@ -254,7 +254,7 @@ along with this software (see the LICENSE.md file). If not, see
             test enables it). Admin's other rules for a relay hold here too (RelayRules.js): the relay the sign-in mail goes
             through (SYSTEM, or one a reset or code template names) is changed only by a holder of ADMIN_ACCESS_MANAGE
             after a sign-in in the last five minutes, and webBaseUrl is on one of the instance's own names
-            (plans/Security-Review-Medium.md SEC-ADM-82, SEC-ADM-83). Nothing is answered, a secret least of all.</description>
+            (plans/archive/Security-Review-Medium.md SEC-ADM-82, SEC-ADM-83). Nothing is answered, a secret least of all.</description>
         <in-parameters>
             <parameter name="emailServerId" required="true"/>
             <parameter name="smtpHost"/><parameter name="smtpPort"/><parameter name="smtpStartTls"/><parameter name="smtpSsl"/>

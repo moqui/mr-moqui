@@ -56,7 +56,7 @@ or it would get each message twice. Such an account takes its address from a mai
 one another address, or making an account one (a hosted or shared kind, no incoming server) needs the
 `EMAIL_ACCOUNT_HOSTED` permission (the `ADMIN` group has it), or authorization disabled (internal setup). Otherwise any
 mail user could take the mail of an address no account has yet, `postmaster@` or a colleague's
-(plans/Security-Review.md SEC-MAIL-01). Its outgoing server, if it has one, is how its replies and automatic replies go out,
+(plans/archive/Security-Review.md SEC-MAIL-01). Its outgoing server, if it has one, is how its replies and automatic replies go out,
 usually back through the gateway.
 
 ## DNS and the gateway

@@ -27,7 +27,7 @@ pub fn clean(text: &str) -> String {
 
 /// `text` cleaned to the safe set for app text read by signed-in users (a note, a comment, a review, a chat-like
 /// message): as [`clean`], and an image keeps its `src` only when it is a path of this server ([`own_image_src`]). An
-/// outside image would tell its host each reader's address and when they read (plans/Security-Review-Medium.md
+/// outside image would tell its host each reader's address and when they read (plans/archive/Security-Review-Medium.md
 /// SEC-CLI-82). What an `allow-html="app"` service parameter takes.
 pub fn clean_app(text: &str) -> String {
     app_cleaner().clean(text).to_string()
@@ -38,7 +38,7 @@ pub fn clean_app(text: &str) -> String {
 const MARKDOWN_PASSES: usize = 6;
 
 /// Markdown `source` with the raw HTML the safe set would change cleaned to it, as [`clean`] cleans HTML
-/// (plans/Security-Review.md SEC-SCR-81). A source whose rendered HTML holds nothing the safe set takes out comes back
+/// (plans/archive/Security-Review.md SEC-SCR-81). A source whose rendered HTML holds nothing the safe set takes out comes back
 /// as it was, so a `<details>` block, a table, a link or `<b>` is kept as written; otherwise each piece of raw HTML
 /// that holds something it takes out (a block whole, an inline tag in the context it needs, a table cell's in a
 /// table) is cleaned, until the HTML holds nothing more; raw HTML still changing after a few passes is written as
@@ -309,7 +309,7 @@ fn safe_builder(own_images: bool) -> ammonia::Builder<'static> {
 /// Whether an image `src` of [`clean_app`] is this server's: a path with no scheme or host (`/apps/...`,
 /// `/richTextImage/1`, `a.png`), never `https://`, `//host` or a backslash. A browser's URL parser takes tabs and line
 /// ends out anywhere and spaces and C0 controls off both ends before it reads a URL, so `/\t/evil.example/x.png` would be
-/// another host's: a `src` with any control or white space character is refused whole (plans/Security-Review-Medium.md
+/// another host's: a `src` with any control or white space character is refused whole (plans/archive/Security-Review-Medium.md
 /// SEC-CLI-82). A path of this server is a same-origin GET, which a transition that writes refuses when the browser
 /// loads it as an image (`moqui_core::web::loaded_as_subresource`).
 fn own_image_src(src: &str) -> bool {

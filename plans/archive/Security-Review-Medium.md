@@ -1,5 +1,9 @@
 # Security review: Medium findings
 
+> Archived 2026-11-27 with [Security-Review](Security-Review.md), which says how the review ended: every Medium
+> finding here has its final status in its entry. What is open is in
+> [Remaining-Work](../Remaining-Work.md#sessions-notifications-and-security).
+
 The Medium findings of the [security review](Security-Review.md), by area. The register, its method, the status values and the coverage are there. Each as its reviewer wrote it. "Not confirmed" is what the reviewer did not trace; "Re-check" is the second reading, where there was one.
 
 ## Web authentication and controls

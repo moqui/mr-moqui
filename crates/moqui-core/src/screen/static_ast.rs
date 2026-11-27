@@ -206,7 +206,7 @@ fn walk(node: &Json, inside_chain: bool, found: &mut Vec<AstViolation>) {
 }
 
 /// The names a compiled static template reads from its scope, which the actions package is limited to
-/// (plans/Security-Review-Medium.md SEC-RTE-02).
+/// (plans/archive/Security-Review-Medium.md SEC-RTE-02).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ScopeReads {
     /// Each top-level name read: `_ctx.name`, or `_ctx.$scope['name']` with a literal name.

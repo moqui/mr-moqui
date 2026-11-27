@@ -573,7 +573,7 @@ impl Connector {
         };
         // `/resources` is a read-only transition, so a GET with URL parameters runs any command: a write command (put,
         // rm, rename, mkdir, mkfile, upload) another site started, by a link the browser follows with the session's
-        // Lax cookie, is refused; the file manager's own requests are the page's (plans/Security-Review.md SEC-RTE-05,
+        // Lax cookie, is refused; the file manager's own requests are the page's (plans/archive/Security-Review.md SEC-RTE-05,
         // SEC-FIL-01). And a write is the file manager's own request only: its fetch (`Sec-Fetch-Dest: empty`) or a
         // request with the session's token, so neither an image of this site nor a link in a stored text, which a
         // reader follows as a page of this site, changes files (SEC-CLI-82); a program's request, which carries its
@@ -884,7 +884,7 @@ fn io_error(location: &str, err: &std::io::Error) -> LibError {
 /// header), nor is a program's request: `program`, its user came by a request header (Basic, `api_key`), which the
 /// screen transitions' token and GET write checks leave alone too, and it sends no `Sec-Fetch-Dest`, as a browser does
 /// whenever it loads a link or an image. A link or an image of this site in a stored text is a same-origin page or
-/// image load with the session's cookie, and changes nothing (plans/Security-Review-Medium.md SEC-CLI-82).
+/// image load with the session's cookie, and changes nothing (plans/archive/Security-Review-Medium.md SEC-CLI-82).
 pub(crate) fn file_change_refused(request: &moqui_core::web::WebRequest, token: &str, program: bool) -> bool {
     let dest = moqui_core::web::fetch_dest(request);
     let own_fetch = dest.is_some_and(|dest| dest.eq_ignore_ascii_case("empty"));

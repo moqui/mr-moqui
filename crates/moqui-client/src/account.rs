@@ -180,7 +180,7 @@ fn device_mode_of<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<D
 /// `https://host[:port][/path]` from what the user typed, refusing plain http: the password and then the key would
 /// cross the network in the clear. A debug build also takes `http://` to this machine (`localhost`, `127.0.0.1`,
 /// `[::1]`), for a development server (`adb reverse`); a release build does not, as any app of the phone, or any user of
-/// the computer, may listen on a loopback port and so be handed the password (plans/Security-Review.md SEC-CLI-109).
+/// the computer, may listen on a loopback port and so be handed the password (plans/archive/Security-Review.md SEC-CLI-109).
 ///
 /// # Errors
 ///

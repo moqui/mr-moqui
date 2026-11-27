@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <eecas xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-entity-eca.xsd">
     <!-- A wiki space's settings that decide what its pages may do, however the row is written (create#WikiSpace, a
-        screen's entity-auto update with the whole context), plans/Security-Review.md SEC-SCR-81:
+        screen's entity-auto update with the whole context), plans/archive/Security-Review.md SEC-SCR-81:
         - allowScriptPages Y (a .fancy page renders as server script for its viewers, render#WikiPage) and a
           decoratorScreenLocation (a screen included around every page) are script stored in a record: DATABASE_ADMIN,
           as Security.eecas.xml's rules;
@@ -51,7 +51,7 @@ along with this software (see the LICENSE.md file). If not, see
                     const own = (prefix) => location.startsWith(prefix) && !location.slice(prefix.length).includes('/')
                     // another place: a component's for a system administrator, any other (another record's
                     // dbresource text, a remote location) only with DATABASE_ADMIN, as Security.eecas.xml holds the
-                    // other location fields (plans/Security-Review-Low.md SEC-SCR-92)
+                    // other location fields (plans/archive/Security-Review-Low.md SEC-SCR-92)
                     let allowed = !location.includes('..') &&
                             (own(`dbresource://WikiSpace/${id}.`) || own(`git://WIKI_${id}/${id}.`)
                                 || (admin && location.startsWith('component://')) || ec.user.hasPermission('DATABASE_ADMIN'))

@@ -442,7 +442,7 @@ pub(crate) fn scope(ec: &ExecutionContext, definition_id: &str) -> Scope {
 /// [`scope`], with `leave_acting` the walk of a schedule's transfer: a definition a transfer does not hand on
 /// ([`MOVES_WITH_SCHEDULE`]: an alert rule, a contact point, a silence, a mute timing) stays with its owner, paused by
 /// `transfer#AlertRuleOwner` until its own new owner resumes it, so the new owner's qualification neither reads it nor
-/// what it reads (plans/Security-Review-Medium.md SEC-TLS-90).
+/// what it reads (plans/archive/Security-Review-Medium.md SEC-TLS-90).
 fn scope_reading(ec: &ExecutionContext, definition_id: &str, leave_acting: bool) -> Scope {
     let (mut seen, mut datasets, mut unread) = (BTreeSet::new(), BTreeSet::new(), BTreeSet::new());
     let left = |id: &str| {
@@ -2041,7 +2041,7 @@ fn pause_owned_schedules(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Paramet
 /// its own, evaluated as its owner each minute and notifying the contact points its author wrote, so it goes only
 /// through `transfer#AlertRuleOwner`, which pauses it until the new owner resumes it and clears its state; its contact
 /// points, silences and mute timings stay with it, and the walk does not go through it
-/// (plans/Security-Review-Medium.md SEC-TLS-90).
+/// (plans/archive/Security-Review-Medium.md SEC-TLS-90).
 const MOVES_WITH_SCHEDULE: &[&str] = &["dashboard", "report", "panel", "dataset", "calcgrid", "search"];
 
 /// `transfer#DefinitionOwner`.

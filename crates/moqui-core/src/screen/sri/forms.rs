@@ -271,7 +271,7 @@ fn find_field_of(key: &str) -> &str {
 /// The `ai-opt-out` field of a form-list that the request finds or sorts by, if any: in an agent's render such a list
 /// shows no rows, as the rows a find keeps would tell the field's text that the render leaves out (design-people
 /// PE-21). Checked once here, at the list every agent render shows (the `screen` tool, the canvas reads, `data`),
-/// whatever the path's query asked for (plans/Security-Review-Low.md SEC-AI-94).
+/// whatever the path's query asked for (plans/archive/Security-Review-Low.md SEC-AI-94).
 fn ai_off_find(form: &FormInstance) -> Result<Option<String>, Error> {
     let node = form.shared_node()?;
     let off: Vec<String> = node

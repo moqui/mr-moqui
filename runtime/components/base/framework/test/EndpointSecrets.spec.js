@@ -1,4 +1,4 @@
-// The endpoint-change rule for every record that keeps a secret beside the address it is sent to (plans/Security-Review-Low.md
+// The endpoint-change rule for every record that keeps a secret beside the address it is sent to (plans/archive/Security-Review-Low.md
 // SEC-TLS-116; Security.eecas.xml *SecretMoves, admin/EndpointSecrets.js): a new address clears the stored secret unless a
 // new one comes with it, and says so; a model endpoint's and an entity sync's address is an ADMIN member's change only; a
 // change of another field keeps the secret; only a seed or install load keeps it beside a new address.

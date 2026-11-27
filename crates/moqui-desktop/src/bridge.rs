@@ -374,7 +374,7 @@ pub(crate) fn open_external(app: AppHandle, url: String) -> Result<(), String> {
 
 /// The setup secret of a sidecar's first administrator, for its window's Login form (`bridge.js`): the sidecar asks
 /// every caller for it, its window too, as any account of the computer reaches its loopback port, and only the app and
-/// its window have it (plans/Security-Review.md SEC-CLI-101). None for the node in process, whose window needs none.
+/// its window have it (plans/archive/Security-Review.md SEC-CLI-101). None for the node in process, whose window needs none.
 #[tauri::command]
 pub(crate) fn node_setup_secret(app: AppHandle) -> Option<String> {
     let sidecar = crate::node_mode(&app) == Some(crate::node::Mode::Sidecar);
@@ -390,7 +390,7 @@ const SCREEN_PROTECTION: bool = cfg!(any(target_os = "macos", windows));
 
 /// Screen protection of the asking page's window for `reason` (`viewOnce` while a view-once photo is open, a room's
 /// or the app's while such a setting holds), on or off: the window is kept out of screenshots and screen recording while
-/// any reason holds it, as the phone's `FLAG_SECURE` (plans/Security-Review.md SEC-CLI-117). Whether it is on now:
+/// any reason holds it, as the phone's `FLAG_SECURE` (plans/archive/Security-Review.md SEC-CLI-117). Whether it is on now:
 /// false where the OS has none, so the page says a screenshot cannot be stopped there.
 #[tauri::command]
 pub(crate) fn secure_screen(app: AppHandle, webview: Webview, reason: String, on: bool) -> bool {

@@ -19,7 +19,7 @@
 //! The tray's "Check for updates…" asks the feed: the app reads it itself, over HTTPS and to [`MAX_FEED_BYTES`] at
 //! most ([`fetch_feed`]), as the plugin would read one whole whatever its size, and hands it to the plugin
 //! (`restore_update`), which takes only a package whose signature binds the version the feed names
-//! (plans/Security-Review.md SEC-CLI-118). A newer version is said in a notification, and the item becomes
+//! (plans/archive/Security-Review.md SEC-CLI-118). A newer version is said in a notification, and the item becomes
 //! "Install update <version>…": choosing it is the confirmation. The update is downloaded and its signature checked
 //! while the node runs; then the node and its Postgres stop, the update replaces the app (and the `moqui` sidecar in
 //! it), and the app restarts. The runtime in the app data directory keeps its data; its components and conf are links
@@ -41,7 +41,7 @@ pub(crate) const ITEM: &str = "check-updates";
 
 /// The largest update the app takes: the plugin collects the artifact in memory before it checks the signature, so
 /// whoever answers for the feed's host could make the app allocate without end; a bundle with Chromium is a few hundred
-/// MB (plans/Security-Review.md SEC-CLI-118).
+/// MB (plans/archive/Security-Review.md SEC-CLI-118).
 pub(crate) const MAX_UPDATE_BYTES: u64 = 1 << 30;
 
 /// Whether a download that has `received` bytes, of `announced` in all, is past [`MAX_UPDATE_BYTES`].

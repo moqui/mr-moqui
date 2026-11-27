@@ -447,7 +447,7 @@
             },
             // The drafts this browser kept (IMPORTED, under the scope) are dropped, never moved into the host: in the apps every
             // server's pages share one origin, so another server's page may have written them under this account's key and
-            // Compose would show them as the user's own (plans/Security-Review-Medium.md SEC-CLI-81). Answers how many.
+            // Compose would show them as the user's own (plans/archive/Security-Review-Medium.md SEC-CLI-81). Answers how many.
             dropLocal() {
                 const storage = moqui.drafts.local();
                 if (!storage) return 0;

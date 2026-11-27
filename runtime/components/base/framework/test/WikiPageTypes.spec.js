@@ -1,4 +1,4 @@
-// A wiki page's type, its file's extension (org.moqui.resource.WikiServices check#WikiPageType; plans/Security-Review.md
+// A wiki page's type, its file's extension (org.moqui.resource.WikiServices check#WikiPageType; plans/archive/Security-Review.md
 // SEC-SCR-81): md, html, txt or excalidraw for anyone; fancy, html.fancy, md.fancy and markdown.fancy, which the template renderers run
 // as server script for whoever views the page, only for a holder of DATABASE_ADMIN, and nothing else (a path, an extension
 // of no renderer). A user without it may not write a script page that is there either. An md page's raw HTML is cleaned as

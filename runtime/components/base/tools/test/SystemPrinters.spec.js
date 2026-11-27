@@ -1,5 +1,5 @@
 // System › Print › Printers (tools/screen/System/Print/Printer/PrinterList.xml) makes and changes a printer as Admin's
-// Connections do, through store#Connection (plans/Security-Review-Medium.md SEC-RTE-83): a new printer waits for a test
+// Connections do, through store#Connection (plans/archive/Security-Review-Medium.md SEC-RTE-83): a new printer waits for a test
 // print, a field the printer kind does not take (allowPrivateNetwork, disabled) is not written, and the form-list's update
 // changes the name and the location only.
 // Run: ./moq test tools --spec SystemPrinters

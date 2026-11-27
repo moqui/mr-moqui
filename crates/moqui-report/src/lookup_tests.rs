@@ -13,7 +13,7 @@
  */
 
 //! A dataset field's lookup labels only the rows the frame's ids name and reads none of their secret fields
-//! (plans/Security-Review.md SEC-TLS-82), on the in-memory facade.
+//! (plans/archive/Security-Review.md SEC-TLS-82), on the in-memory facade.
 
 use moqui_core::context::{ExecutionContext, ExecutionContextFactory};
 use moqui_core::entity::EntityFacade;

@@ -1151,7 +1151,7 @@ function storeTrunk(p) {
   for (const key of ['username', 'authUsername', 'realm']) if (p[key] !== undefined && p[key] !== null) auth[key] = String(p[key]).trim() || null
   // the endpoint-change rule (as a mail relay's, Admin's Connections): a trunk moved to another host, port or transport,
   // or to sign in as another user, keeps no stored password not given again in the same change, so a voice admin cannot
-  // send the provider's SIP password to a host of theirs (found while fixing plans/Security-Review-Medium.md SEC-ADM-82)
+  // send the provider's SIP password to a host of theirs (found while fixing plans/archive/Security-Review-Medium.md SEC-ADM-82)
   // the provider profile too, which says how the trunk signs in (SEC-OUT-86)
   const endpointNow = [host.toLowerCase(), port == null ? '' : String(port), transportEnumId, providerProfileEnumId, auth.username || '',
     auth.authUsername || '', auth.realm || ''].join('|')

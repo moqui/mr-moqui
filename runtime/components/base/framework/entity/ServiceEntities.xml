@@ -417,7 +417,7 @@ along with this software (see the LICENSE.md file). If not, see
             (messageAuthEnumId SmatLogin or empty): the one user account whose posts to /rest/sm/{type}/{this remote} are
             taken, the account the remote system or partner signs in with. Any other signed-in user is refused, an ADMIN
             too, and with none set every post by login is refused, as for a remote that is only polled
-            (system_sync/message.rs receive_checked; plans/Security-Review-Medium.md SEC-BAP-96).</description></field>
+            (system_sync/message.rs receive_checked; plans/archive/Security-Review-Medium.md SEC-BAP-96).</description></field>
         <field name="sendAuthEnumId" type="id"><description>If send and receive auth mechanisms are different specify send auth method here</description></field>
 
         <field name="systemMessageTypeId" type="id"><description>Optional. May be used when this remote is for one

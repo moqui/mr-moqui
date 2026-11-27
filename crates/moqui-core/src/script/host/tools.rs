@@ -1697,7 +1697,7 @@ fn check_tables(call: &mut Call<'_>) -> Result<Ret, HostError> {
 /// `runSqlUpdateConf`): a service's own code (Mantle's account number migration, the instance database setup); work
 /// with authorization disabled outside a screen render (a job, a load, a test's setup); or a holder of the sealed
 /// `SQL_RUNNER_WEB`, the SQL runner's permission. A screen's actions and widgets, a REST resource or a web script
-/// otherwise reach no row past entity authorization and filters by it (plans/Security-Review-Low.md SEC-AI-102).
+/// otherwise reach no row past entity authorization and filters by it (plans/archive/Security-Review-Low.md SEC-AI-102).
 fn sql_allowed() -> Result<(), HostError> {
     let (service_body, unchecked) = with_ec(|ec| {
         (
@@ -1763,7 +1763,7 @@ fn write_data(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let facade = entity_facade()?;
     let mut writer = crate::entity::EntityDataWriter::new(&facade);
     // the restricted entities and the secret fields only for a full backup: the sealed permission a backup archive
-    // needs (plans/Security-Review-Medium.md SEC-TLS-05)
+    // needs (plans/archive/Security-Review-Medium.md SEC-TLS-05)
     writer.full(crate::user::has_permission("ADMIN_BACKUP_DOWNLOAD").unwrap_or(false));
     let Value::List(ops) = ops else {
         return Err(HostError::message("data writer calls are a list"));
@@ -1902,7 +1902,7 @@ fn load_data(call: &mut Call<'_>) -> Result<Ret, HostError> {
         },
     };
     // the load's own writes, on this thread only, until the scope drops on any way out: not the facade's flags, which
-    // every thread reads (plans/Security-Review-Medium.md SEC-DAT-83)
+    // every thread reads (plans/archive/Security-Review-Medium.md SEC-DAT-83)
     let switches = crate::entity::WriteSwitches {
         disable_entity_eca: flag("disableEntityEca"),
         disable_audit_log: flag("disableAuditLog"),
@@ -3297,7 +3297,7 @@ fn is_restricted_generic_entity(call: &mut Call<'_>) -> Result<Ret, HostError> {
 /// ingest rows): what a generic tool's write refuses. With a field name, also a field no generic write takes: a
 /// password field of the entity (by name, or by origin through a view), and on `UserAccount` an identity field (its
 /// username, email address, external id, disabled flag and the rest), which REST strips too; the account screens
-/// change those with their own rules (Data Load's `storeSelected` and `load`, Browse and Record, plans/Security-Review.md
+/// change those with their own rules (Data Load's `storeSelected` and `load`, Browse and Record, plans/archive/Security-Review.md
 /// SEC-TLS-81).
 fn is_generic_write_refused(call: &mut Call<'_>) -> Result<Ret, HostError> {
     use crate::entity::sensitive;

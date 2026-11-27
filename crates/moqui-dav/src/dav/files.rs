@@ -333,7 +333,7 @@ pub(crate) fn handle(context: &Context<'_>, method: &str) -> DavResponse {
             }
             // a lock holds every other writer off what it covers: it is taken only where the user may write (a path
             // that is not there by its folder's right), and never on the drive itself, which would hold the whole drive
-            // (plans/Security-Review-Medium.md SEC-FIL-83)
+            // (plans/archive/Security-Review-Medium.md SEC-FIL-83)
             if path.is_empty() {
                 return DavResponse::text(403, "The drive itself is not locked: lock a file or folder in it");
             }

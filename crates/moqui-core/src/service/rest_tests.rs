@@ -327,7 +327,7 @@ fn an_account_owned_email_server_is_not_written_by_generic_rest_even_by_admin() 
 }
 
 /// A `UserAccount` written through a Service REST entity resource takes none of its identity fields, an ADMIN's write
-/// included (plans/Security-Review-Medium.md SEC-ADM-81): the email address a reset is mailed to, the sign-in name, the
+/// included (plans/archive/Security-Review-Medium.md SEC-ADM-81): the email address a reset is mailed to, the sign-in name, the
 /// provider link and the disabled flag are changed only through `update#UserAccount`, whose rules (another account
 /// holding more access than the caller, a recent sign-in) an entity update would pass by; so are the terminate date (a
 /// cleared one reopens an ended account), the display-account mark and the password hint (SEC-ADM-89). The full name is
@@ -439,7 +439,7 @@ fn an_admins_entity_write_of_an_account_takes_no_identity_field() {
     crate::user::logout().unwrap();
 }
 
-/// A declared entity resource answers an encrypted field only as `<field>IsSet` (plans/Security-Review-Medium.md
+/// A declared entity resource answers an encrypted field only as `<field>IsSet` (plans/archive/Security-Review-Medium.md
 /// SEC-DAT-03, SEC-MAIL-04: `email/servers` gave mailbox passwords and refresh tokens), takes no condition on it
 /// (SEC-DAT-01), never reads without a limit (SEC-RTE-14), and does not write the entity audit log (SEC-RTE-03).
 #[test]

@@ -1,5 +1,5 @@
 // The endpoint-change rule (ConfigurationConnections.js, mr-boss plan/design-admin.md §8.1) for a record that keeps a secret
-// beside the address it is sent to, on every write path (plans/Security-Review-Low.md SEC-TLS-116): the Security.eecas.xml
+// beside the address it is sent to, on every write path (plans/archive/Security-Review-Low.md SEC-TLS-116): the Security.eecas.xml
 // rules *SecretMoves of LlmEndpoint (apiKey), EntitySync (targetPassword), SystemMessageRemote (password, the shared
 // secrets, privateKey), ScrapeTarget (bearerToken), EmailServer (the passwords and the OAuth refresh token),
 // AgentMcpServer and AgentRemoteA2a (authJson).

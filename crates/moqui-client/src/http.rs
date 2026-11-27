@@ -49,7 +49,7 @@ pub(crate) use moqui_lib::remote_login::{form_body, reason};
 
 /// A transport error as text, with no URL, and its causes, which reqwest's own text leaves out. reqwest names the URL
 /// whole in its text, the query and a token in the path (a share link) included, and the apps log what fails, which
-/// on the phone is logcat (plans/Security-Review.md SEC-CLI-112).
+/// on the phone is logcat (plans/archive/Security-Review.md SEC-CLI-112).
 pub(crate) fn transport(err: reqwest::Error) -> String {
     let err = err.without_url();
     let mut text = err.to_string();

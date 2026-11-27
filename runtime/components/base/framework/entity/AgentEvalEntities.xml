@@ -31,7 +31,7 @@
         <field name="agentId" type="id"/>
         <field name="samplingRate" type="number-decimal"/>
         <field name="attachedByUserId" type="id"><description>Who attached it: live scoring runs a scorer of another service
-            as them (plans/Security-Review-Low.md SEC-AI-95).</description></field>
+            as them (plans/archive/Security-Review-Low.md SEC-AI-95).</description></field>
         <field name="lastScoredDate" type="date-time"/>
         <field name="fromDate" type="date-time"/>
         <field name="thruDate" type="date-time"/>

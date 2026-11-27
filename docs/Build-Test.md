@@ -698,7 +698,7 @@ In the Play Console, once:
   video of a share started, its notification and Stop. The app asks for no `ACCESS_BACKGROUND_LOCATION`, so Play's
   background location declaration does not apply ([Mobile-Client, Live location](ui/Mobile-Client.md#live-location)).
 - **Privacy policy:** [docs/Privacy.md](Privacy.md), at its GitHub address, which the app's account menu and sign-in
-  open (plans/Security-Review.md SEC-CLI-122).
+  open (plans/archive/Security-Review.md SEC-CLI-122).
 - **Data safety**, from the merged manifest's permissions (`app/build/intermediates/merged_manifest/release/`, which has
   the libraries' too): the app keeps on the device, not shared with anyone but the user's own server, chat messages and
   mail (each account's store, for offline use), contacts' names in them, files attached, and a device key (a

@@ -1,6 +1,6 @@
 // A hosted or shared mail account with no incoming server is delivered here: the inbound listener's mail to its address
 // is stored in it. So only a holder of EMAIL_ACCOUNT_HOSTED (the ADMIN group), or a call with authorization disabled,
-// makes one, gives one another address, or makes an account one (plans/Security-Review.md SEC-MAIL-01); a mail user
+// makes one, gives one another address, or makes an account one (plans/archive/Security-Review.md SEC-MAIL-01); a mail user
 // still makes an account of another server.
 // The quota of such an account is set by a holder too (SEC-MAIL-07).
 // Run: ./moq test basic-comms --spec HostedMailAddress

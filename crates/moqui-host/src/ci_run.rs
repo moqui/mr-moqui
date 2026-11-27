@@ -121,7 +121,7 @@ fn run_one(
 
 /// A registered runner's token: from the file `--token-file` or `MOQUI_CI_RUNNER_TOKEN_FILE` names, which only the
 /// runner's user should read; else `MOQUI_CI_RUNNER_TOKEN`, with a warning, since a process's starting environment can
-/// be read by any process of its user (`/proc/<pid>/environ`), the steps it runs included (plans/Security-Review.md
+/// be read by any process of its user (`/proc/<pid>/environ`), the steps it runs included (plans/archive/Security-Review.md
 /// SEC-GIT-02).
 /// The token, and the file it came from (where a rotated token is written), if any.
 fn runner_token(args: &[String]) -> Result<(String, Option<PathBuf>), Error> {

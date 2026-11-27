@@ -1,4 +1,4 @@
-// A dataset's services (crates/moqui-report/src/definitions.rs `service_refusal`; plans/Security-Review-Medium.md
+// A dataset's services (crates/moqui-report/src/definitions.rs `service_refusal`; plans/archive/Security-Review-Medium.md
 // SEC-TLS-91): a `serviceName` is called in process as each viewer with the parameters a panel's author wrote, and a
 // `rowFilterService` as each viewer too, so a saved dataset names only a service a shipped dataset names there (CalcGrid's
 // get#CalcFrame), and as its row filter also a registered scope policy. save#Definition refuses any other, and a dataset

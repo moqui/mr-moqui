@@ -681,7 +681,7 @@ fn in_date_range(call: &mut Call<'_>) -> Result<Ret, HostError> {
 
 /// `System.getProperty(name)`: a property or environment value, null when it is not set, or when it is a secret
 /// (`identity::script_refused_property`: the crypt pass, the session key, passwords, tokens, what the conf marks
-/// `is-secret`; plans/Security-Review-Medium.md SEC-SCR-03).
+/// `is-secret`; plans/archive/Security-Review-Medium.md SEC-SCR-03).
 fn get_property(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let name = call.text_or_empty(0);
     if crate::context::identity::script_refused_property(&name) {

@@ -52,7 +52,7 @@ const endedPermissions = [
 // what ADMIN keeps on a demo server, as the base seed grants it: the apps a visitor browses and changes (Comms, CalcGrid,
 // Dashboards, reports), the Admin app's views and the Assist drawer. A grant the base
 // seed gives ADMIN that the demo data neither ends nor names here fails "the base seed's ADMIN grants are each ended or
-// allowed" (plans/Security-Review-Medium.md SEC-DEV-06).
+// allowed" (plans/archive/Security-Review-Medium.md SEC-DEV-06).
 const allowedAuthz = [
     "AIDE_READ_API_ADMIN", "BASIC_COMMS_ADMIN", "CALC_GRID_ADMIN", "CALC_GRID_AUTHOR_ADMIN", "DASHBOARDS_APP_ADMIN",
     "REPORT_ALERT_EVALUATION_ADMIN", "REPORT_BUSINESS_ADMIN", "REPORT_DATASETS_ADMIN", "REPORT_DELIVERY_ADMIN", "REPORT_SHARE_ADMIN",

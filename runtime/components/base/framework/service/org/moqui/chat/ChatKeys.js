@@ -462,7 +462,7 @@ function uploadKeys(p) {
 
 /**
  * The kind of device a `User-Agent` names, as another user is told it: the browser or app, and the OS, never the name
- * its owner gave it, which can name them or their computer (plans/Security-Review.md SEC-CLI-106).
+ * its owner gave it, which can name them or their computer (plans/archive/Security-Review.md SEC-CLI-106).
  */
 function coarseDeviceName(userAgent) {
   const ua = String(userAgent || '')

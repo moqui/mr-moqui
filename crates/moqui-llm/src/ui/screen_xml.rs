@@ -162,7 +162,7 @@ impl Dialect for ScreenXml {
 
 /// Whether a header's page `path` may be shown: none, or a plain path of the apps (`/apps/...`, `/qapps/...`). The
 /// client makes it the src of the preview frame, so `javascript:...` would run in the application's origin and
-/// another site's page would show in the drawer (plans/Security-Review-Medium.md SEC-AI-82).
+/// another site's page would show in the drawer (plans/archive/Security-Review-Medium.md SEC-AI-82).
 #[must_use]
 pub fn page_path_ok(path: &str) -> bool {
     path.is_empty() || super::openui::plain_app_path(path)

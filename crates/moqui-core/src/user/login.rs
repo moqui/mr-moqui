@@ -1122,7 +1122,7 @@ fn check_login_key(key: &str, session_user: Option<&str>, scopes: &[&str]) -> Re
 /// A re-authentication made in a request signed in by this device's key, which the key's row keeps, is this request's
 /// too: the desktop and mobile clients sign every request in by the key, each a session of its own, so a
 /// re-authentication kept only in the session never counted there, and every action behind `require#RecentAuth` failed
-/// in the apps (plans/Security-Review.md SEC-CLI-107). The session's own later stamp stays.
+/// in the apps (plans/archive/Security-Review.md SEC-CLI-107). The session's own later stamp stays.
 fn restore_key_stamps(row: &EntityValue, user_id: &str) {
     if let Some(at) = field_millis(row, "lastAuthDate") {
         keep_later_stamp(LAST_AUTH, at, user_id);

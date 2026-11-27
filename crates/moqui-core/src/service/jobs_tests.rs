@@ -272,7 +272,7 @@ fn a_run_dropped_at_shutdown_releases_its_lock() {
 
 /// A job row's own run is a generic call, so its entity-auto write of an entity no generic write takes is refused; a
 /// call the service queue spilled into a row (`persist_queued`, `QUEUE_PREFIX`) is the framework's own and writes it
-/// (plans/Security-Review-Medium.md SEC-TLS-85).
+/// (plans/archive/Security-Review-Medium.md SEC-TLS-85).
 #[test]
 fn a_job_rows_entity_auto_run_is_generic_and_a_spilled_queued_call_is_not() {
     let ctx = ExecutionContextFactory::test_context();

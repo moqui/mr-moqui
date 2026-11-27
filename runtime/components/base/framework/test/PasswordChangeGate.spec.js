@@ -1,4 +1,4 @@
-// The old password of update#Password is behind the gate of a password login (plans/Security-Review-Medium.md
+// The old password of update#Password is behind the gate of a password login (plans/archive/Security-Review-Medium.md
 // SEC-WEB-02, SEC-ADM-02; ec.user.checkOldPassword): a wrong one counts as a failed login, a locked account refuses
 // even the right one, and every refusal (wrong, locked, unknown user) answers the same message, so the second factor's
 // message never confirms a password to a caller the gate refused. reset#Password leaves requirePasswordChange as it is

@@ -474,7 +474,7 @@ fn a_host_named_like_a_sign_in_gets_the_advice_of_its_kind() {
     );
 }
 
-/// The endpoint-change rule of an account's own server (plans/Security-Review-Medium.md SEC-MAIL-84): a manager who points
+/// The endpoint-change rule of an account's own server (plans/archive/Security-Review-Medium.md SEC-MAIL-84): a manager who points
 /// the server elsewhere (a host, a port, a TLS setting, a user, storeAllowPlain) without entering the password again
 /// clears the stored passwords and marks the account EasAuthFailed, so the next test, sync or send gives the new host
 /// nothing; a change that gives the password keeps it, and a form posting the settings back as they are changes nothing.
@@ -617,7 +617,7 @@ fn an_endpoint_change_without_the_password_clears_the_stored_sign_in() {
     );
 }
 
-/// The SMTP side's own sign-in is never the store's password (plans/Security-Review-Medium.md SEC-MAIL-84): an SMTP user of
+/// The SMTP side's own sign-in is never the store's password (plans/archive/Security-Review-Medium.md SEC-MAIL-84): an SMTP user of
 /// its own signs in only with `smtpPassword`, so giving one and then another SMTP host sends the new host nothing of
 /// the store's; and a change of the SMTP user is an SMTP change, so with the host moved and then the user cleared the
 /// store's password, which SMTP would sign in with again, is cleared and the account still waits for its sign-in.

@@ -1,4 +1,4 @@
-// The rules of Security.eecas.xml BackupDestination* (plans/Security-Review-Medium.md SEC-TLS-83): where a whole-database
+// The rules of Security.eecas.xml BackupDestination* (plans/archive/Security-Review-Medium.md SEC-TLS-83): where a whole-database
 // backup goes is its download, so a write that changes it needs the sealed ADMIN_BACKUP_DOWNLOAD, whatever screen or tool
 // makes it. The destination parameters, the backup service and the permission are get#BackupDestination's (service/
 // backup.rs, which refuses another destination named in a call by the same list), so they are kept once. A write with

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Chromium's process sandbox in a Linux AppImage (plans/Security-Review.md SEC-CLI-103). An AppImage cannot carry the
+//! Chromium's process sandbox in a Linux AppImage (plans/archive/Security-Review.md SEC-CLI-103). An AppImage cannot carry the
 //! setuid `chrome-sandbox` helper (its payload is mounted `nosuid`), so where the system restricts unprivileged user
 //! namespaces (AppArmor, Ubuntu 23.10 and later) or turns them off, `tauri-runtime-cef` starts Chromium with
 //! `--no-sandbox` (`SandboxPolicy::Auto`). The owner's decision: the app runs as it does, and tells the user once, with

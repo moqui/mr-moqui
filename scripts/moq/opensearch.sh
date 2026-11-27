@@ -183,7 +183,7 @@ task_opensearch_download() {
 
 # Check the file $1 against the SHA-512 published at the url $2 (a sha512sum line), which OpenSearch publishes beside
 # each tarball; the file is removed and the task stops when it differs, or when no sum can be read: an archive that is
-# run is never used unchecked (plans/Security-Review-Low.md SEC-OUT-91).
+# run is never used unchecked (plans/archive/Security-Review-Low.md SEC-OUT-91).
 verify_published_sha512() {
     local file=$1 url=$2 expected actual
     dry_run && return 0

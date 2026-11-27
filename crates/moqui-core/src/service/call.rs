@@ -1604,7 +1604,7 @@ fn project(def: &ServiceDef, values: BTreeMap<String, Value>) -> BTreeMap<String
 /// Why a generic write (Service REST's entity resources, a generic call's entity-auto service) may not write
 /// `entity_name` with `parameters`, or None: the entities a generic write refuses (identity, audit, hosted-instance,
 /// service-written and service job; a secret-config one but to a member of `ADMIN`), and a mail account's own server
-/// (plans/Security-Review-Medium.md SEC-TLS-85). Their own services, and the framework's own calls, still write them.
+/// (plans/archive/Security-Review-Medium.md SEC-TLS-85). Their own services, and the framework's own calls, still write them.
 ///
 /// # Errors
 ///
@@ -1632,7 +1632,7 @@ pub fn generic_entity_refusal(
 /// an identity field (`username`, `emailAddress`, `disabled` and the rest) of an account that is there, as the
 /// generic tools' `protectUserAccounts` refuses; a new account may be created with its identity fields. Identity and
 /// password changes go through the account services and screens, which check who may change whom
-/// (plans/Security-Review-Medium.md SEC-TLS-85).
+/// (plans/archive/Security-Review-Medium.md SEC-TLS-85).
 ///
 /// # Errors
 ///

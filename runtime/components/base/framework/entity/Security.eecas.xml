@@ -52,7 +52,7 @@ along with this software (see the LICENSE.md file). If not, see
     </eeca>
     <!-- a DataDocument's title and a link's URL and label are templates, and a link's condition is script, run as whoever
         reads a search hit or a notification of the document: writing one needs DATABASE_ADMIN too
-        (plans/Security-Review.md SEC-SCR-05). Only a value that changes is checked, so another field of a document whose
+        (plans/archive/Security-Review.md SEC-SCR-05). Only a value that changes is checked, so another field of a document whose
         title a seed load wrote can still be changed. -->
     <eeca id="DataDocumentTitleTemplate" entity="moqui.entity.document.DataDocument"
             on-create="true" on-update="true" run-before="true" get-original-value="true">
@@ -70,7 +70,7 @@ along with this software (see the LICENSE.md file). If not, see
             if (!updating || linkCondition != originalValue?.linkCondition) UserSecurityChecks.assertDocumentCondition(linkCondition)
         </script></actions>
     </eeca>
-    <!-- Records whose text runs as script where they are used (plans/Security-Review-Medium.md SEC-SCR-06, SEC-SCR-12): a
+    <!-- Records whose text runs as script where they are used (plans/archive/Security-Review-Medium.md SEC-SCR-06, SEC-SCR-12): a
         template (${}) or an expression in them needs DATABASE_ADMIN, the permission for script stored in records, as a
         DataDocument's does. Only a value that changes is checked, so another field of a row a seed load wrote can still be
         changed; a data load runs with authorization disabled and is not checked. -->
@@ -158,7 +158,7 @@ along with this software (see the LICENSE.md file). If not, see
     </eeca>
     <!-- a field that names a location selects text that is run where its record is used: a screen definition (actions),
         a document rendered by the renderer of its extension, a decorator screen. Any location but a component's needs
-        DATABASE_ADMIN, as a stored expression does (plans/Security-Review-Low.md SEC-SCR-92) -->
+        DATABASE_ADMIN, as a stored expression does (plans/archive/Security-Review-Low.md SEC-SCR-92) -->
     <eeca id="ScreenDocumentLocation" entity="moqui.screen.ScreenDocument"
             on-create="true" on-update="true" run-before="true" get-original-value="true">
         <actions><script>
@@ -192,7 +192,7 @@ along with this software (see the LICENSE.md file). If not, see
     </eeca>
     <!-- a text block's ${name} placeholders are values put in as text where it is used (a queue's acknowledgement,
         mantle.request.RequestServices.send#IntakeConfirmation), never a template run; any other ${} in its body is held as
-        one (plans/Security-Review.md SEC-BAP-81). Removing the placeholders first holds a ${ that removing one makes. The
+        one (plans/archive/Security-Review.md SEC-BAP-81). Removing the placeholders first holds a ${ that removing one makes. The
         placeholder pattern is the one send#IntakeConfirmation fills in (mr-mantle service/mantle/request/RequestServices.xml);
         the two are kept the same. -->
     <eeca id="EmailTextBlockScript" entity="moqui.basic.email.EmailTextBlock"
@@ -203,7 +203,7 @@ along with this software (see the LICENSE.md file). If not, see
                     "EmailTextBlock.bodyHtml")
         </script></actions>
     </eeca>
-    <!-- Where a whole-database backup goes is its download (plans/Security-Review-Medium.md SEC-TLS-83): a backup job's
+    <!-- Where a whole-database backup goes is its download (plans/archive/Security-Review-Medium.md SEC-TLS-83): a backup job's
         directory and mirror parameters, its service, and the address, credentials and message type of a remote a backup job
         mirrors to, and the send path of that type (the mirror's directory or key prefix), are changed only by a holder of
         the sealed ADMIN_BACKUP_DOWNLOAD, whatever screen or tool writes them (System's JobDetail and ConnectionDetail,
@@ -240,7 +240,7 @@ along with this software (see the LICENSE.md file). If not, see
             .messageType(eecaOperation, systemMessageTypeId, sendPath, originalValue)</script></actions>
     </eeca>
     <!-- The endpoint-change rule of ConfigurationConnections.js for every record that keeps a secret beside the address it
-        is sent to, on every write path (plans/Security-Review-Low.md SEC-TLS-116; admin/EndpointSecrets.js moved): a change
+        is sent to, on every write path (plans/archive/Security-Review-Low.md SEC-TLS-116; admin/EndpointSecrets.js moved): a change
         of an address field clears the stored secrets unless new ones are written with it, and says so; a model endpoint's
         and an entity sync's is a member of ADMIN's only. Only a seed or install load answers for itself. An AgentMcpServer's
         or AgentRemoteA2a's URL counts by its origin, as their store services decide; an EmailServer pointed at the edge

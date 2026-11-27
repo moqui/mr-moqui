@@ -124,11 +124,11 @@ Desktop.ini
 /crates/moqui-desktop/gen/
 # The mobile app: tauri-build's schemas. gen/android is kept, less what its own .gitignore files leave out (build
 # outputs and what the Tauri CLI writes on each build). Its Cargo.lock is committed, as the client glue's is
-# (./moq update-app-locks; plans/Security-Review.md SEC-CLI-104).
+# (./moq update-app-locks; plans/archive/Security-Review.md SEC-CLI-104).
 /crates/moqui-mobile/gen/schemas/
 # Local screenshots used during UI review; keep evidence outside repository history.
 /plans/ui-refinement-evidence/
-# Reviewer reports and prompts of the security review (plans/Security-Review.md); working record, not history.
+# Reviewer reports and prompts of the security review (plans/archive/Security-Review.md); working record, not history.
 /plans/security-review-evidence/
 
 # Verified browser output from ./moq build-js

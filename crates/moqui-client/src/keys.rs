@@ -43,7 +43,7 @@ pub trait KeyStore: Send + Sync {
     fn delete(&self, account: &str) -> Result<(), Error>;
 
     /// Whether `entry` is read from the store each time and never kept in memory ([`Keys`]): one the store opens only
-    /// at some times (on the phone, a chat store passphrase while it is unlocked, plans/Security-Review.md SEC-CLI-113),
+    /// at some times (on the phone, a chat store passphrase while it is unlocked, plans/archive/Security-Review.md SEC-CLI-113),
     /// so a read at another time must not stay as none, nor a read at the right time outlive it.
     fn fresh(&self, entry: &str) -> bool {
         let _ = entry;
@@ -219,7 +219,7 @@ impl Keys {
 }
 
 /// The key store entry of the device keys whose sign-out the server did not hear: an account id has no `_`, so it names
-/// no account's key (plans/Security-Review.md SEC-CLI-108).
+/// no account's key (plans/archive/Security-Review.md SEC-CLI-108).
 const PENDING_REVOKES: &str = "_revoke";
 /// At most this many keys wait to be revoked; the oldest go first.
 const PENDING_MAX: usize = 32;

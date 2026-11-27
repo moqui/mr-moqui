@@ -208,7 +208,7 @@ function listContext() {
 // Each group a role mapping or the default group names, as the actor may map it: the grant proposal's rules for the actor,
 // and never a privileged group or one that grants a sealed permission now, whoever asks; a bundle that registers a
 // sensitive capability (CpkSensitive) only a member of ADMIN maps, so an access administrator does not gain it by signing
-// in through a role they mapped (plans/Security-Review-Low.md SEC-ADM-90).
+// in through a role they mapped (plans/archive/Security-Review-Low.md SEC-ADM-90).
 function groupChecks(groupIds) {
     const ids = Array.from(new Set(groupIds.map(text).filter(Boolean)))
     const found = new Map()

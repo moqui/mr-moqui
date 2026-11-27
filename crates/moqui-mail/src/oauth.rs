@@ -146,7 +146,7 @@ impl fmt::Debug for Provider {
 /// Whether a provider endpoint may be used: an `https` URL, or `http` to this machine's loopback on an instance that is
 /// not production (a test's or a developer's stand-in provider). The client secret and users' refresh tokens are posted
 /// to the token endpoint, so a row's endpoint in plain text, or on an address it was not meant for, gets none
-/// (plans/Security-Review-Medium.md SEC-OUT-82).
+/// (plans/archive/Security-Review-Medium.md SEC-OUT-82).
 fn endpoint_allowed(url: &str) -> bool {
     let lower = url.trim().to_ascii_lowercase();
     if lower.starts_with("https://") {
@@ -693,7 +693,7 @@ pub(super) fn access_token(
     };
     let server = read()?;
     // a token goes only to the provider's own mail servers: a server row pointed at another host (by a generic write, or
-    // one written before update#EmailAccount held its hosts to the provider's) gets none (plans/Security-Review-Medium.md
+    // one written before update#EmailAccount held its hosts to the provider's) gets none (plans/archive/Security-Review-Medium.md
     // SEC-MAIL-84)
     let provider_id = field_text(&server, "oauthProviderEnumId");
     let provider = load_provider(facade, &provider_id)

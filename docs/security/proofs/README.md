@@ -32,7 +32,7 @@ Each file is one ASVS chapter, with a table for each of its sections. A row is o
 | L | The requirement's level: 1 or 2. Level 3 is not covered yet. |
 | Topic | What the requirement is about, in our words. The requirement's own text is in [ASVS 5.0.0](https://github.com/OWASP/ASVS/tree/v5.0.0/5.0/en). |
 | Status | One of the five below. |
-| Evidence | For Framework, the control (a file and its function or rule); for Configuration, the setting by its conf selector; for Application, the framework's tool for it; for Gap, the [register](../../../plans/Security-Review.md) entry, the `known_gap_` test or what was seen; for N/A, why. `(map)` marks evidence taken from an [attack surface map](../Attack-Surface.md) file and not checked again in code. |
+| Evidence | For Framework, the control (a file and its function or rule); for Configuration, the setting by its conf selector; for Application, the framework's tool for it; for Gap, the [register](../../../plans/archive/Security-Review.md) entry, the `known_gap_` test or what was seen; for N/A, why. `(map)` marks evidence taken from an [attack surface map](../Attack-Surface.md) file and not checked again in code. |
 | Proof | The existing test that shows a Framework status, or `to write: black-box` (a client spec can show it from outside) or `to write: in-process` (only a Rust test or framework spec can see it). |
 
 A requirement met only in part takes the status of the part that is not met, and its evidence says what is met.

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The shared types an update adds, checked before it is applied (plans/Security-Review-Medium.md SEC-TLS-118). yrs
+//! The shared types an update adds, checked before it is applied (plans/archive/Security-Review-Medium.md SEC-TLS-118). yrs
 //! deletes a shared type by calling itself for each type nested in it, so an update that deleted a type with tens of
 //! thousands of levels below it would overflow a worker's stack and end the process; the levels cost a few bytes each,
 //! so the document size limit does not bound them. An update, an editor's or another server's, is refused when it:

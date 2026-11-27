@@ -115,7 +115,7 @@ pub trait ShellHost: Send + Sync {
 
     /// Whether the device has a secure lock screen (a PIN, pattern, password or biometric), where the app can tell: the
     /// phone does, and without one whoever holds it opens every account in the app, whose keys are not tied to the lock
-    /// (plans/Security-Review.md SEC-CLI-113). None on the desktop, whose sign-in is the computer's.
+    /// (plans/archive/Security-Review.md SEC-CLI-113). None on the desktop, whose sign-in is the computer's.
     fn device_secure(&self) -> Option<bool> {
         None
     }
@@ -133,7 +133,7 @@ pub trait ShellHost: Send + Sync {
 
     /// An account is signed out here: its key is forgotten, whether its server heard (a sign-out with no network, a key
     /// the server no longer takes) or not. The mobile app takes its chat notifications and conversation shortcuts off
-    /// the phone (plans/Security-Review.md SEC-CLI-100), and what its push and calling state names of it, with no
+    /// the phone (plans/archive/Security-Review.md SEC-CLI-100), and what its push and calling state names of it, with no
     /// request to the server ([`Self::account_signing_out`] has that part, when the server can be reached).
     fn account_signed_out(&self, account: &str) {
         let _ = account;
@@ -141,7 +141,7 @@ pub trait ShellHost: Send + Sync {
 
     /// The server's pages of the account they showed are closed, and the next ones may be another account's: the
     /// current account changed, or it signed out. The mobile app, whose one origin every account's server pages share,
-    /// clears that origin's storage, so one account's pages leave nothing for another's (plans/Security-Review-Medium.md
+    /// clears that origin's storage, so one account's pages leave nothing for another's (plans/archive/Security-Review-Medium.md
     /// SEC-CLI-81). The desktop gives each account's app windows a browser profile of their own, and does nothing here.
     fn clear_page_storage(&self) {}
 

@@ -1,5 +1,5 @@
 // PASS sign-in (start#Session, complete#Session of public/Account.js) is counted per requester and per user name, as
-// registration, verification and recovery are (plans/Security-Review-Medium.md SEC-PSA-01): past the user name's limit
+// registration, verification and recovery are (plans/archive/Security-Review-Medium.md SEC-PSA-01): past the user name's limit
 // a sign-in is refused before any password is checked, and another user name is not held by it.
 // Run: ./moq test framework --spec PassSignInThrottle
 const ACCOUNT = "org.moqui.public.AccountServices."

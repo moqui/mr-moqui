@@ -25,7 +25,7 @@ along with this software (see the LICENSE.md file). If not, see
         <set field="entityName" from="den"/><if condition="WebUtilities.isGenericWriteRefused(den)"><message error="true">Entity ${entityName} is not available through this tool</message><return/></if>
         <script><![CDATA[
             // the entity's fields from the request but those no generic write takes (UserAccount's password and identity
-            // fields), which keep their stored values and are named in a warning (plans/Security-Review.md SEC-TLS-81)
+            // fields), which keep their stored values and are named in a warning (plans/archive/Security-Review.md SEC-TLS-81)
             writeMap = {}
             const leftFields = []
             for (const name of ec.entity.getEntityDefinition(den).getAllFieldNames()) {
@@ -41,7 +41,7 @@ along with this software (see the LICENSE.md file). If not, see
         <set field="entityName" from="den"/><if condition="WebUtilities.isGenericWriteRefused(den)"><message error="true">Entity ${entityName} is not available through this tool</message><return/></if>
         <script><![CDATA[
             // the entity's fields from the request but those no generic write takes (UserAccount's password and identity
-            // fields), which keep their stored values and are named in a warning (plans/Security-Review.md SEC-TLS-81)
+            // fields), which keep their stored values and are named in a warning (plans/archive/Security-Review.md SEC-TLS-81)
             writeMap = {}
             const leftFields = []
             for (const name of ec.entity.getEntityDefinition(den).getAllFieldNames()) {

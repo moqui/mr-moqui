@@ -207,7 +207,7 @@ pub fn refuse_restricted_view(
 
 /// An identity field of `UserAccount` (`username`, `emailAddress`, `disabled` and the rest) when `entity_name` is
 /// `UserAccount` by full name, short name or alias: an ETL target that may update an account does not take one, or an
-/// ADMIN would point another account's email at their own mailbox and take it by a reset (plans/Security-Review.md
+/// ADMIN would point another account's email at their own mailbox and take it by a reset (plans/archive/Security-Review.md
 /// SEC-TLS-81).
 #[must_use]
 pub fn is_account_identity(entity_name: &str, field: &str) -> bool {
@@ -232,7 +232,7 @@ pub fn secret_fields_of(facade: &moqui_core::entity::EntityFacade, entity_name: 
 /// The fields of `entity_name` an ETL mapping never reads: no source row holds one, and no lookup, nor a source
 /// condition, matches on one or answers it. They are the password fields, by name or by origin ([`secret_fields_of`]),
 /// and the encrypted fields, which the entity facade decrypts as it reads them, unless the user holds the sealed
-/// `ADMIN_BACKUP_DOWNLOAD`, as an export (plans/Security-Review-Medium.md SEC-TLS-89).
+/// `ADMIN_BACKUP_DOWNLOAD`, as an export (plans/archive/Security-Review-Medium.md SEC-TLS-89).
 #[must_use]
 pub fn hidden_fields_of(facade: &moqui_core::entity::EntityFacade, entity_name: &str) -> Vec<String> {
     use moqui_core::entity::sensitive;

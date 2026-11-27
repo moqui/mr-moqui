@@ -8,7 +8,7 @@ which wants to know whether the framework meets the standard by default, and the
 certify what they build. A certifier should be able to read which requirements the framework meets, which their
 configuration or their application must meet, and then run the proofs against their own deployment.
 
-The library is not the security review's register ([Security-Review](Security-Review.md)) and not a list of every bug
+The library is not the security review's register ([Security-Review](archive/Security-Review.md)) and not a list of every bug
 that review found. A proof exists for a requirement of a published standard. A fixed finding gets a proof only when its
 class is such a requirement; the rest stay regression tests.
 

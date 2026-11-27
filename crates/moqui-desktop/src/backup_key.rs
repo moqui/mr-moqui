@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The backup key (plans/Security-Review.md SEC-CLI-114): an age X25519 identity the app makes once and keeps in the
+//! The backup key (plans/archive/Security-Review.md SEC-CLI-114): an age X25519 identity the app makes once and keeps in the
 //! OS key store, as the device keys are (`client::keystore::Secrets`, the entry [`ENTRY`]). Each backup, the node's
 //! nightly one and the tray's, is sealed to its public key as it is written (`database-backup@recipient`, `moqui
 //! save-db --recipient`), so the backup folder, which the user's own backup or a cloud may copy, holds no plain copy of

@@ -24,7 +24,7 @@
 //! paused at boot ([`apply_schedule_property`]). Unset, neither changes anything; the desktop app sets both
 //! (plans/Mobile-Desktop.md section 4, configuration 1, Backups). A third, `database-backup@recipient`, an age
 //! recipient, seals each dump to it as it is written (`<name>.dump.age`); the desktop app sets it to the public key of
-//! the backup key it keeps (plans/Security-Review.md SEC-CLI-114). An encrypted mirror seals such a dump again, to its
+//! the backup key it keeps (plans/archive/Security-Review.md SEC-CLI-114). An encrypted mirror seals such a dump again, to its
 //! own recipient, so its copy needs both keys: with this set, the mirror need not encrypt.
 
 use std::collections::BTreeMap;
@@ -56,7 +56,7 @@ const JOB_PARAMETER: &str = "moqui.service.job.ServiceJobParameter";
 const SERVICE_NAME: &str = "org.moqui.impl.ServerServices.backup#EmbeddedDatabase";
 /// The parameters that say where the archives go: their directory and their mirror. Choosing them takes a copy of the
 /// whole database (password hashes, every organization's records) off the server, the download the sealed
-/// `ADMIN_BACKUP_DOWNLOAD` gates (plans/Security-Review-Medium.md SEC-TLS-83).
+/// `ADMIN_BACKUP_DOWNLOAD` gates (plans/archive/Security-Review-Medium.md SEC-TLS-83).
 pub(crate) const DESTINATION_PARAMETERS: [&str; 5] = [
     "backupDir",
     "systemMessageRemoteId",
@@ -156,7 +156,7 @@ pub(crate) fn destination(parameters: &BTreeMap<String, Value>) -> [String; 5] {
 /// authorization disabled (a setup, the job runner as the system), a holder of `ADMIN_BACKUP_DOWNLOAD`, and the
 /// destination of a `ServiceJob` of this service as it is stored (a run of the job, which only a holder sets up:
 /// `Security.eecas.xml` `BackupDestination*`) pass. Anyone else naming another directory or mirror, by Service Run or
-/// any other call, is refused (plans/Security-Review-Medium.md SEC-TLS-83).
+/// any other call, is refused (plans/archive/Security-Review-Medium.md SEC-TLS-83).
 fn destination_refusal(
     facade: &EntityFacade,
     parameters: &BTreeMap<String, Value>,

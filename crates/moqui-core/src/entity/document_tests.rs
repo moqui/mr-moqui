@@ -153,7 +153,7 @@ fn a_document_definition_write_drops_the_cached_info() {
 }
 
 /// An encrypted field is left out of a document, whose rows are read with authorization off, decrypted and indexed
-/// (plans/Security-Review-Medium.md SEC-DAT-02); an alias function from a `DataDocumentField` row is one of the fixed
+/// (plans/archive/Security-Review-Medium.md SEC-DAT-02); an alias function from a `DataDocumentField` row is one of the fixed
 /// list, not any SQL function (SEC-DAT-04).
 #[test]
 fn a_document_leaves_out_encrypted_fields_and_takes_only_the_listed_functions() {
