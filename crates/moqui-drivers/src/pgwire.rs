@@ -196,14 +196,17 @@ pub(super) struct DbError {
     hint: Option<String>,
 }
 
+/// The DETAIL and HINT lines are indented: diagnostic lines, which the server log keeps and the text a client is given
+/// leaves out (`client_text`), since a DETAIL holds a row's values as written (`Failing row contains (...)`, a key's
+/// value) (SEC-DAT-95).
 impl std::fmt::Display for DbError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "db error: {}: {}", self.severity, self.message)?;
         if let Some(detail) = &self.detail {
-            write!(f, "\nDETAIL: {detail}")?;
+            write!(f, "\n  DETAIL: {detail}")?;
         }
         if let Some(hint) = &self.hint {
-            write!(f, "\nHINT: {hint}")?;
+            write!(f, "\n  HINT: {hint}")?;
         }
         Ok(())
     }
@@ -824,6 +827,14 @@ impl Wire {
 
     fn parse_buffered(&mut self) -> Result<Option<Message>, Error> {
         loop {
+            // the server's length is refused before `Message::parse` reserves room for it: a header that claims 4 GiB
+            // would otherwise be an allocation that aborts the process (SEC-DAT-94)
+            if let Some(length) = oversized_message(&self.read) {
+                self.dead = true;
+                return Err(Error::new(format!(
+                    "postgres reply: a message of {length} bytes is over the most this client takes ({MAX_MESSAGE_BYTES})"
+                )));
+            }
             let message = match Message::parse(&mut self.read) {
                 Ok(Some(message)) => message,
                 Ok(None) => return Ok(None),
@@ -1438,6 +1449,17 @@ pub(super) fn cancel_within(
         .write_all(&request)
         .and_then(|()| stream.flush())
         .map_err(|err| io_error("cancel", err))
+}
+
+/// The most bytes one backend message may claim: Postgres keeps a field under 1 GiB.
+const MAX_MESSAGE_BYTES: usize = 1024 * 1024 * 1024 + 5;
+
+/// The length a buffered backend message's header claims (its four-byte length after the type byte), when it is over
+/// [`MAX_MESSAGE_BYTES`]; None while the header has not all come or the length is in bounds.
+fn oversized_message(buffer: &[u8]) -> Option<usize> {
+    let header: [u8; 4] = buffer.get(1..5)?.try_into().ok()?;
+    let length = u32::from_be_bytes(header) as usize;
+    (length.saturating_add(1) > MAX_MESSAGE_BYTES).then_some(length)
 }
 
 #[cfg(test)]

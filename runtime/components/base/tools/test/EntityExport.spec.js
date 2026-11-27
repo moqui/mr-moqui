@@ -65,3 +65,40 @@ feature("a record export refuses a restricted entity, and a snapshot name with a
         !written
     },
 })
+
+// SEC-DAT-89: a snapshot import restores any record and runs its service elements, so it needs the sealed
+// ADMIN_BACKUP_DOWNLOAD (an ADMIN without it is refused before anything is read); john.doe holds it
+feature("a snapshot import needs ADMIN_BACKUP_DOWNLOAD", {
+    when() {
+        const groupId = "SPEC_SNAPSHOT_ADMINS"
+        const was = ec.artifactExecution.disableAuthz()
+        try {
+            for (const [entity, fields] of [
+                ["moqui.security.UserAccount", {userId: "SPEC_SNAP", username: "spec.snap", userFullName: "Spec snapshot"}],
+                ["moqui.security.UserGroup", {userGroupId: groupId, description: "Spec snapshot"}],
+                ["moqui.security.UserGroupMember", {userGroupId: groupId, userId: "SPEC_SNAP", fromDate: 0}],
+            ]) {
+                const row = ec.entity.makeValue(entity)
+                row.setFields(fields, true, null, null)
+                row.create()
+            }
+        } finally { if (!was) ec.artifactExecution.enableAuthz() }
+        const importAs = (username) => {
+            ec.user.internalLoginUser(username)
+            try {
+                ec.service.sync().name("org.moqui.impl.EntityServices.import#EntityDataSnapshot")
+                    .parameters({zipFilename: "NoSuchSpecSnapshot.zip"}).disableAuthz().call()
+                return ec.message.getErrorsString()
+            } finally {
+                ec.message.clearErrors()
+                ec.user.internalLoginUser("john.doe")
+            }
+        }
+        return {without: importAs("spec.snap"), holder: importAs("john.doe")}
+    },
+    then({without, holder}) {
+        without.includes("needs ADMIN_BACKUP_DOWNLOAD")
+        !holder.includes("needs ADMIN_BACKUP_DOWNLOAD")
+    },
+})
+

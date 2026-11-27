@@ -170,7 +170,31 @@ fn with_load_slot_read<R>(facade: &EntityFacade, body: impl FnOnce(&LoadSlot) ->
     facade.with_slot_read(LoadSlot::default, body)
 }
 
-/// Service elements the loader has read, in order. They were called as they were read.
+/// The most service elements [`data_file_services`] keeps: the last ones read.
+const KEPT_SERVICES: usize = 256;
+
+/// Keep a service element as [`data_file_services`] answers it: the newest [`KEPT_SERVICES`] only, so the list does not
+/// grow with every load for the life of the process, and a parameter named like a secret (a seed call's password) as
+/// `***` (SEC-DAT-96).
+pub(super) fn keep_service(kept: &mut Vec<DataFileService>, service: &DataFileService) {
+    let mut service = service.clone();
+    for (name, value) in &mut service.parameters {
+        let lower = name.to_ascii_lowercase();
+        let secret = ["password", "secret", "token", "credential"]
+            .iter()
+            .any(|word| lower.contains(word))
+            || lower.ends_with("key");
+        if secret {
+            *value = "***".to_string();
+        }
+    }
+    if kept.len() >= KEPT_SERVICES {
+        kept.drain(..=kept.len() - KEPT_SERVICES);
+    }
+    kept.push(service);
+}
+
+/// Service elements the loader has read, in order, the newest [`KEPT_SERVICES`]. They were called as they were read.
 pub fn data_file_services(facade: &EntityFacade) -> Vec<DataFileService> {
     with_load_slot(facade, |slot| slot.services.clone())
 }
@@ -194,4 +218,36 @@ pub fn conf_data_locations(facade: &EntityFacade) -> Result<Vec<String>, Error> 
         }
     }
     Ok(locations)
+}
+
+#[cfg(test)]
+mod kept_services_tests {
+    /// SEC-DAT-96: the service elements kept are the newest few, a secret-named parameter as `***`.
+    #[test]
+    fn service_elements_are_kept_bounded_and_without_secrets() {
+        let mut kept = Vec::new();
+        for at in 0..super::KEPT_SERVICES + 10 {
+            let service = super::DataFileService {
+                name: format!("create#Thing{at}"),
+                location: "seed.xml".to_string(),
+                parameters: [
+                    ("thingId".to_string(), at.to_string()),
+                    ("newPassword".to_string(), "hunter2".to_string()),
+                ]
+                .into_iter()
+                .collect(),
+            };
+            super::keep_service(&mut kept, &service);
+        }
+        assert_eq!(kept.len(), super::KEPT_SERVICES);
+        assert_eq!(
+            kept.last().unwrap().name,
+            format!("create#Thing{}", super::KEPT_SERVICES + 9)
+        );
+        assert!(kept.iter().all(|service| service.parameters["newPassword"] == "***"));
+        assert_eq!(
+            kept.last().unwrap().parameters["thingId"],
+            (super::KEPT_SERVICES + 9).to_string()
+        );
+    }
 }

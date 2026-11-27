@@ -579,3 +579,39 @@ fn a_guarded_endpoint_connects_to_no_address_its_guard_refuses() {
     assert!(metadata.message().contains("link-local"), "{metadata}");
     drop(listener);
 }
+
+/// SEC-DAT-94: a backend message whose header claims more than a message may hold is refused before anything reserves
+/// room for it (`0xFFFFFFFF` would be a 4 GiB allocation, which aborts on failure); a normal header, and one not all
+/// come yet, are not.
+#[test]
+fn a_message_header_past_the_limit_is_refused_before_it_is_read() {
+    assert_eq!(
+        super::oversized_message(&[b'D', 0xff, 0xff, 0xff, 0xff]),
+        Some(0xffff_ffff)
+    );
+    assert_eq!(super::oversized_message(&[b'D', 0, 0, 0, 12, 0, 1]), None);
+    assert_eq!(super::oversized_message(&[b'D', 0xff, 0xff]), None);
+    assert_eq!(
+        super::oversized_message(&[b'D', 0x40, 0, 0, 4]),
+        None,
+        "1 GiB is in bounds"
+    );
+}
+
+/// SEC-DAT-95: a server error's DETAIL and HINT are diagnostic lines: the log has them, the text a client is given does
+/// not (a DETAIL holds a failing row's values as written).
+#[test]
+fn a_db_errors_detail_is_left_out_of_the_client_text() {
+    let error = super::DbError {
+        code: "23502".to_string(),
+        severity: "ERROR".to_string(),
+        message: "null value in column \"x\" violates not-null constraint".to_string(),
+        detail: Some("Failing row contains (secret-value, null).".to_string()),
+        hint: Some("Give x a value.".to_string()),
+    };
+    let whole = error.to_string();
+    assert!(whole.contains("DETAIL: Failing row contains (secret-value"), "{whole}");
+    let shown = moqui_core::context::client_text(&whole);
+    assert!(shown.contains("violates not-null constraint"), "{shown}");
+    assert!(!shown.contains("secret-value") && !shown.contains("HINT"), "{shown}");
+}
