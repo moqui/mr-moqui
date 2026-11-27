@@ -22,7 +22,7 @@ along with this software (see the LICENSE.md file). If not, see
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="My location shares" default-menu-include="false">
 
-    <transition name="stopShare">
+    <transition name="stopShare" method="post">
         <actions><script><![CDATA[
             ec.service.sync().name('org.moqui.maps.LocationServices.stop#Share').parameter('shareId', String(shareId ?? '')).requireNewTransaction(true).call()
             if (!ec.message.hasError()) ec.message.addMessage(ec.l10n.localize('Sharing stopped'), 'success')
@@ -44,7 +44,7 @@ along with this software (see the LICENSE.md file). If not, see
         <error-response url="."/>
     </transition>
     <!-- an hour more from the later of now and the share's end, within location@max-share-hours from now -->
-    <transition name="extendShare">
+    <transition name="extendShare" method="post">
         <actions><script><![CDATA[
             const share = Array.from(ec.service.sync().name('org.moqui.maps.LocationServices.find#MyShares').call()?.shareList || [])
                 .find((row) => row.shareId === String(shareId ?? ''))

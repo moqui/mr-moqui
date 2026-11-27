@@ -548,6 +548,8 @@ function create(p) {
     const audience = checkAudience(p.audienceList, now)
     if (audience.reasonCode) return audience
     if (!audience.entries.length) return refuse("AUDIENCE_EMPTY", "Choose who sees your location")
+    // the XMPP app's location goes to the share's XMPP contacts only: with none, there is no one to choose it for
+    if (yes(p.takeXmppLocation) && !audience.entries.some(entry => entry.type === "LsaXmpp")) return refuseNoContact()
     const maxShares = setting("max-active-shares", 20)
     // counted under the owner's lock row, so two creates at once cannot both pass the cap
     if (!lockOwner(me)) return refuse("SHARE_LOCK_FAILED", "Your location could not be shared now: try again")
@@ -590,6 +592,10 @@ function create(p) {
     push(share, [me], {event: "started", thruDate: until.until})
     return {shareId: share.shareId, thruDate: until.until, linkToken: added.linkToken}
 }
+
+/** The owner's XMPP app's location asked for a share with no XMPP contact, which it would go to. */
+const refuseNoContact = () =>
+    refuse("XMPP_NO_CONTACT", "Your XMPP app's location goes to your XMPP contacts only: add an XMPP contact to the share first")
 
 /** update#Share: an active share of the caller's own, extended, shortened, relabeled or given more audience. */
 function update(p) {
@@ -661,6 +667,9 @@ function update(p) {
         // or contact already there, given again, changes nothing
         if (fresh.length || restamped) share.audienceVersion = (Number(share.audienceVersion) || 0) + 1
     }
+    // the opt-in asked for a share with no XMPP contact, its adds counted: refused, nothing written
+    if (yes(p.takeXmppLocation) && !activeAudience(share.shareId).some(row => row.audienceTypeEnumId === "LsaXmpp"))
+        return refuseNoContact()
     share.update()
     const reached = currentUserIds(share)
     const fresh = reached.filter(id => !before.includes(id))
@@ -743,11 +752,17 @@ function revokeRows(share, rows, now) {
     // an XMPP contact taken out gets an empty geoloc item (one still in the share by another entry does not)
     const contactsAfter = new Set(xmppUserIds(share))
     pushXmpp(share, contactsBefore.filter(id => !contactsAfter.has(id)), {event: "revoked"})
-    // the last XMPP contact out: the owner's XMPP app's location goes nowhere now, so the opt-in goes with it (a contact
-    // added later does not bring it back unasked), and the XMPP latest with it; the version is not raised by an end
-    if (share.takeXmppLocation === "Y" && !activeAudience(share.shareId).some(row => row.audienceTypeEnumId === "LsaXmpp")) {
+    // this revoke took out the last XMPP contact: the owner's XMPP app's location goes nowhere now, so the opt-in goes
+    // with it (a contact added later does not bring it back unasked), and the XMPP latest with it, its audit row saying
+    // why; the version is not raised by an end. A person, group or link taken out leaves it as the owner chose
+    if (share.takeXmppLocation === "Y" && contactsBefore.length && !contactsAfter.size) {
         share.takeXmppLocation = "N"
-        share.update()
+        ec.context.put("takeXmppLocation_changeReason", "last XMPP contact revoked")
+        try {
+            share.update()
+        } finally {
+            ec.context.remove("takeXmppLocation_changeReason")
+        }
         find(XMPP_LATEST).condition("shareId", share.shareId).deleteAll()
     }
 }

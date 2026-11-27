@@ -581,10 +581,11 @@ module.exports = {
                 const position = held && held.latest ? { lat: held.latest.lat, lon: held.latest.lon }
                     : latest && latest.latitude !== null && latest.latitude !== undefined ? { lat: Number(latest.latitude), lon: Number(latest.longitude) } : null;
                 const seenAt = held ? held.seenAt : latest && typeof latest.seenAt === 'number' ? latest.seenAt : null;
-                // where the last position came from follows a newer push (a page's or the phone's, the only ones pushed
-                // here), not only the read: the XMPP app's is stamped at the read alone
+                // where the last position came from: the server's (by its receive time) as of the read, changed only by a
+                // position pushed after the read (a page's or the phone's, the only ones pushed here), by arrival, never by
+                // the positions' observed times
                 let lastSource = share.lastSource || null;
-                if (held && held.latest && typeof seenAt === 'number' && (typeof share.xmppSeenAt !== 'number' || seenAt > share.xmppSeenAt))
+                if (held && held.latest && typeof held.seenAt === 'number' && typeof share.readAt === 'number' && held.seenAt > share.readAt)
                     lastSource = 'device';
                 return Object.assign({}, share, { position, seenAt, lastSource, thruDate: held && held.thruDate ? held.thruDate : share.thruDate });
             }).filter((share) => share && (!share.thruDate || share.thruDate > this.now));
@@ -1188,6 +1189,8 @@ module.exports = {
         // once: a configuration drawn or normalized again later keeps it, so a share that stopped reporting goes stale
         stampShares(list, receivedAt) {
             return (Array.isArray(list) ? list : []).map((share) => {
+                // when it was read, once, so a push after it is known as newer
+                if (share && typeof share.readAt !== 'number') share = Object.assign({}, share, { readAt: receivedAt });
                 // the XMPP app's last position's age, stamped once as the read's clock (an owner's share)
                 const xmppAge = share ? Number(share.xmppAgeSeconds) : NaN;
                 if (share && typeof share.xmppSeenAt !== 'number' && share.xmppAgeSeconds !== null && share.xmppAgeSeconds !== undefined

@@ -57,7 +57,8 @@ along with this software (see the LICENSE.md file). If not, see
             key signed this request in (userLoginKeyId, ec.user.loginKeyId: the Android app's), or from no device (a
             browser page, which sends while it is open); a share with a device takes that device's reports only, and one
             with none takes no device's (plans/Location-Sharing.md §3.4). takeXmppLocation true lets the owner's XMPP
-            app's location (report#XmppPosition) feed it too, to its XMPP contacts only (§3.6).</description>
+            app's location (report#XmppPosition) feed it too, to its XMPP contacts only (§3.6): refused XMPP_NO_CONTACT
+            without an XMPP contact in the audience.</description>
         <in-parameters>
             <parameter name="audienceList" type="List" required="true"/>
             <parameter name="thruDate" type="Timestamp" required="true"/>
@@ -92,7 +93,7 @@ along with this software (see the LICENSE.md file). If not, see
             true or false turns the owner's XMPP app's location for it on or off (to its XMPP contacts only, audited);
             turned on, it raises audienceVersion, so a phone that sends the share pauses until its person confirms the
             words get#AppShare gives; turned off, it leaves the version and deletes the XMPP app's last position
-            (LocationXmppLatest). Refused: SHARE_NOT_FOUND (not the caller's), SHARE_ENDED, and create#Share's
+            (LocationXmppLatest); true for a share with no XMPP contact (its adds counted) is refused XMPP_NO_CONTACT. Refused: SHARE_NOT_FOUND (not the caller's), SHARE_ENDED, and create#Share's
             reasons.</description>
         <in-parameters>
             <parameter name="shareId" required="true"/>
@@ -127,8 +128,9 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="revoke" noun="Audience">
         <description>Take one entry of a share of the current user's own out of its audience (a person, a group, an XMPP
             contact or the link): it reads nothing from now on, and its users are told on locationShare:shareId (an XMPP
-            contact by an empty geoloc item). Its last XMPP contact out turns takeXmppLocation off with it, and deletes
-            the XMPP app's last position. Refused: SHARE_NOT_FOUND (not the caller's), AUDIENCE_NOT_FOUND.</description>
+            contact by an empty geoloc item). A revoke that takes out its last XMPP contact turns takeXmppLocation off
+            with it (the audit row's reason "last XMPP contact revoked") and deletes the XMPP app's last position; one of
+            a person, group or link leaves it. Refused: SHARE_NOT_FOUND (not the caller's), AUDIENCE_NOT_FOUND.</description>
         <in-parameters>
             <parameter name="shareId" required="true"/>
             <parameter name="audienceSeqId" required="true"/>
