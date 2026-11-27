@@ -1632,7 +1632,7 @@ mod configured {
 
     /// The spans waiting under a root open on its thread are at most tail-trace-spans, the most the export's tail
     /// buffer keeps of a trace: a long call (an import's hundreds of thousands of entity frames) held a record of every
-    /// one until it ended (plans/Maps.md §6.3). A full tail makes room for a failed span; a kept trace counts the rest
+    /// one until it ended (plans/archive/Maps.md §6.3). A full tail makes room for a failed span; a kept trace counts the rest
     /// as dropped.
     #[test]
     fn spans_waiting_under_an_open_root_are_bounded() {

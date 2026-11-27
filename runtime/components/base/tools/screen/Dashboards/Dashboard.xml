@@ -38,56 +38,67 @@
     </transition>
     <transition name="setVariable" method="get" read-only="true">
         <actions><script><![CDATA[
-            const definition=ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId}).call().definition
-            const variable=(definition.body.variables || []).find(variable=>variable.name===variableName)
-            if (!variable || variable.kind==='constant' || Object.prototype.hasOwnProperty.call(ec.context.get('reportFixedVariables') || {},variableName)) throw new Error(ec.l10n.localize('Choose an editable variable'))
-            const values=JSON.parse(variableValuesJson || '{}')
-            values[variableName]=variable.multi?String(variableValue || '').split(',').map(value=>value.trim()).filter(Boolean):variableValue
-            variableParameters={definitionId,from,thru,filtersJson}
-            if (panelId) variableParameters.panelId=panelId
-            for (const [name,value] of Object.entries(values)) variableParameters['var-'+name]=value
+            // a dashboard the viewer may not read (another's unshared one, or none): a form error, not a failure
+            const definition=ec.resource.script('component://tools/template/ReportDelivery.js').ask('get#Definition',{definitionId:String(definitionId || '')}).out?.definition
+            if (!definition) {ec.message.addError(ec.l10n.localize('This dashboard does not exist or is not shared with you'));variableParameters={definitionId}} else {
+                const variable=(definition.body.variables || []).find(variable=>variable.name===variableName)
+                if (!variable || variable.kind==='constant' || Object.prototype.hasOwnProperty.call(ec.context.get('reportFixedVariables') || {},variableName)) throw new Error(ec.l10n.localize('Choose an editable variable'))
+                const values=JSON.parse(variableValuesJson || '{}')
+                values[variableName]=variable.multi?String(variableValue || '').split(',').map(value=>value.trim()).filter(Boolean):variableValue
+                variableParameters={definitionId,from,thru,filtersJson}
+                if (panelId) variableParameters.panelId=panelId
+                for (const [name,value] of Object.entries(values)) variableParameters['var-'+name]=value
+            }
         ]]></script></actions><default-response url="." parameter-map="variableParameters"/>
     </transition>
     <transition name="duplicatePanel" method="post" authz-action="update">
         <actions><script><![CDATA[
-            const definition=ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId}).call().definition
-            const panels=definition.body && definition.body.panels
-            if (definition.type!=='dashboard' || !panels || !panels[panelId]) throw new Error(ec.l10n.localize('Choose a panel of this dashboard'))
-            let copyId=String(panelId).slice(0,70)+'-copy'
-            while (panels[copyId]) copyId+='-copy'
-            if (copyId.length>80) throw new Error('This panel has too many copies; rename one first')
-            panels[copyId]=JSON.parse(JSON.stringify(panels[panelId]))
-            if (panels[copyId].title) panels[copyId].title=panels[copyId].title+' (copy)'
-            // The copy goes after the original: below the grid, or next to it in a list of panel placements.
-            const bottom=node=>(node && node.items || []).reduce((n,item)=>Math.max(n,item.layout?0:(Number(item.y) || 0)+(Number(item.h) || 1)),0)
-            const place=node=>{
-                if (!node || typeof node!=='object') return false
-                const items=node.items || node.children || []
-                const at=items.findIndex(item=>item===panelId || item && item.panelId===panelId)
-                if (at>=0) {const item=items[at];items.splice(at+1,0,typeof item==='string'?copyId:Object.assign({},item,{panelId:copyId},node.type==='grid'?{y:bottom(node)}:{}));return true}
-                return items.some(item=>item && place(item.layout || (item.items?item:null)))
+            // a dashboard the viewer may not read (another's unshared one, or none): a form error, not a failure
+            const definition=ec.resource.script('component://tools/template/ReportDelivery.js').ask('get#Definition',{definitionId:String(definitionId || '')}).out?.definition
+            const unavailable=ec.l10n.localize('This dashboard does not exist or is not shared with you')
+            if (!definition) {ec.message.addError(unavailable);ec.web.sendJsonError(404,unavailable)} else {
+                const panels=definition.body && definition.body.panels
+                if (definition.type!=='dashboard' || !panels || !panels[panelId]) throw new Error(ec.l10n.localize('Choose a panel of this dashboard'))
+                let copyId=String(panelId).slice(0,70)+'-copy'
+                while (panels[copyId]) copyId+='-copy'
+                if (copyId.length>80) throw new Error('This panel has too many copies; rename one first')
+                panels[copyId]=JSON.parse(JSON.stringify(panels[panelId]))
+                if (panels[copyId].title) panels[copyId].title=panels[copyId].title+' (copy)'
+                // The copy goes after the original: below the grid, or next to it in a list of panel placements.
+                const bottom=node=>(node && node.items || []).reduce((n,item)=>Math.max(n,item.layout?0:(Number(item.y) || 0)+(Number(item.h) || 1)),0)
+                const place=node=>{
+                    if (!node || typeof node!=='object') return false
+                    const items=node.items || node.children || []
+                    const at=items.findIndex(item=>item===panelId || item && item.panelId===panelId)
+                    if (at>=0) {const item=items[at];items.splice(at+1,0,typeof item==='string'?copyId:Object.assign({},item,{panelId:copyId},node.type==='grid'?{y:bottom(node)}:{}));return true}
+                    return items.some(item=>item && place(item.layout || (item.items?item:null)))
+                }
+                if (definition.body.layout) place(definition.body.layout)
+                ec.service.sync().name('org.moqui.report.ReportServices.save#Definition').parameters({definition,note:'Duplicated panel '+panelId}).call()
+                ec.web.sendJsonResponse({panelId:copyId})
             }
-            if (definition.body.layout) place(definition.body.layout)
-            ec.service.sync().name('org.moqui.report.ReportServices.save#Definition').parameters({definition,note:'Duplicated panel '+panelId}).call()
-            ec.web.sendJsonResponse({panelId:copyId})
         ]]></script></actions><default-response type="none"/>
     </transition>
     <transition name="removePanel" method="post" authz-action="update">
         <actions><script><![CDATA[
-            const definition=ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId}).call().definition
-            const panels=definition.body && definition.body.panels
-            if (definition.type!=='dashboard' || !panels || !panels[panelId]) throw new Error(ec.l10n.localize('Choose a panel of this dashboard'))
-            delete panels[panelId]
-            const prune=node=>{
-                if (!node || typeof node!=='object') return
-                for (const key of ['items','children']) if (Array.isArray(node[key])) {
-                    node[key]=node[key].filter(item=>item!==panelId && !(item && item.panelId===panelId))
-                    for (const item of node[key]) prune(item && (item.layout || (item.items?item:null)))
+            // a dashboard the viewer may not read (another's unshared one, or none): a form error, not a failure
+            const definition=ec.resource.script('component://tools/template/ReportDelivery.js').ask('get#Definition',{definitionId:String(definitionId || '')}).out?.definition
+            const unavailable=ec.l10n.localize('This dashboard does not exist or is not shared with you')
+            if (!definition) {ec.message.addError(unavailable);ec.web.sendJsonError(404,unavailable)} else {
+                const panels=definition.body && definition.body.panels
+                if (definition.type!=='dashboard' || !panels || !panels[panelId]) throw new Error(ec.l10n.localize('Choose a panel of this dashboard'))
+                delete panels[panelId]
+                const prune=node=>{
+                    if (!node || typeof node!=='object') return
+                    for (const key of ['items','children']) if (Array.isArray(node[key])) {
+                        node[key]=node[key].filter(item=>item!==panelId && !(item && item.panelId===panelId))
+                        for (const item of node[key]) prune(item && (item.layout || (item.items?item:null)))
+                    }
                 }
+                prune(definition.body.layout)
+                ec.service.sync().name('org.moqui.report.ReportServices.save#Definition').parameters({definition,note:'Removed panel '+panelId}).call()
+                ec.web.sendJsonResponse({removed:panelId})
             }
-            prune(definition.body.layout)
-            ec.service.sync().name('org.moqui.report.ReportServices.save#Definition').parameters({definition,note:'Removed panel '+panelId}).call()
-            ec.web.sendJsonResponse({removed:panelId})
         ]]></script></actions><default-response type="none"/>
     </transition>
     <transition name="edit"><default-response url="${ec.resource.script('component://tools/template/ReportMount.js').url('definition')}"/></transition>
@@ -101,8 +112,17 @@
     <actions><script><![CDATA[
         // The mount (template/ReportMount.js): its default range and its links.
         const mount = ec.resource.script('component://tools/template/ReportMount.js').state()
+        dashboardLinks = mount.links
         from = from || mount.policy.range.from; thru = thru || mount.policy.range.thru
-        const definition = ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId}).call().definition
+        // A dashboard the viewer may not read (another's unshared one, or none) reads as not available, without the
+        // engine's refusal in the page's messages and without failing the page (DashboardUnavailable).
+        dashboardSource = ec.resource.script('component://tools/template/ReportDelivery.js').ask('get#Definition', {definitionId:String(definitionId || '')}).out?.definition
+        dashboardAvailable = !!dashboardSource
+        if (!dashboardAvailable) ec.logger.info('Dashboard '+definitionId+' not available to '+ec.user.userId)
+    ]]></script>
+    <if condition="dashboardAvailable"><script><![CDATA[
+        const mount = ec.resource.script('component://tools/template/ReportMount.js').state()
+        const definition = dashboardSource
         dashboardTitle = ec.l10n.localize(definition.title || "")
         dashboardDefinition = JSON.parse(JSON.stringify(definition.body || {}))
         const activeFilters = [...(dashboardDefinition.filters || []),...JSON.parse(filtersJson || '[]')]
@@ -143,8 +163,9 @@
             // shown as a constant, so neither the browser nor the terminal offers it for editing
             if (fixed) variable.kind = 'constant'
         }
-        const rendered = ec.service.sync().name('org.moqui.report.ReportServices.render#Dashboard').parameters({definitionId,
-            variables:dashboardDefinition.variableValues,filters:JSON.parse(filtersJson || '[]'),from,thru,panelId:panelId || undefined}).call().dashboard
+        // a render the engine refuses leaves its error as the page's message and shows no panels, not a render failure
+        const rendered = (ec.service.sync().name('org.moqui.report.ReportServices.render#Dashboard').parameters({definitionId,
+            variables:dashboardDefinition.variableValues,filters:JSON.parse(filtersJson || '[]'),from,thru,panelId:panelId || undefined}).call() || {}).dashboard || {}
         dashboardFrames = {};dashboardNotices = []
         dashboardDefinition.filters=rendered.filters || JSON.parse(filtersJson || '[]')
         dashboardDefinition.viewerId=ec.user.userId
@@ -184,7 +205,7 @@
         // the drill screen (Tools' own, or a mount's; a mount that names none offers none): the panel menu's Drill, in the
         // browser and the terminal
         if (mount.links.drill) dashboardDefinition.appLinks.drill = sri.buildUrl(mount.links.drill).path
-        // a geomap's country or point opens Maps' Browse there (plans/Maps.md §2), only for a viewer whose own grants open the
+        // a geomap's country or point opens Maps' Browse there (plans/archive/Maps.md §2), only for a viewer whose own grants open the
         // Maps app (an app's grant on the screen showing the dashboard does not count); it carries a plain extent or point
         if (ec.artifactExecution.isPermittedOwn('component://tools/screen/Maps.xml', 'AT_XML_SCREEN', 'AUTHZA_VIEW'))
             dashboardDefinition.appLinks.maps = '/apps/maps/Browse'
@@ -204,52 +225,60 @@
             dashboardFrames[panelId] = panel.frames || []
             dashboardNotices.push(...(panel.notices || []).map(notice=>panelId+': '+(typeof notice === 'string' ? notice : notice.message || JSON.stringify(notice))))
         }
-    ]]></script></actions>
+    ]]></script></if></actions>
     <widgets>
-        <label text="${dashboardTitle}" type="h4"/>
-        <link url="edit" text="Edit / save a copy / versions" parameter-map="{definitionId:definitionId}" condition="dashboardDefinition.appLinks.definition"/>
-        <section name="ShareDashboard" condition="dashboardShare.shareable"><widgets>
-            <container-dialog id="ShareDashboard" button-text="Share">
-                <label type="p" style="m-muted" text="A dashboard is shared with one group at a time. It is shared with ${dashboardShare.sharedWith} now: choosing another group takes it from ${dashboardShare.sharedWith}." condition="dashboardShare.sharedWith"/>
-                <label type="p" style="m-muted" text="A dashboard is shared with one group at a time, the one you choose." condition="!dashboardShare.sharedWith"/>
-                <form-single name="ShareDashboardForm" transition="share" map="dashboardShare.values">
-                    <field name="definitionId"><default-field><hidden/></default-field></field>
-                    <field name="expectedVersion"><default-field><hidden/></default-field></field>
-                    <field name="userGroupId"><default-field title="Share with" tooltip="Leave it empty to keep the dashboard private. A group sees the dashboard; each person still sees only the data they may read.">
-                        <drop-down allow-empty="true"><list-options list="dashboardShare.groups" key="${value}" text="${label}"/></drop-down>
-                    </default-field></field>
-                    <field name="save"><default-field><submit text="Save sharing"/></default-field></field>
-                </form-single>
-            </container-dialog>
+        <section name="DashboardUnavailable" condition="!dashboardAvailable"><widgets>
+            <label text="Dashboard not available" type="h5"/>
+            <label type="p" text="This dashboard does not exist or is not shared with you."/>
+            <link id="OpenDashboards" url="${dashboardLinks.dashboards}" text="Back to dashboards" link-type="anchor"
+                    parameter-map="{definitionId:''}" condition="!!dashboardLinks.dashboards"/>
         </widgets></section>
-        <!-- In qvt the dashboard's time picker sets the range; the other modes use this form. -->
-        <section name="DashboardTimeForm" condition="sri.getRenderMode() !== 'qvt'"><widgets>
-            <form-single name="DashboardTime" transition=".">
-                <field name="filtersJson"><default-field><hidden/></default-field></field>
-                <field name="definitionId"><default-field><hidden/></default-field></field>
-                <field name="panelId"><default-field><hidden/></default-field></field>
-                <field name="variableValuesJson" from="JSON.stringify(dashboardDefinition.variableValues || {})"><default-field><hidden/></default-field></field>
-                <field name="from"><default-field title="From"><text-line/></default-field></field>
-                <field name="thru"><default-field title="Through"><text-line/></default-field></field>
-                <field name="refresh"><default-field><submit text="Refresh"/></default-field></field>
-            </form-single>
-        </widgets></section>
-        <section name="DashboardAccessibleVariables" condition="sri.getRenderMode() !== 'qvt'"><widgets>
-            <section-iterate name="DashboardVariables" list="dashboardVariables" entry="variable"><widgets>
-                <form-single name="SetDashboardVariable" transition="setVariable">
+        <section name="DashboardAvailable" condition="dashboardAvailable"><widgets>
+            <label text="${dashboardTitle}" type="h4"/>
+            <link url="edit" text="Edit / save a copy / versions" parameter-map="{definitionId:definitionId}" condition="dashboardDefinition.appLinks.definition"/>
+            <section name="ShareDashboard" condition="dashboardShare.shareable"><widgets>
+                <container-dialog id="ShareDashboard" button-text="Share">
+                    <label type="p" style="m-muted" text="A dashboard is shared with one group at a time. It is shared with ${dashboardShare.sharedWith} now: choosing another group takes it from ${dashboardShare.sharedWith}." condition="dashboardShare.sharedWith"/>
+                    <label type="p" style="m-muted" text="A dashboard is shared with one group at a time, the one you choose." condition="!dashboardShare.sharedWith"/>
+                    <form-single name="ShareDashboardForm" transition="share" map="dashboardShare.values">
+                        <field name="definitionId"><default-field><hidden/></default-field></field>
+                        <field name="expectedVersion"><default-field><hidden/></default-field></field>
+                        <field name="userGroupId"><default-field title="Share with" tooltip="Leave it empty to keep the dashboard private. A group sees the dashboard; each person still sees only the data they may read.">
+                            <drop-down allow-empty="true"><list-options list="dashboardShare.groups" key="${value}" text="${label}"/></drop-down>
+                        </default-field></field>
+                        <field name="save"><default-field><submit text="Save sharing"/></default-field></field>
+                    </form-single>
+                </container-dialog>
+            </widgets></section>
+            <!-- In qvt the dashboard's time picker sets the range; the other modes use this form. -->
+            <section name="DashboardTimeForm" condition="sri.getRenderMode() !== 'qvt'"><widgets>
+                <form-single name="DashboardTime" transition=".">
                     <field name="filtersJson"><default-field><hidden/></default-field></field>
                     <field name="definitionId"><default-field><hidden/></default-field></field>
                     <field name="panelId"><default-field><hidden/></default-field></field>
-                    <field name="from"><default-field><hidden/></default-field></field>
-                    <field name="thru"><default-field><hidden/></default-field></field>
-                    <field name="variableValuesJson" from="JSON.stringify(dashboardDefinition.variableValues)"><default-field><hidden/></default-field></field>
-                    <field name="variableName" from="variable.name"><default-field><hidden/></default-field></field>
-                    <field name="variableValue" from="variable.currentValue"><conditional-field condition="!variable.multi &amp;&amp; variable.valueOptions.length" title="${variable.label || variable.name}"><drop-down><list-options list="variable.valueOptions" key="${value}" text="${text}"/></drop-down></conditional-field><default-field title="${variable.label || variable.name} (comma separated for multiple values)"><text-line/></default-field></field>
-                    <field name="set"><default-field><submit text="Apply variable"/></default-field></field>
+                    <field name="variableValuesJson" from="JSON.stringify(dashboardDefinition.variableValues || {})"><default-field><hidden/></default-field></field>
+                    <field name="from"><default-field title="From"><text-line/></default-field></field>
+                    <field name="thru"><default-field title="Through"><text-line/></default-field></field>
+                    <field name="refresh"><default-field><submit text="Refresh"/></default-field></field>
                 </form-single>
-            </widgets></section-iterate>
+            </widgets></section>
+            <section name="DashboardAccessibleVariables" condition="sri.getRenderMode() !== 'qvt'"><widgets>
+                <section-iterate name="DashboardVariables" list="dashboardVariables" entry="variable"><widgets>
+                    <form-single name="SetDashboardVariable" transition="setVariable">
+                        <field name="filtersJson"><default-field><hidden/></default-field></field>
+                        <field name="definitionId"><default-field><hidden/></default-field></field>
+                        <field name="panelId"><default-field><hidden/></default-field></field>
+                        <field name="from"><default-field><hidden/></default-field></field>
+                        <field name="thru"><default-field><hidden/></default-field></field>
+                        <field name="variableValuesJson" from="JSON.stringify(dashboardDefinition.variableValues)"><default-field><hidden/></default-field></field>
+                        <field name="variableName" from="variable.name"><default-field><hidden/></default-field></field>
+                        <field name="variableValue" from="variable.currentValue"><conditional-field condition="!variable.multi &amp;&amp; variable.valueOptions.length" title="${variable.label || variable.name}"><drop-down><list-options list="variable.valueOptions" key="${value}" text="${text}"/></drop-down></conditional-field><default-field title="${variable.label || variable.name} (comma separated for multiple values)"><text-line/></default-field></field>
+                        <field name="set"><default-field><submit text="Apply variable"/></default-field></field>
+                    </form-single>
+                </widgets></section-iterate>
+            </widgets></section>
+            <section-iterate name="PanelNotices" list="dashboardNotices" entry="notice"><widgets><label text="${notice}" type="p"/></widgets></section-iterate>
+            <report-dashboard dashboard="dashboardDefinition" frames="dashboardFrames"/>
         </widgets></section>
-        <section-iterate name="PanelNotices" list="dashboardNotices" entry="notice"><widgets><label text="${notice}" type="p"/></widgets></section-iterate>
-        <report-dashboard dashboard="dashboardDefinition" frames="dashboardFrames"/>
     </widgets>
 </screen>

@@ -1,4 +1,4 @@
-// The map providers of org.moqui.maps.MapServices (plans/Maps.md §4.2, MapProvider): the mapProvider connection kind and
+// The map providers of org.moqui.maps.MapServices (plans/archive/Maps.md §4.2, MapProvider): the mapProvider connection kind and
 // the Maps readiness checks.
 //
 // The kind is built on the engine of ConfigurationConnections.js (lib.engine), so org.moqui.admin.ConfigurationServices
@@ -24,7 +24,7 @@
 // response's own text. A map draws an outside URL only of an enabled provider that passed its test as it is configured
 // now, on the provider's own origin (tested, for MapConfig.js).
 //
-// A proxied provider (proxyRequests Y; plans/Maps.md §4.2, "a proxy is an explicit provider option") is reached by browsers
+// A proxied provider (proxyRequests Y; plans/archive/Maps.md §4.2, "a proxy is an explicit provider option") is reached by browsers
 // through LocalMap.xml providerProxy (providerAsset below), so a provider with a key may be drawn: the key stays here. Its
 // test asks as the proxy does, the key added as apiKeyParameter says (a query parameter, key by default, or header:Name),
 // and records the path prefixes its style or TileJSON names (proxyPaths), the only paths the proxy forwards. The proxy
@@ -627,7 +627,7 @@ function runMapProviderAdapter(p) {
     return {result: kind.run(operation, p)}
 }
 
-// ===== the proxy (plans/Maps.md §4.2: a proxy is an explicit provider option) =====
+// ===== the proxy (plans/archive/Maps.md §4.2: a proxy is an explicit provider option) =====
 const PROXY_PATH = "/apps/maps/LocalMap/providerProxy"
 const PROXY_MAX_BYTES = 4 * 1024 * 1024
 // a rewritten document kept on this server is at most this long (a shared cache policy)
@@ -928,7 +928,7 @@ function rewriteDocument(json, provider, base) {
                 sprite.url = sprite && typeof sprite.url === "string" ? each(sprite.url) : null
                 if (!sprite.url) return false
             }
-        // ol-mapbox-style draws labels with web fonts (plans/Maps.md §4.1): glyph ranges are not fetched, nor proxied
+        // ol-mapbox-style draws labels with web fonts (plans/archive/Maps.md §4.1): glyph ranges are not fetched, nor proxied
         delete json.glyphs
     } else if (Array.isArray(json.tiles)) {
         json.tiles = json.tiles.map(each)
@@ -1415,7 +1415,7 @@ function providerChecks() {
             continue
         }
         if (geocoder) {
-            // a public demo server: its policy allows an application very little (plans/Maps.md §6.2)
+            // a public demo server: its policy allows an application very little (plans/archive/Maps.md §6.2)
             const host = geocoders().publicHost(provider)
             if (host)
                 out.push(

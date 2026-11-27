@@ -1,4 +1,4 @@
-// Optional Overture data for Maps, org.moqui.maps.OvertureServices (plans/Maps-Overture.md, stages O1 and O2 of plans/Maps.md
+// Optional Overture data for Maps, org.moqui.maps.OvertureServices (plans/archive/Maps-Overture.md, stages O1 and O2 of plans/archive/Maps.md
 // §4.3; docs/tools/Maps.md "Overture places and buildings", "Overture addresses"): what Maps › Configuration › Overture shows, the license
 // acknowledgement, regions, an import started as a run of the OvertureImport ServiceJob (never in the request) and its run
 // (read#OvertureTheme of the moqui-maps crate stages the rows or the archive; this checks and activates), activation,
@@ -972,7 +972,7 @@ const operations = {
     readiness,
     searchPlaces
 }
-// The services an operation runs for, asked of the caller's own grants (isPermittedOwn), as Geo data's (plans/Maps.md §8):
+// The services an operation runs for, asked of the caller's own grants (isPermittedOwn), as Geo data's (plans/archive/Maps.md §8):
 // runImport asks its own of start#OvertureImport, readiness ADMIN_OVERVIEW_VIEW, and searchPlaces is Browse's (public
 // reference data, local rows only).
 // Whether the caller's own grants allow service S + name. With authorization turned off by the caller this answers yes;

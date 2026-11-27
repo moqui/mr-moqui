@@ -238,14 +238,18 @@ fn leave(factory: &ExecutionContextFactory, slot_id: u64, client: Option<&str>) 
         *all = kept;
         gone
     };
-    let presence = Presence::of(factory);
     for member in gone {
-        presence.leave(&member.doc, &member.client);
-        let frame = json!({"type": "peer", "client": member.client, "userId": member.user_id, "name": member.name,
-            "joined": false});
-        broadcast(&member.doc, None, None, &frame);
-        publish(factory, &member.doc, &frame);
+        gone_peer(factory, &member);
     }
+}
+
+/// `member` is no longer a view of its document: the others are told, here and on every server.
+fn gone_peer(factory: &ExecutionContextFactory, member: &Member) {
+    Presence::of(factory).leave(&member.doc, &member.client);
+    let frame = json!({"type": "peer", "client": member.client, "userId": member.user_id, "name": member.name,
+        "joined": false});
+    broadcast(&member.doc, None, None, &frame);
+    publish(factory, &member.doc, &frame);
 }
 
 /// The socket closed: its clients leave their documents.
@@ -285,7 +289,12 @@ async fn deliver_update(factory: Arc<ExecutionContextFactory>, body: Json) {
     let Some(doc) = body["doc"].as_str().map(str::to_string) else {
         return;
     };
-    let has_views = lock(members()).iter().any(|member| member.doc == doc);
+    let views: Vec<(String, String)> = lock(members())
+        .iter()
+        .filter(|member| member.doc == doc)
+        .map(|member| (member.user_id.clone(), member.room.clone()))
+        .collect();
+    let has_views = !views.is_empty();
     let (job_factory, job_doc) = (Arc::clone(&factory), doc.clone());
     let user_id = body["userId"].as_str().unwrap_or_default().to_string();
     let job_user = user_id.clone();
@@ -298,10 +307,17 @@ async fn deliver_update(factory: Arc<ExecutionContextFactory>, body: Json) {
         } else {
             String::new()
         };
-        Ok((followed, dropped, name))
+        // the views whose person left their room (it is open for others still): one who may no longer read the
+        // document, or whose scope changed (service.rs room_of)
+        let rooms = moqui_calc::room::Rooms::of(&job_factory);
+        let left: Vec<(String, String)> = views
+            .into_iter()
+            .filter(|(user, room)| !rooms.has_member(user, room))
+            .collect();
+        Ok((followed, dropped, name, left))
     })
     .await;
-    let (followed, dropped, name) = match caught {
+    let (followed, dropped, name, left) = match caught {
         Ok(caught) => caught,
         Err(err) => {
             tracing::warn!(document = %doc, "CalcGrid: the rooms did not follow an edit: {}", err.message());
@@ -309,6 +325,35 @@ async fn deliver_update(factory: Arc<ExecutionContextFactory>, body: Json) {
         }
     };
     let frame = json!({"type": "changed", "seq": body["seq"], "userId": user_id, "name": name, "kind": body["kind"]});
+    if !left.is_empty() {
+        // told to open the document again, which is refused when they may no longer read it, and no longer a view of
+        // the room: its edits and its viewers are not sent to them (DASH-UI-008)
+        let mut reopen = frame.clone();
+        reopen["reopen"] = Json::Bool(true);
+        let gone: Vec<Member> = {
+            let mut all = lock(members());
+            let (gone, kept): (Vec<Member>, Vec<Member>) = all.drain(..).partition(|member| {
+                member.doc == doc
+                    && left
+                        .iter()
+                        .any(|(user, room)| *user == member.user_id && *room == member.room)
+            });
+            *all = kept;
+            gone
+        };
+        for member in gone {
+            if let Some(slot) = member.slot.upgrade() {
+                let mut message = reopen.clone();
+                message["topic"] = Json::String(topic(&member.room));
+                send(&slot, &message);
+            }
+            gone_peer(&factory, &member);
+        }
+    }
+    // a person's leaving a room changed no cell: nothing more to tell
+    if body["kind"] == "left" {
+        return;
+    }
     let kept: Vec<String> = lock(members())
         .iter()
         .filter(|member| member.doc == doc && !dropped.contains(&member.room))

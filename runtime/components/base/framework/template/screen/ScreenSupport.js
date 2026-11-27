@@ -78,7 +78,7 @@
         `const item = (ec.artifactExecution.authzLocked() ? find : find.disableAuthz()).one(); ` +
         `return item && item.description ? String(item.description) : v; })(ec.resource.expandNoL10n(${jsString(attr(node, "status-id") || "")}))`;
 
-    // A map-view's attributes, checked, for every mode (plans/Maps.md §3.2): `config`, what m-map takes (WGS84, longitude first:
+    // A map-view's attributes, checked, for every mode (plans/archive/Maps.md §3.2): `config`, what m-map takes (WGS84, longitude first:
     // center [lon, lat], extent [west, south, east, north], points [{id, lon, lat, label, precisionEnumId, precision, source}],
     // and only the keys given), the height, and for the text modes `places` ({label, coordinates, precision, source}, the
     // coordinates as "latitude, longitude"), `center` and `area` (texts of the view when there is no place) and, with

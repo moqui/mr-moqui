@@ -1,7 +1,7 @@
 # Location sharing: explicitly shared live location
 
 Status 2026-11-26: plan; nothing built. It carries the "explicitly shared person-location feeds" item of
-[Maps §9, Later research](Maps.md#9-delivery-and-acceptance) forward as work for now, on the user's decisions of
+[Maps §9, Later research](archive/Maps.md#9-delivery-and-acceptance) forward as work for now, on the user's decisions of
 November 26, 2026: a person shares where they are, for a time they choose, with people they choose (users, a group,
 their XMPP contacts, or a guest link for one record such as a delivery or a service visit); the Android app keeps
 sharing in the background through a visible foreground service; the server keeps the latest position only, unless the
@@ -9,7 +9,7 @@ sharer keeps a trail for that share. Offline maps are [Maps-Offline](Maps-Offlin
 
 ## 1. Rules
 
-From [Maps §8](Maps.md#8-access-publication-and-reliability), mr-home
+From [Maps §8](archive/Maps.md#8-access-publication-and-reliability), mr-home
 ([§1.1](../runtime/components/addon/mr-home/plan/initial-design.md#11-design-guideline-child-autonomy-enablement-and-safety),
 [§3.9](../runtime/components/addon/mr-home/plan/initial-design.md#39-maps-places-and-geographic-information) and its
 "Child records and location") and
@@ -28,7 +28,7 @@ From [Maps §8](Maps.md#8-access-publication-and-reliability), mr-home
   ends, and the owner can delete it at any time.
 - **No other reader.** No grant reads another person's shares: not ADMIN, not a household organizer, not a group's
   owner. Monitor shows counts only. Positions never go to telemetry, logs or shared caches
-  ([Maps §8](Maps.md#8-access-publication-and-reliability)).
+  ([Maps §8](archive/Maps.md#8-access-publication-and-reliability)).
 - **Approximate when chosen.** A share can be exact or approximate (rounded on the server to about 1 km, before it is
   stored or sent).
 

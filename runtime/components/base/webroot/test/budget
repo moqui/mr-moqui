@@ -4,6 +4,6 @@
 # measurements moved to test/acceptance/client/ThemeLayout.spec.js.
 # Nov 14, 2026: raised to the final suites of the Dogfood build (DG0 to DG10, Dev AIDE P11 to P13) with the Sales and
 # Marketing apps merged, with the user's agreement: 47.1 s measured, rounded up. A review of regression vs acceptance follows.
-# Nov 26, 2026: raised with the user's agreement (the measured share, rounded up) for the Maps build (plans/Maps.md P0 to P4,
+# Nov 26, 2026: raised with the user's agreement (the measured share, rounded up) for the Maps build (plans/archive/Maps.md P0 to P4,
 # O1, O2) with the merged upstream work of the same days: client 52.9 s measured, set to 53.
 client = 53

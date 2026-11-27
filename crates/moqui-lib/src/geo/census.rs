@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The US Census files (plans/Maps.md §6.2, §6.4): the Gazetteer's ZCTA, Counties and Places files, and the 2020
+//! The US Census files (plans/archive/Maps.md §6.2, §6.4): the Gazetteer's ZCTA, Counties and Places files, and the 2020
 //! ZCTA-to-county relationship file. Each is delimited text with a header line, read by column name: pipe-delimited
 //! (the 2026 files; the delimiter is told from the header, so the older tab-delimited years read too), no quoting, a
 //! byte order mark on the relationship file's header. A ZCTA's GEOID keeps its leading zeros.

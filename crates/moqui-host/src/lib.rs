@@ -2791,7 +2791,7 @@ fn load_one(
     tracing::info!("Loading entity data from {location}");
     let loaded = moqui_core::entity::load_feed::load_entity_data(facade, location, options)?;
     let records = loaded.records;
-    *failed_files += loaded.failed_files;
+    *failed_files += u64::try_from(loaded.failures.len()).unwrap_or(u64::MAX);
     report_message_errors(location);
     tracing::info!(
         "Loaded {records} records from {location} in {:.2}s",

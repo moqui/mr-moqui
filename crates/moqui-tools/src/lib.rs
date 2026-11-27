@@ -48,9 +48,9 @@ pub mod tables;
 pub mod etl;
 pub mod files;
 
-// ---------- The Geo data importer (plans/Maps.md §6.4) ----------
+// ---------- The Geo data importer (plans/archive/Maps.md §6.4) ----------
 pub mod geo;
-// ---------- Map archives (plans/Maps.md §5) ----------
+// ---------- Map archives (plans/archive/Maps.md §5) ----------
 pub mod maps_archive;
 pub mod maps_ogc;
 pub mod maps_overlay;

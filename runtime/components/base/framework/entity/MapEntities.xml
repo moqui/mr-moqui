@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Maps (plans/Maps.md): the providers, layers and profiles a map is drawn from, saved views, users' overlays, the
+<!-- Maps (plans/archive/Maps.md): the providers, layers and profiles a map is drawn from, saved views, users' overlays, the
     registry of record and layer adapters, and the registry and runs of the Geo data importer. The Geo extensions (GeoPostalCode, GeoPointAssoc)
     are in BasicEntities.xml; the services in service/org/moqui/maps/. The settings are the conf's maps element. -->
 <entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-entity-definition.xsd">
@@ -213,7 +213,7 @@ along with this software (see the LICENSE.md file). If not, see
         </seed-data>
     </entity>
 
-    <!-- A projection of the registry (P4c, plans/Maps.md §4.1): a CRS a map may be drawn in, a COG may be in and a user's
+    <!-- A projection of the registry (P4c, plans/archive/Maps.md §4.1): a CRS a map may be drawn in, a COG may be in and a user's
         overlay may be converted from. Its definition is PROJ.4 text, which m-map registers with proj4js from the effective
         configuration (never fetched from an outside service) and moqui-lib geo/proj reads on the server for the methods it
         has (geographic, Mercator, transverse Mercator and UTM, Lambert conformal conic and azimuthal equal-area, Albers,

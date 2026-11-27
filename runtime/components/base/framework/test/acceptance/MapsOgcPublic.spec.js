@@ -1,4 +1,4 @@
-// MapsOgcPublic (plans/Maps.md §4.1, P4a): real public OGC services through the OGC provider kinds (MapOgc.js), nothing
+// MapsOgcPublic (plans/archive/Maps.md §4.1, P4a): real public OGC services through the OGC provider kinds (MapOgc.js), nothing
 // proxied and no key: the USGS National Map's topographic WMTS (a small RESTful capabilities document, one layer, public
 // domain) and NASA GIBS's WMS 1.3.0 (about 2.6 MB of capabilities, some 1,600 layers with time dimensions). Each is tested
 // (its capabilities read with the framework's XML reader and recorded), a layer added from what was recorded

@@ -301,7 +301,8 @@ fn loader_filters_types_holds_services_and_reads_zip() {
     assert!(!facade.flags().disable_fk_create);
 }
 
-/// As Java's `loadAllData`, a file of a directory that fails is logged and counted, and the files after it still load.
+/// As Java's `loadAllData`, a file of a directory that fails is logged, and the files after it still load. The failure
+/// names the file and its reason, so a caller can show which one to repair (TOOL-UI-006).
 #[test]
 fn a_failed_file_in_a_directory_is_skipped_and_the_next_one_loads() {
     let facade = open_empty();
@@ -322,7 +323,11 @@ fn a_failed_file_in_a_directory_is_skipped_and_the_next_one_loads() {
     .unwrap();
     let loaded = load_entity_data(&facade, dir.to_str().unwrap(), &LoadOptions::default()).unwrap();
     assert_eq!(loaded.records, 1);
-    assert_eq!(loaded.failed_files, 1);
+    assert_eq!(loaded.failures.len(), 1, "{:?}", loaded.failures);
+    let failure = &loaded.failures[0];
+    assert!(failure.location.ends_with("a-broken.xml"), "{failure:?}");
+    // the parser's reason for the unclosed element
+    assert!(failure.reason.contains("ended early"), "{failure:?}");
 }
 
 /// As Java's `loadSingleFile`, one file is one transaction: a record that fails takes the file's earlier records
@@ -349,7 +354,7 @@ fn a_file_loads_in_one_transaction_and_a_failure_rolls_back_the_whole_file() {
     )
     .unwrap();
     let loaded = load_entity_data(&facade, dir.to_str().unwrap(), &LoadOptions::default()).unwrap();
-    assert_eq!((loaded.records, loaded.failed_files), (1, 1));
+    assert_eq!((loaded.records, loaded.failures.len()), (1, 1));
     assert_eq!(test_medium(&facade, "T1"), None);
     assert_eq!(test_medium(&facade, "T2").as_deref(), Some("second"));
 }

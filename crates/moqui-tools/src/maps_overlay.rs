@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.maps.MapSourceServices.convert#Overlay` (plans/Maps.md §4.1, §8): a geographic file of one of the formats
+//! `org.moqui.maps.MapSourceServices.convert#Overlay` (plans/archive/Maps.md §4.1, §8): a geographic file of one of the formats
 //! [`moqui_lib::geo::overlay`] reads (GeoJSON, TopoJSON, EsriJSON, GPX, KML, GML, WKT, WKB, delimited text, a zipped
 //! shapefile), at a resource location or given as text or bytes, read and checked there and answered as a sanitized
 //! GeoJSON FeatureCollection in WGS84 with its feature count, bounds, CRS and notes. It writes nothing. It reads any

@@ -1,4 +1,4 @@
-// The fixture of client/MapsLocalOnly (plans/Maps.md §5, §9), run on the walks' server by client/suite.js, whose server has
+// The fixture of client/MapsLocalOnly (plans/archive/Maps.md §5, §9), run on the walks' server by client/suite.js, whose server has
 // maps@external-requests false: maps.local, a Maps user whose map profile is the local Protomaps profile; a PMTiles archive
 // (zoom 0 to 4, every tile one vector tile of an earth and a water polygon, framework test/MapsArchiveLib.js) in a
 // dbresource:// file outside any drive, registered as LOCAL_PROTOMAPS_LIGHT and LOCAL_PROTOMAPS_DARK

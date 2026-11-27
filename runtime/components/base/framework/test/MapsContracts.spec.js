@@ -1,4 +1,4 @@
-// The Maps contracts of P0 (plans/Maps.md §3.2, §4.2): the maps conf element's defaults and an override of
+// The Maps contracts of P0 (plans/archive/Maps.md §3.2, §4.2): the maps conf element's defaults and an override of
 // maps@max-features bounding a layer query; the adapter registry (org.moqui.maps.MapServices find#MapAdapters,
 // get#AdapterService), which logs and leaves out a row naming a missing service or one that does not implement its
 // interface rather than failing; the dialog's grant (MAPS_DIALOG), which a user with no group but ALL_USERS holds while

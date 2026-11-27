@@ -1,7 +1,7 @@
 # Maps offline: region packages for the Android app and the desktop client
 
 Status 2026-11-26: plan; nothing built. It carries the "offline mobile packages" item of
-[Maps §9, Later research](Maps.md#9-delivery-and-acceptance) forward as work for now, on the user's decision of
+[Maps §9, Later research](archive/Maps.md#9-delivery-and-acceptance) forward as work for now, on the user's decision of
 November 26, 2026: a person downloads a region of the map to the Android app or the desktop client and browses it with
 no network, its basemap, its own places and overlays, and the region's postal codes and Overture places. The web PWA is
 left out. The live location feeds of the same section are [Location-Sharing](Location-Sharing.md).

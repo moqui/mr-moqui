@@ -428,22 +428,43 @@ along with this software (see the LICENSE.md file). If not, see
 
     <!-- ========== PEP ========== -->
 
+    <service verb="get" noun="PepNodeRefused" allow-remote="false">
+        <description>Whether a PEP node is one the service does not keep: user location (XEP-0080), which would be pushed
+            to everyone the user shares a room with, a share the user can neither see nor revoke in Moqui, until Moqui's
+            own live location sharing maps it (plans/Location-Sharing.md). The node is compared with ASCII whitespace
+            trimmed (space, tab, LF, FF, CR, as the session's Rust check trims: JavaScript's trim would strip U+FEFF too,
+            and the two would disagree) and in any ASCII case, so a variant spelling cannot reach a stored row on a
+            case-insensitive collation. The same list as the XMPP session's (REFUSED_NODES in
+            crates/moqui-xmpp/src/session/pep.rs), which refuses before calling here.</description>
+        <in-parameters><parameter name="node"/></in-parameters>
+        <out-parameters><parameter name="refused" type="Boolean"/></out-parameters>
+        <actions><script><![CDATA[
+            const REFUSED_NODES = ['http://jabber.org/protocol/geoloc']
+            const name = String(node ?? '').replace(/^[ \t\n\f\r]+|[ \t\n\f\r]+$/g, '')
+            refused = REFUSED_NODES.includes(name.replace(/[A-Z]/g, (letter) => letter.toLowerCase()))
+        ]]></script></actions>
+    </service>
+
     <service verb="get" noun="PepItems">
         <description>The items of a PEP node of ownerUserId (the current user by default) that the current user may read:
             open (any user), presence (the people the owner shares a room with), whitelist (the owner). itemIdList picks
             items; maxItems the newest that many. exists false for a node that is not there; denied true when it may not
             be read. The bookmarks node (urn:xmpp:bookmarks:1) of the user's own adds the user's group rooms as bookmarks
-            with autojoin, where the user kept none for them.</description>
+            with autojoin, where the user kept none for them. A refused node (get#PepNodeRefused) is refused true and
+            denied true to everyone, its owner too, whatever rows it has.</description>
         <in-parameters>
             <parameter name="ownerUserId"/><parameter name="node" required="true"/>
             <parameter name="itemIdList" type="List"/><parameter name="maxItems" type="Integer"/>
         </in-parameters>
         <out-parameters>
-            <parameter name="exists" type="Boolean"/><parameter name="denied" type="Boolean"/>
+            <parameter name="exists" type="Boolean"/><parameter name="denied" type="Boolean"/><parameter name="refused" type="Boolean"/>
             <parameter name="itemList" type="List"/><parameter name="accessModel"/><parameter name="nodeMaxItems"/>
         </out-parameters>
         <actions><script><![CDATA[
-            exists = false; denied = false; itemList = []
+            exists = false; denied = false; refused = false; itemList = []
+            if (ec.service.sync().name('org.moqui.chat.XmppServices.get#PepNodeRefused').parameter('node', node).call().refused) {
+                refused = true; denied = true; return
+            }
             const me = ec.user.userId
             const owner = ownerUserId || me
             const nodeRow = ec.entity.find('moqui.xmpp.XmppPepNode').condition('userId', owner).condition('node', node).disableAuthz().one()
@@ -504,17 +525,21 @@ along with this software (see the LICENSE.md file). If not, see
             access_model or max_items differs is not made (preconditionFailed true, XEP-0060 §7.1.5). A user has at most
             200 nodes, each with at most 256 items (the oldest go), and items of at most xmpp-server@pep-max-bytes (20 MiB) in
             all: past it the item is not kept (resourceConstraint true). Out the users to notify (notifyUserIdList, who
-            may read it).</description>
+            may read it). A refused node (get#PepNodeRefused) is not kept (refused true, which the session answers
+            forbidden).</description>
         <in-parameters>
             <parameter name="node" required="true"/><parameter name="itemId" required="true"/>
             <parameter name="payloadXml" required="true" allow-html="any"/><parameter name="options" type="Map"/>
         </in-parameters>
         <out-parameters>
             <parameter name="preconditionFailed" type="Boolean"/><parameter name="resourceConstraint" type="Boolean"/>
-            <parameter name="notifyUserIdList" type="List"/>
+            <parameter name="refused" type="Boolean"/><parameter name="notifyUserIdList" type="List"/>
         </out-parameters>
         <actions><script><![CDATA[
-            preconditionFailed = false; resourceConstraint = false; notifyUserIdList = []
+            preconditionFailed = false; resourceConstraint = false; refused = false; notifyUserIdList = []
+            if (ec.service.sync().name('org.moqui.chat.XmppServices.get#PepNodeRefused').parameter('node', node).call().refused) {
+                refused = true; return
+            }
             const me = ec.user.userId
             if (String(node).length > 250 || String(itemId).length > 250) { ec.message.addError('The node or item id is too long'); return }
             if (String(payloadXml).length > 262144) { ec.message.addError('The item is too large'); return }

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.maps.MapSourceServices.read#ArchiveHeader` (plans/Maps.md §4.1, §5): the header and metadata of a PMTiles
+//! `org.moqui.maps.MapSourceServices.read#ArchiveHeader` (plans/archive/Maps.md §4.1, §5): the header and metadata of a PMTiles
 //! archive at a resource location, read by range through the resource facade (two reads: the 127-byte header, then
 //! the metadata where the header puts it) and checked by [`moqui_lib::pmtiles`], for registering a map archive and for
 //! its readiness. It writes nothing. Its grant is MAPS_ADMIN's (it reads any location it is given); the services that

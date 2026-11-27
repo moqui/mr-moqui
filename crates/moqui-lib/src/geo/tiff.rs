@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A Cloud Optimized GeoTIFF's header (plans/Maps.md §4.1, P4c), read by range before it is registered as a map layer,
+//! A Cloud Optimized GeoTIFF's header (plans/archive/Maps.md §4.1, P4c), read by range before it is registered as a map layer,
 //! as a PMTiles archive's is: the TIFF or BigTIFF header, its image file directories and the few tags a map needs, never
 //! its tiles. A browser draws the file with geotiff.js through the map-source transition; this decides whether it may.
 //!

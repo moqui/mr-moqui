@@ -228,10 +228,41 @@ pub(super) fn flame(frame: &Value, panel: &Value, width: usize) -> Option<Vec<Li
     Some(lines)
 }
 
-/// A geomap: braille points (latitude and longitude fields) over the land, then the places by value; a country frame
-/// lists the countries by value.
-pub(super) fn geomap(frame: &Value, panel: &Value, width: usize) -> Option<Vec<Line>> {
-    let fields = fields(frame, panel);
+/// Where a geomap's place opens in Maps (`report.mapsUrl` in WebrootReport.js): a point, or a country's extent
+/// `[west, south, east, north]` (`world::country_extent`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum MapsPlace {
+    Point { lon: f64, lat: f64 },
+    Extent([f64; 4]),
+}
+
+/// The most places a geomap lists.
+const LISTED: usize = 10;
+
+/// A place a geomap lists: its name, its amount and the amount as shown, the frame rows it stands for, and where it is
+/// (a point's position, drawn on the map).
+struct Place {
+    name: String,
+    amount: f64,
+    text: String,
+    rows: Vec<usize>,
+    point: Option<(f64, f64)>,
+}
+
+/// The fields a geomap reads its places from: latitude and longitude, or else a country code, each with its value.
+enum Geo<'a> {
+    Points {
+        lat: &'a Value,
+        lon: &'a Value,
+        value: Option<&'a Value>,
+    },
+    Countries {
+        country: &'a Value,
+        value: Option<&'a Value>,
+    },
+}
+
+fn geo_fields<'a>(fields: &'a [Value], panel: &Value) -> Option<Geo<'a>> {
     let options = &panel["geomap"];
     let find = |option: &Value, pattern: &str| {
         let pattern = regex::Regex::new(pattern).ok()?;
@@ -252,9 +283,6 @@ pub(super) fn geomap(frame: &Value, panel: &Value, width: usize) -> Option<Vec<L
         &options["longitude"],
         r"(?i)^(?:lon|lng|long|longitude)$|[._](?:lon|lng|longitude)$|Longitude$",
     );
-    let label = first_label(&fields);
-    let mut lines = Vec::new();
-    let mut places: Vec<(String, f64, String)> = Vec::new();
     if let (Some(lat), Some(lon)) = (lat, lon) {
         let value = options["value"]
             .as_str()
@@ -264,73 +292,148 @@ pub(super) fn geomap(frame: &Value, panel: &Value, width: usize) -> Option<Vec<L
                     .iter()
                     .find(|field| numeric_field(field) && *field != lat && *field != lon)
             });
-        let mut points = Vec::new();
-        for row in 0..values(lat).len().min(5000) {
-            let (Some(y), Some(x)) = (number(&values(lat)[row]), values(lon).get(row).and_then(number)) else {
-                continue;
-            };
-            if !(-90.0..=90.0).contains(&y) || !(-180.0..=180.0).contains(&x) || y < -60.0 {
-                continue;
+        return Some(Geo::Points { lat, lon, value });
+    }
+    let country = find(&options["country"], r"(?i)country|geo(?:Id)?$")?;
+    Some(Geo::Countries {
+        country,
+        value: first_number(fields, &options["value"]),
+    })
+}
+
+/// A row's point (longitude, latitude), when it is WGS84 degrees and no further south than `south`: the drawing's edge
+/// (`world::SOUTH_EDGE`) for the map and its list, -90 for where the row opens in Maps (McMurdo opens, though it is
+/// not drawn).
+fn row_point(lat: &Value, lon: &Value, row: usize, south: f64) -> Option<(f64, f64)> {
+    let (Some(y), Some(x)) = (
+        values(lat).get(row).and_then(number),
+        values(lon).get(row).and_then(number),
+    ) else {
+        return None;
+    };
+    ((south..=90.0).contains(&y) && (-180.0..=180.0).contains(&x)).then_some((x, y))
+}
+
+/// A geomap's places by value, the largest first: its points (latitude and longitude fields), or its countries.
+fn places(frame: &Value, panel: &Value) -> Option<Vec<Place>> {
+    let fields = fields(frame, panel);
+    let label = first_label(&fields);
+    let mut places: Vec<Place> = Vec::new();
+    match geo_fields(&fields, panel)? {
+        Geo::Points { lat, lon, value } => {
+            for row in 0..values(lat).len().min(5000) {
+                let Some((x, y)) = row_point(lat, lon, row, crate::components::world::SOUTH_EDGE) else {
+                    continue;
+                };
+                let amount = value
+                    .and_then(|field| values(field).get(row))
+                    .cloned()
+                    .unwrap_or(Value::Null);
+                places.push(Place {
+                    name: label.map_or_else(|| format!("{y:.2}, {x:.2}"), |field| text_of(values(field).get(row))),
+                    amount: number(&amount).unwrap_or(0.0),
+                    text: value.map_or_else(String::new, |field| formatted(&amount, field)),
+                    rows: vec![row],
+                    point: Some((x, y)),
+                });
             }
-            points.push((x, y));
-            let amount = value
-                .and_then(|field| values(field).get(row))
-                .cloned()
-                .unwrap_or(Value::Null);
-            places.push((
-                label.map_or_else(|| format!("{y:.2}, {x:.2}"), |field| text_of(values(field).get(row))),
-                number(&amount).unwrap_or(0.0),
-                value.map_or_else(String::new, |field| formatted(&amount, field)),
-            ));
         }
-        if places.is_empty() {
-            return None;
-        }
-        lines.extend(crate::components::world::braille_map(&points, &[], width));
-    } else {
-        let country = find(&options["country"], r"(?i)country|geo(?:Id)?$")?;
-        let value = first_number(&fields, &options["value"]);
-        let mut totals: BTreeMap<String, f64> = BTreeMap::new();
-        for (row, code) in values(country).iter().enumerate() {
-            let amount = value
-                .and_then(|field| values(field).get(row))
-                .and_then(number)
-                .unwrap_or(1.0);
-            *totals.entry(text_of(Some(code))).or_default() += amount;
-        }
-        places = totals
-            .into_iter()
-            .map(|(code, amount)| {
-                let text = value.map_or_else(|| amount.to_string(), |field| formatted(&Value::from(amount), field));
-                (code, amount, text)
-            })
-            .collect();
-        if places.is_empty() {
-            return None;
+        Geo::Countries { country, value } => {
+            let mut totals: BTreeMap<String, (f64, Vec<usize>)> = BTreeMap::new();
+            for (row, code) in values(country).iter().enumerate() {
+                let amount = value
+                    .and_then(|field| values(field).get(row))
+                    .and_then(number)
+                    .unwrap_or(1.0);
+                let total = totals.entry(text_of(Some(code))).or_default();
+                total.0 += amount;
+                total.1.push(row);
+            }
+            places = totals
+                .into_iter()
+                .map(|(code, (amount, rows))| Place {
+                    text: value.map_or_else(|| amount.to_string(), |field| formatted(&Value::from(amount), field)),
+                    name: code,
+                    amount,
+                    rows,
+                    point: None,
+                })
+                .collect();
         }
     }
-    places.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-    let max = places.first().map_or(0.0, |place| place.1);
+    if places.is_empty() {
+        return None;
+    }
+    places.sort_by(|a, b| b.amount.total_cmp(&a.amount).then_with(|| a.name.cmp(&b.name)));
+    Some(places)
+}
+
+/// Where a frame row of a geomap panel opens in Maps: its point (the latitude and longitude fields the geomap reads), or
+/// its country's extent; None for a row with neither, or a frame the geomap cannot draw.
+pub(super) fn row_place(frame: &Value, panel: &Value, row: usize) -> Option<MapsPlace> {
+    let fields = fields(frame, panel);
+    match geo_fields(&fields, panel)? {
+        Geo::Points { lat, lon, .. } => row_point(lat, lon, row, -90.0).map(|(lon, lat)| MapsPlace::Point { lon, lat }),
+        Geo::Countries { country, .. } => {
+            crate::components::world::country_extent(&text_of(values(country).get(row))).map(MapsPlace::Extent)
+        }
+    }
+}
+
+/// The path and query of Maps' Browse screen (`maps`) at a place, as `report.mapsUrl` builds them: `extent=w,s,e,n` (the
+/// commas encoded, as URLSearchParams writes them) or `longitude` and `latitude`, each number as JavaScript writes it.
+pub(super) fn maps_url(maps: &str, place: MapsPlace) -> String {
+    fn js(number: f64) -> String {
+        if number == 0.0 {
+            "0".into()
+        } else if number.abs() < 1e-6 {
+            format!("{number:e}")
+        } else {
+            number.to_string()
+        }
+    }
+    match place {
+        MapsPlace::Extent(extent) => format!("{maps}?extent={}", extent.map(js).join("%2C")),
+        MapsPlace::Point { lon, lat } => format!("{maps}?longitude={}&latitude={}", js(lon), js(lat)),
+    }
+}
+
+/// A geomap: braille points (latitude and longitude fields) over the land, then the places by value; a country frame
+/// lists the countries by value. `row` (the table's current row, where the dashboard or panel offers Maps and the panel
+/// has the keys) highlights the listed place it is part of.
+pub(super) fn geomap(frame: &Value, panel: &Value, width: usize, row: Option<usize>) -> Option<Vec<Line>> {
+    let places = places(frame, panel)?;
+    let points: Vec<(f64, f64)> = places.iter().filter_map(|place| place.point).collect();
+    let mut lines = Vec::new();
+    if !points.is_empty() {
+        lines.extend(crate::components::world::braille_map(&points, &[], width));
+    }
+    let max = places.first().map_or(0.0, |place| place.amount);
     let label_w = places
         .iter()
-        .take(10)
-        .map(|place| display_width(&place.0))
+        .take(LISTED)
+        .map(|place| display_width(&place.name))
         .max()
         .unwrap_or(4)
         .clamp(4, width / 3);
     let bar_w = width.saturating_sub(label_w + 20).min(30);
-    for (name, amount, text) in places.iter().take(10) {
-        let drawn = if max > 0.0 { cells(amount / max, bar_w) } else { 0 };
+    for place in places.iter().take(LISTED) {
+        let drawn = if max > 0.0 { cells(place.amount / max, bar_w) } else { 0 };
+        let name = Span::new(fit(&place.name, label_w), Role::Text);
         lines.push(vec![
-            Span::new(fit(name, label_w), Role::Text),
+            if row.is_some_and(|row| place.rows.contains(&row)) {
+                name.reverse()
+            } else {
+                name
+            },
             Span::new(" │", Role::Border),
             Span::new("█".repeat(drawn), Role::Primary),
-            Span::new(format!(" {text}"), Role::Text),
+            Span::new(format!(" {}", place.text), Role::Text),
         ]);
     }
-    if places.len() > 10 {
+    if places.len() > LISTED {
         lines.push(vec![Span::new(
-            format!("Top 10 of {} places", places.len()),
+            format!("Top {LISTED} of {} places", places.len()),
             Role::Muted,
         )]);
     }
@@ -399,18 +502,60 @@ mod tests {
             {"name":"lon","type":"number","values":[2.35,151.21]},
             {"name":"orders","type":"number","values":[5,9]}
         ]});
-        let lines = geomap(&frame, &json!({}), 60).unwrap();
+        let lines = geomap(&frame, &json!({}), 60, None).unwrap();
         let shown = text(&lines);
         assert!(
             lines.iter().flatten().any(|span| span.role == Role::Negative),
             "the points are drawn"
         );
         assert!(shown.find("Sydney").unwrap() < shown.find("Paris").unwrap(), "{shown}");
+        // with no row given (no Maps offered) nothing is highlighted
+        assert!(!lines.iter().flatten().any(|span| span.reverse), "{shown}");
+        // each row's place is where it opens in Maps
+        assert_eq!(
+            row_place(&frame, &json!({}), 1),
+            Some(MapsPlace::Point {
+                lon: 151.21,
+                lat: -33.87
+            })
+        );
+        assert_eq!(row_place(&frame, &json!({}), 2), None, "past the rows");
+        // the table's current row highlights its listed place: row 0 is Paris, listed second
+        let lines = geomap(&frame, &json!({}), 60, Some(0)).unwrap();
+        let selected: Vec<&Span> = lines.iter().flatten().filter(|span| span.reverse).collect();
+        assert!(
+            matches!(&selected[..], [span] if span.text.starts_with("Paris")),
+            "{selected:?}"
+        );
         let countries = json!({"fields":[
-            {"name":"countryGeoId","type":"string","values":["USA","FRA","USA"]},
-            {"name":"sales","type":"number","values":[1,2,3]}
+            {"name":"countryGeoId","type":"string","values":["USA","FRA","USA","XYZ"]},
+            {"name":"sales","type":"number","values":[1,2,3,0]}
         ]});
-        let shown = text(&geomap(&countries, &json!({}), 60).unwrap());
+        let shown = text(&geomap(&countries, &json!({}), 60, None).unwrap());
         assert!(shown.find("USA").unwrap() < shown.find("FRA").unwrap(), "{shown}");
+        // a row of a country listed once for several rows highlights it
+        let lines = geomap(&countries, &json!({}), 60, Some(2)).unwrap();
+        let selected: Vec<&Span> = lines.iter().flatten().filter(|span| span.reverse).collect();
+        assert!(
+            matches!(&selected[..], [span] if span.text.starts_with("USA")),
+            "{selected:?}"
+        );
+        // a country opens at its extent; a code with none has no place
+        let france = row_place(&countries, &json!({}), 1).unwrap();
+        assert_eq!(france, MapsPlace::Extent([-4.5918, 42.3433, 8.0983, 51.148]));
+        assert_eq!(row_place(&countries, &json!({}), 3), None);
+        assert_eq!(
+            maps_url("/apps/maps/Browse", france),
+            "/apps/maps/Browse?extent=-4.5918%2C42.3433%2C8.0983%2C51.148"
+        );
+        assert_eq!(
+            maps_url("/apps/maps/Browse", MapsPlace::Point { lon: 2.35, lat: 48.85 }),
+            "/apps/maps/Browse?longitude=2.35&latitude=48.85"
+        );
+        assert_eq!(
+            maps_url("/apps/maps/Browse", MapsPlace::Extent([-180.0, -0.0, 180.0, 1e-7])),
+            "/apps/maps/Browse?extent=-180%2C0%2C180%2C1e-7",
+            "numbers as JavaScript writes them"
+        );
     }
 }

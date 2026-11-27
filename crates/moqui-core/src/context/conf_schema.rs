@@ -377,7 +377,7 @@ pub static CATALOG: &[Unit] = &[
         .secrets(&[("store-key-secret", Secret::Generated)])
         .children(&[single("stickers", Class::Live)]),
     single("load-runner", Class::Live),
-    // Maps (plans/Maps.md §4.2): read on each request, import and viewport query
+    // Maps (plans/archive/Maps.md §4.2): read on each request, import and viewport query
     single("maps", Class::Live),
     // shared live location (plans/Location-Sharing.md §3.1): read at each share, report and clean
     single("location", Class::Live),

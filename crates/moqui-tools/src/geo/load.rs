@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Validating and loading a Geo data file (plans/Maps.md §6.3, §6.4, steps 3 to 5).
+//! Validating and loading a Geo data file (plans/archive/Maps.md §6.3, §6.4, steps 3 to 5).
 //!
 //! - **Validate** ([`read_file`], [`Preparer`]): the whole file read with `moqui_lib::geo`, writing nothing, each row
 //!   checked as it is read: its country (the run's, or one the Geo table has), its code's shape and computed IDs (at
@@ -246,7 +246,7 @@ pub enum ReadFailure {
 
 /// Read and check the file at `path` (the zip member `member`, or the file) as the run's set's format, writing nothing,
 /// each row checked as it is read: the records are grouped into the items to load as they come, never held twice
-/// (plans/Maps.md §6.3, the forced refresh's memory). `country` is the run's: a row of another country is passed over.
+/// (plans/archive/Maps.md §6.3, the forced refresh's memory). `country` is the run's: a row of another country is passed over.
 ///
 /// # Errors
 ///
@@ -643,7 +643,7 @@ fn add_postal(
 
 /// A find of `entity` that neither reads nor fills the entity cache. Geo, GeoAssoc and GeoPoint are cached entities,
 /// and a run reads every row of its file's scope a chunk at a time: a refresh that changes nothing wrote no row to clear
-/// those lists, so each run's reads stayed in the list caches (about 225 MB for the US, plans/Maps.md §6.3).
+/// those lists, so each run's reads stayed in the list caches (about 225 MB for the US, plans/archive/Maps.md §6.3).
 pub(crate) fn uncached(facade: &EntityFacade, entity: &str) -> Result<moqui_core::entity::EntityFind, LibError> {
     Ok(facade.find(entity)?.use_cache(false))
 }
@@ -1554,7 +1554,7 @@ impl<'a> Loader<'a> {
     }
 
     /// The first-level division of country `country_geo_id` (ISO alpha-2 `alpha2`) for the source's `code`, found by
-    /// lookup among the country's `GAT_REGIONS` children (plans/Maps.md §6.3): by its ISO 3166-2 code (the source's own
+    /// lookup among the country's `GAT_REGIONS` children (plans/archive/Maps.md §6.3): by its ISO 3166-2 code (the source's own
     /// for the US, Switzerland, Belgium and Montenegro, else through the crosswalk of `moqui_lib::geo::admin1`) in
     /// `geoCodeAlpha2`, `geoCodeNumeric` or the ID as Mantle writes one (`CAN_AB`, `JPN_01`, `VNM_VN-SG`), by the ID the
     /// importer would have made, then by `names`. When nothing matches and `create_name` is given,

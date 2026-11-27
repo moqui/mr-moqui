@@ -13,7 +13,7 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
-    <!-- Optional Overture data (plans/Maps-Overture.md, stages O1 and O2 of plans/Maps.md §4.3; docs/tools/Maps.md "Overture
+    <!-- Optional Overture data (plans/archive/Maps-Overture.md, stages O1 and O2 of plans/archive/Maps.md §4.3; docs/tools/Maps.md "Overture
         places and buildings" and "Overture addresses"): an administrator's region, a theme of it (Places, Buildings,
         Addresses) imported from a pinned release as a run
         (moqui.maps.OvertureImport, MapOvertureEntities.xml), staged, checked and activated, and rolled back or removed. The

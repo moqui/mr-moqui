@@ -116,6 +116,32 @@ feature("a DATABASE_ADMIN user's wrapped load is refused an ADMIN_ADV membership
     },
 })
 
+// before, the worker gave the load no array for its failures: a file it could not load was only in the log, and the run
+// and its notification read as a clean load (TOOL-UI-006)
+feature("a wrapped load names a file it could not load in the outcome and fails the run, and the keys are restored", {
+    expect() {
+        const run = () => {
+            ec.user.internalLoginUser("spec.lw.dba")
+            const wrap = ec.service.sync().name("org.moqui.dev.DatabaseServices.plan#LoadWrap").parameters({ db: "group:transactional",
+                entityNames: ["moqui.security.UserGroupMember"], description: "Spec load wrap missing file" }).disableAuthz().call() || {}
+            ec.message.clearErrors()
+            // as the ServiceJob runs it: authorization off
+            ec.artifactExecution.disableAuthz()
+            const out = ec.service.sync().name("moqui.tools.DatabaseLoadServices.run#LoadWrap").parameters({ dropJobId: wrap.dropJobId,
+                restoreJobId: wrap.restoreJobId, location: "component://tools/data/NoSuchSpecLoadWrap.xml" }).call() || {}
+            const errors = ec.message.errorsString
+            ec.message.clearErrors()
+            ec.artifactExecution.enableAuthz()
+            return { out, errors }
+        }
+        const { out, errors } = run()
+        out.dropStatusId == "DbjsDone"
+        String(out.outcome).includes("could not load [component://tools/data/NoSuchSpecLoadWrap.xml]")
+        out.restoreStatusId == "DbjsDone"
+        errors.includes("component://tools/data/NoSuchSpecLoadWrap.xml")
+    },
+})
+
 feature("runAsUser leaves the caller's authorization state as it was, whatever its body does", {
     expect() {
         const run = () => {
