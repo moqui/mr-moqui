@@ -908,19 +908,19 @@ installation has room: at most `maps@package-concurrent-builds` packages are bui
 with the scheduled jobs), another waits, pending ("Waiting for its turn"), and starts when one ends (the hourly clean
 starts any whose turn was missed); a user has at most one package pending or building (`PACKAGE_BUSY`). One scheduler
 runs at a time (`schedule#PackageBuilds`, after the commit of the request that asked), and it first ends any build whose
-run is gone or ended, silent for an hour once started, or never started six hours after it was handed to the job (each
-clock the run's own: a download or a cancel does not reset it). A lost run (a
-full worker queue when its request committed, a run-as user the job runner refused, a restart mid-build or while it was
-queued) so holds its turn for up to an hour or two (a queued one up to about seven), until a scheduler pass or the
-hourly clean ends it. The run is signed in as the package's owner, whoever's request or build's end started it, and cuts
-only what the owner may see; an owner whose account is closed (disabled for good, or past its terminate date) or whose
-password must change, or a run that throws, ends the package failed. An owner locked out for a few minutes after failed
-sign-ins (someone else's, it may be; `user-facade/login@disable-minutes`) puts the build back to wait, and it starts
-after the lock ends, at the next scheduler pass (within about an hour). The owner alone is told when it ends (topic
-`MapPackageBuild`, sent to them directly). The run holds no transaction while it cuts, each write its own, and writes
-only while the package still holds its build key; its files are named by the key, so two runs never share one. It cuts
-each archive (`build#PackageExtract`): for each zoom in turn the tiles of the region sorted by tile ID, found through
-the directories as the tile transition finds one (kept by the archive's tag), read by range in batches by offset
+run is gone or ended, silent for an hour once started, or never started six hours after it was handed to the job, by the
+build's own clocks (its last word, `progressDate`, and its job run's): a download or a cancel does not reset them. A
+lost run (a full worker queue when its request committed, a run-as user the job runner refused, a restart mid-build or
+while it was queued) so holds its turn for up to an hour or two (a queued one up to about seven), until a scheduler pass
+or the hourly clean ends it. The run is signed in as the package's owner, whoever's request or build's end started it,
+and cuts only what the owner may see; an owner whose account is closed (disabled for good, or past its terminate date)
+or whose password must change, or a run that throws, ends the package failed. An owner locked out for a few minutes
+after failed sign-ins (someone else's, it may be; `user-facade/login@disable-minutes`) puts the build back to wait, and
+it starts after the lock ends, at the next scheduler pass (within about an hour). The owner alone is told when it ends
+(topic `MapPackageBuild`, sent to them directly). The run holds no transaction while it cuts, each write its own, and
+writes only while the package still holds its build key; its files are named by the key, so two runs never share one. It
+cuts each archive (`build#PackageExtract`): for each zoom in turn the tiles of the region sorted by tile ID, found
+through the directories as the tile transition finds one (kept by the archive's tag), read by range in batches by offset
 (neighbouring tiles one read) and handed as stored to a streaming writer (`moqui-lib` `pmtiles.rs` `ArchiveWriter`),
 which writes the tile data to a part file and keeps only the directory entries and a bounded map of the contents the
 archive shares between tiles (the sea, read and stored once), the archive's metadata JSON copied whole. Each archive has

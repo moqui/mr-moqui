@@ -9,7 +9,8 @@
 // it; the Offline page renders once in qvt and once in the terminal (its own template); the hourly clean removes an
 // expired package's file and a deleted one's; the owner's places and the overlays they read are packaged, another
 // user's places and an unshared overlay never, a shared one until its share is revoked; a dead build and a disabled
-// owner's build end failed and hold no turn, and a waiting build runs as its owner, who alone is told. The cut's bounds, the
+// owner's build end failed and hold no turn, and a waiting build runs as its owner, who alone is told; a started run
+// silent for an hour is ended by the build's own clocks, its package row's fresh stamp aside. The cut's bounds, the
 // antimeridian and the writer are moqui-tools' and moqui-lib's Rust tests.
 // Run: ./moq test framework --spec MapsPackages
 const S = "org.moqui.maps.MapSourceServices."
@@ -26,6 +27,8 @@ const DISABLED = "MAPS_PKG_DISABLED"
 const LOCKED = "MAPS_PKG_LOCKED"
 const LOCKED_LONG = "MAPS_PKG_LOCKED_LONG"
 const QUEUED_RUN = "MAPS_PKG_QUEUED_RUN"
+// a started run silent for two hours
+const STALLED_RUN = "MAPS_PKG_STALLED_RUN"
 // a group whose members hold the hidden layer's permission: the other user's
 const SECRET_GROUP = "MAPS_PKG_SECRET_GROUP"
 const DIR = "runtime://maps/maps-packages-spec"
@@ -214,7 +217,7 @@ spec({
         del("moqui.resource.ResourceShare", "shareId", ["MAPS_PKG_SHARE_OVERLAY", "MAPS_PKG_SHARE_PLACES"])
         del("moqui.maps.MapOverlay", "ownerUserId", [OWNER, OTHER])
         del("moqui.resource.ResourceDrive", "driveId", ["MAPS_PKG_OWN_DRIVE", "MAPS_PKG_OTHER_DRIVE"])
-        del("moqui.service.job.ServiceJobRun", "jobRunId", [FAKE_RUN, QUEUED_RUN])
+        del("moqui.service.job.ServiceJobRun", "jobRunId", [FAKE_RUN, QUEUED_RUN, STALLED_RUN])
         del("moqui.maps.MapProfile", "profileId", [PROFILE])
         del("moqui.maps.MapLayer", "layerId", [VISIBLE, HIDDEN])
         for (const location of [VISIBLE_LOCATION, HIDDEN_LOCATION, UNZIPPED])
@@ -604,5 +607,27 @@ feature("a build of an owner locked out under a configured window waits, and a r
         out.locked.buildKey == "SPECKEY" && out.locked.statusNote.includes("locked")
         out.stampedOld == true
         out.created.applied == true && out.status == "MapPkgReady" && out.queued == "MapPkgFailed"
+    }
+})
+
+feature("a started run silent for over an hour is ended by the scheduler, though its package row was just written", {
+    when() {
+        ec.artifactExecution.disableAuthz()
+        // started two hours ago, its last word as long ago; the package row written just now (a download of an earlier
+        // revision, a cancel asked): the build's own clocks decide
+        const twoHoursAgo = new Date(Date.now() - 2 * 3600000)
+        make("moqui.service.job.ServiceJobRun", {jobRunId: STALLED_RUN, jobName: "MapPackageBuild", startTime: twoHoursAgo})
+        packageOf("MAPS_PKG_STALLED", {ownerUserId: OTHER, statusId: "MapPkgBuilding", jobRunId: STALLED_RUN, buildKey: "STALLEDKEY",
+            progressDate: twoHoursAgo})
+        const before = packageRow("MAPS_PKG_STALLED")
+        const stamped = Number(before.lastUpdatedStamp?.getTime?.() ?? before.lastUpdatedStamp)
+        const scheduled = invoke(S + "schedule#PackageBuilds")
+        const after = packageRow("MAPS_PKG_STALLED")
+        return {fresh: Date.now() - stamped < 60000, scheduled, statusId: after.statusId, buildKey: after.buildKey || null,
+            jobRunId: after.jobRunId || null}
+    },
+    then(out) {
+        out.fresh == true && out.scheduled.error == ""
+        out.statusId == "MapPkgFailed" && out.buildKey == null && out.jobRunId == null
     }
 })
