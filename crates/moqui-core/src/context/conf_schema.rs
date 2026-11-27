@@ -379,6 +379,8 @@ pub static CATALOG: &[Unit] = &[
     single("load-runner", Class::Live),
     // Maps (plans/Maps.md §4.2): read on each request, import and viewport query
     single("maps", Class::Live),
+    // shared live location (plans/Location-Sharing.md §3.1): read at each share, report and clean
+    single("location", Class::Live),
     single("media-server", LISTENER)
         .children(&[single("turn-server", LISTENER).secrets(&[("auth-secret", Secret::Generated)])]),
     single("calls", Class::Live).children(&[

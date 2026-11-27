@@ -31,6 +31,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:element minOccurs="0" ref="push"/>
                 <xs:element minOccurs="0" ref="load-runner"/>
                 <xs:element minOccurs="0" ref="maps"/>
+                <xs:element minOccurs="0" ref="location"/>
                 <xs:element minOccurs="0" ref="cluster-member"/>
                 <xs:element minOccurs="0" ref="xmpp-server"/>
                 <xs:element minOccurs="0" ref="sip-server"/>
@@ -2402,6 +2403,24 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="overture-max-area" type="xs:string" default="2500"><xs:annotation><xs:documentation>
                 The largest Overture region, in km² (a box's area near enough): a region of a few cities, not a country,
                 so an import reads a few row groups of a few files.</xs:documentation></xs:annotation></xs:attribute>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="location">
+        <xs:annotation><xs:documentation>Shared live location (plans/Location-Sharing.md §3.1): the limits of the shares a
+            person starts (org.moqui.maps.LocationServices). The shares, their audiences, the latest positions and the kept
+            trails are entity rows, not settings.</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:attribute name="max-share-hours" type="non-neg-int-expandable" default="24"><xs:annotation><xs:documentation>
+                The longest a share runs, in hours from its start or from its owner's last extension; every share has an
+                end within it.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="trail-max-days" type="non-neg-int-expandable" default="30"><xs:annotation><xs:documentation>
+                The longest a trail stays after its share ends, in days, for a share whose owner chose to keep one; the
+                hourly clean#LocationShares deletes the points past the share's own trailKeepDays.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="min-interval-seconds" type="non-neg-int-expandable" default="5"><xs:annotation><xs:documentation>
+                The shortest time between two positions a share takes, in seconds: a sooner report is answered 429 and
+                dropped.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="link-max-views-per-minute" type="non-neg-int-expandable" default="30"><xs:annotation><xs:documentation>
+                The most reads a minute of a guest link's page, for one link.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
     <xs:element name="cluster-member">
