@@ -952,7 +952,10 @@ function deviceKey(deviceName) {
 // a call as A signed in by a device key (none: a browser), with authorization on: its results and errors
 function asDevice(device, verbNoun, parameters) {
     ec.user.internalLoginUser(username(A))
-    if (device && !ec.user.loginUserKey(device.key)) return {errors: "the device key did not sign in"}
+    if (device && !ec.user.loginUserKey(device.key)) {
+        ec.message.clearErrors()
+        return {errors: "the device key did not sign in"}
+    }
     const kind = ec.user.loginKeyKind
     ec.artifactExecution.enableAuthz()
     let out = {}
@@ -1033,8 +1036,20 @@ feature(
             out.renewedReport = postApp("reportClientLocation", {shareId, latitude: "40.78", longitude: "-111.9"}, renewedKey)
             // the key the renewal replaced still signs in for its grace: a report on its way as it was renewed is taken
             out.oldKeyReport = reportFrom(tablet, shareId, "40.785")
-            // the app's confirmation reads the share's words from the server
+            // the app's confirmation reads the share's words from the server; another user's share is not found
             out.appShare = postApp("clientLocationShare", {shareId}, renewedKey)
+            out.othersAppShare = sys(() => {
+                ec.user.internalLoginUser(username(B))
+                const got = ec.service.sync().name(S + "get#AppShare").parameters({shareId}).call() || {}
+                const refused = got.reasonCode
+                ec.message.clearErrors()
+                return refused
+            })
+            // a takeover by a browser clears the renewal's grace: the replaced key is refused from then on
+            later(6000)
+            out.takeOver = asDevice(null, "update#Share", {shareId, sendFromHere: true})
+            out.graceAfter = sys(() => ec.entity.find("moqui.maps.LocationShare").condition("shareId", shareId).one().renewedFromKeyId)
+            out.oldKeyAfter = reportFrom(tablet, shareId, "40.786")
             // a share started in a browser has no device
             later(6000)
             const browserShare = asDevice(null, "create#Share", {audienceList: [toUser(B)], thruDate: new Date(shared.now + HOUR)}).shareId
@@ -1049,6 +1064,8 @@ feature(
             out.made.kind == "device"
             out.boundTo == out.phone.hash
             out.fromPhone.statusCode == 200
+            out.fromPhone.audienceSeq >= 1
+            out.fromPhone.audienceReach == 1
             out.fromBrowser.statusCode == 409
             out.fromBrowser.reasonCode == "OTHER_DEVICE"
             out.fromBrowser.errors.includes("Another device sends")
@@ -1077,10 +1094,17 @@ feature(
             out.oldKeyReport.statusCode == 200
             out.appShare.text == null
             out.appShare.json.found == true
-            out.appShare.json.share.audienceText == "Loc B"
             out.appShare.json.share.fromThisDevice == true
             out.appShare.json.share.intervalSeconds == 5
             out.appShare.json.share.approximate == false
+            out.appShare.json.share.audienceText == "Loc B (loc.share.b)"
+            out.appShare.json.share.untilText.length > 0
+            out.appShare.json.share.audienceSeq >= 1
+            out.appShare.json.share.audienceReach == 1
+            out.othersAppShare == "SHARE_NOT_FOUND"
+            out.takeOver.errors == ""
+            out.graceAfter == null
+            out.oldKeyAfter.reasonCode == "OTHER_DEVICE"
             out.browserShareBound == null
             out.stopped.json.stopped == true
             out.afterStop.statusCode == 410
@@ -1117,5 +1141,51 @@ feature("revoking a device key stops the shares it sends, and its audience is to
         ended == true
         after == false
         told == true
+    }
+})
+
+feature("a revoke goes through when stop#DeviceShares fails on a share that is not the key's user's, and logout's revoke stops a key's shares", {
+    when() {
+        // the device list's revoke, with a share bound to the key that another user owns (data that does not hold
+        // together): that share is refused and left, A's own share is stopped, and the key is revoked all the same
+        const phone = deviceKey("Spec tampered phone")
+        later(6000)
+        const own = asDevice(phone, "create#Share", {audienceList: [toUser(B)], thruDate: new Date(shared.now + HOUR)}).shareId
+        make("moqui.maps.LocationShare", {shareId: "LOC_SPEC_TAMPERED", ownerUserId: B, userLoginKeyId: phone.hash,
+            fromDate: new Date(shared.now), thruDate: new Date(shared.now + HOUR), precisionEnumId: "LspExact"})
+        ec.user.internalLoginUser(username(A))
+        ec.service.sync().name("org.moqui.impl.UserServices.revoke#UserDeviceKey").parameters({loginKey: phone.hash}).disableAuthz().call()
+        const revokeErrors = ec.message.hasError() ? ec.message.errorsString : ""
+        ec.message.clearErrors()
+        const row = id => sys(() => ec.entity.find("moqui.maps.LocationShare").condition("shareId", id).one())
+        const keyEnded = sys(() => {
+            const key = ec.entity.find("moqui.security.UserLoginKey").condition("loginKey", phone.hash).one()
+            return key.thruDate != null && ec.user.timestampMillis(key.thruDate) <= Date.now() + 1000
+        })
+        const signsIn = asDevice(phone, "find#MyShares").errors === ""
+        const out = {revokeErrors, keyEnded, signsIn, ownEnded: row(own).endedDate != null, tamperedLeft: row("LOC_SPEC_TAMPERED").endedDate == null}
+        sys(() => ec.entity.find("moqui.maps.LocationShare").condition("shareId", "LOC_SPEC_TAMPERED").deleteAll())
+        // logout's revoke of the key it signs in with (revoke#UserHeldKey, user::revoke_login_key)
+        const laptop = deviceKey("Spec laptop")
+        later(6000)
+        const heldMade = asDevice(laptop, "create#Share", {audienceList: [toUser(B)], thruDate: new Date(shared.now + HOUR)})
+        if (!heldMade.shareId) return Object.assign(out, {heldMade})
+        const held = heldMade.shareId
+        ec.user.internalLoginUser(username(A))
+        ec.service.sync().name("org.moqui.impl.UserServices.revoke#UserHeldKey").parameters({loginKey: laptop.key}).disableAuthz().call()
+        out.heldErrors = ec.message.hasError() ? ec.message.errorsString : ""
+        ec.message.clearErrors()
+        out.heldEnded = row(held).endedDate != null
+        return out
+    },
+    then(out) {
+        out.revokeErrors == ""
+        out.keyEnded == true
+        out.signsIn == false
+        out.ownEnded == true
+        out.tamperedLeft == true
+        out.heldMade == null
+        out.heldErrors == ""
+        out.heldEnded == true
     }
 })

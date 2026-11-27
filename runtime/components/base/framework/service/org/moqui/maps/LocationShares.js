@@ -757,12 +757,11 @@ function report(p) {
             .makeValue(TRAIL)
             .setAll(Object.assign({shareId: share.shareId, observedDate: new Date(position.observed)}, values))
             .createOrUpdate()
-    push(
-        share,
-        currentUserIds(share),
-        Object.assign({event: "position", observedDate: position.observed, approximate: approximated}, values)
-    )
-    return {statusCode: 200}
+    const reached = currentUserIds(share)
+    push(share, reached, Object.assign({event: "position", observedDate: position.observed, approximate: approximated}, values))
+    // the audience's revision, which the Android app compares with the one the person confirmed (a script adding to the
+    // audience after the person's Send pauses the phone's sending until they confirm it again)
+    return Object.assign({statusCode: 200}, audienceRevision(share, reached))
 }
 
 function positionOf(row, now) {
@@ -1116,21 +1115,67 @@ function indicator() {
     }
 }
 
-/** Whom an own share is with, in words: "Sam and Pat", "Sam, Pat and 2 others"; its revoked entries left out. */
-function audienceWords(audienceList) {
-    const names = Array.from(audienceList || [])
-        .filter(entry => !entry.revoked)
-        .map(entry => entry.userName || entry.groupName || entry.jid || (entry.hasLink ? ec.l10n.localize("a guest link") : null))
-        .filter(Boolean)
-    if (!names.length) return ec.l10n.localize("nobody now")
-    if (names.length <= 2) return names.join(" " + ec.l10n.localize("and") + " ")
-    return names.slice(0, 2).join(", ") + " " + ec.l10n.localize("and") + " " + (names.length - 2) + " " + ec.l10n.localize("others")
+/**
+ * Whom an own share is with, in words the owner can check, for the app's own confirmation and notification: each person
+ * by name and unique username ("Sam Smith (sam)"), a group by its name and how many members its snapshot reaches
+ * ("Family (4 members)"), an XMPP contact by JID, the link as "anyone with the guest link"; at most three, then how many
+ * more. Its revoked entries are left out.
+ */
+function audienceWords(share) {
+    const rows = activeAudience(share.shareId)
+    const userIds = rows.filter(row => row.audienceTypeEnumId === "LsaUser" && row.userId).map(row => row.userId)
+    const accounts = {}
+    if (userIds.length)
+        for (const row of find(ACCOUNT).condition("userId", "in", userIds).selectField("userId,userFullName,username").list())
+            accounts[row.userId] = row
+    const groupIds = rows.filter(row => row.userGroupId).map(row => row.userGroupId)
+    const groups = {}
+    if (groupIds.length)
+        for (const row of find("moqui.security.UserGroup").condition("userGroupId", "in", groupIds).selectField("userGroupId,description").list())
+            groups[row.userGroupId] = row.description || row.userGroupId
+    const words = rows.map(row => {
+        switch (row.audienceTypeEnumId) {
+            case "LsaUser": {
+                const account = accounts[row.userId] || {}
+                const name = account.userFullName || account.username || row.userId
+                return account.username && account.username !== name ? `${name} (${account.username})` : name
+            }
+            case "LsaUserGroup": {
+                const members = find(AUDIENCE_MEMBER).condition({shareId: share.shareId, audienceSeqId: row.audienceSeqId}).count()
+                return `${groups[row.userGroupId] || row.userGroupId} (${members} ${ec.l10n.localize(members === 1 ? "member" : "members")})`
+            }
+            case "LsaXmpp":
+                return row.jid
+            case "LsaLink":
+                return ec.l10n.localize("anyone with the guest link")
+            default:
+                return null
+        }
+    }).filter(Boolean)
+    if (!words.length) return ec.l10n.localize("nobody now")
+    if (words.length <= 3) return words.slice(0, -1).join(", ") + (words.length > 1 ? " " + ec.l10n.localize("and") + " " : "") + words[words.length - 1]
+    return words.slice(0, 3).join(", ") + " " + ec.l10n.localize("and") + " " + (words.length - 3) + " " + ec.l10n.localize("more")
+}
+
+/**
+ * The audience's revision, which the app compares with the one the person confirmed (plans/Location-Sharing.md §3.4):
+ * audienceSeq, the newest entry's sequence (an entry added), and audienceReach, the people its current entries reach and
+ * its contacts and link (a group added again, which may reach more). Either grown means the person has not confirmed
+ * whom the phone sends to now.
+ */
+function audienceRevision(share, userIds) {
+    const rows = activeAudience(share.shareId)
+    const audienceSeq = Array.from(find(AUDIENCE).condition("shareId", share.shareId).list())
+        .reduce((max, row) => Math.max(max, Number(row.audienceSeqId) || 0), 0)
+    const others = rows.filter(row => row.audienceTypeEnumId === "LsaXmpp" || row.audienceTypeEnumId === "LsaLink").length
+    return {audienceSeq, audienceReach: (userIds || currentUserIds(share)).length + others}
 }
 
 /**
  * get#AppShare: an active share of the caller's own as the Android app confirms and shows it before it sends it
- * (plans/Location-Sharing.md §3.4): whom with, until when, exact or approximate, its report interval, and whether this
- * request's device sends it; from the server, never the page's words.
+ * (plans/Location-Sharing.md §3.4): whom with, until when (untilText, in the caller's zone, with the weekday when not
+ * today), exact or approximate, its report interval, its audience's revision, and whether this request's device sends
+ * it; from the server, never the page's words.
  */
 function appShare(p) {
     const now = nowMillis()
@@ -1140,32 +1185,50 @@ function appShare(p) {
     const view = ownerView(share, now)
     const approximate = share.precisionEnumId === "LspApproximate"
     const minimum = setting("min-interval-seconds", 5)
+    const thru = millis(share.thruDate)
     return {
-        share: {
-            shareId: share.shareId,
-            thruDate: millis(share.thruDate),
-            approximate,
-            intervalSeconds: approximate ? Math.max(minimum, setting("approximate-interval-seconds", 60)) : minimum,
-            audienceText: audienceWords(view.audienceList),
-            fromThisDevice: view.fromThisDevice
-        }
+        share: Object.assign(
+            {
+                shareId: share.shareId,
+                thruDate: thru,
+                untilText: untilWords(thru, now, ec.user.timeZone),
+                approximate,
+                intervalSeconds: approximate ? Math.max(minimum, setting("approximate-interval-seconds", 60)) : minimum,
+                audienceText: audienceWords(share),
+                fromThisDevice: view.fromThisDevice
+            },
+            audienceRevision(share)
+        )
     }
 }
 
 /**
- * stop#DeviceShares: a device key revoked (its owner's sign-out, the device list): every active share it sends is
- * stopped, as stop#Share does, so none stays on with nothing sending it, also when the device could not tell the
- * server itself (plans/Location-Sharing.md §3.4). Called by the framework (login.rs) with the key's stored hash.
+ * stop#DeviceShares: a device key revoked (its owner's sign-out, the device list, an administrator ending it): every
+ * active share it sends is stopped, as stop#Share does, so none stays on with nothing sending it, also when the device
+ * could not tell the server itself (plans/Location-Sharing.md §3.4). Called by the framework (login.rs, Identity.js)
+ * with the key's stored hash, in a transaction of its own (force-new) so it never touches the revoke's. Each share in a
+ * transaction of its own too; one not of the key's own user (data that does not hold together) is refused by name and
+ * left as it is, and the rest go on.
  */
 function deviceShares(p) {
     const id = text(p.userLoginKeyId)
     if (!id) return {stoppedCount: 0}
-    const now = nowMillis()
+    const key = find("moqui.security.UserLoginKey").condition("loginKey", id).selectField("userId").one()
+    const keyUserId = key ? key.userId : null
     let stoppedCount = 0
-    for (const share of Array.from(find(SHARE).condition("userLoginKeyId", id).condition("endedDate", null).forUpdate(true).list())) {
-        if (share.revokedDate == null && millis(share.thruDate) > now) share.revokedDate = new Date(now)
-        endShare(share, now)
-        stoppedCount++
+    for (const listed of Array.from(find(SHARE).condition("userLoginKeyId", id).condition("endedDate", null).selectField("shareId,ownerUserId").list())) {
+        if (listed.ownerUserId !== keyUserId) {
+            ec.message.addError(ec.l10n.localize("Location share") + " " + listed.shareId + ": " + ec.l10n.localize("not the device key's user's, left as it is"))
+            continue
+        }
+        ec.transaction.runRequireNew(30, "Error stopping location share " + listed.shareId, () => {
+            const now = nowMillis()
+            const share = find(SHARE).condition("shareId", listed.shareId).forUpdate(true).one()
+            if (!share || share.endedDate != null) return
+            if (share.revokedDate == null && millis(share.thruDate) > now) share.revokedDate = new Date(now)
+            endShare(share, now)
+            stoppedCount++
+        })
     }
     return {stoppedCount}
 }

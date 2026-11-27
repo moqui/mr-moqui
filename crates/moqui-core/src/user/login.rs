@@ -1495,8 +1495,18 @@ pub(crate) fn stop_key_location_shares(hashed: &str) {
     }
     let mut parameters = std::collections::BTreeMap::new();
     parameters.insert("userLoginKeyId".to_string(), Value::string(hashed));
-    if let Err(err) = crate::service::sync("org.moqui.maps.LocationServices.stop#DeviceShares", &parameters) {
+    // its own transaction (the service is force-new), and its errors taken back out of the context's messages, so
+    // nothing of it reaches the revoke: a revoke rolled back would leave a lost device's key signing in
+    let mark = ExecutionContext::with_current(|ec| ec.message().error_mark());
+    let called = crate::service::sync("org.moqui.maps.LocationServices.stop#DeviceShares", &parameters);
+    let errors = mark
+        .and_then(|mark| ExecutionContext::with_current(|ec| ec.message().take_errors_since(mark)))
+        .unwrap_or_default();
+    if let Err(err) = called {
         tracing::warn!(error = %err, "the location shares of a revoked device key were not stopped");
+    }
+    for error in errors {
+        tracing::warn!(error = %error, "a location share of a revoked device key");
     }
 }
 

@@ -439,6 +439,24 @@ function accountCredentials(p) {
 }
 
 // End one credential of the account, or every one of its kind: true when one was current.
+/**
+ * The live location shares a device key sends stop with the key (plans/Location-Sharing.md §3.4), as the other revoke
+ * paths do (user/login.rs): in a transaction of its own (the service is force-new), its errors logged and cleared so
+ * they never reach the credential's end.
+ */
+function stopKeyShares(loginKey) {
+    ec.message.pushErrors()
+    try {
+        ec.service.sync().name("org.moqui.maps.LocationServices.stop#DeviceShares").parameters({userLoginKeyId: loginKey}).disableAuthz().call()
+        if (ec.message.hasError()) ec.logger.warn(`The location shares of an ended device key: ${ec.message.errorsString}`)
+    } catch (err) {
+        ec.logger.warn(`The location shares of an ended device key were not stopped: ${err && err.message ? err.message : err}`)
+    } finally {
+        ec.message.clearErrors()
+        ec.message.popErrors()
+    }
+}
+
 function endCredential(userId, kind, credentialId) {
     const now = ec.user.nowTimestamp
     const byId = (entity, idField, conditions = {}) => {
@@ -452,6 +470,7 @@ function endCredential(userId, kind, credentialId) {
             row.set("thruDate", now)
             row.update()
             ended++
+            stopKeyShares(row.loginKey)
         }
     } else if (kind === "appPasswords" || kind === "appPassword") {
         for (const row of byId(APP_PASSWORD, "appPasswordId").filter(row => !row.revokedDate)) {

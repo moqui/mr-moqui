@@ -1046,8 +1046,10 @@ and the guest page for a link are still to come.
   location") until they take it over (Send from here, Send from this device: `sendFromHere`). The renewal of the
   device's key moves its shares to the new key (`renew_device_key`), keeping the replaced key as `renewedFromKeyId`,
   whose reports are taken while it still signs in (its few minutes' grace; cleared by a takeover). Revoking a device
-  key (its sign-out, the device list) stops every active share it sends (`stop#DeviceShares`), also when the device
-  could not tell the server. The owner's reads say where each share is sent from (`sentFromDevice`, the device's
+  key (its sign-out, the device list, an administrator ending it) stops every active share it sends
+  (`stop#DeviceShares`, in a transaction of its own, each share in its own, its errors logged and cleared so the revoke
+  always goes through), also when the device could not tell the server. A report's 200 answer carries the audience's
+  revision (`audienceSeq`, `audienceReach`), which the Android app compares with what the person confirmed. The owner's reads say where each share is sent from (`sentFromDevice`, the device's
   `deviceName`, `fromThisDevice`), never the key's id.
 - **From the Android app** (LL3; [Mobile-Client, Live location](../ui/Mobile-Client.md#live-location)). Browse in the app
   has `moquiDesktop.location`: Share asks for the phone's location permission first (approximate alone for an
