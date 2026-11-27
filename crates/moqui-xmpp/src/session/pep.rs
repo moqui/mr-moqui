@@ -20,7 +20,8 @@
 //! publish whose options differ from the node's is refused `precondition-not-met`, and the owner can configure the
 //! node (`pubsub#owner`) or delete it. Access: `open` is any user of this server, `presence` the people the owner
 //! shares a room with, `whitelist` the owner alone. A publish notifies the sessions of the users who may read the node
-//! and asked for it (`<node>+notify` in their capabilities, XEP-0115), the owner's own included.
+//! and asked for it (`<node>+notify` in their capabilities, XEP-0115), the owner's own included. A node of
+//! `REFUSED_NODES` is refused whatever is asked of it, and no one's interest in it is kept.
 
 use minidom::Element;
 use serde_json::{json, Value as Json};
@@ -31,6 +32,21 @@ use crate::backend::{self, services};
 use crate::ns;
 use crate::registry::Inbound;
 
+/// The nodes this service does not keep (a PEP service may restrict its nodes, XEP-0163 §4). User location (XEP-0080)
+/// would otherwise be stored and pushed to everyone the user shares a room with (a new node's access is `presence`):
+/// a location share the user can neither see nor revoke in Moqui. Refused until Moqui's own live location sharing maps
+/// the node (plans/Location-Sharing.md). The services refuse the same list (`get#PepNodeRefused` in XmppServices.xml).
+const REFUSED_NODES: &[&str] = &["http://jabber.org/protocol/geoloc"];
+
+/// Whether `node` is one this service refuses: no publish, fetch, configure or delete, and no `+notify` interest. It is
+/// compared with ASCII whitespace trimmed (space, tab, LF, FF, CR: what the services trim too, so both sides agree on a
+/// node such as one led by U+FEFF) and in any ASCII case, so a variant spelling cannot reach a stored row on a
+/// case-insensitive collation.
+pub(super) fn refused_node(node: &str) -> bool {
+    let node = node.trim_matches(|ch: char| ch.is_ascii_whitespace());
+    REFUSED_NODES.iter().any(|refused| refused.eq_ignore_ascii_case(node))
+}
+
 impl Session {
     pub(super) async fn pep(&mut self, iq: &Element, pubsub: &Element, owner: Option<String>) {
         let kind = attr(iq, "type");
@@ -40,6 +56,12 @@ impl Session {
         let node = attr(&operation, "node");
         if node.is_empty() && operation.name() != "publish-options" {
             return self.pubsub_error(iq, "modify", "bad-request", "nodeid-required");
+        }
+        // `forbidden` (type auth), as XEP-0060 answers a publish without sufficient privileges (§7.1.3.1) and an items
+        // fetch the owner's node does not allow (§6.5.9.10); checked before any service, so an item kept there earlier
+        // is not served either
+        if refused_node(&node) {
+            return self.refuse(iq, "auth", "forbidden", None);
         }
         let owner_ns = pubsub.ns() == ns::PUBSUB_OWNER;
         match (kind.as_str(), operation.name(), owner_ns) {
@@ -91,6 +113,10 @@ impl Session {
             Ok(found) => found,
             Err(_) => return self.refuse(iq, "cancel", "item-not-found", None),
         };
+        // a node the services refuse (get#PepNodeRefused), as the check above answers one
+        if backend::flag(&found, "refused") {
+            return self.refuse(iq, "auth", "forbidden", None);
+        }
         if backend::flag(&found, "denied") {
             return self.pubsub_error(iq, "auth", "forbidden", "presence-subscription-required");
         }
@@ -130,6 +156,10 @@ impl Session {
             Ok(found) => found,
             Err(_) => return self.refuse(iq, "wait", "internal-server-error", None),
         };
+        // a node the services refuse (get#PepNodeRefused): forbidden, as the check before the call answers one
+        if backend::flag(&found, "refused") {
+            return self.refuse(iq, "auth", "forbidden", None);
+        }
         if backend::flag(&found, "preconditionFailed") {
             return self.pubsub_error(iq, "cancel", "conflict", "precondition-not-met");
         }
@@ -184,9 +214,19 @@ impl Session {
             )
             .await
         {
-            Ok(found) if backend::flag(&found, "exists") => found,
-            _ => return self.refuse(iq, "cancel", "item-not-found", None),
+            Ok(found) => found,
+            Err(_) => return self.refuse(iq, "cancel", "item-not-found", None),
         };
+        // a node the services refuse, then one the user may not read, before one that is not there (as pep_items)
+        if backend::flag(&found, "refused") {
+            return self.refuse(iq, "auth", "forbidden", None);
+        }
+        if backend::flag(&found, "denied") {
+            return self.pubsub_error(iq, "auth", "forbidden", "presence-subscription-required");
+        }
+        if !backend::flag(&found, "exists") {
+            return self.refuse(iq, "cancel", "item-not-found", None);
+        }
         let access = backend::text(&found, "accessModel");
         let max = backend::text(&found, "nodeMaxItems");
         let config = form(

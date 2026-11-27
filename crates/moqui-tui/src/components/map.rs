@@ -197,23 +197,28 @@ impl Component for Map {
                 lines.push(vec![Span::new(reason, Role::Warning)]);
             }
         }
+        // the view: its center and its area (west greater than east across the antimeridian), shown with the places too
+        // (Maps › Browse opened on a point or an area lists the places within it)
+        let mut view = Vec::new();
+        if let Some(center) = pair(props, state, "center").filter(|values| values.len() == 2) {
+            view.push(vec![Span::new(
+                format!("Center: {}", coordinates(center[0], center[1])),
+                Role::Text,
+            )]);
+        }
+        if let Some(extent) = pair(props, state, "extent").filter(|values| values.len() == 4) {
+            let area = format!(
+                "Area: {} – {}",
+                coordinates(extent[0], extent[1]),
+                coordinates(extent[2], extent[3])
+            );
+            view.push(vec![Span::new(area, Role::Text)]);
+        }
         if places.is_empty() {
             lines.push(vec![Span::new("No places", Role::Muted)]);
-            if let Some(center) = pair(props, state, "center").filter(|values| values.len() == 2) {
-                lines.push(vec![Span::new(
-                    format!("Center: {}", coordinates(center[0], center[1])),
-                    Role::Text,
-                )]);
-            }
-            if let Some(extent) = pair(props, state, "extent").filter(|values| values.len() == 4) {
-                let area = format!(
-                    "Area: {} – {}",
-                    coordinates(extent[0], extent[1]),
-                    coordinates(extent[2], extent[3])
-                );
-                lines.push(vec![Span::new(area, Role::Text)]);
-            }
+            lines.extend(view);
         } else {
+            lines.extend(view);
             lines.push(vec![Span::new("Places", Role::Text).bold()]);
         }
         for (at, place) in places.iter().enumerate() {

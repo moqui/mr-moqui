@@ -32,6 +32,9 @@ pub const JANE_PASSWORD: &str = "wxyz-2345-6789-abcd-efgh";
 
 /// A PEP node the fake answers as past the user's bytes in all.
 pub const FULL_NODE: &str = "urn:xmpp:test:full";
+/// A PEP node the fake answers as the services refuse one (get#PepNodeRefused: `refused`) that the session's own list
+/// does not name, as when the two lists disagree.
+pub const SERVICE_REFUSED_NODE: &str = "urn:xmpp:test:refused";
 /// A JID the fake answers as one block or push registration past the user's cap.
 pub const FULL_JID: &str = "full.example.org";
 
@@ -472,6 +475,9 @@ impl Fake {
             }
             // a cap the services hold (SEC-COM-20), for the names a test gives to be past it
             services::PEP_PUBLISH if text(p, "node") == FULL_NODE => Ok(json!({"resourceConstraint": true})),
+            services::PEP_PUBLISH | services::PEP_ITEMS if text(p, "node") == SERVICE_REFUSED_NODE => {
+                Ok(json!({"refused": true}))
+            }
             services::BLOCK if p["jidList"].to_string().contains(FULL_JID) => Ok(json!({"resourceConstraint": true})),
             services::PUSH_ENABLE if text(p, "pushJid") == FULL_JID => Ok(json!({"resourceConstraint": true})),
             services::PEP_PUBLISH => {

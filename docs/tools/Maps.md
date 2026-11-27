@@ -556,10 +556,16 @@ whose routes the record's [links](#record-links) resolve to; Open in Maps carrie
 
 A Dashboards geomap ([Monitoring](Monitoring.md)) opens Maps where a country or a point is clicked (or chosen with Enter):
 Browse centered on the country's largest land area (`extent=west,south,east,north`, so an overseas territory does not
-widen it) or on the point (`longitude`, `latitude`), and nothing else of the panel's rows. It is offered only to a viewer
-whose own grants open the Maps app (`Dashboard.xml` sets `appLinks.maps` by `isPermittedOwn` of `Maps.xml`; an app's
-grant on the screen that shows the dashboard does not count); without it the geomap is as it was. The terminal's geomap
-offers no link yet.
+widen it; west greater than east for one across the antimeridian, such as Russia) or on the point (`longitude`,
+`latitude`), and nothing else of the panel's rows. It is offered only to a viewer whose own grants open the Maps app
+(`Dashboard.xml` sets `appLinks.maps` by `isPermittedOwn` of `Maps.xml`; an app's grant on the screen that shows the
+dashboard does not count); without it the geomap is as it was. The terminal's geomap does the same where the link is
+offered: in a dashboard's table mode (`g`) or on a report panel of its own, `M` opens the table's current row in Maps
+(its country or its latitude and longitude, the fields the geomap reads, a point south of the drawing's 60°S too) with
+the same extent or point, and the listed place of that row is highlighted; the table's own keys (rows, data links,
+filters) are unchanged. `M` because `o` is the shell's Open in browser and `m` the dashboard's panel menu. The
+countries' extents are a table built from the same outline (`COUNTRY_EXTENTS` in
+`crates/moqui-tui/src/components/world.rs`).
 
 ### Under an app's route
 
@@ -859,9 +865,11 @@ fallback), and a refresh is compared by address, not by ID.
 
 ## Tests
 
-The regression spec is `tools/test/MapsScreens.spec.js` (Browse in qvue and tui, its terminal's overlays and postal search; LocalMap, a plain XML screen, once in
-qvt for a writer and once in html for a user it refuses the record; the access rules, Save location, the profile
-rules); the configuration services' rules are `framework/test/MapsConfig.spec.js` (with a record link resolved to the host
+The regression spec is `tools/test/MapsScreens.spec.js` (Browse in tui, its terminal's overlays, postal search and the
+view it is opened on; LocalMap, a plain XML screen, once in qvt for a writer and once in html for a user it refuses the
+record; the access rules, Save location, the profile rules), with Browse's one qvue render in a browser in the client
+spec `tools/test/client/MapsBrowseExtent.spec.js` (the MapsBrowse component and its map, opened on an extent across the
+antimeridian at the first load, and the extent check's refusals); the configuration services' rules are `framework/test/MapsConfig.spec.js` (with a record link resolved to the host
 app's route, else one of no app, and left out for a non-holder, and a profile's view projection: a registered one handed
 to the map with its definition, refused for a vector-style basemap and for an unknown code), and the archives'
 (registering, the map-source transition's access, ranges, revocation and stale revisions, and the tile transition's tile,
