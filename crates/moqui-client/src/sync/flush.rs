@@ -477,9 +477,11 @@ fn send_op(job: &Job<'_>, op: &OutboxOp) -> Outcome {
 }
 
 /// Maps' save of a place (`store#Place`), once by its `clientRef` (plans/Maps-Offline.md §2.5): done when it was
-/// applied (or a duplicate of one that was), not sent with the server's reason when it was refused.
+/// applied (or a duplicate of one that was), not sent with the server's reason when it was refused. A 403 with the
+/// server's JSON (the user may not use Maps) fails with its reason rather than waiting for a sign-in, so it holds up no
+/// later place; a 403 without one (a key the server no longer takes) is held as any other.
 fn send_place(job: &Job<'_>, op: &OutboxOp, payload: &Value) -> Outcome {
-    if !job.server.syncs() {
+    if !job.server.place_queue() {
         return Outcome::NotSent(400, Some("A place saved offline needs a newer server".to_string()));
     }
     let params = vec![
@@ -489,6 +491,15 @@ fn send_place(job: &Job<'_>, op: &OutboxOp, payload: &Value) -> Outcome {
         ("clientRef".to_string(), op.id.clone()),
     ];
     let sent = post_form(job, MAP_PLACE_PATH, &params);
+    if sent.status() == 403 && sent.json().is_object() {
+        return Outcome::NotSent(
+            400,
+            Some(errors_of(&sent.json()).map_or_else(
+                || "You may not save places on this server".to_string(),
+                |why| format!("Not saved: {why}"),
+            )),
+        );
+    }
     if !is_ok(&sent) {
         return not_sent(&sent);
     }

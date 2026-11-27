@@ -994,11 +994,13 @@ precompiled with the other bundled screens) and OpenLayers' main part (plans/Map
 - **The library.** `shell/libs.txt` names `openlayers main`: the main entry of the OpenLayers build with ol-mapbox-style,
   ol-pmtiles and pmtiles, the chunks it imports, `ol.css` and `ol-map.json`, as the build's `openlayers/parts.json`
   lists them (about 0.7 MB of the build's 1.2 MB). The raster part and its decoders (COG layers, registered projections)
-  are not bundled: a package holds no COG layer. A development run serves only those files too.
-- **The Maps entry.** The shell's drawer has Maps, which opens Maps' Browse (the server's page, in an app window; on the
-  phone in the webview) when the server answers and the offline screen when it does not, as the shell's offline chip
-  says (`moqui.connection`: the host's own unreachable answer, `X-Moqui-Offline: unreachable`, or none); and Offline
-  maps, the offline screen at any time. The Maps app of the drawer's Applications opens the offline screen too while
+  are not bundled: a package holds no COG layer. A development run serves only those files too; a bundle holds only
+  them (and no `parts.json`) and serves what it holds.
+- **The Maps entry.** For an account with the Maps app (its `shellData` apps, which the store keeps for offline use),
+  the shell's drawer has Maps, which opens Maps' Browse (the server's page, in an app window; on the phone in the
+  webview) when the server answers and the offline screen when it does not, as the shell's offline chip says
+  (`moqui.connection`: the host's own unreachable answer, `X-Moqui-Offline: unreachable`, or none); and Offline maps,
+  the offline screen at any time. The Maps app of the drawer's Applications opens the offline screen too while
   offline.
 - **The offline screen** lists the account's packages as the server lists them (`packageList`) and as the device holds
   them, one row each, with Download, Update (a newer revision on the server), Cancel, Delete and, on the phone, "Download
@@ -1009,19 +1011,28 @@ precompiled with the other bundled screens) and OpenLayers' main part (plans/Map
   URL resolved under the package's path on the shell's origin and nothing else asked (not the shell's own `/libs`,
   never another host), the label fonts and sprites the package's, each archive read by range (pmtiles' `FetchSource`
   takes the host's 206 slices, one per tile or directory, well under the 16 MiB a slice), the outline its
-  `outline.json`, the attribution the manifest's with the archive's own notice as plain text. Locate me, the places and
-  the overlays work as on the web.
+  `outline.json`, the attribution the manifest's with the archive's own notice as plain text. A layer's style is the
+  package's too, and a GeoJSON member past 16 MiB is read by range. Locate me, the places and the overlays work as on
+  the web. **Attribution as text:** an archive's attribution (its metadata, often HTML) is never markup. It goes to
+  OpenLayers' attribution control, which sets what it is given as HTML, only as escaped text (`map.attributionHtml`,
+  links only to http addresses), and the offline screen shows it as text.
 - **Search** is in the page over the package's JSON, within its region: its places (`places.geojson`), postal codes
   (`postal.json`, by code or place name) and Overture places (`overture-places.json`, by name, brand, category or
-  locality); its Overture addresses through the host (`packages_addresses`, `moqui_client::packages::Packages::search_addresses`),
-  which matches them with the server's own address matching (`moqui-lib` `geo/address.rs`, which builds with no Parquet
-  reader or codec) over the keys the server wrote into each row. A member past 16 MiB is read by range and joined.
-- **A place saved** there (the place found or chosen, else the map's center, and a name) is an outbox item, `map-place`
-  ([Desktop-Client](../ui/Desktop-Client.md#the-outbox-and-drafts)), sent by the host when the server answers to
-  Browse's `savePlace` with its `clientRef`, which keeps it once (`ClientSyncServices.call#ClientRequest`: sent again it
-  answers the first save, `duplicate`). A place is only ever added, so no change on the server meets it; one refused
-  (1000 places) shows why, with Retry and Discard. A server below `clientApi` 4 takes no queued place: it is saved at
-  once online and needs a connection offline.
+  locality), at most ten results of each source; its Overture addresses through the host (`packages_addresses`,
+  `moqui_client::packages::Packages::search_addresses`), which matches them with the server's own address matching
+  (`moqui-lib` `geo/address.rs`, which builds with no Parquet reader or codec; its tier walk, `search_tiers`, is the
+  server's search's too) over the keys the server wrote into each row. The host reads the member once into typed rows
+  and keeps their index for one package revision (a switch, a delete or a new revision drops it). A member past 16 MiB
+  is read by range and joined, and a new revision installed while a package is open opens it again.
+- **A place saved** there (the place found or chosen, else the map's center, and a name; for an account with the Maps
+  app) is an outbox item, `map-place` ([Desktop-Client](../ui/Desktop-Client.md#the-outbox-and-drafts)), queued where
+  the server's client config says `features.placeRef`, and sent by the host when the server answers to Browse's
+  `savePlace` with its `clientRef`, which keeps a saved place once by it (`ClientSyncServices` claim#ClientRequest and
+  store#ClientRequest in one transaction: sent again it answers the first save, `duplicate`). A place is only ever
+  added, so no change on the server meets it. One refused (1000 places, an unreadable places file) keeps no ref on the
+  server and shows why, with Retry, which may then save it, and Discard; a user Maps refuses (a 403 with the server's
+  reason) fails so, holding up no later place, and one waiting for a sign-in may be discarded. A server without
+  `placeRef` takes no queued place: it is saved at once online and needs a connection offline.
 - **No cache across accounts.** A package's URL carries no account, and package ids are the server's, so two accounts
   may have the same URL with other files: the host answers them `no-store`, and the screen keeps what it read of a
   package in memory for its account and revision only (an account switch loads the shell again).

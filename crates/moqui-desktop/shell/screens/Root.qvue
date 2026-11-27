@@ -112,7 +112,7 @@ along with this software (see the LICENSE.md file). If not, see
             <!-- Maps (plans/Maps-Offline.md §2.5): Browse when the server answers, the offline screen when it does not -->
             <template v-if="mapsOn">
                 <q-item-label header>{{t('Maps')}}</q-item-label>
-                <q-item v-if="mapsApp || isOffline" clickable class="m-shell-maps" @click="openMaps">
+                <q-item clickable class="m-shell-maps" @click="openMaps">
                     <q-item-section avatar><q-icon name="sym_o_map"></q-icon></q-item-section>
                     <q-item-section>{{t('Maps')}}</q-item-section>
                     <q-item-section side><q-icon :name="isOffline ? 'sym_o_cloud_off' : 'sym_o_open_in_new'" size="xs"></q-icon></q-item-section>
@@ -404,8 +404,10 @@ module.exports = {
         viewTitle() { return this.view ? t(VIEW_TITLES[this.view]) : ''; },
         // the server holds calls (its clientConfig's calls) and the call store is here, as m-qapps-root has them
         callsOn() { return !!(moqui.call && this.userId && this.config && this.config.calls); },
-        // the offline map packages of this app (moquiDesktop.packages, plans/Maps-Offline.md §2.5) and the server's Maps app
-        mapsOn() { return !!(host() && host().packages && this.componentOf('maps')); },
+        // the offline map packages of this app (moquiDesktop.packages, plans/Maps-Offline.md §2.5), for an account with the
+        // server's Maps app (its shellData's apps, which the store keeps for offline use): one without it sees no Maps
+        // entry, and the offline screen saves no place for it
+        mapsOn() { return !!(host() && host().packages && this.componentOf('maps') && this.mapsApp); },
         mapsApp() { return this.apps.find(isMapsApp) || null; },
         // the comms screens this shell shows itself, in the drawer
         commsItems() {
@@ -554,7 +556,8 @@ module.exports = {
         // Maps (plans/Maps-Offline.md §2.5): Browse, the server's page, when the server answers; the offline screen with the
         // device's packages when it does not (moqui.connection: the host's unreachable answer, or none)
         openMaps() {
-            if (this.isOffline || !this.mapsApp) { this.setUrl('/qapps/maps/Offline'); return; }
+            if (!this.mapsApp) return;
+            if (this.isOffline) { this.setUrl('/qapps/maps/Offline'); return; }
             host().openRemote(MAPS_BROWSE).catch((err) => this.failed(err));
         },
         // an app of the drawer: its page in an app window; Maps offline is the offline screen

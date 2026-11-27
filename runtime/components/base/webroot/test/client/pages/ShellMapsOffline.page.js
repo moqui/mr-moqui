@@ -34,7 +34,9 @@ const files = {
         { type: "Feature", id: "p1", geometry: { type: "Point", coordinates: [-71.05, 42.36] }, properties: { name: "Ferry dock" } },
         { type: "Feature", id: "p2", geometry: { type: "Point", coordinates: [2.35, 48.85] }, properties: { name: "Ferry in Paris" } }] },
     "postal.json": { rows: [{ code: "02110", displayCode: "02110", country: "US", places: [{ name: "Boston", adminName1: "MA" }], lon: -71.05, lat: 42.357 }] },
-    "overture-places.json": { rows: [{ placeName: "Harbor Café", basicCategory: "cafe", locality: "Boston", longitude: -71.04, latitude: 42.35 }] }
+    // a café, and thirty bakeries named Harbor: one source does not crowd out the others
+    "overture-places.json": { rows: [{ placeName: "Harbor Café", basicCategory: "cafe", locality: "Boston", longitude: -71.04, latitude: 42.35 }]
+        .concat(Array.from({ length: 30 }, (unused, index) => ({ placeName: "Harbor Bakery " + index, basicCategory: "bakery", longitude: -71.03, latitude: 42.34 }))) }
 };
 const asked = [];
 const realFetch = window.fetch;
@@ -88,7 +90,9 @@ window.moquiDesktop = {
         add: (kind, payload) => { calls.push(["outbox", kind, payload]); host.ops.push({ id: payload.clientRef, kind, state: "waiting", payload: JSON.stringify(payload) }); return Promise.resolve({}); },
         list: () => Promise.resolve(host.ops),
         kinds: () => Promise.resolve({ clientApi: 4, kinds: ["chat-send", "map-place"] }),
-        retry: () => Promise.resolve(true), discard: () => Promise.resolve(true), on: () => () => {}
+        retry: () => Promise.resolve(true),
+        discard: (id) => { calls.push(["discard", id]); host.ops = host.ops.filter((op) => op.id !== id); return Promise.resolve(true); },
+        on: () => () => {}
     },
     openRemote: (path) => { calls.push(["openRemote", path]); return Promise.resolve(); }
 };
@@ -171,6 +175,8 @@ test("offline, a package opens from the device: it says so and when it was built
         await vm.search();
         const labels = vm.results.map((result) => result.label);
         assert.ok(labels.includes("Harbor Café") && labels.includes("12 Harbor Street, Boston"), labels.join(", "));
+        assert.equal(labels[0], "12 Harbor Street, Boston", "the address first, not crowded out by thirty places");
+        assert.equal(labels.filter((label) => /^Harbor (Café|Bakery)/.test(label)).length, 10, "at most ten of one source");
         assert.deepEqual(calls.filter((call) => call[0] === "addresses").pop().slice(1, 3), ["P7", "harbor"]);
         // a place saved offline: an outbox item the host sends when the server answers, by its clientRef
         vm.show(vm.results.find((result) => result.label === "Harbor Café"));
@@ -182,6 +188,13 @@ test("offline, a package opens from the device: it says so and when it was built
         assert.deepEqual([queued[2].label, queued[2].longitude, queued[2].latitude], ["Harbor Café", -71.04, 42.35]);
         await until(() => holder.querySelector(".m-maps-offline-queued"), "the place waiting");
         assert.ok(holder.querySelector(".m-maps-offline-queued").textContent.includes("Waits for the server"));
+        // one held (a sign-in asked for) may be discarded, so it holds up no later place
+        host.ops.push({ id: "held1", kind: "map-place", state: "held", payload: { label: "Pier" } });
+        await vm.readOutbox();
+        await until(() => holder.querySelector(".m-maps-offline-discard"), "the held place's Discard");
+        assert.ok(holder.querySelector(".m-maps-offline-queued").textContent.includes("Waiting for a sign-in"));
+        holder.querySelector(".m-maps-offline-discard").click();
+        await until(() => calls.some((call) => call[0] === "discard" && call[1] === "held1"), "the discard");
     } finally {
         done();
         host.online = true;
@@ -201,8 +214,17 @@ test("a package's files are read for the account they came from: another account
         assert.equal(asked.filter((one) => one.path === "postal.json").length, before, "kept for the account and revision");
         moqui.storageScope = "a2";
         assert.equal(await vm.member("postal.json"), null, "not another account's");
+        moqui.storageScope = "a1";
+        // a new revision installed while it is open: opened again, nothing of the old one kept
+        const manifests = asked.filter((one) => one.path === "manifest.json").length;
+        host.device = host.device.map((row) => (row.packageId === "P7" ? Object.assign({}, row, { revision: 4 }) : row));
+        await vm.readStatus();
+        await until(() => vm.kept && vm.kept.revision === 4, "the new revision opened");
+        assert.ok(asked.filter((one) => one.path === "manifest.json").length > manifests, "its manifest read again");
+        assert.deepEqual(Object.keys(vm.kept.members), []);
     } finally {
         moqui.storageScope = "a1";
+        host.device = host.device.map((row) => (row.packageId === "P7" ? Object.assign({}, row, { revision: 3 }) : row));
         done();
     }
 });
@@ -215,8 +237,14 @@ test("the shell's Maps entry opens Browse when the server answers and the offlin
     assert.deepEqual(calls.filter((call) => call[0] === "openRemote").pop(), ["openRemote", "/qapps/maps/Browse"]);
     methods.openMaps.call(shell(true, { path: "/qapps/maps" }));
     methods.openMaps.call(shell(false, null));
-    assert.deepEqual(shown, ["/qapps/maps/Offline", "/qapps/maps/Offline"], "offline, or a server with no Maps app");
-    methods.openApp.call(shell(true, null), { name: "maps", path: "/qapps/maps" });
+    methods.openMaps.call(shell(true, null));
+    assert.deepEqual(shown, ["/qapps/maps/Offline"], "offline the offline screen; nothing for an account without the Maps app");
+    // the drawer's Maps entries only for an account with the Maps app
+    const computed = moqui.bundledComponent("Shell/Root").computed;
+    const drawer = (apps) => computed.mapsOn.call({ componentOf: () => ({}), mapsApp: computed.mapsApp.call({ apps }) });
+    assert.equal(drawer([{ name: "maps", path: "/qapps/maps" }]), true);
+    assert.equal(drawer([{ name: "boss", path: "/qapps/boss" }]), false);
+    methods.openApp.call(shell(true, { path: "/qapps/maps" }), { name: "maps", path: "/qapps/maps" });
     assert.equal(shown.pop(), "/qapps/maps/Offline", "the Maps app offline is the offline screen");
     methods.openApp.call(shell(true, null), { name: "boss", path: "/qapps/boss" });
     assert.equal(shown.pop(), "/qapps/boss", "another app is its page");

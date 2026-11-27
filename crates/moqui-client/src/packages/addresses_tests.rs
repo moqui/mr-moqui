@@ -21,21 +21,32 @@ fn row(number: &str, street: &str, postcode: &str, locality: &str, lon: f64, lat
         "streetNorm": address::street_key(street, "US"), "houseNumber": number, "numberNorm": address::number_key(number),
         "unitText": null, "unitNorm": "", "postcode": postcode, "postcodeNorm": address::postcode_key(postcode, "US"),
         "postalCity": locality, "locality": locality, "region": "MA", "levelsText": "", "latitude": lat, "longitude": lon,
-        "sourceDatasets": "OpenAddresses", "sourceLicenses": "CC0"
+        "positionKind": null, "sourceDatasets": "OpenAddresses", "sourceLicenses": "CC0"
     })
+}
+
+fn rows() -> Vec<Value> {
+    vec![
+        row("12", "Hemenway Street", "02115", "Boston", -71.0894, 42.3445),
+        row("14", "Hemenway Street", "02115", "Boston", -71.0896, 42.3447),
+        row("3", "Boylston Street", "02116", "Boston", -71.07, 42.35),
+        // a row with no point, one with its degrees as text, and one with fields of the wrong kind
+        json!({ "countryCode": "US", "streetName": "No point", "streetNorm": "no point" }),
+        json!({ "countryCode": "US", "streetName": "Text Street", "streetNorm": address::street_key("Text Street", "US"),
+            "houseNumber": 7, "numberNorm": "7", "latitude": "42.3", "longitude": "-71.1" }),
+        json!({ "countryCode": ["US"], "streetName": {"a": 1}, "streetNorm": true, "latitude": 1, "longitude": 1 }),
+    ]
+}
+
+fn search(rows: &[Value], text: &str, country: &str) -> Value {
+    search_rows(&json!({ "rows": rows }).to_string(), text, country, None, 5).unwrap()
 }
 
 #[test]
 fn a_packages_addresses_are_matched_as_the_server_matches_them() {
-    let rows = vec![
-        row("12", "Hemenway Street", "02115", "Boston", -71.0894, 42.3445),
-        row("14", "Hemenway Street", "02115", "Boston", -71.0896, 42.3447),
-        row("3", "Boylston Street", "02116", "Boston", -71.07, 42.35),
-        json!({ "countryCode": "US", "streetName": "No point", "streetNorm": "no point" }),
-        json!("not a row"),
-    ];
+    let rows = rows();
     // a number and its street, written another way: an address match
-    let found = search_rows(&rows, "", "12 Hemenway St, Boston", "", None, 5);
+    let found = search(&rows, "12 Hemenway St, Boston", "");
     assert_eq!(found["valid"], true, "{found}");
     let first = &found["candidates"][0];
     assert_eq!(first["tier"], "address");
@@ -43,26 +54,72 @@ fn a_packages_addresses_are_matched_as_the_server_matches_them() {
     assert_eq!(first["number"], "12");
     assert!((first["lon"].as_f64().unwrap() + 71.0894).abs() < 1e-9);
     assert_eq!(first["sourceLicenses"], "CC0");
+    // a number and degrees written as text are read
+    assert_eq!(search(&rows, "7 Text Street", "US")["candidates"][0]["tier"], "address");
     // a number the street does not have: the street's estimate, with its points' extent
-    let street = search_rows(&rows, "", "99 Hemenway Street", "US", None, 5);
+    let street = search(&rows, "99 Hemenway Street", "US");
     assert_eq!(street["candidates"][0]["tier"], "street", "{street}");
     assert_eq!(street["candidates"][0]["precisionEnumId"], "GPP_PLACE_ESTIMATE");
     assert_eq!(street["candidates"][0]["number"], "");
     // no such street; no street at all
-    assert_eq!(
-        search_rows(&rows, "", "5 Nowhere Lane", "", None, 5)["reasonCode"],
-        "NO_MATCH"
-    );
-    assert_eq!(search_rows(&rows, "", "", "", None, 5)["reasonCode"], "QUERY_UNREAD");
-    assert_eq!(search_rows(&[], "", "12 Hemenway St", "", None, 5)["valid"], false);
+    assert_eq!(search(&rows, "5 Nowhere Lane", "")["reasonCode"], "NO_MATCH");
+    assert_eq!(search(&rows, "", "")["reasonCode"], "QUERY_UNREAD");
+    assert_eq!(search(&[], "12 Hemenway St", "")["valid"], false);
+    assert!(search_rows("not json", "12 Hemenway St", "", None, 5).is_err());
+}
+
+/// A package installed with its addresses member, as a download leaves it.
+fn install(packages_dir: &Path, revision: i64, rows: &[Value]) -> PathBuf {
+    let dir = packages_dir.join("data/a.packages/P1").join(revision.to_string());
+    std::fs::create_dir_all(&dir).unwrap();
+    let member = json!({ "rows": rows }).to_string();
+    std::fs::write(dir.join(ADDRESSES_MEMBER), &member).unwrap();
+    let sha = format!("{:064x}", revision);
+    let manifest = json!({ "package": { "packageId": "P1", "revision": revision },
+        "members": [{ "path": ADDRESSES_MEMBER, "size": member.len(), "sha256": sha }] });
+    std::fs::write(dir.join("manifest.json"), manifest.to_string()).unwrap();
+    dir
 }
 
 #[test]
-fn a_package_with_no_addresses_says_so() {
+fn a_packages_address_index_is_kept_for_its_revision_and_dropped_on_a_switch_or_delete() {
     let dir = std::env::temp_dir().join(format!("moqui-client-addresses-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let packages = Packages::new(&dir);
-    let answer = packages.search_addresses("a", "P1", "12 Main St", "", None, 5);
-    assert_eq!(answer["reasonCode"], "NO_DATA");
+    assert_eq!(
+        packages.search_addresses("a", "P1", "12 Main St", "", None, 5)["reasonCode"],
+        "NO_DATA"
+    );
+    let first = install(&dir, 3, &rows());
+    assert_eq!(
+        packages.search_addresses("a", "P1", "12 Hemenway St", "", None, 5)["valid"],
+        true
+    );
+    assert!(packages.address_index_kept());
+    // kept: the member removed from under it is not read again for the same revision
+    std::fs::write(first.join(ADDRESSES_MEMBER), "{}").unwrap();
+    assert_eq!(
+        packages.search_addresses("a", "P1", "12 Hemenway St", "", None, 5)["valid"],
+        true
+    );
+    // another account's search never reads this one's index, and a switch drops it
+    assert_eq!(
+        packages.search_addresses("b", "P1", "12 Hemenway St", "", None, 5)["reasonCode"],
+        "NO_DATA"
+    );
+    packages.drop_address_index(None);
+    assert!(!packages.address_index_kept());
+    // a new revision installed is read as it is
+    install(&dir, 4, &rows()[2..3]);
+    assert_eq!(
+        packages.search_addresses("a", "P1", "12 Hemenway St", "", None, 5)["reasonCode"],
+        "NO_MATCH"
+    );
+    assert_eq!(
+        packages.search_addresses("a", "P1", "3 Boylston St", "", None, 5)["valid"],
+        true
+    );
+    packages.delete("a", "P1").unwrap();
+    assert!(!packages.address_index_kept(), "a delete drops it");
     let _ = std::fs::remove_dir_all(&dir);
 }

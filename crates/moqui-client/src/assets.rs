@@ -147,13 +147,20 @@ pub struct Asset {
 
 impl Assets {
     /// The bundle's files, staged in `shell-assets/` of its resources.
+    /// A library staged by its part holds that part's files only (`./moq desktop build` copies them, not the library's
+    /// `parts.json`), so nothing more is filtered here.
     pub fn staged(resources: &Path) -> Self {
         let staged = resources.join("shell-assets");
-        Self::new(staged.join("shell"), staged.join("webroot"))
+        Self::load(staged.join("shell"), staged.join("webroot"), false)
     }
 
-    /// The shell's files in `shell` (with its `libs.txt`) and the webroot's in `webroot`.
+    /// The shell's files in `shell` (with its `libs.txt`) and the webroot's in `webroot`: a development run's, the
+    /// repository's, where a library staged by its part is served by its `parts.json`, as a bundle has it.
     pub fn new(shell: PathBuf, webroot: PathBuf) -> Self {
+        Self::load(shell, webroot, true)
+    }
+
+    fn load(shell: PathBuf, webroot: PathBuf, by_parts: bool) -> Self {
         let lines = lib_lines(&std::fs::read_to_string(shell.join("libs.txt")).unwrap_or_else(|err| {
             tracing::error!("The shell's libs.txt was not read: {err}");
             String::new()
@@ -161,6 +168,7 @@ impl Assets {
         let libs_dir = webroot.join("libs");
         let parts = lines
             .iter()
+            .filter(|_| by_parts)
             .filter_map(|(lib, part)| {
                 part.as_ref()
                     .map(|part| (lib.clone(), part_files(&libs_dir, lib, part)))

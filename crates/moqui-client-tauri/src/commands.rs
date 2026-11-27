@@ -652,6 +652,8 @@ pub(crate) fn switched(state: &ClientState) {
     *moqui_lib::sync::lock(&state.open_pending) = None;
     state.core.mirror().cancel();
     state.core.sockets().close_all();
+    // the offline search's address index is the other account's package (plans/Maps-Offline.md §2.5)
+    state.core.packages().drop_address_index(None);
     state.shell.close_remotes(None);
     state.shell.clear_page_storage();
     state.load_shell(None);

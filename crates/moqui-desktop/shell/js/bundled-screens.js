@@ -1349,8 +1349,10 @@ module.exports = {
         viewTitle() { return this.view ? t(VIEW_TITLES[this.view]) : ''; },
         // the server holds calls (its clientConfig's calls) and the call store is here, as m-qapps-root has them
         callsOn() { return !!(moqui.call && this.userId && this.config && this.config.calls); },
-        // the offline map packages of this app (moquiDesktop.packages, plans/Maps-Offline.md §2.5) and the server's Maps app
-        mapsOn() { return !!(host() && host().packages && this.componentOf('maps')); },
+        // the offline map packages of this app (moquiDesktop.packages, plans/Maps-Offline.md §2.5), for an account with the
+        // server's Maps app (its shellData's apps, which the store keeps for offline use): one without it sees no Maps
+        // entry, and the offline screen saves no place for it
+        mapsOn() { return !!(host() && host().packages && this.componentOf('maps') && this.mapsApp); },
         mapsApp() { return this.apps.find(isMapsApp) || null; },
         // the comms screens this shell shows itself, in the drawer
         commsItems() {
@@ -1499,7 +1501,8 @@ module.exports = {
         // Maps (plans/Maps-Offline.md §2.5): Browse, the server's page, when the server answers; the offline screen with the
         // device's packages when it does not (moqui.connection: the host's unreachable answer, or none)
         openMaps() {
-            if (this.isOffline || !this.mapsApp) { this.setUrl('/qapps/maps/Offline'); return; }
+            if (!this.mapsApp) return;
+            if (this.isOffline) { this.setUrl('/qapps/maps/Offline'); return; }
             host().openRemote(MAPS_BROWSE).catch((err) => this.failed(err));
         },
         // an app of the drawer: its page in an app window; Maps offline is the offline screen
@@ -2295,39 +2298,36 @@ module.exports = {
                                       ]),
                                       _: 1
                                     }),
-                                    (_ctx.mapsApp || _ctx.isOffline)
-                                      ? (_openBlock(), _createBlock(_component_q_item, {
-                                          key: 0,
-                                          clickable: "",
-                                          class: "m-shell-maps",
-                                          onClick: _ctx.openMaps
-                                        }, {
+                                    _createVNode(_component_q_item, {
+                                      clickable: "",
+                                      class: "m-shell-maps",
+                                      onClick: _ctx.openMaps
+                                    }, {
+                                      default: _withCtx(() => [
+                                        _createVNode(_component_q_item_section, { avatar: "" }, {
                                           default: _withCtx(() => [
-                                            _createVNode(_component_q_item_section, { avatar: "" }, {
-                                              default: _withCtx(() => [
-                                                _createVNode(_component_q_icon, { name: "sym_o_map" })
-                                              ]),
-                                              _: 1
-                                            }),
-                                            _createVNode(_component_q_item_section, null, {
-                                              default: _withCtx(() => [
-                                                _createTextVNode(_toDisplayString(_ctx.t('Maps')), 1)
-                                              ]),
-                                              _: 1
-                                            }),
-                                            _createVNode(_component_q_item_section, { side: "" }, {
-                                              default: _withCtx(() => [
-                                                _createVNode(_component_q_icon, {
-                                                  name: _ctx.isOffline ? 'sym_o_cloud_off' : 'sym_o_open_in_new',
-                                                  size: "xs"
-                                                }, null, 8, ["name"])
-                                              ]),
-                                              _: 1
-                                            })
+                                            _createVNode(_component_q_icon, { name: "sym_o_map" })
                                           ]),
                                           _: 1
-                                        }, 8, ["onClick"]))
-                                      : _createCommentVNode("", true),
+                                        }),
+                                        _createVNode(_component_q_item_section, null, {
+                                          default: _withCtx(() => [
+                                            _createTextVNode(_toDisplayString(_ctx.t('Maps')), 1)
+                                          ]),
+                                          _: 1
+                                        }),
+                                        _createVNode(_component_q_item_section, { side: "" }, {
+                                          default: _withCtx(() => [
+                                            _createVNode(_component_q_icon, {
+                                              name: _ctx.isOffline ? 'sym_o_cloud_off' : 'sym_o_open_in_new',
+                                              size: "xs"
+                                            }, null, 8, ["name"])
+                                          ]),
+                                          _: 1
+                                        })
+                                      ]),
+                                      _: 1
+                                    }, 8, ["onClick"]),
                                     _createVNode(_component_q_item, {
                                       clickable: "",
                                       active: _ctx.view === 'maps',
@@ -3387,7 +3387,8 @@ const inBox = (bbox, lon, lat) => {
     if (lat < south || lat > north) return false;
     return west <= east ? lon >= west && lon <= east : lon >= west || lon <= east;
 };
-const RESULTS_MAX = 20;
+// the results of each source at most, so one source (200,000 Overture places) does not crowd out the others
+const PER_SOURCE = 10;
 const bytesText = (size) => {
     const n = Number(size) || 0;
     if (n >= 1073741824) return (n / 1073741824).toFixed(1) + ' GB';
@@ -3469,16 +3470,30 @@ module.exports = {
                 licenses: source.licenses.join(', ') }));
         },
         notice() { return moqui.map && moqui.map.plainText ? moqui.map.plainText(this.manifest && this.manifest.notice, 500) : ''; },
+        // whether this account may save a place: it has the Maps app (Shell/Root's mapsApp, from its kept shellData); a
+        // screen mounted on its own (a test's) may
+        mapsAccess() { const root = this.$root; return !(root && root !== this && 'mapsApp' in root && !root.mapsApp); },
         // the point a saved place takes: the last place found or chosen on the map, else the map's center
         pointToSave() { return this.picked || this.center; },
         // the places saved here that wait in the outbox (map-place), with their state
         queuedPlaces() {
-            return this.outboxOps.filter((op) => op.kind === 'map-place').map((op) => {
+            return this.outboxOps.filter((op) => op.kind === 'map-place' && op.state !== 'acked').map((op) => {
                 const payload = op.payload || {};
                 const failed = op.state === 'failed' || op.state === 'conflict';
-                return { id: op.id, label: payload.label || t('A place'), failed,
-                    stateText: failed ? t('Not saved') + (op.error ? ': ' + op.error : '') : op.state === 'sending' ? t('Saving') : t('Waits for the server, then is saved to your places') };
+                // held: the server asked for a sign-in (a 401, or a 403 it gave no reason for); it may be discarded
+                const held = op.state === 'held';
+                return { id: op.id, label: payload.label || t('A place'), failed, held,
+                    stateText: failed ? t('Not saved') + (op.error ? ': ' + op.error : '') : held ? t('Waiting for a sign-in to this server')
+                        : op.state === 'sending' ? t('Saving') : t('Waits for the server, then is saved to your places') };
             });
+        }
+    },
+    watch: {
+        // a new revision installed while a package is open: opened again, what was read of the old one dropped
+        rows(rows) {
+            if (!this.opened || !this.kept) return;
+            const row = rows.find((one) => one.packageId === this.kept.packageId);
+            if (row && row.installed && row.revision !== this.kept.revision) this.open(row);
         }
     },
     methods: {
@@ -3546,7 +3561,9 @@ module.exports = {
         member(path) {
             const kept = this.kept;
             const listed = this.manifest && Array.isArray(this.manifest.members) && this.manifest.members.some((member) => member && member.path === path);
-            if (!kept || !listed || kept.account !== (moqui.storageScope || '')) return Promise.resolve(null);
+            const installed = this.device.find((row) => String(row.packageId) === String(kept && kept.packageId) && row.installed);
+            if (!kept || !listed || kept.account !== (moqui.storageScope || '') || (installed && Number(installed.revision) !== Number(kept.revision)))
+                return Promise.resolve(null);
             if (!kept.members[path]) kept.members[path] = readMember(kept.base + path).then((text) => JSON.parse(text), (err) => {
                 delete kept.members[path];
                 throw err;
@@ -3559,8 +3576,11 @@ module.exports = {
             const bbox = this.manifest && this.manifest.package && this.manifest.package.bbox;
             this.searching = true;
             this.error = '';
-            const found = [];
-            const add = (item) => { if (found.length < RESULTS_MAX * 4 && inBox(bbox, item.lon, item.lat)) found.push(item); };
+            const found = { address: [], place: [], postal: [], overture: [] };
+            const add = (item) => {
+                const list = found[item.key.split(':')[0]];
+                if (list && list.length < PER_SOURCE && inBox(bbox, item.lon, item.lat)) list.push(item);
+            };
             const places = this.member('places.geojson').then((json) => {
                 (json && Array.isArray(json.features) ? json.features : []).forEach((feature, index) => {
                     const props = feature && feature.properties || {};
@@ -3596,7 +3616,7 @@ module.exports = {
                     });
             const each = [addresses, places, postal, overture].map((work) => work.catch((err) => { console.warn('MapsOffline: a search did not finish', err); this.error = message(err); }));
             return Promise.all(each).then(() => {
-                this.results = found.slice(0, RESULTS_MAX);
+                this.results = found.address.concat(found.place, found.postal, found.overture);
                 this.searched = true;
                 this.searching = false;
             });
@@ -3636,6 +3656,7 @@ module.exports = {
             }
             // a server that takes no place by its clientRef: saved now, or not at all offline
             if (this.offline) { this.error = t('Saving a place needs a connection to this server'); return; }
+            if (!this.mapsAccess) return;
             return moqui.request('/apps/maps/Browse/savePlace', { method: 'POST', params: { label, longitude: point.lon, latitude: point.lat } }).then((result) => {
                 const json = result.json || {};
                 if (json.applied) { this.placeName = ''; this.$q.notify({ type: 'positive', message: fill(t('{name} is saved to your places'), { name: label }) }); }
@@ -4021,37 +4042,40 @@ module.exports = {
                                   }, null, 8, ["config", "onViewChange", "onSelect"]))
                                 : _createCommentVNode("", true)
                             ]),
-                            _createVNode(_component_q_form, {
-                              class: "q-px-md row items-center q-gutter-sm m-maps-offline-save",
-                              onSubmit: _ctx.savePlace
-                            }, {
-                              default: _withCtx(() => [
-                                _createVNode(_component_q_input, {
-                                  modelValue: _ctx.placeName,
-                                  "onUpdate:modelValue": $event => ((_ctx.placeName) = $event),
-                                  dense: "",
-                                  outlined: "",
-                                  class: "col",
-                                  label: _ctx.t('Save a place: its name'),
-                                  maxlength: "200",
-                                  autocomplete: "off"
-                                }, null, 8, ["modelValue", "onUpdate:modelValue", "label"]),
-                                _createVNode(_component_q_btn, {
-                                  type: "submit",
-                                  flat: "",
-                                  dense: "",
-                                  "no-caps": "",
-                                  color: "primary",
-                                  icon: "sym_o_add_location_alt",
-                                  label: _ctx.pointToSave && _ctx.pointToSave.label ? _ctx.t('Save this place') : _ctx.t('Save the map\'s center'),
-                                  disable: !_ctx.placeName.trim() || !_ctx.pointToSave
-                                }, null, 8, ["label", "disable"])
-                              ]),
-                              _: 1
-                            }, 8, ["onSubmit"]),
+                            (_ctx.mapsAccess)
+                              ? (_openBlock(), _createBlock(_component_q_form, {
+                                  key: 3,
+                                  class: "q-px-md row items-center q-gutter-sm m-maps-offline-save",
+                                  onSubmit: _ctx.savePlace
+                                }, {
+                                  default: _withCtx(() => [
+                                    _createVNode(_component_q_input, {
+                                      modelValue: _ctx.placeName,
+                                      "onUpdate:modelValue": $event => ((_ctx.placeName) = $event),
+                                      dense: "",
+                                      outlined: "",
+                                      class: "col",
+                                      label: _ctx.t('Save a place: its name'),
+                                      maxlength: "200",
+                                      autocomplete: "off"
+                                    }, null, 8, ["modelValue", "onUpdate:modelValue", "label"]),
+                                    _createVNode(_component_q_btn, {
+                                      type: "submit",
+                                      flat: "",
+                                      dense: "",
+                                      "no-caps": "",
+                                      color: "primary",
+                                      icon: "sym_o_add_location_alt",
+                                      label: _ctx.pointToSave && _ctx.pointToSave.label ? _ctx.t('Save this place') : _ctx.t('Save the map\'s center'),
+                                      disable: !_ctx.placeName.trim() || !_ctx.pointToSave
+                                    }, null, 8, ["label", "disable"])
+                                  ]),
+                                  _: 1
+                                }, 8, ["onSubmit"]))
+                              : _createCommentVNode("", true),
                             (_ctx.queuedPlaces.length)
                               ? (_openBlock(), _createBlock(_component_q_list, {
-                                  key: 3,
+                                  key: 4,
                                   dense: "",
                                   class: "q-mx-md m-maps-offline-queued"
                                 }, {
@@ -4090,25 +4114,29 @@ module.exports = {
                                             ]),
                                             _: 2
                                           }, 1024),
-                                          (op.failed)
+                                          (op.failed || op.held)
                                             ? (_openBlock(), _createBlock(_component_q_item_section, {
                                                 key: 0,
                                                 side: "",
                                                 class: "row no-wrap"
                                               }, {
                                                 default: _withCtx(() => [
-                                                  _createVNode(_component_q_btn, {
-                                                    flat: "",
-                                                    dense: "",
-                                                    "no-caps": "",
-                                                    label: _ctx.t('Retry'),
-                                                    onClick: $event => (_ctx.retryPlace(op))
-                                                  }, null, 8, ["label", "onClick"]),
+                                                  (op.failed)
+                                                    ? (_openBlock(), _createBlock(_component_q_btn, {
+                                                        key: 0,
+                                                        flat: "",
+                                                        dense: "",
+                                                        "no-caps": "",
+                                                        label: _ctx.t('Retry'),
+                                                        onClick: $event => (_ctx.retryPlace(op))
+                                                      }, null, 8, ["label", "onClick"]))
+                                                    : _createCommentVNode("", true),
                                                   _createVNode(_component_q_btn, {
                                                     flat: "",
                                                     dense: "",
                                                     "no-caps": "",
                                                     label: _ctx.t('Discard'),
+                                                    class: "m-maps-offline-discard",
                                                     onClick: $event => (_ctx.discardPlace(op))
                                                   }, null, 8, ["label", "onClick"])
                                                 ]),

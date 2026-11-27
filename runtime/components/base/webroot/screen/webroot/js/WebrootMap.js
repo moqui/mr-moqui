@@ -508,12 +508,37 @@
         if (profile.notice && typeof profile.notice === "object") profile.notice = { text: text(profile.notice.text) };
         given.profile = profile;
         given.layers = (Array.isArray(given.layers) ? given.layers : []).filter((layer) => layer && typeof layer === "object")
-            .map((layer) => Object.assign({}, layer, { url: map.packageUrl(layer.url, base) }));
+            .map((layer) => Object.assign({}, layer, { url: map.packageUrl(layer.url, base), styleUrl: layer.styleUrl ? map.packageUrl(layer.styleUrl, base) : "" }));
         // what a page of the server's would ask again or send: nothing of it offline
         ["recordLayers", "features", "points", "record", "adapter", "recordKey", "layerErrors", "projections"].forEach((key) => { delete given[key]; });
         given.projection = "EPSG:3857";
         given.packageBase = map.isPackageBase(base) ? base : "";
         return given;
+    };
+    // A package's file read whole: the apps' scheme answers a file past 16 MiB only by range (moqui_client::packages::serve),
+    // so it is asked in slices of that, each with no HTTP cache (a package's URL carries no account), and joined
+    const PACKAGE_SLICE = 16 * 1024 * 1024;
+    map.readPackageFile = (url) => {
+        const parts = [];
+        const next = (at) => root.fetch(url, { cache: "no-store", credentials: "same-origin", headers: { Range: "bytes=" + at + "-" + (at + PACKAGE_SLICE - 1) } })
+            .then((response) => {
+                if (response.status === 200) return response.text().then((whole) => ({ whole }));
+                if (response.status !== 206) throw new Error("HTTP " + response.status);
+                const range = /\/(\d+)$/.exec(response.headers.get("Content-Range") || "");
+                const total = range ? Number(range[1]) : 0;
+                return response.arrayBuffer().then((buffer) => {
+                    const bytes = new Uint8Array(buffer);
+                    parts.push(bytes);
+                    return bytes.length && at + bytes.length < total ? next(at + bytes.length) : {};
+                });
+            });
+        return next(0).then((done) => {
+            if (done && done.whole !== undefined) return done.whole;
+            const joined = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
+            let offset = 0;
+            parts.forEach((part) => { joined.set(part, offset); offset += part.length; });
+            return new root.TextDecoder().decode(joined);
+        });
     };
     // What a package was built from, for the offline screen: each source's attribution and licenses as plain text (an
     // archive's own notice is often HTML, never shown as markup)
@@ -714,7 +739,9 @@
         Object.assign({}, source, { attribution: map.escapeHtml(map.attributionText(source.attribution)) }) : source);
 
     // The attribution control's HTML for a text of lines and their links (attributionUrls, in order): each line escaped, a
-    // link only for an http(s) URL, opening in a new tab.
+    // link only for an http(s) URL, opening in a new tab. OpenLayers' attribution control sets what it is given as HTML, so
+    // everything handed to it is made escaped text here, a package's own source notice too (plans/Maps-Offline.md §2.5:
+    // an archive's attribution, often HTML, is shown as text, never as markup).
     map.attributionHtml = (attribution, urls) => text(attribution).split("\n").map((line) => line.trim()).filter((line) => line).map((line, index) => {
         const url = (urls || [])[index];
         return url && /^https?:\/\//i.test(url) ? '<a href="' + map.escapeHtml(url) + '" target="_blank" rel="noopener noreferrer">' + map.escapeHtml(line) + "</a>" :
@@ -1202,11 +1229,14 @@
                 const dark = root.document && root.document.body && root.document.body.classList.contains("body--dark");
                 // read here, not by url: each ring is made continuous across the antimeridian before it is projected
                 const url = new URL(basemap.url, this.pageOrigin() + "/").href;
-                const source = new O.VectorSource({ attributions, overlaps: false, loader: (extent, resolution, projection, success, failure) => {
+                // a package's by range, past 16 MiB as the app's scheme answers it
+                const read = () => (this.packageBase() ? map.readPackageFile(url).then((body) => JSON.parse(body)) :
                     root.fetch(url, { credentials: "same-origin" }).then((response) => {
                         if (!response.ok) throw new Error("HTTP " + response.status);
                         return response.json();
-                    }).then((topology) => {
+                    }));
+                const source = new O.VectorSource({ attributions, overlaps: false, loader: (extent, resolution, projection, success, failure) => {
+                    read().then((topology) => {
                         const features = new O.TopoJSON({ layers: ["countries"] }).readFeatures(topology);
                         features.forEach((feature) => {
                             const geometry = feature.getGeometry();
@@ -1479,7 +1509,15 @@
                         this.checkUrl(layer.url, L("The layer"));
                         const format = layer.kind === "gpx" ? new O.GPX() : layer.kind === "kml" ? new O.KML(map.kmlOptions()) :
                             layer.kind === "topojson" ? new O.TopoJSON() : new O.GeoJSON();
-                        const source = new O.VectorSource({ url: layer.url, format, attributions });
+                        // a package's file read here, by range past 16 MiB as the app's scheme answers it; else by url
+                        const url = new URL(layer.url, this.pageOrigin() + "/").href;
+                        const source = this.packageBase() ? new O.VectorSource({ format, attributions, loader: (extent, resolution, projection, success, failure) => {
+                            map.readPackageFile(url).then((body) => {
+                                const features = format.readFeatures(body, { featureProjection: projection });
+                                source.addFeatures(features);
+                                success(features);
+                            }).catch((err) => { console.warn("m-map: the layer " + layer.id + " did not load", err); failure(); });
+                        } }) : new O.VectorSource({ url: layer.url, format, attributions });
                         this.watchSource(source, layer, "vector");
                         // its features are selected (a click, or Enter at the center): the layer says whose they are
                         const vector = new O.VectorLayer({ source, style: (feature) => this.featureStyle(O, feature) });

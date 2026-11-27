@@ -13,97 +13,151 @@
  */
 
 //! The offline search of a package's Overture addresses (plans/Maps-Offline.md §2.5): the server's address matching
-//! (`moqui_lib::geo::address`, which builds with no Parquet reader or codec, the same code `search#OvertureAddresses`
-//! ranks with) over the package's `overture-addresses.json`, whose rows carry the keys the server made of each point
-//! (`streetNorm`, `numberNorm`, `unitNorm`, `postcodeNorm`). The text is read into its parts for each country of the
-//! rows, its street's keys looked up, then the number, the number without its suffix and the street alone, as the
-//! server's search does; the best tier and score of the countries wins. The file is read for each search (a search is
-//! asked for, not typed through), and nothing is kept or sent.
+//! (`moqui_lib::geo::address`, which builds with no Parquet reader or codec; its `search_tiers` is the walk the server's
+//! `search#OvertureAddresses` takes too) over the package's `overture-addresses.json`, whose rows carry the keys the
+//! server made of each point (`streetNorm`, `numberNorm`, `unitNorm`, `postcodeNorm`). The text is read into its parts
+//! for each country of the rows and the best tier and score of the countries wins.
+//!
+//! The member (up to 200,000 rows) is read once into typed rows of the fields used, streamed from the file, and kept as
+//! an index by street key for one package revision of one account at a time ([`Packages`]' cache, keyed by the
+//! revision's directory and the member's SHA-256): another package or account replaces it, and a delete, a new
+//! revision installed, an account's data forgotten or an account switch drops it. Nothing is sent.
 
 use std::collections::{BTreeSet, HashMap};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use moqui_lib::geo::address::{self, Candidate, Point, Query, Ranked, Tier};
-use serde_json::{json, Map, Value};
+use moqui_lib::geo::address::{self, Candidate, Point, Ranked, Tier};
+use serde::{Deserialize, Deserializer};
+use serde_json::json;
+use serde_json::Value;
 
 use super::Packages;
 
 /// The member a package's addresses are in.
 pub const ADDRESSES_MEMBER: &str = "overture-addresses.json";
-/// The most street keys tried for a text, and countries for a text read as each of them, as the server's search.
-const MAX_STREETS: usize = 8;
+/// The most countries a text with none is read as, as the server's search.
 const MAX_COUNTRIES: usize = 6;
 /// The most points of one number of a street, and of one street, as the server reads them.
 const NUMBER_ROWS: usize = 200;
 const STREET_ROWS: usize = 500;
 
-/// The rows of a package's addresses, by country and street key.
-struct Index {
+/// A text field of a row: a string, a number written as text, or nothing (read as one value at a time, so a number keeps
+/// its digits whatever serde_json's number features).
+fn text<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+    Ok(match Value::deserialize(deserializer)? {
+        Value::String(text) => text.trim().to_string(),
+        Value::Number(n) => n.to_string(),
+        _ => String::new(),
+    })
+}
+
+/// A degree of a row: a number, or a number written as text.
+fn degrees<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<f64>, D::Error> {
+    let value = text(deserializer)?;
+    Ok(value.parse::<f64>().ok().filter(|value| value.is_finite()))
+}
+
+/// A row of the member as OF1's MapPackages.js writes it: only the fields the matcher reads.
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub(crate) struct Row {
+    #[serde(deserialize_with = "text")]
+    gers_id: String,
+    #[serde(deserialize_with = "text")]
+    country_code: String,
+    #[serde(deserialize_with = "text")]
+    street_name: String,
+    #[serde(deserialize_with = "text")]
+    street_norm: String,
+    #[serde(deserialize_with = "text")]
+    house_number: String,
+    #[serde(deserialize_with = "text")]
+    number_norm: String,
+    #[serde(deserialize_with = "text")]
+    unit_text: String,
+    #[serde(deserialize_with = "text")]
+    unit_norm: String,
+    #[serde(deserialize_with = "text")]
+    postcode: String,
+    #[serde(deserialize_with = "text")]
+    postcode_norm: String,
+    #[serde(deserialize_with = "text")]
+    postal_city: String,
+    #[serde(deserialize_with = "text")]
+    locality: String,
+    #[serde(deserialize_with = "text")]
+    region: String,
+    #[serde(deserialize_with = "text")]
+    levels_text: String,
+    #[serde(deserialize_with = "degrees")]
+    latitude: Option<f64>,
+    #[serde(deserialize_with = "degrees")]
+    longitude: Option<f64>,
+    #[serde(deserialize_with = "text")]
+    source_datasets: String,
+    #[serde(deserialize_with = "text")]
+    source_licenses: String,
+}
+
+/// The member: its rows.
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct Member {
+    rows: Vec<Row>,
+}
+
+/// A row as the matcher's point (the fields `address_service::point_of` reads of a stored row), taking its texts.
+fn point_of(row: Row) -> Option<Point> {
+    let mut places: Vec<String> = row
+        .levels_text
+        .split(" | ")
+        .map(address::fold)
+        .filter(|place| !place.is_empty())
+        .collect();
+    let postal_city = address::fold(&row.postal_city);
+    if !postal_city.is_empty() {
+        places.push(postal_city);
+    }
+    Some(Point {
+        address_id: row.gers_id.clone(),
+        country: row.country_code.to_ascii_uppercase(),
+        street: row.street_name,
+        number: row.house_number,
+        number_key: row.number_norm,
+        unit: row.unit_text,
+        unit_key: row.unit_norm,
+        postcode: row.postcode,
+        postcode_key: row.postcode_norm,
+        locality: row.locality,
+        region: row.region,
+        places,
+        lon: row.longitude.filter(|lon| lon.abs() <= 180.0)?,
+        lat: row.latitude.filter(|lat| lat.abs() <= 90.0)?,
+        gers_id: row.gers_id,
+        release: String::new(),
+        datasets: row.source_datasets,
+        licenses: row.source_licenses,
+    })
+}
+
+/// The points of a package's addresses, by country and street key.
+pub(crate) struct Index {
     points: Vec<Point>,
     by_street: HashMap<(String, String), Vec<usize>>,
     countries: BTreeSet<String>,
 }
 
-fn field(row: &Map<String, Value>, name: &str) -> String {
-    match row.get(name) {
-        Some(Value::String(text)) => text.trim().to_string(),
-        Some(Value::Number(n)) => n.to_string(),
-        _ => String::new(),
-    }
-}
-
-fn degrees(row: &Map<String, Value>, name: &str) -> Option<f64> {
-    match row.get(name) {
-        Some(Value::Number(n)) => n.as_f64(),
-        Some(Value::String(text)) => text.trim().parse().ok(),
-        _ => None,
-    }
-    .filter(|value: &f64| value.is_finite())
-}
-
-/// A row of the member as the matcher's point (the fields `address_service::point_of` reads of a stored row).
-fn point_of(row: &Map<String, Value>, release: &str) -> Option<Point> {
-    let mut places: Vec<String> = field(row, "levelsText")
-        .split(" | ")
-        .map(address::fold)
-        .filter(|place| !place.is_empty())
-        .collect();
-    let postal_city = address::fold(&field(row, "postalCity"));
-    if !postal_city.is_empty() {
-        places.push(postal_city);
-    }
-    Some(Point {
-        address_id: field(row, "gersId"),
-        country: field(row, "countryCode").to_ascii_uppercase(),
-        street: field(row, "streetName"),
-        number: field(row, "houseNumber"),
-        number_key: field(row, "numberNorm"),
-        unit: field(row, "unitText"),
-        unit_key: field(row, "unitNorm"),
-        postcode: field(row, "postcode"),
-        postcode_key: field(row, "postcodeNorm"),
-        locality: field(row, "locality"),
-        region: field(row, "region"),
-        places,
-        lon: degrees(row, "longitude").filter(|lon| lon.abs() <= 180.0)?,
-        lat: degrees(row, "latitude").filter(|lat| lat.abs() <= 90.0)?,
-        gers_id: field(row, "gersId"),
-        release: release.to_string(),
-        datasets: field(row, "sourceDatasets"),
-        licenses: field(row, "sourceLicenses"),
-    })
-}
-
 impl Index {
-    fn of(rows: &[Value], release: &str) -> Self {
+    fn of(rows: Vec<Row>) -> Self {
         let mut index = Self {
             points: Vec::new(),
             by_street: HashMap::new(),
             countries: BTreeSet::new(),
         };
-        for row in rows.iter().filter_map(Value::as_object) {
-            let street = field(row, "streetNorm");
-            let Some(point) = point_of(row, release).filter(|point| !street.is_empty() && point.country.len() == 2)
-            else {
+        for mut row in rows {
+            let street = std::mem::take(&mut row.street_norm);
+            let Some(point) = point_of(row).filter(|point| !street.is_empty() && point.country.len() == 2) else {
                 continue;
             };
             index.countries.insert(point.country.clone());
@@ -132,67 +186,12 @@ impl Index {
             None => points.take(STREET_ROWS).cloned().collect(),
         }
     }
-}
 
-/// The best tier found for one country's reading of the text (`address_service::search_country`'s steps).
-fn search_country(index: &Index, query: &Query, country: &str, near: Option<(f64, f64)>) -> Option<(Tier, Ranked)> {
-    let number = query
-        .number
-        .as_deref()
-        .map(address::number_key)
-        .filter(|key| !key.is_empty());
-    for (street, locality) in query.streets(country).into_iter().take(MAX_STREETS) {
-        let locality = locality.as_deref().map(address::fold);
-        if let Some(number) = number.as_deref() {
-            let found = index.rows(country, &street, Some(number));
-            if !found.is_empty() {
-                return Some((
-                    Tier::Address,
-                    address::rank(query, locality.as_deref(), Tier::Address, found, near),
-                ));
-            }
-            if let Some(base) = address::number_base(number) {
-                let found = index.rows(country, &street, Some(&base));
-                let suffix = number
-                    .get(base.len()..)
-                    .unwrap_or_default()
-                    .trim_matches(['/', '-'])
-                    .to_string();
-                if query.unit.is_none() && !suffix.is_empty() && found.iter().any(|point| point.unit_key == suffix) {
-                    let as_unit = Query {
-                        unit: Some(suffix.clone()),
-                        ..query.clone()
-                    };
-                    let units: Vec<Point> = found.into_iter().filter(|point| point.unit_key == suffix).collect();
-                    return Some((
-                        Tier::Address,
-                        address::rank(&as_unit, locality.as_deref(), Tier::Address, units, near),
-                    ));
-                }
-                if !found.is_empty() {
-                    return Some((
-                        Tier::NumberBase,
-                        address::rank(query, locality.as_deref(), Tier::NumberBase, found, near),
-                    ));
-                }
-            }
-        }
-        let found = index.rows(country, &street, None);
-        if !found.is_empty() {
-            return Some((
-                Tier::Street,
-                address::rank(query, locality.as_deref(), Tier::Street, found, near),
-            ));
-        }
-    }
-    None
-}
-
-fn tier_order(tier: Tier) -> u8 {
-    match tier {
-        Tier::Address => 0,
-        Tier::NumberBase => 1,
-        Tier::Street => 2,
+    /// Read from a member's file, streamed into typed rows.
+    fn read(file: &Path) -> Result<Self, String> {
+        let opened = std::fs::File::open(file).map_err(|err| err.to_string())?;
+        let member: Member = serde_json::from_reader(std::io::BufReader::new(opened)).map_err(|err| err.to_string())?;
+        Ok(Self::of(member.rows))
     }
 }
 
@@ -221,19 +220,10 @@ fn candidate_json(candidate: &Candidate) -> Value {
     })
 }
 
-/// Search the rows of a package's addresses member (`{rows: [...]}`) for `text`, read as `country` (ISO alpha-2) or as
-/// each country of the rows; `near` (the map's middle) breaks ties. Answers `{valid, candidates, ambiguous}`, or
-/// `valid: false` with `reasonCode` QUERY_UNREAD (no street in the text) or NO_MATCH, in the shape of the server's
-/// `search#OvertureAddresses`.
-pub fn search_rows(
-    rows: &[Value],
-    release: &str,
-    text: &str,
-    country: &str,
-    near: Option<(f64, f64)>,
-    limit: usize,
-) -> Value {
-    let index = Index::of(rows, release);
+/// Search an index for `text`, read as `country` (ISO alpha-2) or as each country of its rows; `near` (the map's
+/// middle) breaks ties. Answers `{valid, candidates, ambiguous}`, or `valid: false` with `reasonCode` QUERY_UNREAD (no
+/// street in the text) or NO_MATCH, in the shape of the server's `search#OvertureAddresses`.
+pub(crate) fn search_index(index: &Index, text: &str, country: &str, near: Option<(f64, f64)>, limit: usize) -> Value {
     let asked = country.trim().to_ascii_uppercase();
     let countries: Vec<String> = if asked.len() == 2 {
         vec![asked]
@@ -247,17 +237,11 @@ pub fn search_rows(
             continue;
         };
         read_any = true;
-        if let Some((tier, ranked)) = search_country(&index, &query, country, near) {
-            let better = match &best {
-                None => true,
-                Some((best_tier, best_ranked)) => {
-                    tier_order(tier) < tier_order(*best_tier)
-                        || tier == *best_tier
-                            && ranked.candidates.first().map_or(i32::MIN, |c| c.score)
-                                > best_ranked.candidates.first().map_or(i32::MIN, |c| c.score)
-                }
-            };
-            if better {
+        let found = address::search_tiers::<std::convert::Infallible>(&query, country, near, &mut |street, number| {
+            Ok(index.rows(country, street, number))
+        });
+        if let Ok(Some((tier, ranked))) = found {
+            if address::better(tier, &ranked, best.as_ref().map(|(tier, ranked)| (*tier, ranked))) {
                 best = Some((tier, ranked));
             }
         }
@@ -273,9 +257,29 @@ pub fn search_rows(
     }
 }
 
+/// [`search_index`] over the rows of a member's JSON (`{rows: [...]}`), for a caller that holds them.
+///
+/// # Errors
+///
+/// Returns why the JSON is not a member's.
+pub fn search_rows(
+    member: &str,
+    text: &str,
+    country: &str,
+    near: Option<(f64, f64)>,
+    limit: usize,
+) -> Result<Value, String> {
+    let member: Member = serde_json::from_str(member).map_err(|err| err.to_string())?;
+    Ok(search_index(&Index::of(member.rows), text, country, near, limit))
+}
+
+/// The one index the device keeps: the revision directory and the member's SHA-256 it was read from.
+pub(crate) type Cached = Option<(PathBuf, String, Arc<Index>)>;
+
 impl Packages {
-    /// Search the installed revision of an account's package for an address ([`search_rows`] over its
-    /// `overture-addresses.json`): `valid: false` with `reasonCode` NO_DATA when the package has no addresses.
+    /// Search the installed revision of an account's package for an address ([`search_index`] over its
+    /// `overture-addresses.json`, read once and kept for that revision): `valid: false` with `reasonCode` NO_DATA when
+    /// the package has no addresses.
     pub fn search_addresses(
         &self,
         account: &str,
@@ -292,21 +296,48 @@ impl Packages {
         let Some(manifest) = self.manifest(&dir) else {
             return no_data();
         };
-        if !manifest.members.contains_key(ADDRESSES_MEMBER) {
+        let Some(member) = manifest.members.get(ADDRESSES_MEMBER) else {
             return no_data();
-        }
-        let read = std::fs::read(dir.join(ADDRESSES_MEMBER))
-            .map_err(|err| err.to_string())
-            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).map_err(|err| err.to_string()));
-        let member = match read {
-            Ok(member) => member,
-            Err(err) => {
-                tracing::error!("The addresses of the offline map {package_id} were not read: {err}");
-                return no_data();
+        };
+        let kept = moqui_lib::sync::lock(&self.addresses)
+            .as_ref()
+            .filter(|(at, sha, _)| *at == dir && *sha == member.sha256)
+            .map(|(_, _, index)| Arc::clone(index));
+        let index = match kept {
+            Some(index) => index,
+            None => {
+                // the one kept goes first, so two are never held at once
+                *moqui_lib::sync::lock(&self.addresses) = None;
+                match Index::read(&dir.join(ADDRESSES_MEMBER)) {
+                    Ok(index) => {
+                        let index = Arc::new(index);
+                        *moqui_lib::sync::lock(&self.addresses) =
+                            Some((dir.clone(), member.sha256.clone(), Arc::clone(&index)));
+                        index
+                    }
+                    Err(err) => {
+                        tracing::error!("The addresses of the offline map {package_id} were not read: {err}");
+                        return no_data();
+                    }
+                }
             }
         };
-        let rows = member["rows"].as_array().map_or(&[][..], Vec::as_slice);
-        search_rows(rows, "", text, country, near, limit)
+        search_index(&index, text, country, near, limit)
+    }
+
+    /// Drop the kept address index (an account switch; and of the packages under `dir`, a delete, a new revision, an
+    /// account's data forgotten, when given).
+    pub fn drop_address_index(&self, under: Option<&Path>) {
+        let mut kept = moqui_lib::sync::lock(&self.addresses);
+        if under.is_none_or(|dir| kept.as_ref().is_some_and(|(at, _, _)| at.starts_with(dir))) {
+            *kept = None;
+        }
+    }
+
+    /// Whether an address index is kept (a test's).
+    #[cfg(test)]
+    pub(crate) fn address_index_kept(&self) -> bool {
+        moqui_lib::sync::lock(&self.addresses).is_some()
     }
 }
 

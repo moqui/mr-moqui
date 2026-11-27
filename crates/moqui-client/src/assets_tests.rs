@@ -259,3 +259,37 @@ fn a_bundle_reads_its_staged_copy() {
         PathBuf::from("/App/Resources/shell-assets/shell/index.html")
     );
 }
+
+/// plans/Maps-Offline.md §2.5: a bundle's staged library of one part holds that part's files and no `parts.json`
+/// (`./moq desktop build` copies only the part), and is served as it is staged.
+#[test]
+fn a_bundles_library_staged_by_its_part_is_served_without_its_parts_list() {
+    let dir = std::env::temp_dir().join(format!("moqui-client-assets-staged-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let files = [
+        ("shell-assets/shell/libs.txt", "vue\nopenlayers main\n"),
+        ("shell-assets/shell/index.html", "<p>shell</p>"),
+        ("shell-assets/webroot/libs/openlayers/ol-map.json", "{}"),
+        ("shell-assets/webroot/libs/openlayers/ol-map-A.min.js", "main()"),
+        ("shell-assets/webroot/libs/openlayers/chunks/chunk-B.min.js", "chunk()"),
+        ("shell-assets/webroot/libs/openlayers/ol.css", ".ol {}"),
+    ];
+    for (path, text) in files {
+        let file = dir.join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, text).unwrap();
+    }
+    let assets = Assets::staged(&dir);
+    for path in [
+        "/libs/openlayers/ol-map.json",
+        "/libs/openlayers/ol-map-A.min.js",
+        "/libs/openlayers/chunks/chunk-B.min.js",
+        "/libs/openlayers/ol.css",
+    ] {
+        assert!(assets.read(path).is_some(), "{path}");
+    }
+    // what the stage does not hold is not there, and a library libs.txt does not name is not served
+    assert!(assets.read("/libs/openlayers/ol-raster-C.min.js").is_none());
+    assert!(assets.file_of("/libs/mermaid/mermaid.min.js").is_none());
+    let _ = std::fs::remove_dir_all(&dir);
+}

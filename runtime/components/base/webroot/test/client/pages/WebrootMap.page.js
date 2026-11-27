@@ -707,6 +707,8 @@ const packageManifest = () => ({
                 { id: "OUTLINE_NE110", label: "Country outlines", kind: "outline", url: "outline.json", attribution: "Natural Earth",
                     attributionUrls: ["https://www.naturalearthdata.com/"] }] },
         layers: [{ id: "places", label: "My places", kind: "geojson", url: "places.geojson", visible: true },
+            { id: "tiles", label: "Tiles", kind: "pmtiles", url: "overlays/7.pmtiles", styleUrl: "style/overlay.json" },
+            { id: "styled", label: "Styled", kind: "pmtiles", url: "overlays/8.pmtiles", styleUrl: "https://evil.example/style.json" },
             { id: "out", label: "Out", kind: "geojson", url: "../P8/places.geojson" },
             { id: "abs", label: "Abs", kind: "geojson", url: "https://evil.example/x.json" },
             { id: "rooted", label: "Rooted", kind: "geojson", url: "/libs/naturalearth/countries-110m.json" }],
@@ -729,7 +731,9 @@ test("a package's manifest is its map's configuration: every URL the package's, 
     assert.deepEqual(config.profile.basemaps.map((basemap) => [basemap.url, basemap.styleUrl]),
         [[PACKAGE + "basemap/LIGHT.pmtiles", PACKAGE + "style/light.json"], [PACKAGE + "outline.json", ""]]);
     assert.deepEqual(config.layers.map((layer) => [layer.id, layer.url]),
-        [["places", PACKAGE + "places.geojson"], ["out", ""], ["abs", ""], ["rooted", ""]], "a URL that is not a plain path of the package is dropped");
+        [["places", PACKAGE + "places.geojson"], ["tiles", PACKAGE + "overlays/7.pmtiles"], ["styled", PACKAGE + "overlays/8.pmtiles"], ["out", ""], ["abs", ""],
+            ["rooted", ""]], "a URL that is not a plain path of the package is dropped");
+    assert.deepEqual(config.layers.slice(1, 3).map((layer) => layer.styleUrl), [PACKAGE + "style/overlay.json", ""], "a layer's style is the package's too");
     assert.deepEqual(config.profile.allowedOrigins, [], "no host the profile named");
     assert.equal(config.profile.notice.href, "", "no link of the server's");
     assert.deepEqual(config.extent, [-71.2, 42.2, -70.9, 42.5], "the view is the package's region");
@@ -782,14 +786,25 @@ test("a package's map is drawn from its files alone: no outside request, its att
     // the package's files, answered here as the app's scheme answers them; every request the page makes is noted
     const topology = { type: "Topology", arcs: [[[-71.2, 42.2], [-70.9, 42.2], [-70.9, 42.5], [-71.2, 42.5], [-71.2, 42.2]]],
         objects: { countries: { type: "GeometryCollection", geometries: [{ type: "Polygon", arcs: [[0]], properties: { name: "Harbor" } }] } } };
-    const files = { "outline.json": JSON.stringify(topology) };
+    const places = { type: "FeatureCollection", features: [{ type: "Feature", id: "p1", geometry: { type: "Point", coordinates: [-71.05, 42.36] },
+        properties: { name: "Ferry dock" } }] };
+    const files = { "outline.json": JSON.stringify(topology), "places.geojson": JSON.stringify(places) };
+    const ranges = [];
     const asked = [];
     const realFetch = window.fetch;
     window.fetch = (input, init) => {
         const url = new URL(typeof input === "string" ? input : input.url, location.href);
         asked.push(url.href);
-        if (url.origin === page && url.pathname.startsWith(PACKAGE) && files[url.pathname.slice(PACKAGE.length)] !== undefined)
-            return Promise.resolve(new Response(files[url.pathname.slice(PACKAGE.length)], { status: 200, headers: { "Content-Type": "application/json" } }));
+        const body = url.origin === page && url.pathname.startsWith(PACKAGE) ? files[url.pathname.slice(PACKAGE.length)] : undefined;
+        const range = /^bytes=(\d+)-(\d+)$/.exec(new Headers((init && init.headers) || {}).get("Range") || "");
+        // the places as the app's scheme answers a file past its slice: 206 slices (of 64 bytes here), each saying the whole
+        if (body !== undefined && range && url.pathname.endsWith("places.geojson")) {
+            const bytes = new TextEncoder().encode(body);
+            const start = Number(range[1]), end = Math.min(Number(range[2]), start + 63, bytes.length - 1);
+            ranges.push(start);
+            return Promise.resolve(new Response(bytes.slice(start, end + 1), { status: 206, headers: { "Content-Range": "bytes " + start + "-" + end + "/" + bytes.length } }));
+        }
+        if (body !== undefined) return Promise.resolve(new Response(body, { status: 200, headers: { "Content-Type": "application/json" } }));
         if (url.origin === page && url.pathname.startsWith(PACKAGE)) return Promise.resolve(new Response("Not in this offline map", { status: 404 }));
         return realFetch(input, init);
     };
@@ -798,7 +813,7 @@ test("a package's map is drawn from its files alone: no outside request, its att
     // the outline alone, with its source's notice HTML: drawn and attributed as text
     manifest.configuration.profile.basemaps = manifest.configuration.profile.basemaps.slice(1);
     manifest.configuration.profile.basemap = "OUTLINE_NE110";
-    manifest.configuration.layers = [];
+    manifest.configuration.layers = [{ id: "places", label: "My places", kind: "geojson", url: "places.geojson", visible: true }];
     manifest.sources = [{ kind: "basemap", member: "outline.json", sourceAttribution: '<b>Natural Earth</b> data <img src=x onerror="window.packageAttack=1">' }];
     const holder = document.createElement("div");
     holder.style.width = "480px";
@@ -822,6 +837,8 @@ test("a package's map is drawn from its files alone: no outside request, its att
         };
         await until(() => view && view.layerStatus.some((status) => status.id === "OUTLINE_NE110" && status.state === "ready"), "the outline");
         await until(() => holder.querySelector(".ol-attribution li"), "the attribution");
+        await until(() => view.layerStatus.some((status) => status.id === "places" && status.state === "ready"), "the places");
+        assert.ok(ranges.length > 1 && ranges[0] === 0, "a GeoJSON member read by range, slice by slice: " + ranges.join(","));
         const attribution = holder.querySelector(".ol-attribution ul");
         assert.ok(attribution.textContent.includes("Natural Earth data"), attribution.textContent);
         assert.equal(attribution.querySelector("img"), null, "the notice is text, never markup");

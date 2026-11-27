@@ -1016,6 +1016,100 @@ pub fn label(point: &Point, tier: Tier) -> String {
         .join(", ")
 }
 
+/// The most street keys tried for one country's reading of a text.
+pub const MAX_STREETS: usize = 8;
+
+/// The order of the tiers, the best first.
+#[must_use]
+pub fn tier_order(tier: Tier) -> u8 {
+    match tier {
+        Tier::Address => 0,
+        Tier::NumberBase => 1,
+        Tier::Street => 2,
+    }
+}
+
+/// Whether one country's best (`tier`, `ranked`) is better than the best so far: a better tier, or the same tier with a
+/// higher score.
+#[must_use]
+pub fn better(tier: Tier, ranked: &Ranked, best: Option<(Tier, &Ranked)>) -> bool {
+    match best {
+        None => true,
+        Some((best_tier, best_ranked)) => {
+            tier_order(tier) < tier_order(best_tier)
+                || tier == best_tier
+                    && ranked.candidates.first().map_or(i32::MIN, |c| c.score)
+                        > best_ranked.candidates.first().map_or(i32::MIN, |c| c.score)
+        }
+    }
+}
+
+/// What [`search_tiers`] reads points with: `(street key, number key)` to the points of the street (of the number).
+pub type RowsOf<'a, E> = dyn FnMut(&str, Option<&str>) -> Result<Vec<Point>, E> + 'a;
+
+/// The best tier found for one country's reading of a text: for each street key of the query (at most
+/// [`MAX_STREETS`]), the number on it, then the number without its suffix (a suffix the source keeps as the unit, Italy's
+/// `12/A`, is the address), then the street alone. `rows(street, number)` gives the points of a street key of `country`,
+/// those of one number key when given: the server's index (`moqui-maps` `address_service`) and an offline package's
+/// rows (`moqui-client` `packages::addresses`, plans/Maps-Offline.md §2.5) are both searched by this one walk.
+///
+/// # Errors
+///
+/// What `rows` answers.
+pub fn search_tiers<E>(
+    query: &Query,
+    country: &str,
+    near: Option<(f64, f64)>,
+    rows: &mut RowsOf<'_, E>,
+) -> Result<Option<(Tier, Ranked)>, E> {
+    let number = query.number.as_deref().map(number_key).filter(|key| !key.is_empty());
+    for (street, locality) in query.streets(country).into_iter().take(MAX_STREETS) {
+        let locality = locality.as_deref().map(fold);
+        if let Some(number) = number.as_deref() {
+            let found = rows(&street, Some(number))?;
+            if !found.is_empty() {
+                return Ok(Some((
+                    Tier::Address,
+                    rank(query, locality.as_deref(), Tier::Address, found, near),
+                )));
+            }
+            if let Some(base) = number_base(number) {
+                let found = rows(&street, Some(&base))?;
+                let suffix = number
+                    .get(base.len()..)
+                    .unwrap_or_default()
+                    .trim_matches(['/', '-'])
+                    .to_string();
+                if query.unit.is_none() && !suffix.is_empty() && found.iter().any(|point| point.unit_key == suffix) {
+                    let as_unit = Query {
+                        unit: Some(suffix.clone()),
+                        ..query.clone()
+                    };
+                    let units: Vec<Point> = found.into_iter().filter(|point| point.unit_key == suffix).collect();
+                    return Ok(Some((
+                        Tier::Address,
+                        rank(&as_unit, locality.as_deref(), Tier::Address, units, near),
+                    )));
+                }
+                if !found.is_empty() {
+                    return Ok(Some((
+                        Tier::NumberBase,
+                        rank(query, locality.as_deref(), Tier::NumberBase, found, near),
+                    )));
+                }
+            }
+        }
+        let found = rows(&street, None)?;
+        if !found.is_empty() {
+            return Ok(Some((
+                Tier::Street,
+                rank(query, locality.as_deref(), Tier::Street, found, near),
+            )));
+        }
+    }
+    Ok(None)
+}
+
 #[cfg(test)]
 #[path = "address_tests.rs"]
 mod tests;

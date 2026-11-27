@@ -41,8 +41,9 @@
 //! - `mail-send` carries `baseStamp` (the server's draft the user edited) and `saveRef` (the save's own reference), so
 //!   a draft changed on the server meanwhile is a conflict, not overwritten.
 //! - `map-place`: a place saved on the offline Maps screen (plans/Maps-Offline.md §2.5), `{clientRef, label,
-//!   longitude, latitude}`, sent to Maps' `savePlace` (`store#Place`), which takes it once by its `clientRef`. A place
-//!   is only ever added there, never changed, so it meets no server change to conflict with; all of them in one order.
+//!   longitude, latitude}`, where the server says Maps' `savePlace` (`store#Place`) takes it once by its `clientRef`
+//!   (`features.placeRef`). A place is only ever added there, never changed, so it meets no server change to conflict
+//!   with; all of them in one order. A refusal keeps no ref on the server, so a retry may be saved.
 //!
 //! A conflict (`conflict` state) keeps the server's state in `current`; a retry of it sends the user's anyway (no
 //! `seen` or `baseStamp`, new references), a discard drops it.
@@ -252,6 +253,8 @@ pub fn kinds_json(server: &ServerSync) -> Value {
     let mut kinds: Vec<&str> = MD4_KINDS.to_vec();
     if server.syncs() {
         kinds.extend(MESSAGE_KINDS);
+    }
+    if server.place_queue() {
         kinds.push(MAP_PLACE);
     }
     if server.internal_send() {
@@ -455,6 +458,9 @@ pub fn check_with(
             )
         }
         MAP_PLACE => {
+            if !server.place_queue() {
+                return Err("A place saved offline needs a connection to this server".to_string());
+            }
             if !files.is_empty() {
                 return Err("A saved place sends no files".to_string());
             }

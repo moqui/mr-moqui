@@ -18,9 +18,10 @@ along with this software (see the LICENSE.md file). If not, see
     another host. It says when it is offline and when the package was built, and shows the package's sources and licenses
     as text. Search runs in the page over the package's places, postal codes and Overture places (bounded by its region),
     and its Overture addresses through the host (packages.addresses: the server's address matching). A place saved here
-    is an outbox item (map-place: store#Place by its clientRef), sent when the server answers. Package files are read with
-    no HTTP cache (the host answers no-store) and kept in memory only for the account and revision they came from: the
-    same URL is another account's package after a switch. Bundled, precompiled (bundled-screens.txt). -->
+    is an outbox item (map-place: store#Place by its clientRef), sent when the server answers, offered only to an account
+    with the Maps app (the shell's mapsApp). Package files are read with no HTTP cache (the host answers no-store) and kept
+    in memory only for the account and revision they came from: the same URL is another account's package after a switch,
+    and a new revision installed while a package is open opens it again. Bundled, precompiled (bundled-screens.txt). -->
 <template><div class="m-maps-offline">
     <div v-if="!supported" class="q-pa-md m-muted">{{t('This app cannot keep offline maps.')}}</div>
     <template v-else-if="!opened">
@@ -82,7 +83,7 @@ along with this software (see the LICENSE.md file). If not, see
         <div class="q-pa-md">
             <m-map v-if="mapConfig" ref="map" id="MapsOfflineMap" :config="mapConfig" height="60vh" @view-change="viewChanged" @select="selected"></m-map>
         </div>
-        <q-form class="q-px-md row items-center q-gutter-sm m-maps-offline-save" @submit="savePlace">
+        <q-form v-if="mapsAccess" class="q-px-md row items-center q-gutter-sm m-maps-offline-save" @submit="savePlace">
             <q-input v-model="placeName" dense outlined class="col" :label="t('Save a place: its name')" maxlength="200" autocomplete="off"></q-input>
             <q-btn type="submit" flat dense no-caps color="primary" icon="sym_o_add_location_alt" :label="pointToSave && pointToSave.label ? t('Save this place') : t('Save the map\'s center')"
                 :disable="!placeName.trim() || !pointToSave"></q-btn>
@@ -92,9 +93,9 @@ along with this software (see the LICENSE.md file). If not, see
                 <q-item-section avatar><q-icon name="sym_o_schedule_send" size="20px"></q-icon></q-item-section>
                 <q-item-section><q-item-label>{{op.label}}</q-item-label>
                     <q-item-label caption :class="op.failed ? 'text-negative' : ''">{{op.stateText}}</q-item-label></q-item-section>
-                <q-item-section v-if="op.failed" side class="row no-wrap">
-                    <q-btn flat dense no-caps :label="t('Retry')" @click="retryPlace(op)"></q-btn>
-                    <q-btn flat dense no-caps :label="t('Discard')" @click="discardPlace(op)"></q-btn>
+                <q-item-section v-if="op.failed || op.held" side class="row no-wrap">
+                    <q-btn v-if="op.failed" flat dense no-caps :label="t('Retry')" @click="retryPlace(op)"></q-btn>
+                    <q-btn flat dense no-caps :label="t('Discard')" class="m-maps-offline-discard" @click="discardPlace(op)"></q-btn>
                 </q-item-section>
             </q-item>
         </q-list>
@@ -146,7 +147,8 @@ const inBox = (bbox, lon, lat) => {
     if (lat < south || lat > north) return false;
     return west <= east ? lon >= west && lon <= east : lon >= west || lon <= east;
 };
-const RESULTS_MAX = 20;
+// the results of each source at most, so one source (200,000 Overture places) does not crowd out the others
+const PER_SOURCE = 10;
 const bytesText = (size) => {
     const n = Number(size) || 0;
     if (n >= 1073741824) return (n / 1073741824).toFixed(1) + ' GB';
@@ -228,16 +230,30 @@ module.exports = {
                 licenses: source.licenses.join(', ') }));
         },
         notice() { return moqui.map && moqui.map.plainText ? moqui.map.plainText(this.manifest && this.manifest.notice, 500) : ''; },
+        // whether this account may save a place: it has the Maps app (Shell/Root's mapsApp, from its kept shellData); a
+        // screen mounted on its own (a test's) may
+        mapsAccess() { const root = this.$root; return !(root && root !== this && 'mapsApp' in root && !root.mapsApp); },
         // the point a saved place takes: the last place found or chosen on the map, else the map's center
         pointToSave() { return this.picked || this.center; },
         // the places saved here that wait in the outbox (map-place), with their state
         queuedPlaces() {
-            return this.outboxOps.filter((op) => op.kind === 'map-place').map((op) => {
+            return this.outboxOps.filter((op) => op.kind === 'map-place' && op.state !== 'acked').map((op) => {
                 const payload = op.payload || {};
                 const failed = op.state === 'failed' || op.state === 'conflict';
-                return { id: op.id, label: payload.label || t('A place'), failed,
-                    stateText: failed ? t('Not saved') + (op.error ? ': ' + op.error : '') : op.state === 'sending' ? t('Saving') : t('Waits for the server, then is saved to your places') };
+                // held: the server asked for a sign-in (a 401, or a 403 it gave no reason for); it may be discarded
+                const held = op.state === 'held';
+                return { id: op.id, label: payload.label || t('A place'), failed, held,
+                    stateText: failed ? t('Not saved') + (op.error ? ': ' + op.error : '') : held ? t('Waiting for a sign-in to this server')
+                        : op.state === 'sending' ? t('Saving') : t('Waits for the server, then is saved to your places') };
             });
+        }
+    },
+    watch: {
+        // a new revision installed while a package is open: opened again, what was read of the old one dropped
+        rows(rows) {
+            if (!this.opened || !this.kept) return;
+            const row = rows.find((one) => one.packageId === this.kept.packageId);
+            if (row && row.installed && row.revision !== this.kept.revision) this.open(row);
         }
     },
     methods: {
@@ -305,7 +321,9 @@ module.exports = {
         member(path) {
             const kept = this.kept;
             const listed = this.manifest && Array.isArray(this.manifest.members) && this.manifest.members.some((member) => member && member.path === path);
-            if (!kept || !listed || kept.account !== (moqui.storageScope || '')) return Promise.resolve(null);
+            const installed = this.device.find((row) => String(row.packageId) === String(kept && kept.packageId) && row.installed);
+            if (!kept || !listed || kept.account !== (moqui.storageScope || '') || (installed && Number(installed.revision) !== Number(kept.revision)))
+                return Promise.resolve(null);
             if (!kept.members[path]) kept.members[path] = readMember(kept.base + path).then((text) => JSON.parse(text), (err) => {
                 delete kept.members[path];
                 throw err;
@@ -318,8 +336,11 @@ module.exports = {
             const bbox = this.manifest && this.manifest.package && this.manifest.package.bbox;
             this.searching = true;
             this.error = '';
-            const found = [];
-            const add = (item) => { if (found.length < RESULTS_MAX * 4 && inBox(bbox, item.lon, item.lat)) found.push(item); };
+            const found = { address: [], place: [], postal: [], overture: [] };
+            const add = (item) => {
+                const list = found[item.key.split(':')[0]];
+                if (list && list.length < PER_SOURCE && inBox(bbox, item.lon, item.lat)) list.push(item);
+            };
             const places = this.member('places.geojson').then((json) => {
                 (json && Array.isArray(json.features) ? json.features : []).forEach((feature, index) => {
                     const props = feature && feature.properties || {};
@@ -355,7 +376,7 @@ module.exports = {
                     });
             const each = [addresses, places, postal, overture].map((work) => work.catch((err) => { console.warn('MapsOffline: a search did not finish', err); this.error = message(err); }));
             return Promise.all(each).then(() => {
-                this.results = found.slice(0, RESULTS_MAX);
+                this.results = found.address.concat(found.place, found.postal, found.overture);
                 this.searched = true;
                 this.searching = false;
             });
@@ -395,6 +416,7 @@ module.exports = {
             }
             // a server that takes no place by its clientRef: saved now, or not at all offline
             if (this.offline) { this.error = t('Saving a place needs a connection to this server'); return; }
+            if (!this.mapsAccess) return;
             return moqui.request('/apps/maps/Browse/savePlace', { method: 'POST', params: { label, longitude: point.lon, latitude: point.lat } }).then((result) => {
                 const json = result.json || {};
                 if (json.applied) { this.placeName = ''; this.$q.notify({ type: 'positive', message: fill(t('{name} is saved to your places'), { name: label }) }); }

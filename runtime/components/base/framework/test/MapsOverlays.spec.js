@@ -109,6 +109,7 @@ spec({
         del("moqui.resource.ResourceShare", "shareId", [SHARE, FILE_SHARE])
         del("moqui.service.job.ServiceJobRun", "jobRunId", [FAKE_RUN])
         del("moqui.resource.ResourceRecent", "userId", users)
+        del("moqui.basic.client.ClientRequestRef", "userId", users)
         for (const drive of Array.from(
             ec.entity.find("moqui.resource.ResourceDrive").condition("ownerUserId", "in", users).list()
         )) {
@@ -258,11 +259,15 @@ function savePlace(userId, params) {
 }
 
 feature(
-    "a place saved offline is kept once by its clientRef: sent again it answers the first save (plans/Maps-Offline.md §2.5)",
+    "a place saved offline is kept once by its clientRef, and a refusal keeps no ref: its retry is saved (plans/Maps-Offline.md §2.5)",
     {
         when() {
             const params = {label: "Ferry dock", longitude: "-71.05", latitude: "42.36", clientRef: "maps-ovl-place-1"}
             const out = {first: savePlace(OWNER, params), again: savePlace(OWNER, params)}
+            // refused (out of range), then sent again by the same ref once it can be saved
+            const retried = {label: "Pier", longitude: "-71.04", latitude: "91", clientRef: "maps-ovl-place-2"}
+            out.refused = savePlace(OWNER, retried)
+            out.retried = savePlace(OWNER, Object.assign({}, retried, {latitude: "42.35"}))
             out.file = JSON.parse(fileText(ownerDrive(), "Maps/places.geojson") || "{}")
             return out
         },
@@ -273,13 +278,11 @@ feature(
             out.again.duplicate == true
             out.again.placeId == out.first.placeId
             out.file.features.filter(feature => feature.properties.name === "Ferry dock").length == 1
-        },
-        cleanup() {
-            ec.entity
-                .find("moqui.basic.client.ClientRequestRef")
-                .condition("clientRef", "maps-ovl-place-1")
-                .disableAuthz()
-                .deleteAll()
+            out.refused.applied == false
+            out.refused.reasonCode == "POINT_INVALID"
+            out.retried.applied == true
+            out.retried.duplicate == false
+            out.file.features.filter(feature => feature.properties.name === "Pier").length == 1
         }
     }
 )

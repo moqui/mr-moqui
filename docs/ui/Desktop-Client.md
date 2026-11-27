@@ -176,7 +176,7 @@ while the window is hidden.
 | `mail-state` | a thread's read, flag, archive, move or trash, as absolute values, in order; shown in the stored rows at once; with `seen` at `clientApi` 4 |
 | `chat-edit`, `chat-redact`, `chat-react`, `poll-vote` | a message's edit, redaction, reaction or poll vote, once by its `clientRef`, the four of one message in order (`clientApi` 4) |
 | `internal-send` | an internal message's send, once by its `clientRef`, where the server's `server.features.internalSendRef` says so (a `mail-send` of one becomes it); no files |
-| `map-place` | a place saved on the offline Maps screen (`{clientRef, label, longitude, latitude}`), sent to Maps' `savePlace` once by its `clientRef`, all in one order (`clientApi` 4; plans/Maps-Offline.md §2.5) |
+| `map-place` | a place saved on the offline Maps screen (`{clientRef, label, longitude, latitude}`), sent to Maps' `savePlace` once by its `clientRef`, all in one order, where the server's `server.features.placeRef` says so; a refusal keeps no ref, so its retry may be saved, and a 403 with the server's reason fails rather than waiting for a sign-in (plans/Maps-Offline.md §2.5) |
 
 - **WebrootChat's rules:** no answer, 408, 429 and 5xx are tried again after 2, 5, 15 and 60 seconds; 401 and 403 hold
   until a sign-in or a renewed key, and an operation held three times in a row fails; another 4xx fails with the

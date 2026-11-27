@@ -185,6 +185,8 @@ pub struct Packages {
     data: PathBuf,
     jobs: Mutex<HashMap<(String, String), Arc<Job>>>,
     manifests: Mutex<HashMap<PathBuf, Arc<Manifest>>>,
+    /// The one package's address index the offline search keeps ([`addresses`]).
+    addresses: Mutex<addresses::Cached>,
     free_space: FreeSpace,
 }
 
@@ -215,6 +217,7 @@ impl Packages {
             data: dir.join("data"),
             jobs: Mutex::new(HashMap::new()),
             manifests: Mutex::new(HashMap::new()),
+            addresses: Mutex::new(None),
             free_space,
         }
     }
@@ -479,6 +482,7 @@ impl Packages {
             job.cancel.store(true, Ordering::SeqCst);
         }
         moqui_lib::sync::lock(&self.manifests).retain(|path, _| !path.starts_with(&dir));
+        self.drop_address_index(Some(&dir));
         let removed = remove_tree(&dir);
         drop(jobs);
         removed
@@ -499,6 +503,7 @@ impl Packages {
             owner != account
         });
         moqui_lib::sync::lock(&self.manifests).retain(|path, _| !path.starts_with(&dir));
+        self.drop_address_index(Some(&dir));
         if let Err(err) = remove_tree(&dir) {
             tracing::error!("The map packages of {account} on this device were not all removed: {err}");
         }

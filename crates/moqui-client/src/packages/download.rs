@@ -541,6 +541,7 @@ impl Run<'_> {
             );
         }
         moqui_lib::sync::lock(&self.packages.manifests).retain(|path, _| !path.starts_with(dir));
+        self.packages.drop_address_index(Some(dir));
         for entry in std::fs::read_dir(dir).into_iter().flatten().filter_map(Result::ok) {
             let name = entry.file_name().to_string_lossy().into_owned();
             let earlier = name != self.revision.to_string() && name.bytes().all(|b| b.is_ascii_digit());
