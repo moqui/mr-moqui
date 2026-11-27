@@ -11,6 +11,7 @@ const AUDIENCE_MEMBER = "moqui.maps.LocationShareAudienceMember"
 const OWNER_LOCK = "moqui.maps.LocationShareOwner"
 const LATEST = "moqui.maps.LocationLatest"
 const TRAIL = "moqui.maps.LocationTrailPoint"
+const XMPP_LATEST = "moqui.maps.LocationXmppLatest"
 const ACCOUNT = "moqui.security.UserAccount"
 const GROUP_MEMBER = "moqui.security.UserGroupMember"
 const HOUR = 3600000
@@ -261,8 +262,9 @@ function xmppUserIds(share, rows) {
  * those contacts' users only, which the XMPP server (moqui-xmpp session/geoloc.rs) sends to each of their sessions that
  * asked for user location as a geoloc event from the owner, and an empty geoloc item for an end. The same values the
  * share's audience is sent (an approximate share's cell), at the time of the report, so a contact added later gets only
- * positions received after it was added. Sent when the transaction commits, never saved or sent to a phone; no web
- * client follows the topic.
+ * positions received after it was added. Sent when the transaction commits, never saved or sent to a phone. A browser
+ * of the same user whose notification socket follows every topic (WebrootChat.js registers ALL) gets it too: it is that
+ * contact's own, and no web screen reads it.
  */
 function pushXmpp(share, userIds, message) {
     if (!userIds.length) return
@@ -305,8 +307,11 @@ function untilWords(thru, now, timeZone) {
     return ec.l10n.format(new Date(thru), day(thru) === day(now) ? "HH:mm" : "EEE HH:mm", null, timeZone)
 }
 
-/** Each user added is told who shares with them and until when, in their own time zone: no position. */
-function notifyShared(share, userIds, now) {
+/**
+ * Each user added is told who shares with them and until when, in their own time zone: no position. On topic
+ * LocationShared, or LocationSharedXmpp for the share's XMPP contacts (whose XMPP app gets the positions).
+ */
+function notifyShared(share, userIds, now, topic) {
     const ids = userIds.filter(id => id && id !== share.ownerUserId)
     if (!ids.length) return
     const people = namesOf(ids.concat([share.ownerUserId]))
@@ -319,7 +324,7 @@ function notifyShared(share, userIds, now) {
     for (const zone of Object.keys(byZone)) {
         const untilText = untilWords(millis(share.thruDate), now, zone || null)
         ec.makeNotificationMessage()
-            .topic("LocationShared")
+            .topic(topic || "LocationShared")
             .userIds(byZone[zone])
             .directOnly()
             .message({shareId: share.shareId, ownerName, label: share.label || ownerName, untilText})
@@ -568,6 +573,9 @@ function create(p) {
             precisionEnumId,
             keepTrail: trail.keepTrail,
             trailKeepDays: trail.trailKeepDays,
+            // the owner's XMPP app's location feeds it too, to its XMPP contacts only, only by the owner's choice here
+            // (plans/Location-Sharing.md §3.6)
+            takeXmppLocation: yes(p.takeXmppLocation) ? "Y" : "N",
             // raised by every change of the audience that can reach someone new (plans/Location-Sharing.md §3.4)
             audienceVersion: 1
         })
@@ -578,6 +586,7 @@ function create(p) {
     const reach = checkReach(share)
     if (reach.reasonCode) return reach
     notifyShared(share, currentUserIds(share), now)
+    notifyShared(share, xmppUserIds(share), now, "LocationSharedXmpp")
     push(share, [me], {event: "started", thruDate: until.until})
     return {shareId: share.shareId, thruDate: until.until, linkToken: added.linkToken}
 }
@@ -603,8 +612,16 @@ function update(p) {
         share.userLoginKeyId = deviceKeyId()
         share.renewedFromKeyId = null
     }
+    // the owner's XMPP app's location fed to it too (to its XMPP contacts only): turned on, it reaches them from a
+    // source the device's person did not confirm, so the audience version is raised
+    if (p.takeXmppLocation != null && !blank(p.takeXmppLocation)) {
+        const take = yes(p.takeXmppLocation) ? "Y" : "N"
+        if (take === "Y" && share.takeXmppLocation !== "Y") share.audienceVersion = (Number(share.audienceVersion) || 0) + 1
+        share.takeXmppLocation = take
+    }
     let added = {linkToken: null}
     const before = currentUserIds(share)
+    const contactsBefore = xmppUserIds(share)
     if (Array.from(p.addAudienceList || []).length) {
         const audience = checkAudience(p.addAudienceList, now)
         if (audience.reasonCode) return audience
@@ -653,10 +670,19 @@ function update(p) {
         {event: "revoked"}
     )
     notifyShared(share, fresh, now)
+    const contacts = xmppUserIds(share)
+    notifyShared(
+        share,
+        contacts.filter(id => !contactsBefore.includes(id)),
+        now,
+        "LocationSharedXmpp"
+    )
     const people = namesOf(fresh)
     const addedUserList = fresh.map(userId => ({userId, userName: (people[userId] || {}).name || userId}))
     const thruDate = millis(share.thruDate)
     push(share, reached, {event: "changed", thruDate})
+    // the XMPP contacts' sessions keep the end, to send the empty item when it comes
+    pushXmpp(share, contacts, {event: "changed", thruDate})
     // the owner's devices are told whom the change lets in, and when another device sends it now
     push(share, [share.ownerUserId], Object.assign({event: "changed", thruDate, addedUserList}, moved ? {sentFromMoved: true} : {}))
     return {thruDate, linkToken: added.linkToken, addedUserList}
@@ -674,6 +700,7 @@ function endShare(share, now) {
     }
     share.update()
     find(LATEST).condition("shareId", share.shareId).deleteAll()
+    find(XMPP_LATEST).condition("shareId", share.shareId).deleteAll()
     push(share, userIds.concat([share.ownerUserId]), {event: "ended"})
     // the XEP-0080 "stopped": an empty geoloc item to the share's XMPP contacts
     pushXmpp(share, contacts, {event: "ended"})
@@ -828,34 +855,9 @@ function report(p) {
         return {statusCode: 409, reasonCode: "AUDIENCE_CHANGED"}
 
     const latest = find(LATEST).condition("shareId", share.shareId).one()
-    const approximated = share.precisionEnumId === "LspApproximate"
-    const minimum = setting("min-interval-seconds", 5)
-    // an approximate share takes a position less often, so its cell changes tell less of a path
-    const intervalMillis = (approximated ? Math.max(minimum, setting("approximate-interval-seconds", 60)) : minimum) * 1000
-    const received = latest ? millis(latest.receivedDate) : null
-    if (received != null && now - received < intervalMillis)
-        return {
-            statusCode: 429,
-            reasonCode: "RATE_LIMITED",
-            retryAfterSeconds: Math.max(1, Math.ceil((intervalMillis - (now - received)) / 1000))
-        }
-    const checked = checkPosition(p, now, share)
-    if (checked.reasonCode) return checked
-    // an approximate share's stored time is its minute, so a later fix of the same minute replaces that minute's
-    const latestObserved = latest && latest.observedDate != null ? millis(latest.observedDate) : null
-    if (
-        latestObserved != null &&
-        (approximated ? checked.position.observed < latestObserved : checked.position.observed <= latestObserved)
-    )
-        return {statusCode: 409, reasonCode: "STALE"}
-    const position = approximated ? approximate(checked.position, lastCellOf(share, now) || latest) : checked.position
-    const values = {
-        latitude: position.latitude,
-        longitude: position.longitude,
-        accuracy: position.accuracy,
-        heading: position.heading,
-        speed: position.speed
-    }
+    const taken = takePosition(share, p, now, latest, () => lastCellOf(share, now) || latest)
+    if (!taken.position) return taken
+    const {position, values, approximated} = taken
     ec.entity
         .makeValue(LATEST)
         .setAll(
@@ -878,21 +880,125 @@ function report(p) {
     const reached = currentUserIds(share)
     push(share, reached, Object.assign({event: "position", observedDate: position.observed, approximate: approximated}, values))
     // its XMPP contacts as they are at this report: one added later gets only what is received after
-    pushXmpp(share, xmppUserIds(share), {
-        event: "position",
-        observedDate: position.observed,
-        latitude: values.latitude,
-        longitude: values.longitude,
-        accuracy: values.accuracy
-    })
+    pushXmppPosition(share, position)
     return {statusCode: 200}
 }
 
-/** One report#Position for a share, its refusal's error kept out of the caller's messages: its outcome alone. */
-function reportQuiet(parameters) {
+/**
+ * A report's position as a share takes it, against the latest one it holds (`latest`, LocationLatest or, for the
+ * owner's XMPP app, LocationXmppLatest): at most one a min-interval-seconds (429), its values checked, not older than the
+ * latest (STALE), and an approximate share's cell made from `cellBase()`'s last cell. Out {position, values,
+ * approximated} or the refusal.
+ */
+function takePosition(share, p, now, latest, cellBase) {
+    const approximated = share.precisionEnumId === "LspApproximate"
+    const minimum = setting("min-interval-seconds", 5)
+    // an approximate share takes a position less often, so its cell changes tell less of a path
+    const intervalMillis = (approximated ? Math.max(minimum, setting("approximate-interval-seconds", 60)) : minimum) * 1000
+    const received = latest ? millis(latest.receivedDate) : null
+    if (received != null && now - received < intervalMillis)
+        return {
+            statusCode: 429,
+            reasonCode: "RATE_LIMITED",
+            retryAfterSeconds: Math.max(1, Math.ceil((intervalMillis - (now - received)) / 1000))
+        }
+    const checked = checkPosition(p, now, share)
+    if (checked.reasonCode) return checked
+    // an approximate share's stored time is its minute, so a later fix of the same minute replaces that minute's
+    const latestObserved = latest && latest.observedDate != null ? millis(latest.observedDate) : null
+    if (
+        latestObserved != null &&
+        (approximated ? checked.position.observed < latestObserved : checked.position.observed <= latestObserved)
+    )
+        return {statusCode: 409, reasonCode: "STALE"}
+    const position = approximated ? approximate(checked.position, cellBase()) : checked.position
+    const values = {
+        latitude: position.latitude,
+        longitude: position.longitude,
+        accuracy: position.accuracy,
+        heading: position.heading,
+        speed: position.speed
+    }
+    return {position, values, approximated}
+}
+
+/** A position the share took, to its XMPP contacts as they are now, with the share's end (for the session's own end). */
+function pushXmppPosition(share, position) {
+    pushXmpp(share, xmppUserIds(share), {
+        event: "position",
+        thruDate: millis(share.thruDate),
+        observedDate: position.observed,
+        latitude: position.latitude,
+        longitude: position.longitude,
+        accuracy: position.accuracy
+    })
+}
+
+/** Whom a share's XMPP contacts are, in words: their JIDs, "jane@example.org and 2 more". */
+function xmppWords(share) {
+    const jids = activeAudience(share.shareId)
+        .filter(row => row.audienceTypeEnumId === "LsaXmpp")
+        .map(row => row.jid)
+        .filter(Boolean)
+    if (!jids.length) return ec.l10n.localize("nobody now")
+    const and = " " + ec.l10n.localize("and") + " "
+    if (jids.length <= 3) return jids.slice(0, -1).join(", ") + (jids.length > 1 ? and : "") + jids[jids.length - 1]
+    return jids.slice(0, 3).join(", ") + and + (jids.length - 3) + " " + ec.l10n.localize("more")
+}
+
+/**
+ * A position from the owner's XMPP app for one share that takes it (takeXmppLocation Y): the share's own rules (the
+ * rate, the values, staleness, an approximate share's cell) against its XMPP latest, kept in LocationXmppLatest and
+ * pushed to the share's XMPP contacts only, never to its users, groups or link, never its LocationLatest or trail
+ * (plans/Location-Sharing.md §3.6). The first one a share takes tells the owner's XMPP sessions that their XMPP app's
+ * location is shared, with whom and until when.
+ */
+function takeXmpp(shareId, p) {
+    const share = ownShare(shareId, true)
+    // received once the share's lock is held, as report#Position takes its time
+    const now = nowMillis()
+    if (!share) return notFound(404)
+    if (!isActive(share, now)) return {statusCode: 410, reasonCode: "SHARE_ENDED"}
+    if (share.takeXmppLocation !== "Y") return {statusCode: 403, reasonCode: "NO_XMPP_SHARE"}
+    const latest = find(XMPP_LATEST).condition("shareId", share.shareId).one()
+    const taken = takePosition(share, p, now, latest, () => latest || lastCellOf(share, now))
+    if (!taken.position) return taken
+    const {position} = taken
+    ec.entity
+        .makeValue(XMPP_LATEST)
+        .setAll({
+            shareId: share.shareId,
+            latitude: position.latitude,
+            longitude: position.longitude,
+            accuracy: position.accuracy,
+            observedDate: new Date(position.observed),
+            receivedDate: new Date(now)
+        })
+        .createOrUpdate()
+    pushXmppPosition(share, position)
+    if (!latest) {
+        const owner = namesOf([share.ownerUserId])[share.ownerUserId] || {}
+        pushXmpp(share, [share.ownerUserId], {
+            event: "feeding",
+            thruDate: millis(share.thruDate),
+            text:
+                ec.l10n.localize("Your XMPP app's location is shared with") +
+                " " +
+                xmppWords(share) +
+                " " +
+                ec.l10n.localize("until") +
+                " " +
+                untilWords(millis(share.thruDate), now, owner.timeZone || null)
+        })
+    }
+    return {statusCode: 200}
+}
+
+/** One share's take of an XMPP position, its refusal's error kept out of the caller's messages: its outcome alone. */
+function takeXmppQuiet(shareId, parameters) {
     ec.message.pushErrors()
     try {
-        return report(parameters) || {}
+        return takeXmpp(shareId, parameters) || {}
     } finally {
         ec.message.clearErrors()
         ec.message.popErrors()
@@ -901,12 +1007,11 @@ function reportQuiet(parameters) {
 
 /**
  * report#XmppPosition (plans/Location-Sharing.md §3.6, LL5): a user location publish (XEP-0080) from the caller's own
- * XMPP client as a report of each of the caller's active shares with an XMPP contact in its audience that is sent from
- * no device (a browser page's share; one sent from the Android app is that device's alone, and an XMPP client is no
- * device key), through report#Position with the share's rules: the rate, approximate rounding, the audience's reach.
- * None: NO_XMPP_SHARE, so a client's setting never starts a share. A client clock more than a minute ahead is sent
- * again with the server's time, as a browser page does. Out the outcome of the best of them: 200 when one took it,
- * else 429 when one was too soon, else STALE, else the first refusal.
+ * XMPP client, taken by each of the caller's active shares whose owner turned on takeXmppLocation and that has an XMPP
+ * contact in its audience (takeXmpp: to those contacts only). None: NO_XMPP_SHARE, so a client's setting never starts a
+ * share or feeds one the owner did not choose. A client clock more than a minute ahead is taken again with the server's
+ * time, as a browser page does. Out the outcome of the best of them: 200 when one took it, else 429 when one was too
+ * soon, else STALE, else the first refusal.
  */
 function xmppReport(p) {
     const me = ec.user.userId
@@ -916,7 +1021,7 @@ function xmppReport(p) {
     const shareIds = Array.from(
         find(SHARE)
             .condition("ownerUserId", me)
-            .condition("userLoginKeyId", null)
+            .condition("takeXmppLocation", "Y")
             .condition("revokedDate", null)
             .condition("endedDate", null)
             .condition("thruDate", "greater", new Date(now))
@@ -937,10 +1042,10 @@ function xmppReport(p) {
     )
     const outcomes = []
     for (const shareId of shareIds.filter(id => withXmpp.has(id))) {
-        const asked = {shareId, latitude: p.latitude, longitude: p.longitude, accuracy: p.accuracy}
+        const asked = {latitude: p.latitude, longitude: p.longitude, accuracy: p.accuracy}
         const observed = blank(p.observedMillis) ? null : new Date(Number(p.observedMillis))
-        let out = reportQuiet(Object.assign({observedDate: observed}, asked))
-        if (out.reasonCode === "CLOCK_AHEAD") out = reportQuiet(asked)
+        let out = takeXmppQuiet(shareId, Object.assign({observedDate: observed}, asked))
+        if (out.reasonCode === "CLOCK_AHEAD") out = takeXmppQuiet(shareId, asked)
         outcomes.push(out)
     }
     if (!outcomes.length) return noShare
@@ -997,7 +1102,8 @@ function ownerView(share, now) {
         audienceSeqId: row.audienceSeqId,
         audienceTypeEnumId: row.audienceTypeEnumId,
         userId: row.userId || null,
-        userName: row.userId ? (people[row.userId] || {}).name || row.userId : null,
+        // a person's name; an XMPP contact is named by its JID
+        userName: row.audienceTypeEnumId === "LsaUser" && row.userId ? (people[row.userId] || {}).name || row.userId : null,
         userGroupId: row.userGroupId || null,
         groupName: row.userGroupId ? groups[row.userGroupId] || row.userGroupId : null,
         jid: row.jid || null,
@@ -1019,7 +1125,30 @@ function ownerView(share, now) {
         fromThisDevice: !!share.userLoginKeyId && share.userLoginKeyId === deviceKeyId(),
         audienceVersion: Number(share.audienceVersion) || 0,
         audienceList
-    })
+    }, lastSourceOf(share, now))
+}
+
+/**
+ * For the owner: whether the owner's XMPP app feeds the share (takeXmppLocation), the age of its last position from
+ * there (never the position), and where the share's last position came from, by the server's receive time: "xmpp"
+ * (the owner's XMPP app, to its XMPP contacts only) or "device" (a page or the phone), or null for none yet.
+ */
+function lastSourceOf(share, now) {
+    const take = share.takeXmppLocation === "Y"
+    if (!isActive(share, now)) return {takeXmppLocation: take, xmppAgeSeconds: null, lastSource: null}
+    const xmpp = find(XMPP_LATEST).condition("shareId", share.shareId).selectField("observedDate,receivedDate").one()
+    const latest = find(LATEST).condition("shareId", share.shareId).selectField("receivedDate").one()
+    const xmppReceived = xmpp ? millis(xmpp.receivedDate) : null
+    const received = latest ? millis(latest.receivedDate) : null
+    const observed = xmpp ? millis(xmpp.observedDate) : null
+    let lastSource = null
+    if (xmppReceived != null && (received == null || xmppReceived > received)) lastSource = "xmpp"
+    else if (received != null) lastSource = "device"
+    return {
+        takeXmppLocation: take,
+        xmppAgeSeconds: observed == null ? null : Math.max(0, Math.round((now - observed) / 1000)),
+        lastSource
+    }
 }
 
 /** A share as its audience reads it. */
@@ -1275,6 +1404,7 @@ function clean() {
         shareId => {
             if (find(TRAIL).condition("shareId", shareId).count() > 0) return 0
             find(LATEST).condition("shareId", shareId).deleteAll()
+            find(XMPP_LATEST).condition("shareId", shareId).deleteAll()
             find(AUDIENCE_MEMBER).condition("shareId", shareId).deleteAll()
             find(AUDIENCE).condition("shareId", shareId).deleteAll()
             find(SHARE).condition("shareId", shareId).deleteAll()

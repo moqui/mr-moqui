@@ -1265,6 +1265,11 @@ function liveShares() {
             deviceName: share.deviceName || null,
             fromThisDevice: share.fromThisDevice === true,
             audienceVersion: Number(share.audienceVersion) || 0,
+            // the owner's XMPP app feeds it too (to its XMPP contacts only), the age of its last position from there, and
+            // where the last position came from (plans/Location-Sharing.md §3.6)
+            takeXmppLocation: share.takeXmppLocation === true,
+            xmppAgeSeconds: share.xmppAgeSeconds ?? null,
+            lastSource: share.lastSource || null,
             latest: livePosition(share.latest)
         })
     const theirs = probe(LIVE_SERVICES + "find#SharedWithMe", {})

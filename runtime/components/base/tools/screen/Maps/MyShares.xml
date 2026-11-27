@@ -77,7 +77,10 @@ along with this software (see the LICENSE.md file). If not, see
             whoText: Array.from(share.audienceList || []).filter((row) => !row.revoked)
                 .map((row) => row.hasLink ? L('a guest link') : row.userName || row.groupName || row.jid || '').filter(Boolean).join(', '),
             untilText: share.thruDate ? ec.l10n.format(new Date(Number(share.thruDate)), 'EEE HH:mm') : '',
-            ageText: ageText(share.latest ? share.latest.ageSeconds : null) + (share.approximate ? ' · ' + L('approximate, about 1 km') : '')}))
+            // the newest of the page's or phone's and the XMPP app's, with where it came from (plans/Location-Sharing.md §3.6)
+            ageText: (share.lastSource === 'xmpp' ? ageText(share.xmppAgeSeconds) + ' · ' + L('from your XMPP app')
+                : ageText(share.latest ? share.latest.ageSeconds : null) + (share.lastSource ? ' · ' + L('from this page or phone') : ''))
+                + (share.approximate ? ' · ' + L('approximate, about 1 km') : '')}))
         // Open in Maps: only for a user whose own grants open the Maps app (Maps.xml carries its grant, as LocalMap asks)
         mapsOpen = !!ec.user.userId && !!ec.artifactExecution.isPermittedOwn('component://tools/screen/Maps.xml', 'AT_XML_SCREEN', 'view')
     ]]></script></actions>

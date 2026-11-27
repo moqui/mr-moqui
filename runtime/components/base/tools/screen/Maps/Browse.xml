@@ -150,8 +150,8 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/>
     </transition>
     <!-- Share my location: create#Share with the audience chosen (audience: a JSON list of {audienceTypeEnumId, userId,
-        userGroupId, jid}), until thruDate (epoch millis), exact or approximate and a trail or not; a link's token is answered
-        this once -->
+        userGroupId, jid}), until thruDate (epoch millis), exact or approximate, a trail or not, and the XMPP app's location
+        for the XMPP contacts or not (takeXmppLocation); a link's token is answered this once -->
     <transition name="createShare" method="post">
         <actions><script><![CDATA[
             let audienceList = null
@@ -160,6 +160,7 @@ along with this software (see the LICENSE.md file). If not, see
             const out = !Array.isArray(audienceList) ? null : ec.service.sync().name('org.moqui.maps.LocationServices.create#Share')
                 .requireNewTransaction(true).parameters({audienceList: audienceList.slice(0, 100), thruDate: Number.isFinite(thru) ? new Date(thru) : null,
                     precisionEnumId: String(context.precisionEnumId || 'LspExact'), keepTrail: String(context.keepTrail) === 'true',
+                    takeXmppLocation: String(context.takeXmppLocation) === 'true',
                     label: String(context.label || '').trim() || null}).call()
             if (!out) ec.web.sendJsonResponse({applied: false, reason: ec.l10n.localize('Choose who sees your location')})
             else if (ec.message.hasError()) { const reason = ec.message.getErrorsString(); ec.message.clearErrors(); ec.web.sendJsonResponse({applied: false, reasonCode: out.reasonCode, reason}) }

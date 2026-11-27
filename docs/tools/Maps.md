@@ -994,7 +994,8 @@ A person shares where they are, until a time they choose, with people they choos
 ([plans/Location-Sharing.md](../../plans/Location-Sharing.md)). The server side is built: the services
 `org.moqui.maps.LocationServices` (`framework/service/org/moqui/maps/LocationServices.xml`, `LocationShares.js`), the
 entities `LocationShare`, `LocationShareAudience`, `LocationShareAudienceMember`, `LocationShareOwner` (the lock of an
-owner's share count), `LocationLatest` and `LocationTrailPoint` (`moqui.maps`,
+owner's share count), `LocationLatest`, `LocationTrailPoint` and `LocationXmppLatest` (the owner's XMPP app's latest,
+for its XMPP contacts only) (`moqui.maps`,
 `framework/entity/MapLocationEntities.xml`) and the hourly clean, Maps shows them (below, "In Maps"), and the Android
 app sends a share from the phone, also in the background (below, "From the Android app"), and a share's XMPP contacts
 follow it in their XMPP apps (below, "Over XMPP"). Chat's live location and the guest page for a link are still to
@@ -1102,15 +1103,18 @@ come.
 - **Over XMPP** (LL5; [XMPP, User location](../interfaces/XMPP.md#user-location)). A share with XMPP contacts in its
   audience sends each position it takes, from any device or page, to those contacts' XMPP apps as user location
   (XEP-0080): a `geoloc` event from the owner's JID to each of their sessions that asked for it, with the values the
-  audience sees (an approximate share's cell), and an empty `geoloc` item when it ends, is stopped or revokes them. A
-  contact reads nothing of it on the web (`find#SharedWithMe`, `get#Share` read people and groups), gets only positions
-  received after they were added, and adding one raises the audience version. The owner's own XMPP client can send it
-  too: its location publish is `report#XmppPosition`, a report of each of the owner's active shares with an XMPP
-  contact that is sent from no device (a browser page's, or one taken over by Send from here: an XMPP client is no
-  device key, so a share the phone sends stays the phone's), through `report#Position`'s rules; with no such share it
-  is refused, so a client's setting never starts a share, and its "stopped" (an empty item) ends none: the share is
-  the owner's to stop here. XMPP contacts are users of this server only: there is no federation.
-
+  audience sees (an approximate share's cell), and an empty `geoloc` item when it ends (at its time too, sent by the
+  XMPP session), is stopped or revokes them. A contact is told (`LocationSharedXmpp`), reads nothing of it on the web
+  (`find#SharedWithMe`, `get#Share` read people and groups), gets only positions received after they were added, and
+  adding one raises the audience version. The owner's own XMPP app's location feeds a share only when the owner turns
+  on "Also use my XMPP app's location (sent to my XMPP contacts only)" in Share my location (`takeXmppLocation`, on
+  `create#Share` and `update#Share`, audited; turning it on raises the audience version): its location publish is
+  `report#XmppPosition`, taken by each such share with its rules, kept apart (`LocationXmppLatest`) and sent to the
+  share's XMPP contacts only, never its latest position, trail, people, groups or link. The first one tells the owner's
+  XMPP app by a headline, and Who sees my location and My location shares say where the last position came from
+  ("from your XMPP app" or "from this page or phone") and the XMPP app's last position's age. With no such share a
+  publish is refused, so a client's setting never starts or feeds a share, and its "stopped" (an empty item) ends
+  none: the share is the owner's to stop here. XMPP contacts are users of this server only: there is no federation.
 - **The owner's acts.** `create#Share` (the audience, the end, exact or approximate, a trail or not), `update#Share`
   (extend or shorten, add to the audience, change the label or purpose), `stop#Share`, `revoke#Audience` (one person,
   group, XMPP contact or the link), `report#Position` and `delete#Trail` are the owner's alone; another person's share,
@@ -1147,7 +1151,7 @@ come.
   names them to the owner, and tells anyone it leaves out. The one way back without the owner: a snapshot member's own
   row, ended and reopened, or deleted and made again with the same `fromDate` (an administrator can do either in System
   › Access), lets that same person back. No grant of these services reads another person's shares, and the generic
-  entity tools, entity REST, entity-auto services and the agents' `data` tool refuse these six entities, an
+  entity tools, entity REST, entity-auto services and the agents' `data` tool refuse these seven entities, an
   administrator's included (`moqui-entity` `sensitive.rs`).
 - **What the server's operator can still reach.** These services keep a share from other users, not from whoever runs
   the server: an administrator who signs in as the person (`ADMIN_LOGIN_AS`) sees what that person sees; a holder of the
@@ -1199,7 +1203,8 @@ escaped labels are `webroot/test/client/pages/WebrootMap.page.js`; the share ser
 effective configuration's `locationShares` and a share's device (another device or a browser refused, Send from here
 and Send from this device, the app's `reportClientLocation` and `stopClientLocation`, a renewed key, and over XMPP an
 XMPP position taken by the share with XMPP contacts only and each report pushed to those contacts alone),
-`framework/test/LocationShares.spec.js`, with the XMPP session's side in `moqui-xmpp` (`session::tests`, user location); the phone's sending, `moqui-client` `location_tests.rs` (`report_location`: the
+`framework/test/LocationShares.spec.js` (with the XMPP opt-in: none refused, the contacts alone reached, the version
+raised), with the XMPP session's side in `moqui-xmpp` (`session::tests`, user location); the phone's sending, `moqui-client` `location_tests.rs` (`report_location`: the
 newest point only, 429, stale, the clock, a 410, 404, another device or a sign-out stopping it), `moqui-mobile`
 `location_tests.rs` and the Kotlin `LocationRulesTest` (the interval, the stop rules, the start only from the app in
 front). The configuration services' rules are `framework/test/MapsConfig.spec.js` (with a record link resolved to the host
@@ -1305,5 +1310,5 @@ reached; the rate and its 429, a clock ahead and a time before the share; an app
 stored or sent, the same for two shares at one place, kept through jitter at a cell line, its accuracy 1000 m or the
 device's rounded up and its time to the minute; an ended share hidden, 410 to a report and its latest position cleaned;
 a trail kept only when chosen, deleted by its owner and purged past its days; the audit rows with no position; a link's
-token answered once and only its digest kept), with the generic tools' refusal of the six entities in Rust
+token answered once and only its digest kept), with the generic tools' refusal of the seven entities in Rust
 (`moqui-entity` `sensitive.rs`) and the agents' `data` tool's (`moqui-llm` `core_tests.rs`).
