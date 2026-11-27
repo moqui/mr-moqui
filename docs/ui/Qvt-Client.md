@@ -1247,12 +1247,13 @@ its `aria-label` and tooltip, so it fits the 390 px phone header.
 | `get(key)`, `list()` | One indicator; all of them in `sequence` then key order, each with `text` |
 | `clear()` | Takes every one off, and the notes: the shell's `beforeLogoutHooks` entry does it at a sign-out |
 
-The server's indicators come from the apps' `shell-indicator` providers (`mr-xml-screen.xsd`, called with no parameters
+The server's indicators come from the `shell-indicator` providers of the apps the user may open and of the components'
+confs (for every signed-in user) (`mr-xml-screen.xsd`, called with no parameters
 through `ShellServices.get#ShellIndicators`, its `call#Providers` running each as its app by the user's own authorization
 records): `GET /shellIndicators` (`webroot.xml`, 401 without a user)
 answers `{indicators: [{key, label, icon, tone, title, url, refreshInSeconds, sourceId}], refreshOn: [{topicPrefix, events}]}`.
 The shell asks for them with the shell data (at the page's start and after a re-login), sets each with its `url` as the
-action, takes off one it set that is no longer answered, asks again after the soonest `refreshInSeconds` (relative, so neither clock need agree), when the notification socket opens again,, and on a push of the
+action, takes off one it set that is no longer answered, asks again after the soonest `refreshInSeconds` (relative, so neither clock need agree), when the notification socket opens again, and on a push of the
 notification socket whose topic starts with a `refreshOn` `topicPrefix` and whose message's `event` is one of its `events`
 (within half a second of the last such push). The framework's conf answers one for every signed-in user (`MoquiDefaultConf.xml` `screen-facade` `shell-providers`, a hook a conf may answer, run with authorization disabled, so its service reads only the caller's own rows): "Sharing location" while the user shares theirs
 ([Maps, Live location](../tools/Maps.md#live-location)).

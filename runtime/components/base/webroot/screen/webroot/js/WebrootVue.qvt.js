@@ -29,13 +29,13 @@
     moqui.beforeLogoutHooks = moqui.beforeLogoutHooks || new Set();
 
     // Shell indicators (docs/ui/Qvt-Client.md, Shell indicators): status chips in the app bar on every screen, kept by the
-    // shell, which outlives the screens (Maps' "Sharing location", plans/Location-Sharing.md §3.3). set(key, {label, icon,
+    // shell, which outlives the screens (live location's "Sharing location", plans/Location-Sharing.md §3.3). set(key, {label, icon,
     // tone, title, action, sequence}) adds or replaces one (key: letters, digits, _ and -; tone: primary, positive, warning,
     // negative or info; action: a path of this site the shell goes to, {url}, or a function, {onClick}); remove(key) takes
     // it off; note(key, text) puts a screen's few words after its label, kept until note(key, null) or clear(); clear()
     // takes every one off, which a sign-out does (beforeLogoutHooks). Reactive; the label, note and title are plain text, cut
-    // short and shown as text. The indicators the server's shell-indicator providers answer are the shell's own
-    // (loadShellIndicators).
+    // short and shown as text. The indicators the server's shell-indicator providers answer (the apps' and those a
+    // component's conf registers for every user) are the shell's own (loadShellIndicators).
     const INDICATOR_TONES = ["primary", "positive", "warning", "negative", "info"];
     const indicatorText = (value, max) => (value === null || value === undefined || typeof value === "object" ? "" : String(value))
         .replace(/[\u0000-\u001f\u007f-\u009f‪-‮⁦-⁩]/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
@@ -10424,7 +10424,14 @@
                     this.indicatorRules = (Array.isArray(json.refreshOn) ? json.refreshOn : []).filter((rule) => moqui.isPlainObject(rule) && moqui.isString(rule.topicPrefix) && rule.topicPrefix)
                         .map((rule) => ({ topicPrefix: rule.topicPrefix, events: Array.isArray(rule.events) ? rule.events.map(String) : null }));
                     if (next !== null) this.indicatorTimer = setTimeout(() => this.loadShellIndicators(), Math.min(Math.max(next * 1000 + 1000, 5000), 86400000));
-                }, (err) => console.info("shell indicators not loaded", err && err.status));
+                }, (err) => {
+                    console.info("shell indicators not loaded", err && err.status);
+                    // the last ask failed: asked again in a minute, so a chip does not stay as it was
+                    if (ask === this.indicatorAsk) {
+                        clearTimeout(this.indicatorTimer);
+                        this.indicatorTimer = setTimeout(() => this.loadShellIndicators(), 60000);
+                    }
+                });
             },
             indicatorClick(indicator) {
                 const item = moqui.shellIndicators.get(indicator.key);

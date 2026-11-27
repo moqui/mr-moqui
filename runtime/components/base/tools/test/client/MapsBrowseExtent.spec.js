@@ -4,7 +4,8 @@
 // (WebrootMap.js) loads only as m-map mounts, after the first view is set, so a check there left the extent unread on a
 // fresh page. The view is read once the page settles and Browse has its configuration. On the same render, live location
 // (plans/Location-Sharing.md §3.3): a share started from Browse, sent from the page, drawn on the live layer, shown by the
-// app bar's "Sharing location" chip (a shell indicator, its label text) and stopped.
+// app bar's "Sharing location" chip (a shell indicator, its label text) and stopped; a failed read hides nothing, and the
+// page once closed starts no watch again.
 const RUSSIA = "27.2865,41.1518,-169.8983,77.6975"
 
 /** The MapsBrowse component of the page, found in the shell's tree of components. */
@@ -47,7 +48,7 @@ feature("Browse is the MapsBrowse component with its map, opened on an extent ac
         // Share my location with a guest link starts one, sent from this page (the browser's position stood in for, as
         // watchPosition gives it) through reportPosition, its banner shown and its latest drawn on m-map's live layer as the
         // audience reads it; Stop ends it and the page stops sending
-        let started, drawn, shown, chip, markup, failedRead, panel, stopped
+        let started, drawn, shown, chip, markup, failedRead, panel, stopped, closed
         try {
             started = page.evaluate(`(async () => {
                 const vm = (${browse})()
@@ -106,6 +107,21 @@ feature("Browse is the MapsBrowse component with its map, opened on an extent ac
             stopped = page.waitFor(`(() => { const vm = (${browse})()
                 return !document.querySelector('[data-maps-sharing="' + ${JSON.stringify(started.shareId)} + '"]') && !vm.sending.length && !document.getElementById("m-indicator-locationSharing")
                     ? { mine: vm.myShares.length, watching: vm.watchId === null } : null })()`, {timeout: 10})
+            // once the page has closed (its own beforeUnmount run), nothing starts the watch again: a late read that restores
+            // a stored share, a share started or stopped, a watch asked for; nor says "sending here"
+            closed = page.evaluate(`(() => {
+                const vm = (${browse})()
+                let watches = 0
+                Object.defineProperty(navigator, "geolocation", { configurable: true, value: {
+                    watchPosition() { watches++; return 9 }, getCurrentPosition() { watches++ }, clearWatch() {} } })
+                vm.$.type.beforeUnmount.call(vm)
+                vm.startSending("SPEC_CLOSED", { fresh: true })
+                vm.restoreSending()
+                vm.watchFixes()
+                vm.noteSending()
+                return { watches, sending: vm.sending.length, pump: vm.pumpTimer === null || vm.pumpTimer === undefined,
+                    note: (moqui.shellIndicators.state.notes || {}).locationSharing || "" }
+            })()`)
         } finally {
             // a run that failed on the way leaves no active share: the one the page started is stopped (again, harmlessly);
             // a page too broken for that does not hide the failure that broke it
@@ -141,5 +157,9 @@ feature("Browse is the MapsBrowse component with its map, opened on an extent ac
         failedRead.kept == started.shareId
         failedRead.sending == started.shareId
         failedRead.gone == 0
+        closed.watches == 0
+        closed.sending == 0
+        closed.pump == true
+        closed.note == ""
     }
 })
