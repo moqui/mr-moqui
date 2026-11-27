@@ -14,6 +14,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
     <!-- The native screen share in a call (ScreenShare.kt): its foreground service holds the projection. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <!-- A server page's audio or video in the background (MediaPlayback.kt): its mediaPlayback foreground service. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <!-- The screen off at the ear in a voice call (CallAudio's proximity wake lock). -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- The call's media, in the WebView: asked at the Answer (IncomingCallActivity) or by the page. -->
@@ -139,6 +141,11 @@
             android:name=".CallService"
             android:exported="false"
             android:foregroundServiceType="phoneCall|microphone|camera" />
+        <!-- The media notification of a server page's audio or video (MediaPlayback.kt) -->
+        <service
+            android:name=".MediaPlaybackService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
         <receiver
             android:name=".CallActionReceiver"
             android:exported="false" />

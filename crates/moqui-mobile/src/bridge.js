@@ -328,8 +328,35 @@
             stop: (shareId) => invoke("location_share_stop", { shareId: String(shareId || "") }),
             status: () => ask("location_share_status").then((list) => (Array.isArray(list) ? list : []), () => [])
         });
+        // the page's media in the background (src/media.rs): a media notification with play and pause and a
+        // foreground service while it plays, so the audio goes on with the app in the background or the screen off.
+        // The notification's buttons come back to the listeners of on(fn): {action, position}.
+        const mediaListeners = [];
+        Object.defineProperty(window, "__moquiMediaAction", { configurable: false, writable: false,
+            value: (event) => {
+                mediaListeners.slice().forEach((fn) => {
+                    try { fn(event || {}); } catch (err) { console.error("moquiDesktop media listener failed", err); }
+                });
+            } });
+        const mediaInfo = (given) => {
+            const info = given || {};
+            const number = (value) => (typeof value === "number" && isFinite(value) ? value : null);
+            return { title: text(info.title), artist: text(info.artist), artworkUrl: text(info.artworkUrl),
+                playing: typeof info.playing === "boolean" ? info.playing : null, position: number(info.position),
+                duration: number(info.duration), rate: number(info.rate) };
+        };
+        const media = Object.freeze({
+            start: (info) => invoke("media_session", { action: "start", info: mediaInfo(info) }),
+            update: (info) => invoke("media_session", { action: "update", info: mediaInfo(info) }),
+            stop: () => invoke("media_session", { action: "stop", info: null }),
+            on: (fn) => {
+                if (typeof fn !== "function") return () => {};
+                mediaListeners.push(fn);
+                return () => { const i = mediaListeners.indexOf(fn); if (i >= 0) mediaListeners.splice(i, 1); };
+            }
+        });
         // pushDelivers: the chat's notifications come by FCM, not from the page's socket (plans/Comms-Messaging.md §7.2 rule 7)
-        window.moquiDesktop = Object.freeze({ socket, outbox, drafts, vault, notify, windowSeen, pushDelivers: true, location,
+        window.moquiDesktop = Object.freeze({ socket, outbox, drafts, vault, notify, windowSeen, media, pushDelivers: true, location,
             storageScope: String(page.storageScope || ""),
             openInShell: (path) => ask("open_in_shell", { path: String(path || "") }),
             openExternal: (url) => invoke("open_external", { url: String(url || "") }),

@@ -96,6 +96,7 @@ const COMMANDS: &[&str] = &[
     "location_share_stop",
     "location_share_status",
     "web_request",
+    "media_session",
 ];
 
 fn main() {

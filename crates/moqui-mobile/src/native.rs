@@ -196,6 +196,17 @@ pub(crate) fn tell_page(what: &str, json: &str) {
     }
 }
 
+/// The media notification's or session's button (`Native.mediaAction`, `MediaPlayback.kt`): the server page that
+/// plays the media hears it (`moquiDesktop.media.on`). `position` is in seconds; a negative one is none.
+pub(crate) fn media_action(what: &str, position: f64) {
+    let position = (position >= 0.0).then_some(position);
+    match (crate::media::action_script(what, position), host()) {
+        (Some(script), Some(host)) => host.tell_app_page(&script),
+        (None, _) => log::warn!("Media: the page is not told {what}: not an action"),
+        (Some(_), None) => {}
+    }
+}
+
 /// Telecom ended an answered call (a headset's or a car's hang-up): the page leaves it.
 pub(crate) fn hang_up(id: &str) {
     match (calls::call_id(id), host()) {
@@ -1196,6 +1207,21 @@ mod entries {
     ) {
         env.with_env(|env| -> Result<(), jni::errors::Error> {
             super::tell_page(&what.try_to_string(env)?, &json.try_to_string(env)?);
+            Ok(())
+        })
+        .resolve::<LogErrorAndDefault>();
+    }
+
+    /// `Native.mediaAction(what, position)`: the media notification's button, for the server page.
+    #[no_mangle]
+    pub extern "system" fn Java_org_moqui_mobile_Native_mediaAction<'caller>(
+        mut env: EnvUnowned<'caller>,
+        _class: JClass<'caller>,
+        what: JString<'caller>,
+        position: jni::sys::jdouble,
+    ) {
+        env.with_env(|env| -> Result<(), jni::errors::Error> {
+            super::media_action(&what.try_to_string(env)?, position);
             Ok(())
         })
         .resolve::<LogErrorAndDefault>();

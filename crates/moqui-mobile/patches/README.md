@@ -44,6 +44,12 @@ invoke key and could call the app's commands as the page, with the account's dev
   `isForMainFrame`, the one place it tells), and a copy a request came with is dropped, so the app's scheme can tell
   the page's own document from what a frame of another origin in it starts (`src/scheme.rs` `page_site`,
   SEC-CLI-102).
+- `src/android/kotlin/RustWebChromeClient.kt`: a page's fullscreen (a video's fullscreen button, or
+  `requestFullscreen`) shows its view over the activity, in landscape, with the system bars hidden, until the page
+  leaves it or Android's back does (`leaveFullscreen`). wry hid the view at once, so fullscreen never showed.
+- `src/android/kotlin/WryActivity.kt`: `keepWebViewRunning()` (false unless the app says so): while it is true the
+  activity's pause does not pause the webview, so a page's audio and its timers go on in the background
+  (`MediaPlayback.kt`, src/media.rs).
 
 `./moq android dev` and `build` stop when `cargo tree -i wry` shows a wry that is not this copy (cargo builds a wry the
 patch no longer matches from crates.io with only a warning), so a Tauri update cannot drop the patch unseen.

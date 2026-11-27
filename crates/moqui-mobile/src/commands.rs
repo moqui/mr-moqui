@@ -783,6 +783,27 @@ pub(crate) async fn web_request(
     .map_err(|err| format!("The web request stopped: {err}"))?
 }
 
+/// A server page's media in the background (`moquiDesktop.media`, src/media.rs): `start`, `update` or `stop` the
+/// media notification and its foreground service. The main webview's server pages only (`moqui-app`), not the shell
+/// and not a frame.
+#[tauri::command(async)]
+pub(crate) fn media_session(webview: tauri::Webview, action: String, info: Option<crate::media::MediaInfo>) -> Result<(), String> {
+    let page = webview.url().map_err(|err| err.to_string())?;
+    if webview.label() != crate::host::MAIN || page.origin().ascii_serialization() != moqui_client_tauri::APP_ORIGIN {
+        return Err("Not a server page".to_string());
+    }
+    let action = crate::media::action(&action)?;
+    let state = crate::media::state(&info.unwrap_or_default());
+    let json = serde_json::to_string(&state).map_err(|err| err.to_string())?;
+    #[cfg(target_os = "android")]
+    return crate::android::media_session(action, &json);
+    #[cfg(not(target_os = "android"))]
+    {
+        log::debug!("Media {action}: {json} (no media notification here)");
+        Ok(())
+    }
+}
+
 /// The shell's page, or an error: the screen share is the call's, which the shell owns.
 fn require_shell(app: &AppHandle, webview: &tauri::Webview, nonce: Option<&str>) -> Result<(), String> {
     let host = host(app)?;

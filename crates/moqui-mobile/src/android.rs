@@ -647,6 +647,23 @@ pub(crate) fn fcm_stop() -> Result<(), String> {
     })
 }
 
+/// A server page's media (`MediaPlayback.fromPage`): `action` is `start`, `update` or `stop`, `json` the checked
+/// [`crate::media::MediaState`].
+pub(crate) fn media_session(action: &str, json: &str) -> Result<(), String> {
+    with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.MediaPlayback"))?;
+        let action = env.new_string(action)?;
+        let json = env.new_string(json)?;
+        env.call_static_method(
+            &class,
+            jni_str!("fromPage"),
+            jni_sig!("(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)V"),
+            &[JValue::Object(app), JValue::Object(&action), JValue::Object(&json)],
+        )?;
+        Ok(())
+    })
+}
+
 /// Clear the server pages' origin's storage (`PageStorage.clear`), at a switch of the current account or its sign-out
 /// (SEC-CLI-81).
 pub(crate) fn clear_page_storage() -> Result<(), String> {

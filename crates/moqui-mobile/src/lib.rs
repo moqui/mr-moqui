@@ -41,6 +41,7 @@ mod host;
 mod join;
 mod keystore;
 mod location;
+mod media;
 mod native;
 mod push;
 mod scheme;
@@ -164,7 +165,8 @@ pub fn run() {
             commands::location_share_start,
             commands::location_share_stop,
             commands::location_share_status,
-            commands::web_request
+            commands::web_request,
+            commands::media_session
         ])
         .setup(move |app| {
             let embedded = files.take().ok_or("the app was set up twice")?;
