@@ -9,7 +9,8 @@
 // time before the share told apart, an approximate share's cell (one fixed grid, the same for two shares, kept through
 // jitter at a line, its accuracy 1000 m or the device's rounded up, its time to the minute) made before it is stored or
 // sent, an ADMIN reads nothing of another's, the audit rows hold no position, and a link's token is returned once with
-// only its digest kept. It ends its memberships and stops its shares in cleanup, so it runs again on --db existing.
+// only its digest kept; the owner's lock row is made on first use, and a group of more than four times the audience cap
+// is refused before its snapshot is written (the LL1 review). It ends its memberships and stops its shares in cleanup, so it runs again on --db existing.
 // Run: ./moq test framework --spec LocationShares
 const S = "org.moqui.maps.LocationServices."
 const A = "LOC_SHARE_A"
@@ -28,6 +29,8 @@ const J = "LOC_SHARE_J"
 const USERS = [A, B, C, D, F, G, H, I, J]
 const GROUP = "LOC_SHARE_GROUP"
 const OTHER_GROUP = "LOC_SHARE_OTHER"
+// a group of five current members, for the cap checked before a group's snapshot
+const BIG_GROUP = "LOC_SHARE_BIG"
 const MINUTE = 60000
 const HOUR = 3600000
 const DAY = 86400000
@@ -137,7 +140,7 @@ spec({
         sys(() =>
             ec.entity
                 .find("moqui.security.UserGroupMember")
-                .condition("userGroupId", "in", [GROUP, OTHER_GROUP])
+                .condition("userGroupId", "in", [GROUP, OTHER_GROUP, BIG_GROUP])
                 .condition("userId", "in", USERS)
                 .condition("thruDate", null)
                 .updateAll({thruDate: new Date(Date.now() - 1000)})
@@ -756,3 +759,45 @@ feature("a guest link's token is returned once and only its digest is kept; a sh
         secondLink == "ONE_LINK"
     }
 })
+
+feature(
+    "the owner's lock row is made on first use; a group of more than four times max-audience members is refused before its snapshot",
+    {
+        when() {
+            sys(() => ec.entity.find("moqui.maps.LocationShareOwner").condition("ownerUserId", A).deleteAll())
+            const first = as(A, "create#Share", {audienceList: [toUser(B)], thruDate: new Date(shared.now + HOUR)})
+            const lockRows = rows("moqui.maps.LocationShareOwner", {ownerUserId: A}).length
+            make("moqui.security.UserGroup", {userGroupId: BIG_GROUP, description: "Location shares spec, five members"})
+            for (const userId of [A, B, C, I, J])
+                make("moqui.security.UserGroupMember", {userGroupId: BIG_GROUP, userId, fromDate: new Date(shared.now - DAY)})
+            // five membership rows, but a snapshot of B alone: C and J block A here, and I blocks A from the start, so
+            // the cap after the writes passes at a max-audience of 1 and only the check before the snapshot refuses it
+            const share = max =>
+                withConf("location@max-audience", max, () =>
+                    blockedBy(C, () =>
+                        blockedBy(J, () =>
+                            as(A, "create#Share", {audienceList: [toGroup(BIG_GROUP)], thruDate: new Date(shared.now + HOUR)})
+                        )
+                    )
+                )
+            const refused = share(1)
+            const allowed = share(2)
+            return {
+                first,
+                lockRows,
+                refused,
+                allowed,
+                snapshot: rows("moqui.maps.LocationShareAudienceMember", {shareId: allowed.shareId || "-"}).map(row => row.userId)
+            }
+        },
+        then({first, lockRows, refused, allowed, snapshot}) {
+            first.errors == ""
+            first.shareId != null
+            lockRows == 1
+            refused.reasonCode == "AUDIENCE_TOO_LARGE"
+            refused.shareId == null
+            allowed.errors == ""
+            snapshot.join() == B
+        }
+    }
+)

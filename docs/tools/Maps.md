@@ -886,7 +886,9 @@ and read through the services only.
   token is answered once by the call that makes it and kept only as its digest (as `ResourceShare`'s link). Each person
   added is told who shares with them and until when (the `LocationShared` notification, in their own time zone). A
   person has at most `location@max-active-shares` shares on at once, and a share at most `location@max-audience` people
-  (a group's members counted each), contacts and links.
+  (the members its groups reach, counted each), contacts and links; a group with more than four times that many current
+  members is refused before its members are written down. A share whose owner's lock row cannot be made or locked is
+  refused (`SHARE_LOCK_FAILED`) rather than counted without it.
 - **Who reads it.** `find#MyShares` (the owner's shares with their audiences), `find#SharedWithMe` and `get#Share` (the
   latest position, and a kept trail in pages of up to 1000 points) answer the owner and the share's current audience
   only: a user whose entry is not revoked, or a member of a group whose entry is not revoked who is in the entry's
