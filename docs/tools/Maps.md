@@ -870,172 +870,123 @@ fallback), and a refresh is compared by address, not by ID.
 
 ## Offline packages
 
-A user downloads a region of their map to the Android app or the desktop client and browses it with no network
-([plans/Maps-Offline.md](../../plans/Maps-Offline.md)). The server part is built (the package, its build and its
-download), and so are the apps' store of packages with their download and serving ([below](#on-the-device)) and the
-offline Maps screen that reads them ([In the apps](#in-the-apps)).
+A user downloads a region of their map to the Android app or the desktop client and browses it with no network: its
+basemap, their own places and the overlays they read, and the region's postal codes, Overture places and addresses. A
+place they save meanwhile is sent when the server answers again. The web PWA has no offline maps. The design is
+[plans/Maps-Offline.md](../../plans/Maps-Offline.md); how the apps keep and serve packages is in
+[Desktop-Client](../ui/Desktop-Client.md#offline-map-packages) and [Mobile-Client](../ui/Mobile-Client.md#offline-map-packages).
 
-**A package** (`moqui.maps.MapPackage`) is one region (west, south, east, north; a west east of its east crosses the
-antimeridian) at a zoom range (0 to 16), built on the server from what its owner may see when it is built. It is its
-owner's alone: it is never shared, and every service and request checks the owner (another user's package is, to them,
-one that is not there). The file is a zip, every member stored as it is (the tiles are compressed already):
+**Making one.** Maps › Offline maps (`Maps/Offline.xml`, `MAPS_APP`) lists the user's packages with their state, zooms,
+size and built date, with Download, Update, Cancel and Delete. New offline map draws the region as a box on the map
+(the one its west, south, east and north parameters name, else the user's map's initial view); the user picks its zooms
+(0 to 16), its basemaps among those their profile offers, and whether it holds their places, their overlays, the postal
+codes and the Overture rows. Estimate shows the size and the tile count before anything is built; Build starts it, and
+the user is told (a notification of topic `MapPackageBuild`, to them alone) when it is ready or failed. Update builds it
+again as a new revision from what they may see then, the earlier revision downloadable until the new one is ready;
+Delete removes it, its file and its download records. The terminal page (`Offline.tui.json`) lists the packages and
+their states with Update, Cancel and Delete; a package is not made from the terminal. A package is its owner's alone:
+it is never shared (a household member builds their own), and every service and request checks the owner (another
+user's package is, to them, one that is not there).
+
+**What it holds.** A package (`moqui.maps.MapPackage`) is one region (west, south, east, north; a west east of its east
+crosses the antimeridian) at a zoom range, cut on the server from what its owner may see when it is built. Its file is a
+zip, every member stored as it is (the tiles are compressed already):
 
 | Member | Contents |
 | --- | --- |
-| `manifest.json` | `schemaVersion` 1; the package (id, name, bbox, zooms, revision, built date); the effective configuration frozen with every URL package-relative (paths from the package's root, no host and no path of this server: the packaged basemaps, the outline, the places and overlays, `allowedOrigins` empty, `externalRequests` false, the view the region); each source with its revision, attribution and license; each member's path, size and SHA-256; what was left out (`omitted`) and what could not be read (`failures`) |
+| `manifest.json` | `schemaVersion` 1; the package (id, name, bbox, zooms, revision, built date); the effective configuration frozen with every URL package-relative (no host and no path of this server: the packaged basemaps, the outline, the places and overlays, `allowedOrigins` empty, `externalRequests` false, the view the region); each source with its revision, attribution and license; each member's path, size and SHA-256; what was left out (`omitted`) and what could not be read (`failures`) |
 | `basemap/<layerId>.pmtiles` | The extract of each basemap archive: the light and dark styles of one archive share one |
 | `style/<flavor>.json`, `sprites/…`, `fonts/noto-sans/…` | A basemap's style (one under `/libs`) with its `sprite` and `metadata["ol:webfonts"]` made package-relative, its sprites, and the map label fonts' CSS and woff2 files |
 | `outline.json` | The Natural Earth outline, for the zooms below the extract |
 | `places.geojson`, `overlays/<overlayId>.geojson` | The owner's places, and the overlays they read now that meet the region, as the overlay transition gives them; an overlay simplified into tiles as its tiles' extract, `overlays/<overlayId>.pmtiles` |
-| `postal.json` | The postal codes whose representative point is in the region (at most 50,000): code, display code, country, place names with their admin names, point and precision, with the data sets' licenses in the manifest |
-| `overture-places.json`, `overture-addresses.json` | The rows of the active Overture imports whose point is in the region (at most 200,000 each), each import's licenses in the manifest |
+| `postal.json` | The postal codes whose representative point is in the region: code, display code, country, place names with their admin names, point and precision, with the data sets' licenses in the manifest |
+| `overture-places.json`, `overture-addresses.json` | The rows of the active Overture imports whose point is in the region, each import's licenses in the manifest; an address row carries the keys the server made of it, which the apps' address search reads |
 
-Only the archive basemaps the owner's map profile offers them now are cut (the profile's basemap and the other styles of
-its archive, or those the user chose among the profile's basemaps), and only overlays they read now. **Record layers** (an
-app's facilities, assets, a party's addresses) are not packaged: their access is read at each request, and a copy on a
-device would outlive a revoked grant. **A provider's remote tiles** (OpenFreeMap) are never packaged: its terms allow a
-limited offline download, not a mirror; an offline package needs a [registered archive](#archives). A package holds only
-what its owner could read when it was built, and a copy on a device stays readable there until it is deleted there: the
-screen says so.
+Only the archive basemaps the owner's map profile offers them now are cut, and only the overlays they read now.
+**Record layers** (an app's facilities, assets, a party's addresses) are not packaged: their access is read at each
+request, and a copy on a device would outlive a revoked grant; the screen says so. **A provider's remote tiles**
+(OpenFreeMap) are never packaged: its terms allow a limited offline download, not a mirror, so an offline package needs
+a [registered archive](#archives) (`NO_ARCHIVE` without one). A COG layer is not packaged either.
 
-**Building.** Estimate reads the size before anything is built: for each archive the tiles of the region found through
-its directories, their distinct contents and their bytes (`MapSourceServices.estimate#PackageExtract`, in Rust,
-`moqui-tools` `maps_extract.rs`: no tile is read, and one zoom's tile IDs at most are held), the postal and Overture
-rows counted in the region and sized near enough. A package past `maps@package-max-bytes` is refused there, as is a
-region of more than 4,000,000 tiles, one with no registered basemap archive to cut (`NO_ARCHIVE`), and one that would
-take the user's packages past `maps@package-user-max-bytes` (`TOO_LARGE_FOR_USER`). Build (`create#Package`) records the
-archives' registered revisions and a random build key, and its run of the `MapPackageBuild` ServiceJob starts when the
-installation has room: at most `maps@package-concurrent-builds` packages are built at once (the job workers are shared
-with the scheduled jobs), another waits, pending ("Waiting for its turn"), and starts when one ends (the hourly clean
-starts any whose turn was missed); a user has at most one package pending or building (`PACKAGE_BUSY`). One scheduler
-runs at a time (`schedule#PackageBuilds`, after the commit of the request that asked), and it first ends any build whose
-run is gone or ended, silent for an hour once started, or never started six hours after it was handed to the job, by the
-build's own clocks (its last word, `progressDate`, and its job run's): a download or a cancel does not reset them. A
-lost run (a full worker queue when its request committed, a run-as user the job runner refused, a restart mid-build or
-while it was queued) so holds its turn for up to an hour or two (a queued one up to about seven), until a scheduler pass
-or the hourly clean ends it. The run is signed in as the package's owner, whoever's request or build's end started it,
-and cuts only what the owner may see; an owner whose account is closed (disabled for good, or past its terminate date)
-or whose password must change, or a run that throws, ends the package failed. An owner locked out for a few minutes
-after failed sign-ins (someone else's, it may be; `user-facade/login@disable-minutes`) puts the build back to wait, and
-it starts after the lock ends, at the next scheduler pass (within about an hour). The owner alone is told when it ends
-(topic `MapPackageBuild`, sent to them directly). The run holds no transaction while it cuts, each write its own, and
-writes only while the package still holds its build key; its files are named by the key, so two runs never share one. It
-cuts each archive (`build#PackageExtract`): for each zoom in turn the tiles of the region sorted by tile ID, found
-through the directories as the tile transition finds one (kept by the archive's tag), read by range in batches by offset
-(neighbouring tiles one read) and handed as stored to a streaming writer (`moqui-lib` `pmtiles.rs` `ArchiveWriter`),
-which writes the tile data to a part file and keeps only the directory entries and a bounded map of the contents the
-archive shares between tiles (the sea, read and stored once), the archive's metadata JSON copied whole. Each archive has
-what is left of `maps@package-max-bytes` after the members before it, and a zip past it fails the run. An archive
-registered again since Build, or replaced while it is cut (its tag and size checked when the cut starts and ends, a file
-on disk by its modification time too), fails the run: never a mixed extract; so does a region where no basemap could be
-cut. The other members are read as the owner; one that cannot be read is logged and named in the manifest's `failures`
-in general words (no path of the server), and the rest goes on. The zip is
-`runtime://tmp/map-packages/<packageId>-<revision>-<buildKey>.zip`, with its size and SHA-256 on the row. The run's
-progress is on the row, and Cancel (`cancel#Package`) stops it at its next batch of tiles (a package still waiting ends
-at once); a run that stopped with no word for an hour is ended by the next scheduler or when its owner next updates,
-cancels or deletes the package, and a run so ended that was only slow stops at its next batch, its key gone. Update
-(`update#Package`) builds it again as a new revision from what the owner may see and the archives as registered then;
-the earlier revision stays downloadable until the new one is ready, and its file is removed then. Delete removes the
-row, its download records and the file. The hourly `clean_MapPackages_hourly` job (`clean#MapPackages`) removes the file
-of a package not downloaded for `maps@package-keep-days` since it was built or last downloaded (the package is left
-Expired; Update builds it again) and any file under `runtime://tmp/map-packages` no package names, a busy package's own
-build left alone.
+**How it is built.** The estimate reads each archive's directories for the region's tiles, their distinct contents and
+their bytes, with no tile read (`MapSourceServices.estimate#PackageExtract`, in Rust, `moqui-tools` `maps_extract.rs`),
+and counts the postal and Overture rows. Build (`create#Package`) records the archives' registered revisions and a random
+build key, and the `MapPackageBuild` ServiceJob runs it when the installation has room (`maps@package-concurrent-builds`
+at once; another waits, "Waiting for its turn", and starts when one ends). The run is signed in as the package's owner,
+whoever's request or build's end started it, and cuts only what the owner may see: for each archive and zoom the
+region's tiles in tile-ID order, read by range in batches and handed as stored to a streaming writer (`moqui-lib`
+`pmtiles.rs` `ArchiveWriter`, the archive's metadata copied whole), then the other members, read as the owner, the
+manifest and the zip, `runtime://tmp/map-packages/<packageId>-<revision>-<buildKey>.zip`, with its size and SHA-256 on
+the row. Its progress is on the row and Cancel stops it at its next batch of tiles. It writes only while the package
+holds its build key, and fails rather than mixing revisions: an archive registered again since Build, or replaced while
+it is cut (its tag and size checked at the start and the end), ends it failed, as does a region where no basemap could
+be cut or a zip past the size cap. A member that cannot be read is logged and named in the manifest's `failures` in
+general words, and the rest goes on. An owner whose account is closed or whose password must change ends it failed; one
+locked out for a few minutes after failed sign-ins puts it back to wait. One scheduler runs at a time
+(`schedule#PackageBuilds`, after the commit of the request that asked), and it first ends a build whose run is gone, silent
+for an hour once started, or not started six hours after it was handed to the job, by the build's own clocks. The hourly
+`clean_MapPackages_hourly` job (`clean#MapPackages`) starts a build whose turn was missed, and removes the file of a package
+not downloaded for `maps@package-keep-days` since it was built or last downloaded (the package is left Expired; Update
+builds it again) and any file under `runtime://tmp/map-packages` no package names.
 
-**The settings** are attributes of the `maps` conf element: `maps@package-max-bytes` (2 GiB),
-`maps@package-user-max-bytes` (8 GiB), `maps@package-concurrent-builds` (1) and `maps@package-keep-days` (30).
-
-**The screen** is Maps › Offline maps (`Maps/Offline.xml`, `MAPS_APP`): the user's packages with their state, zooms,
-size and built date, with Download, Update, Cancel and Delete; and New offline map, the region drawn as a box on the map
-(the one its west, south, east and north parameters name, else the user's map's initial view), its zooms, its basemaps
-and what else it holds, with Estimate and Build. Its terminal page (`Offline.tui.json`) lists the packages and their
-states with Update, Cancel and Delete; a package is not made from the terminal. The `package` transition
+**Downloading it.** In the app, the shell's drawer has Offline maps (and Maps, below) for an account with the Maps app.
+The offline screen lists the account's packages as the server lists them (`/apps/maps/Offline/packageList`,
+`find#Packages`: each package's revision, size, strong tag and download path) and as the device holds them, with
+Download, Update (a newer revision on the server), Cancel and Delete from this device; on the phone, "Download only on
+Wi-Fi". The app downloads through the account's own requests with its device key, by ranges, resuming where a cut left
+it; checks the whole file and each member against the SHA-256 the server and the manifest give; and only then puts the
+new revision in place of the one it had, which a failed check keeps. The `package` transition
 (`/apps/maps/Offline/package?packageId=…&revision=…`) sends the zip by `ec.web.sendPinnedResourceResponse` with its
-SHA-256 as the strong `ETag` (`sha256-…`), by range (one `Range`, `If-Range`), so a download resumes; it checks the
-owner on every request (`get#PackageAccess`: another user's package is 404) and answers 409 for a revision that is no
-longer the package's. Each download is recorded (`moqui.maps.MapPackageDownload`: the package, the revision and, for a
-request signed in by a device's key, that `UserLoginKey` and its device name); the account's Devices list showing each
-device's packages is coming (OF4). The apps read the user's packages as JSON from `packageList`
-(`/apps/maps/Offline/packageList`, `find#Packages`: each package's revision, size, strong tag and download path).
+SHA-256 as the strong `ETag` (`sha256-…`), by range (one `Range`, `If-Range`); it checks the owner on every request
+(`get#PackageAccess`: another user's package is 404) and answers 409 for a revision that is no longer the package's (the
+app then offers the new one). Each download is recorded (`moqui.maps.MapPackageDownload`: the package, the revision and,
+for a request signed in by a device's key, that `UserLoginKey` and its device name). On Android WorkManager runs the
+download (`PackageDownloadWorker`), so it goes on with the app in the background and waits for a network (or Wi-Fi); on
+the desktop it is a task of the app.
 
-### On the device
+**The offline screen.** The drawer's Maps opens Maps' Browse (the server's page) when the server answers and the shell's
+offline Maps screen (`Shell/MapsOffline`, bundled with the apps and precompiled) when it does not, as the shell's offline
+chip says, and so does the Maps app among the drawer's Applications while offline; Offline maps opens that screen at any
+time, and offline it lists the packages on the device and says so.
+Open draws the package's map and says that it is read from the device, whether it is offline and when the package was
+built. The map is `m-map` in package mode ([Qvt-Client](../ui/Qvt-Client.md)), with OpenLayers' main part bundled in
+the shell (`shell/libs.txt` `openlayers main`, about 0.7 MB; not the raster part): its configuration the manifest's,
+every URL resolved under the package's path on the shell's origin (`/__moqui-app/maps/<packageId>/`) and nothing else
+asked, not even the shell's own `/libs`, never another host; the label fonts and sprites the package's, each archive
+read by range, the outline its `outline.json`. Locate me, the places and the overlays work as on the web. A package's
+sources (each archive's attribution and notice, the postal and Overture licenses) are shown as text under the map and
+given to OpenLayers' attribution control only as escaped text (`map.attributionHtml`), never as markup: an archive's
+metadata is often HTML. **Search** finds, within the package's region, its saved places (`places.geojson`), postal
+codes (`postal.json`, by code or place name) and Overture places (`overture-places.json`, by name, brand, category or
+locality) in the page, and its Overture addresses through the app (`packages_addresses`), which matches them with the
+server's own address matching (`moqui-lib` `geo/address.rs`), at most ten results of each. **A place saved** there (the
+result chosen or the map's center, and a name) waits in the app's outbox as a `map-place` item
+([Desktop-Client](../ui/Desktop-Client.md#the-outbox-and-drafts)), listed under the map, and is sent when the server
+answers to Browse's `savePlace` with its `clientRef`, which keeps it once however many times it is sent (a place is only
+ever added, so no change on the server meets it). One the server refuses (1000 places, an unreadable places file) shows
+why, with Retry and Discard; one waiting for a sign-in may be discarded. A server without `features.placeRef` takes no
+queued place: the screen saves it at once online and needs a connection offline.
 
-The Android app and the desktop client keep downloaded packages beside each account's store (`moqui-client`
-`packages`, [Desktop-Client](../ui/Desktop-Client.md#offline-map-packages),
-[Mobile-Client](../ui/Mobile-Client.md#offline-map-packages)):
+**Limits.**
 
-- **The store.** `client/data/<account>.packages/<packageId>/<revision>/`, owner-only as the store is, outside
-  `store-max-mb`, within `<client-conf packages-max-mb>` (4096) for the account's packages, and a download starts only
-  with room for its rest, its unpacked copy and 64 MB free. A personal device keeps them across sign-outs; a shared
-  device's go with the account's data at its sign-out, and removing an account always deletes them.
-- **The download**, through the account's own requests with its device key: `packageList` for the revision's tag and
-  size, then the zip by ranges of 4 MiB, each with `If-Range` the strong tag, into a part file resumed from its
-  length; the whole file's SHA-256 against the tag; then each member the manifest lists unpacked, within its size and
-  checked against its SHA-256 (a member the manifest does not list, one it lists that is missing, a compressed,
-  encrypted or symlink member, a path outside the package's folder, or one member past 2 GiB refuses the package),
-  and the revision's folder swapped in by rename, the previous revision removed after. A failed check keeps the
-  revision the device had. A 409 (the package built again) reads the list again and offers the new revision. On
-  Android `PackageDownloadWorker` (WorkManager) runs it, resumable, on any network or only on Wi-Fi; on the desktop a
-  task of the app.
-- **Serving to the offline screen.** The app's scheme answers `/__moqui-app/maps/<packageId>/<path>` on the shell's
-  origin, to the shell's own webview only (no server page reads it, nor embeds it) from the current account's installed
-  revision, never kept by the webview (`no-store`): HEAD, GET and one `Range` as a 206 slice read from the file, at most
-  16 MiB a slice (a file past 16 MiB is asked by range); the member's SHA-256 is its `ETag`, a path the manifest does
-  not list is 404. The package's own `manifest.json` is served too. Android's WebView reads an intercepted body's length
-  as a 32-bit number, hence the 2 GiB member bound, within the server's `maps@package-max-bytes` of 2 GiB.
-- **The shell's commands**: `packages_list` (the server's list and the device's), `packages_download` (a revision;
-  `wifiOnly` on the phone), `packages_cancel`, `packages_delete`, `packages_status` and `packages_addresses` (below);
-  ids, names, revisions, sizes and states, never a path on the device.
+| Limit | Where |
+| --- | --- |
+| A package's size: 2 GiB, refused at the estimate (`TOO_LARGE`) and enforced while it is cut | `maps@package-max-bytes` |
+| A user's packages together: 8 GiB (`TOO_LARGE_FOR_USER`) | `maps@package-user-max-bytes` |
+| Builds at once on the installation: 1 | `maps@package-concurrent-builds` |
+| A package's file kept after its last build or download: 30 days | `maps@package-keep-days` |
+| A region of at most 4,000,000 tiles (`TOO_MANY_TILES`), zooms 0 to 16; 50 packages a user (`TOO_MANY_PACKAGES`), one of them pending or building (`PACKAGE_BUSY`) | fixed |
+| 50,000 postal codes and 200,000 rows of each Overture theme a package; a member past 2 GiB is refused by the apps (Android's WebView reads a body's length as 32 bits) | fixed |
+| An account's packages on a device: 4096 MB, and a download starts only with room for its rest, its unpacked copy and 64 MB more | `<client-conf packages-max-mb>` ([Desktop-Client](../ui/Desktop-Client.md#device-modes-and-client-conf)) |
 
-### In the apps
-
-The apps' shell bundles an offline Maps screen (`Shell/MapsOffline`, `crates/moqui-desktop/shell/screens/MapsOffline.qvue`,
-precompiled with the other bundled screens) and OpenLayers' main part (plans/Maps-Offline.md §2.5):
-
-- **The library.** `shell/libs.txt` names `openlayers main`: the main entry of the OpenLayers build with ol-mapbox-style,
-  ol-pmtiles and pmtiles, the chunks it imports, `ol.css` and `ol-map.json`, as the build's `openlayers/parts.json`
-  lists them (about 0.7 MB of the build's 1.2 MB). The raster part and its decoders (COG layers, registered projections)
-  are not bundled: a package holds no COG layer. A development run serves only those files too; a bundle holds only
-  them (and no `parts.json`) and serves what it holds.
-- **The Maps entry.** For an account with the Maps app (its `shellData` apps, which the store keeps for offline use),
-  the shell's drawer has Maps, which opens Maps' Browse (the server's page, in an app window; on the phone in the
-  webview) when the server answers and the offline screen when it does not, as the shell's offline chip says
-  (`moqui.connection`: the host's own unreachable answer, `X-Moqui-Offline: unreachable`, or none); and Offline maps,
-  the offline screen at any time. The Maps app of the drawer's Applications opens the offline screen too while
-  offline.
-- **The offline screen** lists the account's packages as the server lists them (`packageList`) and as the device holds
-  them, one row each, with Download, Update (a newer revision on the server), Cancel, Delete and, on the phone, "Download
-  only on Wi-Fi"; offline it lists the device's and says so. Open draws a package's map and says when it is offline and
-  when the package was built; its sources (each archive's attribution and notice, the postal and Overture licenses) and
-  the package's notice are shown as text, never as markup.
-- **The map** is `m-map` in package mode ([Qvt-Client](../ui/Qvt-Client.md)): its configuration the manifest's, every
-  URL resolved under the package's path on the shell's origin and nothing else asked (not the shell's own `/libs`,
-  never another host), the label fonts and sprites the package's, each archive read by range (pmtiles' `FetchSource`
-  takes the host's 206 slices, one per tile or directory, well under the 16 MiB a slice), the outline its
-  `outline.json`, the attribution the manifest's with the archive's own notice as plain text. A layer's style is the
-  package's too, and a GeoJSON member past 16 MiB is read by range. Locate me, the places and the overlays work as on
-  the web. **Attribution as text:** an archive's attribution (its metadata, often HTML) is never markup. It goes to
-  OpenLayers' attribution control, which sets what it is given as HTML, only as escaped text (`map.attributionHtml`,
-  links only to http addresses), and the offline screen shows it as text.
-- **Search** is in the page over the package's JSON, within its region: its places (`places.geojson`), postal codes
-  (`postal.json`, by code or place name) and Overture places (`overture-places.json`, by name, brand, category or
-  locality), at most ten results of each source; its Overture addresses through the host (`packages_addresses`,
-  `moqui_client::packages::Packages::search_addresses`), which matches them with the server's own address matching
-  (`moqui-lib` `geo/address.rs`, which builds with no Parquet reader or codec; its tier walk, `search_tiers`, is the
-  server's search's too) over the keys the server wrote into each row. The host reads the member once into typed rows
-  and keeps their index for one package revision (a switch, a delete or a new revision drops it). A member past 16 MiB
-  is read by range and joined, and a new revision installed while a package is open opens it again.
-- **A place saved** there (the place found or chosen, else the map's center, and a name; for an account with the Maps
-  app) is an outbox item, `map-place` ([Desktop-Client](../ui/Desktop-Client.md#the-outbox-and-drafts)), queued where
-  the server's client config says `features.placeRef`, and sent by the host when the server answers to Browse's
-  `savePlace` with its `clientRef`, which keeps a saved place once by it (`ClientSyncServices` claim#ClientRequest and
-  store#ClientRequest in one transaction: sent again it answers the first save, `duplicate`). A place is only ever
-  added, so no change on the server meets it. One refused (1000 places, an unreadable places file) keeps no ref on the
-  server and shows why, with Retry, which may then save it, and Discard; a user Maps refuses (a 403 with the server's
-  reason) fails so, holding up no later place, and one waiting for a sign-in may be discarded. A server without
-  `placeRef` takes no queued place: it is saved at once online and needs a connection offline.
-- **No cache across accounts.** A package's URL carries no account, and package ids are the server's, so two accounts
-  may have the same URL with other files: the host answers them `no-store`, and the screen keeps what it read of a
-  package in memory for its account and revision only (an account switch loads the shell again).
+**Privacy.** A package holds only what its owner could read when it was built, and a copy on a device stays readable
+there until it is deleted there, also after the server revokes access to what is in it: the offline screen says so, and
+so does the apps' [privacy notice](../Privacy.md). It is kept in the app's own files, readable only by the app, outside
+the account's store (`client/data/<account>.packages/`). A personal device keeps it across sign-outs; a shared device's
+go with the account's data at its sign-out, and removing an account always deletes them. The server records which
+device downloaded which revision (`MapPackageDownload`); the account's Devices list does not show them yet. Browsing a
+package sends nothing: no tile, style or search leaves the device, and only a saved place goes to the server, when it
+answers.
 
 ## Live location
 
@@ -1248,7 +1199,11 @@ registered again since the build was asked failing it; the owner's places and th
 user's places and an unshared overlay never, a shared one until its share is revoked; the Offline page once in qvt and once in the terminal), with the box's tile set (across the antimeridian, at
 zoom 0, a tile's edge), the extract's bounds, a shared content cut once, a replaced archive and a cancel leaving no file in
 Rust (`moqui-tools` `maps_extract_tests.rs`), and the streaming writer giving the bytes the whole-archive writer gave
-(`moqui-lib` `pmtiles_tests.rs`).
+(`moqui-lib` `pmtiles_tests.rs`); the `package` transition asked by GET with its parameters in the URL, as the apps ask
+it, `tools/test/client/MapsOfflineDownload.spec.js`. The whole of it on the Android emulator, a package built, downloaded,
+browsed and searched with the network cut, and a place saved offline sent when the network is back, is the acceptance
+walk `MapsOfflinePackage`: the tools acceptance spec of that name serves its data and package, and
+`scripts/android-maps-offline.sh` drives the app ([Mobile-Client, Tests](../ui/Mobile-Client.md#tests)).
 Overture: the services' rules are `framework/test/MapsOverture.spec.js` (a non-holder, outside requests off, a license not
 acknowledged, a region too large and a release of schema 3 refused; a Places import read by range from the one item and row
 group that meet the region, active and searched, the later ranges pinned to the file's ETag; a failed update and a file
